@@ -131,20 +131,39 @@ async def test_a_request_under_a_new_key_records_it_even_with_the_same_certifica
 
 
 @pytest.mark.asyncio
-async def test_the_fill_records_the_pin_for_existing_members_and_they_keep_passing(pinning):
+async def test_the_fill_records_the_pin_for_every_existing_member_and_they_keep_passing(pinning):
     env = pinning
     member = _new_member("existing")
     assert (await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "existing-1"))).status_code == 200
-    # As every member row stood before the key was recorded.
+    alice = env.actors["alice"]
+    without_certificate = (alice.sk, alice.did, "alice")
+    # As every member row stood before the key was recorded, with or without a certificate.
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET accepted_team_did_key = NULL WHERE did_key = $1", member[1],
+        "UPDATE {{tables.agents}} SET accepted_team_did_key = NULL WHERE did_key = ANY($1::text[])",
+        [member[1], alice.did],
     )
     [fill] = MIGRATIONS.glob("*_member_accepted_team_key.sql")
 
     await env.db.execute(fill.read_text())
 
-    assert (await _row(env, member))["accepted_team_did_key"] == env.team_did
-    assert (await _identity_membership(env, member))["team_id"] == TEAM
+    for each in (member, without_certificate):
+        assert (await _row(env, each))["accepted_team_did_key"] == env.team_did
+        assert (await _identity_membership(env, each))["team_id"] == TEAM
+
+
+@pytest.mark.asyncio
+async def test_a_member_row_written_without_the_key_takes_the_teams_key_of_that_moment(pinning):
+    env = pinning
+    did = _make_keypair()[2]
+
+    await env.db.execute(
+        "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope) VALUES ($1, $2, 'written', 'local')",
+        TEAM, did,
+    )
+
+    assert await env.db.fetch_value(
+        "SELECT accepted_team_did_key FROM {{tables.agents}} WHERE did_key = $1", did,
+    ) == env.team_did
 
 
 # --- A member under the current key passes; under a superseded key it is refused
@@ -271,13 +290,16 @@ async def test_same_team_delivery_needs_the_sender_under_the_current_key(pinning
 
 
 @pytest.mark.asyncio
-async def test_a_row_without_a_recorded_certificate_passes_as_before(pinning):
+async def test_a_member_without_a_certificate_on_file_is_a_member_until_the_key_changes(pinning):
     env = pinning
     alice = env.actors["alice"]
-    row = await lookup_identity_agent_context(env.infra, did_key=alice.did)
-    assert row["certificate_id"] is None
+    member = (alice.sk, alice.did, "alice")
+    assert (await _row(env, member))["certificate_id"] is None
+    assert (await _identity_membership(env, member))["team_id"] == TEAM
 
-    await _change_key(env)
+    next_sk, next_did = await _change_key(env)
+    assert (await _identity_membership(env, member))["team_id"] is None
 
-    assert (await current_membership(env.app.state.awid_registry_client, row))["team_id"] == TEAM
+    assert (await _connect(env, member, _certificate(next_sk, next_did, member, "alice-after"))).status_code == 200
+    assert (await _identity_membership(env, member))["team_id"] == TEAM
 

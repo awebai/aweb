@@ -73,7 +73,7 @@ async def test_live_certificate_keeps_team_context():
 @pytest.mark.asyncio
 async def test_row_without_recorded_certificate_passes_without_registry_call():
     request, registry = _request_with_revocations(set())
-    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": None}
+    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": None, **CURRENT_KEY}
     out = await _enforce_current_membership(request, row)
     assert out is row
     registry.get_team_revocations.assert_not_awaited()

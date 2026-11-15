@@ -1,13 +1,12 @@
 """A member is a member under its team's current key.
 
 The server records, on each member's agents row, the team key under which it
-last accepted that member's certificate (accepted_team_did_key). The team's
-current key is the key the server admitted the team with, moved only by the
-namespace controller's act (teams.team_did_key, aweb.team_key_pins). A member
-whose recorded key is not the current one is refused wherever it is looked up,
-so changing a team's key removes every member until each holds a certificate
-under the new key. A row with no recorded certificate predates the recording
-of certificates and is judged as before.
+last accepted that member (accepted_team_did_key): the key a certificate was
+verified under, or, for a row written without one, the team's key at that
+moment. The team's current key is the key the server holds for the team
+(teams.team_did_key, aweb.team_key_pins). A row is a member only while the two
+are equal, wherever it is looked up, so changing a team's key removes every
+member until each is accepted under the new key.
 """
 
 from __future__ import annotations
@@ -26,18 +25,13 @@ def member_key_columns_sql(agent: str) -> str:
 def member_key_current_sql(agent: str) -> str:
     """SQL predicate: the agents row aliased ``agent`` is a member under its
     team's current key."""
-    return (
-        f"({agent}.certificate_id IS NULL"
-        f" OR {agent}.accepted_team_did_key = {current_team_key_sql(agent)})"
-    )
+    return f"({agent}.accepted_team_did_key = {current_team_key_sql(agent)})"
 
 
 def member_key_current(row) -> bool:
     """Whether the member ``row`` (an agents row read with
     member_key_columns_sql) was accepted under its team's current key. A row
     read without those columns is not."""
-    if not str(row.get("certificate_id") or "").strip():
-        return True
     accepted = str(row.get("accepted_team_did_key") or "").strip()
     return bool(accepted) and accepted == str(row.get("current_team_did_key") or "").strip()
 

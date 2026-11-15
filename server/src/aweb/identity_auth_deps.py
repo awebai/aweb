@@ -199,8 +199,11 @@ async def _enforce_current_membership(request: Request, row: dict | None) -> dic
     and agent_id are stripped, while the DID-scoped facts stand, so the
     identity keeps reading its own mailbox and loses only team attribution
     and team-gated behavior. A row with no recorded certificate predates the
-    recording (migration 017) and passes unchanged; it heals at the next
-    certificate-authenticated connect or request.
+    recording (migration 017) and has no certificate to check for
+    revocation; it heals at the next certificate-authenticated connect or
+    request. Every row, with or without one, keeps its team context only
+    while it was accepted under the team's current key
+    (aweb.member_team_key).
     """
     return await current_membership(getattr(request.app.state, "awid_registry_client", None), row)
 
@@ -212,17 +215,18 @@ async def current_membership(registry_client, row: dict | None) -> dict | None:
         return row
     team_id = (row.get("team_id") or "").strip()
     certificate_id = (row.get("certificate_id") or "").strip()
-    if not team_id or not certificate_id:
+    if not team_id:
         return row
     if not member_key_current(row):
         logger.warning(
-            "identity-auth team context stripped: certificate %s for alias %r in %s "
-            "was accepted under a team key that is not the team's current key",
-            certificate_id,
+            "identity-auth team context stripped: alias %r in %s was accepted under "
+            "a team key that is not the team's current key",
             row.get("alias"),
             team_id,
         )
         return _without_team_context(row)
+    if not certificate_id:
+        return row
     revoked = await revoked_certificates(registry_client, team_id)
     if certificate_id not in revoked:
         # Staged existence requirement (default OFF): an unregistered

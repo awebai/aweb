@@ -25,6 +25,8 @@ async def test_cli_preserves_explicit_address_with_signed_alias(privacy_app, tmp
     team_sk, _, team_did = _make_keypair()
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE team_id=$2", team_did, TEAM)
     await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE name=$2", team_did, TEAM.split(":", 1)[0])
+    # The team has always had this key: its members were accepted under it.
+    await env.db.execute("UPDATE {{tables.agents}} SET accepted_team_did_key=$1 WHERE team_id=$2", team_did, TEAM)
     homes = {}
     for name in ("alice", "bob"):
         actor = env.actors[name]

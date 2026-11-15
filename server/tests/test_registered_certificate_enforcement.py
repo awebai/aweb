@@ -326,12 +326,13 @@ async def test_identity_flag_on_registry_unavailable_fails_closed(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_identity_flag_on_row_without_recorded_certificate_passes_without_reads(monkeypatch):
-    """Pre-migration-017 rows have no recorded certificate; they pass
-    unchanged (and heal at the next certificate-authenticated request),
-    with no registry reads at all."""
+    """Pre-migration-017 rows have no recorded certificate; accepted under
+    the team's current key, they pass unchanged (and heal at the next
+    certificate-authenticated request), with no registry reads at all."""
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry()
-    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": None}
+    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": None,
+           "accepted_team_did_key": "did:key:zTeam", "current_team_did_key": "did:key:zTeam"}
     out = await _enforce_current_membership(_identity_request(registry), row)
     assert out is row
     assert registry.list_calls == 0
