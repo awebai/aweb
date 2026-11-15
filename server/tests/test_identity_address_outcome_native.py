@@ -17,9 +17,11 @@ from starlette.requests import Request
 
 from aweb.identity_auth_deps import resolve_identity_auth
 from aweb.identity_binding import verify_identity_binding
+from aweb.mcp.auth import MCPAuthMiddleware
+from aweb.mcp.tools.federation import mcp_messaging_auth
 from awid.registry import RegistryClient, RegistryError
 from identity_binding_support import register_global_identity
-from tests.test_dashboard_privacy import privacy_app as privacy_app  # noqa: F401
+from tests.test_dashboard_privacy import privacy_app as privacy_app  # noqa: PLC0414
 from tests.test_messages_http import _signed_identity_headers
 
 
@@ -123,6 +125,15 @@ async def test_failed_reverse_read_is_unknown_and_recovers_without_empty_evidenc
             assert outcome.state == "unknown"
             assert isinstance(outcome.cause, RegistryError)
             assert outcome.cause.status_code == 503
+            assert await projection(env, actor) == before
+
+            # The second production auth adapter must carry the same UNKNOWN
+            # outcome through its messaging conversion, not collapse to empty.
+            context = await MCPAuthMiddleware(env.app, env.infra)._resolve_auth(identity_request(env, actor))
+            assert context.address_resolution.state == "unknown"
+            assert isinstance(context.address_resolution.cause, RegistryError)
+            assert context.address == actor.address
+            assert mcp_messaging_auth(context).address_resolution is context.address_resolution
             assert await projection(env, actor) == before
 
         recovered = await resolve_identity_auth(identity_request(env, actor))

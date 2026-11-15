@@ -38,6 +38,7 @@ from aweb.identity_binding import (
     verify_identity_binding,
 )
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
+from aweb.identity_address import AddressResolution
 from aweb.membership import require_fresh
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_auth_envelope import team_auth_signature_payload
@@ -73,6 +74,7 @@ class TeamIdentity:
     certificate_id: str
     grant: GrantContext | None = None
     protection_observation: TeamProtectionObservation | None = field(default=None, repr=False, compare=False)
+    address_resolution: AddressResolution = field(default_factory=AddressResolution)
 
     def require_fresh(self) -> None:
         """Fence an effect with this request's original membership observation."""
