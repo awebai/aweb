@@ -811,9 +811,7 @@ async def test_signed_continuation_after_rotation_keeps_stored_route(
         else:
             assert result.status_code == (503 if evidence == "unavailable" else 403), result.text
             if evidence == "unavailable":
-                # Fresh certificate protection evidence is required before
-                # the continuation's independent identity-binding read.
-                assert result.json()["detail"].startswith("AWID team key resolution upstream unavailable (ConnectError):")
+                assert result.json()["detail"] == "identity_binding_unavailable"
             assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == before_count
         assert before == await env.db.fetch_all("SELECT * FROM {{tables.agents}} ORDER BY agent_id")
         assert await resolve_agent_by_did(env.infra, stable) is None
