@@ -10,26 +10,21 @@ from dataclasses import replace
 from uuid import uuid4
 
 import pytest
-from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 from awid.signing import canonical_json_bytes
 from nacl.signing import SigningKey
 
-from tests.protected_consumer_support import ready_owner_act_consumer
 from tests.test_independent_protected_signer import did
 from tests.test_protected_admission_native import admit_operation, endorse, headers, prepare, root_operation
 from tests.test_protected_owner_removal_native import legacy_member, owner_removal
 from tests.test_protected_removal_native import admitted, removal, self_call
 
 pytest_plugins = ("tests.test_protected_admission_native",)
-ROWS = ("admit", "endorse", "remove", "owner_remove", "owner_act")
+ROWS = ("admit", "endorse", "remove", "owner_remove")
 
 
 @asynccontextmanager
 async def operation_case(a, row, tmp_path, test_db_factory):
-    if row == "owner_act":
-        async with ready_owner_act_consumer(a.w, tmp_path, test_db_factory):
-            yield owner_act_operation(a.w.operation)
-    elif row == "endorse":
+    if row == "endorse":
         yield root_operation(a)
     elif row == "owner_remove":
         _, certificate = await legacy_member(a, "local")
@@ -104,8 +99,8 @@ async def test_each_served_row_requires_proof_and_current_scoped_requester(
             await a.w.db.execute(
                 "UPDATE {{tables.protected_requester_bindings}} SET active=true WHERE principal=$1", a.w.root_id,
             )
-        if row in {"owner_remove", "owner_act"}:
-            # These rows bind no requester/target equality: an independent
+        if row == "owner_remove":
+            # This row binds no requester/target equality: an independent
             # owner may be asked to act about a different principal.
             subject = operation.intent()["subject"]
             assert subject.get("member_id", subject.get("principal")) != a.w.root_id

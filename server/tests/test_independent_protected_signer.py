@@ -320,29 +320,37 @@ async def signer_world(
             await registry.aclose()
 
 
-async def prepare(world):
+async def prepare(world, operation=None):
     requester = await world.app.requester(
         proof_request(world),
         principal=world.root_id,
         operation="protected_operation_prepare",
     )
-    return await world.app.signer.prepare(world.operation, requester=requester)
+    return await world.app.signer.prepare(operation or world.operation, requester=requester)
 
 
-@pytest_asyncio.fixture
-async def ready_owner_consumer(world, tmp_path, test_db_factory):
-    from tests.protected_consumer_support import ready_owner_act_consumer
+async def owner_removal_operation(world):
+    """A served live-floor controller act needing the team's own B3 approval:
+    an owner's removal of a local member, with no delivery consumer."""
+    from tests.test_protected_owner_removal_native import legacy_member, owner_removal
 
-    async with ready_owner_act_consumer(world, tmp_path, test_db_factory) as consumer:
-        yield consumer
+    a = SimpleNamespace(w=world)
+    _, certificate = await legacy_member(a, "local")
+    return owner_removal(a, certificate)
+
+
+async def revoked(world, operation):
+    certificate_id = operation.intent()["subject"]["certificate_id"]
+    rows = await world.registry.list_team_certificates_fresh(DOMAIN, "engineering", active_only=False)
+    return next(row for row in rows if row.certificate_id == certificate_id).revoked_at is not None
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_one_shared_effect_with_customer_registry_private_reads_and_actual_uv(
     world,
 ):
-    prepared = await prepare(world)
+    operation = await owner_removal_operation(world)
+    prepared = await prepare(world, operation)
     options = await world.app.signer.approval_options(
         prepared.operation_id, human=world.human
     )
@@ -351,11 +359,7 @@ async def test_one_shared_effect_with_customer_registry_private_reads_and_actual
         prepared.operation_id, proof, human=world.human
     )
     assert receipt.state == "committed"
-    assert receipt.result["v"] == 2 and receipt.result["delivery"]["state"] == "applied"
-    world.controller.verify_key.verify(
-        base64.b64decode(receipt.result["artifact"]["signing"]),
-        base64.b64decode(receipt.result["artifact"]["signature"]),
-    )
+    assert await revoked(world, operation)
     reader = await world.app.requester(
         proof_request(
             world, body=b"", operation="protected_operation_receipt", method="GET"
@@ -413,8 +417,8 @@ async def test_worker_tokens_and_plain_keys_cannot_prepare(world, authorization)
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_unprovisioned_registered_requester_cannot_prepare(world):
+    operation = await owner_removal_operation(world)
     key = SigningKey.generate()
     principal = (await world.registry.register_did(did(key), bytes(key))).did_aw
     requester = await world.app.requester(
@@ -423,13 +427,12 @@ async def test_unprovisioned_registered_requester_cannot_prepare(world):
         operation="protected_operation_prepare",
     )
     with pytest.raises(SignerRefused, match="scope_refused"):
-        await world.app.signer.prepare(world.operation, requester=requester)
+        await world.app.signer.prepare(operation, requester=requester)
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_authorizer_removed_between_prepare_and_execute_cannot_sign(world):
-    prepared = await prepare(world)
+    prepared = await prepare(world, await owner_removal_operation(world))
     options = await world.app.signer.approval_options(
         prepared.operation_id, human=world.human
     )
@@ -494,9 +497,8 @@ async def test_root_old_key_stops_authenticating_after_continuity_rotation(world
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_policy_changed_after_options_cannot_commit_the_old_approval(world):
-    prepared = await prepare(world)
+    prepared = await prepare(world, await owner_removal_operation(world))
     options = await world.app.signer.approval_options(
         prepared.operation_id, human=world.human
     )
@@ -560,10 +562,10 @@ async def test_agent_with_verified_human_ancestor_cannot_be_an_authorizing_human
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("elapsed,allowed", [(59, True), (61, False)])
-@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_registry_evidence_deadline_survives_an_actual_authority_lock_wait(
     world, elapsed, allowed
 ):
+    operation = await owner_removal_operation(world)
     now = 0
     world.app.authority.timer = lambda: now
     task = None
@@ -572,7 +574,7 @@ async def test_registry_evidence_deadline_survives_an_actual_authority_lock_wait
             await blocker.fetch_one(
                 "SELECT * FROM {{tables.protected_authorizer_bindings}} FOR UPDATE"
             )
-            task = asyncio.create_task(prepare(world))
+            task = asyncio.create_task(prepare(world, operation))
             # Observe PostgreSQL's lock wait, rather than assuming a sleep
             # allowed the executor to reach its authority fence.
             for _ in range(200):
@@ -591,7 +593,7 @@ async def test_registry_evidence_deadline_survives_an_actual_authority_lock_wait
             assert waiting, "authority lock wait was not established"
             now = elapsed
         if allowed:
-            assert (await task).operation_id == world.operation.operation_id
+            assert (await task).operation_id == operation.operation_id
         else:
             with pytest.raises(SignerRefused, match="evidence_unavailable"):
                 await task
@@ -608,9 +610,8 @@ async def test_registry_evidence_deadline_survives_an_actual_authority_lock_wait
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_no_uv_cannot_authorize_the_controller_effect(world):
-    prepared = await prepare(world)
+    prepared = await prepare(world, await owner_removal_operation(world))
     options = await world.app.signer.approval_options(
         prepared.operation_id, human=world.human
     )
@@ -630,14 +631,14 @@ async def test_no_uv_cannot_authorize_the_controller_effect(world):
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("ready_owner_consumer")
 async def test_agent_requester_cannot_execute_a_live_floor_operation(world):
+    operation = await owner_removal_operation(world)
     requester = await world.app.requester(
         proof_request(world),
         principal=world.root_id,
         operation="protected_operation_prepare",
     )
-    prepared = await world.app.signer.prepare(world.operation, requester=requester)
+    prepared = await world.app.signer.prepare(operation, requester=requester)
     with pytest.raises(SignerRefused, match="scope_refused"):
         await world.app.signer.execute(prepared.operation_id, {}, human=requester)
     from fastapi import HTTPException

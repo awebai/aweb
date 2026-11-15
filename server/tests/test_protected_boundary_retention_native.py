@@ -15,7 +15,7 @@ from tests.test_independent_protected_signer import DOMAIN, did
 from tests.test_protected_admission_native import admit_operation, endorse, execute, prepare
 from tests.test_protected_removal_native import removal
 
-from tests.protected_consumer_support import activate, ready_owner_act_consumer
+from tests.protected_consumer_support import activate
 
 pytest_plugins = ("tests.test_protected_admission_native",)
 
@@ -89,84 +89,6 @@ async def test_genuine_retained_admission_and_exact_confirmation(admissions, tmp
     assert len(sends) == 2
     status = await a.w.registry.get_team_certificate_status_fresh(DOMAIN, "engineering", artifact["certificate_id"])
     assert status["status"] == "revoked"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("unconfirmed", [False, True])
-async def test_genuine_b3_owner_act_reaches_protected_sql_consumer(world, tmp_path, test_db_factory, monkeypatch, unconfirmed):
-    from tests.test_independent_protected_signer import prepare as prepare_owner
-
-    w = world
-    async with ready_owner_act_consumer(w, tmp_path, test_db_factory) as consumer:
-        db, custody, client = consumer.db, consumer.custody, consumer.client
-        prepared = await prepare_owner(w)
-        candidate_row = await w.db.fetch_one(
-            "SELECT candidate_links FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
-        token = next(iter(json.loads(candidate_row["candidate_links"]).values()))
-        if unconfirmed:
-            async def unreadable(*args):
-                return None  # Hide only confirmation; the actual consumer still applies.
-            monkeypatch.setattr(custody, "confirm_retained", unreadable)
-        options = await w.app.signer.approval_options(prepared.operation_id, human=w.human)
-        proof = w.device.get(dict(options))
-        original_clock = w.app.signer.clock
-        if unconfirmed:
-            # The candidate and authorized unsigned snapshot precede a real
-            # B3-authorized signature, retained delivery and consumer commit.
-            authorized = w.app.signer._authorized
-            interleaved = False
-            results = []
-            async def sign_after_authorized(operation_id, actor, purpose, **kwargs):
-                nonlocal interleaved
-                snapshot = await authorized(operation_id, actor, purpose, **kwargs)
-                if purpose == "approval" and not interleaved:
-                    interleaved = True
-                    results.append(await w.app.signer.execute(prepared.operation_id, proof, human=w.human))
-                    monkeypatch.setattr(w.app.signer, "clock", lambda: original_clock() + timedelta(days=2))
-                return snapshot
-            monkeypatch.setattr(w.app.signer, "_authorized", sign_after_authorized)
-            with pytest.raises(SignerRefused, match="scope_refused"):
-                await w.app.signer.link_view(prepared.handoff_id, token)
-            assert interleaved
-            result = results[0]
-            assert result.state == "pending" and result.code == "effect_in_progress"
-        else:
-            result = await w.app.signer.execute(prepared.operation_id, proof, human=w.human)
-            assert result.state == "committed" and result.result["v"] == 2
-        assert await db.fetch_value("SELECT count(*) FROM holding") == 0
-        assert await db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 1
-        assert await db.fetch_value("SELECT count(*) FROM {{tables.protected_effect_receipts}}") == 1
-        row = await w.db.fetch_one("SELECT retained_effect FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
-        retained = json.loads(row["retained_effect"])
-        if unconfirmed:
-            from aweb.protected_signing.owner import owner_view, owner_page_html
-            async with w.db.transaction() as tx:
-                scope = (await w.app.authority.binding(tx))["b3_scope"]
-            for offset in (timedelta(), timedelta(days=2)):
-                view = await owner_view(w.app, scope=scope, subject=w.human.subject, now=original_clock() + offset)
-                assert view["pending"] == []
-                # Approved but not confirmed: listed as such, never as expired history.
-                assert [(item["operation_id"], item["state"]) for item in view["unresolved"]] == [
-                    (prepared.operation_id, "unresolved")]
-                assert view["history"] == []
-                html = owner_page_html(view)
-                assert "Approved, not confirmed yet:" in html
-                assert "Expired, nobody decided" not in html and "by you" not in html
-            historical = await w.app.signer.receipt(prepared.operation_id, reader=w.human)
-            assert historical.state == "unknown" and historical.code == "external_effect_unresolved"
-            reread = await w.db.fetch_one(
-                "SELECT retained_effect FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
-            assert json.loads(reread["retained_effect"]) == retained
-            assert await db.fetch_value("SELECT count(*) FROM {{tables.owner_act_nonces}}") == 1
-            return
-        body = base64.b64decode(retained["delivery"]["body"])
-        url = w.operation.audience + retained["delivery"]["path"]
-        missing = await client.post(url, content=body)
-        assert (missing.status_code, missing.json()["detail"]) == (403, "protected_controller_required")
-        altered = await client.post(url, content=body + b" ", headers=retained["delivery"]["headers"])
-        assert (altered.status_code, altered.json()["detail"]) == (403, "protected_controller_required")
-
-
 
 @pytest.mark.asyncio
 async def test_cache_wait_expiry_keeps_original_bundle_claim_and_never_sends(admissions, tmp_path, monkeypatch):

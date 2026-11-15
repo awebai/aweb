@@ -18,10 +18,8 @@ from aweb_naapp.runtime.audit import AuditKind
 from aweb_naapp.runtime.protected_signer import SignerRefused, catalog
 from aweb_naapp.runtime.protected_signer.codecs import signing_bytes
 from aweb_naapp.runtime.protected_signer.execution_intent import materialize_artifact
-from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 from awid.registry_types import RegistryError
 from nacl.signing import SigningKey
-from tests.protected_consumer_support import ready_owner_act_consumer
 from tests.test_independent_protected_signer import did, proof_request
 from tests.test_protected_admission_native import (
     admit_operation,
@@ -41,8 +39,10 @@ SELECTORS = (
     ("team.agent.admit", "default"),
     ("team.agent.remove", "default"),
     ("team.agent.remove", "owner_approved"),
-    ("human-role.revoke", "default"),
 )
+# The owner act's protected-delivery consumer is removed (aweb-adcl.1): the
+# catalog may still name it, and this matrix states that it is not covered.
+REMOVED_CONSUMER = ("human-role.revoke", "default")
 TABLES = (
     "protected_signer_operations", "approval_requests", "approvals",
     "approval_candidates", "approval_links", "protected_root_admissions",
@@ -51,7 +51,8 @@ TABLES = (
 
 
 def test_status_matrix_names_every_served_definition():
-    assert set(SELECTORS) == {key for key, spec in catalog.OPERATIONS.items() if spec.consumer_available}
+    served = {key for key, spec in catalog.OPERATIONS.items() if spec.consumer_available}
+    assert set(SELECTORS) == served - {REMOVED_CONSUMER}
 
 
 async def snapshot(db):
@@ -112,11 +113,7 @@ async def read(a, operation, *, context=None):
 
 
 @asynccontextmanager
-async def selected_operation(a, selector, tmp_path, test_db_factory):
-    if selector == ("human-role.revoke", "default"):
-        async with ready_owner_act_consumer(a.w, tmp_path, test_db_factory):
-            yield owner_act_operation(a.w.operation)
-        return
+async def selected_operation(a, selector):
     if selector == ("identity.root.endorse", "default"):
         operation = root_operation(a)
     elif selector == ("team.agent.remove", "owner_approved"):
@@ -136,10 +133,10 @@ async def selected_operation(a, selector, tmp_path, test_db_factory):
 @pytest.mark.parametrize("selector", SELECTORS, ids=["/".join(value) for value in SELECTORS])
 @pytest.mark.parametrize("state", ["pending", "committed", "refused", "signed", "expired_unresolved"])
 async def test_status_twice_preserves_stable_history_for_every_definition(
-    admissions, tmp_path, test_db_factory, monkeypatch, selector, state
+    admissions, monkeypatch, selector, state
 ):
     a = admissions
-    async with selected_operation(a, selector, tmp_path, test_db_factory) as operation:
+    async with selected_operation(a, selector) as operation:
         response = await prepare(a, operation)
         assert response.status_code == 200, response.text
         signer = a.group.component(operation.context).signer
@@ -299,57 +296,6 @@ async def test_status_refusals_create_nothing_and_leave_history_unchanged(admiss
         assert (response.status_code, response.json()) == (expected[0], {"detail": expected[1]})
         assert await snapshot(a.w.db) == before
     assert calls == []
-
-
-@pytest.mark.asyncio
-async def test_status_recovers_a_genuine_retained_effect_after_unknown_without_another_send(
-    admissions, tmp_path, test_db_factory, monkeypatch
-):
-    a = admissions
-    async with ready_owner_act_consumer(a.w, tmp_path, test_db_factory) as consumer:
-        operation = owner_act_operation(a.w.operation)
-        assert (await prepare(a, operation)).status_code == 200
-        custody, signer = consumer.custody, a.w.app.signer
-        confirm = custody.confirm_retained
-
-        async def unavailable(*args):
-            return None
-
-        monkeypatch.setattr(custody, "confirm_retained", unavailable)
-        options = await signer.approval_options(operation.operation_id, human=a.w.human)
-        await signer.execute(operation.operation_id, a.w.device.get(dict(options)), human=a.w.human)
-        original_row = await operation_row(a, operation)
-        assert original_row["result"] is None and original_row["retained_effect"] is not None
-        assert original_row["delivery_claim"] is not None
-        assert await consumer.db.fetch_value("SELECT count(*) FROM holding") == 0
-        consumer_before = {table: await consumer.db.fetch_all("SELECT * FROM " + table)
-            for table in ("owner_act_nonces", "protected_effect_receipts")}
-        assert len(consumer_before["owner_act_nonces"]) == len(consumer_before["protected_effect_receipts"]) == 1
-        signer.clock = lambda: original_row["expires_at"] + timedelta(seconds=1)
-        before = await snapshot(a.w.db)
-        calls = forbid_effects(a, monkeypatch)
-        for _ in range(2):
-            response = await read(a, operation)
-            assert response.status_code == 200 and response.json() == {
-                "state": "unknown", "code": "external_effect_unresolved"}, response.text
-            assert await snapshot(a.w.db) == before
-        # The exact proof-gated historical receipt becomes available. This
-        # read may settle application, but cannot mint/release another bundle.
-        monkeypatch.setattr(custody, "confirm_retained", confirm)
-        response = await read(a, operation)
-        assert response.status_code == 200 and response.json()["state"] == "committed", response.text
-        assert response.json()["result"]["delivery"]["state"] == "applied"
-        settled = await operation_row(a, operation)
-        assert {key for key in settled if settled[key] != original_row[key]} == {"result", "committed_at"}
-        after = await snapshot(a.w.db)
-        settled_history_only(before, after)
-        again = await read(a, operation)
-        assert again.status_code == 200 and again.json() == response.json()
-        assert await snapshot(a.w.db) == after
-        for table, rows in consumer_before.items():
-            assert await consumer.db.fetch_all("SELECT * FROM " + table) == rows
-        assert calls == []
-
 
 @pytest.mark.asyncio
 async def test_status_confirmation_expiry_rolls_back_result_quota_and_audit(admissions, monkeypatch):
