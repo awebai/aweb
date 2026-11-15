@@ -23,11 +23,11 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.runtime.protected_signer import (
     AdmittedHuman,
+    OwnerActOperation,
     ProtectedKeyContext,
     ProtectedSigner,
     ReceiptReader,
     RestrictedRequester,
-    RevokeHumanRole,
     SignerRefused,
 )
 from tests.runtime.approvals.support import AuditOutbox, Clock, Policies
@@ -117,7 +117,7 @@ class ControllerCustody:
         return None
 
     def sign_owner_act(self, operation, fields):
-        assert isinstance(operation, RevokeHumanRole)
+        assert isinstance(operation, OwnerActOperation)
         return self.key.sign(owner_act_signing_bytes(fields)).signature
 
 
@@ -126,7 +126,7 @@ class World:
     signer: ProtectedSigner
     passkeys: Passkeys
     device: SoftAuthenticator
-    operation: RevokeHumanRole
+    operation: OwnerActOperation
     requester: RestrictedRequester
     human: AdmittedHuman
     reader: ReceiptReader
@@ -220,15 +220,7 @@ async def world(test_db_factory):
         effect_adapters={}, definitions=(operation_spec("human-role.revoke"),),
     )
     await signer.migrate()
-    operation = RevokeHumanRole(
-        str(uuid.uuid4()),
-        context,
-        "https://console.example.com",
-        "example",
-        str(uuid.uuid4()),
-        "example.owner",
-        human_id,
-    )
+    operation = OwnerActOperation(str(uuid.uuid4()), context, "https://console.example.com", 'human-role.revoke', 'default', {'app_id': "example", 'installation_id': str(uuid.uuid4()), 'role': "example.owner", 'principal': human_id})
     yield World(
         signer,
         passkeys,

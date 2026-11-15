@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from aweb_naapp.runtime.protected_signer import CatalogOperation, SignerRefused
+from aweb_naapp.runtime.protected_signer import OwnerActOperation, SignerRefused
 from awid.id_certificates import sign_id_certificate
 from awid.registry_types import RegistryError
 from awid.signing import canonical_json_bytes, sign_message
@@ -20,7 +20,7 @@ pytest_plugins = ("tests.test_protected_admission_native",)
 
 
 def owner_removal(a, certificate):
-    return CatalogOperation(str(uuid4()), a.w.context, a.w.registry.registry_url,
+    return OwnerActOperation(str(uuid4()), a.w.context, a.w.registry.registry_url,
         "team.agent.remove", "owner_approved", {"team_id": TEAM,
             "member_id": certificate.get("member_did_aw") or certificate["member_did_key"],
             "certificate_id": certificate["certificate_id"],

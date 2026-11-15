@@ -16,7 +16,7 @@ from awid.signing import sign_message
 
 from aweb.protected_signing.custody import ProtectedControllerCustody
 from aweb.protected_signing.legacy_delivery import deliver_legacy
-from aweb_naapp.runtime.protected_signer import CatalogOperation, ProtectedKeyContext
+from aweb_naapp.runtime.protected_signer import OwnerActOperation, ProtectedKeyContext
 from aweb_naapp.runtime.protected_signer.codecs import artifact_for, signing_bytes
 from aweb_naapp.signing_key import parse_signing_key_hex
 
@@ -39,7 +39,7 @@ def fixture(name):
         subject = {"team_id": TEAM, "root_id_or_self": actor, "member_id": child,
             "certificate_id": str(uuid4()), "expected_membership": {"member_did_key": member_key,
                 "member_did_aw": child, "member_address": None, "alias": "worker", "identity_scope": "global"}}
-    op = CatalogOperation(str(uuid4()), context, ORIGIN, name, "default", subject)
+    op = OwnerActOperation(str(uuid4()), context, ORIGIN, name, "default", subject)
     artifact = artifact_for(op, controller, NOW)
     signing = signing_bytes(op, artifact)
     signature = sign_message(seed, signing)

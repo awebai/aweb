@@ -9,7 +9,6 @@ from .service import POLICY_REF, ProtectedSigner
 from .types import (
     AdmittedHuman,
     AuthorityProvider,
-    CatalogOperation,
     ControllerCustody,
     CurrentAuthority,
     OperationReceipt,
@@ -17,7 +16,6 @@ from .types import (
     PreparedOperation,
     ReceiptReader,
     RestrictedRequester,
-    RevokeHumanRole,
     SignerRefused,
     VerifiedProtectedEffect,
 )
@@ -32,7 +30,6 @@ __all__ = [
     "EffectConfirmation",
     "FrozenDelivery",
     "CurrentAuthority",
-    "CatalogOperation",
     "OperationReceipt",
     "OwnerActOperation",
     "POLICY_REF",
@@ -44,7 +41,6 @@ __all__ = [
     "RestrictedRequester",
     "RetainedEffect",
     "RetainedEffectCustody",
-    "RevokeHumanRole",
     "SignerRefused",
     "VerifiedProtectedEffect",
 ]

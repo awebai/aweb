@@ -7,7 +7,7 @@ current-owner and exact live-gesture boundary.
 
 from time import monotonic
 
-from aweb_naapp.runtime.protected_signer import AdmittedHuman, CatalogOperation, RestrictedRequester, SignerRefused
+from aweb_naapp.runtime.protected_signer import AdmittedHuman, OwnerActOperation, RestrictedRequester, SignerRefused
 from aweb_naapp.runtime.protected_signer.owner_initiation import _checked_owner_initiation
 
 from .removal import confirm_removal, current_member, membership_fields, removable_kind, removal_confirmed
@@ -50,7 +50,7 @@ class OwnerRemovalEffects:
         if not matches or matches[0].revoked_at is not None:
             raise SignerRefused("subject_ineligible")
         record = matches[0]
-        operation = CatalogOperation(selection["operation_id"], actor.context, self.c.registry.registry_url,
+        operation = OwnerActOperation(selection["operation_id"], actor.context, self.c.registry.registry_url,
             selection["operation"], selection["variant"], {"team_id": actor.context.authority_id,
                 "member_id": record.member_did_aw or record.member_did_key, "certificate_id": record.certificate_id,
                 "expected_membership": membership_fields(record)})

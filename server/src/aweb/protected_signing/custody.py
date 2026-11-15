@@ -19,7 +19,6 @@ from typing import Any
 from aweb_naapp.runtime.protected_signer.codecs import authority_key, signing_bytes
 from aweb_naapp.runtime.protected_signer import (
     OwnerActOperation,
-    RevokeHumanRole,
     SignerRefused,
 )
 from aweb_naapp.runtime.protected_signer.types import owner_act_operation
@@ -118,7 +117,7 @@ class ProtectedControllerCustody(ProtectedEffectCustody):
                 os.close(directory_fd)
 
     def sign_owner_act(
-        self, operation: RevokeHumanRole | OwnerActOperation, fields: Mapping[str, Any]
+        self, operation: OwnerActOperation, fields: Mapping[str, Any]
     ) -> bytes:
         return self.sign_operation(operation, fields)
 

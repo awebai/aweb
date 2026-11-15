@@ -12,18 +12,19 @@ DOMAINS = (
     Path("server/src/aweb/protected_signing"),
 )
 CATALOG = Path("naapp-lib/src/aweb_naapp/runtime/protected_signer/catalog.py")
+SELECTOR_FIELDS = frozenset({"operation", "variant", "family", "provider"})
 
 
 def _selector(node):
     if isinstance(node, ast.Name):
-        return node.id in {"operation", "variant"}
+        return node.id in SELECTOR_FIELDS
     if isinstance(node, ast.Attribute):
-        return node.attr in {"operation", "variant"}
+        return node.attr in SELECTOR_FIELDS
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
         and node.func.attr == "get" and node.args and isinstance(node.args[0], ast.Constant)):
-        return node.args[0].value in {"operation", "variant"}
+        return node.args[0].value in SELECTOR_FIELDS
     return (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)
-            and node.slice.value in {"operation", "variant"})
+            and node.slice.value in SELECTOR_FIELDS)
 
 
 def _literal(node):
@@ -47,7 +48,8 @@ def selector_comparisons(source: str, suffix: str) -> list[int]:
         return sorted(set(found))
     if suffix not in {".js", ".mjs", ".cjs", ".ts", ".tsx", ".html"}:
         return []
-    selector = r"(?:[\w.$]+\.(?:operation|variant)|[\w.$]+\[[\"'](?:operation|variant)[\"']\]|\b(?:operation|variant))"
+    fields = "|".join(sorted(SELECTOR_FIELDS))
+    selector = rf"(?:[\w.$]+\.(?:{fields})|[\w.$]+\[[\"'](?:{fields})[\"']\]|\b(?:{fields}))"
     literal = r"[\"'][^\"'\n]*[\"']"
     equality = r"\s*(?:===?|!==?)\s*"
     pattern = re.compile(selector + equality + literal + "|" + literal + equality + selector)
@@ -62,14 +64,21 @@ def violations(root: Path = ROOT) -> list[str]:
     for domain in DOMAINS:
         for path in sorted((root / domain).rglob("*")):
             relative = path.relative_to(root)
-            if not path.is_file() or path.suffix == ".md" or "__pycache__" in path.parts or relative == CATALOG:
+            if not path.is_file() or path.suffix == ".md" or "__pycache__" in path.parts :
                 continue
             try:
                 source = path.read_text()
             except UnicodeDecodeError:
                 continue
+            if relative == CATALOG:
+                for node in ast.parse(source).body:
+                    if (isinstance(node, (ast.Assign, ast.AnnAssign))
+                        and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+                        and pattern.search(node.value.value)):
+                        found.append(f"{relative}:{node.lineno}: exported operation-name string")
+                continue
             for number in selector_comparisons(source, path.suffix):
-                found.append(f"{relative}:{number}: literal operation/variant comparison")
+                found.append(f"{relative}:{number}: literal operation/variant/family/provider comparison")
             for number, line in enumerate(source.splitlines(), 1):
                 for match in pattern.finditer(line):
                     found.append(f"{relative}:{number}: {match.group()}")

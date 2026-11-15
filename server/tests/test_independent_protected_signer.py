@@ -18,7 +18,7 @@ from aweb_naapp.runtime.protected_signer import (
     AdmittedHuman,
     ProtectedKeyContext,
     ReceiptReader,
-    RevokeHumanRole,
+    OwnerActOperation,
     SignerRefused,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
@@ -287,15 +287,7 @@ async def signer_world(
                 scope, device.get(await app.passkeys.login_options(scope))
             )
             human = AdmittedHuman(human_id, login.subject, scope, context)
-            operation = RevokeHumanRole(
-                str(uuid.uuid4()),
-                context,
-                "https://app.customer.example",
-                "customer-app",
-                str(uuid.uuid4()),
-                "customer.owner",
-                human_id,
-            )
+            operation = OwnerActOperation(str(uuid.uuid4()), context, "https://app.customer.example", 'human-role.revoke', 'default', {'app_id': "customer-app", 'installation_id': str(uuid.uuid4()), 'role': "customer.owner", 'principal': human_id})
             yield SimpleNamespace(
                 app=app,
                 registry_origin=registry_origin,

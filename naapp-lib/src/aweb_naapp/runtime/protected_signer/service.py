@@ -55,7 +55,6 @@ from .types import (
     ReceiptReader,
     RequestExpired,
     RestrictedRequester,
-    RevokeHumanRole,
     SignerRefused,
     _checked_self_removal,
     owner_act_operation,
@@ -345,7 +344,7 @@ class ProtectedSigner:
         )
 
     async def prepare(
-        self, operation: RevokeHumanRole | OwnerActOperation, *, requester: RestrictedRequester | OwnerInitiation
+        self, operation: OwnerActOperation, *, requester: RestrictedRequester | OwnerInitiation
     ) -> PreparedOperation:
         typed = owner_act_operation(operation)
         provider = self._effect_provider(typed)

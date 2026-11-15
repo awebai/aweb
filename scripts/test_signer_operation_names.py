@@ -18,7 +18,7 @@ class OperationBoundaryTests(unittest.TestCase):
             vector.write_text(json.dumps({"operations": rows}))
             for domain in DOMAINS:
                 (root / domain).mkdir(parents=True)
-            (root / CATALOG).write_text('name = "team.agent.renew"\n')
+            (root / CATALOG).write_text('_ROWS = ({"operation": "team.agent.renew", "variant": "default"},)\n')
             # An adapter has no exemption; generated data and tests are outside
             # these explicit production directories.
             adapter = root / DOMAINS[1] / "adapter.py"
@@ -33,6 +33,9 @@ class OperationBoundaryTests(unittest.TestCase):
             'if intent["operation"] == "no.contract.row": pass',
             'if intent.get("operation") == "no.contract.row": pass',
             'if operation.variant != "another": pass',
+            'if operation.spec.family == "some_family": pass',
+            'if operation.spec.effect.provider == "some_provider": pass',
+            'if provider in {"some_provider"}: pass',
             'if "another" == variant: pass',
             'if operation not in {"no.contract.row"}: pass',
             'match operation.operation:\n    case "no.contract.row": pass',
@@ -45,9 +48,24 @@ class OperationBoundaryTests(unittest.TestCase):
             'if (intent.operation === "no.contract.row") {}',
             'if (intent["variant"] !== "anything") {}',
             'if ("no.contract.row" === intent.operation) {}',
+            'if (row.family === "some_family") {}',
+            'if (effect.provider !== "some_provider") {}',
         ):
             with self.subTest(code=code):
                 self.assertEqual(selector_comparisons(code, ".js"), [1])
+
+    def test_catalog_cannot_export_an_operation_name_as_a_scalar(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vector = root / "docs/vectors/human-assurance-v1.json"
+            vector.parent.mkdir(parents=True)
+            vector.write_bytes((ROOT / "docs/vectors/human-assurance-v1.json").read_bytes())
+            for domain in DOMAINS:
+                (root / domain).mkdir(parents=True)
+            (root / CATALOG).write_text('REVOKE_OPERATION = "human-role.revoke"\n')
+            errors = violations(root)
+            self.assertEqual(len(errors), 1)
+            self.assertIn("catalog.py:1: exported operation-name string", errors[0])
 
     def test_nonselector_fields_and_data_driven_comparisons_are_not_dispatch(self):
         for code in (

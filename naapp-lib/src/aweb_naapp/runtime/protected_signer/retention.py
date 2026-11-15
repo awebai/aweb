@@ -20,7 +20,7 @@ from uuid import UUID
 from awid.log import require_canonical_server_origin
 
 if TYPE_CHECKING:
-    from .types import CatalogOperation, CurrentAuthority
+    from .types import CurrentAuthority, OwnerActOperation
 
 
 def _stamp(value: datetime) -> str:
@@ -138,7 +138,7 @@ class EffectConfirmation:
 
 
 class RetainedEffectCustody(Protocol):
-    def retain_authorized_effect(self, *, operation: CatalogOperation, request: Mapping[str, Any],
+    def retain_authorized_effect(self, *, operation: OwnerActOperation, request: Mapping[str, Any],
         artifact: Mapping[str, Any], signing: bytes, signature: bytes, authority: CurrentAuthority,
         expires_at: datetime) -> RetainedEffect | None:
         """Synchronous/local only; None preserves unmarked legacy behavior.
@@ -149,11 +149,11 @@ class RetainedEffectCustody(Protocol):
         """
         ...
 
-    async def deliver_retained(self, operation: CatalogOperation, retained: RetainedEffect) -> None:
+    async def deliver_retained(self, operation: OwnerActOperation, retained: RetainedEffect) -> None:
         """One exact post-commit mutation; never refresh or regenerate bytes."""
         ...
 
-    async def confirm_retained(self, operation: CatalogOperation, retained: RetainedEffect) -> EffectConfirmation | None:
+    async def confirm_retained(self, operation: OwnerActOperation, retained: RetainedEffect) -> EffectConfirmation | None:
         """Read-only exact-effect confirmation, including after an uncertain send.
 
         Verify the binding/artifact/proof/reference against the actual named

@@ -7,7 +7,11 @@ from uuid import uuid4
 
 import pytest
 
-from aweb_naapp.runtime.protected_signer import ProtectedKeyContext, RevokeHumanRole, SignerRefused
+from aweb_naapp.runtime.protected_signer import (
+    OwnerActOperation,
+    ProtectedKeyContext,
+    SignerRefused,
+)
 from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
 from aweb_naapp.runtime.protected_signer.operation_display import OperationDisplay
 
@@ -78,8 +82,7 @@ REFUSED = [
 def revoke_request():
     team, domain = "engineering:customer.example", "customer.example"
     context = ProtectedKeyContext("customer-signer", "team_controller", team, domain, "human-id", domain, 1)
-    revoke = RevokeHumanRole(str(uuid4()), context, "https://app.customer.example", "customer-app",
-        str(uuid4()), "customer.owner", "human-id")
+    revoke = OwnerActOperation(str(uuid4()), context, "https://app.customer.example", 'human-role.revoke', 'default', {'app_id': "customer-app", 'installation_id': str(uuid4()), 'role': "customer.owner", 'principal': "human-id"})
     return {**revoke.intent(), "requester": "did:key:z6Mkrequester"}
 
 

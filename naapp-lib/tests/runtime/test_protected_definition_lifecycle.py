@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from aweb_naapp.runtime.protected_signer import RevokeHumanRole
+from aweb_naapp.runtime.protected_signer import OwnerActOperation
 from aweb_naapp.runtime.protected_signer.catalog import operation_spec
 from aweb_naapp.runtime.protected_signer.codecs import artifact_for
 from aweb_naapp.runtime.protected_signer.http import parse_operation
@@ -37,11 +37,11 @@ def test_request_deadlines_preserve_artifact_and_existing_request_window():
     assert spec.effect_deadline(artifact, NOW + timedelta(seconds=60)) == NOW + timedelta(seconds=60)
 
 
-def test_http_definition_preserves_released_revoke_type_and_exact_body():
+def test_http_definition_uses_the_common_type_and_preserves_exact_body():
     context = operation("team.agent.admit").context
-    legacy = RevokeHumanRole(str(uuid4()), context, "https://app.customer.example", "app", str(uuid4()), "app.owner", context.human_id)
+    legacy = OwnerActOperation(str(uuid4()), context, "https://app.customer.example", 'human-role.revoke', 'default', {'app_id': "app", 'installation_id': str(uuid4()), 'role': "app.owner", 'principal': context.human_id})
     parsed = parse_operation(legacy.intent())
-    assert type(parsed) is RevokeHumanRole and parsed == legacy
+    assert type(parsed) is OwnerActOperation and parsed == legacy
     assert callable(operation_spec("human-role.revoke").codec.decode_intent)
     for name in ["identity.root.endorse", "team.agent.admit"]:
         op = operation(name)

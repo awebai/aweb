@@ -7,7 +7,7 @@ This port integrates explicitly protected consumers; custody without it keeps
 its existing signed-result and delivery behavior.
 
 `retain_authorized_effect` is synchronous and runs inside the existing local
-signature transaction. It receives the normalized `CatalogOperation`, frozen
+signature transaction. It receives the normalized `OwnerActOperation`, frozen
 request and artifact, verified signature bytes, current authority observation
 and original effect deadline. It must perform no network I/O or expose a proof.
 A `None` result means an authoritatively unmarked legacy consumer; an unavailable

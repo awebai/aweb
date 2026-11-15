@@ -85,20 +85,10 @@ def _owner_signing(operation, artifact):
 
 
 def catalog_intent(body, context, redirect):
-    from .types import CatalogOperation
+    from .types import OwnerActOperation
 
-    return CatalogOperation(body["operation_id"], context, body["audience"], body["operation"],
+    return OwnerActOperation(body["operation_id"], context, body["audience"], body["operation"],
         body["variant"], body["subject"], redirect)
-
-
-def revoke_intent(body, context, redirect):
-    from .types import RevokeHumanRole, owner_act_operation
-
-    subject = body["subject"]
-    legacy = RevokeHumanRole(body["operation_id"], context, body["audience"], subject["app_id"],
-        subject["installation_id"], subject["role"], subject["principal"], redirect)
-    owner_act_operation(legacy)
-    return legacy
 
 
 ROOT_CODEC = OperationCodec(validate_root_subject, _root, root_signing_bytes, "issuer_key", {
@@ -153,7 +143,7 @@ OWNER_REMOVAL_CODEC = OperationCodec(validate_owner_removal_subject, _removal, r
 REVOKE_CODEC = OperationCodec(_revoke_subject, _owner_artifact, _owner_signing, "team_key_did", {
     "fields": {field: {"pattern": r"[\s\S]+"} for field in sorted(_REVOKE_FIELDS)},
     "required": sorted(_REVOKE_FIELDS),
-}, decode_intent=revoke_intent, go_verifier="ownerActArtifactDiffers", presentation={
+}, decode_intent=catalog_intent, go_verifier="ownerActArtifactDiffers", presentation={
     "exact": {"/artifact": ["v", "type", "act", "team_id", "team_key_did", "aud", "subject", "nonce", "issued_at", "expires_at"]},
     "constants": {"/artifact/v": 1, "/artifact/type": "aweb.owner-act"},
     "nonempty": ["/artifact/team_key_did", "/artifact/nonce"],

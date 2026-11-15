@@ -10,7 +10,7 @@ import httpx
 import pytest
 from awid.did import did_from_public_key, generate_keypair
 from awid.protected_membership import TeamProtectionObservation
-from aweb_naapp.runtime.protected_signer import CatalogOperation, SignerRefused
+from aweb_naapp.runtime.protected_signer import OwnerActOperation, SignerRefused
 from pydantic import ValidationError
 from pydantic_settings import SettingsError
 
@@ -133,7 +133,7 @@ async def test_rendered_receipt_readiness_decides_what_the_real_custody_serves(d
         "service_id": context.service_id, "service_did_key": service_did_key}, monotonic() + 60)
     authority = SimpleNamespace(context=context, protection=observation, team_key_did=custody.team_key_did,
         require_fresh=lambda: None)
-    operation = CatalogOperation("22222222-2222-4222-8222-222222222222", context, origin,
+    operation = OwnerActOperation("22222222-2222-4222-8222-222222222222", context, origin,
         "human-role.revoke", "default", {"app_id": "app", "installation_id": "installation",
             "role": "app.owner", "principal": "did:aw:owner"})
     async with httpx.AsyncClient() as client:

@@ -8,7 +8,7 @@ import pytest
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
 
-from aweb_naapp.runtime.protected_signer import RevokeHumanRole, SignerRefused
+from aweb_naapp.runtime.protected_signer import OwnerActOperation, SignerRefused
 from aweb_naapp.runtime.protected_signer.codecs import signing_bytes
 from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 from tests.runtime.test_protected_identity_artifacts import NOW, operation
@@ -21,8 +21,7 @@ def live_operation(name):
     op = owner_operation()
     if name == "removal":
         return op
-    return owner_act_operation(RevokeHumanRole(str(uuid4()), op.context, "https://app.customer.example",
-        "app", str(uuid4()), "app.owner", op.context.human_id))
+    return owner_act_operation(OwnerActOperation(str(uuid4()), op.context, "https://app.customer.example", 'human-role.revoke', 'default', {'app_id': "app", 'installation_id': str(uuid4()), 'role': "app.owner", 'principal': op.context.human_id}))
 
 
 @pytest.mark.parametrize("name", ["root", "owner_act", "removal"])

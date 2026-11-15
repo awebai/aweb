@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from aweb_naapp.runtime.protected_signer import CatalogOperation, SignerRefused
+from aweb_naapp.runtime.protected_signer import OwnerActOperation, SignerRefused
 from aweb_naapp.runtime.protected_signer.codecs import artifact_for, signing_bytes
 from aweb_naapp.runtime.protected_signer.execution_intent import prepare_artifact_intent
 from tests.runtime.test_protected_member_removal import CONTROLLER, operation, subject
@@ -15,7 +15,7 @@ def owner_operation(**changes):
     fields = subject()
     del fields["root_id_or_self"]
     fields.update(changes)
-    return CatalogOperation(str(uuid4()), operation(fields).context, operation(fields).audience,
+    return OwnerActOperation(str(uuid4()), operation(fields).context, operation(fields).audience,
         "team.agent.remove", "owner_approved", fields)
 
 

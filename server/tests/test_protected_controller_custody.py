@@ -8,7 +8,7 @@ import pytest
 from aweb_naapp.hooks.owner_act import owner_act_signing_bytes
 from aweb_naapp.runtime.protected_signer import (
     ProtectedKeyContext,
-    RevokeHumanRole,
+    OwnerActOperation,
     SignerRefused,
 )
 from awid.did import did_from_public_key, stable_id_from_did_key
@@ -37,15 +37,7 @@ def case(tmp_path):
         "customer.example",
         1,
     )
-    operation = RevokeHumanRole(
-        str(uuid.uuid4()),
-        context,
-        "https://app.customer.example",
-        "customer-app",
-        str(uuid.uuid4()),
-        "customer.owner",
-        human,
-    )
+    operation = OwnerActOperation(str(uuid.uuid4()), context, "https://app.customer.example", 'human-role.revoke', 'default', {'app_id': "customer-app", 'installation_id': str(uuid.uuid4()), 'role': "customer.owner", 'principal': human})
     fields = {
         "v": 1,
         "type": "aweb.owner-act",

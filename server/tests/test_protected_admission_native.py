@@ -15,7 +15,7 @@ from uuid import uuid4
 import httpx
 import pytest
 import pytest_asyncio
-from aweb_naapp.runtime.protected_signer import AdmittedHuman, CatalogOperation, SignerRefused
+from aweb_naapp.runtime.protected_signer import AdmittedHuman, OwnerActOperation, SignerRefused
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from awid.did import did_from_public_key, generate_keypair
 from awid.id_certificates import ID_CERTIFICATE_PREFIX, sign_id_certificate
@@ -128,7 +128,7 @@ async def execute(a, operation):
 
 
 def root_operation(a):
-    return CatalogOperation(str(uuid4()), a.human.context, a.w.registry.registry_url, "identity.root.endorse", "default",
+    return OwnerActOperation(str(uuid4()), a.human.context, a.w.registry.registry_url, "identity.root.endorse", "default",
         {"domain": DOMAIN, "root_id": a.w.root_id, "root_key": did(a.w.root), "teams": [TEAM], "deployment_label": "oats-root"})
 
 
@@ -158,7 +158,7 @@ def admit_operation(a, *, registered=None, **changes):
         "admission_policy_digest": a.policy["digest"], "expected_policy_version": a.policy["version"], **changes}
     if registered is not None:
         subject["child_id"], subject["child_key"] = registered
-    return CatalogOperation(str(uuid4()), a.w.context, a.w.registry.registry_url, "team.agent.admit", "default", subject)
+    return OwnerActOperation(str(uuid4()), a.w.context, a.w.registry.registry_url, "team.agent.admit", "default", subject)
 
 
 @pytest.mark.asyncio

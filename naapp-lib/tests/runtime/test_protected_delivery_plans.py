@@ -10,7 +10,7 @@ import pytest
 from awid.did import did_from_public_key, generate_keypair
 from awid.signing import canonical_json_bytes, sign_message
 
-from aweb_naapp.runtime.protected_signer import CatalogOperation, RevokeHumanRole
+from aweb_naapp.runtime.protected_signer import OwnerActOperation
 from aweb_naapp.runtime.protected_signer.codecs import artifact_for, signing_bytes
 from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 from tests.runtime.test_protected_identity_artifacts import HKEY, NOW, operation
@@ -62,7 +62,7 @@ def test_registration_plan_binds_full_existing_certificate_and_covering_auth(loc
 
 def test_removal_reuses_exact_artifact_request_and_does_not_mint_new_auth():
     admit = operation("team.agent.admit")
-    op = CatalogOperation(str(uuid4()), admit.context, admit.audience, "team.agent.remove", "default", removal_subject())
+    op = OwnerActOperation(str(uuid4()), admit.context, admit.audience, "team.agent.remove", "default", removal_subject())
     _, _, artifact, signing, signature = signed(op)
     plan = op.spec.effect.delivery_plan(op, artifact, signing, signature, "2026-11-13T12:01:00Z")
     assert plan.controller_envelope == signing
@@ -73,7 +73,7 @@ def test_removal_reuses_exact_artifact_request_and_does_not_mint_new_auth():
 
 def test_owner_act_plan_preserves_consumer_bytes_without_a_second_controller_signature():
     context = operation("team.agent.admit").context
-    op = owner_act_operation(RevokeHumanRole(str(uuid4()), context, "https://app.customer.example", "app", str(uuid4()), "app.owner", context.human_id))
+    op = owner_act_operation(OwnerActOperation(str(uuid4()), context, "https://app.customer.example", 'human-role.revoke', 'default', {'app_id': "app", 'installation_id': str(uuid4()), 'role': "app.owner", 'principal': context.human_id}))
     _, _, artifact, signing, signature = signed(op)
     plan = op.spec.effect.delivery_plan(op, artifact, signing, signature, STAMP)
     assert plan.artifact_type == "owner-act" and plan.controller_envelope is None

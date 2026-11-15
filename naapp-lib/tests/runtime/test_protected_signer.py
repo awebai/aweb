@@ -26,7 +26,7 @@ async def test_signs_one_real_owner_act_with_actual_uv_and_recovers_exact_receip
     world.key.verify_key.verify(raw, signature)
     fields = json.loads(raw.split(b"\n", 1)[1])
     assert fields["act"] == "human-role.revoke"
-    assert fields["subject"]["principal"] == world.operation.principal
+    assert fields["subject"]["principal"] == world.operation.intent()["subject"]["principal"]
     assert await world.signer.receipt(prepared.operation_id, reader=world.reader) == result
     assert await world.signer.execute(prepared.operation_id, proof, human=world.human) == result
     assert (await world.audit.kinds()).count("protected_operation_signed") == 1
@@ -43,7 +43,7 @@ async def test_changed_payload_under_same_client_operation_id_is_refused(world):
     await world.signer.prepare(world.operation, requester=world.requester)
     with pytest.raises(SignerRefused, match="operation_conflict"):
         await world.signer.prepare(
-            replace(world.operation, role="other.owner"), requester=world.requester
+            replace(world.operation, subject={**world.operation.intent()["subject"], "role": "other.owner"}), requester=world.requester
         )
 
 
@@ -117,7 +117,7 @@ async def test_failed_audit_rolls_back_consume_result_and_allows_same_operation_
 async def test_another_operation_cannot_use_the_original_uv_assertion(world):
     first, proof = await approve(world)
     second = await world.signer.prepare(
-        replace(world.operation, operation_id=str(uuid.uuid4()), role="other.owner"),
+        replace(world.operation, operation_id=str(uuid.uuid4()), subject={**world.operation.intent()["subject"], "role": "other.owner"}),
         requester=world.requester,
     )
     with pytest.raises(SignerRefused, match="proof_invalid"):

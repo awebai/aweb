@@ -1121,7 +1121,7 @@ the app committed but its response was dropped. The client must not report a
 usable session from that pair; acceptance checks that it sends no second POST.
 
 The typed library ports take trusted adapter evidence explicitly:
-`prepare(CatalogOperation, requester=RestrictedRequester)`,
+`prepare(OwnerActOperation, requester=RestrictedRequester)`,
 `approval_options(operation_id, human=AdmittedHuman)`,
 `execute(operation_id, proof, human=AdmittedHuman)` and
 `receipt(operation_id, reader=ReceiptReader)`. The bounded request-origin

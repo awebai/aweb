@@ -61,18 +61,18 @@ def test_each_definition_owns_its_consumer_codec_and_page_schema():
 
 
 @pytest.mark.asyncio
-async def test_released_revoke_type_reaches_the_live_floor_execute_refusal():
+async def test_common_owner_act_reaches_the_live_floor_execute_refusal():
     from uuid import uuid4
 
     from aweb_naapp.runtime.protected_signer import (
+        OwnerActOperation,
         ProtectedKeyContext,
         ProtectedSigner,
         RestrictedRequester,
-        RevokeHumanRole,
     )
 
     context = ProtectedKeyContext("signer", "team_controller", "team:example.org", "example.org", "did:aw:human", "example.org", 1)
-    legacy = RevokeHumanRole(str(uuid4()), context, "https://app.example.org", "app", str(uuid4()), "app.owner", "did:aw:human")
+    legacy = OwnerActOperation(str(uuid4()), context, "https://app.example.org", 'human-role.revoke', 'default', {'app_id': "app", 'installation_id': str(uuid4()), 'role': "app.owner", 'principal': "did:aw:human"})
     requester = RestrictedRequester("did:aw:root", context)
     service = object.__new__(ProtectedSigner)
 

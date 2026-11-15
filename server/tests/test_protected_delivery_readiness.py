@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from aweb_naapp.runtime.protected_signer import CatalogOperation, ProtectedKeyContext, SignerRefused
+from aweb_naapp.runtime.protected_signer import OwnerActOperation, ProtectedKeyContext, SignerRefused
 from awid.protected_membership import TeamProtectionObservation
 from nacl.signing import SigningKey
 
@@ -45,7 +45,7 @@ def capability(tmp_path):
     observation = TeamProtectionObservation(TEAM, did(controller), binding, monotonic() + 60)
     authority = SimpleNamespace(context=context, protection=observation, team_key_did=did(controller),
         require_fresh=lambda: None)
-    operation = CatalogOperation("22222222-2222-4222-8222-222222222222", context, ORIGIN,
+    operation = OwnerActOperation("22222222-2222-4222-8222-222222222222", context, ORIGIN,
         "human-role.revoke", "default", {"app_id": "app", "installation_id": "installation",
             "role": "app.owner", "principal": "did:aw:owner"})
     # Startup checked real custody; the capability method may only inspect

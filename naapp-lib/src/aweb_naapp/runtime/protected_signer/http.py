@@ -47,17 +47,16 @@ from .types import (
     ReceiptReader,
     RequestExpired,
     RestrictedRequester,
-    RevokeHumanRole,
     SignerRefused,
 )
 
-Requester = Callable[[Request, RevokeHumanRole | OwnerActOperation], Awaitable[RestrictedRequester]]
+Requester = Callable[[Request, OwnerActOperation], Awaitable[RestrictedRequester]]
 Reader = Callable[[Request, str], Awaitable[ReceiptReader]]
 _FIELDS = {"operation_id", "operation", "variant", "scope", "audience", "subject"}
 _SCOPE = {"v", "kind", "service_id", "authority", "human", "generation"}
 
 
-def parse_operation(body: Any, *, historical_read: bool = False) -> RevokeHumanRole | OwnerActOperation:
+def parse_operation(body: Any, *, historical_read: bool = False) -> OwnerActOperation:
     """The closed catalog selects the typed codec; possession is not authority."""
     try:
         if not isinstance(body, dict) or not _FIELDS <= set(body) <= _FIELDS | {"redirect_uri", "approval_format"}:

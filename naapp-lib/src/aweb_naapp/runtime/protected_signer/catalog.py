@@ -160,13 +160,6 @@ class OperationDefinition:
         return self.rule == "live_floor"
 
 
-# Source-compatible metadata type; the object also owns its consumer codec.
-OperationSpec = OperationDefinition
-
-
-REVOKE_OPERATION = "human-role.revoke"
-
-
 _ROWS = (
     OperationDefinition(
         "team.agent.remove", "owner_approved", "team_controller", "live_floor", "member_revocation",
@@ -328,7 +321,7 @@ _ROWS = (
         finalize_execution_refusal=True,
     ),
     OperationDefinition(
-        REVOKE_OPERATION,
+        "human-role.revoke",
         "default",
         "team_controller",
         "live_floor",
@@ -360,7 +353,7 @@ _ROWS = (
 OPERATIONS = MappingProxyType({(spec.operation, spec.variant): spec for spec in _ROWS})
 
 
-def operation_spec(operation: str, variant: str = "default") -> OperationSpec:
+def operation_spec(operation: str, variant: str = "default") -> OperationDefinition:
     if type(operation) is not str or not operation or type(variant) is not str or not variant:
         raise SignerRefused("request_invalid")
     try:

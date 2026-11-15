@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
-from aweb_naapp.runtime.protected_signer import CatalogOperation, SignerRefused
+from aweb_naapp.runtime.protected_signer import OwnerActOperation, SignerRefused
 from awid.signing import canonical_json_bytes, sign_message
 from awid.registry_types import RegistryError
 from nacl.signing import SigningKey
@@ -39,7 +39,7 @@ def removal(a, certificate, *, self_remove=False, **changes):
         "certificate_id": certificate["certificate_id"],
         "expected_membership": {field: certificate.get(field) for field in (
             "member_did_key", "member_did_aw", "member_address", "alias", "identity_scope")}, **changes}
-    return CatalogOperation(str(uuid4()), a.w.context, a.w.registry.registry_url,
+    return OwnerActOperation(str(uuid4()), a.w.context, a.w.registry.registry_url,
         "team.agent.remove", "default", subject)
 
 

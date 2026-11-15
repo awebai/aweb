@@ -5,7 +5,7 @@ Import the shared service and trusted adapter ports from
 
 ```python
 from aweb_naapp.runtime.protected_signer import (
-    ProtectedSigner, ProtectedKeyContext, RevokeHumanRole,
+    ProtectedSigner, ProtectedKeyContext, OwnerActOperation,
     RestrictedRequester, AdmittedHuman, ReceiptReader,
     AuthorityProvider, CurrentAuthority, ControllerCustody,
 )
@@ -26,14 +26,15 @@ receipt = await signer.execute(prepared.operation_id, assertion, human=human)
 receipt = await signer.receipt(prepared.operation_id, reader=requester_reader)
 ```
 
-This slice accepts only `RevokeHumanRole`, the `human-role.revoke` owner act.
-The operation ID is a canonical UUID selected before prepare. Repeating the
-same ID and intent returns the frozen preparation; a changed intent refuses.
-The signature and its exact signing bytes are base64 in the committed result.
-It does not deliver or apply the act remotely. Request-origin and human-origin
-JSON mounts are below; console supplies the existing page's governance mode.
-Other catalog operations remain unsupported. `handoff_id` is an association ID,
-not a URL or authority.
+Each served definition uses the concrete `OwnerActOperation` constructor with
+its catalog selector and typed subject. The operation ID is a canonical UUID
+selected before prepare. Repeating the same ID and intent returns the frozen
+preparation; a changed intent refuses. Live-floor rows need the human's exact
+UV; bounded rows use the admitted requester's existing authority. The selected
+effect adapter controls delivery and confirmation, while the signature and its
+exact signing bytes are retained in the receipt. An embedding serves only the
+definitions and provider ports it supplies at construction. `handoff_id` is an
+association ID, not a URL or authority.
 
 `ProtectedKeyContext` names the service, authority kind/ID/domain, selected
 human ID/domain, and current generation. It is B3's explicit preinstallation

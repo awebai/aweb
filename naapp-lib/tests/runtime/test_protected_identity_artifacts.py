@@ -8,7 +8,11 @@ from awid.did import did_from_public_key, generate_keypair, stable_id_from_publi
 from awid.id_certificates import id_certificate_signing_bytes
 from awid.signing import canonical_json_bytes
 
-from aweb_naapp.runtime.protected_signer import CatalogOperation, ProtectedKeyContext, SignerRefused
+from aweb_naapp.runtime.protected_signer import (
+    OwnerActOperation,
+    ProtectedKeyContext,
+    SignerRefused,
+)
 from aweb_naapp.runtime.protected_signer.codecs import artifact_for, authority_key, signing_bytes
 from aweb_naapp.runtime.protected_signer.execution_intent import prepare_artifact_intent
 
@@ -34,7 +38,7 @@ def operation(name, *, subject=None):
         fields = {"team_id": TEAM, "root_id": ROOT, "root_key": ROOTKEY, "child_id": CHILD,
             "child_key": CHILDKEY, "member_alias": "agent-one", "admission_policy_digest": "sha256:"+"a"*64,
             "expected_policy_version": 1}
-    return CatalogOperation(str(uuid4()), context, "https://registry.customer.example", name, "default", fields if subject is None else subject)
+    return OwnerActOperation(str(uuid4()), context, "https://registry.customer.example", name, "default", fields if subject is None else subject)
 
 
 def test_root_endorsement_uses_the_existing_id_certificate_without_an_extra_root_key_field():
@@ -153,12 +157,12 @@ def test_browser_accepts_the_existing_revoke_through_the_generated_catalog():
     import subprocess
     from pathlib import Path
 
-    from aweb_naapp.runtime.protected_signer import RevokeHumanRole
+    from aweb_naapp.runtime.protected_signer import OwnerActOperation
     from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
     from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 
     context = ProtectedKeyContext(SERVICE, "team_controller", TEAM, DOMAIN, H, DOMAIN, 1)
-    legacy = RevokeHumanRole(str(uuid4()), context, "https://app.customer.example", "customer-app", str(uuid4()), "customer.owner", H)
+    legacy = OwnerActOperation(str(uuid4()), context, "https://app.customer.example", 'human-role.revoke', 'default', {'app_id': "customer-app", 'installation_id': str(uuid4()), 'role': "customer.owner", 'principal': H})
     op = owner_act_operation(legacy)
     request = {**legacy.intent(), "artifact": prepare_artifact_intent(op, HKEY, NOW, NOW + timedelta(minutes=10))}
     script = r'''

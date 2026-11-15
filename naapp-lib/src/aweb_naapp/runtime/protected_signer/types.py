@@ -287,51 +287,7 @@ class AuthorityProvider(Protocol):
 
 
 @dataclass(frozen=True)
-class RevokeHumanRole:
-    operation_id: str
-    context: ProtectedKeyContext
-    audience: str
-    app_id: str
-    installation_id: str
-    role: str
-    principal: str
-    redirect_uri: str | None = None
-
-    def __post_init__(self):
-        if str(UUID(self.operation_id)) != self.operation_id:
-            raise SignerRefused("request_invalid")
-        if self.context.authority_kind != "team_controller":
-            raise SignerRefused("scope_refused")
-        if self.redirect_uri is not None:
-            from aweb_naapp.console.handoff_wire import HandoffWireRefused, loopback_redirect
-
-            try:
-                loopback_redirect(self.redirect_uri)
-            except HandoffWireRefused:
-                raise SignerRefused("redirect_uri_refused") from None
-
-    def intent(self) -> dict[str, Any]:
-        from .catalog import REVOKE_OPERATION
-
-        return {
-            "operation_id": self.operation_id,
-            "operation": REVOKE_OPERATION,
-            "variant": "default",
-            "approval_format": "intent_v1",
-            **({"redirect_uri": self.redirect_uri} if self.redirect_uri is not None else {}),
-            "scope": self.context.fields(),
-            "audience": self.audience,
-            "subject": {
-                "app_id": self.app_id,
-                "installation_id": self.installation_id,
-                "role": self.role,
-                "principal": self.principal,
-            },
-        }
-
-
-@dataclass(frozen=True)
-class CatalogOperation:
+class OwnerActOperation:
     """A registered artifact codec, with a frozen, schema-checked subject.
 
     The operation table selects the verifier's vocabulary; neither a caller
@@ -394,24 +350,8 @@ class CatalogOperation:
         }
 
 
-# Source-compatible name for the initial registered owner-act constructor.
-OwnerActOperation = CatalogOperation
-
-
 def owner_act_operation(operation):
-    """Keep the released RevokeHumanRole constructor and wire source-compatible."""
-    if type(operation) is RevokeHumanRole:
-        from .catalog import REVOKE_OPERATION
-
-        return OwnerActOperation(
-            operation.operation_id,
-            operation.context,
-            operation.audience,
-            REVOKE_OPERATION,
-            "default",
-            operation.intent()["subject"],
-            operation.redirect_uri,
-        )
+    """Require the one concrete, catalog-validated operation type."""
     if type(operation) is OwnerActOperation:
         return operation
     raise SignerRefused("operation_refused")
@@ -427,7 +367,7 @@ class ControllerCustody(Protocol):
     """
 
     def sign_owner_act(
-        self, operation: RevokeHumanRole | OwnerActOperation, fields: Mapping[str, Any]
+        self, operation: OwnerActOperation, fields: Mapping[str, Any]
     ) -> bytes: ...
 
 
