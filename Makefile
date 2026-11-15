@@ -149,6 +149,7 @@ test-shipping:
 	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_disk_floor.py
+	python3 scripts/test_candidate_input_modes.py
 	python3 scripts/test_candidate_network.py
 	python3 scripts/test_candidate_bind_ownership.py
 	python3 scripts/test_candidate_published_port.py
