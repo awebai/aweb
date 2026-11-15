@@ -46,8 +46,7 @@ async def _component_for(composition, scope):
 
 
 def _owner_initiable():
-    spec = OPERATIONS.get(("team.agent.remove", "owner_approved"))
-    return spec is not None and spec.owner_initiable
+    return any(spec.owner_initiable for spec in OPERATIONS.values())
 
 
 def _asked_at(request):
@@ -474,9 +473,11 @@ def owner_page_html(view: dict) -> str:
         elif view["members"]:
             removable = view.get("owner_initiable", False)
             if removable:
+                definition = next(spec for spec in OPERATIONS.values() if spec.owner_initiable)
                 parts.append(
                     f'<ul class="owner-list" id="owner-members" data-team-id="{e(authority["id"])}" '
-                    f'data-storage-scope="{e(view["storage_scope"])}">'
+                    f'data-storage-scope="{e(view["storage_scope"])}" '
+                    f'data-operation="{e(definition.operation)}" data-variant="{e(definition.variant)}">'
                 )
             else:
                 parts.append('<ul class="owner-list">')

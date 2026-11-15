@@ -158,7 +158,8 @@ async def test_owner_prepare_reuses_the_saved_intent_under_current_owner_and_ses
     engine.authority = SimpleNamespace(observe=observe)
     engine.db = SimpleNamespace(transaction=transaction)
     engine.custody = SimpleNamespace(sign_operation=lambda *args: pytest.fail("prepare must not sign"))
-    engine.owner_removal = SimpleNamespace(observe=no_target_refresh)
+    engine.effect_adapters = {op.spec.effect.provider: SimpleNamespace(observe=no_target_refresh)}
+    engine.definitions = {(op.operation, op.variant): op.spec}
     engine._hold_session, engine._check_session, engine._lock = session, current, lock
     result = await engine.prepare(op, requester=actor)
     assert result.payload == row["request"] and result.expires_at.endswith("Z")

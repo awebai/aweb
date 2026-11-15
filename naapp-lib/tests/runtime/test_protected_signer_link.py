@@ -30,7 +30,8 @@ def mailing_signer(world, contacts, *, reveal=True):
     """The same real world's signer, as a deployment that mails approvals."""
     policy = ActionPolicy("aweb.human-assurance/1", 1, Assurance.PASSKEY, timedelta(hours=24), (SCOPE,),
         link_reveals_request=reveal)
-    return ProtectedSigner(world.passkeys.db, passkeys=world.passkeys, policies=Policies(policy),
+    return ProtectedSigner(world.passkeys.db, effect_adapters=world.signer.effect_adapters,
+        definitions=tuple(world.signer.definitions.values()), passkeys=world.passkeys, policies=Policies(policy),
         delivery=contacts, audit=world.audit, authority=world.signer.authority, custody=world.signer.custody,
         clock=world.clock, mailed_approval_wait=timedelta(hours=24))
 
@@ -138,7 +139,8 @@ async def test_without_the_reveal_policy_the_link_reveals_nothing(world):
 
 async def test_a_signer_that_does_not_mail_sends_nothing(world):
     contacts = Contacts()
-    signer = ProtectedSigner(world.passkeys.db, passkeys=world.passkeys, policies=world.signer.policies,
+    signer = ProtectedSigner(world.passkeys.db, effect_adapters=world.signer.effect_adapters,
+        definitions=tuple(world.signer.definitions.values()), passkeys=world.passkeys, policies=world.signer.policies,
         delivery=contacts, audit=world.audit, authority=world.signer.authority, custody=world.signer.custody,
         clock=world.clock)
     prepared = await signer.prepare(world.operation, requester=world.requester)
@@ -242,7 +244,7 @@ async def test_a_signed_receipt_without_a_confirmation_provider_preserves_its_hi
     spec = catalog.OPERATIONS[("human-role.revoke", "default")]
     monkeypatch.setattr(catalog, "OPERATIONS", {**catalog.OPERATIONS,
         ("human-role.revoke", "default"): replace(spec, effect=replace(spec.effect, provider=provider_name))})
-    assert world.signer.admission is None
+    assert not world.signer.effect_adapters
     if expired:
         world.clock.advance(timedelta(hours=25))
     query = "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1"

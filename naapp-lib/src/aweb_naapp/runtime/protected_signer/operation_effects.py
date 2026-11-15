@@ -19,7 +19,7 @@ class OperationEffect:
 
 
 LOCAL_SIGNATURE = OperationEffect(delivery_plan=owner_act_delivery, requires_service_delivery=True)
-ENDORSEMENT = OperationEffect("admission", signing_commit="record_endorsement")
-REGISTERED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=certificate_delivery, cache_tolerates_unavailable=True, invalidates_membership=True)
-REVOKED_MEMBERSHIP = OperationEffect("admission", confirmation_commit="confirm", delivery_plan=revocation_delivery, invalidates_membership=True)
+ENDORSEMENT = OperationEffect("endorsement", signing_commit="record_endorsement")
+REGISTERED_MEMBERSHIP = OperationEffect("admit", confirmation_commit="confirm", delivery_plan=certificate_delivery, cache_tolerates_unavailable=True, invalidates_membership=True)
+REVOKED_MEMBERSHIP = OperationEffect("removal", confirmation_commit="confirm", delivery_plan=revocation_delivery, invalidates_membership=True)
 OWNER_REVOKED_MEMBERSHIP = OperationEffect("owner_removal", initiation_prepare="prepare_selection", confirmation_commit="confirm", delivery_plan=revocation_delivery, invalidates_membership=True)

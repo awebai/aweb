@@ -59,7 +59,13 @@ class _SelfRemovalAdmission:
 def _admitted_self_removal(operation, *, principal, key_did, deadline, read_only=False):
     intent = operation.intent()
     subject = intent.get("subject", {})
-    if (intent.get("operation") != "team.agent.remove" or intent.get("variant") != "default"
+    from .catalog import operation_spec
+
+    try:
+        definition = operation_spec(intent.get("operation"), intent.get("variant", "default"))
+    except SignerRefused:
+        raise SignerRefused("scope_refused") from None
+    if (not definition.supports_self_removal
         or operation.context.authority_kind != "team_controller" or subject.get("root_id_or_self") != "self"
         or subject.get("member_id") != principal or not principal or not key_did
         or type(deadline) not in (int, float) or not math.isfinite(deadline) or type(read_only) is not bool):
@@ -305,9 +311,11 @@ class RevokeHumanRole:
                 raise SignerRefused("redirect_uri_refused") from None
 
     def intent(self) -> dict[str, Any]:
+        from .catalog import REVOKE_OPERATION
+
         return {
             "operation_id": self.operation_id,
-            "operation": "human-role.revoke",
+            "operation": REVOKE_OPERATION,
             "variant": "default",
             "approval_format": "intent_v1",
             **({"redirect_uri": self.redirect_uri} if self.redirect_uri is not None else {}),
@@ -393,11 +401,13 @@ OwnerActOperation = CatalogOperation
 def owner_act_operation(operation):
     """Keep the released RevokeHumanRole constructor and wire source-compatible."""
     if type(operation) is RevokeHumanRole:
+        from .catalog import REVOKE_OPERATION
+
         return OwnerActOperation(
             operation.operation_id,
             operation.context,
             operation.audience,
-            "human-role.revoke",
+            REVOKE_OPERATION,
             "default",
             operation.intent()["subject"],
             operation.redirect_uri,

@@ -28,7 +28,7 @@ function page({finals = [], stored = {}, answers}) {
   const button = {dataset: {removeCertificate: certificate}, disabled: false, events: {}, focused: false,
     addEventListener(name, fn) { this.events[name] = fn; }, closest: selector => (selector === 'li' ? row : null),
     focus() { this.focused = true; }};
-  const list = {dataset: {teamId: team, storageScope: scope},
+  const list = {dataset: {teamId: team, storageScope: scope, operation: "team.agent.remove", variant: "owner_approved"},
     querySelectorAll: selector => (selector === '[data-remove-certificate]' ? [button] : [])};
   const finalItems = finals.map(id => ({dataset: {finalOperation: id}}));
   const sent = [];

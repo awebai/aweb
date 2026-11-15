@@ -151,7 +151,8 @@ async def test_composed_historical_receipt_guard_covers_owner_and_requester(huma
         "expires_at": now + timedelta(seconds=-1 if expired else 60)}
     service = object.__new__(ProtectedSigner)
     service.clock = lambda: now
-    service.owner_removal = None
+    service.effect_adapters = {}
+    service.definitions = {(op.operation, op.variant): op.spec}
 
     async def authorized(operation_id, reader, purpose, **kwargs):
         assert (operation_id, reader, purpose) == (op.operation_id, actor, "receipt")

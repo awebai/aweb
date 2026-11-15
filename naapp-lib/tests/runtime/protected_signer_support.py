@@ -206,6 +206,8 @@ async def world(test_db_factory):
             (SCOPE,),
         )
     )
+    from aweb_naapp.runtime.protected_signer.catalog import operation_spec
+
     signer = ProtectedSigner(
         db,
         passkeys=passkeys,
@@ -215,6 +217,7 @@ async def world(test_db_factory):
         authority=SQLAuthority(db, context, subject, did_key(key), clock),
         custody=ControllerCustody(key, clock),
         clock=clock,
+        effect_adapters={}, definitions=(operation_spec("human-role.revoke"),),
     )
     await signer.migrate()
     operation = RevokeHumanRole(
