@@ -591,6 +591,28 @@ verify_export() {
     "$(compose images -q cli | head -1)" /usr/local/bin/cross-registry-offline-verifier.py "$1" "$ALICE_HUMAN"
 }
 verify_export controls
+# These artifacts use the real second registry/controller and original sender
+# key. Their signatures are valid; they differ only at the claimed tree domain.
+compose run --rm -T --no-deps -v "$RUNTIME/envelopes:/envelopes" --entrypoint id-tree-verifier cli cross-domain-fixtures
+verify_export cross-domain
+cp "$WORK_DIR/alice/.aw/id-chain.json" "$WORK_DIR/alice-chain-original.json"
+for presentation in foreign-domain mixed-domains; do
+  python3 - "$RUNTIME/envelopes/$presentation.json" "$WORK_DIR/alice/.aw/id-chain.json" <<'PYDOMAIN'
+import json, sys
+from pathlib import Path
+export = json.loads(Path(sys.argv[1]).read_text())
+Path(sys.argv[2]).write_text(json.dumps(export["id_chain"], sort_keys=True, separators=(",", ":")))
+PYDOMAIN
+  run_cli alice who --json | python3 -c '
+import json,sys
+raw=sys.stdin.read(); result=json.loads(raw[raw.find("{"):])
+assert result["identity_valid"] is False and result["reason"] == "domain_mismatch", result
+assert result["human_id"] is None and result["kind"] is None and "chain" not in result, result
+'
+done
+mv "$WORK_DIR/alice-chain-original.json" "$WORK_DIR/alice/.aw/id-chain.json"
+[[ "$(who_json alice)" == "$ALICE_WHO" ]]
+echo "PASS: who refuses foreign enrollment and mixed-domain chains, then verifies the restored neighboring chain"
 compose stop awid-a
 verify_export unavailable
 compose start awid-a

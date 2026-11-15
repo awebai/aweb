@@ -91,6 +91,13 @@ def main():
             assert result["outcome"] == "unknown" and result["identity_valid"] is False, result
             assert "invalid" in verify(raw, text=True, exit_codes=(1,)).lower()
             print("PASS: tampered exported message is invalid before it can establish a human")
+        elif mode == "cross-domain":
+            for name in ("foreign-domain", "mixed-domains"):
+                raw = Path("/envelopes/" + name + ".json").read_text()
+                result = verify(raw, exit_codes=(1,))
+                no_authority(result)
+                assert result["identity_valid"] is False and result["reason"] == "domain_mismatch", result
+                print("PASS: " + name + " export is invalid with domain_mismatch and exit 1")
         elif mode == "unavailable":
             result = verify(adopted, exit_codes=(2,))
             no_authority(result)
