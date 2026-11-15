@@ -862,7 +862,11 @@ class ProtectedSigner:
             if row is None:
                 raise SignerRefused("operation_not_found")
             await fence.prepare(tx, human)
-            if row["result"] is not None or row["refusal_code"] is not None:
+            # A concurrent caller may have retained the signature while this
+            # one waited. Its receipt distinguishes pending from committed;
+            # never consume B2 again or deliver under this transaction's lock.
+            if (row["result"] is not None or row["refusal_code"] is not None
+                or row["signed_result"] is not None):
                 await self._hold_session(tx, human, human_session)
                 await self._check_session(tx, human_session)
                 await fence.check(tx, human)
