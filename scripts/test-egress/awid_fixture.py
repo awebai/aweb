@@ -6,6 +6,11 @@ schema), for test helpers that seed state the CLI cannot publish itself.
 Rate limits are off unless AWID_FIXTURE_RATE_LIMITS=production, which runs the
 production bucket values on the in-memory limiter, private to this fixture.
 
+With AWID_FIXTURE_RELEASE=production it serves the AWID release production runs,
+as published (pinned in production-awid/), instead of this repository's AWID;
+the DNS dependency is not available there. Run uv sync --frozen in that project
+beforehand.
+
 Uses the suite's PG/Redis when configured, otherwise owns disposable containers.
 No service responses are synthesized. Run uv sync --frozen in awid beforehand.
 """
@@ -14,6 +19,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import tempfile
 import sys
 import time
 import urllib.request
@@ -83,11 +89,24 @@ def main():
             env['AWID_RATE_LIMIT_BACKEND'] = 'memory'
         if env.get('AWID_FIXTURE_DNS_DOMAIN'):
             env['AWID_PUBLIC_ORIGINS'] = f'http://127.0.0.1:{port}'
-        process = subprocess.Popen(['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'),
-                                    'python', '-c',
-                                    "import runpy, sys, uvicorn; uvicorn.run(runpy.run_path(sys.argv[1])['fixture_app'](), host='127.0.0.1', port=int(sys.argv[2]))",
-                                    str(Path(__file__).resolve()), str(port)],
-                                   env=env, stdout=sys.stderr, stderr=sys.stderr)
+        if os.environ.get('AWID_FIXTURE_RELEASE') == 'production':
+            if env.get('AWID_FIXTURE_DNS_DOMAIN'):
+                raise RuntimeError('the production AWID fixture has no DNS dependency')
+            # The release's own server, settings and migrations; nothing of
+            # this repository on its path.
+            env.pop('PYTHONPATH', None)
+            env.pop('AWID_RATE_LIMIT_DISABLED', None)
+            env['AWID_RATE_LIMIT_BACKEND'] = 'memory'
+            command = ['uv', 'run', '--offline', '--frozen', '--project', str(Path(__file__).resolve().parent / 'production-awid'),
+                       'awid', '--host', '127.0.0.1', '--port', str(port)]
+            cwd = tempfile.gettempdir()
+        else:
+            command = ['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'),
+                       'python', '-c',
+                       "import runpy, sys, uvicorn; uvicorn.run(runpy.run_path(sys.argv[1])['fixture_app'](), host='127.0.0.1', port=int(sys.argv[2]))",
+                       str(Path(__file__).resolve()), str(port)]
+            cwd = None
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=sys.stderr, stderr=sys.stderr)
         url = f'http://127.0.0.1:{port}'
         for _ in range(120):
             if process.poll() is not None:

@@ -39,7 +39,23 @@ func realAWIDFixtureRateLimited(t *testing.T) (string, realAWIDStorage) {
 	return startRealAWIDFixture(t, true)
 }
 
+// productionAWIDFixture runs the AWID release production runs, as published
+// (scripts/test-egress/production-awid), with disposable storage.
+func productionAWIDFixture(t *testing.T) string {
+	t.Helper()
+	registryURL, _ := startAWIDFixture(t, "AWID_FIXTURE_RELEASE=production")
+	return registryURL
+}
+
 func startRealAWIDFixture(t *testing.T, rateLimited bool) (string, realAWIDStorage) {
+	t.Helper()
+	if rateLimited {
+		return startAWIDFixture(t, "AWID_FIXTURE_RATE_LIMITS=production")
+	}
+	return startAWIDFixture(t)
+}
+
+func startAWIDFixture(t *testing.T, extraEnv ...string) (string, realAWIDStorage) {
 	t.Helper()
 	script, err := filepath.Abs("../../../../scripts/test-egress/awid_fixture.py")
 	if err != nil {
@@ -54,10 +70,7 @@ func startRealAWIDFixture(t *testing.T, rateLimited bool) (string, realAWIDStora
 		t.Fatalf("resolve parent uv cache: %v", err)
 	}
 	cmd := exec.Command("python3", script)
-	cmd.Env = append(os.Environ(), "UV_CACHE_DIR="+strings.TrimSpace(string(cacheDir)))
-	if rateLimited {
-		cmd.Env = append(cmd.Env, "AWID_FIXTURE_RATE_LIMITS=production")
-	}
+	cmd.Env = append(append(os.Environ(), "UV_CACHE_DIR="+strings.TrimSpace(string(cacheDir))), extraEnv...)
 	cmd.Stderr = os.Stderr
 	input, err := cmd.StdinPipe()
 	if err != nil {
