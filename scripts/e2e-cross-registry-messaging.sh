@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$ROOT/scripts/journey-network.sh"
 PROJECT="${AWEB_CROSS_REGISTRY_PROJECT:-aweb-cross-reg-$RANDOM-$$}"
+CLI_IMAGE="$PROJECT-cli:journey"
 BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 [[ "$BIND_ROOT" = /* && -d "$BIND_ROOT" ]] || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
 RUNTIME="$(mktemp -d "$BIND_ROOT/aweb-cross-reg.XXXXXX")"
@@ -40,6 +41,10 @@ cleanup() {
   fi
   if [[ -f "$COMPOSE_FILE" ]]; then
     compose down -v --rmi local --remove-orphans >/dev/null 2>&1 || status=1
+    # Compose's local-image cleanup leaves explicitly tagged images behind.
+    if docker image inspect "$CLI_IMAGE" >/dev/null 2>&1; then
+      docker image rm "$CLI_IMAGE" >/dev/null 2>&1 || status=1
+    fi
     for kind in container volume network image; do
       case "$kind" in
         container) leftovers="$(docker ps -aq --filter label=com.docker.compose.project="$PROJECT")" ;;
@@ -283,6 +288,7 @@ services:
       awid-b: {condition: service_started}
       federation-dns: {condition: service_started}
   cli:
+    image: "$CLI_IMAGE"
     build:
       context: "$ROOT"
       dockerfile: scripts/federation-cli.Dockerfile
@@ -310,6 +316,10 @@ EOF
 
 compose down -v --remove-orphans >/dev/null 2>&1 || true
 compose build awid-a awid-b aweb-a aweb-b cli
+if ! CLI_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$CLI_IMAGE")" || [[ -z "$CLI_IMAGE_ID" ]]; then
+  echo "CLI build did not produce the expected image: $CLI_IMAGE" >&2
+  exit 1
+fi
 compose up -d federation-dns postgres-a postgres-b redis-a redis-b
 DNS_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(compose ps -q federation-dns)")"
 [[ -n "$DNS_IP" ]]
@@ -586,9 +596,10 @@ run_cli bob mail show --message-id "$ENCRYPTED_MAIL_ID" --envelope > "$RUNTIME/e
 # Unlike the recipient container, this outsider has no identity volume at all.
 # Its only bind mount is the exported messages; its HOME and cwd are fresh.
 verify_export() {
+  [[ -n "$CLI_IMAGE_ID" ]] || { echo "Cannot launch export verifier: CLI image ID is empty" >&2; return 1; }
   docker run --rm --network "${PROJECT}_default" --dns "$DNS_IP" \
     -v "$RUNTIME/envelopes:/envelopes:ro" --entrypoint python3 \
-    "$(compose images -q cli | head -1)" /usr/local/bin/cross-registry-offline-verifier.py "$1" "$ALICE_HUMAN"
+    "$CLI_IMAGE_ID" /usr/local/bin/cross-registry-offline-verifier.py "$1" "$ALICE_HUMAN"
 }
 verify_export controls
 # These artifacts use the real second registry/controller and original sender
