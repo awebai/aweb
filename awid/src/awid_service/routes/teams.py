@@ -101,6 +101,30 @@ async def _require_team_controller(
     return caller_did, row
 
 
+async def _require_team_key_unchanged(tx, *, domain: str, name: str, team_did_key: str) -> None:
+    """Lock the team row, as rotate_team_key does, and refuse 409
+    team_key_not_current when the team's key is no longer ``team_did_key``,
+    the key the request was authorized and verified under. Held to the end
+    of ``tx``, so a key change cannot commit between this check and the
+    write."""
+    row = await tx.fetch_one(
+        """
+        SELECT team_did_key FROM {{tables.teams}}
+        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        domain,
+        name,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if row["team_did_key"] != team_did_key:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "team_key_not_current", "message": "The team key changed while this request was checked"},
+        )
+
+
 def _validate_team_name_path(name: str) -> str:
     if not _TEAM_NAME_PATTERN.fullmatch(name):
         raise HTTPException(
@@ -931,24 +955,27 @@ async def register_certificate(
     )
 
     try:
-        await db.execute(
-            """
-            INSERT INTO {{tables.team_certificates}}
-                (team_uuid, certificate_id, member_did_key, member_did_aw,
-                 member_address, alias, identity_scope, certificate)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            """,
-            team_row["team_uuid"],
-            body.certificate_id,
-            body.member_did_key,
-            body.member_did_aw,
-            body.member_address,
-            body.alias,
-            body.identity_scope,
-            body.certificate,
-        )
-    except QueryError as exc:
-        cause = exc.__cause__
+        async with db.transaction() as tx:
+            await _require_team_key_unchanged(tx, domain=domain, name=name, team_did_key=team_row["team_did_key"])
+            await tx.execute(
+                """
+                INSERT INTO {{tables.team_certificates}}
+                    (team_uuid, certificate_id, member_did_key, member_did_aw,
+                     member_address, alias, identity_scope, certificate)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                team_row["team_uuid"],
+                body.certificate_id,
+                body.member_did_key,
+                body.member_did_aw,
+                body.member_address,
+                body.alias,
+                body.identity_scope,
+                body.certificate,
+            )
+    except (QueryError, asyncpg.UniqueViolationError) as exc:
+        # A transaction's connection raises asyncpg's error unwrapped.
+        cause = exc.__cause__ if isinstance(exc, QueryError) else exc
         if not isinstance(cause, asyncpg.UniqueViolationError):
             raise
         constraint_name = getattr(cause, "constraint_name", "")
