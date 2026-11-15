@@ -397,6 +397,7 @@ class ProtectedSigner:
         cap = _checked_self_removal(requester, operation=typed)
         if cap is not None and cap.read_only:
             raise SignerRefused("scope_refused")
+        self._check_requester_subject(typed, requester, purpose="prepare")
         extra = await provider.observe(typed, requester, purpose="prepare") if provider is not None else None
         pending = mail = None
         async with self.db.transaction() as tx:
@@ -566,6 +567,19 @@ class ProtectedSigner:
             raise SignerRefused("operation_expired")
         return prepared
 
+    @staticmethod
+    def _check_requester_subject(operation, actor, *, purpose):
+        rule = operation.spec.requester
+        if rule.principal_bound_to == "nothing" or (rule.bound_in == "prepare_only" and purpose != "prepare"):
+            return
+        subject = operation.intent()["subject"]
+        root = subject.get("root_id", subject.get("root_id_or_self"))
+        if root == "self" and operation.spec.supports_self_removal:
+            if _checked_self_removal(actor, operation=operation) is not None:
+                return
+        if not root or actor.principal != root:
+            raise SignerRefused("scope_refused")
+
     async def _authorized(self, operation_id, actor, purpose, *, human_session=None):
         fence = await self.authority.observe(actor.context, purpose=purpose)
         async with self.db.transaction() as tx:
@@ -575,7 +589,9 @@ class ProtectedSigner:
             request = _json(row["request"])
             if purpose != "receipt":
                 self._require_current_format(request)
-            _checked_self_removal(actor, operation=self._operation(request))
+            typed = owner_act_operation(self._operation(request))
+            _checked_self_removal(actor, operation=typed)
+            self._check_requester_subject(typed, actor, purpose=purpose)
             expected = request["scope"]
             if purpose == "receipt":
                 matches = {

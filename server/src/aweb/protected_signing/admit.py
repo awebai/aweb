@@ -14,8 +14,6 @@ class AdmitEffects:
         c, subject = self.c, operation.intent()["subject"]
         if operation.audience != c.registry.registry_url:
             raise SignerRefused("scope_refused")
-        if actor.principal != subject["root_id"]:
-            raise SignerRefused("scope_refused")
         started = self.timer()
         policy = await read_policy(c)
         fields = policy.fields()

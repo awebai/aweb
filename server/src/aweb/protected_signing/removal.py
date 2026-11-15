@@ -95,7 +95,7 @@ async def observe_removal(adapter, operation, actor, *, purpose):
         if cap is None:
             raise SignerRefused("scope_refused")
     else:
-        if cap is not None or actor.principal != subject["root_id_or_self"] or not actor.key_did:
+        if cap is not None or not actor.key_did:
             raise SignerRefused("scope_refused")
         policy = await read_policy(c)
         if subject["team_id"] not in policy.fields()["teams"]:

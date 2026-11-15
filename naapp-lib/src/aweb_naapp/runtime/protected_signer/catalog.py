@@ -33,6 +33,21 @@ from .types import SignerRefused
 
 
 @dataclass(frozen=True)
+class RequesterRule:
+    """Closed authentication and subject-binding data, shared by every row."""
+
+    proof: Literal["registered_requester", "registered_requester_or_own_certificate", "registered_requester_or_owner_session"]
+    principal_bound_to: Literal["nothing", "subject_root"]
+    bound_in: Literal["prepare_only", "every_phase"]
+
+    def __post_init__(self):
+        if (self.proof not in {"registered_requester", "registered_requester_or_own_certificate", "registered_requester_or_owner_session"}
+            or self.principal_bound_to not in {"nothing", "subject_root"}
+            or self.bound_in not in {"prepare_only", "every_phase"}):
+            raise ValueError("invalid requester rule")
+
+
+@dataclass(frozen=True)
 class OperationDefinition:
     operation: str
     variant: str
@@ -45,9 +60,9 @@ class OperationDefinition:
     codec: OperationCodec
     effect: OperationEffect
     display: OperationDisplay
+    requester: RequesterRule
     binding_paths: tuple[tuple[str, str], ...] = ()
     consumer_available: bool = True
-    owner_initiable: bool = False
     # A whole frozen request is revealable only after its definition's fields
     # have been reviewed as public. A deployment policy cannot widen this.
     link_revealable: bool = False
@@ -55,8 +70,15 @@ class OperationDefinition:
     signing_port: str = "sign_operation"
     finalize_execution_refusal: bool = False
     receipt_uv_expiry: bool = False
-    supports_self_removal: bool = False
     request_window: tuple[tuple[str, ...], int] | None = None
+
+    @property
+    def owner_initiable(self) -> bool:
+        return self.requester.proof == "registered_requester_or_owner_session"
+
+    @property
+    def supports_self_removal(self) -> bool:
+        return self.requester.proof == "registered_requester_or_own_certificate"
 
     def effect_deadline(self, artifact, deadline):
         if self.needs_human and self.codec.issuance is not None and artifact.get("type") == "aweb.protected-artifact-intent":
@@ -143,6 +165,7 @@ _ROWS = (
          "Verified agent or authoritative unknown only; never verified human or unavailable evidence",
          "Exact membership and frozen classification rechecked before release"),
         codec=OWNER_REMOVAL_CODEC, effect=OWNER_REVOKED_MEMBERSHIP,
+        requester=RequesterRule("registered_requester_or_owner_session", "nothing", "every_phase"),
         binding_paths=(("target_kind", "/target_kind"),),
         display=OperationDisplay("Remove {/subject/expected_membership/alias} from {/subject/team_id|team}?",
             ("{/subject/expected_membership/alias} leaves {/subject/team_id|team}.", "Its aweb identity is not deleted."),
@@ -152,7 +175,7 @@ _ROWS = (
             (("subject_ineligible", "This member is a person, or could not be checked, so it cannot be removed here."),
              ("issuer_kind_forbidden", "Only an owner's passkey can approve this."))),
         prepared_fields=frozenset({"requester_key", "target_kind"}),
-        finalize_execution_refusal=True, receipt_uv_expiry=True, link_revealable=True, owner_initiable=True,
+        finalize_execution_refusal=True, receipt_uv_expiry=True, link_revealable=True,
         request_window=(("request", "timestamp"), 300),
     ),
     OperationDefinition(
@@ -174,6 +197,7 @@ _ROWS = (
             "Membership removal distinct from ID revocation",
         ),
         codec=REMOVAL_CODEC,
+        requester=RequesterRule("registered_requester_or_own_certificate", "subject_root", "every_phase"),
         effect=REVOKED_MEMBERSHIP,
         display=OperationDisplay("Remove {/subject/expected_membership/alias} from {/subject/team_id|team}?",
             ("{/subject/expected_membership/alias} leaves {/subject/team_id|team}.", "Its aweb identity is not deleted."),
@@ -184,7 +208,6 @@ _ROWS = (
              ("issuer_kind_forbidden", "This team cannot remove that kind of member."))),
         prepared_fields=frozenset({"requester_key"}),
         finalize_execution_refusal=True,
-        supports_self_removal=True,
         request_window=(("request", "timestamp"), 300),
     ),
     OperationDefinition(
@@ -220,6 +243,7 @@ _ROWS = (
             "Execute refuses policy_changed on changed current policy; retry never rebinds",
         ),
         codec=ROOT_CODEC,
+        requester=RequesterRule("registered_requester", "subject_root", "prepare_only"),
         effect=ENDORSEMENT,
         binding_paths=(("parent", "/artifact/parent"), ("certificate", "/artifact"),
             ("registry", "/registry"), ("responsibility_statement", "/responsibility_statement"),
@@ -278,6 +302,7 @@ _ROWS = (
             "Counters per policy/team/root ID; key rotation retains bucket; aggregate ceiling only if explicit",
         ),
         codec=ADMISSION_CODEC,
+        requester=RequesterRule("registered_requester", "subject_root", "every_phase"),
         effect=REGISTERED_MEMBERSHIP,
         binding_paths=(("certificate_fields", "/artifact"), ("admission_policy_version", "/admission_policy_version"),
             ("request_id", "/request_id"), ("service_id", "/scope/service_id")),
@@ -306,6 +331,7 @@ _ROWS = (
             "Last-owner safeguards",
         ),
         codec=REVOKE_CODEC,
+        requester=RequesterRule("registered_requester", "nothing", "every_phase"),
         effect=LOCAL_SIGNATURE,
         display=OperationDisplay("Remove {/subject/principal} as {/subject/role} of {/subject/app_id}?",
             ("{/subject/principal} will no longer be {/subject/role} of {/subject/app_id}.",),
