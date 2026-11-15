@@ -132,9 +132,10 @@ func formatTeamRotateKey(v any) string {
 }
 
 func teamRotateKeyNotice(domain, team string) string {
-	return fmt.Sprintf("Every active member of %s now has a certificate under the new team key; members' clients "+
-		"fetch it when a server refuses their old one. A member whose client cannot fetch it installs the "+
-		"certificate with `aw id team install-cert`.", awid.BuildTeamID(domain, team))
+	return fmt.Sprintf("Every member of %s with a certificate the registry records now has one under the new team key; "+
+		"members' clients fetch it when a server refuses their old one, or install it with `aw id team install-cert`. "+
+		"A server member with no certificate at the registry got none and is cut off until it is admitted again; "+
+		"the registry cannot tell this command how many such members a server holds.", awid.BuildTeamID(domain, team))
 }
 
 func didOf(key ed25519.PrivateKey) string {
