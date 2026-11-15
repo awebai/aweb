@@ -22,7 +22,7 @@ from aweb.messaging.sender_membership import sender_memberships
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_identity_grants import _grant_headers, _session_keypair
 from test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_team_headers
-from test_team_key_pinning import pinning, register_namespace_controller, rotate_team_key  # noqa: F401
+from test_team_key_pinning import _substitute_registry_team_key, pinning, register_namespace_controller, rotate_team_key  # noqa: F401
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "src" / "aweb" / "migrations" / "aweb"
 
@@ -303,3 +303,22 @@ async def test_a_member_without_a_certificate_on_file_is_a_member_until_the_key_
     assert (await _connect(env, member, _certificate(next_sk, next_did, member, "alice-after"))).status_code == 200
     assert (await _identity_membership(env, member))["team_id"] == TEAM
 
+
+
+@pytest.mark.asyncio
+async def test_before_enforcement_a_member_under_the_registrys_key_keeps_its_grant_and_team_context(pinning, monkeypatch):
+    env = pinning
+    monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "false")
+    await register_namespace_controller(env, env.namespace_did)
+    served_sk, _, served_did = _make_keypair()
+    # The registry serves another key with no namespace-controller act.
+    await _substitute_registry_team_key(env, served_did)
+    member = _new_member("tolerated")
+    certificate = _certificate(served_sk, served_did, member, "tolerated-1")
+
+    assert (await _connect(env, member, certificate)).status_code == 200
+    grant = await _mint_grant(env, member, certificate)
+
+    assert (await _use_grant(env, grant)).status_code == 200
+    assert (await _identity_membership(env, member))["team_id"] == TEAM
+    assert await env.db.fetch_value("SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1", TEAM) == served_did
