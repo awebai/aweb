@@ -34,7 +34,8 @@ Two investigations where duration, not response, decided the outcome.
   isolated passes do not clear a failure seen in a full repeated matrix, and do
   not explain every later timeout.
 
-Related: [acceptance must exercise the claimed operation](/coordinator/acceptance-must-exercise-the-claimed-operation.md).
+Related: [acceptance must exercise the claimed operation](/coordinator/acceptance-must-exercise-the-claimed-operation.md);
+[tests age original stamps, never the clock](/aweb-expert/decisions/tests-age-original-stamps-not-the-clock.md).
 
 # Provenance
 
