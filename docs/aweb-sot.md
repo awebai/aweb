@@ -759,7 +759,6 @@ router entry.
 - `agent_activity`
 - `apps`
 - `hook_bindings`
-- `protected_effect_receipts`
 - `app_hooks`
 - `connect`
 - `chat`
