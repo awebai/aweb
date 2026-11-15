@@ -27,7 +27,7 @@ def refusal(hint):
 
 @pytest.mark.parametrize("hint,header", [(7, "7"), (7.01, "8"), (0, "0"), (None, None)])
 def test_standard_retry_hint_preserves_the_fixed_503(hint, header):
-    result = _http(refusal(hint))
+    result = _http(refusal(hint), None)
     assert result.status_code == 503
     assert result.detail == "receipt_unavailable"
     assert (result.headers or {}).get("Retry-After") == header
@@ -37,7 +37,7 @@ def test_standard_retry_hint_preserves_the_fixed_503(hint, header):
     "hint", ["7", True, -1, float("nan"), float("inf"), 1e300, {}, 2**31]
 )
 def test_malformed_hint_cannot_mask_or_change_the_original_refusal(hint):
-    result = _http(refusal(hint))
+    result = _http(refusal(hint), None)
     assert result.status_code == 503 and result.detail == "receipt_unavailable"
     assert not result.headers
 
@@ -45,7 +45,7 @@ def test_malformed_hint_cannot_mask_or_change_the_original_refusal(hint):
 def test_other_refusals_never_become_retry_invitations():
     error = SignerRefused("proof_invalid")
     error.retry_after_seconds = 7
-    result = _http(error)
+    result = _http(error, None)
     assert result.status_code == 403 and not result.headers
 
 
@@ -104,7 +104,7 @@ async def test_authority_observation_preserves_only_known_throttling(throttled):
     )
     with pytest.raises(SignerRefused) as caught:
         await authority.observe(context, purpose="receipt")
-    response = _http(caught.value)
+    response = _http(caught.value, None)
     assert response.status_code == 503
     assert (response.headers or {}).get("Retry-After") == ("8" if throttled else None)
 
@@ -148,7 +148,7 @@ async def test_requester_current_key_lookup_preserves_the_hint_after_proof(monke
         await composition.requester(
             request, principal=context.human_id, operation="protected_operation_receipt"
         )
-    assert _http(caught.value).headers == {"Retry-After": "7"}
+    assert _http(caught.value, None).headers == {"Retry-After": "7"}
 
 
 @pytest.mark.asyncio
@@ -181,6 +181,6 @@ async def test_authority_binding_wrapped_throttle_retains_the_same_explicit_hint
     with pytest.raises(SignerRefused) as caught:
         await authority.observe(context, purpose="receipt")
     assert registry.calls == 2
-    response = _http(caught.value)
+    response = _http(caught.value, None)
     assert response.status_code == 503 and response.detail == "receipt_unavailable"
     assert response.headers == {"Retry-After": "17"}

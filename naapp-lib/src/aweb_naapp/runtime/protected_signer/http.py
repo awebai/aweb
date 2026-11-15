@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
+import traceback
+import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from dataclasses import asdict
 from math import ceil
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -131,7 +135,47 @@ def _gone_when_expired():
         raise HTTPException(410, "operation_expired") from None
 
 
-def _http(error: Exception) -> HTTPException:
+logger = logging.getLogger(__name__)
+
+# How many held operations one final lookup may name: a tab holds one per
+# member it started removing.
+FINAL_LOOKUP_LIMIT = 50
+
+
+def _canonical_uuid(value: str) -> str | None:
+    try:
+        return str(uuid.UUID(value))
+    except ValueError:
+        return None
+
+
+def _frames(error: BaseException) -> list[str]:
+    """Where `error` was raised, outermost first: each frame's file (its
+    directory and name), line and function. No source text, message or local."""
+    return [f"{'/'.join(Path(frame.filename).parts[-2:])}:{frame.lineno} {frame.name}"
+            for frame in traceback.extract_tb(error.__traceback__)]
+
+
+def _log_unexpected(error: Exception, request: Request | None) -> None:
+    """Name an unexpected failure for the operator by its route template, the
+    operation it names, its class and its stack frames. Its message, locals
+    and the request can carry the very bytes the refusal withholds, so none of
+    them is logged."""
+    route = request.scope.get("route") if request is not None else None
+    operation_id = request.path_params.get("operation_id") if request is not None else None
+    try:
+        operation_id = str(uuid.UUID(operation_id)) if str(uuid.UUID(operation_id)) == operation_id else None
+    except (TypeError, ValueError):
+        operation_id = None
+    template = getattr(route, "path", None)
+    failure = type(error).__name__
+    frames = _frames(error)
+    logger.error("protected signer route %s failed unexpectedly: %s (operation %s) at %s",
+        template, failure, operation_id, " > ".join(frames),
+        extra={"route": template, "operation_id": operation_id, "failure": failure, "frames": frames})
+
+
+def _http(error: Exception, request: Request | None) -> HTTPException:
     if isinstance(error, HTTPException):
         if error.status_code == 429:
             return error
@@ -159,6 +203,7 @@ def _http(error: Exception) -> HTTPException:
             "live_approval_required": (403, "live_approval_required"),
             "admission_policy_missing": (403, "admission_policy_missing"),
             "admission_limit_reached": (403, "admission_limit_reached"),
+            "open_requests_limit_reached": (403, "open_requests_limit_reached"),
             "subject_ineligible": (403, "subject_ineligible"),
             "operation_not_found": (404, "operation_not_found"),
             "operation_conflict": (409, "operation_conflict"),
@@ -172,6 +217,7 @@ def _http(error: Exception) -> HTTPException:
         return HTTPException(400, "request_invalid")
     if isinstance(error, ApprovalRefused):
         return HTTPException(403, "operation_refused")
+    _log_unexpected(error, request)
     return HTTPException(503, "receipt_unavailable")
 
 
@@ -196,12 +242,14 @@ class ProtectedOperationsHTTP:
         executor: Callable[[Request, str], Awaitable[RestrictedRequester]] | None = None,
         policy_reader: Callable[[Request, str], Awaitable[dict[str, Any]]] | None = None,
         owner_prepare: Callable[[dict[str, Any], ConsoleSession], Awaitable[PreparedOperation]] | None = None,
+        owner_final: Callable[[list[str], ConsoleSession], Awaitable[list[str]]] | None = None,
         human_sessions: ConsoleSessions | None = None,
         human_csrf_key: str | None = None,
     ):
         require_canonical_server_origin(request_origin)
         self.signer, self.requester, self.reader, self.limiter = signer, requester, reader, limiter
         self.policy_reader, self.executor, self.owner_prepare = policy_reader, executor, owner_prepare
+        self.owner_final = owner_final
         self.hosts = _origin_hosts(request_origin)
         if (human_sessions is None) != (human_csrf_key is None):
             raise ValueError("human sessions and CSRF storage key must be configured together")
@@ -248,7 +296,7 @@ class ProtectedOperationsHTTP:
                     assert self.policy_reader is not None
                     return await self.policy_reader(request, request.query_params["team_id"])
                 except Exception as error:
-                    raise _http(error) from None
+                    raise _http(error, request) from None
 
         @router.post("/protected-operations")
         async def prepare(request: Request):
@@ -276,7 +324,7 @@ class ProtectedOperationsHTTP:
                 }
                 return result
             except Exception as error:
-                raise _http(error) from None
+                raise _http(error, request) from None
 
         if self.executor is not None:
             @router.post("/protected-operations/{operation_id}/execute")
@@ -293,7 +341,7 @@ class ProtectedOperationsHTTP:
                         raise SignerRefused("requester_invalid")
                     return receipt_json(await self.signer.execute_request(operation_id, requester=requester))
                 except Exception as error:
-                    raise _http(error) from None
+                    raise _http(error, request) from None
 
         @router.get("/protected-operations/{operation_id}")
         async def receipt(operation_id: str, request: Request):
@@ -308,7 +356,7 @@ class ProtectedOperationsHTTP:
                     raise HTTPException(401, "requester_invalid")
                 return receipt_json(await self.signer.receipt(operation_id, reader=reader))
             except Exception as error:
-                raise _http(error) from None
+                raise _http(error, request) from None
 
         return router
 
@@ -358,7 +406,7 @@ class ProtectedOperationsHTTP:
         return retained["operation_id"], human, session
 
     @staticmethod
-    def _human_error(error):
+    def _human_error(error, request):
         # Human authentication has its existing codes, distinct from restricted
         # requester credentials. Never send callback exception details.
         if isinstance(error, HTTPException) and error.detail in {
@@ -372,7 +420,7 @@ class ProtectedOperationsHTTP:
             return error
         if isinstance(error, SignerRefused) and error.code == "console_session_required":
             return HTTPException(401, "console_session_required")
-        return _http(error)
+        return _http(error, request)
 
     async def _link_request(self, request, fields):
         """A personal mailed link's POST: pinned human Host and Origin, the
@@ -406,6 +454,22 @@ class ProtectedOperationsHTTP:
         """Only governance JSON; console owns the existing HTML page and LOGIN."""
         router = APIRouter(route_class=ConsoleRoute)
 
+        @router.post("/governance/operations/final")
+        async def owner_final(request: Request):
+            """Which of the operations a signed-in owner's tab holds are final
+            in their scope: an exact-id read that grants and changes nothing."""
+            try:
+                session = await self._console_session(request)
+                ids = (await self._human_body(request, {"operation_ids"}))["operation_ids"]
+                if (type(ids) is not list or not 0 < len(ids) <= FINAL_LOOKUP_LIMIT
+                        or any(type(i) is not str or _canonical_uuid(i) != i for i in ids)):
+                    raise SignerRefused("request_invalid")
+                if self.owner_final is None:
+                    raise SignerRefused("operation_not_served")
+                return {"final": await self.owner_final(ids, session)}
+            except Exception as error:
+                raise self._human_error(error, request) from None
+
         @router.post("/governance/operations")
         async def owner_prepare(request: Request):
             try:
@@ -420,7 +484,7 @@ class ProtectedOperationsHTTP:
                 result["payload"] = {"policy": {"ref": frozen["policy_ref"], "version": frozen["policy_version"]}, "request": frozen}
                 return result
             except Exception as error:
-                raise self._human_error(error) from None
+                raise self._human_error(error, request) from None
 
         @router.get("/handoff/{handoff_id}/governance")
         async def state(handoff_id: str, request: Request):
@@ -446,7 +510,7 @@ class ProtectedOperationsHTTP:
                     "requested_by_you": requested_by_you,
                 }
             except Exception as error:
-                raise self._human_error(error) from None
+                raise self._human_error(error, request) from None
 
         @router.post("/handoff/{handoff_id}/governance/options")
         async def options(handoff_id: str, request: Request):
@@ -460,7 +524,7 @@ class ProtectedOperationsHTTP:
                     )
                 )
             except Exception as error:
-                raise self._human_error(error) from None
+                raise self._human_error(error, request) from None
 
         # Mailed approval links: POST only. ConsoleRoute's headers make every
         # answer, refusals included, no-store and no-referrer; no CORS header
@@ -484,7 +548,7 @@ class ProtectedOperationsHTTP:
                 }
                 return {"mode": "governance-link", **result, "state": "pending"}
             except Exception as error:
-                raise self._human_error(error) from None
+                raise self._human_error(error, request) from None
 
         @router.post("/handoff/{handoff_id}/link/options")
         async def link_options(handoff_id: str, request: Request):
@@ -494,7 +558,7 @@ class ProtectedOperationsHTTP:
                     options = await self.signer.link_options(handoff_id, body["token"], body["decision"])
                 return dict(options)
             except Exception as error:
-                raise self._human_error(error) from None
+                raise self._human_error(error, request) from None
 
         @router.post("/handoff/{handoff_id}/link/decide")
         async def link_decide(handoff_id: str, request: Request):
@@ -507,7 +571,7 @@ class ProtectedOperationsHTTP:
                 )
                 return receipt_json(receipt)
             except Exception as error:
-                raise self._human_error(error) from None
+                raise self._human_error(error, request) from None
 
         @router.post("/handoff/{handoff_id}/governance/execute")
         async def execute(handoff_id: str, request: Request):
@@ -532,6 +596,6 @@ class ProtectedOperationsHTTP:
                     result["redirect_uri"] = redirect + "?" + urlencode({"handoff_id": handoff_id})
                 return result
             except Exception as error:
-                raise self._human_error(error) from None
+                raise self._human_error(error, request) from None
 
         return router

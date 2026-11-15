@@ -41,6 +41,7 @@ from .execution_intent import (
     validate_issued_artifact,
 )
 from .owner_initiation import OwnerInitiation, _checked_owner_initiation
+from .requester_budget import admit_open_request, reserve_notices
 from .retention import EffectConfirmation, RetainedEffect
 from .types import (
     AdmittedHuman,
@@ -369,7 +370,7 @@ class ProtectedSigner:
         if cap is not None and cap.read_only:
             raise SignerRefused("scope_refused")
         extra = await provider.observe(typed, requester, purpose="prepare") if provider is not None else None
-        pending = None
+        pending = mail = None
         async with self.db.transaction() as tx:
             row = await self._lock(tx, operation.operation_id)
             await prepare_authority(tx)
@@ -381,6 +382,13 @@ class ProtectedSigner:
             policy = await self.policies.current(POLICY_REF, tx=tx)
             if policy is None or policy.min_assurance is not Assurance.PASSKEY:
                 raise SignerRefused("policy_changed")
+            if typed.spec.needs_human:
+                await admit_open_request(
+                    tx, service_id=operation.context.service_id, authority_id=operation.context.authority_id,
+                    now=self.clock(),
+                    **({"owner": (initiation.human.subject, initiation.human.b3_scope)} if initiation is not None
+                       else {"requester": requester.principal}),
+                )
             now = self.clock().replace(microsecond=0)
             # Pending approval is bounded even for artifacts whose existing
             # consumer wire has no expiry (for example a team server record).
@@ -430,8 +438,8 @@ class ProtectedSigner:
             await tx.execute(
                 "INSERT INTO {{tables.protected_signer_operations}} "
                 "(operation_id,handoff_id,requester,intent,request,digest,approval_id,"
-                "candidate_links,expires_at,initiator_subject,initiator_scope,initiation_selection) "
-                "VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12)",
+                "candidate_links,expires_at,initiator_subject,initiator_scope,initiation_selection,scope) "
+                "VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13::jsonb)",
                 operation.operation_id,
                 str(uuid.uuid4()),
                 requester.principal,
@@ -444,9 +452,21 @@ class ProtectedSigner:
                 initiation.human.subject if initiation is not None else None,
                 initiation.human.b3_scope if initiation is not None else None,
                 initiation._selection if initiation is not None else None,
+                json.dumps(request["scope"]),
             )
             row = await self._lock(tx, operation.operation_id)
             await self._emit(AuditKind.PROTECTED_OPERATION_PREPARED, tx, row, actor.principal)
+            if pending is not None and self.mailed_approval_wait is not None and pending.deliveries:
+                if await reserve_notices(
+                    tx, operation_id=operation.operation_id, service_id=operation.context.service_id,
+                    authority_id=operation.context.authority_id, requester=actor.principal,
+                    notices=len(pending.deliveries), now=self.clock(),
+                ):
+                    mail = pending
+                else:
+                    # Past the requester's budget: created and waiting as any
+                    # other, its notices not mailed and recorded so.
+                    await self._emit(AuditKind.PROTECTED_NOTICE_SUPPRESSED, tx, row, actor.principal)
             if extra is not None:
                 await extra.check(tx, request)
                 extra.require_fresh()
@@ -457,10 +477,10 @@ class ProtectedSigner:
             if self.clock() >= row["expires_at"]:
                 raise SignerRefused("operation_expired")
             prepared = self._prepared(row)
-        if pending is not None and self.mailed_approval_wait is not None:
+        if mail is not None:
             # After commit only: B2's delivery reads the committed handoff row.
             # Each approver's personal link goes to their own recorded contact.
-            await self.approvals.deliver(pending)
+            await self.approvals.deliver(mail)
         return prepared
 
     def _check_prepare_owner(self, row, requester, *, intent=None):
@@ -555,10 +575,62 @@ class ProtectedSigner:
             raise SignerRefused("scope_refused")
         return link
 
+    @staticmethod
+    def _approved_gesture(retained, approval, row, human) -> datetime:
+        """The deadline of ``human``'s retained exact-act approval of this
+        row: the earliest of its challenge's issue plus five minutes, the
+        challenge's own expiry and the operation's. Any other proof is
+        proof_invalid."""
+        metadata, context = retained.metadata, retained.context
+        if (
+            metadata.get("purpose") != "approve"
+            or metadata.get("approval_id") != approval.approval_id
+            or metadata.get("request_sha256") != row["digest"]
+            or metadata.get("subject") != human.subject
+            or context["scope"] != human.b3_scope
+            or any(context.get(k) != v for k, v in human.context.fields().items())
+        ):
+            raise SignerRefused("proof_invalid")
+        return min(
+            _time(metadata["challenge_issued_at"]) + timedelta(seconds=300),
+            _time(metadata["challenge_expires_at"]),
+            row["expires_at"],
+        )
+
+    async def _approved_retry(self, operation_id: str, human: AdmittedHuman, *, human_session=None) -> bool:
+        """Whether ``human``'s own passkey approval of this operation is
+        decided and retained, nothing is signed yet, and its original gesture
+        window is still open: the act then needs only execute, never another
+        challenge. Advisory, granting nothing: execute rechecks the session,
+        credential, B3 scope, policy, authority and deadlines under its locks."""
+        row = await self._authorized(operation_id, human, "approval", human_session=human_session)
+        if (row["result"] is not None or row["refusal_code"] is not None
+                or row.get("signed_result") is not None or row.get("retained_effect") is not None):
+            return False
+        approval = await self.store.get(row["approval_id"])
+        if approval is None or approval.state is not ApprovalState.APPROVED:
+            return False
+        decided = approval.decided_by
+        if decided is None or (decided.subject, decided.scope, decided.assurance) != (
+            human.subject, human.b3_scope, Assurance.PASSKEY,
+        ):
+            return False
+        try:
+            deadline = self._approved_gesture(
+                await self.passkeys.retained_proof(decided.evidence_ref), approval, row, human)
+        except SignerRefused:
+            return False
+        return self.clock() < deadline
+
     async def approval_options(
         self, operation_id: str, *, human: AdmittedHuman, human_session=None,
         decision: Decision = Decision.APPROVE,
     ) -> Mapping[str, Any]:
+        if decision is Decision.APPROVE and await self._approved_retry(
+                operation_id, human, human_session=human_session):
+            # This approver already approved this exact act and nothing is
+            # signed: no new challenge; the page runs execute again.
+            return {"state": "approved"}
         row = await self._authorized(operation_id, human, "approval", human_session=human_session)
         if row["refusal_code"] is not None:
             raise SignerRefused(row["refusal_code"])
@@ -627,7 +699,16 @@ class ProtectedSigner:
         try:
             linked = await self.approvals.open_link(token)
         except ApprovalRefused:
-            raise SignerRefused("scope_refused") from None
+            # A link spent by its own approver's approval that has not been
+            # signed yet, inside its original gesture window, still shows that
+            # approver the act, so a reload can finish it. Nothing else does.
+            if not await self._approved_retry(operation_id, human):
+                raise SignerRefused("scope_refused") from None
+            approval = await self.store.get(row["approval_id"])
+            policy = await self.policies.current(approval.policy_ref) if approval is not None else None
+            if policy is None or not policy.reveals_request_on_link():
+                raise SignerRefused("scope_refused") from None
+            return self._prepared(row)
         if linked.request is None:
             # This deployment's policy does not let a link reveal its request.
             raise SignerRefused("scope_refused")
@@ -796,21 +877,7 @@ class ProtectedSigner:
             )
             await self._hold_session(tx, human, human_session, b3_held=True)
             retained = await self.passkeys.retained_proof(decided.evidence_ref, tx=tx)
-            metadata, context = retained.metadata, retained.context
-            if (
-                metadata.get("purpose") != "approve"
-                or metadata.get("approval_id") != approval.approval_id
-                or metadata.get("request_sha256") != row["digest"]
-                or metadata.get("subject") != human.subject
-                or context["scope"] != human.b3_scope
-                or any(context.get(k) != v for k, v in human.context.fields().items())
-            ):
-                raise SignerRefused("proof_invalid")
-            deadline = min(
-                _time(metadata["challenge_issued_at"]) + timedelta(seconds=300),
-                _time(metadata["challenge_expires_at"]),
-                row["expires_at"],
-            )
+            deadline = self._approved_gesture(retained, approval, row, human)
             if self.clock() >= deadline:
                 raise SignerRefused("gesture_expired")
             if not await self._credential_current(tx, human, retained.credential_id):

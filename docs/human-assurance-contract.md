@@ -690,10 +690,10 @@ No adapter implements its own ceremony, request parser or receipt store.
 | Request | GET `/protected-admission-policies?team_id=T` | Nonsecret setup/status read for an authorized requester. |
 | Human | GET `/handoff/{handoff_id}` | Existing shared page in its stored governance or LOGIN mode. |
 | Human | GET `/handoff/{handoff_id}/governance` | Current authorized human reads the frozen operation/state. |
-| Human | POST `/handoff/{handoff_id}/governance/options` | B3 options for this exact act/current human. |
+| Human | POST `/handoff/{handoff_id}/governance/options` | B3 options for this exact act/current human; `{"state":"approved"}` when that human's own retained approval of it awaits only execute (below). |
 | Human | POST `/handoff/{handoff_id}/governance/execute` | Existing browser/CSRF protections, bound UV and current authority; execute once. |
 | Human | POST `/handoff/{handoff_id}/link` | Personal mailed link: reveals the frozen operation's display to that approver; decides nothing. |
-| Human | POST `/handoff/{handoff_id}/link/options` | B3 options for that approver, this exact act and one decision (approve or reject). |
+| Human | POST `/handoff/{handoff_id}/link/options` | B3 options for that approver, this exact act and one decision (approve or reject); for approve, `{"state":"approved"}` as on the governance route. |
 | Human | POST `/handoff/{handoff_id}/link/decide` | That approver's one fresh exact-act UV decides; approve then executes once. |
 
 The request origin accepts one of these mutually exclusive requester proofs:
@@ -812,7 +812,21 @@ themselves.
 ### Mailed approval links
 
 The signer mails each eligible approver their own approval notice after the
-prepare transaction commits; the requester never receives or relays a link.
+prepare transaction commits, up to the requester's notice budget; the requester
+never receives or relays a link. The budget is ten notices per requester per
+hour, one per approver mailed, across operation kinds and for one signer
+authority, and never less than one full round: a request to more approvers than
+the budget is mailed whole when the window holds no other notice. Each prepare reserves its notices once, in its own transaction, so a
+repeated prepare or concurrent prepares cannot spend more. Past the budget the
+request is still created and waits for its approver exactly as a mailed one
+does, but no notice is mailed for it, then or later. Its authorized owners see
+it on the owner page marked not mailed (over the notice budget), and the signer
+records the suppression durably: an audit event and the reservation row. The
+prepare answer, its receipt, frozen payload, digest, operation id, expiry and
+resume are unchanged, so the requester's aw does not yet report it; an agent
+requester cannot necessarily read the owner page, and gains no permission to.
+Reporting it to the requester is a later, negotiated aw change. A request past
+the budget is never refused, re-approved or shortened for it.
 Opening that personal link reveals the request, and one fresh user-verified
 passkey assertion bound to the exact act approves or rejects it: one gesture,
 with no separate LOGIN (Juan 2026-11-13, via coordinator). The notice says
@@ -850,6 +864,25 @@ mailed link reveals a request. Its requirements:
   purpose and records `refused(human_refused)`.
 * No standing session is created. The link never authenticates a console
   session, an owner page, another operation or another candidate.
+* An approval is not spent by a failure after it is recorded. When this
+  approver's own passkey approval of this exact act is decided and retained,
+  nothing is signed, and its original UV-at-effect window (the earliest of the
+  challenge's issue plus 300 seconds, the challenge's expiry and the
+  operation's) is still open, approve options answer `{"state":"approved"}`
+  instead of a challenge, and that approver's reveal still shows the act, so a
+  reopened page can finish it. The page then runs execute (or decide) once
+  more when the person presses Approve; it reuses the retained UV and does not
+  extend its window. The answer is advisory and grants nothing: execute
+  rechecks the session, credential, B2/B3, policy, authority and deadlines under
+  its locks. A reject never takes this path, another candidate never gets it,
+  and past the window, or once the credential is revoked, nothing finishes. A
+  `503` from execute or decide is "not completed yet", which the page offers to
+  try again. The 503 may also be the lost answer of an act already applied:
+  its options are then refused, nothing runs again, and the signed-in page
+  reads the request to show how it ended, while the mailed link, which cannot
+  read a decided request, says it cannot confirm and points to History. Once a
+  decision was sent, the mailed link's own expiry check reads a spent link or
+  an expiry the same way: never as undecided, never as a dead link.
 
 Inbox access therefore discloses the complete classified request to whoever
 holds the inbox or runs the page with its link; it never supplies the
@@ -1062,7 +1095,14 @@ operation and keeps its generic status code. The
 controls distinguish these cases from an incorrect request origin.
 
 Invalid authentication is 401 `requester_invalid`, scope denial 403
-`scope_refused`, binding conflict 409 `operation_conflict`. Authenticated
+`scope_refused`, binding conflict 409 `operation_conflict`. A requester that
+already has twenty unfinished requests needing a human under one signer
+authority is refused at prepare with 403 `open_requests_limit_reached`, before
+any approval or operation is created. An agent is counted by its own principal
+and an owner's page request by that owner, never pooled under the signer host's
+key. A place frees when its request is signed, refused or expires; an approval
+alone does not free it, since an approved act whose signing failed can still be
+finished. Resending a prepare already made still answers. Authenticated
 lookup with no authorized matching record returns 404 `operation_not_found`,
 not proof that a previously sent request never committed. Availability failure
 is 503 `receipt_unavailable`. Receipt states themselves use HTTP 200.

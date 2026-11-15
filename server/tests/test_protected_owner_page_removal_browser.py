@@ -133,25 +133,21 @@ async def test_the_owner_removes_a_member_from_the_owner_page_with_one_exact_pas
             retained_page = page.url
             await approve.click()
             if lost_answer:
-                # The same outcome as the mailed link: a heading, no controls,
-                # what was asked kept in view, and the way back to History.
-                title = page.locator("#handoff-title")
-                await expect(title).to_have_text("Not confirmed")
-                await expect(title).to_be_focused()
-                await expect(page.locator("#handoff-action")).to_be_hidden()
-                await expect(page.locator("#handoff-deny")).to_be_hidden()
-                await expect(page.locator("#handoff-governance-title")).to_have_text("What was asked")
-                await expect(page.locator("#handoff-governance")).to_be_visible()
-                owner_page = page.locator("#handoff-outcome-text").get_by_role("link", name="owner page", exact=True)
-                await expect(owner_page).to_have_attribute("href", "/")
+                # The answer was lost after the act applied: the same act is
+                # offered again as an approval only, never as a denial.
+                await expect(page.locator("body")).to_have_attribute("data-handoff-state", "retry")
+                await expect(approve).to_be_enabled()
+                await expect(approve).to_be_focused()
+                await expect(page.locator("#handoff-deny")).to_be_disabled()
+                await expect(page.locator("#handoff-title")).to_have_text(f"Remove {root.alias} from engineering?")
                 assert await revoked(a, certificate)
-                await owner_page.click()
-                await page.wait_for_url(origin + "/")
+                # Trying again finishes the act it already applied, once.
+                await approve.click()
+                await expect(page.locator("#handoff-title")).to_have_text("Approved")
+                assert len(deliveries) == 1
+                await page.goto(origin + "/")
                 await expect(page.locator(f'[data-remove-certificate="{root.certificate_id}"]')).to_have_count(0)
-                recovery = page.get_by_role("link", name="Check this request", exact=True)
-                await expect(recovery).to_have_attribute("href", retained_page.removeprefix(origin))
-                await recovery.click()
-                await page.wait_for_url(retained_page)
+                await page.goto(retained_page)
             await expect(page.locator("#handoff-title")).to_have_text("Approved")
             assert await revoked(a, certificate)
             assert len(deliveries) == 1
@@ -160,10 +156,10 @@ async def test_the_owner_removes_a_member_from_the_owner_page_with_one_exact_pas
             await expect(page.locator("#handoff-title")).to_have_text("Approved")
             await expect(page.locator("#handoff-action")).to_be_hidden()
             # Prepare from the page, then the exact act's options and execute.
+            # Trying again after a lost answer asks for options once more and
+            # is refused: the applied act is never executed a second time.
+            act = retained_page.removeprefix(origin) + "/governance"
+            retry = [act + "/options"] if lost_answer else []
             assert [p for p in posts if p.startswith("/governance") or "/governance/" in p] == [
-                "/governance/operations",
-                *[p for p in posts if p.endswith("/governance/options")],
-                *[p for p in posts if p.endswith("/governance/execute")],
+                "/governance/operations", act + "/options", act + "/execute", *retry,
             ]
-            assert len([p for p in posts if p == "/governance/operations"]) == 1
-            assert len([p for p in posts if p.endswith("/governance/execute")]) == 1

@@ -22,6 +22,41 @@
   notes](awid/README.md#registry-first-upgrades-and-rollback-limits) for the
   measured compatibility, public status contract and pinned-origin requirements.
 
+- The team deployment bundle can turn on the protected signer's service-owned
+  delivery, which `human-role.revoke` requires: `signer.serviceKey` names the
+  distinct attestation key at `private-controller/service.key` (recovered
+  from its own offline copy, never minted again), and
+  `signer.ownerActOrigins` / `signer.effectReceiptOrigins` pin the consumers.
+  Each part is off unless set; the host refuses a plaintext consumer origin.
+  The protected revoke journeys now exercise that delivery, but they are not
+  yet in the candidate gate (aweb-adbi gates the Secrets lanes).
+
+- The protected signer bounds each requester's approval mail to ten notices
+  an hour. A request past the budget is still created and waits as any other,
+  but is not mailed: the signer records that and the owner page marks it
+  "not mailed". The prepare and receipt answers are unchanged. The budget
+  is never less than one full round of a request's approvers.
+
+- The protected signer refuses a new request with 403
+  `open_requests_limit_reached` while its requester already has twenty
+  unfinished requests that need a human under one authority: an agent
+  counted by its principal, an owner's page request by that owner. A
+  place frees when its request is signed, refused or expires. aw tells the
+  refusal in words.
+
+- The owner page reads bounded pages of its own scope instead of every
+  stored operation, and a tab's saved removal retires through an exact-id
+  lookup of its stored final outcome. An approval interrupted by a failed
+  registry read after the owner's passkey touch is no longer spent: a
+  reopened page (signed-in or mailed link) finishes it with no new passkey
+  check while its original gesture window lasts, and a 503 offers Try again.
+  Unexpected signer errors are logged by route, operation id, exception
+  class and stack frames (file, line and function), never with a message
+  or locals; the controller key signs a delivery envelope only inside
+  custody, from the verified signed artifact. `aw` backs off reading a
+  pending receipt (to a one-minute cap, never past the operation's expiry)
+  instead of spending its whole read allowance.
+
 - `aw custody serve` picks up a parent import, certificate install or connect
   that changes its resident home while it runs, without a restart and
   without a request mixing old and new credentials. Those commands now

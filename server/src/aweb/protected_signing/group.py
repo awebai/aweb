@@ -116,6 +116,11 @@ class ProtectedSignerGroup:
                 return False
         return ConsoleSessions(self.db, passkeys=self.passkeys, scopes=current_scope)
 
+    async def final_owner_operations(self, operation_ids, session):
+        from .owner import final_operations
+
+        return await final_operations(self, scope=session.scope, operation_ids=operation_ids)
+
     async def prepare_owner_selection(self, selection, session):
         async with self.db.transaction() as tx:
             component = await self.for_b3_scope(session.scope, tx=tx)
@@ -126,7 +131,8 @@ class ProtectedSignerGroup:
 
         return ProtectedOperationsHTTP(self.signer, request_origin=self.request_origin,
             requester=self.authenticate_prepare, reader=self.authenticate_receipt, executor=self.authenticate_execute,
-            policy_reader=self.read_admission_policy, owner_prepare=self.prepare_owner_selection, **kwargs)
+            policy_reader=self.read_admission_policy, owner_prepare=self.prepare_owner_selection,
+            owner_final=self.final_owner_operations, **kwargs)
 
     async def migrate(self):
         await self.selected.migrate()

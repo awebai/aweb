@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, datetime, timedelta
 from html import escape
 from urllib.parse import quote
+
+from fastapi import HTTPException, Query, Request
 
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.admission_policy import AdmissionPolicy
@@ -67,26 +70,91 @@ def _rendered(request):
     return rendered["title"], named if named != request.get("requester") else None
 
 
-async def owner_view(composition, *, scope: str, subject: str, now: datetime | None = None) -> dict:
+_COLUMNS = (
+    "operation_id,handoff_id,requester,request,digest,approval_id,expires_at,initiator_subject,initiator_scope,"
+    "result IS NOT NULL AS committed,signed_result IS NOT NULL AS signed,refusal_code,committed_at,"
+    "(SELECT r.suppressed FROM {{tables.protected_signer_notice_reservations}} r "
+    "WHERE r.operation_id=o.operation_id) AS notice_suppressed"
+)
+# Each state class the page lists, stated exactly as its partial index's
+# predicate (migration 009), so each page reads only its own class: open
+# (waiting, or unsigned past its expiry), signed but unconfirmed, and final.
+# Approval-less rows are bounded admissions, listed under added agents instead.
+_OPEN = "approval_id IS NOT NULL AND result IS NULL AND refusal_code IS NULL AND signed_result IS NULL"
+_UNRESOLVED = "approval_id IS NOT NULL AND result IS NULL AND refusal_code IS NULL AND signed_result IS NOT NULL"
+_FINAL = "approval_id IS NOT NULL AND (result IS NOT NULL OR refusal_code IS NOT NULL)"
+_AFTER = "AND ($3::timestamptz IS NULL OR (expires_at, operation_id) < ($3::timestamptz, $4::text)) "
+_ORDER = "ORDER BY expires_at DESC, operation_id DESC LIMIT $5"
+
+
+def _page(state: str, extra: str = "") -> str:
+    return ("SELECT " + _COLUMNS + " FROM {{tables.protected_signer_operations}} o "
+            "WHERE scope=$1::jsonb AND " + state + " " + extra + _AFTER + _ORDER)
+
+
+# One page of one list for one scope, newest expiry first, after an optional
+# (expires_at, operation_id) cursor. History merges two bounded pages, each
+# through its own index: final outcomes, and unsigned requests past expiry
+# ($2, the reader's now). The unresolved list never expires into history: it
+# may already be applied ($2 is typed but unused there).
+LISTS = {
+    "pending": _page(_OPEN, "AND expires_at > $2::timestamptz "),
+    "unresolved": _page(_UNRESOLVED, "AND $2::timestamptz IS NOT NULL "),
+    "history": "SELECT * FROM ((" + _page(_FINAL, "AND $2::timestamptz IS NOT NULL ") + ") UNION ALL ("
+               + _page(_OPEN, "AND expires_at <= $2::timestamptz ") + ")) h " + _ORDER,
+}
+
+
+async def final_operations(composition, *, scope: str, operation_ids: list[str]) -> list[str]:
+    """Of ``operation_ids``, those whose stored outcome in this scope is final:
+    committed or refused. An expiry the clock alone shows, a signed but
+    unconfirmed row, another scope's row or an unknown id is not."""
+    c = await _component_for(composition, scope)
+    rows = await c.db.fetch_all(
+        "SELECT operation_id FROM {{tables.protected_signer_operations}} "
+        "WHERE scope=$1::jsonb AND operation_id = ANY($2::text[]) "
+        "AND (result IS NOT NULL OR refusal_code IS NOT NULL)",
+        json.dumps(c.context.fields()), operation_ids)
+    final = {row["operation_id"] for row in rows}
+    return [i for i in operation_ids if i in final]
+
+
+def _cursor(row) -> str:
+    return row["expires_at"].astimezone(UTC).isoformat() + "|" + row["operation_id"]
+
+
+def _after(cursor: str | None):
+    if not cursor:
+        return None, None
+    expires, _, operation_id = cursor.partition("|")
+    try:
+        at = datetime.fromisoformat(expires)
+        operation_id = str(uuid.UUID(operation_id))
+    except ValueError:
+        return None, None
+    # A time without an offset names no instant.
+    return (at, operation_id) if at.utcoffset() is not None else (None, None)
+
+
+async def owner_view(composition, *, scope: str, subject: str, now: datetime | None = None,
+                     page: int = HISTORY_LIMIT, cursors: dict[str, str] | None = None) -> dict:
     """``subject`` is the signed-in approver: the page names them and marks
-    the decisions they made, even when the scope has other approvers."""
+    the decisions they made, even when the scope has other approvers. Each
+    list is one page after its cursor in ``cursors``; ``view["more"]`` holds
+    the cursor of the next page of each, or None."""
     c = await _component_for(composition, scope)
     context = c.context
     now = datetime.now(UTC) if now is None else now
-    fields = context.fields()
-    rows = await c.db.fetch_all(
-        "SELECT operation_id,handoff_id,requester,request,digest,approval_id,expires_at,initiator_subject,initiator_scope,"
-        "result IS NOT NULL AS committed,signed_result IS NOT NULL AS signed,refusal_code,committed_at "
-        "FROM {{tables.protected_signer_operations}} "
-        "ORDER BY expires_at DESC"
-    )
-    pending, history, requests = [], [], {}
+    fields = json.dumps(context.fields())
+    lists, more = {}, {}
+    for name, query in LISTS.items():
+        expires, operation_id = _after((cursors or {}).get(name))
+        rows = await c.db.fetch_all(query, fields, now, expires, operation_id, page + 1)
+        lists[name], more[name] = rows[:page], (_cursor(rows[page - 1]) if len(rows) > page else None)
+    pending, unresolved, history = [], [], []
     approvers = await _approvers(c, scope)
-    for row in rows:
+    for row in [*lists["pending"], *lists["unresolved"], *lists["history"]]:
         request = _json(row["request"])
-        requests[row["operation_id"]] = request
-        if request.get("scope") != fields:
-            continue
         title, named = _rendered(request)
         # A request this signed-in approver started from the owner page is theirs.
         requested_by_you = row["initiator_subject"] == subject and row["initiator_scope"] == scope
@@ -96,9 +164,6 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
             "requester": row["requester"], "digest": row["digest"],
             "asked_at": _asked_at(request), "title": title, "requester_name": named,
             "approval_id": row["approval_id"], "requested_by_you": requested_by_you}
-        if row["approval_id"] is None:
-            # Bounded unattended work (admissions) is listed under added agents.
-            continue
         if row["committed"]:
             history.append({**entry, "state": "committed", "at": _stamp(row["committed_at"])})
         elif row["refusal_code"] is not None:
@@ -107,17 +172,22 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
             # Signed but not confirmed: it may already be applied, so it is
             # never "expired" and no longer waits for a decision (the
             # signer's own receipt says unknown, external_effect_unresolved).
-            history.append({**entry, "state": "unresolved", "handoff_id": row["handoff_id"], "at": None})
+            unresolved.append({**entry, "state": "unresolved", "handoff_id": row["handoff_id"], "at": None})
         elif row["expires_at"] <= now:
             history.append({**entry, "state": "expired", "at": _stamp(row["expires_at"])})
         else:
-            pending.append({**entry, "handoff_id": row["handoff_id"], "expires_at": _stamp(row["expires_at"])})
+            pending.append({**entry, "handoff_id": row["handoff_id"], "expires_at": _stamp(row["expires_at"]),
+                # Past its requester's notice budget nobody was mailed: it waits here only.
+                **({"notice": "not_mailed"} if row["notice_suppressed"] else {})})
     view = {
         "authority": {"kind": context.authority_kind, "id": context.authority_id, "domain": context.authority_domain,
             "human": context.human_id},
         "pending": pending,
-        "history": await _deciders(c, history[:HISTORY_LIMIT], subject),
+        "unresolved": await _deciders(c, unresolved, subject),
+        "history": await _deciders(c, history, subject),
+        "more": more,
         "admitted": [],
+        "admitted_removed": 0,
         "roots": [],
         "policy": None,
         "approvers": approvers,
@@ -130,14 +200,14 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
             "\n".join((context.service_id, context.authority_kind, context.authority_id, scope, subject)).encode()
         ).hexdigest()[:16],
     }
-    for item in [*pending, *view["history"]]:
+    for item in [*pending, *view["unresolved"], *view["history"]]:
         del item["approval_id"]
     for approver in approvers:
         del approver["subject"]
     if context.authority_kind == "team_controller":
-        await _admissions(c, view, requests, now)
+        await _admissions(c, view, now)
         await _members(c, view)
-        _name_requesters([*view["pending"], *view["history"]], view["members"])
+        _name_requesters([*view["pending"], *view["unresolved"], *view["history"]], view["members"])
     return view
 
 
@@ -155,7 +225,7 @@ def _name_requesters(entries, members):
         )
 
 
-async def _admissions(c, view, requests, now):
+async def _admissions(c, view, now):
     context = c.context
     row = await c.db.fetch_one(
         "SELECT policy FROM {{tables.protected_admission_policies}} WHERE service_id=$1", context.service_id
@@ -166,22 +236,40 @@ async def _admissions(c, view, requests, now):
     if context.authority_id not in policy["teams"]:
         return
     view["policy"] = policy
+    # Agents still added or being added, which the policy bounds; the removed
+    # ones, which only grow, are counted, never read row by row.
     admitted = await c.db.fetch_all(
         "SELECT operation_id,root_id,certificate_id,child_id,child_key,admitted_at,state "
         "FROM {{tables.protected_root_admissions}} "
-        "WHERE service_id=$1 AND team_id=$2 ORDER BY admitted_at DESC",
+        "WHERE service_id=$1 AND team_id=$2 AND state <> 'removed' ORDER BY admitted_at DESC",
         context.service_id, context.authority_id,
     )
+    view["admitted_removed"] = await c.db.fetch_value(
+        "SELECT count(*) FROM {{tables.protected_root_admissions}} "
+        "WHERE service_id=$1 AND team_id=$2 AND state = 'removed'",
+        context.service_id, context.authority_id,
+    )
+    requests = {row["operation_id"]: _json(row["request"]) for row in await c.db.fetch_all(
+        "SELECT operation_id,request FROM {{tables.protected_signer_operations}} WHERE operation_id = ANY($1::text[])",
+        [row["operation_id"] for row in admitted])}
     for row in admitted:
         subject = requests.get(row["operation_id"], {}).get("subject", {})
         view["admitted"].append({"root_id": row["root_id"], "alias": subject.get("member_alias"),
             "certificate_id": row["certificate_id"], "child_id": row["child_id"], "child_key": row["child_key"],
             "admitted_at": _stamp(row["admitted_at"]),
             "state": row["state"]})
+    # Every root with an agent still added, or an admission inside its rate
+    # window, whose count still bounds it.
+    window = policy["bounds"]["rate_window_seconds"]
+    roots = await c.db.fetch_all(
+        "SELECT DISTINCT root_id FROM {{tables.protected_root_admissions}} "
+        "WHERE service_id=$1 AND team_id=$2 AND (state <> 'removed' OR admitted_at > $3)",
+        context.service_id, context.authority_id, now - timedelta(seconds=window),
+    )
     async with c.db.transaction() as tx:
-        for root_id in sorted({row["root_id"] for row in admitted}):
+        for root_id in sorted(row["root_id"] for row in roots):
             counts = await admission_counts(tx, service_id=context.service_id, team_id=context.authority_id,
-                root_id=root_id, window_seconds=policy["bounds"]["rate_window_seconds"], now=now)
+                root_id=root_id, window_seconds=window, now=now)
             view["roots"].append({"root_id": root_id, "active": counts["active"], "in_window": counts["in_window"],
                 "next_at": _stamp(counts["next_at"])})
 
@@ -202,7 +290,11 @@ async def _members(c, view):
     # One member key may hold several certificates; only this signer's exact
     # record of a certificate says anything about how it joined, and then
     # with the state recorded. Without one, nothing about its origin is known.
-    recorded = {a["certificate_id"]: a["state"] for a in view["admitted"]}
+    recorded = {row["certificate_id"]: row["state"] for row in await c.db.fetch_all(
+        "SELECT certificate_id,state FROM {{tables.protected_root_admissions}} "
+        "WHERE service_id=$1 AND team_id=$2 AND certificate_id = ANY($3::text[])",
+        c.context.service_id, c.context.authority_id, [record.certificate_id for record in records],
+    )}
     for record in records:
         view["members"].append({"alias": record.alias, "kind": await _member_kind(c, record),
             "joined": _JOINED.get(recorded.get(record.certificate_id), "unrecorded"),
@@ -236,17 +328,21 @@ async def _member_kind(c, record):
 
 
 async def _deciders(c, history, subject):
-    """Mark each decision the signed-in approver made. The approval records
-    which approver decided; the audit names only the governed human, the same
-    for every approver of the scope."""
+    """Mark each decision the signed-in approver made, in one read for the
+    page. The approval records which approver decided; the audit names only
+    the governed human, the same for every approver of the scope."""
+    store = c.signer.store
+    decided = {row["approval_id"]: row for row in await store.db.fetch_all(
+        "SELECT approval_id,decided_subject,decided_at FROM {{tables.approvals}} WHERE approval_id = ANY($1::text[])",
+        [item["approval_id"] for item in history],
+    )} if history else {}
     for item in history:
-        approval = await c.signer.store.get(item["approval_id"])
-        decider = approval.decided_by if approval is not None else None
-        item["decided_by_you"] = decider is not None and decider.subject == subject
+        approval = decided.get(item["approval_id"])
+        item["decided_by_you"] = approval is not None and approval["decided_subject"] == subject
         # A refused or unresolved request is dated by the approver's decision;
         # without one it has no time to show, never its expiry.
         if item["state"] in ("refused", "unresolved"):
-            item["at"] = _stamp(approval.decided_at) if approval is not None and approval.decided_at else None
+            item["at"] = _stamp(approval["decided_at"]) if approval is not None and approval["decided_at"] else None
     return history
 
 
@@ -308,6 +404,15 @@ def _team_name(team_id):
     return team_id.partition(":")[0]
 
 
+def _older(view: dict, listing: str, text: str) -> str:
+    """The link to the next page of one list, when it has one."""
+    cursor = (view.get("more") or {}).get(listing)
+    if not cursor:
+        return ""
+    href = "/older?list=" + quote(listing, safe="") + "&after=" + quote(cursor, safe="")
+    return f'<p><a data-older="{escape(listing, quote=True)}" href="{escape(href, quote=True)}">{escape(text)}</a></p>'
+
+
 def owner_page_html(view: dict) -> str:
     """The owner page's HTML from owner_view. Every value is escaped. Each
     request reads as its operation definition's own question."""
@@ -328,10 +433,13 @@ def owner_page_html(view: dict) -> str:
                 f'<li><a href="/handoff/{e(item["handoff_id"])}">{e(item["title"])}</a>'
                 f'<p>Requested by {e(item.get("requester_name") or item["requester"])}{asked}</p>'
                 f'<p>Expires {_time(item["expires_at"])}</p>'
+                + ('<p data-notice="not-mailed">Not mailed: its requester is over the notice budget.</p>'
+                    if item.get("notice") == "not_mailed" else "")
                 + _technical([("Requested by", item["requester"]), ("Operation", item["operation"]),
                     ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
+        parts.append(_older(view, "pending", "Older requests waiting for you"))
     else:
         parts.append("<p>Nothing is waiting for you.</p>")
     if team:
@@ -354,8 +462,12 @@ def owner_page_html(view: dict) -> str:
                     + _technical([("Added by", agent["root_id"]), ("Agent key", agent["child_key"])]) + "</li>"
                 )
             parts.append("</ul>")
-        else:
+        elif not view.get("admitted_removed"):
             parts.append("<p>No agents have been added yet.</p>")
+        if view.get("admitted_removed"):
+            removed = view["admitted_removed"]
+            parts.append(f"<p>{removed} {'agent' if removed == 1 else 'agents'} added this way "
+                         f"{'was' if removed == 1 else 'were'} removed later; they are not listed.</p>")
         parts.append("<h2>Team members</h2>")
         if view["members"] is None:
             parts.append("<p>The member list could not be read right now. Reload to try again.</p>")
@@ -403,9 +515,9 @@ def owner_page_html(view: dict) -> str:
         else:
             parts.append("<p>This team has no admission policy on this signer.</p>")
     parts.append("<h2>History</h2>")
-    if view["history"]:
+    if view.get("unresolved") or view["history"]:
         parts.append('<ul class="owner-list">')
-        for item in view["history"]:
+        for item in [*view.get("unresolved", []), *view["history"]]:
             outcome = _OUTCOMES.get(item["state"]) or _REFUSALS.get(item.get("code"), "Not completed")
             if item.get("decided_by_you") and item["state"] not in ("expired", "unresolved"):
                 outcome += " by you"
@@ -427,6 +539,8 @@ def owner_page_html(view: dict) -> str:
                     ("Digest", item["digest"])]) + "</li>"
             )
         parts.append("</ul>")
+        parts.append(_older(view, "unresolved", "Older requests approved but not confirmed"))
+        parts.append(_older(view, "history", "Older history"))
     else:
         parts.append("<p>Nothing has happened yet.</p>")
     parts.append('<h2>Who can approve</h2><ul class="owner-list">')
@@ -447,7 +561,25 @@ def owner_router(composition, *, sessions, csrf_key):
     async def home(session):
         return owner_page_html(await owner_view(composition, scope=session.scope, subject=session.subject))
 
-    router = protected_shell(csrf_key).router(sessions=sessions, home_title="Approvals", home=home)
+    shell = protected_shell(csrf_key)
+    router = shell.router(sessions=sessions, home_title="Approvals", home=home)
+
+    @router.get("/older")
+    async def older(request: Request, listing: str = Query("", alias="list"), after: str = ""):
+        """The same page with one list at the page after ``after``, so every
+        retained request stays reachable; the other lists show their first
+        page. A malformed list name or cursor is refused."""
+        from aweb_naapp.console.browser import login_redirect
+
+        if listing not in LISTS or _after(after) == (None, None):
+            raise HTTPException(400, "request_invalid")
+        try:
+            session = await sessions.current(request)
+            body_html = owner_page_html(await owner_view(
+                composition, scope=session.scope, subject=session.subject, cursors={listing: after}))
+        except HTTPException as error:
+            return login_redirect(error)
+        return shell.console_page(title="Approvals", body_html=body_html, session=session)
 
     @router.get("/owner-ui/owner.js")
     async def script():

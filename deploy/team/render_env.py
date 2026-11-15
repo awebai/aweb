@@ -116,6 +116,22 @@ OPTIONAL_COMPONENTS = ("secrets", "logs", "signer", "agents", "front")
 SIGNER_CONFIG = "/etc/aweb/signer"
 
 
+# The service attestation key, in the same private custody volume as the
+# controller key and under the same ownership and mode rules.
+SIGNER_SERVICE_KEY = "/run/secrets/signer/private-controller/service.key"
+
+
+def _check_signer_delivery(signer: dict) -> None:
+    """Receipt readiness names only pinned consumers, and pinned consumers
+    need the service key: without it every act they serve is refused."""
+    ready = signer.get("effectReceiptOrigins", [])
+    unpinned = sorted(set(ready) - set(signer.get("ownerActOrigins", [])))
+    if unpinned:
+        raise Refused(f"signer.effectReceiptOrigins: not in signer.ownerActOrigins: {', '.join(unpinned)}")
+    if signer.get("ownerActOrigins") and signer.get("serviceKey") is not True:
+        raise Refused("signer.serviceKey: required for signer.ownerActOrigins")
+
+
 def _check_signer_profile(config: dict, registry_url: str) -> None:
     """The bundle and the signer's profile name the same origins and registry."""
     signer = config["signer"]
@@ -163,6 +179,9 @@ def render(config: object) -> dict[str, str]:
         out["SIGNER_SCOPE_FILE"] = f"{SIGNER_CONFIG}/scope.json"
         if "emailCaFile" in config["signer"]:
             out["AWEB_PROTECTED_EMAIL_CA_FILE"] = f"{SIGNER_CONFIG}/email-ca.pem"
+        _check_signer_delivery(config["signer"])
+        if config["signer"].get("serviceKey") is True:
+            out["AWEB_PROTECTED_SERVICE_KEY_FILE"] = SIGNER_SERVICE_KEY
     if "agents" in config:
         out["EGRESS_ADDRESS"] = config["agents"]["resolverIp"]
         # The agents network's gateway is its subnet's first address; neither

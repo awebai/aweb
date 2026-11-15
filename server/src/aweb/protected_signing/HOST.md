@@ -22,7 +22,10 @@ direct access to the protected process to that proxy. This header selects
 only rate-limit identity, never authentication, request audience or authority.
 With no configured header, forwarded values are ignored and identity is the
 connection peer. Behind a single proxy this means one shared 30-per-minute
-budget per bucket: a CLI polling every two seconds can use that entire budget.
+budget per bucket. aw reads a pending receipt every two seconds at first and
+backs off to once a minute (never past the operation's expiry), so one waiting
+operation leaves most of that budget to others; many concurrent waits still
+share it.
 That default is suitable for a single-human host; configure the trusted header
 for multiple clients rather than broadly enabling forwarded-header trust.
 
@@ -112,7 +115,11 @@ version and live B3 approver subject/scope. Empty or mismatched provisioning
 refuses startup. Each operation still performs its own fresh authority checks.
 Resources close on startup failure and shutdown. Existing deployments require
 their authorized migration procedure; this entry point is not permission to
-apply migrations or move keys in a real deployment.
+apply migrations or move keys in a real deployment. Stop every running signer
+process before starting the upgraded one: the signer's operation-scope
+migration (008) rewrites the operations table and makes its new column
+required in one step, so an older signer still running would fail every
+prepare after it.
 
 ## One-command setup
 
@@ -434,6 +441,13 @@ It uses the controller key reader's strict ownership/mode/symlink checks. The
 host refuses reuse of any configured controller, namespace, human or ordinary
 member key for this role. Omitting it preserves legacy composition; it cannot
 produce a protected-team service attestation or authorize cutover.
+Its backup is a separately protected offline copy that the team owner keeps
+beside the controller's, under the same recovery procedure, made when the key
+is provisioned and before the registry's protection binding names its public
+key. Generic backups leave the live private volume out (`teamctl backup` omits
+`signer/private-controller`), and the bound key cannot be minted again: without
+that copy, service-owned delivery stays closed until an authorized generation
+transition.
 
 The registry host's local administrator transition is
 `awid_service.protected_teams.provision_team_protection` inside a database

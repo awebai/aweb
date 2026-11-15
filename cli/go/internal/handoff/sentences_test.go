@@ -30,7 +30,7 @@ func contractCodes(t *testing.T) []string {
 	}
 	return append(codes, "request_invalid", "redirect_uri_refused", "requester_invalid",
 		"scope_refused", "operation_conflict", "operation_not_found",
-		"login_rate_limited", "handoff_rate_limited")
+		"login_rate_limited", "handoff_rate_limited", "open_requests_limit_reached")
 }
 
 func TestEveryContractCodeIsTold(t *testing.T) {

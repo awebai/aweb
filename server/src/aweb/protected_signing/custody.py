@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import os
 import stat
+from datetime import UTC, datetime
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -24,10 +25,10 @@ from aweb_naapp.runtime.protected_signer import (
 from aweb_naapp.runtime.protected_signer.types import owner_act_operation
 from aweb_naapp.signing_key import parse_signing_key_hex
 from awid.did import did_from_public_key
-from awid.signing import sign_message
+from awid.signing import sign_message, verify_did_key_signature
 
 
-from .legacy_delivery import deliver_legacy
+from .legacy_delivery import deliver_legacy, delivery_plan
 from .effects import ProtectedEffectCustody
 
 
@@ -138,6 +139,42 @@ class ProtectedControllerCustody(ProtectedEffectCustody):
         # signature. Custody only supplies the one exact local key operation.
         signature = sign_message(bytes(self._key), payload)
         return base64.b64decode(signature + "=" * (-len(signature) % 4), validate=True)
+
+    def authenticate_delivery(self, operation, artifact, signing: bytes, signature: bytes):
+        """The one delivery of this custody's own operation: its definition
+        builds the request from the artifact and its verified signature, and
+        custody authenticates it as the definition requires. A revoke artifact
+        is its own controller envelope and reuses its signature; a distinct
+        envelope (a registration) gets one more controller signature over
+        exactly the bytes the definition derived. Returns the plan and its
+        authenticated delivery."""
+        typed = owner_act_operation(operation)
+        context = typed.context
+        if (
+            context.service_id != self.service_id
+            or context.authority_kind != self.authority_kind
+            or context.authority_id != self.team_id
+            or context.authority_domain != self.domain
+        ):
+            raise SignerRefused("scope_refused")
+        if authority_key(typed, artifact) != self.team_key_did or signing_bytes(typed, artifact) != signing:
+            raise SignerRefused("operation_mismatch")
+        try:
+            verify_did_key_signature(did_key=self.team_key_did, payload=signing,
+                signature_b64=base64.b64encode(signature).rstrip(b"=").decode())
+        except ValueError:
+            raise SignerRefused("operation_mismatch") from None
+        clock = getattr(self, "_effect_clock", None)
+        now = clock() if clock is not None else datetime.now(UTC)
+        plan = delivery_plan(self, operation, artifact, signing, signature,
+            now.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        if plan.controller_envelope is None:
+            authentication = None
+        elif plan.controller_envelope == signing:
+            authentication = signature
+        else:
+            authentication = self._key.sign(plan.controller_envelope).signature
+        return plan, plan.authenticate(authentication)
 
     async def register_admission(self, registry, operation, artifact, result):
         return await deliver_legacy(self, registry, operation, artifact, result)

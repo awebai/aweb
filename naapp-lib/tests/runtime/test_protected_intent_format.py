@@ -25,7 +25,7 @@ def test_live_rows_emit_and_accept_only_the_current_approval_format(name):
         with pytest.raises(SignerRefused) as error:
             parse_operation(old)
         assert error.value.code == "upgrade_aw_required"
-        response = _http(error.value)
+        response = _http(error.value, None)
         assert response.status_code == 426 and response.detail == "upgrade_aw_required"
 
 

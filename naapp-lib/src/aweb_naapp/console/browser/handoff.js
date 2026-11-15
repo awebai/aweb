@@ -25,6 +25,9 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
   let loggedIn = false;
   let operationId;
   let submitted = false;
+  // Set once the signer has answered 503 after a decision was sent: the act
+  // may already have been applied, with only its answer lost.
+  let retrying = false;
   let frozenRedirect;
   let csrf;
   let display;
@@ -314,9 +317,18 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
       checkAt(30000);  // Still pending at the signer: the clocks differ.
     } catch (error) {
       if (decided || inFlight) return;
-      if (error.status === 410) linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
+      if (retrying) unconfirmedOutcome();
+      else if (error.status === 410) linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
       else linkUnavailable();
     }
+  }
+
+  // A decision was sent before this answer, and its own answer was lost or
+  // was a 503: a spent link or an expiry is not evidence that nothing was
+  // decided or applied, so the page cannot say how it ended.
+  function unconfirmedOutcome() {
+    document.body.dataset.handoffState = "unconfirmed";
+    outcome(...unconfirmed);
   }
 
   async function linkLoad() {
@@ -349,6 +361,29 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
 
   const unconfirmed = ["Not confirmed",
     "This page could not confirm what happened. Your owner page shows the outcome under History."];
+
+  // The signer answered that it could not finish now (503): the act is not
+  // known to be done, and the same act can be tried again. Pressing Approve
+  // again asks for options, which say whether another passkey check is needed.
+  function notYet() {
+    status.textContent = "Not completed yet: the signer could not finish this right now. Try again.";
+    action.disabled = false;
+    deny.disabled = true;
+    document.body.dataset.handoffState = "retry";
+    retrying = true;
+    inFlight = false;
+    submitted = false;
+    action.focus();
+  }
+
+  async function reread() {
+    try {
+      await governanceState(await request(""));
+    } catch {
+      submitted = true;
+      failed();
+    }
+  }
 
   function outcome(title, text) {
     decided = true;
@@ -400,6 +435,13 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     let sent = false;
     try {
       const options = await linkPost("/options", {token: linkToken, decision});
+      if (decision === "approve" && options.state === "approved") {
+        // You already approved this exact act and nothing is signed yet:
+        // finishing it needs no new passkey check.
+        sent = true;
+        linkOutcome(await linkPost("/decide", {token: linkToken, decision, assertion: {}}));
+        return;
+      }
       if (options.userVerification !== "required") throw new Error("handoff_refused");
       const credential = await navigator.credentials.get({
         publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
@@ -417,9 +459,12 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         document.body.dataset.handoffState = "ready";
         inFlight = false;
         pressed.focus();
-      } else if (sent) {
-        document.body.dataset.handoffState = "unconfirmed";
-        outcome(...unconfirmed);
+      } else if (sent && error.status === 503 && decision === "approve") {
+        // Only an approval has a retry lane; a failed rejection stays
+        // unconfirmed below, never offered back as an approval.
+        notYet();
+      } else if (sent || retrying) {
+        unconfirmedOutcome();
       } else if (error.status === 410) {
         // The signer itself answered that the request expired undecided.
         linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
@@ -573,6 +618,12 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         return;
       }
       const options = await request("/options", {});
+      if (governance && operationId && options.state === "approved") {
+        // You already approved this exact act and nothing is signed yet.
+        submitted = true;
+        await governanceComplete(await request("/execute", {assertion: {}}));
+        return;
+      }
       if (governance) {
         if (!operationId || options.userVerification !== "required") throw new Error("handoff_refused");
         const credential = await navigator.credentials.get({
@@ -614,6 +665,12 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         action.focus();
       } else if (governance && loggedIn && !submitted && error.status === 401) {
         signedOut();
+      } else if (governance && submitted && error.status === 503) {
+        notYet();
+      } else if (governance && retrying && !submitted) {
+        // A retry refused before sending: the earlier attempt may have
+        // applied the act. The request itself says how it ended.
+        await reread();
       } else {
         failed();
       }
