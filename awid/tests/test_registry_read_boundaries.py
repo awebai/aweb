@@ -12,7 +12,7 @@ from awid.protected_effect import HEADER, artifact_digest, encode_proofs, http_c
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import record_signing_bytes
 from awid_service.protected_teams import _lock_key, provision_team_protection
-from test_controller_request_v2_http import ORIGIN, controller_app as controller_app, keypair, send
+from test_controller_request_v2_http import ORIGIN, controller_app as controller_app, certificate_body, keypair, send
 
 TEAM_PATH = "/v1/namespaces/local/teams/base"
 
@@ -135,7 +135,7 @@ async def test_paginated_team_projection_is_one_actual_select_per_page(controlle
 
 
 @pytest.mark.asyncio
-async def test_bad_binding_refuses_entire_list_without_inventing_legacy(controller_app):
+async def test_bad_binding_refuses_entire_list_without_inventing_legacy(controller_app, caplog):
     env = controller_app
     await env.db.execute(
         "INSERT INTO {{tables.team_protection}} (domain,name,service_id,service_did_key,generation) "
@@ -145,6 +145,7 @@ async def test_bad_binding_refuses_entire_list_without_inventing_legacy(controll
     assert response.status_code == 503, response.text
     assert response.json()["detail"]["code"] == "protected_state_unavailable"
     assert "teams" not in response.json()
+    assert "base:local" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -236,3 +237,60 @@ async def test_registry_artifact_origin_configuration_has_no_request_fallback(co
     if not accepted:
         assert response.json()["detail"]["code"] == "protected_controller_required"
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.team_server_records}}") == int(accepted)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("guard", ["team", "namespace", "projection"])
+@pytest.mark.parametrize("route", ["team", "certificate_status"])
+async def test_reader_lock_timeout_is_retryable_unavailable(controller_app, caplog, guard, route):
+    env = controller_app
+    cert = certificate_body(env)
+    registered = await send(
+        env, "POST", TEAM_PATH + "/certificates",
+        {"domain": "local", "operation": "register_certificate", "team_name": "base",
+         "certificate_id": cert["certificate_id"]}, cert, signer=env.team,
+    )
+    assert registered.status_code == 200, registered.text
+    path = TEAM_PATH if route == "team" else (
+        TEAM_PATH + "/certificates/" + cert["certificate_id"] + "/status?protection=1"
+    )
+    env.client._transport.raise_app_exceptions = False
+    lock = _lock_key(guard, "local" if guard == "namespace" else "base:local")
+    async with env.db.transaction() as blocker:
+        # Use the real deployed session lock_timeout, not a replaced DB call.
+        assert await blocker.fetch_value("SHOW lock_timeout") == "5s"
+        if guard == "projection":
+            await blocker.execute("LOCK TABLE {{tables.team_protection}} IN ACCESS EXCLUSIVE MODE")
+        else:
+            await blocker.execute("SELECT pg_advisory_xact_lock($1::bigint)", lock)
+        async with asyncio.timeout(10):
+            response = await env.client.get(path)
+        assert response.status_code == 503, response.text
+        assert response.json()["detail"]["code"] == "protected_state_unavailable"
+        assert int(response.headers["Retry-After"]) > 0
+        assert "base:local" in caplog.text
+        assert "lock timeout" in caplog.text.lower()
+    # Releasing the exclusive effect lock restores the same actual read.
+    resumed = await env.client.get(path)
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["protection"] == {"mode": "legacy"}
+    if route == "certificate_status":
+        old = await env.client.get(path.split("?")[0])
+        assert old.status_code == 200
+        assert set(old.json()) == {"team_id", "team_did_key", "status", "revoked_at"}
+
+
+@pytest.mark.asyncio
+async def test_real_registry_health_advertises_protection_capability(controller_app):
+    env = controller_app
+    for path in ("/health", "/ready", "/ops/health"):
+        response = await env.client.get(path)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert set(payload) == {"status", "version", "checks", "capabilities"}
+        assert payload["status"] == "ok"
+        assert payload["version"]
+        assert payload["checks"]["database"] == payload["checks"]["redis"] == "ok"
+        assert payload["capabilities"] == {"team_protection": True}
+    assert (await env.client.get("/live")).json() == {"status": "ok"}
+    assert set((await env.client.get("/")).json()) == {"service", "version", "status"}

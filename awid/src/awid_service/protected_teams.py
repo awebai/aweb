@@ -14,6 +14,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+import asyncpg
 from fastapi import HTTPException
 
 from awid.controller_request import raw_controller_request_target
@@ -87,7 +88,21 @@ async def team_guard(tx, domain, name, *, exclusive=True):
     )
 
 
-def project_protection(row):
+@asynccontextmanager
+async def team_read_transaction(db, domain, name):
+    """Read one guarded projection, refusing a contended effect as unavailable."""
+    try:
+        async with db.transaction() as tx:
+            await team_guard(tx, domain, name, exclusive=False)
+            yield tx
+    except asyncpg.LockNotAvailableError:
+        logger.exception("Authoritative team read lock timed out: team=%s", build_team_id(domain, name))
+        error = refusal("protected_state_unavailable")
+        error.headers = {"Retry-After": "1"}
+        raise error from None
+
+
+def project_protection(row, *, team_id):
     """Validate one authoritative row, including an explicit absent-row legacy."""
     try:
         if row is None or row["mode"] == "legacy":
@@ -96,7 +111,7 @@ def project_protection(row):
         binding["history_id"] = str(binding["history_id"])
         return validate_binding(binding)
     except Exception:
-        logger.exception("Authoritative protected-team binding unavailable")
+        logger.exception("Authoritative protected-team binding unavailable: team=%s", team_id)
         raise refusal("protected_state_unavailable") from None
 
 
@@ -109,10 +124,13 @@ async def protection(tx, domain, name):
             domain,
             name,
         )
-    except Exception:
-        logger.exception("Authoritative protected-team binding unavailable")
-        raise refusal("protected_state_unavailable") from None
-    return project_protection(row)
+    except Exception as exc:
+        logger.exception("Authoritative protected-team binding unavailable: team=%s", build_team_id(domain, name))
+        error = refusal("protected_state_unavailable")
+        if isinstance(exc, asyncpg.LockNotAvailableError):
+            error.headers = {"Retry-After": "1"}
+        raise error from None
+    return project_protection(row, team_id=build_team_id(domain, name))
 
 
 async def _request_body(request):

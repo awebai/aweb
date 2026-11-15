@@ -1452,10 +1452,21 @@ Three unauthenticated routes report the registry's state. None is rate limited.
 | `GET /health` | The same as `/ready` | The same response as `/ready` | Monitoring and manual checks |
 
 `/ready`, `/health` and its alias `/ops/health` are one handler. Their body is
-`{"status": "ok" | "unhealthy", "version": "<awid-service version>", "checks": {...}}`
+`{"status": "ok" | "unhealthy", "version": "<awid-service version>", "checks": {...}, "capabilities": {"team_protection": true}}`
 with either status code. `checks` holds `redis` and `database` (`"ok"` or
 `"error"`), the database `schema` and the `rate_limiter` class in use; failure
 details go to the service log, never the body.
+
+`capabilities.team_protection: true` advertises implementation support for
+explicit protection in authorized team reads and in the negotiated exact
+certificate-status read (`?protection=1`). It says nothing about a particular
+team's protection, custody, cutover eligibility or the health of dependencies.
+Only the flag grants positive capability support. For startup diagnostics, a
+successfully answered parseable version in a release line below `0.5.40` (for
+example `0.5.39`) identifies an older registry. An absent flag on `0.5.40` or
+later, including `0.5.40rc1`, remains unknown and is retried. A failed request
+or unclassifiable response remains unknown, never older. Startup diagnostics
+do not replace per-operation authority checks or renew cached evidence.
 
 Point a restarting probe at `/live` only. A probe that restarts the process on
 `/ready` or `/health` restarts every replica during a Redis or database outage,

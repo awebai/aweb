@@ -44,6 +44,10 @@ protection projections in one bounded query. Unavailable or malformed protection
 evidence refuses the whole page with 503 `protected_state_unavailable`, without
 omitting individual teams or inferring legacy.
 
+Read lock timeouts return 503 `protected_state_unavailable` with `Retry-After: 1`.
+An exclusive namespace effect blocks team reads across that namespace; keep its
+transaction short and perform no network work while it holds the effect locks.
+
 Every AWID controller effect takes the namespace guard then canonical-team
 guards in lexical order, including when a protection row is absent. Team effects
 and activation share the namespace guard; namespace cascade takes it exclusively.
