@@ -165,13 +165,16 @@ async def test_address_outage_preserves_verified_sender_and_refuses_unknown_befo
     env = privacy_app
     async with address_reader(env):
         verified = await prepare_actor(env, "alice", address=f"example.test/adbv-{uuid4().hex}")
-        unknown = await prepare_actor(env, "bob", address="")
-        target = env.actors["carol"]
-        before = {actor.id: await projection(env, actor) for actor in (verified, unknown)}
+        verified_empty = await prepare_actor(env, "bob", address="")
+        unknown = await prepare_actor(env, "carol", address="")
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET did_aw_verified_key=NULL WHERE agent_id=$1", unknown.id,
+        )
+        before = {actor.id: await projection(env, actor) for actor in (verified, verified_empty, unknown)}
         async with stalled_address_read(env):
-            kept_id, refused_id = str(uuid4()), str(uuid4())
+            kept_id, empty_id, refused_id = str(uuid4()), str(uuid4()), str(uuid4())
             kept = await send(env, verified, {
-                "to_did": target.did, "message_id": kept_id,
+                "to_did": verified_empty.did, "message_id": kept_id,
                 "subject": "existing sender", "body": "verified local address stays usable",
             })
             assert kept.status_code == 200, kept.text
@@ -182,9 +185,20 @@ async def test_address_outage_preserves_verified_sender_and_refuses_unknown_befo
             assert stored["from_did"] == verified.stable_id
             assert stored["from_address"] == verified.address
 
+            empty = await send(env, verified_empty, {
+                "to_did": verified.did, "message_id": empty_id,
+                "subject": "verified empty", "body": "verified addressless sender stays usable",
+            })
+            assert empty.status_code == 200, empty.text
+            stored_empty = await env.db.fetch_one(
+                "SELECT from_did,from_address FROM {{tables.messages}} WHERE message_id=$1", UUID(empty_id),
+            )
+            assert stored_empty["from_did"] == verified_empty.stable_id
+            assert stored_empty["from_address"] is None
+
             dispatched = len(env.dispatched)
             refused = await send(env, unknown, {
-                "to_did": target.did, "message_id": refused_id,
+                "to_did": verified.did, "message_id": refused_id,
                 "subject": "unknown address", "body": "must not choose another From",
             })
             assert refused.status_code == 503, refused.text
@@ -194,5 +208,5 @@ async def test_address_outage_preserves_verified_sender_and_refuses_unknown_befo
                 UUID(refused_id),
             ) == 0
             assert len(env.dispatched) == dispatched
-            for actor in (verified, unknown):
+            for actor in (verified, verified_empty, unknown):
                 assert await projection(env, actor) == before[actor.id]
