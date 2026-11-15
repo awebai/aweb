@@ -57,6 +57,8 @@ failed required lookups give unavailable and never establish a human or kind.
 A valid root-to-agent chain without a human reports `no_human` and kind `agent`.
 Getting a nearest human establishes responsibility, not team membership,
 resource access or how that human's key was used.
+The signed From address is a claim by the signer, not a verified address, and
+is therefore absent from the result.
 
 Exit status is `0` for a valid proof (`nearest_human` or `no_human` with
 `identity_valid:true`) and a normal unknown/no-chain answer, `1` for invalid
@@ -79,3 +81,6 @@ the disposable real-service journey permits HTTP through development mode only.
 An unavailable DNS root or registry, or a root that no longer agrees with DNS,
 cannot produce a valid result. A report is a check against current public
 evidence, not a historical proof of a message's delivery time.
+A global ID's continuity is only as current as the registry its chain domain
+or signed address selects; this stateless outside verifier cannot detect that
+registry serving an older log.

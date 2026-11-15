@@ -571,9 +571,13 @@ verify_ts_received "$plain_inbox" "" "$PLAIN_MAIL_ID"
 echo "PASS: an unenrolled received sender remains unknown with no inferred human"
 
 echo "Proving exported mail with only public bytes, real DNS and public registry reads"
+encrypted_mail="$(run_cli alice mail send --e2ee --to-address beta.example.net/bob --subject 'encrypted export' --body 'outside encrypted proof' --json)"
+ENCRYPTED_MAIL_ID="$(printf '%s' "$encrypted_mail" | json_field message_id)"
+[[ -n "$ENCRYPTED_MAIL_ID" ]]
 mkdir -p "$RUNTIME/envelopes"
 run_cli bob mail show --message-id "$MAIL_ID" --envelope > "$RUNTIME/envelopes/adopted.json"
 run_cli bob mail show --message-id "$PLAIN_MAIL_ID" --envelope > "$RUNTIME/envelopes/chainless.json"
+run_cli bob mail show --message-id "$ENCRYPTED_MAIL_ID" --envelope > "$RUNTIME/envelopes/encrypted.json"
 # Unlike the recipient container, this outsider has no identity volume at all.
 # Its only bind mount is the exported messages; its HOME and cwd are fresh.
 verify_export() {
@@ -615,5 +619,10 @@ removed_certificate="$(printf '%s' "$removed" | json_field certificate_id)"
 [[ "$(curl -sS "$AWID_A_URL/v1/namespaces/alpha.example.com/teams/alpha/certificates/$removed_certificate/status" | json_field status)" == revoked ]]
 [[ "$(who_json alice)" == "$ALICE_WHO" ]]
 echo "PASS: removing alice from team alpha revokes her team certificate and leaves her ID chain verified"
+
+# Self-revocation is ID authority, independent of the removed team membership.
+# Run it last so the other live-sender controls keep their valid neighboring case.
+run_cli alice id revoke "$ALICE_DID_AW" --json >/dev/null
+verify_export revoked
 
 echo "PASS: real DNS, Secret Service, PTY, constructor chains, unchanged resume, outsider verification, mail and chat across disjoint registries"

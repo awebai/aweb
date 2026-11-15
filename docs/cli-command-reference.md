@@ -16,7 +16,7 @@ to refresh it.
 | Family | Commands |
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
-| Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
+| Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `verify`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
 | Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
@@ -2282,6 +2282,27 @@ Flags:
 - `--registry string AWID registry URL override`
 - `--team-id string Canonical team id (<name>:<namespace>; defaults to active team)`
 
+## `verify`
+
+### `verify`
+
+Verify an exported signed message using only its original signed content,
+DNS and public registry reads. No identity, team, token or initialization is needed.
+FILE defaults to stdin; - also reads stdin. Export with:
+  aw mail show --message-id ID --envelope > message.json
+
+Print the same responsibility result as aw who, with invalid proof shown explicitly
+as invalid. --json retains the shared outcome and identity_valid fields: invalid
+proof has outcome unknown and identity_valid false. Lookup failures are unavailable,
+never valid. A verified signature alone does not establish a responsible human.
+Encrypted exports can be verified without decrypting their content.
+Exit 0 for valid or normal unknown results, 1 for invalid proof, 2 for unavailable
+evidence or unreadable input.
+
+Flags:
+- `-h, --help help for verify`
+- `--registry string Registry origin, when the domain's _awid record names none (same restriction as aw who)`
+
 ## `whoami`
 
 ### `whoami`
@@ -3324,7 +3345,7 @@ Flags:
 
 Show mail by conversation or exact message ID.
 
-With --message-id, one unique message is selected. The conversation-window direction and 500-message ceiling below do not apply.
+With --message-id, one unique message is selected. The conversation-window direction and 500-message ceiling below do not apply. Add --envelope to export its original signed envelope as JSON for aw verify, without acknowledging it.
 
 With --conversation-id, --limit caps how many messages are returned and defaults to 200. The messages returned are the OLDEST ones, so on a conversation longer than the limit the newest messages are the ones missing - which is the opposite of what someone checking for recent mail expects.
 
@@ -3334,6 +3355,7 @@ To read a whole conversation, pass --limit above its length and check the return
 
 Flags:
 - `--conversation-id string Mail conversation to inspect`
+- `--envelope Export an exact message's original signed envelope as JSON for aw verify`
 - `-h, --help help for show`
 - `--limit int For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed (default 200)`
 - `--message-id string Legacy mail message to inspect`

@@ -56,6 +56,23 @@ def main():
             assert human in verify(adopted, text=True)
             print("PASS: exported adopted agent verifies from file and stdin with no credentials")
 
+            omitted = json.loads(adopted)
+            del omitted["id_chain"]
+            result = verify(json.dumps(omitted))
+            assert result["outcome"] == "nearest_human" and result["identity_valid"] is True, result
+            assert result["human_id"] == human and result["kind"] == "agent", result
+            assert result["reason"] == "verified", result
+            print("PASS: omitting an enrolled global sender's chain recovers its current tree result")
+
+            encrypted = Path("/envelopes/encrypted.json").read_text()
+            envelope = json.loads(encrypted)
+            assert "encrypted_envelope" in envelope and "signed_payload" not in envelope, envelope
+            assert "outside encrypted proof" not in encrypted
+            result = verify(encrypted)
+            assert result["outcome"] == "nearest_human" and result["identity_valid"] is True, result
+            assert result["human_id"] == human and result["kind"] == "agent", result
+            print("PASS: real encrypted mail export verifies without a decryption key or plaintext")
+
             plain = Path("/envelopes/chainless.json").read_text()
             result = verify(plain)
             no_authority(result)
@@ -85,6 +102,11 @@ def main():
             no_authority(result)
             assert result["identity_valid"] is False or result["outcome"] == "unavailable", result
             print("PASS: changed authoritative DNS root gives invalid or unavailable, never valid")
+        elif mode == "revoked":
+            result = verify(adopted, exit_codes=(1,))
+            no_authority(result)
+            assert result["identity_valid"] is False and result["reason"] == "revoked", result
+            print("PASS: a revoked agent's previously exported mail is invalid with exit 1")
         else:
             raise AssertionError(mode)
 
