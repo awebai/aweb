@@ -6,7 +6,7 @@ act is signed once."""
 
 from playwright.async_api import expect
 
-from aweb_naapp.runtime.protected_signer import SignerRefused
+from aweb_naapp.runtime.protected_signer import ProtectedSigner, SignerRefused
 from tests.console.test_handoff_governance_page import open_page
 from tests.console.test_handoff_link_page import link_service as link_service  # noqa: F401
 from tests.console.test_handoff_link_page import sign_in, watch_posts  # noqa: F401
@@ -29,6 +29,18 @@ def fail_the_read_after_the_touch(s, monkeypatch):
         return await observe(context, purpose=purpose)
 
     monkeypatch.setattr(authority, "observe", once)
+
+
+def lose_the_answer_after_signing(monkeypatch):
+    """A mailed-link decision that signs and applies, then loses its answer.
+    The page's signer is the fixture's own instance, so its class is patched."""
+    decide = ProtectedSigner.link_decide
+
+    async def lose_the_answer(self, *args, **kwargs):
+        await decide(self, *args, **kwargs)
+        raise SignerRefused("evidence_unavailable")
+
+    monkeypatch.setattr(ProtectedSigner, "link_decide", lose_the_answer)
 
 
 async def signed(s):
@@ -96,15 +108,7 @@ async def test_a_mailed_link_deny_that_fails_after_the_touch_never_turns_into_ap
 
 async def test_a_mailed_link_answer_lost_after_signing_tries_again_into_not_confirmed(link_service, monkeypatch):  # noqa: F811
     s = link_service
-    # The page's signer is the fixture's own instance: patch its class.
-    service = type(s.world.signer)
-    decide = service.link_decide
-
-    async def lose_the_answer(self, *args, **kwargs):
-        await decide(self, *args, **kwargs)
-        raise SignerRefused("evidence_unavailable")  # Lose only the already applied answer.
-
-    monkeypatch.setattr(service, "link_decide", lose_the_answer)
+    lose_the_answer_after_signing(monkeypatch)
     context, page, _, _ = await open_page(s, 375)
     async with context:
         await page.goto(s.link)
@@ -120,3 +124,42 @@ async def test_a_mailed_link_answer_lost_after_signing_tries_again_into_not_conf
         owner_page = page.locator("#handoff-outcome-text").get_by_role("link", name="owner page", exact=True)
         await expect(owner_page).to_have_attribute("href", "/")
         assert await signed(s) == 1
+
+
+async def test_the_expiry_check_after_a_lost_answer_keeps_it_unconfirmed(link_service, monkeypatch):  # noqa: F811
+    s = link_service
+    lose_the_answer_after_signing(monkeypatch)
+    context, page, _, _ = await open_page(s, 375)
+    async with context:
+        await page.clock.install()
+        posts = watch_posts(page, s.origin)
+        await page.goto(s.link)
+        await page.locator("#handoff-action").click()
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "retry")
+        # The page's own expiry check reads a link the signing already spent.
+        await page.clock.fast_forward("25:00:00")
+        await expect(page.locator("#handoff-title")).to_have_text("Not confirmed")
+        await expect(page.locator("#handoff-governance-title")).to_have_text("What was asked")
+        await expect(page.locator("#handoff-governance")).to_be_visible()
+        await expect(page.locator("#handoff-action")).to_be_hidden()
+        handoff = f"/handoff/{s.prepared.handoff_id}/link"
+        assert posts == [handoff, handoff + "/options", handoff + "/decide", handoff]
+        assert await signed(s) == 1
+
+
+async def test_an_approved_request_that_expires_unsigned_is_never_called_undecided(link_service, monkeypatch):  # noqa: F811
+    from datetime import timedelta
+
+    s = link_service
+    fail_the_read_after_the_touch(s, monkeypatch)
+    context, page, _, _ = await open_page(s, 375)
+    async with context:
+        await page.clock.install()
+        await page.goto(s.link)
+        await page.locator("#handoff-action").click()
+        await expect(page.locator("body")).to_have_attribute("data-handoff-state", "retry")
+        s.world.clock.advance(timedelta(hours=25))
+        await page.clock.fast_forward("25:00:00")
+        await expect(page.locator("#handoff-title")).to_have_text("Not confirmed")
+        await expect(page.locator("#handoff-action")).to_be_hidden()
+        assert await signed(s) == 0

@@ -317,9 +317,18 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
       checkAt(30000);  // Still pending at the signer: the clocks differ.
     } catch (error) {
       if (decided || inFlight) return;
-      if (error.status === 410) linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
+      if (retrying) unconfirmedOutcome();
+      else if (error.status === 410) linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
       else linkUnavailable();
     }
+  }
+
+  // A decision was sent before this answer, and its own answer was lost or
+  // was a 503: a spent link or an expiry is not evidence that nothing was
+  // decided or applied, so the page cannot say how it ended.
+  function unconfirmedOutcome() {
+    document.body.dataset.handoffState = "unconfirmed";
+    outcome(...unconfirmed);
   }
 
   async function linkLoad() {
@@ -454,11 +463,8 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
         // Only an approval has a retry lane; a failed rejection stays
         // unconfirmed below, never offered back as an approval.
         notYet();
-      } else if (sent || (retrying && error.status !== 410)) {
-        // A retry refused before sending: the earlier attempt may have
-        // applied the act, so this page cannot say how it ended.
-        document.body.dataset.handoffState = "unconfirmed";
-        outcome(...unconfirmed);
+      } else if (sent || retrying) {
+        unconfirmedOutcome();
       } else if (error.status === 410) {
         // The signer itself answered that the request expired undecided.
         linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
