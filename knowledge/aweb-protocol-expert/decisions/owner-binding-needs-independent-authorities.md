@@ -52,6 +52,9 @@ This applies [one principal and one policy per request](/aweb-expert/decisions/o
 and [independent assurance dimensions](/aweb-protocol-expert/lessons/vary-independent-assurance-dimensions.md)
 to the specific composition needed by owner binding. The reducing-control
 neighbor is [local stop is not new binding authority](/aweb-protocol-expert/lessons/local-stop-is-not-new-binding-authority.md).
+[The caller carries the enforcer's approval request](/aweb-protocol-expert/decisions/the-caller-carries-the-enforcer-approval-request.md)
+decides which actor carries approval evidence. It keeps these authorities
+independent.
 
 # Provenance
 
