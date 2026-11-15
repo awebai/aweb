@@ -128,9 +128,12 @@ def _after(cursor: str | None):
         return None, None
     expires, _, operation_id = cursor.partition("|")
     try:
-        return datetime.fromisoformat(expires), str(uuid.UUID(operation_id))
+        at = datetime.fromisoformat(expires)
+        operation_id = str(uuid.UUID(operation_id))
     except ValueError:
         return None, None
+    # A time without an offset names no instant.
+    return (at, operation_id) if at.utcoffset() is not None else (None, None)
 
 
 async def owner_view(composition, *, scope: str, subject: str, now: datetime | None = None,
@@ -325,17 +328,21 @@ async def _member_kind(c, record):
 
 
 async def _deciders(c, history, subject):
-    """Mark each decision the signed-in approver made. The approval records
-    which approver decided; the audit names only the governed human, the same
-    for every approver of the scope."""
+    """Mark each decision the signed-in approver made, in one read for the
+    page. The approval records which approver decided; the audit names only
+    the governed human, the same for every approver of the scope."""
+    store = c.signer.store
+    decided = {row["approval_id"]: row for row in await store.db.fetch_all(
+        "SELECT approval_id,decided_subject,decided_at FROM {{tables.approvals}} WHERE approval_id = ANY($1::text[])",
+        [item["approval_id"] for item in history],
+    )} if history else {}
     for item in history:
-        approval = await c.signer.store.get(item["approval_id"])
-        decider = approval.decided_by if approval is not None else None
-        item["decided_by_you"] = decider is not None and decider.subject == subject
+        approval = decided.get(item["approval_id"])
+        item["decided_by_you"] = approval is not None and approval["decided_subject"] == subject
         # A refused or unresolved request is dated by the approver's decision;
         # without one it has no time to show, never its expiry.
         if item["state"] in ("refused", "unresolved"):
-            item["at"] = _stamp(approval.decided_at) if approval is not None and approval.decided_at else None
+            item["at"] = _stamp(approval["decided_at"]) if approval is not None and approval["decided_at"] else None
     return history
 
 

@@ -79,7 +79,9 @@ async def test_every_waiting_and_unconfirmed_request_is_reachable_from_the_serve
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("query", ["list=everything&after=x", "list=pending&after=not-a-cursor",
-                                   "list=history&after=2026-01-01T00:00:00+00:00|not-an-id"])
+                                   "list=history&after=2026-01-01T00:00:00+00:00|not-an-id",
+                                   # A time with no offset names no instant.
+                                   "list=history&after=2026-01-01T00:00:00|00000000-0000-4000-8000-000000000000"])
 async def test_a_malformed_older_page_is_refused(admissions, tmp_path, query):
     async with owner_http(admissions, tmp_path) as (client, _, _):
         assert (await client.get("/older?" + query)).status_code == 400
