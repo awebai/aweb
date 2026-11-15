@@ -639,9 +639,25 @@ POST   /v1/namespaces/{domain}/teams/{name}/rotate
                  "team_server":     { "record", "signature" },
                  "team_custodians": [{ "record", "signature" }],
                  "member_custody":  [{ "record", "signature" }],
-                 "member_person":   [{ "record", "signature" }] } }
+                 "member_person":   [{ "record", "signature" }] },
+               "member_certificates": [{                  (optional)
+                 "old_certificate_id": "uuid",
+                 "certificate": "<base64 certificate under the NEW key>",
+                 "custody": { "record", "signature" },   (optional)
+                 "person":  { "record", "signature" } }] } (optional)
        Note: invalidates ALL existing certificates (they were
        signed by the old key). Members need new certificates.
+       member_certificates replaces, in the same transaction, each named
+       active certificate: AWID revokes it and registers the given
+       certificate, which must be signed by the new key for the same
+       member, alias, did:aw, address and identity scope; custody and
+       person are that member's records for the new certificate, signed by
+       the new key (a custody record's custodian must be registered). An
+       old certificate that is not active: 409
+       member_certificate_not_active; a certificate or record that does
+       not hold: 422; either way nothing changes. A registry that predates
+       the field refuses it with 422. Certificates not named are left as
+       they are.
        resigned_records carries every team-key-signed record of the team
        re-signed with the NEW key: unchanged apart from team_did_key and a
        newer issued_at, exactly one per stored record of each kind, and
@@ -720,6 +736,9 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
        member. If member_address is present, awid validates that it
        resolves to member_did_aw before recording the certificate.
        Response: { "registered": true, "certificate_id": "uuid" }
+       The certificate is verified under, and inserted while holding, the
+       team row's current key (the lock rotate takes); a key change that
+       commits meanwhile refuses it 409 team_key_not_current.
 
 GET    /v1/namespaces/{domain}/teams/{name}/certificates
        List issued certificates (active and revoked).

@@ -33,7 +33,7 @@ from awid.team_ids import build_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from awid_service.delivery_origin import validate_delivery_origin
 from awid.controller_request import ControllerAuthRoute, verified_controller_proof, verify_controller_json_request
-from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
+from awid_service.attestation_rotation import ResignedRecords, SignedRecord, apply_resigned_records, record_member_records
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
 
@@ -385,11 +385,24 @@ class TeamCreateRequest(BaseModel):
         return value
 
 
+class MemberCertificateChange(BaseModel):
+    """A kept member's certificate under the new key, replacing
+    ``old_certificate_id``, with the member's records for it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    old_certificate_id: str = Field(..., min_length=1, max_length=256)
+    certificate: str = Field(..., min_length=1, max_length=16384)
+    custody: SignedRecord | None = None
+    person: SignedRecord | None = None
+
+
 class TeamRotateKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     new_team_did_key: str = Field(..., min_length=1, max_length=256)
     resigned_records: ResignedRecords | None = None
+    member_certificates: list[MemberCertificateChange] = Field(default_factory=list)
 
     @field_validator("new_team_did_key")
     @classmethod
@@ -856,6 +869,66 @@ async def _bounded_rotate_body(request: Request) -> TeamRotateKeyRequest:
         raise RequestValidationError(exc.errors()) from exc
 
 
+async def _replace_member_certificates(
+    tx, *, team_uuid, team_id: str, new_team_did_key: str, changes: list[MemberCertificateChange],
+) -> None:
+    """In the rotation's transaction, revoke each named active certificate and
+    register its replacement: the same member, alias and identity scope,
+    signed by the new key. Then record the member's records for it."""
+    now = datetime.now(timezone.utc)
+    for change in changes:
+        old = await tx.fetch_one(
+            """
+            SELECT member_did_key, member_did_aw, member_address, alias, identity_scope
+            FROM {{tables.team_certificates}}
+            WHERE team_uuid = $1 AND certificate_id = $2 AND revoked_at IS NULL
+            FOR UPDATE
+            """,
+            team_uuid, change.old_certificate_id,
+        )
+        if old is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "member_certificate_not_active", "message": f"No active certificate {change.old_certificate_id} in this team"},
+            )
+        cert = _parse_certificate_blob(change.certificate) or {}
+        try:
+            replacement = CertificateRegisterRequest(
+                certificate_id=str(cert.get("certificate_id") or ""),
+                member_did_key=old["member_did_key"],
+                member_did_aw=old["member_did_aw"],
+                member_address=old["member_address"],
+                alias=old["alias"],
+                identity_scope=old["identity_scope"],
+                certificate=change.certificate,
+            )
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail="member certificate is not a team certificate") from exc
+        _verify_certificate_blob(change.certificate, team_id=team_id, team_did_key=new_team_did_key, body=replacement)
+        await tx.execute(
+            """
+            UPDATE {{tables.team_certificates}} SET revoked_at = NOW()
+            WHERE team_uuid = $1 AND certificate_id = $2
+            """,
+            team_uuid, change.old_certificate_id,
+        )
+        await tx.execute(
+            """
+            INSERT INTO {{tables.team_certificates}}
+                (team_uuid, certificate_id, member_did_key, member_did_aw,
+                 member_address, alias, identity_scope, certificate)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            team_uuid, replacement.certificate_id, replacement.member_did_key, replacement.member_did_aw,
+            replacement.member_address, replacement.alias, replacement.identity_scope, change.certificate,
+        )
+        await record_member_records(
+            tx, team_uuid=team_uuid, team_id=team_id, new_team_did_key=new_team_did_key,
+            certificate_id=replacement.certificate_id, member_did_key=replacement.member_did_key,
+            custody=change.custody, person=change.person, now=now,
+        )
+
+
 @router.post(
     "/{name}/rotate",
     response_model=TeamRotateResponse,
@@ -902,6 +975,10 @@ async def rotate_team_key(
             domain,
             name,
             body.new_team_did_key,
+        )
+        await _replace_member_certificates(
+            tx, team_uuid=old_row["team_uuid"], team_id=build_team_id(domain, name),
+            new_team_did_key=body.new_team_did_key, changes=body.member_certificates,
         )
         proof = verified_controller_proof(request)
         await tx.execute(
