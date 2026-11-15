@@ -570,6 +570,44 @@ plain_inbox="$(run_cli bob mail inbox --show-all --json)"
 verify_ts_received "$plain_inbox" "" "$PLAIN_MAIL_ID"
 echo "PASS: an unenrolled received sender remains unknown with no inferred human"
 
+echo "Proving exported mail with only public bytes, real DNS and public registry reads"
+mkdir -p "$RUNTIME/envelopes"
+run_cli bob mail show --message-id "$MAIL_ID" --envelope > "$RUNTIME/envelopes/adopted.json"
+run_cli bob mail show --message-id "$PLAIN_MAIL_ID" --envelope > "$RUNTIME/envelopes/chainless.json"
+# Unlike the recipient container, this outsider has no identity volume at all.
+# Its only bind mount is the exported messages; its HOME and cwd are fresh.
+verify_export() {
+  docker run --rm --network "${PROJECT}_default" --dns "$DNS_IP" \
+    -v "$RUNTIME/envelopes:/envelopes:ro" --entrypoint python3 \
+    "$(compose images -q cli | head -1)" /usr/local/bin/cross-registry-offline-verifier.py "$1" "$ALICE_HUMAN"
+}
+verify_export controls
+compose stop awid-a
+verify_export unavailable
+compose start awid-a
+wait_health awid-a "$AWID_A_URL" awid-a
+publish_dns "$BOB_CONTROLLER" "$BOB_CONTROLLER"
+dns_changed=0
+for _ in $(seq 1 30); do
+  if ! seen="$(run_cli alice id namespace check-txt --domain alpha.example.com --json 2>&1)" \
+    && [[ "$seen" == *"DNS controller $BOB_CONTROLLER does not match local controller $ALICE_CONTROLLER"* ]]; then
+    dns_changed=1; break
+  fi
+  sleep 1
+done
+[[ "$dns_changed" == 1 ]] || { printf '%s\n' "$seen" >&2; exit 1; }
+verify_export dns-root
+publish_dns "$ALICE_CONTROLLER" "$BOB_CONTROLLER"
+# CoreDNS reload is asynchronous; establish restoration before later controls.
+dns_restored=0
+for _ in $(seq 1 30); do
+  if run_cli alice id namespace check-txt --domain alpha.example.com --json >/dev/null 2>&1; then
+    dns_restored=1; break
+  fi
+  sleep 1
+done
+[[ "$dns_restored" == 1 ]]
+
 echo "Proving team membership removal is not ID revocation"
 removed="$(run_cli alice id team remove-member --team alpha --namespace alpha.example.com --member alpha.example.com/alice --json)"
 removed_certificate="$(printf '%s' "$removed" | json_field certificate_id)"

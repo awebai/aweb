@@ -30,6 +30,7 @@ RUN python3 /tmp/federation-cli-user.py "$FIXTURE_UID" "$FIXTURE_GID" && rm /tmp
 COPY --from=build /out/aw /usr/local/bin/aw
 COPY --from=build /out/id-tree-verifier /usr/local/bin/id-tree-verifier
 COPY scripts/cross-registry-human-journey.py /usr/local/bin/cross-registry-human-journey.py
+COPY scripts/cross-registry-offline-verifier.py /usr/local/bin/cross-registry-offline-verifier.py
 COPY --from=channel-build /journey/channel-core/dist /journey/channel-core/dist
 COPY --from=channel-build /journey/channel-core/node_modules /journey/channel-core/node_modules
 COPY channel-core/package.json /journey/channel-core/package.json
