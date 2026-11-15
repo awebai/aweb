@@ -7,6 +7,12 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+func whoTestEnrollment(domain string) func(context.Context, string, string) awid.IDTreeEnrollmentResult {
+	return func(context.Context, string, string) awid.IDTreeEnrollmentResult {
+		return awid.IDTreeEnrollmentResult{State: "enrolled", Domain: &domain}
+	}
+}
+
 // The frozen chain/status are valid in example.com. Only the independent
 // key-route enrollment changes, so a refusal cannot be a broken signature.
 func TestWhoPresentedGlobalChainMustMatchEnrollmentDomain(t *testing.T) {

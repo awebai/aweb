@@ -220,14 +220,15 @@ func TestWhoRefusesARegistryTheDomainDoesNotName(t *testing.T) {
 func TestWhoInstalledGlobalChainIsIndependentOfAddressDomain(t *testing.T) {
 	v := loadWhoVectors(t)
 	for _, tc := range []struct {
-		name, address, status, outcome, reason string
-		certificates                           []string
+		name, address, enrollment, status, outcome, reason string
+		certificates                                       []string
 	}{
-		{"same-domain", "example.com/child", "normal", "nearest_human", "verified", []string{"alice", "global-agent"}},
-		{"alias-nearest-human", "signup-owner.example.com/child", "normal", "nearest_human", "verified", []string{"alice", "global-agent"}},
-		{"alias-no-human", "signup-owner.example.com/child", "registered-root-agent-rotated", "no_human", "verified", []string{"registered-root-agent"}},
-		{"alias-revoked", "signup-owner.example.com/child", "alice-revoked-now", "unknown", "revoked", []string{"alice", "global-agent"}},
-		{"alias-unavailable", "signup-owner.example.com/child", "", "unavailable", "evidence_unavailable", []string{"alice", "global-agent"}},
+		{"same-domain", "example.com/child", "example.com", "normal", "nearest_human", "verified", []string{"alice", "global-agent"}},
+		{"alias-nearest-human", "signup-owner.example.com/child", "example.com", "normal", "nearest_human", "verified", []string{"alice", "global-agent"}},
+		{"alias-no-human", "signup-owner.example.com/child", "example.com", "registered-root-agent-rotated", "no_human", "verified", []string{"registered-root-agent"}},
+		{"alias-revoked", "signup-owner.example.com/child", "example.com", "alice-revoked-now", "unknown", "revoked", []string{"alice", "global-agent"}},
+		{"alias-unavailable", "signup-owner.example.com/child", "example.com", "", "unavailable", "evidence_unavailable", []string{"alice", "global-agent"}},
+		{"foreign-enrollment", "signup-owner.example.com/child", "other.example.com", "normal", "unknown", "domain_mismatch", []string{"alice", "global-agent"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := whoIdentity(t, v, false, false)
@@ -259,8 +260,8 @@ func TestWhoInstalledGlobalChainIsIndependentOfAddressDomain(t *testing.T) {
 				age := float64(0)
 				evidence = &awid.IDChainEvidence{Status: status, NamespaceAuthority: map[string]any{"domain": "example.com", "dns_name": "_awid.example.com", "inherited": false, "controller_key": epoch["did_key"]}, AgeSeconds: &age}
 			}
-			out, err := executeWho(t.Context(), whoOptions{WorkingDir: dir, Status: whoFixedStatus{evidence}, TXTResolver: staticTXTResolver{}})
-			if err != nil || out.ID != key.DIDAW || out.Domain != "example.com" || out.Outcome != tc.outcome || out.Reason != tc.reason {
+			out, err := executeWho(t.Context(), whoOptions{WorkingDir: dir, Status: whoFixedStatus{evidence}, TXTResolver: staticTXTResolver{}, ReceivedEnrollment: whoTestEnrollment(tc.enrollment)})
+			if err != nil || out.ID != key.DIDAW || out.Domain != tc.enrollment || out.Outcome != tc.outcome || out.Reason != tc.reason {
 				t.Fatalf("address %s: out %+v err %v", tc.address, out, err)
 			}
 			if tc.reason == "verified" {
@@ -398,7 +399,7 @@ func TestWhoReceivedUsesSharedCurrentStatus(t *testing.T) {
 				t.Fatalf("chat wire chain refused: %v", err)
 			}
 
-			out, err := executeWhoReceived(context.Background(), msg, whoOptions{Status: whoFixedStatus{evidence}, TXTResolver: staticTXTResolver{}})
+			out, err := executeWhoReceived(context.Background(), msg, whoOptions{Status: whoFixedStatus{evidence}, TXTResolver: staticTXTResolver{}, ReceivedEnrollment: whoTestEnrollment("example.com")})
 			if err != nil || out.Outcome != c.Expected.Outcome || out.Reason != c.Expected.Reason {
 				t.Fatalf("out %+v expected %+v err %v", out, c.Expected, err)
 			}

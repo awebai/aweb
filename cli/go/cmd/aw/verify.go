@@ -152,9 +152,9 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) who
 		}
 		return domainRegistryURL(authority, override)
 	}
-	if export.IDChain == nil && strings.HasPrefix(subject.ID, "did:aw:") {
-		// A bare global ID has no tree domain. Its signed address selects the key
-		// registry; only the coherent key response may name its enrollment domain.
+	if strings.HasPrefix(subject.ID, "did:aw:") {
+		// Its signed address selects the key registry independently of the
+		// presented chain; only the coherent key response names enrollment.
 		registryURL := strings.TrimSpace(opts.RegistryURL)
 		if domain, _, ok := strings.Cut(address, "/"); ok {
 			var err error

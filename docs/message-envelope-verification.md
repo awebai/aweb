@@ -66,11 +66,13 @@ proof (`identity_valid:false`), and `2` for unavailable evidence or unreadable
 input. A nonzero verification result still prints one result document under
 `--json`; diagnostics go to stderr.
 
-The chain's domain selects its own DNS authority and registry. A global sender
-without a presented chain is checked for enrollment through public key reads:
+The chain's domain selects its own DNS authority and status registry. Every
+global sender is checked for enrollment through independent public key reads:
 its signed address selects the key registry, or an explicit `--registry` or the
 default public registry supplies that route when the signed sender is an alias.
-Only fresh, subject-bound enrollment evidence selects the ID-tree domain.
+Only fresh, subject-bound enrollment evidence selects the ID-tree domain, and
+a presented chain in another domain is invalid with `domain_mismatch`.
+Every certificate inside a chain must also belong to that same domain (R3).
 Omission of an enrolled sender's chain does not bypass its current registration.
 
 `--registry ORIGIN` has the same restriction as `aw who`: it supplies a registry
@@ -81,6 +83,6 @@ the disposable real-service journey permits HTTP through development mode only.
 An unavailable DNS root or registry, or a root that no longer agrees with DNS,
 cannot produce a valid result. A report is a check against current public
 evidence, not a historical proof of a message's delivery time.
-A global ID's continuity is only as current as the registry its chain domain
-or signed address selects; this stateless outside verifier cannot detect that
+A global ID's continuity is only as current as the registry its signed address
+or explicit/default key route selects; this stateless outside verifier cannot detect that
 registry serving an older log.
