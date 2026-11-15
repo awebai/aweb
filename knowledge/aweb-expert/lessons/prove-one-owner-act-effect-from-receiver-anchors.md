@@ -53,12 +53,9 @@ amended. Check a receiver anchor's writer in source before you propose it,
 as the [evidence and reproduction standard](/aweb-expert/decisions/evidence-and-reproduction-standard.md)
 requires of every claim.
 
-Where these assertions apply is set by
-[an owner act's exact replay is tested only on the protected path](/aweb-expert/decisions/owner-act-replay-is-tested-only-on-the-protected-path.md).
-
 # Status
 
-Source fact at aweb main f268e6596: `credential_narrowing_authority` is
+Source fact at aweb main f268e6596, re-checked unchanged at 3bb8fefab: `credential_narrowing_authority` is
 inserted only in `naapp-lib/src/aweb_naapp/runtime/credential_audit/narrowing.py`;
 `credential_authorizations` is inserted in `recorder.py` there with
 `authority`, `commitment`, `signing` and `notice_contact_sha256`;
