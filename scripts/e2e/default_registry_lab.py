@@ -17,6 +17,7 @@ import time
 
 from default_registry_client import BINARY_SHA256, write_zone
 from lab_lifecycle import Resources, load_json
+from lab_quota_observer import write_private
 
 
 IMAGES = {
@@ -61,6 +62,10 @@ def tls_files(root, deadline, log):
     (root / "server.key").chmod(0o400)
 
 
+def publish_plan(path, plan):
+    write_private(path, plan)
+
+
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
@@ -96,13 +101,7 @@ def main():
             "volume_names": [], "published_listener": {"project": "", "service": "awid",
                 "container_name": label + "-awid", "host_ip": address, "published_port": 443,
                 "target_port": 8010, "protocol": "tcp"}}
-    with (args.out / "resources.plan.json").open("x") as stream:
-        json.dump(plan, stream, indent=2)
-        stream.flush()
-        os.fsync(stream.fileno())
-    directory = os.open(args.out, os.O_RDONLY | os.O_DIRECTORY)
-    os.fsync(directory)
-    os.close(directory)
+    publish_plan(args.out / "resources.plan.json", plan)
     print('resource plan: ' + str(args.out / 'resources.plan.json'), flush=True)
     resources = Resources(args.out, plan, body_end)
     result = {"primary": "FAIL", "cleanup": {"verdict": "UNKNOWN"}, "images": IMAGES}

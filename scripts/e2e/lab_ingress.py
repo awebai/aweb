@@ -8,6 +8,7 @@ isolation; registry public-address validation and TLS policy stay unchanged.
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 
@@ -18,6 +19,7 @@ class Ingress:
             raise ValueError('invalid ingress ownership')
         self.root, self.deadline = root, deadline
         self.chain = 'ADAZ_' + fixture_id[5:21]
+        self.forward_chain = self.chain + '_F'
         self.journal = root / 'ingress.private.jsonl'
 
     def call(self, argv, *, mutate=False):
@@ -54,7 +56,7 @@ class Ingress:
         if any(link.get('addr_info') for link in ipv6):
             raise ValueError('this profile requires no globally assigned IPv6')
         rules = self.call(['iptables', '-w', '2', '-S'])
-        if any(line.split()[:2] == ['-N', self.chain] for line in rules.splitlines()):
+        if any(line.split()[:2] in (['-N', self.chain], ['-N', self.forward_chain]) for line in rules.splitlines()):
             raise ValueError('ingress chain already exists; never adopted')
         if '-N DOCKER-USER' not in rules.splitlines():
             raise ValueError('reviewed Docker iptables ingress hook is unavailable')
@@ -63,8 +65,11 @@ class Ingress:
             ['-A', self.chain, '-m', 'conntrack', '--ctstate', 'ESTABLISHED,RELATED', '-j', 'ACCEPT'],
             ['-A', self.chain, '-p', 'tcp', '--dport', '22', '-j', 'ACCEPT'],
             ['-A', self.chain, '-j', 'DROP'],
+            ['-N', self.forward_chain],
+            ['-A', self.forward_chain, '-m', 'conntrack', '--ctstate', 'ESTABLISHED,RELATED', '-j', 'ACCEPT'],
+            ['-A', self.forward_chain, '-j', 'DROP'],
             ['-I', 'INPUT', '1', '-i', device, '-j', self.chain],
-            ['-I', 'DOCKER-USER', '1', '-i', device, '-j', 'DROP'],
+            ['-I', 'DOCKER-USER', '1', '-i', device, '-j', self.forward_chain],
         ]:
             # The DOCKER-USER rule is tagged with the owned chain as a comment;
             # no global save/restore or adoption of an existing rule occurs.
@@ -72,13 +77,20 @@ class Ingress:
                 argv = argv[:-2] + ['-m', 'comment', '--comment', self.chain, *argv[-2:]]
             self.call(['iptables', '-w', '2', *argv], mutate=True)
         readback = self.call(['iptables', '-w', '2', '-S'])
-        expected = f'-A INPUT -i {device} -j {self.chain}'
-        if expected not in readback.splitlines():
+        parsed = [shlex.split(line) for line in readback.splitlines()]
+        expected = ['-A', 'INPUT', '-i', device, '-j', self.chain]
+        if expected not in parsed:
             raise RuntimeError('owned INPUT jump readback differs')
-        expected_forward = f'-A DOCKER-USER -i {device} -m comment --comment {self.chain} -j DROP'
-        if expected_forward not in readback.splitlines():
+        expected_forward = ['-A', 'DOCKER-USER', '-i', device, '-m', 'comment', '--comment',
+                            self.chain, '-j', self.forward_chain]
+        forward_drop = ['-A', self.forward_chain, '-j', 'DROP']
+        permits = [index for index, rule in enumerate(parsed)
+                   if len(rule) == 8 and rule[:5] == ['-A', self.forward_chain, '-m', 'conntrack', '--ctstate']
+                   and set(rule[5].split(',')) == {'ESTABLISHED', 'RELATED'} and rule[6:] == ['-j', 'ACCEPT']]
+        if (expected_forward not in parsed or forward_drop not in parsed or len(permits) != 1
+                or permits[0] >= parsed.index(forward_drop)):
             raise RuntimeError('owned Docker ingress rule readback differs')
-        self.append({'kind': 'installed', 'chain': self.chain, 'external_interface': device,
+        self.append({'kind': 'installed', 'chain': self.chain, 'forward_chain': self.forward_chain, 'external_interface': device,
                      'rules': readback, 'disposition': 'retained until provider teardown'})
-        return {'chain': self.chain, 'external_interface': device,
+        return {'chain': self.chain, 'forward_chain': self.forward_chain, 'external_interface': device,
                 'disposition': 'retained until exact provider teardown'}

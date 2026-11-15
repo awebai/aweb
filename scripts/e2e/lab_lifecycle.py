@@ -216,7 +216,7 @@ class Resources:
                                 and labels.get("com.docker.compose.service") == expected["service"])
                     if self.plan["owner_label"]["key"] == "aweb.adaz.default":
                         selected = value["Name"].lstrip("/") == expected["container_name"]
-                    if selected:
+                    if selected and value["State"]["Running"]:
                         wanted = [{"HostIp": expected["host_ip"], "HostPort": str(expected["published_port"])}]
                         if ports.get("8010/tcp") == wanted:
                             self.listener_seen = True
@@ -313,6 +313,16 @@ def fresh_host_baseline(root, deadline):
         stream.flush()
         os.fsync(stream.fileno())
     return baseline
+
+
+def final_verdict(result, plan_count, quota_observations):
+    return "PASS" if (result["primary"] == "PASS" and not result["process"]["populated"]
+        and result["process"].get("verdict") == "CLEAN"
+        and not result.get("cleanup_error") and len(result["cleanup"]) == plan_count
+        and any(q.get("enforcement", {}).get("verdict") == "PASS" and q.get("binding_verified_after_body")
+                for q in quota_observations.values())
+        and all(r.get("verdict") == "CLEAN" and r.get("public_listener_seen")
+                for r in result["cleanup"].values())) else "FAIL"
 
 
 def supervise(command, admission, plan_paths, out, body_seconds, cleanup_seconds, admission_digest):
@@ -432,13 +442,7 @@ def supervise(command, admission, plan_paths, out, body_seconds, cleanup_seconds
                     observed["binding_verified_after_body"] = False
                     observed["binding_error"] = type(error).__name__
             result["quota_observations"] = quota_observations
-            result["final"] = "PASS" if (result["primary"] == "PASS" and not result["process"]["populated"]
-                and result["process"].get("verdict") == "CLEAN"
-                and not result.get("cleanup_error") and len(result["cleanup"]) == len(plan_paths)
-                and any(q.get("enforcement", {}).get("verdict") == "PASS" and q.get("binding_verified_after_body")
-                        for q in quota_observations.values())
-                and all(r.get("verdict") == "CLEAN" and r.get("public_listener_seen")
-                        for r in result["cleanup"].values())) else "FAIL"
+            result["final"] = final_verdict(result, len(plan_paths), quota_observations)
             with (out / "supervisor.json").open("x") as stream:
                 json.dump(result, stream, indent=2)
                 stream.write("\n")

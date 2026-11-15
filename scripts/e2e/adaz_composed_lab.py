@@ -19,8 +19,8 @@ from default_registry_client import BINARY_SHA256
 from default_registry_lab import checked
 from lab_lifecycle import load_json
 
-CLOUD_SHA = '5c0165a6dc90071d2d4501f3d6421ad2b97cfb52'
-CLOUD_BUNDLE_SHA256 = 'ace10e6034eeec30972507f2a8b0724b50314581d230158c7c0e21b20db8b587'
+CLOUD_SHA = '32707736f9694fd64221f85ab632cf0667542d58'
+CLOUD_BUNDLE_SHA256 = '0ccf46236be266912fa0f6c64f2f5f113fecbead83c6bf64e8ccdaf1d6e93455'
 BODY_SHA256 = '331eabdd9dbfcd31635db3b737b7622e39824f4a4dbdac2d4f2026776dab8a41'
 PROBE_SHA256 = 'c463f142d9abea0c4c48a1fa70912ad6b612ae226186908b57141d5bf7c825c4'
 
