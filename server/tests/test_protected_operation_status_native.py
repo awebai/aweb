@@ -99,9 +99,8 @@ def forbid_effects(a, monkeypatch):
                      "retain_authorized_effect", "deliver_retained"):
             if hasattr(custody, name):
                 monkeypatch.setattr(custody, name, forbidden)
-        for name in ("admission", "owner_removal"):
-            provider = getattr(component.signer, name, None)
-            if provider is not None:
+        for provider in component.signer.effect_adapters.values():
+            if callable(getattr(provider, "register", None)):
                 monkeypatch.setattr(provider, "register", forbidden)
     return calls
 
@@ -172,8 +171,7 @@ async def test_status_twice_preserves_stable_history_for_every_definition(
             # A historical sign-only row whose old confirmation port is no
             # longer installed still has a readable receipt. This must not
             # install a provider, infer application or restart its deadline.
-            for name in ("admission", "owner_removal"):
-                monkeypatch.setattr(signer, name, None)
+            monkeypatch.setattr(signer, "effect_adapters", {})
             expected = {"state": "pending", "reason": "effect_in_progress", "expires_at": expected["expires_at"]}
             if state == "expired_unresolved":
                 signer.clock = lambda: row["expires_at"] + timedelta(seconds=1)
@@ -368,7 +366,7 @@ async def test_status_confirmation_expiry_rolls_back_result_quota_and_audit(admi
     operation = admit_operation(a)
     assert (await prepare(a, operation)).status_code == 200
     assert (await execute(a, operation)).status_code == 503
-    provider = signer.admission
+    provider = signer._effect_provider(operation)
     confirm = provider.confirm
     now = signer.clock()
 

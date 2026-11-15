@@ -12,7 +12,7 @@ from awid.did import did_from_public_key, generate_keypair, stable_id_from_publi
 from awid.identity_observation import observe_identity_binding, observe_identity_kind
 from awid.registry_types import IDTreeEnrollment, RegistryError
 
-from aweb.protected_signing.admission import AdmissionEffects
+from aweb.protected_signing.admit import AdmitEffects
 from aweb.protected_signing.removal import agent_target
 
 
@@ -54,46 +54,50 @@ async def test_legacy_registered_unknown_kind_cannot_be_removed_as_an_agent(lega
         await agent_target(c, record, self_key=record.member_did_key if self_remove else None)
 
 
-def admission_attempt(c, record):
+def admission_attempt(c, record, monkeypatch):
     registry = c.registry
     # The same kind boundary applies when the root admits a global child.
     # Root/policy admission are existing independent ports; the target's
     # binding and classification still use the real public observers above.
     registry.registry_url = "https://registry.example"
 
-    class Effects(AdmissionEffects):
-        async def policy(self, tx=None):
-            return SimpleNamespace(fields=lambda: {"teams": ["team:example"],
-                "subject_kinds": ["local_agent", "registered_agent"]})
+    from aweb.protected_signing import admit
 
-        async def root_head(self, root_id, root_key, *, require_enrolled):
-            assert require_enrolled
-            return "root-head"
+    async def policy(composition, tx=None):
+        return SimpleNamespace(fields=lambda: {"teams": ["team:example"],
+            "subject_kinds": ["local_agent", "registered_agent"]})
+
+    async def root_head(composition, root_id, root_key, *, require_enrolled):
+        assert require_enrolled
+        return "root-head"
+
+    monkeypatch.setattr(admit, "read_policy", policy)
+    monkeypatch.setattr(admit, "root_head", root_head)
 
     subject = {"team_id": "team:example", "root_id": "root", "root_key": "root-key",
         "child_id": record.member_did_aw, "child_key": record.member_did_key}
     operation = SimpleNamespace(operation="team.agent.admit", audience=registry.registry_url,
         intent=lambda: {"subject": subject})
-    return Effects(c).observe(operation, SimpleNamespace(principal="root"), purpose="prepare")
+    return AdmitEffects(c).observe(operation, SimpleNamespace(principal="root"), purpose="prepare")
 
 
 @pytest.mark.asyncio
-async def test_legacy_registered_unknown_kind_cannot_be_admitted_as_an_agent(legacy_member):
+async def test_legacy_registered_unknown_kind_cannot_be_admitted_as_an_agent(legacy_member, monkeypatch):
     with pytest.raises(SignerRefused, match="subject_ineligible"):
-        await admission_attempt(*legacy_member)
+        await admission_attempt(*legacy_member, monkeypatch)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", ["root_remove", "self_remove", "admit"])
 @pytest.mark.parametrize("missing_enrollment", [False, True])
-async def test_registered_kind_evidence_failure_is_unavailable(legacy_member, path, missing_enrollment):
+async def test_registered_kind_evidence_failure_is_unavailable(legacy_member, path, missing_enrollment, monkeypatch):
     from aweb_naapp.runtime.protected_signer.http import _http
 
     c, record = legacy_member
     c.registry.enrollment = None if missing_enrollment else IDTreeEnrollment(True, "example.org")
     with pytest.raises(SignerRefused, match="evidence_unavailable") as refusal:
         if path == "admit":
-            await admission_attempt(c, record)
+            await admission_attempt(c, record, monkeypatch)
         else:
             await agent_target(c, record, self_key=record.member_did_key if path == "self_remove" else None)
     assert c.registry.evidence_calls == (0 if missing_enrollment else 1)

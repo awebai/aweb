@@ -103,6 +103,8 @@ async def test_owner_act_without_service_delivery_refuses_before_pending_or_sign
 
     op = live_operation("owner_act")
     engine = object.__new__(ProtectedSigner)
+    engine.definitions = {(op.operation, op.variant): op.spec}
+    engine.effect_adapters = {}
 
     async def observe(context, *, purpose):
         return SimpleNamespace()

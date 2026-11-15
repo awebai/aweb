@@ -348,7 +348,7 @@ def test_the_owner_can_start_removing_any_member_but_a_verified_human_from_the_p
     # selection under this team and this signed-in approver.
     assert '<script src="/owner-ui/owner.js" defer></script>' in html
     assert ('<ul class="owner-list" id="owner-members" data-team-id="engineering:customer.example" '
-        'data-storage-scope="s-0123abcd">') in html
+        'data-storage-scope="s-0123abcd" data-operation="team.agent.remove" data-variant="owner_approved">') in html
     for certificate, alias in (("cert-1", "build-&lt;1&gt;"), ("cert-2", "ops")):
         assert (f'<button type="button" class="btn secondary" data-remove-certificate="{certificate}">'
             f"Remove {alias}…</button>") in html

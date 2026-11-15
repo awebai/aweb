@@ -11,7 +11,7 @@ from awid.team_ids import build_team_id, parse_team_id
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.protected_signer import SignerRefused
 
-from .admission import _registry
+from .admission import _registry, read_policy, root_head
 from .bootstrap import bootstrap_record
 
 
@@ -72,9 +72,9 @@ async def bind_root(composition, *, human_id, root_id, teams, replace_root=None)
     owner, parts = selected_bindings(composition, human_id, teams)
     started = owner.authority.timer()
     root = await _registry(owner.registry.resolve_key_fresh(root_id), missing="subject_ineligible")
-    await owner.signer.admission.root_head(root_id, root.current_did_key, require_enrolled=False)
+    await root_head(owner, root_id, root.current_did_key, require_enrolled=False)
     observations = [(c, await c.authority.observe(c.context, purpose="prepare")) for c in parts]
-    policies = [(c, await c.signer.admission.policy()) for c in parts]
+    policies = [(c, await read_policy(c)) for c in parts]
     if any(not set(teams) <= set(policy.fields()["teams"]) for _, policy in policies):
         raise SignerRefused("admission_policy_missing")
     changed, scopes = [], []
@@ -93,7 +93,7 @@ async def bind_root(composition, *, human_id, root_id, teams, replace_root=None)
         pairs = [(row["b3_scope"], row["subject"]) for _, row in bindings]
         b3 = await owner.passkeys.prepare_current_approvers(tx, pairs)
         for c, expected in policies:
-            if await c.signer.admission.policy(tx) != expected:
+            if await read_policy(c, tx) != expected:
                 raise SignerRefused("policy_changed")
         for c, binding in bindings:
             scope = binding["b3_scope"]

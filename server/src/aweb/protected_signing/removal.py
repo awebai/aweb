@@ -6,6 +6,7 @@ capacity occupied and never repeats its mutation.
 """
 
 from dataclasses import asdict
+from time import monotonic
 
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.protected_signer import SignerRefused
@@ -14,7 +15,7 @@ from awid.contract import normalize_identity_scope
 from awid.identity_observation import IdentityObservationRefused, observe_identity_binding, observe_identity_kind
 from awid.registry_types import RegistryThrottled
 
-from .admission import _lock_quota, _registry
+from .admission import _lock_quota, _registry, hold_endorsed_root, read_policy, root_head
 
 
 def membership_fields(record):
@@ -94,12 +95,12 @@ async def observe_removal(adapter, operation, actor, *, purpose):
         if cap is None:
             raise SignerRefused("scope_refused")
     else:
-        if cap is not None or actor.principal != subject["root_id_or_self"] or not actor.key_did:
+        if cap is not None or not actor.key_did:
             raise SignerRefused("scope_refused")
-        policy = await adapter.policy()
+        policy = await read_policy(c)
         if subject["team_id"] not in policy.fields()["teams"]:
             raise SignerRefused("scope_refused")
-        head = await adapter.root_head(actor.principal, actor.key_did, require_enrolled=True)
+        head = await root_head(c, actor.principal, actor.key_did, require_enrolled=True)
     record = await current_member(c, operation)
     if record is None:
         raise SignerRefused("subject_ineligible")
@@ -138,10 +139,10 @@ class RemovalObservation:
         if not self.actor.key_did or request["requester_key"] != self.actor.key_did:
             raise SignerRefused("operation_mismatch")
         if self.policy is not None:
-            current = await self.adapter.policy(tx)
+            current = await read_policy(self.adapter.c, tx)
             if current.fields() != self.policy.fields():
                 raise SignerRefused("policy_changed")
-            await self.adapter.hold_endorsed_root(tx, self.actor.principal, self.head)
+            await hold_endorsed_root(self.adapter.c, tx, self.actor.principal, self.head)
         await self.local_row(tx)
         self.require_fresh()
 
@@ -180,3 +181,20 @@ async def confirm_removal(c, tx, operation, *, require_bucket=True):
         subject=operation.operation_id, occurred_at=c.signer.clock(),
         details={"operation_id": operation.operation_id, "team_id": context.authority_id,
             "certificate_id": subject["certificate_id"], "member_id": subject["member_id"]}), tx)
+
+
+class RemovalEffects:
+    def __init__(self, composition, *, timer=monotonic):
+        self.c, self.timer = composition, timer
+
+    async def observe(self, operation, actor, *, purpose):
+        return await observe_removal(self, operation, actor, purpose=purpose)
+
+    async def registered(self, operation, artifact, signed):
+        return await removal_confirmed(self.c, operation)
+
+    async def register(self, operation, artifact, signed):
+        return await _registry(self.c.authority.custody.remove_member(self.c.registry, operation, artifact, signed))
+
+    async def confirm(self, tx, operation):
+        await confirm_removal(self.c, tx, operation)
