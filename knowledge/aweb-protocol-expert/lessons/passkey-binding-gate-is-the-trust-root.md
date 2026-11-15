@@ -1,7 +1,7 @@
 ---
 type: Lesson
 title: The gate on passkey binding is the trust root of passkey approvals
-description: The naapp passkey verifier registers with user verification and one pinned origin but no attestation, so an assertion proves a fresh human gesture only as far as the gate on binding holds; an aw human key alone must not authorize a binding, a notice after binding detects but never prevents, and per-naapp registration is the safe RP ID shape.
+description: Where a passkey verifier checks no attestation, as the naapp B3 verifier does, an assertion proves a fresh human gesture only as far as the gate on binding holds; an aw human key alone must not authorize a binding, a notice after binding detects but never prevents, and per-naapp registration is the safe RP ID shape.
 tags: [lesson, passkeys, webauthn, authority, naapp, human-identity]
 timestamp: 2026-11-08
 ---
@@ -12,6 +12,13 @@ attestation. Whoever passes the binding gate can therefore enrol a software
 authenticator and produce user-verified assertions at will. "A passkey
 assertion is a fresh human gesture" holds only as far as the gate on binding
 that passkey holds.
+
+This premise is the naapp B3 verifier's. The human approval service in the
+approval and key custody architecture (aweb-adcl) adds hardware attestation
+against a pinned, dated list of certified models and grades each key, so an
+enforcer can demand a grade a software authenticator cannot reach. That is the
+structural fix where it applies. The binding rules below still hold for any
+verifier, and in full wherever no attestation is checked.
 
 The proposal to replace naapp-local enrolment with one shared, verified human
 identity will recur. Its tempting form is "bind the passkey with the human's aw
@@ -26,7 +33,7 @@ authorizes the binding.
   authenticator. A human-key signature is not evidence of a fresh gesture;
   `docs/id-certificates.md` says so for ID certificates.
 - **Gate the first binding per (naapp, human) with something the key holder
-  does not control.** Today that gate is the enrolment link sent only to the
+  does not control.** In the naapp B3 verifier that gate is the enrolment link sent only to the
   contact that the designating owner act commits to by hash, trust on first
   use. Once a subject has enrolled, it gets no new enrolment link outside
   recovery. A further binding must be gated by an existing passkey.
