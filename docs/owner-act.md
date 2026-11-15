@@ -33,16 +33,16 @@ with the ruling below on who may sign one.
 An owner act is valid only from the team's **controller authority**, exercised
 by the organization owner:
 
-- Hosted and independent/BYOT deployments use the same
-  [protected signer boundary](human-assurance-contract.md). The operator keeps
-  the controller key outside worker access. A local plaintext key or a
-  passphrase prompt is not an alternate supported governance lane.
+- The controller key stays outside worker access: with the owner, or in the
+  organization's key holder, a separate process that signs only under its own
+  rules.
 - The signer acts only for the **current authorized organization/team owner**
-  (never an admin or a role label alone), after a live passkey UV approval bound
-  to exactly this act and consumed once. Account login, a stored credential,
-  API key, MCP token or ordinary session cannot substitute. The shared signer
-  and migration need their own implementation/release acceptance; this change
-  does not alter the owner-act wire or make a verifier prove custody.
+  (never an admin or a role label alone). Where the rule for an act requires a
+  person, it signs only on an approval receipt: the owner approves exactly this
+  act with their own key, bound to the enforcer's one-time value and deadline,
+  and the receipt is consumed once. Account login, a stored credential, API
+  key, MCP token or ordinary session cannot substitute. This does not alter the
+  owner-act wire or make a verifier prove custody.
 
 **Disclosure.** A custodian of the controller key can mint any owner act:
 activate or revoke hook targets, designate itself a reader, set retention or

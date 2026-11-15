@@ -57,7 +57,7 @@ can read them back:
    canonical JSON of its fields). `aw team admin log-key sign --record
    <unsigned.json> --out <record.json>` takes exactly one route:
    `--team-key-did <did> --signature <sig>` attaches a signature produced
-   elsewhere, such as by a deployment's protected signer, after verifying it;
+   elsewhere, such as by the organization's key holder, after verifying it;
    `--offline-controller-key` signs with the controller key in
    `~/.awid/team-keys/` on that machine. With no route it refuses.
    `aw team admin log-key signing-bytes --record <unsigned.json>
