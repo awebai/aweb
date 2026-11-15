@@ -67,7 +67,7 @@ async def self_requester(c, request, operation, *, purpose):
         expected_context.pop("generation")
         selected_context.pop("generation")
     subject = intent["subject"]
-    if (intent["operation"] != "team.agent.remove" or subject["root_id_or_self"] != "self"
+    if (not selected.spec.supports_self_removal or subject["root_id_or_self"] != "self"
         or subject["member_id"] != principal or subject["certificate_id"] != cert.get("certificate_id")
         or selected_context != expected_context
         or cert.get("team_id") != context.authority_id or cert.get("member_did_key") != key):

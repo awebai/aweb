@@ -64,7 +64,8 @@ async def test_prepare_availability_before_any_pending_state(case, monkeypatch):
 
     signer = object.__new__(ProtectedSigner)
     signer.db = NoStore()
-    signer.admission = NoStore() if case.get("adapter_present") else None
+    signer.effect_adapters = {"admit": NoStore()} if case.get("adapter_present") else {}
+    signer.definitions = catalog.OPERATIONS
     signer.custody = SimpleNamespace()
     signer.passkeys = SimpleNamespace(rp=SimpleNamespace(origin="https://human.example"))
     checks = []

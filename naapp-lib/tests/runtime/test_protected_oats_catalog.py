@@ -62,7 +62,6 @@ def test_each_definition_owns_its_consumer_codec_and_page_schema():
 
 @pytest.mark.asyncio
 async def test_released_revoke_type_reaches_the_live_floor_execute_refusal():
-    from types import SimpleNamespace
     from uuid import uuid4
 
     from aweb_naapp.runtime.protected_signer import (
@@ -76,7 +75,6 @@ async def test_released_revoke_type_reaches_the_live_floor_execute_refusal():
     legacy = RevokeHumanRole(str(uuid4()), context, "https://app.example.org", "app", str(uuid4()), "app.owner", "did:aw:human")
     requester = RestrictedRequester("did:aw:root", context)
     service = object.__new__(ProtectedSigner)
-    service.admission = SimpleNamespace()
 
     async def authorized(operation_id, actor, purpose):
         assert operation_id == legacy.operation_id and actor is requester and purpose == "execute"
@@ -85,3 +83,31 @@ async def test_released_revoke_type_reaches_the_live_floor_execute_refusal():
     service._authorized = authorized
     with pytest.raises(SignerRefused, match="live_approval_required"):
         await service._execute_request(legacy.operation_id, requester=requester)
+
+
+def test_startup_requires_each_selected_effect_provider_before_any_io():
+    from aweb_naapp.runtime.protected_signer import ProtectedSigner
+    from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
+
+    with pytest.raises(ValueError, match="effect adapter"):
+        ProtectedSigner(None, passkeys=None, policies=None, delivery=None, audit=None,
+                        authority=None, custody=None, effect_adapters={}, definitions=tuple(OPERATIONS.values()))
+
+
+@pytest.mark.parametrize("field", ["signing_commit", "confirmation_commit", "initiation_prepare"])
+def test_startup_checks_row_selected_hooks_before_any_io(field):
+    from types import SimpleNamespace
+
+    from aweb_naapp.runtime.protected_signer import ProtectedSigner
+    from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
+
+    definition = next(row for row in OPERATIONS.values() if getattr(row.effect, field))
+    selected = getattr(definition.effect, field)
+    names = ("observe", "registered", "register", definition.effect.signing_commit,
+             definition.effect.confirmation_commit, definition.effect.initiation_prepare)
+    adapter = SimpleNamespace(**{name: (lambda: None) for name in names if name is not None})
+    setattr(adapter, selected, None)
+    with pytest.raises(ValueError, match="hook '" + selected + "'"):
+        ProtectedSigner(None, passkeys=None, policies=None, delivery=None, audit=None,
+                        authority=None, custody=None, effect_adapters={definition.effect.provider: adapter},
+                        definitions=(definition,))

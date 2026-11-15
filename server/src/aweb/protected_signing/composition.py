@@ -142,6 +142,14 @@ class IndependentProtectedSigner:
             enrolment_ttl=timedelta(hours=1),
             challenge_ttl=timedelta(minutes=5),
         )
+        from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
+        from .admit import AdmitEffects
+        from .endorse import EndorseEffects
+        from .owner_removal import OwnerRemovalEffects
+        from .removal import RemovalEffects
+
+        adapters = {"admit": AdmitEffects(self), "endorsement": EndorseEffects(self),
+                    "removal": RemovalEffects(self), "owner_removal": OwnerRemovalEffects(self)}
         self.signer = ProtectedSigner(
             db,
             passkeys=self.passkeys,
@@ -151,14 +159,10 @@ class IndependentProtectedSigner:
             authority=self.authority,
             custody=custody,
             mailed_approval_wait=MAILED_APPROVAL_WAIT,
+            effect_adapters=adapters,
+            definitions=tuple(row for row in OPERATIONS.values() if row.key_role == context.authority_kind),
         )
 
-        from .admission import AdmissionEffects
-
-        self.signer.admission = AdmissionEffects(self)
-        from .owner_removal import OwnerRemovalEffects
-
-        self.signer.owner_removal = OwnerRemovalEffects(self)
         configure = getattr(custody, "configure_effects", None)
         if callable(configure):
             client = getattr(registry, "client", registry)
@@ -194,18 +198,9 @@ class IndependentProtectedSigner:
     async def authenticate_prepare(self, request, operation):
         if operation.context != self.context:
             raise SignerRefused("scope_refused")
-        if (
-            operation.intent()["operation"] == "team.log-key.sign"
-            and operation.audience != self.request_origin
-        ):
-            raise SignerRefused("scope_refused")
-        if operation.intent()["operation"] == "team.agent.remove":
-            if operation.spec.supports_self_removal and operation.intent()["subject"]["root_id_or_self"] == "self":
-                from .self_removal import self_requester
-
-                return await self_requester(self, request, operation, purpose="prepare")
-            if "X-AWID-Team-Certificate" in request.headers:
-                raise SignerRefused("requester_invalid")
+        actor = await self._own_certificate_requester(request, operation, purpose="prepare")
+        if actor is not None:
+            return actor
         return await self.requester(
             request,
             principal=request.headers.get("X-AWEB-DID-AW", ""),
@@ -217,17 +212,26 @@ class IndependentProtectedSigner:
         operation = await self.signer.lookup_operation(operation_id)
         if operation is None:
             raise SignerRefused("operation_not_found")
-        if operation.intent()["operation"] == "team.agent.remove":
-            if operation.spec.supports_self_removal and operation.intent()["subject"]["root_id_or_self"] == "self":
-                from .self_removal import self_requester
-
-                return await self_requester(self, request, operation, purpose=purpose)
-            if "X-AWID-Team-Certificate" in request.headers:
-                raise SignerRefused("requester_invalid")
+        actor = await self._own_certificate_requester(request, operation, purpose=purpose)
+        if actor is not None:
+            return actor
         return await self.requester(
             request, principal=request.headers.get("X-AWEB-DID-AW", ""),
             operation="protected_operation_" + purpose, context=operation.context,
         )
+
+    async def _own_certificate_requester(self, request, operation, *, purpose):
+        from aweb_naapp.runtime.protected_signer.types import owner_act_operation
+
+        operation = owner_act_operation(operation)
+        rule = operation.spec.requester
+        if operation.spec.supports_self_removal and operation.intent()["subject"]["root_id_or_self"] == "self":
+            from .self_removal import self_requester
+
+            return await self_requester(self, request, operation, purpose=purpose)
+        if rule.proof != "registered_requester" and "X-AWID-Team-Certificate" in request.headers:
+            raise SignerRefused("requester_invalid")
+        return None
 
     async def authenticate_receipt(self, request, operation_id):
         return await self._authenticate_retained(request, operation_id, purpose="receipt")
@@ -345,7 +349,8 @@ class IndependentProtectedSigner:
         This binding allows prepare/receipt only, never unattended execution.
         Body size is bounded before the proof helper acquires its whole body.
         """
-        if operation not in {
+        request_label = operation
+        if request_label not in {
             "protected_operation_prepare",
             "protected_operation_receipt",
             "protected_operation_execute",
@@ -353,14 +358,14 @@ class IndependentProtectedSigner:
             raise SignerRefused("scope_refused")
         context = self.context if context is None else context
         expected, selected = self.context.fields(), context.fields()
-        if operation == "protected_operation_receipt":
+        if request_label == "protected_operation_receipt":
             expected.pop("generation")
             selected.pop("generation")
         if expected != selected:
             raise SignerRefused("scope_refused")
-        key_did = await self._request_key(request, principal=principal, operation=operation,
+        key_did = await self._request_key(request, principal=principal, operation=request_label,
                                         scope=context.fields(), domain=context.authority_domain)
-        if operation == "protected_operation_receipt":
+        if request_label == "protected_operation_receipt":
             return ReceiptReader(principal, context, key_did=key_did)
         return RestrictedRequester(principal, context, key_did=key_did)
 
