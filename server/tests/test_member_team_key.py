@@ -290,6 +290,23 @@ async def test_same_team_delivery_needs_the_sender_under_the_current_key(pinning
 
 
 @pytest.mark.asyncio
+async def test_a_member_row_written_with_a_certificate_but_no_key_is_not_a_member(pinning):
+    env = pinning
+    sk, _, did = _make_keypair()
+    member = (sk, did, "unverified")
+
+    # Nothing verified this certificate under the team's key, so no key is recorded for it.
+    await env.db.execute(
+        "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, certificate_id) "
+        "VALUES ($1, $2, 'unverified', 'local', 'unverified-1')",
+        TEAM, did,
+    )
+
+    assert (await _row(env, member))["accepted_team_did_key"] is None
+    assert (await _identity_membership(env, member))["team_id"] is None
+
+
+@pytest.mark.asyncio
 async def test_a_member_without_a_certificate_on_file_is_a_member_until_the_key_changes(pinning):
     env = pinning
     alice = env.actors["alice"]

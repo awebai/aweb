@@ -12,13 +12,15 @@ FROM {{tables.teams}} AS t
 WHERE t.team_id = a.team_id
   AND a.accepted_team_did_key IS NULL;
 
--- A member row written without the key is accepted under the key the server
--- holds for its team at that moment. Certificate admission writes the key it
--- verified under explicitly.
+-- A member row written without a certificate and without the key is accepted
+-- under the key the server holds for its team at that moment. A row written
+-- with a certificate records the key that certificate was verified under; with
+-- none given it stays NULL, is not a member, and records the key at its first
+-- certificate-authenticated request.
 CREATE OR REPLACE FUNCTION aweb.member_accepted_team_key_default()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.accepted_team_did_key IS NULL THEN
+    IF NEW.accepted_team_did_key IS NULL AND NEW.certificate_id IS NULL THEN
         SELECT team_did_key INTO NEW.accepted_team_did_key
         FROM {{tables.teams}}
         WHERE team_id = NEW.team_id;
