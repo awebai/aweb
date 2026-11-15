@@ -365,7 +365,7 @@ func verifyHolderEvidence(ctx context.Context, e *holderCredentialExport, select
 	if !current {
 		return nil, notMember("the certificate is not an active certificate of the team")
 	}
-	kind, err := holderKind(ctx, e, cert)
+	kind, err := holderKind(ctx, e, cert, whoOptions{TXTResolver: &awid.NetTXTResolver{}})
 	if err != nil {
 		return nil, err
 	}
@@ -374,7 +374,7 @@ func verifyHolderEvidence(ctx context.Context, e *holderCredentialExport, select
 
 // holderKind verifies the holder's ID chain for its certified key and
 // returns its kind, which must be human.
-func holderKind(ctx context.Context, e *holderCredentialExport, cert *awid.TeamCertificate) (string, error) {
+func holderKind(ctx context.Context, e *holderCredentialExport, cert *awid.TeamCertificate, opts whoOptions) (string, error) {
 	certificates, _ := e.IDChain["certificates"].([]any)
 	domain := ""
 	if len(certificates) > 0 {
@@ -382,7 +382,29 @@ func holderKind(ctx context.Context, e *holderCredentialExport, cert *awid.TeamC
 		inner, _ := last["certificate"].(map[string]any)
 		domain, _ = inner["domain"].(string)
 	}
-	out, err := verifyWhoPresentation(ctx, awid.IDChainSubject{ID: e.Principal, DIDKey: cert.MemberDIDKey}, e.IDChain, domain, whoOptions{TXTResolver: &awid.NetTXTResolver{}})
+	opts.ReceivedEnrollment = func(ctx context.Context, principal, key string) awid.IDTreeEnrollmentResult {
+		unknown := awid.IDTreeEnrollmentResult{State: "unknown"}
+		registry, err := newConfiguredRegistryClient(nil)
+		if err != nil {
+			return unknown
+		}
+		registry.Resolver.DNSResolver = opts.TXTResolver
+		registryURL := registry.DefaultRegistryURL
+		// The active certificate's holder address locates this principal's key
+		// route independently of the exported chain and the acting team owner.
+		if addressDomain, _, ok := strings.Cut(cert.MemberAddress, "/"); ok {
+			registryURL, err = registry.DiscoverRegistry(ctx, addressDomain)
+			if err != nil {
+				return unknown
+			}
+		}
+		resolution, err := registry.ResolveKeyAt(ctx, registryURL, principal)
+		if err != nil {
+			return unknown
+		}
+		return resolution.IDTreeEnrollmentOf(principal, key, time.Now())
+	}
+	out, err := verifyWhoPresentation(ctx, awid.IDChainSubject{ID: e.Principal, DIDKey: cert.MemberDIDKey}, e.IDChain, domain, opts)
 	if err != nil {
 		return "", withErrorCode("principal_status_unavailable", err)
 	}
