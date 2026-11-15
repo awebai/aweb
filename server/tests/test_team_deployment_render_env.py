@@ -200,6 +200,9 @@ def test_explicitly_empty_origins_stay_closed(signer):
         # Readiness without the attestation key is a deployment that can only refuse.
         ({"ownerActOrigins": ["https://secrets.example.com"],
           "effectReceiptOrigins": ["https://secrets.example.com"]}, "signer.serviceKey"),
+        # Consumers without the attestation key: every service-owned act would
+        # be refused operation_not_served at its first prepare.
+        ({"ownerActOrigins": ["https://secrets.example.com"]}, "signer.serviceKey"),
     ],
 )
 def test_a_malformed_service_delivery_setting_is_refused_by_its_key(signer, given, key):

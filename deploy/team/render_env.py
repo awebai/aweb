@@ -122,13 +122,14 @@ SIGNER_SERVICE_KEY = "/run/secrets/signer/private-controller/service.key"
 
 
 def _check_signer_delivery(signer: dict) -> None:
-    """Receipt readiness names only pinned consumers, and needs the service key."""
+    """Receipt readiness names only pinned consumers, and pinned consumers
+    need the service key: without it every act they serve is refused."""
     ready = signer.get("effectReceiptOrigins", [])
     unpinned = sorted(set(ready) - set(signer.get("ownerActOrigins", [])))
     if unpinned:
         raise Refused(f"signer.effectReceiptOrigins: not in signer.ownerActOrigins: {', '.join(unpinned)}")
-    if ready and signer.get("serviceKey") is not True:
-        raise Refused("signer.serviceKey: required for signer.effectReceiptOrigins")
+    if signer.get("ownerActOrigins") and signer.get("serviceKey") is not True:
+        raise Refused("signer.serviceKey: required for signer.ownerActOrigins")
 
 
 def _check_signer_profile(config: dict, registry_url: str) -> None:

@@ -437,6 +437,13 @@ It uses the controller key reader's strict ownership/mode/symlink checks. The
 host refuses reuse of any configured controller, namespace, human or ordinary
 member key for this role. Omitting it preserves legacy composition; it cannot
 produce a protected-team service attestation or authorize cutover.
+Its backup is a separately protected offline copy that the team owner keeps
+beside the controller's, under the same recovery procedure, made when the key
+is provisioned and before the registry's protection binding names its public
+key. Generic backups leave the live private volume out (`teamctl backup` omits
+`signer/private-controller`), and the bound key cannot be minted again: without
+that copy, service-owned delivery stays closed until an authorized generation
+transition.
 
 The registry host's local administrator transition is
 `awid_service.protected_teams.provision_team_protection` inside a database

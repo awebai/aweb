@@ -130,7 +130,9 @@ is a procedure, not an enforced fence (`aweb-acyw`).
 
 **The signer's service key (`signer/private-controller/service.key`) is left
 out with the controller key and is recovered the same way: from its own
-separately protected offline copy.** The registry's protection binding names
+separately protected offline copy, which the team owner keeps beside the
+controller key's and makes when the custodian installs the key, before the
+registry's protection binding names it.** The registry's protection binding names
 its public key, so it cannot be minted again: a new key no longer matches the
 binding, and the signer refuses every service-owned act. Without a copy,
 recovery stops there, closed. Replacing the key takes the registry operator's
