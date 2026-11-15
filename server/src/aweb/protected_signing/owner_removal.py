@@ -5,14 +5,18 @@ human's authority. B2/B3 and IndependentAuthority remain the shared executor's
 current-owner and exact live-gesture boundary.
 """
 
+from time import monotonic
+
 from aweb_naapp.runtime.protected_signer import AdmittedHuman, CatalogOperation, RestrictedRequester, SignerRefused
 from aweb_naapp.runtime.protected_signer.owner_initiation import _checked_owner_initiation
 
-from .admission import AdmissionEffects
 from .removal import confirm_removal, current_member, membership_fields, removable_kind, removal_confirmed
 
 
-class OwnerRemovalEffects(AdmissionEffects):
+class OwnerRemovalEffects:
+    def __init__(self, composition, *, timer=monotonic):
+        self.c, self.timer = composition, timer
+
     async def observe(self, operation, actor, *, purpose):
         c = self.c
         if (operation.audience != c.registry.registry_url
@@ -103,7 +107,7 @@ async def prepare_owner_selection(c, selection, session):
     saved = await c.signer.owner_prepared(actor)
     if saved is not None:
         return saved
-    provider = getattr(c.signer, spec.effect.provider or "", None)
+    provider = c.signer.effect_adapter(spec)
     prepare = getattr(provider, spec.effect.initiation_prepare or "", None)
     if not callable(prepare):
         raise SignerRefused("operation_not_served")

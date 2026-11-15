@@ -362,7 +362,7 @@ async def test_last_audit_wait_cannot_extend_the_roots_original_registry_observa
 
     a = admissions
     await endorse(a)
-    adapter = a.w.app.signer.admission
+    adapter = a.w.app.signer._effect_provider(admit_operation(a))
     clock = [monotonic()]
     adapter.timer = lambda: clock[0]
     op = admit_operation(a)
@@ -578,13 +578,13 @@ async def test_b2_policy_change_cannot_release_a_retained_unsent_admission(admis
 
         monkeypatch.setattr(a.w.app.authority, "observe", observe)
     registrations = []
-    original_register = signer.admission.register
+    original_register = signer._effect_provider(operation).register
 
     async def register(*args, **kwargs):
         registrations.append(args)
         return await original_register(*args, **kwargs)
 
-    monkeypatch.setattr(signer.admission, "register", register)
+    monkeypatch.setattr(signer._effect_provider(operation), "register", register)
     result = await execute(a, operation)
     assert result.status_code == 200 and result.json()["state"] == "pending", result.text
     assert registrations == []

@@ -168,7 +168,7 @@ async def test_unknown_becoming_human_cannot_reuse_frozen_owner_approval(admissi
     key, certificate = await legacy_member(a, "unknown")
     operation = owner_removal(a, certificate)
     assert (await prepare(a, operation)).json()["payload"]["request"]["target_kind"] == "kind not verified"
-    provider = a.w.app.signer.owner_removal
+    provider = a.w.app.signer._effect_provider(operation)
     original = provider.observe
     calls = 0
 
@@ -258,7 +258,7 @@ async def test_owner_release_rechecks_live_authority_after_signature(admissions,
     _, certificate = await legacy_member(a, "local")
     operation = owner_removal(a, certificate)
     assert (await prepare(a, operation)).status_code == 200
-    provider, calls = a.w.app.signer.owner_removal, 0
+    provider, calls = a.w.app.signer._effect_provider(operation), 0
     original = provider.observe
     original_clock = a.w.app.signer.clock
 

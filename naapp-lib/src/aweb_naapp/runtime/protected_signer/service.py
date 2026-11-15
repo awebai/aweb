@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from awid.signing import canonical_json_bytes, verify_did_key_signature
@@ -91,6 +92,30 @@ def _stable_context(context):
     return {k: v for k, v in context.fields().items() if k != "generation"}
 
 
+
+def _checked_effect_adapters(definitions, adapters):
+    """Validate the selected code-owned lifecycle ports before startup does I/O."""
+    if not isinstance(adapters, Mapping):
+        raise ValueError("effect adapters must be an explicit mapping")
+    for definition in definitions:
+        if not definition.consumer_available:
+            continue
+        effect = definition.effect
+        if effect.provider is None:
+            if any((effect.signing_commit, effect.confirmation_commit, effect.initiation_prepare)):
+                raise ValueError(f"effect adapter missing for {definition.operation}/{definition.variant}")
+            continue
+        adapter = adapters.get(effect.provider)
+        if adapter is None:
+            raise ValueError(f"effect adapter {effect.provider!r} missing for {definition.operation}/{definition.variant}")
+        hooks = ["observe", effect.signing_commit, effect.confirmation_commit, effect.initiation_prepare]
+        if effect.confirmation_commit is not None:
+            hooks.extend(("registered", "register"))
+        for name in hooks:
+            if name is not None and not callable(getattr(adapter, name, None)):
+                raise ValueError(f"effect adapter {effect.provider!r} lacks callable hook {name!r}")
+    return MappingProxyType(dict(adapters))
+
 class ProtectedSigner:
     """Shared local executor. Unimplemented catalog operations fail closed.
 
@@ -110,13 +135,16 @@ class ProtectedSigner:
         audit: AuditSink,
         authority: AuthorityProvider,
         custody: ControllerCustody,
-        admission=None,
+        effect_adapters: Mapping[str, Any],
+        definitions: tuple[catalog.OperationDefinition, ...],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         mailed_approval_wait: timedelta | None = None,
     ) -> None:
+        definitions = tuple(definitions)
+        self.effect_adapters = _checked_effect_adapters(definitions, effect_adapters)
+        self.definitions = MappingProxyType({(row.operation, row.variant): row for row in definitions if row.consumer_available})
         self.db, self.passkeys, self.policies, self.audit = db, passkeys, policies, audit
         self.authority, self.custody, self.clock = authority, custody, clock
-        self.admission = admission
         # When set, the signer mails each approver their personal link after
         # prepare commits, and a live-floor approval may wait this long for
         # them, still capped by every frozen artifact and policy deadline
@@ -1191,14 +1219,20 @@ class ProtectedSigner:
         if policy is None or policy.version != request["policy_version"]:
             raise SignerRefused("policy_changed")
 
-    def _effect_provider(self, operation):
-        name = owner_act_operation(operation).spec.effect.provider
+    def effect_adapter(self, definition):
+        key = definition.operation, definition.variant
+        if key not in self.definitions:
+            raise SignerRefused("operation_not_served")
+        name = definition.effect.provider
         if name is None:
             return None
-        provider = getattr(self, name, None)
+        provider = self.effect_adapters.get(name)
         if provider is None:
             raise SignerRefused("operation_not_served")
         return provider
+
+    def _effect_provider(self, operation):
+        return self.effect_adapter(owner_act_operation(operation).spec)
 
     def _retain_authorized_effect(self, operation, request, signing, signature, authority, expires_at, *, artifact):
         """Local only, inside the signature transaction; never exposes a proof."""
@@ -1511,6 +1545,6 @@ class ProtectedSigner:
             # main's definition-owned guard for both human and requester reads.
             operation = owner_act_operation(self._operation(_json(row["request"])))
             provider_name = operation.spec.effect.provider
-            if provider_name is not None and getattr(self, provider_name, None) is not None:
+            if provider_name is not None and self.effect_adapters.get(provider_name) is not None:
                 return await self._reconcile_admission(operation_id, reader, may_send=False, human_session=human_session)
         return self._receipt(row)

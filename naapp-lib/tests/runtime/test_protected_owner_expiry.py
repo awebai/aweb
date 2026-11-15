@@ -182,7 +182,8 @@ async def test_an_inflight_human_continuation_cannot_sign_after_unsigned_retirem
 
     engine._authorized = authorized
     engine.store = SimpleNamespace(get=approval)
-    engine.owner_removal = SimpleNamespace(observe=observed)
+    engine.effect_adapters = {op.spec.effect.provider: SimpleNamespace(observe=observed)}
+    engine.definitions = {(op.operation, op.variant): op.spec}
     engine.passkeys = SimpleNamespace(prepare_current_approvers=lambda *a: pytest.fail("a terminal row cannot reach signing"))
     receipt = await engine._execute_human(op.operation_id, {}, human=actor.human, human_session=actor.session)
     assert (receipt.state, receipt.code) == ("refused", "operation_expired")

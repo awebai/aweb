@@ -142,6 +142,14 @@ class IndependentProtectedSigner:
             enrolment_ttl=timedelta(hours=1),
             challenge_ttl=timedelta(minutes=5),
         )
+        from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
+        from .admit import AdmitEffects
+        from .endorse import EndorseEffects
+        from .owner_removal import OwnerRemovalEffects
+        from .removal import RemovalEffects
+
+        adapters = {"admit": AdmitEffects(self), "endorsement": EndorseEffects(self),
+                    "removal": RemovalEffects(self), "owner_removal": OwnerRemovalEffects(self)}
         self.signer = ProtectedSigner(
             db,
             passkeys=self.passkeys,
@@ -151,14 +159,10 @@ class IndependentProtectedSigner:
             authority=self.authority,
             custody=custody,
             mailed_approval_wait=MAILED_APPROVAL_WAIT,
+            effect_adapters=adapters,
+            definitions=tuple(row for row in OPERATIONS.values() if row.key_role == context.authority_kind),
         )
 
-        from .admission import AdmissionEffects
-
-        self.signer.admission = AdmissionEffects(self)
-        from .owner_removal import OwnerRemovalEffects
-
-        self.signer.owner_removal = OwnerRemovalEffects(self)
         configure = getattr(custody, "configure_effects", None)
         if callable(configure):
             client = getattr(registry, "client", registry)
