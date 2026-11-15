@@ -62,8 +62,17 @@ type teamCertificateInstall struct {
 	WorkingDir      string
 	Home            string
 	CertificatePath string
-	RegistryURL     string
-	Registry        *awid.RegistryClient
+	// Certificate, when set, is installed instead of the file at CertificatePath.
+	Certificate *awid.TeamCertificate
+	// ReplaceSuperseded lets the certificate replace one the home holds for
+	// its team under a key that is not the team's current key.
+	ReplaceSuperseded bool
+	// WorkspacePath, when set, is the workspace binding whose membership for
+	// the team is pointed at the installed certificate before anything is
+	// sent with it.
+	WorkspacePath string
+	RegistryURL       string
+	Registry          *awid.RegistryClient
 }
 
 func installRefusal(code, format string, args ...any) error {
@@ -83,9 +92,12 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 		return nil, fmt.Errorf("load the signing key in %s: %w", c.Home, err)
 	}
 	didKey := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
-	cert, err := awid.LoadTeamCertificate(c.CertificatePath)
-	if err != nil {
-		return nil, installRefusal("certificate_invalid", "%s is not a team certificate: %v", c.CertificatePath, err)
+	cert := c.Certificate
+	if cert == nil {
+		cert, err = awid.LoadTeamCertificate(c.CertificatePath)
+		if err != nil {
+			return nil, installRefusal("certificate_invalid", "%s is not a team certificate: %v", c.CertificatePath, err)
+		}
 	}
 	if cert.MemberDIDKey != didKey || cert.MemberDIDAW != identity.StableID || cert.IdentityScope != identity.IdentityScope {
 		return nil, installRefusal("member_mismatch", "the certificate names member %s %s (%s), not this home's identity %s %s (%s)",
@@ -95,7 +107,7 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 	// Decided read-only first, so a refused home is left exactly as it was,
 	// then again under the home's install lock, so a concurrent install of
 	// another certificate cannot slip in between the decision and the write.
-	if _, err := homeInstallStatus(c.Home, cert, local); err != nil {
+	if _, err := homeInstallStatus(c.Home, cert, local, c.ReplaceSuperseded); err != nil {
 		return nil, err
 	}
 	if err := checkCurrentTeamCertificate(ctx, c, cert); err != nil {
@@ -106,11 +118,11 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 		return nil, err
 	}
 	defer lock.Close()
-	status, err := homeInstallStatus(c.Home, cert, local)
+	status, err := homeInstallStatus(c.Home, cert, local, c.ReplaceSuperseded)
 	if err != nil {
 		return nil, err
 	}
-	if err := recordTeamCertificate(c.WorkingDir, c.Home, cert, c.RegistryURL, status); err != nil {
+	if err := recordTeamCertificateInBinding(c.WorkingDir, c.Home, cert, c.RegistryURL, status, c.WorkspacePath); err != nil {
 		return nil, err
 	}
 	result := map[string]any{"status": status, "team_id": cert.Team, "alias": cert.Alias, "certificate_id": cert.CertificateID,
@@ -125,10 +137,12 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 const teamCertificateInstallLock = "team-certificate-install.lock"
 
 // homeInstallStatus is how home takes cert: installed when it holds none for
-// cert's team, already_installed when it holds exactly cert. It refuses
-// certificate_conflict when home holds another certificate for the team, or,
-// for a local identity, any trace of another team.
-func homeInstallStatus(home string, cert *awid.TeamCertificate, local bool) (string, error) {
+// cert's team, already_installed when it holds exactly cert, and, with
+// replaceSuperseded, replaced when it holds one under another team key than
+// cert's (checked current before the write). It refuses certificate_conflict
+// when home holds another certificate for the team, or, for a local identity,
+// any trace of another team.
+func homeInstallStatus(home string, cert *awid.TeamCertificate, local, replaceSuperseded bool) (string, error) {
 	if local {
 		if err := localHomeOfOtherTeam(home, cert.Team); err != nil {
 			return "", err
@@ -146,6 +160,9 @@ func homeInstallStatus(home string, cert *awid.TeamCertificate, local bool) (str
 		return "", err
 	}
 	if !same {
+		if replaceSuperseded && existing.TeamDIDKey != cert.TeamDIDKey && existing.MemberDIDKey == cert.MemberDIDKey && existing.Alias == cert.Alias {
+			return "replaced", nil
+		}
 		return "", installRefusal("certificate_conflict", "%s already holds certificate %s for %s", home, existing.CertificateID, cert.Team)
 	}
 	return "already_installed", nil
@@ -250,9 +267,29 @@ func sameTeamCertificate(a, b *awid.TeamCertificate) (bool, error) {
 // already_installed, records the team membership, and ensures the identity's
 // encryption key. Recording again completes an install that was interrupted.
 func recordTeamCertificate(workingDir, identityHome string, cert *awid.TeamCertificate, registryURL, status string) error {
+	return recordTeamCertificateInBinding(workingDir, identityHome, cert, registryURL, status, "")
+}
+
+// recordTeamCertificateInBinding is recordTeamCertificate that also points the
+// workspace binding at workspacePath, when set, at the saved certificate before
+// the encryption key is published with it.
+func recordTeamCertificateInBinding(workingDir, identityHome string, cert *awid.TeamCertificate, registryURL, status, workspacePath string) error {
 	if status != "already_installed" {
 		if _, err := saveAcceptedTeamCertificate(workingDir, identityHome, cert.Team, cert); err != nil {
 			return err
+		}
+	}
+	if strings.TrimSpace(workspacePath) != "" {
+		workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+		if err != nil {
+			return fmt.Errorf("read the workspace binding %s: %w", workspacePath, err)
+		}
+		installed := awconfig.TeamCertificateRelativePath(cert.Team)
+		if membership := workspace.Membership(cert.Team); membership != nil && membership.CertPath != installed {
+			membership.CertPath = installed
+			if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
+				return fmt.Errorf("certificate %s is saved, but recording it in %s failed: %w", cert.CertificateID, workspacePath, err)
+			}
 		}
 	}
 	if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
