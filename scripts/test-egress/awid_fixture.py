@@ -95,6 +95,7 @@ def main():
             # The release's own server, settings and migrations; nothing of
             # this repository on its path.
             env.pop('PYTHONPATH', None)
+            env.pop('VIRTUAL_ENV', None)
             env.pop('AWID_RATE_LIMIT_DISABLED', None)
             env['AWID_RATE_LIMIT_BACKEND'] = 'memory'
             command = ['uv', 'run', '--offline', '--frozen', '--project', str(Path(__file__).resolve().parent / 'production-awid'),

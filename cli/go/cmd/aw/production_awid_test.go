@@ -21,6 +21,7 @@ func TestInviteAcceptAgainstTheProductionAWIDRelease(t *testing.T) {
 	t.Setenv("HOME", tmp)
 	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
 	registryURL := productionAWIDFixture(t)
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
 
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	controllerPub, controllerKey, err := awid.GenerateKeypair()

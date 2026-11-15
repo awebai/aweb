@@ -10,15 +10,19 @@ same 001-011 schema), and its ``transport`` carries each request over real HTTP
 to the release, whatever host the client names, so a test can swap one
 registry for the other. ``fault``, ``down`` and ``delay`` work as there.
 
-The release verifies no DNS (``AWID_SKIP_DNS_VERIFY``) and serves
-``REGISTRY_URL`` as its public origin, to ``SERVICE_TOKEN`` as the in-process
-registry does. Its ``app`` is a :class:`ReleaseApp`:
-what a test sets there is read back by the test's own side only.
+The release serves ``REGISTRY_URL`` as its public origin, to ``SERVICE_TOKEN``,
+as the in-process registry does. Its ``app`` is a :class:`ReleaseApp`. A test
+gives a namespace's DNS authority as it gives the in-process registry, through
+``app.dependency_overrides[get_domain_verifier]``; the release, whose own
+domain verifier is that one override, asks the test process for the answer
+over loopback HTTP each time it verifies a domain. Nothing reaches real DNS.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import json
 import os
 import socket
 import tempfile
@@ -29,10 +33,35 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+from awid.dns_verify import DnsVerificationError
+from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry, ServiceTransport
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
 _SCHEMA_PREFIX = "production_awid_"
+
+# Runs in the release's own environment: its app, its migrations, and a domain
+# verifier that asks the test process (argv[2]) for each domain's authority.
+_SERVE_RELEASE = """
+import json, sys, urllib.error, urllib.parse, urllib.request
+import uvicorn
+from awid.dns_verify import DnsVerificationError, DomainAuthority
+from awid_service.deps import get_domain_verifier
+from awid_service.main import create_app
+
+authority_url = sys.argv[2]
+
+async def verify(domain):
+    try:
+        with urllib.request.urlopen(authority_url + urllib.parse.quote(domain, safe=""), timeout=5) as answer:
+            return DomainAuthority(**json.load(answer))
+    except urllib.error.HTTPError as refused:
+        raise DnsVerificationError(refused.read().decode()) from None
+
+app = create_app()
+app.dependency_overrides[get_domain_verifier] = lambda: verify
+uvicorn.run(app, host="127.0.0.1", port=int(sys.argv[1]))
+"""
 
 
 def _project() -> Path:
@@ -62,7 +91,9 @@ class _Forward(httpx.AsyncBaseTransport):
             scheme=self._origin.scheme, host=self._origin.host, port=self._origin.port
         )
         headers = [(name, value) for name, value in request.headers.raw if name.lower() != b"host"]
-        forwarded = httpx.Request(request.method, url, headers=headers, content=await request.aread())
+        forwarded = httpx.Request(
+            request.method, url, headers=headers, content=await request.aread()
+        )
         return await self._http.handle_async_request(forwarded)
 
     async def aclose(self) -> None:
@@ -70,12 +101,42 @@ class _Forward(httpx.AsyncBaseTransport):
 
 
 class ReleaseApp:
-    """The settings a test gives an in-process registry's app, kept for the
-    test's own side; the release in its own process never reads them."""
+    """The settings a test gives an in-process registry's app. The release
+    reads only the domain verifier override, through :func:`_serve_authority`."""
 
     def __init__(self) -> None:
         self.dependency_overrides: dict = {}
         self.state = SimpleNamespace()
+
+
+async def _serve_authority(app: ReleaseApp) -> asyncio.Server:
+    """Loopback HTTP answering ``GET /<domain>`` with the authority ``app``'s
+    domain verifier override gives, or 404 with the refusal."""
+
+    async def answer(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            request_line = (await reader.readline()).decode()
+            while (await reader.readline()) not in (b"\r\n", b"\n", b""):
+                pass
+            domain = httpx.URL(request_line.split()[1]).path.lstrip("/")
+            override = app.dependency_overrides.get(get_domain_verifier)
+            try:
+                if override is None:
+                    raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
+                status, body = "200 OK", dataclasses.asdict(await override()(domain))
+            except DnsVerificationError as refused:
+                status, body = "404 Not Found", {"refused": str(refused)}
+            content = json.dumps(body).encode()
+            writer.write(
+                f"HTTP/1.1 {status}\r\ncontent-type: application/json\r\n"
+                f"content-length: {len(content)}\r\nconnection: close\r\n\r\n".encode()
+                + content
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+
+    return await asyncio.start_server(answer, "127.0.0.1", 0)
 
 
 class ProductionServiceTransport(ServiceTransport):
@@ -106,15 +167,29 @@ async def running_production_registry(
         AWID_DB_SCHEMA=schema,
         AWID_REDIS_URL=redis_url or os.environ.get("REDIS_URL", "redis://localhost:6379/0"),
         AWID_RATE_LIMIT_BACKEND="memory",
-        AWID_SKIP_DNS_VERIFY="1",
         AWID_PUBLIC_ORIGINS=REGISTRY_URL,
         AWID_SERVICE_TOKEN=SERVICE_TOKEN,
         APP_ENV="test",
     )
+    env.pop("AWID_SKIP_DNS_VERIFY", None)
+    env.pop("VIRTUAL_ENV", None)
+    app = ReleaseApp()
+    authority = await _serve_authority(app)
+    authority_port = authority.sockets[0].getsockname()[1]
     process = await asyncio.create_subprocess_exec(
-        "uv", "run", "--offline", "--frozen", "--project", str(_project()),
-        "awid", "--host", "127.0.0.1", "--port", str(port),
-        cwd=tempfile.gettempdir(), env=env,
+        "uv",
+        "run",
+        "--offline",
+        "--frozen",
+        "--project",
+        str(_project()),
+        "python",
+        "-c",
+        _SERVE_RELEASE,
+        str(port),
+        f"http://127.0.0.1:{authority_port}/",
+        cwd=tempfile.gettempdir(),
+        env=env,
     )
     db: AsyncDatabaseManager | None = None
     transport: ProductionServiceTransport | None = None
@@ -133,7 +208,7 @@ async def running_production_registry(
         db = AsyncDatabaseManager(DatabaseConfig(connection_string=database_url, schema=schema))
         await db.connect()
         transport = ProductionServiceTransport(origin)
-        yield Registry(app=ReleaseApp(), db=db, transport=transport)  # type: ignore[arg-type]
+        yield Registry(app=app, db=db, transport=transport)  # type: ignore[arg-type]
     finally:
         if process.returncode is None:
             process.terminate()
@@ -143,6 +218,8 @@ async def running_production_registry(
             except TimeoutError:
                 process.kill()
                 await process.wait()
+        authority.close()
+        await authority.wait_closed()
         if transport is not None:
             await transport._inner.aclose()
         if db is not None:
