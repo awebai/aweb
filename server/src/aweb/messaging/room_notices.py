@@ -12,7 +12,6 @@ from awid.team_certificate import decode_team_certificate
 from aweb.config import require_registered_certificates
 from aweb.grant_streams import grant_has_scope, grant_terminal_reason
 from aweb.identity_binding import verify_identity_binding
-from aweb.identity_address import require_address_evidence
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.messaging.room import _active_member, _post_dict, _uuid
 from aweb.service_errors import ServiceError
@@ -62,7 +61,6 @@ class RoomAuthorityWindow:
 
 
 async def _refresh_room_authority(request, db, identity):
-    require_address_evidence(identity)
     # A snapshot is not a new HTTP request. Its opening signature/timestamp
     # already admitted this actor; only current authority must be refreshed.
     # Reset request-local binding observations so they cannot outlive the

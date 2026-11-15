@@ -15,7 +15,7 @@ import httpx
 import pytest
 from starlette.requests import Request
 
-from aweb.identity_auth_deps import resolve_identity_auth
+from aweb.identity_auth_deps import get_messaging_auth, resolve_identity_auth
 from aweb.identity_binding import verify_identity_binding
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.mcp.tools.federation import mcp_messaging_auth
@@ -221,3 +221,66 @@ async def test_address_outage_preserves_verified_sender_and_refuses_unknown_befo
             assert len(env.dispatched) == dispatched
             for actor in (verified, verified_empty, unknown):
                 assert await projection(env, actor) == before[actor.id]
+
+
+@pytest.mark.asyncio
+async def test_conflicting_verified_stored_addresses_refuse_during_outage_before_effect(privacy_app):
+    env = privacy_app
+    async with address_reader(env):
+        actor = await prepare_actor(env, "alice", address=f"example.test/adbv-{uuid4().hex}")
+        # A real second address for the same identity, positively verified by
+        # the same registry before recording the second membership's marker.
+        other_name = f"adbv-other-{uuid4().hex}"
+        other_address = f"example.test/{other_name}"
+        namespace_id = await env.registry_db.fetch_value(
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain='example.test'",
+        )
+        await env.registry_db.execute(
+            "INSERT INTO {{tables.public_addresses}} (namespace_id,name,did_aw) VALUES ($1,$2,$3)",
+            namespace_id, other_name, actor.stable_id,
+        )
+        await verify_identity_binding(
+            identity_request(env, actor), did_key=actor.did, did_aw=actor.stable_id, address=other_address,
+        )
+        other_team_name = f"adbv-{uuid4().hex}"
+        other_team_id = f"{other_team_name}:example.test"
+        other_agent_id = uuid4()
+        await env.db.execute(
+            "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) "
+            "VALUES ($1,'example.test',$2,$3)", other_team_id, other_team_name, env.team_did,
+        )
+        await env.db.execute(
+            "INSERT INTO {{tables.agents}} "
+            "(agent_id,team_id,did_key,alias,identity_scope,did_aw,address,did_aw_verified_key,inbound_mode) "
+            "VALUES ($1,$2,$3,'alice','global',$4,$5,$3,'open')",
+            other_agent_id, other_team_id, actor.did, actor.stable_id, other_address,
+        )
+        before = [dict(row) for row in await env.db.fetch_all(
+            "SELECT agent_id,did_aw,address,did_aw_verified_key FROM {{tables.agents}} "
+            "WHERE did_key=$1 ORDER BY agent_id", actor.did,
+        )]
+        assert len(before) == 2
+        assert {row["address"] for row in before} == {actor.address, other_address}
+        assert all(row["did_aw_verified_key"] == actor.did for row in before)
+        dispatched = len(env.dispatched)
+        message_id = uuid4()
+        async with stalled_address_read(env):
+            auth = await get_messaging_auth(identity_request(env, actor), db=env.db)
+            assert auth.address is None
+            assert auth.address_resolution.state == "unknown"
+            assert not auth.address_resolution.stored_binding_verified
+            assert isinstance(auth.address_resolution.cause, RegistryError)
+            response = await send(env, actor, {
+                "to_did": env.actors["bob"].did, "message_id": str(message_id),
+                "subject": "ambiguous stored From", "body": "must not choose either address",
+            })
+            assert response.status_code == 503, response.text
+            assert response.json()["detail"]["code"] == "address_evidence_unavailable"
+            assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
+            assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.conversations}}") == 0
+            assert len(env.dispatched) == dispatched
+            after = [dict(row) for row in await env.db.fetch_all(
+                "SELECT agent_id,did_aw,address,did_aw_verified_key FROM {{tables.agents}} "
+                "WHERE did_key=$1 ORDER BY agent_id", actor.did,
+            )]
+            assert after == before
