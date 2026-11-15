@@ -275,7 +275,7 @@ def test_a_requester_the_team_knows_is_named_by_its_alias():
 
 
 @pytest.mark.asyncio
-async def test_provenance_comes_only_from_this_signers_exact_record_of_the_certificate():
+async def test_provenance_comes_only_from_this_signers_exact_record_of_the_certificate(admissions):
     """AWID allows several active certificates for one member key. Only the
     certificate this signer recorded is credited to it, with the state it
     recorded; any other certificate is "not recorded by this signer", which
@@ -293,12 +293,17 @@ async def test_provenance_comes_only_from_this_signers_exact_record_of_the_certi
         return [certificate("cert-admitted"), certificate("cert-same-key"), certificate("cert-reserved", "did:key:zR"),
             certificate("cert-removed", "did:key:zX"), certificate("cert-unknown", "did:key:zU")]
 
-    c = SimpleNamespace(context=SimpleNamespace(authority_id="engineering:customer.example"),
-        registry=SimpleNamespace(list_team_certificates_fresh=certificates))
-    view = {"admitted": [
-        {"child_key": "did:key:zSHARED", "certificate_id": "cert-admitted", "state": "active"},
-        {"child_key": "did:key:zR", "certificate_id": "cert-reserved", "state": "reserved"},
-        {"child_key": "did:key:zX", "certificate_id": "cert-removed", "state": "removed"}], "members": []}
+    team = "engineering:customer.example"
+    for certificate_id, key, state in [("cert-admitted", "did:key:zSHARED", "active"),
+            ("cert-reserved", "did:key:zR", "reserved"), ("cert-removed", "did:key:zX", "removed")]:
+        await admissions.w.db.execute(
+            "INSERT INTO {{tables.protected_root_admissions}} "
+            "(operation_id,service_id,team_id,root_id,policy_digest,certificate_id,child_key,admitted_at,state) "
+            "VALUES(gen_random_uuid()::text,'provenance-service',$1,'root','digest',$2,$3,now(),$4)",
+            team, certificate_id, key, state)
+    c = SimpleNamespace(context=SimpleNamespace(service_id="provenance-service", authority_id=team),
+        db=admissions.w.db, registry=SimpleNamespace(list_team_certificates_fresh=certificates))
+    view = {"members": []}
     await _members(c, view)
     assert {m["certificate_id"]: m["joined"] for m in view["members"]} == {
         "cert-admitted": "signer", "cert-same-key": "unrecorded", "cert-reserved": "signer_reserved",
@@ -471,3 +476,35 @@ async def test_a_request_past_the_notice_budget_shows_it_was_not_mailed(admissio
     assert notices == {**{o.operation_id: None for o in operations[:-1]}, operations[-1].operation_id: "not_mailed"}
     html = owner_page_html(view)
     assert html.count('data-notice="not-mailed"') == 1
+
+
+@pytest.mark.asyncio
+async def test_the_owner_page_lists_current_admissions_and_counts_removed_ones(admissions):
+    a = admissions
+    await endorse(a)
+    added = admit_operation(a)
+    assert (await prepare(a, added)).status_code == 200
+    assert (await execute(a, added)).json()["state"] == "committed"
+    [row] = await a.w.db.fetch_all(
+        "SELECT service_id,team_id,root_id,policy_digest FROM {{tables.protected_root_admissions}}")
+    # Years of agents added and removed again.
+    await a.w.db.execute(
+        "INSERT INTO {{tables.protected_root_admissions}} "
+        "(operation_id,service_id,team_id,root_id,policy_digest,certificate_id,child_id,child_key,admitted_at,state) "
+        "SELECT gen_random_uuid()::text,$1,$2,$3,$4,gen_random_uuid()::text,NULL,'did:key:z'||g,"
+        "now() - make_interval(days => 30 + g),'removed' FROM generate_series(1, 500) g",
+        row["service_id"], row["team_id"], row["root_id"], row["policy_digest"])
+    scope = await scope_of(a.w.app)
+    view = await owner_view(a.group, scope=scope, subject=a.actor.subject)
+    [agent] = view["admitted"]
+    assert agent["state"] == "active" and view["admitted_removed"] == 500
+    # The signer recorded the agent's removal; the registry still lists it.
+    await a.w.db.execute("UPDATE {{tables.protected_root_admissions}} SET state='removed' WHERE certificate_id=$1",
+                         agent["certificate_id"])
+    view = await owner_view(a.group, scope=scope, subject=a.actor.subject)
+    assert view["admitted"] == [] and view["admitted_removed"] == 501
+    alias = added.intent()["subject"]["member_alias"]
+    assert {m["alias"]: m for m in view["members"]}[alias]["joined"] == "signer_removed"
+    # Its root still shows the admission inside the rate window.
+    [root] = view["roots"]
+    assert (root["root_id"], root["active"], root["in_window"]) == (a.w.root_id, 0, 1)

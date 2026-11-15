@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from html import escape
 from urllib.parse import quote
 
@@ -184,6 +184,7 @@ async def owner_view(composition, *, scope: str, subject: str, now: datetime | N
         "history": await _deciders(c, history, subject),
         "more": more,
         "admitted": [],
+        "admitted_removed": 0,
         "roots": [],
         "policy": None,
         "approvers": approvers,
@@ -232,10 +233,17 @@ async def _admissions(c, view, now):
     if context.authority_id not in policy["teams"]:
         return
     view["policy"] = policy
+    # Agents still added or being added, which the policy bounds; the removed
+    # ones, which only grow, are counted, never read row by row.
     admitted = await c.db.fetch_all(
         "SELECT operation_id,root_id,certificate_id,child_id,child_key,admitted_at,state "
         "FROM {{tables.protected_root_admissions}} "
-        "WHERE service_id=$1 AND team_id=$2 ORDER BY admitted_at DESC",
+        "WHERE service_id=$1 AND team_id=$2 AND state <> 'removed' ORDER BY admitted_at DESC",
+        context.service_id, context.authority_id,
+    )
+    view["admitted_removed"] = await c.db.fetch_value(
+        "SELECT count(*) FROM {{tables.protected_root_admissions}} "
+        "WHERE service_id=$1 AND team_id=$2 AND state = 'removed'",
         context.service_id, context.authority_id,
     )
     requests = {row["operation_id"]: _json(row["request"]) for row in await c.db.fetch_all(
@@ -247,10 +255,18 @@ async def _admissions(c, view, now):
             "certificate_id": row["certificate_id"], "child_id": row["child_id"], "child_key": row["child_key"],
             "admitted_at": _stamp(row["admitted_at"]),
             "state": row["state"]})
+    # Every root with an agent still added, or an admission inside its rate
+    # window, whose count still bounds it.
+    window = policy["bounds"]["rate_window_seconds"]
+    roots = await c.db.fetch_all(
+        "SELECT DISTINCT root_id FROM {{tables.protected_root_admissions}} "
+        "WHERE service_id=$1 AND team_id=$2 AND (state <> 'removed' OR admitted_at > $3)",
+        context.service_id, context.authority_id, now - timedelta(seconds=window),
+    )
     async with c.db.transaction() as tx:
-        for root_id in sorted({row["root_id"] for row in admitted}):
+        for root_id in sorted(row["root_id"] for row in roots):
             counts = await admission_counts(tx, service_id=context.service_id, team_id=context.authority_id,
-                root_id=root_id, window_seconds=policy["bounds"]["rate_window_seconds"], now=now)
+                root_id=root_id, window_seconds=window, now=now)
             view["roots"].append({"root_id": root_id, "active": counts["active"], "in_window": counts["in_window"],
                 "next_at": _stamp(counts["next_at"])})
 
@@ -271,7 +287,11 @@ async def _members(c, view):
     # One member key may hold several certificates; only this signer's exact
     # record of a certificate says anything about how it joined, and then
     # with the state recorded. Without one, nothing about its origin is known.
-    recorded = {a["certificate_id"]: a["state"] for a in view["admitted"]}
+    recorded = {row["certificate_id"]: row["state"] for row in await c.db.fetch_all(
+        "SELECT certificate_id,state FROM {{tables.protected_root_admissions}} "
+        "WHERE service_id=$1 AND team_id=$2 AND certificate_id = ANY($3::text[])",
+        c.context.service_id, c.context.authority_id, [record.certificate_id for record in records],
+    )}
     for record in records:
         view["members"].append({"alias": record.alias, "kind": await _member_kind(c, record),
             "joined": _JOINED.get(recorded.get(record.certificate_id), "unrecorded"),
@@ -435,8 +455,12 @@ def owner_page_html(view: dict) -> str:
                     + _technical([("Added by", agent["root_id"]), ("Agent key", agent["child_key"])]) + "</li>"
                 )
             parts.append("</ul>")
-        else:
+        elif not view.get("admitted_removed"):
             parts.append("<p>No agents have been added yet.</p>")
+        if view.get("admitted_removed"):
+            removed = view["admitted_removed"]
+            parts.append(f"<p>{removed} {'agent' if removed == 1 else 'agents'} added this way "
+                         f"{'was' if removed == 1 else 'were'} removed later; they are not listed.</p>")
         parts.append("<h2>Team members</h2>")
         if view["members"] is None:
             parts.append("<p>The member list could not be read right now. Reload to try again.</p>")
