@@ -315,27 +315,36 @@ async def test_owner_retry_retires_only_definite_unsigned_expiry_and_can_start_a
 
 
 @pytest.mark.asyncio
-async def test_open_requests_from_the_owner_page_are_not_bounded_by_the_agent_cap(admissions, tmp_path):
-    """Every owner's page prepares under the signer host's key; the cap on a
-    requester's open requests bounds agents, so one owner's open removals
-    never block another's."""
+async def test_each_owners_open_page_requests_are_bounded_on_their_own(admissions, tmp_path):
+    """Every owner's page prepares under the signer host's one key; the bound
+    on unfinished requests counts each owner by itself, so another owner's
+    open removals never use up this owner's places, and this owner's own do."""
     from aweb_naapp.runtime.protected_signer import OPEN_REQUEST_LIMIT
 
     a = admissions
     _, first = await legacy_member(a, "local")
     _, second = await legacy_member(a, "local", alias="second-member")
+    _, third = await legacy_member(a, "local", alias="third-member")
     async with owner_http(a, tmp_path) as (client, headers, _):
         await a.w.db.execute("UPDATE {{tables.protected_requester_bindings}} SET active=false")
         body = selection(first)
         assert (await client.post("/governance/operations", json=body, headers=headers)).status_code == 200
-        # As many open owner-page requests as an agent may hold, all under the host's key.
-        await a.w.db.execute(
-            "INSERT INTO {{tables.protected_signer_operations}} "
-            "(operation_id,handoff_id,requester,intent,request,digest,approval_id,candidate_links,expires_at,scope,"
-            "initiator_subject,initiator_scope,initiation_selection) "
-            "SELECT gen_random_uuid()::text,gen_random_uuid()::text,requester,intent,request,digest,"
-            "gen_random_uuid()::text,'{}'::jsonb,expires_at,scope,initiator_subject,initiator_scope,initiation_selection "
-            "FROM {{tables.protected_signer_operations}}, generate_series(1, $2) WHERE operation_id=$1",
-            body["operation_id"], OPEN_REQUEST_LIMIT)
+
+        async def copies(subject, count):
+            await a.w.db.execute(
+                "INSERT INTO {{tables.protected_signer_operations}} "
+                "(operation_id,handoff_id,requester,intent,request,digest,approval_id,candidate_links,expires_at,"
+                "scope,initiator_subject,initiator_scope,initiation_selection) "
+                "SELECT gen_random_uuid()::text,gen_random_uuid()::text,requester,intent,request,digest,"
+                "gen_random_uuid()::text,'{}'::jsonb,expires_at,scope,$3,initiator_scope,initiation_selection "
+                "FROM {{tables.protected_signer_operations}}, generate_series(1, $2) WHERE operation_id=$1",
+                body["operation_id"], count, subject)
+
+        # Another owner of the same scope holds a full set of open requests.
+        await copies("another-owner", OPEN_REQUEST_LIMIT)
         response = await client.post("/governance/operations", json=selection(second), headers=headers)
         assert response.status_code == 200, response.text
+        # This owner's own, with the two it made, reach the limit.
+        await copies(a.w.human.subject, OPEN_REQUEST_LIMIT - 2)
+        refused = await client.post("/governance/operations", json=selection(third), headers=headers)
+        assert refused.status_code == 403 and refused.json() == {"detail": "open_requests_limit_reached"}

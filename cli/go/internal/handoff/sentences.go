@@ -126,7 +126,7 @@ var sentences = map[string]func(Facts) string{
 		return "The signer has no record of this operation for this identity."
 	},
 	"open_requests_limit_reached": func(Facts) string {
-		return "This identity already has as many requests waiting for approval as the signer allows. Run the command again after the approver decides one or one expires."
+		return "This identity already has as many unfinished requests as the signer allows. Run the command again once one of them is signed, refused or expired; an approval alone does not free its place."
 	},
 	"login_rate_limited":   func(Facts) string { return "Too many sign-in attempts." },
 	"handoff_rate_limited": func(Facts) string { return "Too many requests to the signer." },

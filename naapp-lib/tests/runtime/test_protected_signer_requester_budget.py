@@ -145,3 +145,38 @@ async def test_a_round_to_more_approvers_than_the_budget_is_mailed_once_per_wind
     assert await reserve(NOTICE_BUDGET + 2) is False
     world.clock.advance(NOTICE_WINDOW)
     assert await reserve(NOTICE_BUDGET + 2) is True
+
+
+async def test_an_approved_request_whose_signing_failed_still_holds_its_place(world, monkeypatch):
+    """A slot frees when its request is signed, refused or expired, never at
+    the human decision alone: an approval recorded before a failed read
+    leaves the act unsigned and still finishable."""
+    signer = mailing_signer(world, Contacts())
+    approved = fresh(world)
+    await signer.prepare(approved, requester=world.requester)
+    for _ in range(OPEN_REQUEST_LIMIT - 1):
+        await signer.prepare(fresh(world), requester=world.requester)
+    # The approval is recorded, then the very next authority read fails, once.
+    authority, armed = signer.authority, {"read": False}
+    observe, decide = authority.observe, signer.approvals.decide
+
+    async def fail_once_after_the_decision(context, *, purpose):
+        if armed["read"]:
+            armed["read"] = False
+            raise SignerRefused("evidence_unavailable")
+        return await observe(context, purpose=purpose)
+
+    async def decided(*args, **kwargs):
+        result = await decide(*args, **kwargs)
+        armed["read"] = True
+        return result
+
+    monkeypatch.setattr(authority, "observe", fail_once_after_the_decision)
+    monkeypatch.setattr(signer.approvals, "decide", decided)
+    options = await signer.approval_options(approved.operation_id, human=world.human)
+    with pytest.raises(SignerRefused, match="evidence_unavailable"):
+        await signer.execute(approved.operation_id, world.device.get(dict(options)), human=world.human)
+    assert (await signer.receipt(approved.operation_id, reader=world.reader)).state == "pending"
+    assert await signer.approval_options(approved.operation_id, human=world.human) == {"state": "approved"}
+    with pytest.raises(SignerRefused, match="open_requests_limit_reached"):
+        await signer.prepare(fresh(world), requester=world.requester)

@@ -1095,11 +1095,14 @@ operation and keeps its generic status code. The
 controls distinguish these cases from an incorrect request origin.
 
 Invalid authentication is 401 `requester_invalid`, scope denial 403
-`scope_refused`, binding conflict 409 `operation_conflict`. An agent requester
-that already has twenty requests waiting for a human under one signer authority is
-refused at prepare with 403 `open_requests_limit_reached`, before any approval
-or operation is created; a decided or expired request frees its place, and
-resending a prepare already made still answers. Authenticated
+`scope_refused`, binding conflict 409 `operation_conflict`. A requester that
+already has twenty unfinished requests needing a human under one signer
+authority is refused at prepare with 403 `open_requests_limit_reached`, before
+any approval or operation is created. An agent is counted by its own principal
+and an owner's page request by that owner, never pooled under the signer host's
+key. A place frees when its request is signed, refused or expires; an approval
+alone does not free it, since an approved act whose signing failed can still be
+finished. Resending a prepare already made still answers. Authenticated
 lookup with no authorized matching record returns 404 `operation_not_found`,
 not proof that a previously sent request never committed. Availability failure
 is 503 `receipt_unavailable`. Receipt states themselves use HTTP 200.

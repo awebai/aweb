@@ -4,11 +4,15 @@ The requester is the stable principal the authority admitted, scoped to the
 signer and its authority, so a new operation id, operation kind or requester
 key does not reset either bound.
 
-Open requests: an agent requester holds at most OPEN_REQUEST_LIMIT requests
-waiting for a human at once (an owner's page request is not counted). Past it prepare is refused before any approval state is
-created, so neither the owner's lists nor the stored operations grow without
-bound, and a real request cannot be buried. A decided or expired request frees
-its place.
+Open requests: each requester holds at most OPEN_REQUEST_LIMIT unfinished
+requests that need a human at once. An agent is counted by its own principal;
+an owner's page request by that owner (every owner's page prepares under the
+signer host's one key, which must not pool them). Past the limit prepare is
+refused before any approval state is created, so neither the owner's lists nor
+the stored operations grow without bound, and a real request cannot be buried.
+A place frees when its request is signed, refused or expires; an approval
+alone does not free it, since an approved act whose signing failed can still
+be finished.
 
 Mail: each prepared operation that needs a human reserves its notices, one per
 approver it would mail, inside the prepare transaction and under a lock on the
@@ -30,20 +34,30 @@ NOTICE_WINDOW = timedelta(hours=1)
 OPEN_REQUEST_LIMIT = 20
 
 
-async def admit_open_request(tx, *, service_id: str, authority_id: str, requester: str, now: datetime) -> None:
-    """Refuse a new request that needs a human while the requester already has
-    OPEN_REQUEST_LIMIT waiting. Called in the transaction that creates it,
-    before any approval state; the lock is held until that transaction ends."""
+_UNFINISHED = ("approval_id IS NOT NULL AND result IS NULL AND refusal_code IS NULL AND signed_result IS NULL "
+               "AND expires_at > $1 AND scope->>'service_id'=$2 AND scope->'authority'->>'id'=$3")
+
+
+async def admit_open_request(tx, *, service_id: str, authority_id: str, now: datetime,
+                             requester: str | None = None, owner: tuple[str, str] | None = None) -> None:
+    """Refuse a new request that needs a human while its requester (an agent's
+    principal, or an owner's (subject, scope)) already has OPEN_REQUEST_LIMIT
+    unfinished. Called in the transaction that creates it, before any approval
+    state; the lock is held until that transaction ends."""
+    values: tuple[str, ...]
+    if owner is not None and requester is None:
+        kind, values, where = "owner", owner, "initiator_subject=$4 AND initiator_scope=$5"
+    elif requester is not None and owner is None:
+        kind, values, where = "agent", (requester,), "requester=$4 AND initiator_subject IS NULL"
+    else:
+        raise ValueError("exactly one of requester and owner")
     await tx.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-                     "\n".join(("protected-open-requests", service_id, authority_id, requester)))
-    waiting = await tx.fetch_value(
-        "SELECT count(*) FROM {{tables.protected_signer_operations}} "
-        "WHERE requester=$1 AND approval_id IS NOT NULL AND result IS NULL AND refusal_code IS NULL "
-        "AND signed_result IS NULL AND expires_at > $2 "
-        "AND scope->>'service_id'=$3 AND scope->'authority'->>'id'=$4",
-        requester, now, service_id, authority_id,
+                     "\n".join(("protected-open-requests", service_id, authority_id, kind, *values)))
+    unfinished = await tx.fetch_value(
+        f"SELECT count(*) FROM {{{{tables.protected_signer_operations}}}} WHERE {_UNFINISHED} AND {where}",
+        now, service_id, authority_id, *values,
     )
-    if waiting >= OPEN_REQUEST_LIMIT:
+    if unfinished >= OPEN_REQUEST_LIMIT:
         raise SignerRefused("open_requests_limit_reached")
 
 
