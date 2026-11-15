@@ -38,6 +38,14 @@ The v1 wrapper has these fields:
 | `signing_key_id` | Its existing signing-key selector, when present. |
 | `encrypted_envelope` | The original encrypted v2 envelope, instead of the preceding three fields. |
 | `id_chain` | The optional adjacent ID-chain presentation, unchanged. |
+| `evidence` | Reserved optional versioned evidence payload, currently ignored by verification. |
+
+The reserved value is opaque, including its own version selector. Unknown versions
+and malformed evidence content inside valid JSON do not change the message or
+ID-chain result; this reservation does not verify any evidence claim.
+The outer export rejects duplicate members,
+including escaped or case-insensitive names for the same field. Unrelated unknown
+outer fields and malformed JSON remain invalid.
 
 The sender's key and stable ID come from the signed content. Display labels,
 server-projected sender IDs and earlier verification statuses are not inputs.
