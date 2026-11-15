@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 import re
+import traceback
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import contextmanager
 from dataclasses import asdict
 from math import ceil
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -147,10 +149,18 @@ def _canonical_uuid(value: str) -> str | None:
         return None
 
 
+def _frames(error: BaseException) -> list[str]:
+    """Where `error` was raised, outermost first: each frame's file (its
+    directory and name), line and function. No source text, message or local."""
+    return [f"{'/'.join(Path(frame.filename).parts[-2:])}:{frame.lineno} {frame.name}"
+            for frame in traceback.extract_tb(error.__traceback__)]
+
+
 def _log_unexpected(error: Exception, request: Request | None) -> None:
     """Name an unexpected failure for the operator by its route template, the
-    operation it names and its class. Its message, traceback and the request
-    can carry the very bytes the refusal withholds, so none of them is logged."""
+    operation it names, its class and its stack frames. Its message, locals
+    and the request can carry the very bytes the refusal withholds, so none of
+    them is logged."""
     route = request.scope.get("route") if request is not None else None
     operation_id = request.path_params.get("operation_id") if request is not None else None
     try:
@@ -159,9 +169,10 @@ def _log_unexpected(error: Exception, request: Request | None) -> None:
         operation_id = None
     template = getattr(route, "path", None)
     failure = type(error).__name__
-    logger.error("protected signer route %s failed unexpectedly: %s (operation %s)",
-        template, failure, operation_id,
-        extra={"route": template, "operation_id": operation_id, "failure": failure})
+    frames = _frames(error)
+    logger.error("protected signer route %s failed unexpectedly: %s (operation %s) at %s",
+        template, failure, operation_id, " > ".join(frames),
+        extra={"route": template, "operation_id": operation_id, "failure": failure, "frames": frames})
 
 
 def _http(error: Exception, request: Request | None) -> HTTPException:

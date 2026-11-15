@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -352,6 +353,7 @@ async def test_valid_json_above_64_kib_is_refused_before_mint(http_world):
 
 
 UNEXPECTED_CANARY = "canary-7f3e9b"
+FRAME = re.compile(r"[\w.-]+/[\w.-]+\.py:\d+ [\w<>.]+")
 
 
 @pytest.mark.parametrize("method", ["POST", "GET"])
@@ -380,6 +382,10 @@ async def test_an_unexpected_failure_is_logged_by_route_and_class_only(http_worl
     [record] = [r for r in caplog.records if r.levelno >= logging.ERROR]
     template = "/protected-operations" if method == "POST" else "/protected-operations/{operation_id}"
     assert (record.route, record.operation_id, record.failure) == (template, operation_id, "QueryError")
+    # Where it failed, as file, line and function only: enough to find the bug.
+    assert record.frames and all(FRAME.fullmatch(frame) for frame in record.frames), record.frames
+    assert any(frame.startswith("protected_signer/") for frame in record.frames), record.frames
+    assert record.frames[-1] in record.getMessage()
     logged = caplog.text + "".join(str(r.__dict__) for r in caplog.records)
     for secret in (UNEXPECTED_CANARY, "http_requesters", sent["Authorization"].split()[-1],
                    sent["X-AWEB-Signed-Payload"]):

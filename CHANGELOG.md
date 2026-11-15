@@ -42,8 +42,9 @@
   registry read after the owner's passkey touch is no longer spent: a
   reopened page (signed-in or mailed link) finishes it with no new passkey
   check while its original gesture window lasts, and a 503 offers Try again.
-  Unexpected signer errors are logged by route, operation id and exception
-  class only; the controller key signs a delivery envelope only inside
+  Unexpected signer errors are logged by route, operation id, exception
+  class and stack frames (file, line and function), never with a message
+  or locals; the controller key signs a delivery envelope only inside
   custody, from the verified signed artifact. `aw` backs off reading a
   pending receipt (to a one-minute cap, never past the operation's expiry)
   instead of spending its whole read allowance.
