@@ -1,8 +1,8 @@
 # Knowledge log
 
 ## 2026-11-11
-* **Harvest**: OKF proposal from seat aweb-protocol-expert-secrets-docs with five backing notes; three human-assurance contract decisions frozen on a review branch (584d76c9c), not on main, and two review lessons. The fallback lesson is merged into the session-start decision. Reviewer names and message identifiers are omitted.
-* **Creation**: decisions [a credential-cap change records policy.changed](/aweb-protocol-expert/decisions/credential-cap-change-records-policy-changed.md), [a session start by someone other than the holder is loopback only](/aweb-protocol-expert/decisions/non-holder-session-start-is-loopback-only.md) and [a holding with no notice contact refuses self-service credential changes](/aweb-protocol-expert/decisions/no-notice-contact-refuses-self-credential-change.md); lesson [review against the reviewed base, not main](/aweb-protocol-expert/lessons/review-against-the-reviewed-base.md).
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-secrets-docs: one review lesson. Its three human-assurance contract decisions are not recorded, because the human approval and key custody architecture (aweb-adcl) supersedes the design they decided. Reviewer names and message identifiers are omitted.
+* **Creation**: lesson [review against the reviewed base, not main](/aweb-protocol-expert/lessons/review-against-the-reviewed-base.md).
 
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
