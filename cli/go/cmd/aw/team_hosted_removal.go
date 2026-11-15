@@ -150,7 +150,10 @@ func executeHostedRemovalRequest(req *http.Request, apiKey, label, awebURL strin
 		return nil, fmt.Errorf("read %s response: %w", label, err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s returned %d: %s", label, resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &plainRefusal{
+			text: fmt.Sprintf("%s returned %d: %s", label, resp.StatusCode, strings.TrimSpace(string(body))),
+			err:  &awid.APIError{StatusCode: resp.StatusCode, Body: string(body)},
+		}
 	}
 	return body, nil
 }

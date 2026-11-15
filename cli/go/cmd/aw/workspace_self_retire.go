@@ -49,6 +49,12 @@ const (
 	aliasReleaseNoCredential = "no_workspace_credential"
 )
 
+// callerCertificateRevoked is the self-remove route's refusal of a caller whose own
+// certificate is already revoked. It is the --json error code a retirement
+// hook keys on: that member can no longer finish its own retirement, and the
+// team's owner has to.
+const callerCertificateRevoked = "certificate_revoked"
+
 type selfRetireResponse struct {
 	Status              string `json:"status"`
 	TeamID              string `json:"team_id"`
@@ -236,6 +242,9 @@ func postSelfRetire(ctx context.Context, client *aweb.Client, plan selfRetirePla
 		out, err = postSelfRetireWithAPIKey(ctx, plan)
 	}
 	if err != nil {
+		if awid.RefusalCode(err) == callerCertificateRevoked {
+			return nil, withErrorCode(callerCertificateRevoked, err)
+		}
 		return nil, err
 	}
 	if strings.TrimSpace(out.Status) == "" {

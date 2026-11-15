@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `aw workspace delete --json` reports `error.code: "certificate_revoked"`
+  when the hosted self-remove route refuses the caller because its own
+  certificate is already revoked (the server's `detail.code`). Such a member
+  cannot finish its own retirement; the team's owner finishes it with
+  `aw team remove-agent`. Both the team-certificate and the workspace-key
+  paths report it, and a workspace-key refusal's `--json` envelope now
+  carries the server's status and code like every other refusal.
 - Failed identity address discovery now remains unknown instead of looking
   addressless. Identity sends keep using a stored binding verified for the
   current key, including a verified empty address; an unverified sender gets
