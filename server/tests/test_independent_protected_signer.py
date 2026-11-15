@@ -498,7 +498,8 @@ async def test_root_old_key_stops_authenticating_after_continuity_rotation(world
 
 @pytest.mark.asyncio
 async def test_policy_changed_after_options_cannot_commit_the_old_approval(world):
-    prepared = await prepare(world, await owner_removal_operation(world))
+    operation = await owner_removal_operation(world)
+    prepared = await prepare(world, operation)
     options = await world.app.signer.approval_options(
         prepared.operation_id, human=world.human
     )
@@ -506,8 +507,9 @@ async def test_policy_changed_after_options_cannot_commit_the_old_approval(world
     await world.db.execute(
         "UPDATE {{tables.protected_authorizer_bindings}} SET policy_version=2"
     )
-    with pytest.raises(SignerRefused, match="policy_changed"):
-        await world.app.signer.execute(prepared.operation_id, proof, human=world.human)
+    refused = await world.app.signer.execute(prepared.operation_id, proof, human=world.human)
+    assert (refused.state, refused.code) == ("refused", "policy_changed")
+    assert not await revoked(world, operation)
     assert (
         await world.db.fetch_value(
             "SELECT count(*) FROM {{tables.protected_local_audit}} "

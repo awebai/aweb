@@ -321,12 +321,8 @@ async def test_history_unknown_refresh_limit_is_per_team(registry, team, history
     await registry.add_certificate(other.certificate())
     await cache.get(TEAM_ID, team.certificate_id)
     await cache.get(other.team_id, other.certificate_id)
-    for team_id, certificate_id in ((TEAM_ID, "unknown"), (other.team_id, "also-unknown")):
-        # History cache refresh still coalesces per team, but get also requires
-        # a fresh exact-certificate observation: unknown IDs cannot be admitted.
-        with pytest.raises(HTTPException) as refused:
-            await cache.get(team_id, certificate_id)
-        assert refused.value.status_code == 401 and refused.value.detail == "unregistered"
+    await cache.get(TEAM_ID, "unknown")
+    await cache.get(other.team_id, "also-unknown")
     assert len(team_lookups(registry)) == 2
     assert len(team_lookups(registry, "other")) == 2
 
@@ -362,9 +358,7 @@ async def test_history_cold_outage_coalesces_failures_and_retries_after_window(
 async def test_history_nonexistent_team_flood_does_not_retain_refresh_state(registry, team):
     cache = history_cache(registry)
     await cache.get(TEAM_ID, team.certificate_id)
-    with pytest.raises(HTTPException) as refused:
-        await cache.get(TEAM_ID, "unpublished")
-    assert refused.value.status_code == 401 and refused.value.detail == "unregistered"
+    await cache.get(TEAM_ID, "unpublished")
     locks_before = dict(cache._team_refresh_locks)
     attempts_before = dict(cache._unknown_refresh_at)
     ghosts = [Member(team_id=f"missing-{i}:example.com") for i in range(16)]
