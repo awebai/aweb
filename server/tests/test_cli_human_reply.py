@@ -104,6 +104,10 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     team_sk, _, team_did = _make_keypair()
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
     await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
+    # The team has always had this key: its members were accepted under it.
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2 AND certificate_id IS NOT NULL", team_did, TEAM,
+    )
     cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
                              member_did_aw=agent["stable_id"], member_address=agent["address"])
     # Match the CLI wire format: absent optional local fields, not empty strings.

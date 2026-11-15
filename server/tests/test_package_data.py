@@ -150,6 +150,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "049_dead_row_indexes.sql",
         "050_one_active_team_document.sql",
         "051_team_key_pin_act.sql",
+        "052_member_accepted_team_key.sql",
     ]
 
 

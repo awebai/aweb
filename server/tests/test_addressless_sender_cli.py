@@ -74,7 +74,7 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
     published = await env.client.put("/v1/agents/me/encryption-key", content=peer_body, headers=peer_headers)
     assert published.status_code == 200, published.text
     await env.app.state.awid_registry_client.register_did(human["did"], human["signing_key"])
-    await env.db.execute("UPDATE {{tables.agents}} SET certificate_id='privacy-alice' WHERE agent_id=$1", env.actors["alice"].id)
+    await env.db.execute("UPDATE {{tables.agents}} SET certificate_id='privacy-alice', accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1", env.actors["alice"].id)
     message_id, conversation_id = str(uuid4()), str(uuid4())
     source = encrypt_e2ee_mail(sender=human, recipients=[agent], subject="Human question",
                               body="Human private text", message_id=message_id,
@@ -117,6 +117,10 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
     team_sk, _, team_did = _make_keypair()
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
     await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
+    # The team has always had this key: its members were accepted under it.
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2 AND certificate_id IS NOT NULL", team_did, TEAM,
+    )
     cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
                              member_did_aw=agent["stable_id"], member_address=agent["address"])
     # Match the CLI wire format: absent optional local fields, not empty strings.
@@ -210,7 +214,7 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
             await env.db.execute("UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2", json.dumps(envelope), UUID(message_id))
             await env.db.execute("UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1", env.actors["alice"].id)
             await read_both("verification_stale")
-            await env.db.execute("UPDATE {{tables.agents}} SET certificate_id='privacy-alice' WHERE agent_id=$1", env.actors["alice"].id)
+            await env.db.execute("UPDATE {{tables.agents}} SET certificate_id='privacy-alice', accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1", env.actors["alice"].id)
             # A second CLI process restores the registry-scoped checkpoint.
             await read_both("verified")
             await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", env.actors["alice"].id)

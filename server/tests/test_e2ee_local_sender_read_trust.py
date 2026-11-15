@@ -52,7 +52,8 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
         await env.registry_db.execute(
             "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ('sender.test', $1, $2, 'public')",
             sender_team.split(":", 1)[0], sender_team_did)
-        await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1, certificate_id='privacy-alice' WHERE agent_id=$2",
+        await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1, certificate_id='privacy-alice', "
+                             "accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = $1) WHERE agent_id=$2",
                              sender_team, env.actors["alice"].id)
         await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$1 WHERE workspace_id=$2",
                              sender_team, env.actors["alice"].workspace)
@@ -76,7 +77,8 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
                                 signing_key=actor.sk, private_key=private, encryption_key=assertion)
     sender, agent = identities["alice"], identities["bob"]
     if human:
-        await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key, certificate_id='privacy-alice' WHERE agent_id=$1",
+        await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key, certificate_id='privacy-alice', "
+                             "accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1",
                              env.actors["alice"].id)
     message_id, conversation_id = str(uuid4()), str(uuid4())
     source = encrypt_e2ee_mail(sender=sender, recipients=[agent], subject="Local encrypted",
@@ -117,6 +119,10 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
     team_sk, _, team_did = _make_keypair()
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
     await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
+    # The team has always had this key: its members were accepted under it.
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2 AND certificate_id IS NOT NULL", team_did, TEAM,
+    )
     cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
                              member_did_aw=agent["stable_id"], member_address=agent["address"])
     cert.pop("signature")
