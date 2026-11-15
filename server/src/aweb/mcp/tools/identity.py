@@ -34,13 +34,16 @@ async def whoami(db_infra) -> str:
             auth.did_key,
         )
 
-    return json.dumps(
-        {
-            "team_id": auth.team_id,
-            "agent_id": auth.agent_id,
-            "alias": auth.alias,
-            "did_key": auth.did_key,
-            "did_aw": (auth.did_aw or (row["did_aw"] if row and row["did_aw"] else "")),
-            "address": (auth.address or (row["address"] if row and row["address"] else "")),
-        }
-    )
+    outcome = auth.address_resolution
+    result = {
+        "team_id": auth.team_id,
+        "agent_id": auth.agent_id,
+        "alias": auth.alias,
+        "did_key": auth.did_key,
+        "did_aw": (auth.did_aw or (row["did_aw"] if row and row["did_aw"] else "")),
+        "address": (auth.address or (row["address"] if row and row["address"] else "")),
+    }
+    if outcome.state == "unknown":
+        result["address"] = None
+        result["address_status"] = "unknown"
+    return json.dumps(result)

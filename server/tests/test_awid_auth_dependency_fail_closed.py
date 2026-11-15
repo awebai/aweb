@@ -7,6 +7,7 @@ from starlette.requests import Request
 
 from awid.registry import CachedRegistryClient, KeyResolution, RegistryClient, RegistryError
 from aweb import identity_auth_deps
+from aweb.identity_address import AddressResolution
 from aweb.team_auth_deps import _get_revoked_certificates, _resolve_team_key
 from tests.awid_stall_support import stalled_registry_url
 
@@ -148,7 +149,7 @@ async def test_identity_auth_warmed_key_and_address_cache_makes_zero_upstream_ca
         await registry.aclose()
 
     assert first == second == identity_auth_deps.IdentityAuth(
-        did_key=did_key, did_aw=did_aw, address=None
+        did_key=did_key, did_aw=did_aw, address=None, address_resolution=AddressResolution("empty")
     )
     assert after_first == {"key": 1, "addresses": 1}
     assert request_counts == after_first
