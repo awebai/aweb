@@ -2,8 +2,7 @@
 
 ## 2026-11-13
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-signer-ux (incarnation 2026-11-13).
-* **Creation**: decision [owners remove a compromised agent from the owner page](/aweb-expert/decisions/owners-remove-a-compromised-agent-from-the-owner-page.md).
-* **Creation**: lessons [per-approver attribution comes from the approval record](/aweb-expert/lessons/per-approver-attribution-comes-from-the-approval-record.md) and [build on a peer's unlanded branch in a separate tree](/aweb-expert/lessons/build-on-unlanded-peer-work-in-a-separate-tree.md).
+* **Creation**: lesson [build on a peer's unlanded branch in a separate tree](/aweb-expert/lessons/build-on-unlanded-peer-work-in-a-separate-tree.md).
 
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
