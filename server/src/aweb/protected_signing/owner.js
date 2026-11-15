@@ -63,8 +63,8 @@
     const kept = saved(key);
     if (kept && kept.team_id === team && kept.certificate_id === certificate &&
         typeof kept.operation_id === "string" && kept.operation_id) return kept;
-    const chosen = {operation_id: crypto.randomUUID(), operation: "team.agent.remove",
-      variant: "owner_approved", team_id: team, certificate_id: certificate};
+    const chosen = {operation_id: crypto.randomUUID(), operation: list.dataset.operation,
+      variant: list.dataset.variant, team_id: team, certificate_id: certificate};
     sessionStorage.setItem(key, JSON.stringify(chosen));
     return chosen;
   }

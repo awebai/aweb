@@ -132,6 +132,9 @@ class OperationDefinition:
 OperationSpec = OperationDefinition
 
 
+REVOKE_OPERATION = "human-role.revoke"
+
+
 _ROWS = (
     OperationDefinition(
         "team.agent.remove", "owner_approved", "team_controller", "live_floor", "member_revocation",
@@ -290,7 +293,7 @@ _ROWS = (
         finalize_execution_refusal=True,
     ),
     OperationDefinition(
-        "human-role.revoke",
+        REVOKE_OPERATION,
         "default",
         "team_controller",
         "live_floor",
