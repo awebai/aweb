@@ -16,15 +16,16 @@ def main():
         home.mkdir()
         # No inherited tokens, config, identity-home selector, proxy or server URL.
         # The container mounts only the public export directory, never a .aw.
+        # APP_ENV only permits this fixture's HTTP registry origin. Explicit
+        # --registry selects its private address through the supported operator
+        # path; no federation-test bypass, TLS bypass or DNS verifier is used.
         env = {"HOME": str(home), "PATH": os.environ["PATH"],
-               "APP_ENV": "development", "AWEB_FEDERATION_TEST": "1"}
+               "APP_ENV": "development"}
 
-        def verify(raw, *, stdin=False, text=False, registry=""):
-            args = ["aw", "verify"]
+        def verify(raw, *, stdin=False, text=False):
+            args = ["aw", "verify", "--registry", "http://awid-a:8010"]
             if not text:
                 args.append("--json")
-            if registry:
-                args.extend(["--registry", registry])
             if not stdin:
                 path = root / "message.json"
                 path.write_text(raw)

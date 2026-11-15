@@ -880,6 +880,15 @@ fetches through the cached client and shows nearest human/no human/unknown,
 with a distinct revoked, root_replaced or stale reason and the verified chain. It never
 prints a supplied label as a verified human.
 
+[`aw verify`](message-envelope-verification.md) applies the same shared result
+to an exported message without credentials or an aweb messaging-server read.
+`aw mail show --message-id ID --envelope` exports its original signed bytes (or
+encrypted envelope) with the unchanged adjacent chain. The verifier derives the
+author from signed content, verifies original authentication first, then obtains
+current DNS/public-registry evidence. Invalid proof is explicit in text and
+retains `outcome=unknown, identity_valid=false` in JSON; failed lookups remain
+unavailable.
+
 An enrolled global ID cannot evade status/revocation by omitting the header:
 its independently authenticated stable ID is checked through the same cached
 batch and its current certificate is fetched there within the SAME cached
