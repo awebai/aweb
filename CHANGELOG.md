@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- aweb-naapp: `RevokeHumanRole` and `CatalogOperation` were exported in release candidates 0.5.1rc3 through 0.5.2rc2; code built against those candidates must move to `OwnerActOperation`. No final release carried them.
 - Registry team reads that hit a database lock timeout now return retryable
   `503 protected_state_unavailable`; invalid-binding logs identify the team.
   Health responses advertise `capabilities.team_protection: true` so startup

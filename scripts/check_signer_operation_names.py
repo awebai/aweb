@@ -64,7 +64,7 @@ def violations(root: Path = ROOT) -> list[str]:
     for domain in DOMAINS:
         for path in sorted((root / domain).rglob("*")):
             relative = path.relative_to(root)
-            if not path.is_file() or path.suffix == ".md" or "__pycache__" in path.parts :
+            if not path.is_file() or path.suffix == ".md" or "__pycache__" in path.parts:
                 continue
             try:
                 source = path.read_text()
