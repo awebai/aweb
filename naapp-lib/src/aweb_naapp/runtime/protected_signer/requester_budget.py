@@ -4,8 +4,8 @@ The requester is the stable principal the authority admitted, scoped to the
 signer and its authority, so a new operation id, operation kind or requester
 key does not reset either bound.
 
-Open requests: a requester holds at most OPEN_REQUEST_LIMIT requests waiting
-for a human at once. Past it prepare is refused before any approval state is
+Open requests: an agent requester holds at most OPEN_REQUEST_LIMIT requests
+waiting for a human at once (an owner's page request is not counted). Past it prepare is refused before any approval state is
 created, so neither the owner's lists nor the stored operations grow without
 bound, and a real request cannot be buried. A decided or expired request frees
 its place.

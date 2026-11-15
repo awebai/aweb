@@ -382,7 +382,11 @@ class ProtectedSigner:
             policy = await self.policies.current(POLICY_REF, tx=tx)
             if policy is None or policy.min_assurance is not Assurance.PASSKEY:
                 raise SignerRefused("policy_changed")
-            if typed.spec.needs_human:
+            # Agents are bounded; an owner's page request needs an admitted
+            # passkey session, and every owner's page prepares under the
+            # signer host's one key, so a shared bound would let one owner's
+            # open requests block another's.
+            if typed.spec.needs_human and initiation is None:
                 await admit_open_request(
                     tx, service_id=operation.context.service_id, authority_id=operation.context.authority_id,
                     requester=requester.principal, now=self.clock(),

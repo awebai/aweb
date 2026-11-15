@@ -1095,8 +1095,8 @@ operation and keeps its generic status code. The
 controls distinguish these cases from an incorrect request origin.
 
 Invalid authentication is 401 `requester_invalid`, scope denial 403
-`scope_refused`, binding conflict 409 `operation_conflict`. A requester that
-already has twenty requests waiting for a human under one signer authority is
+`scope_refused`, binding conflict 409 `operation_conflict`. An agent requester
+that already has twenty requests waiting for a human under one signer authority is
 refused at prepare with 403 `open_requests_limit_reached`, before any approval
 or operation is created; a decided or expired request frees its place, and
 resending a prepare already made still answers. Authenticated
