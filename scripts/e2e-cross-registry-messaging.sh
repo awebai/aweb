@@ -22,6 +22,8 @@ AWID_B_URL="$(journey_url "$PROJECT" awid-b 8010 "http://$PUBLISHED_HOST:$AWID_B
 AWEB_A_URL="$(journey_url "$PROJECT" aweb-a 8000 "http://$PUBLISHED_HOST:$AWEB_A_PORT")"
 AWEB_B_URL="$(journey_url "$PROJECT" aweb-b 8000 "http://$PUBLISHED_HOST:$AWEB_B_PORT")"
 mkdir -p "$DNS_DIR" "$WORK_DIR/home" "$WORK_DIR/alice" "$WORK_DIR/bob"
+# CoreDNS runs as nonroot; only its public DNS mounts cross the UID boundary.
+chmod 0755 "$DNS_DIR"
 
 compose() {
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
@@ -182,6 +184,7 @@ $TTL 1
 @ IN NS ns.example.net.
 ns IN A 127.0.0.1
 EOF
+chmod 0644 "$DNS_DIR/Corefile" "$DNS_DIR/example.com.zone" "$DNS_DIR/example.net.zone"
 
 cat > "$COMPOSE_FILE" <<EOF
 services:
@@ -363,6 +366,8 @@ ns IN A 127.0.0.1
 _awid IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-b:8010;"
 _awid.beta IN TXT "awid=v1; controller=$beta_controller; registry=http://awid-b:8010;"
 EOF
+  # mv replaces the inode, so set the new public mode before publishing it.
+  chmod 0644 "$DNS_DIR/example.com.zone.tmp" "$DNS_DIR/example.net.zone.tmp"
   mv "$DNS_DIR/example.com.zone.tmp" "$DNS_DIR/example.com.zone"
   mv "$DNS_DIR/example.net.zone.tmp" "$DNS_DIR/example.net.zone"
 }
