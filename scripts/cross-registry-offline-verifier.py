@@ -22,7 +22,7 @@ def main():
         env = {"HOME": str(home), "PATH": os.environ["PATH"],
                "APP_ENV": "development"}
 
-        def verify(raw, *, stdin=False, text=False):
+        def verify(raw, *, stdin=False, text=False, exit_codes=(0,)):
             args = ["aw", "verify", "--registry", "http://awid-a:8010"]
             if not text:
                 args.append("--json")
@@ -32,10 +32,15 @@ def main():
                 args.append(str(path))
             result = subprocess.run(args, input=raw if stdin else None, text=True,
                                     capture_output=True, cwd=root, env=env, timeout=30)
-            assert result.returncode == 0, (args, result.stdout, result.stderr)
+            assert result.returncode in exit_codes, (args, result.returncode, result.stdout, result.stderr)
             assert not list(home.iterdir()), list(home.iterdir())
             assert not (root / ".aw").exists()
-            return result.stdout if text else json.loads(result.stdout)
+            if text:
+                return result.stdout
+            answer = json.loads(result.stdout)
+            expected = 1 if answer["identity_valid"] is False else 2 if answer["outcome"] == "unavailable" else 0
+            assert result.returncode == expected, (result.returncode, answer)
+            return answer
 
         def no_authority(result):
             assert result["identity_valid"] is not True, result
@@ -64,19 +69,19 @@ def main():
             payload["body"] = "tampered after export"
             tampered["signed_payload"] = json.dumps(payload)
             raw = json.dumps(tampered)
-            result = verify(raw, stdin=True)
+            result = verify(raw, stdin=True, exit_codes=(1,))
             no_authority(result)
             assert result["outcome"] == "unknown" and result["identity_valid"] is False, result
-            assert "invalid" in verify(raw, text=True).lower()
+            assert "invalid" in verify(raw, text=True, exit_codes=(1,)).lower()
             print("PASS: tampered exported message is invalid before it can establish a human")
         elif mode == "unavailable":
-            result = verify(adopted)
+            result = verify(adopted, exit_codes=(2,))
             no_authority(result)
             assert result["outcome"] == "unavailable", result
             assert result["reason"] == "evidence_unavailable", result
             print("PASS: stopped real registry gives unavailable, never valid")
         elif mode == "dns-root":
-            result = verify(adopted)
+            result = verify(adopted, exit_codes=(1, 2))
             no_authority(result)
             assert result["identity_valid"] is False or result["outcome"] == "unavailable", result
             print("PASS: changed authoritative DNS root gives invalid or unavailable, never valid")

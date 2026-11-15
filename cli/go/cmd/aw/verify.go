@@ -40,7 +40,9 @@ Print the same responsibility result as aw who, with invalid proof shown explici
 as invalid. --json retains the shared outcome and identity_valid fields: invalid
 proof has outcome unknown and identity_valid false. Lookup failures are unavailable,
 never valid. A verified signature alone does not establish a responsible human.
-Encrypted exports can be verified without decrypting their content.`,
+Encrypted exports can be verified without decrypting their content.
+Exit 0 for valid or normal unknown results, 1 for invalid proof, 2 for unavailable
+evidence or unreadable input.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runVerify,
 }
@@ -58,19 +60,25 @@ func runVerify(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 && args[0] != "-" {
 		file, err := os.Open(args[0])
 		if err != nil {
-			return err
+			return usageError("read envelope: %v", err)
 		}
 		defer file.Close()
 		input = file
 	}
 	raw, err := awid.ReadAllBounded(input, awid.MaxResponseSize)
 	if err != nil {
-		return err
+		return usageError("read envelope: %v", err)
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	out := verifyExportedMessage(ctx, raw, whoOptions{RegistryURL: verifyRegistry, TXTResolver: &awid.NetTXTResolver{}})
 	printOutput(out, formatVerifiedMessage)
+	if out.IdentityValid != nil && !*out.IdentityValid {
+		return &cliError{code: 1, msg: "invalid message proof: " + out.Reason}
+	}
+	if out.Outcome == "unavailable" {
+		return &cliError{code: 2, msg: "message proof unavailable: " + out.Reason}
+	}
 	return nil
 }
 

@@ -58,6 +58,12 @@ A valid root-to-agent chain without a human reports `no_human` and kind `agent`.
 Getting a nearest human establishes responsibility, not team membership,
 resource access or how that human's key was used.
 
+Exit status is `0` for a valid proof (`nearest_human` or `no_human` with
+`identity_valid:true`) and a normal unknown/no-chain answer, `1` for invalid
+proof (`identity_valid:false`), and `2` for unavailable evidence or unreadable
+input. A nonzero verification result still prints one result document under
+`--json`; diagnostics go to stderr.
+
 The chain's domain selects its own DNS authority and registry. A global sender
 without a presented chain is checked for enrollment through public key reads:
 its signed address selects the key registry, or an explicit `--registry` or the

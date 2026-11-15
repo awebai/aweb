@@ -23,13 +23,16 @@ func marshalMessageExport(t *testing.T, export messageExport) []byte {
 	return raw
 }
 
-func localMessageExport(t *testing.T) messageExport {
+func testMessageExport(t *testing.T, global bool) messageExport {
 	t.Helper()
 	pub, key, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
 	envelope := &awid.MessageEnvelope{From: "sender", FromDID: awid.ComputeDIDKey(pub), To: "recipient", Type: "mail", Body: "original body", Timestamp: time.Now().UTC().Format(time.RFC3339)}
+	if global {
+		envelope.FromStableID = awid.ComputeStableID(pub)
+	}
 	signature, err := awid.SignMessage(key, envelope)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +41,7 @@ func localMessageExport(t *testing.T) messageExport {
 }
 
 func TestVerifyExportedMessageAuthenticatesOriginalBytes(t *testing.T) {
-	export := localMessageExport(t)
+	export := testMessageExport(t, false)
 	result := verifyExportedMessage(context.Background(), marshalMessageExport(t, export), whoOptions{})
 	if result.ID != export.SigningKeyID || result.Outcome != "unknown" || result.Reason != "legacy_no_chain" || result.IdentityValid != nil {
 		t.Fatalf("chainless local author: %+v", result)
@@ -51,10 +54,10 @@ func TestVerifyExportedMessageAuthenticatesOriginalBytes(t *testing.T) {
 			e.SignedPayload = strings.Replace(e.SignedPayload, "original body", "tampered body", 1)
 		}},
 		{"sender", func(e *messageExport) {
-			e.SignedPayload = strings.Replace(e.SignedPayload, e.SigningKeyID, localMessageExport(t).SigningKeyID, 1)
+			e.SignedPayload = strings.Replace(e.SignedPayload, e.SigningKeyID, testMessageExport(t, false).SigningKeyID, 1)
 		}},
 		{"signature", func(e *messageExport) { e.Signature = "invalid" }},
-		{"key selector", func(e *messageExport) { e.SigningKeyID = localMessageExport(t).SigningKeyID }},
+		{"key selector", func(e *messageExport) { e.SigningKeyID = testMessageExport(t, false).SigningKeyID }},
 		{"missing signature", func(e *messageExport) { e.Signature = "" }},
 		{"malformed chain", func(e *messageExport) { e.IDChain = awid.ReceivedIDChain{"certificates": []any{}} }},
 	} {
@@ -79,7 +82,7 @@ func TestVerifyExportedMessageAuthenticatesOriginalBytes(t *testing.T) {
 }
 
 func TestExportMailEnvelopePreservesSignedBytesAndRefusesReconstruction(t *testing.T) {
-	export := localMessageExport(t)
+	export := testMessageExport(t, false)
 	message := awid.InboxMessage{MessageID: "exact", SignedPayload: export.SignedPayload, Signature: export.Signature, SigningKeyID: export.SigningKeyID,
 		FromDID: "untrusted server projection", Body: "not the signed body", VerificationStatus: awid.Verified}
 	got, err := exportMailEnvelope([]awid.InboxMessage{message}, "exact")
@@ -149,7 +152,7 @@ func TestVerifyBinaryIgnoresIdentityStateAndReadsFileOrStdin(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
-	export := localMessageExport(t)
+	export := testMessageExport(t, false)
 	raw := marshalMessageExport(t, export)
 	path := filepath.Join(root, "export.json")
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
@@ -179,5 +182,35 @@ func TestVerifyBinaryIgnoresIdentityStateAndReadsFileOrStdin(t *testing.T) {
 				t.Fatalf("verification wrote state: %s %v %v", dir, entries, err)
 			}
 		}
+	}
+	invalid := export
+	invalid.SignedPayload = strings.Replace(invalid.SignedPayload, "original body", "tampered body", 1)
+	for _, tc := range []struct {
+		name   string
+		raw    []byte
+		code   int
+		reason string
+	}{
+		{"invalid", marshalMessageExport(t, invalid), 1, "message_signature_invalid"},
+		{"malformed", []byte("{"), 1, "malformed_envelope"},
+		{"unavailable", marshalMessageExport(t, testMessageExport(t, true)), 2, "evidence_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.CommandContext(ctx, bin, "verify", "--json", "--registry", "https://127.0.0.1:1")
+			cmd.Dir, cmd.Stdin = t.TempDir(), strings.NewReader(string(tc.raw))
+			cmd.Env = testCommandEnv(t.TempDir())
+			// Port 1 is unreachable; no fake registry or DNS response is used.
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			output, err := cmd.Output()
+			failure, ok := err.(*exec.ExitError)
+			if !ok || failure.ExitCode() != tc.code {
+				t.Fatalf("exit err=%v want=%d stdout=%s stderr=%s", err, tc.code, output, stderr.String())
+			}
+			var result whoOutput
+			if json.Unmarshal(output, &result) != nil || result.Reason != tc.reason {
+				t.Fatalf("one JSON result expected: %s", output)
+			}
+		})
 	}
 }
