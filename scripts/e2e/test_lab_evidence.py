@@ -5,6 +5,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 from lab_lifecycle import Resources
 from lab_quota_observer import enforcement, write_private
@@ -37,6 +38,24 @@ class EvidenceControls(unittest.TestCase):
         volume['Labels'] = {'owner': 'foreign'}
         with self.assertRaises(RuntimeError):
             observer.ownership('volume', volume)
+
+    def test_list_inspect_race_needs_exact_inventory_identity_and_a_successful_full_read(self):
+        observer = Resources(Path('/unused'), {}, time.monotonic() + 1)
+        observer.errors = [{'argv': ['container', 'inspect', 'a' * 64], 'rc': 1}]
+        observer.call = mock.Mock(return_value={'rc': 1})
+        observer.all_objects = mock.Mock(return_value=set())
+        # A reference spelling that resembles an ID is still a name unless
+        # the caller has obtained it from a complete inventory.
+        with self.assertRaises(RuntimeError):
+            observer.inspect('container', 'a' * 64)
+        observer.all_objects.assert_not_called()
+        self.assertIsNone(observer.inspect('container', 'a' * 64, exact_from_inventory=True))
+        self.assertTrue(observer.errors[0]['resolved_absent_after_inspect'])
+        observer.errors = [{'rc': 1}]
+        observer.all_objects.side_effect = RuntimeError('inventory UNKNOWN')
+        with self.assertRaises(RuntimeError):
+            observer.inspect('container', 'a' * 64, exact_from_inventory=True)
+        self.assertNotIn('resolved_absent_after_inspect', observer.errors[0])
 
     def test_enforcement_needs_shared_actual_peer_and_matching_live_redis_buckets(self):
         requests = [

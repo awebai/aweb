@@ -116,14 +116,14 @@ class Resources:
             raise RuntimeError("unexpected Docker resource inventory")
         return values
 
-    def inspect(self, kind, reference):
+    def inspect(self, kind, reference, *, exact_from_inventory=False):
         result = self.call([kind, "inspect", reference])
         if result["rc"] != 0:
             # A short-lived labelled seed can disappear between list/inspect.
             # Do not parse diagnostics or equate names with IDs. A separate
             # complete successful inventory may establish this exact ID gone.
             # Keep both calls and the failed inspect in the raw receipt.
-            if kind == "volume" or re.fullmatch("[0-9a-f]{64}", reference):
+            if exact_from_inventory and (kind == "volume" or re.fullmatch("[0-9a-f]{64}", reference)):
                 failed = self.errors[-1]
                 if reference not in self.all_objects(kind):
                     failed["resolved_absent_after_inspect"] = True
@@ -190,7 +190,7 @@ class Resources:
             for ref in sorted(refs):
                 if (kind, ref) in self.observed and (kind != "container" or ref in self.started_containers):
                     continue
-                value = self.inspect(kind, ref)
+                value = self.inspect(kind, ref, exact_from_inventory=True)
                 if value is None:
                     continue
                 labels, stamp = self.ownership(kind, value)
@@ -242,7 +242,7 @@ class Resources:
                     current = self.all_objects(kind)
                     if ref not in current:
                         continue
-                    value = self.inspect(kind, ref)
+                    value = self.inspect(kind, ref, exact_from_inventory=True)
                     if value is None:
                         continue
                     _, stamp = self.ownership(kind, value)
@@ -305,7 +305,7 @@ def fresh_host_baseline(root, deadline):
     if baseline["container"] or baseline["volume"]:
         raise RuntimeError("exclusive fresh host has existing containers or volumes")
     for ref in baseline["network"]:
-        value = observer.inspect("network", ref)
+        value = observer.inspect("network", ref, exact_from_inventory=True)
         if value["Name"] not in {"bridge", "host", "none"}:
             raise RuntimeError("exclusive fresh host has a non-default network")
     with (root / "pre-child-inventory.json").open("x") as stream:

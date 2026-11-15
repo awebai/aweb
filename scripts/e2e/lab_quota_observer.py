@@ -129,7 +129,7 @@ def capture(observer, ready_path, admission, admission_digest):
         references = observer.inventory('container', 'com.docker.compose.project=' + project)
         selected = []
         for ref in references:
-            value = observer.inspect('container', ref)
+            value = observer.inspect('container', ref, exact_from_inventory=True)
             labels, _ = observer.ownership('container', value)
             if labels.get('com.docker.compose.service') == service:
                 selected.append(value)
