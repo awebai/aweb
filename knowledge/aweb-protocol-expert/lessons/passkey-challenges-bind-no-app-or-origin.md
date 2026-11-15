@@ -1,7 +1,7 @@
 ---
 type: Lesson
 title: Passkey challenges bind no app or origin
-description: The B3 approval and login challenge preimages commit to the approval, candidate, nonce, policy, purpose and request hash but not to the app or its origin, so under a per-app browser RP ID the browser's attested origin is what isolates apps; a profile that shares one credential across naapps through a native client moves that isolation into one client rule, pinned origin and no redirects.
+description: The naapp B3 approval and login challenge preimages commit to the approval, candidate, nonce, policy, purpose and request hash but not to the app or its origin, so under a per-app browser RP ID the browser's attested origin is what isolates apps; a profile that shares one credential across naapps through a native client moves that isolation into one client rule, pinned origin and no redirects.
 tags: [lesson, passkeys, webauthn, naapp, confused-deputy, authority]
 timestamp: 2026-11-08
 ---
@@ -17,6 +17,13 @@ Under a per-app browser RP ID that something is the browser. The browser
 writes `clientData.origin` itself, and the verifier derives the RP ID from that
 origin's hostname and re-checks both. An assertion one naapp collects cannot be
 replayed at another.
+
+This describes the naapp B3 constructions. The human approval service in the
+approval and key custody architecture (aweb-adcl) does not rely on the browser
+for this: its request names the enforcer it is for, the key's signature over
+those exact bytes is the receipt, and the enforcer refuses a receipt made for
+another enforcer or another act. There the binding is in the signed bytes, and
+the rule below about moving isolation into a client does not arise.
 
 # How to apply
 
