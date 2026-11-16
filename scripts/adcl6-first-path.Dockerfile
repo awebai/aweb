@@ -5,7 +5,7 @@ FROM python:3.13-slim-bookworm
 COPY --from=uv /uv /usr/local/bin/uv
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
 ENV UV_HTTP_TIMEOUT=300 UV_CONCURRENT_DOWNLOADS=4 PLAYWRIGHT_BROWSERS_PATH=/opt/browsers UV_PYTHON=/usr/local/bin/python3.13 UV_PYTHON_DOWNLOADS=never
-RUN apt-get update && apt-get install -y --no-install-recommends libnss3-tools ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libnss3-tools ca-certificates dbus gnome-keyring && rm -rf /var/lib/apt/lists/*
 COPY approval /source/approval
 COPY holder /source/holder
 COPY runner-requirements.txt /runner-requirements.txt

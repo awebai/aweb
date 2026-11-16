@@ -417,6 +417,7 @@ Subcommands:
 - `namespace` Protocol/admin namespace controller and address operations
 - `operation` Inspect protected operations this identity requested
 - `parent` Request and import your own certificate from a parent
+- `proof` Export a message signed by your human key with its saved evidence
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
 - `resolve` Resolve a did:aw to its current did:key
@@ -756,10 +757,65 @@ Flags:
 Human identities in a namespace's identity tree
 
 Subcommands:
+- `add` Ask an approved-mode issuer for a new person's pending enrollment
+- `enroll` Enroll an approval key for your new or existing human ID
 - `init` Create your human ID in a namespace
+- `register` Register your issued human certificate with your own key
 
 Flags:
 - `-h, --help help for human`
+
+## `id human add`
+
+### `id human add`
+
+Run as an existing enrolled person with --human ID --human-domain DOMAIN.
+The issuer's approved-mode endpoint asks for human approval through the existing
+428 protocol. Review the exact act in your approval-service browser page. Every
+identity signature uses your passphrase-protected keychain key at this terminal.
+
+This command returns a pending intent; it never enrolls the new person. The new
+person first prepares their own key with aw id human init and gives you its ID
+and key. Give them the resulting FILE. They run aw id human enroll --intent FILE
+--issuer URL with their own --human ID --human-domain DOMAIN, then register and
+confirm their approval key in the browser named by that signed intent.
+
+In operator mode, the organization's operator instead runs aweb-key-holder
+issue-person on the holder host. The new person runs aw id human register FILE.
+This command has no operator mode or operator network route.
+
+Flags:
+- `--approval-origin string Optional equality pin for your enrolled approval service`
+- `-h, --help help for add`
+- `--identity-key string New person's prepared identity did:key`
+- `--issuer string Issuer HTTPS origin; defaults to your saved enrollment`
+- `--out string New pending-intent file; default is JSON on stdout`
+- `--person string New person's prepared did:aw`
+
+## `id human enroll`
+
+### `id human enroll`
+
+Run this yourself with --human ID --human-domain DOMAIN at a terminal.
+Your identity key stays in the passphrase-protected OS keychain. For a new person,
+first run aw id human init and obtain a pending --intent FILE from your issuer.
+For an existing person, --issuer URL asks that issuer for an enrollment intent.
+After the first use, the issuer is remembered with your human record.
+
+The signed intent supplies the approval service and RP ID; --approval-origin is
+an optional equality pin. You see the service before opening its enrollment page.
+Register and confirm your key in that browser, then continue at this terminal.
+Interrupted commands resume their original enrollment. Enrollment of an existing
+person never adds or changes a creation claim.
+
+Next: use aw id proof --message-file FILE --out proof.json, then give proof.json
+to anyone; they run plain aw verify proof.json on their machine.
+
+Flags:
+- `--approval-origin string Optional pin; must equal the service in the issuer's signed intent`
+- `-h, --help help for enroll`
+- `--intent string Pending signed enrollment intent handed to a new person by the issuer`
+- `--issuer string Your issuer's HTTPS origin; remembered after first use`
 
 ## `id human init`
 
@@ -767,7 +823,11 @@ Flags:
 
 Create your human ID in --domain. With --as-root the namespace controller on
 this machine issues its certificate now. Without it, the human is only
-prepared: an issuer elsewhere admits it through `aw id parent request`.
+prepared: give the public ID and key to your issuer. With a holder, its
+operator hands you an issued FILE for `aw id human register FILE`, or
+a pending intent for `aw id human enroll --intent FILE --issuer URL`.
+Enrollment asks you to register and confirm a key in the named browser.
+The existing `aw id parent request` exchange is also supported.
 
 The human key is kept in the OS keychain, encrypted under a passphrase you
 choose; every signature asks for that passphrase on the terminal. This needs
@@ -780,6 +840,21 @@ Flags:
 - `--domain string Namespace domain`
 - `-h, --help help for init`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+
+## `id human register`
+
+### `id human register`
+
+Register the certificate handed to you by your organization's operator or
+approved issuer. Run this yourself with --human ID --human-domain DOMAIN at a
+terminal; each signature asks for your keychain passphrase. Prepare your human ID
+first with aw id human init. This registers your ID without enrolling an approval
+key. Afterwards you may optionally run aw id human enroll, or create a portable
+message with aw id proof --message-file FILE for anyone to check with aw verify.
+
+Flags:
+- `-h, --help help for register`
+- `--registry string Optional registry pin; must agree with the domain's DNS record`
 
 ## `id log`
 
@@ -1044,6 +1119,24 @@ Flags:
 - `--parent string did:aw or did:key of the parent identity`
 - `--resign Ask the parent to re-sign the certificate this local agent carries`
 - `--root-parent The parent is the namespace root of --domain`
+
+## `id proof`
+
+### `id proof`
+
+Sign the text in --message-file with your human key at a terminal, asking for
+its keychain passphrase. The JSON export carries your ID chain and any saved
+enrollment evidence. It needs no team or mail server. Missing enrollment is not
+a refusal and adds no evidence. Run with --human ID --human-domain DOMAIN.
+
+Next: give the output file to anyone. On another machine they run:
+  aw verify FILE
+No identity, credentials, initialization or registry flag is needed.
+
+Flags:
+- `-h, --help help for proof`
+- `--message-file string Text file to sign as your message`
+- `--out string New export file; default is JSON on stdout`
 
 ## `id register`
 

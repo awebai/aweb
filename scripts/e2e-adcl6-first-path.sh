@@ -55,7 +55,7 @@ cleanup() {
   # Identity homes, browser profile and the holder's private volume are erased.
   for name in inputs.json; do [[ ! -f "$RUNTIME/$name" ]] || cp "$RUNTIME/$name" "$OUTPUT/$name" || cleanup_status=1; done
   if [[ -d "$RUNTIME/work" ]]; then
-    for name in journey.json first-activation.json second-activation.json first-outside.json second-outside.json approval-record.json controller-public.json command-failure.stderr retention.json; do
+    for name in journey.json first-activation.json second-activation.json first-outside.json first-no-evidence-outside.json second-outside.json approval-record.json controller-public.json command-failure.stderr retention.json; do
       [[ ! -f "$RUNTIME/work/$name" ]] || cp "$RUNTIME/work/$name" "$OUTPUT/$name" || cleanup_status=1
     done
     [[ ! -d "$RUNTIME/work/public" ]] || cp -R "$RUNTIME/work/public" "$OUTPUT/public-exports" || cleanup_status=1

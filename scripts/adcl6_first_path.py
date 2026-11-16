@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""Component journey, not a claim that aw provides an add-human product flow.
+"""Product commands for optional human issuance, enrollment and public proof.
 
-aw performs the signed 428 approval loop and the outside verification. The
-driver performs the enrollment exchange, creates the person identity, registers
-its ID certificate, and constructs/signs the evidence-bearing message. It also
-automates real Chromium ceremonies against the installed services. prepare only
-stages the concrete Compose fixture; e2e-adcl6-first-path.sh invokes the journey.
+aw performs human keychain preparation, certificate registration, enrollment,
+approved add through the generic 428 client, proof export and outside verification.
+The operator uses the holder's private commands for namespace configuration and
+operator issuance. Python configures the disposable infrastructure and real DNS,
+automates Chromium virtual authenticators, and makes read-only assertions. It
+never generates a person's key, signs a request/message, or registers its ID.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
 import hashlib
 import importlib.metadata
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 import subprocess
@@ -27,26 +27,36 @@ import tarfile
 import time
 import tomllib
 from urllib.parse import quote
-from uuid import uuid4
 
-AW = "962c94dd747f6adff2ee7f9c7d1f69bea3b6da0f"
-HOLDER = "0ba1350347d57bfe3fc93aeba5fa6261f48937e1"
-APPROVAL = "2f041129ab21147fd2d452a679bf629279e92642"
+AW = "75533828bc541b76b1f25cf53240b967a93f2de1"
+HOLDER = "75533828bc541b76b1f25cf53240b967a93f2de1"
+APPROVAL = "aa736fbd4164f9378cd0bba67264d8a69a263594"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
 SITE = "https://approval.adcl6.test"
 AUDIENCE = "https://holder.adcl6.test"
 RP = "approval.adcl6.test"
 DNS = "172.29.190.53"
+HOLDER_IP = "172.29.190.13"
 NETWORK = "172.29.190.0/24"
 STEP_OWNERS = {
-    "aw": ["signed 428 approval request/submit/poll/presentation", "outside aw verify"],
+    "aw": [
+        "human init through real OS keychain and PTY",
+        "human register",
+        "human enroll start/material/confirm/activate",
+        "human add through generic 428 approval",
+        "id proof with stored evidence",
+        "plain outside aw verify",
+    ],
+    "holder_private_cli": [
+        "controller/namespace setup",
+        "operator issue-person",
+        "configure human issuance",
+    ],
     "driver": [
-        "approval-service enrollment start/material/confirm/activate exchange",
-        "person identity creation, signing.key/identity.yaml, and DID registration",
-        "subject ID certificate registration",
-        "evidence-bearing message construction and signing",
+        "disposable service and authoritative DNS fixture lifecycle",
         "Chromium virtual-authenticator ceremony automation",
+        "read-only public registry and output assertions",
     ],
 }
 
@@ -78,6 +88,7 @@ def retain(args) -> None:
         "first-activation.json",
         "second-activation.json",
         "first-outside.json",
+        "first-no-evidence-outside.json",
         "second-outside.json",
         "approval-record.json",
         "controller-public.json",
@@ -176,10 +187,15 @@ def prepare(args) -> None:
     (build / "Dockerfile").write_bytes(
         (root / "scripts/adcl6-first-path.Dockerfile").read_bytes()
     )
-    runner_lock = tomllib.loads((root / "naapp-lib/uv.lock").read_text())
     runner = []
-    for package in runner_lock["package"]:
-        if package["name"] in {"playwright", "pyee", "greenlet"}:
+    for lock, names in (
+        ("naapp-lib/uv.lock", {"playwright", "pyee", "greenlet"}),
+        ("naapp/secrets/uv.lock", {"pexpect", "ptyprocess"}),
+    ):
+        runner_lock = tomllib.loads((root / lock).read_text())
+        for package in runner_lock["package"]:
+            if package["name"] not in names:
+                continue
             artifacts = package.get("wheels", []) + (
                 [package["sdist"]] if "sdist" in package else []
             )
@@ -190,7 +206,7 @@ def prepare(args) -> None:
                 + " "
                 + " ".join("--hash=" + item["hash"] for item in artifacts)
             )
-    if len(runner) != 3:
+    if len(runner) != 5:
         raise RuntimeError(
             "browser dependency closure missing from the repository lock"
         )
@@ -354,15 +370,7 @@ http {
         },
     }
     holder_flags = (
-        "--state /state/private --registry-origin "
-        + REGISTRY
-        + " --origin "
-        + AUDIENCE
-        + " --approval-origin "
-        + SITE
-        + " --rp-id "
-        + RP
-        + " --grading passkey_only"
+        "--state /state/private --registry-origin " + REGISTRY + " --origin " + AUDIENCE
     )
     services["holder"] = {
         **common,
@@ -378,6 +386,7 @@ http {
             + " serve --bind 0.0.0.0 --port 8081",
         ],
         "volumes": common["volumes"] + ["holder-state:/state"],
+        "networks": {"default": {"ipv4_address": HOLDER_IP}},
     }
     services["https"] = {
         "image": "nginx:1.27-alpine",
@@ -394,7 +403,10 @@ http {
     }
     services["driver"] = {
         **common,
-        "command": ["python", "/journey.py", "driver"],
+        "command": ["dbus-run-session", "--", "python", "/journey.py", "driver"],
+        "cap_add": [
+            "IPC_LOCK"
+        ],  # The disposable real Secret Service locks key material.
         "environment": {
             **common["environment"],
             "HOME": "/work/browser-home",
@@ -491,12 +503,187 @@ async def command(*args, data=None, cwd=None, env=None, timeout=120):
     return out
 
 
-async def holder_cli(operation, person=None, value=None, *extra):
+async def human_command(home, args, *, actor=None, json_output=True):
+    """Run the installed human client at a real PTY, with a real Secret Service.
+
+    The fixture types only its disposable passphrase and browser-completion
+    answers. All keys, requests, certificates and evidence are produced by aw.
+    """
+    import pexpect
+
+    home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    env = {**os.environ, "HOME": str(home)}
+    env.pop("AWEB_IDENTITY_HOME", None)
+    child = pexpect.spawn(
+        "aw", args, cwd=str(home), env=env, encoding="utf-8", timeout=180, echo=False
+    )
+    transcript = []
+    registered, confirmed = False, False
+    try:
+        while True:
+            found = await child.expect(
+                [
+                    r"Choose a passphrase[^\r\n]*: ",
+                    r"Type the passphrase again: ",
+                    r"Passphrase for that human key: ",
+                    r"Register your key in that browser, then type yes to continue \[y/N\]: ",
+                    r"Confirm your enrollment in that browser, then type yes to continue \[y/N\]: ",
+                    pexpect.EOF,
+                ],
+                async_=True,
+            )
+            transcript.append(child.before)
+            if found == 5:
+                break
+            if found < 3:
+                child.sendline("disposable adcl6 human passphrase")
+            elif found == 3:
+                assert actor is not None and not registered, (
+                    "unexpected_browser_registration"
+                )
+                urls = re.findall(
+                    r"Open (https://[^\s]+/enroll#[^\s]+)", "".join(transcript)
+                )
+                assert urls and urls[-1].startswith(SITE + "/enroll#"), (
+                    "wrong_enrollment_site"
+                )
+                await actor.register(urls[-1].partition("/enroll#")[2])
+                registered = True
+                child.sendline("yes")
+            else:
+                assert actor is not None, "unexpected_browser_confirmation"
+                if not confirmed:
+                    await actor.confirm()
+                    confirmed = True
+                child.sendline("yes")
+        child.close()
+        text = "".join(transcript)
+        if child.exitstatus != 0:
+            failure = Path("/work/command-failure.stderr")
+            failure.write_text(text)
+            failure.chmod(0o600)
+            raise RuntimeError(
+                f"human aw exited {child.exitstatus}/{child.signalstatus}"
+            )
+        assert not list(home.rglob("signing.key")), "human_key_written_into_agent_home"
+        if not json_output:
+            return text
+        start = re.search(r"[\[{]", text)
+        assert start is not None, "missing_human_command_json"
+        return json.loads(text[start.start() :])
+    finally:
+        if child.isalive():
+            child.close(force=True)
+
+
+async def holder_cli(operation, person=None, value=None, *extra, approval=False):
     args = [
         "docker",
         "exec",
         "-i",
         os.environ["HOLDER_CONTAINER"],
+        "aweb-key-holder",
+        "--state",
+        "/state/private",
+        "--registry-origin",
+        REGISTRY,
+        "--origin",
+        AUDIENCE,
+    ]
+    if approval:
+        args += ["--approval-origin", SITE, "--rp-id", RP, "--grading", "passkey_only"]
+    args.append(operation)
+    if person:
+        args += ["--person", person]
+    args += list(extra)
+    raw = await command(
+        *args, data=None if value is None else json.dumps(value).encode()
+    )
+    return json.loads(raw)
+
+
+@dataclass
+class Person:
+    name: str
+    key: str
+    identity: str
+    home: Path
+    activation: dict | None = None
+
+    @property
+    def record_dir(self):
+        return (
+            self.home / ".awid" / "humans" / ORG / self.identity.removeprefix("did:aw:")
+        )
+
+    async def aw(self, *args, actor=None, json_output=True):
+        return await human_command(
+            self.home,
+            ["--human", self.identity, "--human-domain", ORG, *args],
+            actor=actor,
+            json_output=json_output,
+        )
+
+
+async def enable_holder_approval():
+    """Change only the owned holder; its key volume and audience stay fixed."""
+    name, project = os.environ["HOLDER_CONTAINER"], os.environ["PROJECT"]
+    (old,) = json.loads(await command("docker", "inspect", name))
+    assert old["Config"]["Labels"]["com.docker.compose.project"] == project
+    assert "--approval-origin" not in " ".join(old["Config"]["Cmd"])
+    assert not any(value.startswith("AWSIGN_") for value in old["Config"]["Env"])
+    (state,) = [mount for mount in old["Mounts"] if mount["Destination"] == "/state"]
+    (public,) = [mount for mount in old["Mounts"] if mount["Destination"] == "/public"]
+    assert state["Type"] == "volume" and state["Name"].startswith(project + "_")
+    before = await holder_cli("descriptor")
+    await holder_cli("configure", None, None, "--human-issuance", "approved")
+    # Keep the old phase's startup/configuration evidence before replacing it.
+    public_file(
+        Path("/work/public/holder-operator-config.json"),
+        json.dumps(
+            {
+                "cmd": old["Config"]["Cmd"],
+                "image": old["Image"],
+                "user": old["Config"]["User"],
+            }
+        ),
+    )
+    await command("docker", "stop", "--time", "10", name)
+    await command("docker", "rm", name)
+    args = [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        name,
+        "--label",
+        "com.docker.compose.project=" + project,
+        "--label",
+        "com.docker.compose.service=holder",
+        "--user",
+        "1003:1003",
+        "--network",
+        project + "_default",
+        "--network-alias",
+        "holder",
+        "--ip",
+        HOLDER_IP,
+        "--dns",
+        DNS,
+        "--mount",
+        "type=volume,src=" + state["Name"] + ",dst=/state",
+        "--mount",
+        "type=bind,src=" + public["Source"] + ",dst=/public,readonly",
+    ]
+    for value in old["Config"]["Env"]:
+        # This owned service has only image defaults and public fixture inputs.
+        args += ["--env", value]
+    args += [
+        old["Image"],
+        "sh",
+        "-ec",
+        'umask 077; exec "$@"',
+        "holder",
         "aweb-key-holder",
         "--state",
         "/state/private",
@@ -510,37 +697,38 @@ async def holder_cli(operation, person=None, value=None, *extra):
         RP,
         "--grading",
         "passkey_only",
-        operation,
+        "serve",
+        "--bind",
+        "0.0.0.0",
+        "--port",
+        "8081",
     ]
-    if person:
-        args += ["--person", person]
-    args += list(extra)
-    raw = await command(
-        *args, data=None if value is None else json.dumps(value).encode()
-    )
-    return json.loads(raw)
+    await command(*args)
+    after = await holder_cli("descriptor", approval=True)
+    assert before["did_key"] == after["did_key"], "holder_key_changed_on_configuration"
 
 
-@dataclass
-class Person:
-    name: str
-    seed: bytes
-    key: str
-    identity: str
-    home: Path
-    activation: dict | None = None
-
-
-def assert_outside_verdict(result, identity):
+def assert_outside_verdict(result, identity, profile="creation"):
     assert result["identity_valid"] is True, (
         "outside_identity_invalid:" + result["reason"]
     )
     assert result["human_id"] == identity and result["kind"] == "human", (
         "outside_human_mismatch"
     )
+    assert result["id"] == identity and result["outcome"] == "nearest_human", (
+        "outside_subject_mismatch"
+    )
     assert len(result["evidence"]) == 1, "outside_evidence_missing"
     (evidence,) = result["evidence"]
+    if profile == "none":
+        assert evidence["presence"] == "absent", "outside_unexpected_evidence"
+        assert evidence["issuer_authenticated_grade"] is None, (
+            "outside_unexpected_grade"
+        )
+        assert evidence["proof"]["status"] != "valid", "outside_invented_proof"
+        return
     for part in ("statement", "proof"):
+        assert isinstance(evidence.get(part), dict), f"outside_{part}_missing"
         checked = evidence[part]
         assert checked["status"] == "valid", (
             f"outside_{part}_{checked['status']}:{checked['reason']}"
@@ -550,9 +738,14 @@ def assert_outside_verdict(result, identity):
         and evidence["proof_binds_grade"] is True
     ), "outside_grade_below_passkey_uv"
     assert evidence["currentness"] == "current", "outside_subject_not_current"
-    assert evidence["continuity"] == "unbroken", (
-        "outside_continuity_" + evidence["continuity"]
-    )
+    if profile == "later":
+        assert evidence["profile"] == "human_enrolled_later", "outside_creation_claim"
+        assert isinstance(evidence["can_approve_since"], int), "outside_missing_since"
+        assert evidence["continuity"] == "unknown", "outside_later_creation_continuity"
+    else:
+        assert evidence["continuity"] == "unbroken", (
+            "outside_continuity_" + evidence["continuity"]
+        )
 
 
 def assert_approval_target(request, first, second):
@@ -668,18 +861,24 @@ async def browsers():
 async def driver():
     import dns.asyncresolver
     import httpx
-    from awid.did import generate_keypair, did_from_public_key, stable_id_from_did_key
-    from awid.id_certificates import encode_id_chain_header, id_certificate_id
-    from awid.registry import RegistryClient
-    from awid.signing import sign_message, canonical_payload
-    from approval_service.answers import read_answer, assemble_receipt
-    from approval_service.canonical import canonical, parse
+    from awid.registry import RegistryClient, DIDKeyNotFoundError
+    from approval_service.canonical import parse
     from approval_service.encoding import decode
-    from approval_service.seams import http_authorization, make_needs_human, check_http
+    from approval_service.seams import make_needs_human
 
     work = Path("/work")
+    runtime = work / "browser-home" / "keyring-runtime"
+    runtime.mkdir(parents=True, mode=0o700, exist_ok=True)
+    os.environ["XDG_RUNTIME_DIR"] = str(runtime)
+    await command(
+        "gnome-keyring-daemon",
+        "--unlock",
+        "--components=secrets",
+        data=b"disposable adcl6 collection password",
+    )
+    await command("gnome-keyring-daemon", "--start", "--components=secrets")
     report = {
-        "journey_kind": "component",
+        "journey_kind": "product",
         "step_owners": STEP_OWNERS,
         "completed": False,
         "phases": [],
@@ -698,6 +897,7 @@ async def driver():
             "aweb-approval-service",
             "aweb-key-holder",
             "playwright",
+            "pexpect",
         )
     }
     assert not any(
@@ -731,43 +931,30 @@ async def driver():
         aclosing(RegistryClient(REGISTRY)) as registry,
     ):
         async with phase("real HTTPS service readiness"):
-            for url, expected in (
+            for address, expected in (
                 (REGISTRY + "/health", 200),
                 (SITE + "/health", 200),
                 (AUDIENCE + "/", 404),
             ):
-                deadline = time.monotonic() + 120
-                last_error = "not checked"
+                deadline, last_error = time.monotonic() + 90, "not attempted"
                 while True:
                     try:
-                        response = await client.get(url)
+                        response = await client.get(address)
                         if response.status_code == expected:
                             break
                         last_error = f"HTTP {response.status_code}, expected {expected}"
                     except httpx.TransportError as error:
-                        detail = f"{type(error).__name__}: {error}"
-                        if detail != last_error:
-                            print(f"readiness {url}: {detail}", flush=True)
-                        last_error = detail
+                        last_error = f"{type(error).__name__}: {error}"
                     if time.monotonic() >= deadline:
                         raise RuntimeError(
-                            f"service readiness deadline for {url}: {last_error}"
+                            f"service readiness deadline for {address}: {last_error}"
                         )
                     await asyncio.sleep(1)
-        async with phase("controller custody and authoritative DNS"):
-            descriptor = json.loads(
-                await command(
-                    "docker",
-                    "exec",
-                    os.environ["HOLDER_CONTAINER"],
-                    "aweb-key-holder",
-                    "--state",
-                    "/state/private",
-                    "descriptor",
-                )
-            )
-            root_key = descriptor["did_key"]
-            public_file(Path("/public/adcl6.test.zone"), zone(root_key))
+        async with phase(
+            "controller custody and authoritative DNS through holder command"
+        ):
+            descriptor = await holder_cli("descriptor")
+            public_file(Path("/public/adcl6.test.zone"), zone(descriptor["did_key"]))
             deadline = time.monotonic() + 30
             while True:
                 try:
@@ -777,7 +964,7 @@ async def driver():
                     values = [b"".join(record.strings).decode() for record in records]
                     if values == [
                         "awid=v1; controller="
-                        + root_key
+                        + descriptor["did_key"]
                         + "; registry="
                         + REGISTRY
                         + ";"
@@ -793,205 +980,68 @@ async def driver():
                 value={
                     "operation": "namespace_register",
                     "domain": ORG,
-                    "controller_did": root_key,
+                    "controller_did": descriptor["did_key"],
                 },
             )
             save(work / "controller-public.json", descriptor)
 
         async def person(name):
-            seed, public = generate_keypair()
-            key = did_from_public_key(public)
-            identity = stable_id_from_did_key(key)
-            await registry.register_did(key, seed)
-            home = work / "identities" / name / ".aw"
-            home.mkdir(parents=True, mode=0o700)
-            (home / "signing.key").write_text(
-                "-----BEGIN ED25519 PRIVATE KEY-----\n"
-                + base64.b64encode(seed).decode()
-                + "\n-----END ED25519 PRIVATE KEY-----\n"
+            home = work / "identities" / name
+            created = await human_command(
+                home, ["id", "human", "init", "--domain", ORG, "--json"]
             )
-            (home / "signing.key").chmod(0o600)
-            save(
-                home / "identity.yaml",
-                {
-                    "schema_version": 2,
-                    "did": key,
-                    "stable_id": identity,
-                    "address": ORG + "/" + name,
-                    "custody": "self",
-                    "identity_scope": "global",
-                    "registry_url": REGISTRY,
-                    "registry_status": "registered",
-                    "created_at": datetime.now(UTC).isoformat(),
-                },
-            )
-            return Person(name, seed, key, identity, home)
+            assert created["status"] == "prepared"
+            return Person(name, created["did_key"], created["id"], home)
 
-        async def exchange(purpose, body, intent, caller):
-            requester = intent["intent"]["requester"]
-            raw = canonical(body)
-            issued = int(time.time())
-            if caller is None:
-                auth = (
-                    await holder_cli(
-                        "authorize",
-                        intent["intent"]["person"],
-                        body,
-                        "--purpose",
-                        purpose,
-                        "--issued-at",
-                        str(issued),
-                    )
-                )["authorization"]
-            else:
-                auth = http_authorization(
-                    raw,
-                    seed=caller.seed,
-                    requester=requester,
-                    origin=SITE,
-                    purpose=purpose,
-                    issued_at=issued,
-                )
-            path = "/v1/enrollments/" + purpose.removeprefix("enrollment_")
-            check_http(
-                auth,
-                raw,
-                requester=requester,
-                origin=SITE,
-                method="POST",
-                path=path,
-                purpose=purpose,
-                now=issued,
-            )
-            response = await client.post(
-                SITE + path,
-                content=raw,
-                headers={"Authorization": auth, "Content-Type": "application/json"},
-            )
-            request_bytes = (
-                decode(body["request_bytes"])
-                if purpose == "enrollment_confirm"
-                else None
-            )
-            return read_answer(
-                purpose,
-                response.json(),
-                status=response.status_code,
-                intent=intent,
-                request_bytes=request_bytes,
-            )
-
-        async def enforcer(caller, path, body, *, approvals=False):
-            body_path = work / ("request-" + uuid4().hex + ".json")
-            save(body_path, body)
-            env = {
-                **os.environ,
-                "AWEB_IDENTITY_HOME": str(caller.home),
-                "HOME": str(caller.home.parent),
-            }
-            chain = {
-                "v": 1,
-                "type": "aweb.id-chain",
-                "certificates": caller.activation["id_chain"],
-            }
-            args = [
-                "aw",
+        async def outside(subject, profile):
+            text = work / (subject.name + "-message.txt")
+            text.write_text("Public human identity proof from aw")
+            name = subject.name + "-" + profile + ".json"
+            exported = work / "public" / name
+            await subject.aw(
                 "id",
-                "request",
-                "POST",
-                AUDIENCE + path,
-                "--body-file",
-                str(body_path),
-                "--header",
-                "X-AWID-ID-Chain: " + encode_id_chain_header(chain),
-                "--json",
-            ]
-            if approvals:
-                requester_path, admission_path = (
-                    work / "requester.json",
-                    work / "admission.json",
-                )
-                save(
-                    requester_path,
-                    {"kind": "identity", "id": caller.identity, "key": caller.key},
-                )
-                save(
-                    admission_path,
-                    {
-                        "team_certificate": None,
-                        "id_chain": caller.activation["id_chain"],
-                    },
-                )
-                args += [
-                    "--approval-origin",
-                    SITE,
-                    "--approval-requester",
-                    str(requester_path),
-                    "--approval-admission",
-                    str(admission_path),
-                    "--approval-record",
-                    str(work / "approval-record.json"),
-                ]
-            result = json.loads(
-                await command(*args, env=env, cwd=caller.home.parent, timeout=180)
+                "proof",
+                "--message-file",
+                str(text),
+                "--out",
+                str(exported),
+                json_output=False,
             )
-            assert result["status"] == 200, result["status"]
-            return result["body"]
-
-        async def outside(subject):
-            activation = subject.activation
-            receipt = activation["creation_receipt"]
-            creation_request = parse(decode(receipt["request_bytes"]))
-            assert creation_request["purpose"] == "enrollment_confirmation"
-            assert creation_request["approver"] == subject.identity
+            document = json.loads(exported.read_text())
+            signed = json.loads(document["signed_payload"])
             assert (
-                activation["evidence"]["evidence"]["creation"]["credential"]
-                == receipt["assertion"]["id"]
+                signed["from_stable_id"] == subject.identity
+                and signed["from_did"] == subject.key
             )
-            envelope = {
-                "from": ORG + "/" + subject.name,
-                "from_did": subject.key,
-                "from_stable_id": subject.identity,
-                "to": "public-proof-reader",
-                "to_did": subject.key,
-                "type": "mail",
-                "subject": "adcl6 public identity proof",
-                "body": "Public creation evidence",
-                "timestamp": datetime.now(UTC).isoformat(),
-                "message_id": str(uuid4()),
-            }
-            raw = canonical_payload(envelope)
-            export = {
-                "v": 1,
-                "type": "aweb.message-envelope",
-                "signed_payload": raw.decode(),
-                "signature": sign_message(subject.seed, raw),
-                "signing_key_id": subject.key,
-                "id_chain": {
-                    "v": 1,
-                    "type": "aweb.id-chain",
-                    "certificates": activation["id_chain"],
-                },
-                "evidence": {
-                    "v": 1,
-                    "links": [
-                        {
-                            "certificate": id_certificate_id(
-                                activation["id_chain"][-1]["certificate"]
-                            ),
-                            "statement": activation["evidence"],
-                            "receipt": receipt,
-                        }
-                    ],
-                },
-            }
-            save(work / "public" / (subject.name + ".json"), export)
+            assert signed["from"] == "", "proof_fabricated_an_address"
+            if profile == "none":
+                assert "evidence" not in document, "unenrolled_sender_gained_evidence"
+            else:
+                (entry,) = document["evidence"]["links"]
+                body = entry["statement"]["evidence"]
+                if profile == "later":
+                    assert (
+                        body["kind"] == "human_enrolled_later"
+                        and "creation" not in body
+                    )
+                else:
+                    assert body["kind"] == "human" and "creation" in body
+                confirmation = parse(decode(entry["receipt"]["request_bytes"]))
+                assert confirmation["purpose"] == "enrollment_confirmation"
+                assert confirmation["approver"] == subject.identity
+            # The first invocation is deliberately plain: no --registry, --json,
+            # identity, inherited config or credential. JSON is a second projection.
             script = (
-                "set -e; mkdir -p /tmp/fresh-home /tmp/fresh-cwd; cd /tmp/fresh-cwd; env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp/fresh-home TMPDIR=/tmp SSL_CERT_FILE=/public/ca.crt aw verify --registry "
-                + REGISTRY
-                + " --json /exports/"
-                + subject.name
-                + '.json; test -z "$(ls -A /tmp/fresh-home)"; test ! -e .aw'
+                "export HOME=/tmp/outsider SSL_CERT_FILE=/public/ca.crt; "
+                "mkdir /tmp/empty; cd /tmp/empty; "
+                + "aw verify /exports/"
+                + name
+                + " >/tmp/plain; "
+                + "aw --json verify /exports/"
+                + name
+                + " >/tmp/result; "
+                + 'test ! -e "$HOME"; test ! -e .aw; '
+                + 'python -c \'import json,pathlib; print(json.dumps({"plain":pathlib.Path("/tmp/plain").read_text(),"result":json.loads(pathlib.Path("/tmp/result").read_text())}))\''
             )
             raw = await command(
                 "docker",
@@ -1020,162 +1070,179 @@ async def driver():
                 script,
             )
             result = json.loads(raw)
-            assert_outside_verdict(result, subject.identity)
-            save(work / (subject.name + "-outside.json"), result)
+            assert_outside_verdict(result["result"], subject.identity, profile)
+            plain = result["plain"]
+            if profile == "none":
+                assert (
+                    "no evidence" in plain
+                    and "created with" not in plain
+                    and "can approve since" not in plain
+                )
+                output = subject.name + "-no-evidence-outside.json"
+            elif profile == "later":
+                assert "can approve since" in plain and "(issuer's statement)" in plain
+                assert (
+                    "confirmation proof checked" in plain
+                    and "created with" not in plain
+                    and "creation proof" not in plain
+                )
+                output = subject.name + "-outside.json"
+            else:
+                assert (
+                    "created with a passkey and user verification; proof checked"
+                    in plain
+                )
+                output = subject.name + "-outside.json"
+            save(work / output, result["result"])
+            public_file(
+                work / "public" / (subject.name + "-" + profile + "-plain.txt"), plain
+            )
 
-        async def enroll(subject, intent, actor, caller):
-            empty = {"team_certificate": None, "id_chain": []}
-            admission = (
-                empty
-                if caller is None
-                else {
-                    "team_certificate": None,
-                    "id_chain": caller.activation["id_chain"],
+        async def enroll(subject, actor, intent=None):
+            args = ["id", "human", "enroll", "--issuer", AUDIENCE, "--json"]
+            if intent is not None:
+                path = work / (subject.name + "-intent.json")
+                save(path, intent)
+                args += ["--intent", str(path)]
+                assert intent["intent"]["requester"] == {
+                    "kind": "identity",
+                    "id": subject.identity,
+                    "key": subject.key,
                 }
+            result = await subject.aw(*args, actor=actor)
+            assert (
+                result["statement"]["status"] == "valid"
+                and result["proof"]["status"] == "valid"
             )
-            base = {"version": 1, "intent": intent, "admission": admission}
-            started = await exchange("enrollment_start", base, intent, caller)
-            await actor.register(started["locator"])
-            material = await exchange("enrollment_material", base, intent, caller)
-            assert len(material["registrations"]) == 1
-            if caller is None:
-                prepared = await holder_cli(
-                    "bind", subject.identity, material, "--registration-count", "1"
-                )
-            else:
-                prepared = await enforcer(
-                    caller,
-                    "/v1/enrollments/" + subject.identity + "/binding",
-                    {"material": material, "registration_count": 1},
-                )
-            confirm = {
-                **base,
-                "binding": prepared["binding"],
-                "request_bytes": prepared["request_bytes"],
-            }
-            pending = await exchange("enrollment_confirm", confirm, intent, caller)
-            assert pending["state"] == "pending"
-            await actor.confirm()
-            deadline = parse(decode(prepared["request_bytes"]))["deadline"]
-            while True:
-                answer = await exchange("enrollment_confirm", confirm, intent, caller)
-                if answer["state"] != "pending":
-                    break
-                if time.time() >= deadline:
-                    raise RuntimeError("original enrollment deadline reached")
-                await asyncio.sleep(1)
-            receipt = assemble_receipt(
-                decode(prepared["request_bytes"]),
-                answer,
-                locator=started["locator"],
-                intent=intent,
+            session = json.loads(
+                (subject.record_dir / "enrollment-session.json").read_text()
             )
-            if caller is None:
-                activation = await holder_cli("finish", subject.identity, receipt)
-            else:
-                activation = await enforcer(
-                    caller, "/v1/enrollments/" + subject.identity + "/finish", receipt
-                )
-            await registry.register_id_certificate(
-                {
-                    "v": 1,
-                    "type": "aweb.id-chain",
-                    "certificates": activation["id_chain"],
-                },
-                signer=lambda payload: (
-                    subject.key,
-                    base64.b64decode(sign_message(subject.seed, payload) + "=="),
-                ),
-                expected_head=None,
-                invitation_id=None,
-            )
-            result = await exchange("enrollment_activate", activation, intent, caller)
-            assert result["state"] == "active"
-            activated = (
-                await holder_cli("activate", subject.identity)
-                if caller is None
-                else await enforcer(
-                    caller, "/v1/enrollments/" + subject.identity + "/activate", {}
-                )
-            )
-            assert activated["state"] == "active"
-            subject.activation = activation
-            save(work / (subject.name + "-activation.json"), activation)
+            assert session["completed"] is True
+            subject.activation = session["activation"]
+            save(work / (subject.name + "-activation.json"), subject.activation)
             await actor.login(subject.identity)
 
         async with browsers() as (first_browser, second_browser):
             first, second = await person("first"), await person("second")
             async with phase(
-                "controller bootstraps first person and browser enrollment"
+                "operator issues without approval configuration; aw registers own certificate"
             ):
-                intent = (
-                    await holder_cli(
-                        "bootstrap", first.identity, None, "--identity-key", first.key
-                    )
-                )["intent"]
-                await enroll(first, intent, first_browser, None)
-            async with phase("first person outside verification"):
-                await outside(first)
+                issued = await holder_cli(
+                    "issue-person", first.identity, None, "--identity-key", first.key
+                )
+                assert (
+                    issued["state"] == "issued" and issued["identity_key"] == first.key
+                )
+                path = work / "first-issued.json"
+                save(path, issued)
+                result = await first.aw("id", "human", "register", str(path), "--json")
+                assert (
+                    result["status"] == "registered" and result["id"] == first.identity
+                )
             async with phase(
-                "first person approves exact second-person request in Chromium"
+                "plain outsider aw verify reports valid human with no evidence"
             ):
+                await outside(first, "none")
+            async with phase(
+                "same holder enables approval; existing person enrolls later through aw"
+            ):
+                await enable_holder_approval()
+                deadline = time.monotonic() + 60
+                while True:
+                    try:
+                        response = await client.get(AUDIENCE + "/")
+                        if response.status_code == 404:
+                            break
+                    except httpx.TransportError:
+                        pass
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("configured holder readiness deadline")
+                    await asyncio.sleep(1)
+                await enroll(first, first_browser)
+                assert (
+                    first.activation["evidence"]["evidence"]["kind"]
+                    == "human_enrolled_later"
+                )
+            async with phase(
+                "plain outsider aw verify reports later approval evidence without creation"
+            ):
+                await outside(first, "later")
+            async with phase(
+                "aw human add carries exact second-person approval through Chromium"
+            ):
+                intent_path = work / "second-pending-intent.json"
                 pending = asyncio.create_task(
-                    enforcer(
-                        first,
-                        "/v1/humans",
-                        {
-                            "person": second.identity,
-                            "identity_key": second.key,
-                            "approver": first.identity,
-                        },
-                        approvals=True,
+                    first.aw(
+                        "id",
+                        "human",
+                        "add",
+                        "--person",
+                        second.identity,
+                        "--identity-key",
+                        second.key,
+                        "--out",
+                        str(intent_path),
+                        json_output=False,
                     )
                 )
                 try:
-                    deadline = time.monotonic() + 60
-                    while not (work / "approval-record.json").exists():
+                    deadline = time.monotonic() + 90
+                    while True:
+                        records = list(first.record_dir.glob("human-add-*.json"))
+                        if records:
+                            assert len(records) == 1
+                            retained = json.loads(records[0].read_text())
+                            if "request_bytes" in retained:
+                                break
                         if pending.done():
                             await pending
-                            raise RuntimeError("request returned without retaining R")
+                            raise RuntimeError(
+                                "typed add returned before retaining approval"
+                            )
                         if time.monotonic() >= deadline:
-                            raise RuntimeError("requester did not reach needs-human")
+                            raise RuntimeError("typed add did not retain needs-human")
                         await asyncio.sleep(0.1)
-                    original = json.loads((work / "approval-record.json").read_text())[
-                        "request_bytes"
-                    ]
+                    original = retained["request_bytes"]
                     request = parse(decode(original))
                     assert_approval_target(request, first.identity, second.identity)
-                    assert not (
-                        await registry.resolve_key_fresh(second.identity)
-                    ).id_tree.enrolled
-                    # The page fetches pending rows after login; no invented UI poll.
+                    try:
+                        current = await registry.resolve_key_fresh(second.identity)
+                    except DIDKeyNotFoundError as missing:
+                        enrollment = missing.id_tree
+                    else:
+                        enrollment = current.id_tree
+                    assert enrollment is not None and not enrollment.enrolled, (
+                        "human_issued_before_approval"
+                    )
                     await first_browser.login(first.identity)
                     _, needs = make_needs_human(request, origin=SITE)
                     await first_browser.approve(
                         needs["digest"], first.identity, second.identity
                     )
-                    intent = (await pending)["intent"]
-                    retained = json.loads((work / "approval-record.json").read_text())
+                    await pending
+                    retained = json.loads(records[0].read_text())
                     assert (
                         retained["request_bytes"]
                         == original
                         == retained["receipt"]["request_bytes"]
                     )
+                    save(work / "approval-record.json", retained)
+                    intent = json.loads(intent_path.read_text())["intent"]
                     assert intent["intent"]["person"] == second.identity
                 finally:
                     if not pending.done():
                         pending.cancel()
                         await asyncio.gather(pending, return_exceptions=True)
             async with phase(
-                "second person browser enrollment and committed activation"
+                "new person enrolls and registers own certificate through aw"
             ):
-                await enroll(second, intent, second_browser, first)
-                assert (
-                    first.activation["creation_receipt"]["assertion"]["id"]
-                    != second.activation["creation_receipt"]["assertion"]["id"]
-                )
-            async with phase("second person outside verification"):
-                await outside(second)
+                await enroll(second, second_browser, intent)
+                assert second.activation["evidence"]["evidence"]["kind"] == "human"
+                assert "creation" not in first.activation["evidence"]["evidence"]
+            async with phase(
+                "plain outsider aw verify checks creation statement and proof"
+            ):
+                await outside(second, "creation")
         report["completed"] = True
         save(work / "journey.json", report)
         print("PASS: adcl6 first self-custody add-human journey completed", flush=True)
