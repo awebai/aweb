@@ -26,7 +26,7 @@ import (
 // The hosted boundary is HTTP; the child's proof, parent approval, import and
 // chain verification run the production exchange, with no substituted signer.
 func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
-	for _, scenario := range []string{"three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "further-team external home", "further-team cross-machine recipe", "further-team retry"} {
+	for _, scenario := range []string{"three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias"} {
 		t.Run(scenario, func(t *testing.T) {
 			resetTeamHumanCreateGlobals(t)
 			v := loadWhoVectors(t)
@@ -158,6 +158,9 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			origin = service.URL
 			t.Setenv("AWEB_URL", origin)
 			workspace := workspaceBinding(origin, team, "coordinator", "workspace-parent")
+			if scenario == "further-team api-base alias" {
+				workspace.AwebURL = origin + "/api"
+			}
 			writeTeamCertificateWorkspaceForTest(t, root, workspace, &testSelectionFixture{SigningKey: parentKey, IdentityScope: "local"})
 			writeWorkspaceBindingForTest(t, root, workspace)
 			if furtherTeam {

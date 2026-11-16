@@ -1857,11 +1857,11 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 		if err != nil {
 			return nil, err
 		}
-		origin, err := normalizeAwebBaseURL(firstNonEmptyString(selected.AwebURL, selected.BaseURL))
-		if err != nil {
-			return nil, err
-		}
-		if err := awconfig.SaveTeamInvite(&awconfig.TeamInvite{InviteID: hostedTeamInviteRecordID(created.Token), Domain: domain, TeamName: name, IdentityScope: awid.IdentityModeLocal, AwebURL: origin, IDChild: link}); err != nil {
+		if err := awconfig.SaveTeamInvite(&awconfig.TeamInvite{
+			InviteID: hostedTeamInviteRecordID(created.Token),
+			Domain:   domain, TeamName: name,
+			IdentityScope: awid.IdentityModeLocal, IDChild: link,
+		}); err != nil {
 			return nil, err
 		}
 	}

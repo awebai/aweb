@@ -36,7 +36,7 @@ func localHostedInviteLink(token string, state *hostedInviteCreation) (*awconfig
 	}
 	if invite.InviteID != hostedTeamInviteRecordID(token) || invite.IDChild == nil ||
 		invite.IDChild.Parent != state.Tree.Parent["id"] || invite.IDChild.Domain != state.Tree.Domain ||
-		invite.AwebURL != state.AwebURL || awid.BuildTeamID(invite.Domain, invite.TeamName) != state.TeamID {
+		awid.BuildTeamID(invite.Domain, invite.TeamName) != state.TeamID {
 		return nil, errors.New("local hosted invite link differs from the pinned preview")
 	}
 	return invite, nil
