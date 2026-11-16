@@ -33,6 +33,7 @@ from aweb_naapp.runtime.origins import OriginApps
 from aweb_naapp.runtime.passkeys.email import PasskeyEmailDelivery
 from aweb_naapp.runtime.team_auth import Principal
 from awid.dns_verify import DomainVerifier
+from awid.external_authority import TXTOutcomeResolver
 from fastapi import FastAPI, HTTPException, Request
 from pgdbm import AsyncDatabaseManager, DatabaseConfig
 
@@ -106,6 +107,7 @@ def create_runtime(
     hooks: HookEgress,
     *,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    awid_txt_resolver: TXTOutcomeResolver | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     awid_domain_verifier: DomainVerifier | None = None,
 ) -> NaappRuntime:
@@ -119,6 +121,7 @@ def create_runtime(
         owner_acts=OWNER_ACTS,
         owner_acts_origin=settings.console_origin,
         awid_transport=awid_transport,
+        awid_txt_resolver=awid_txt_resolver,
         awid_domain_verifier=awid_domain_verifier,
         team_server_transport=team_server_transport,
         hook_egress=hooks.egress,
@@ -132,6 +135,7 @@ def create_app(
     *,
     email: EmailSettings,
     awid_transport: httpx.AsyncBaseTransport | None = None,
+    awid_txt_resolver: TXTOutcomeResolver | None = None,
     team_server_transport: httpx.AsyncBaseTransport | None = None,
     resolver: Resolver | None = None,
     awid_domain_verifier: DomainVerifier | None = None,
@@ -140,12 +144,15 @@ def create_app(
     """logs on its public origin and its console origin. ``email`` sends the
     enrolment links of designated readers. Hook events leave through the guard
     the settings configure; ``resolver`` replaces its DNS resolver, and
-    ``awid_domain_verifier`` the DNS check of an AWID domain's authority."""
+    ``awid_domain_verifier`` the DNS check of an AWID domain's authority.
+    ``awid_txt_resolver`` answers the ``_awid`` records that name who may move
+    a pinned team key (system DNS by default)."""
     hooks = HookEgress.from_settings(settings, resolver=resolver)
     runtime = create_runtime(
         settings,
         hooks,
         awid_transport=awid_transport,
+        awid_txt_resolver=awid_txt_resolver,
         team_server_transport=team_server_transport,
         awid_domain_verifier=awid_domain_verifier,
     )

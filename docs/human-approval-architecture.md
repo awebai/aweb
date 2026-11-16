@@ -145,9 +145,10 @@ certificate names. An enrolled key is a key the person approves with.
   and receipts tied to the earlier person's key stop being current, so a lost
   enrolled key cannot go on approving.
 - Enrolling a key later never changes how an ID was created.
-- Each agent issued or adopted under a person carries its own receipt. A
-  verifier reports the evidence for each link of the chain. A link without a
-  receipt is reported as such and is not refused.
+- Each agent a person issues or adopts carries a receipt on that link. Agents
+  issued by agents carry none; they are attributed to the person through the
+  chain. A verifier reports the evidence for each link of the chain. A link
+  without a receipt is reported as such and is not refused.
 - Evidence is seen only where a sender presents it. A bare ID cannot be looked
   up for its grade. An absent statement proves nothing.
 

@@ -86,7 +86,7 @@ async def test_identity_writer_unifies_rows_and_connect_inherits(aweb_cloud_db, 
     async with manager.transaction() as tx:
         agent_id = await _ensure_agent(tx, "third:policy.example", key, "did:aw:policy", "policy.example/member",
                                        "third", "global", "", "agent", "developer", "third-certificate",
-                                       human_verified_key=None)
+                                       human_verified_key=None, accepted_team_did_key="did:key:zTeam")
     assert await manager.fetch_value("SELECT inbound_mode FROM {{tables.agents}} WHERE agent_id=$1", agent_id) == mode
 
 

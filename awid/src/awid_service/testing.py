@@ -28,6 +28,7 @@ from redis.asyncio import Redis
 
 from awid.attestation_records import sign_record
 from awid.did import did_from_public_key
+from awid.external_authority import DNSLookup
 from awid.ratelimit import NoOpRateLimiter
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
@@ -71,6 +72,26 @@ def _did_key(key: SigningKey) -> str:
     return did_from_public_key(bytes(key.verify_key))
 
 
+class TXTAnswers:
+    """DNS as a relying server sees it: ``_awid`` records by query name,
+    NXDOMAIN for anything else. DNS is outside every service under test."""
+
+    def __init__(self, controllers: dict[str, str] | None = None) -> None:
+        self.controllers = dict(controllers or {})
+
+    async def lookup_txt(self, name: str) -> DNSLookup:
+        controller = self.controllers.get(name)
+        if controller is None:
+            return DNSLookup("nxdomain")
+        return DNSLookup("record", (f"awid=v1; controller={controller};",))
+
+
+def dns_naming(domain: str, controller: SigningKey | str) -> TXTAnswers:
+    """DNS whose ``_awid.<domain>`` names ``controller`` as namespace controller."""
+    did = controller if isinstance(controller, str) else _did_key(controller)
+    return TXTAnswers({f"_awid.{domain}": did})
+
+
 @dataclass
 class Registry:
     """A running in-process AWID: its app, its database and its transport."""
@@ -87,11 +108,36 @@ class Registry:
         )
 
     async def rotate_team_key(self, team_id: str, team_did_key: str) -> None:
+        """Write the registry's team key directly, as the registry's operator
+        could: no namespace-controller act backs it, so a server that pinned
+        the team refuses it (awid.team_key_acts)."""
         name, domain = team_id.split(":", 1)
         await self.db.execute(
             "UPDATE {{tables.teams}} SET team_did_key = $3 WHERE domain = $1 AND name = $2",
             domain, name, team_did_key,
         )
+
+    async def rotate_team_key_by_controller(self, team_id: str, team_did_key: str, controller: SigningKey) -> None:
+        """Rotate through the real route, signed by ``controller`` as the
+        namespace controller (registered for the domain if it has none), so
+        AWID keeps the act a pinned server checks against DNS (dns_naming)."""
+        name, domain = team_id.split(":", 1)
+        await self.db.execute(
+            "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
+            "VALUES ($1, $2, 'verified') ON CONFLICT DO NOTHING",
+            domain, _did_key(controller),
+        )
+        timestamp = datetime.now(UTC).isoformat()
+        claims = {"domain": domain, "operation": "rotate_team_key", "name": name, "new_team_did_key": team_did_key}
+        signature = sign_message(bytes(controller), canonical_json_bytes({**claims, "timestamp": timestamp}))
+        async with httpx.AsyncClient(transport=self.transport, base_url=REGISTRY_URL) as client:
+            response = await client.post(
+                f"/v1/namespaces/{domain}/teams/{name}/rotate",
+                json={"new_team_did_key": team_did_key},
+                headers={"Authorization": f"DIDKey {_did_key(controller)} {signature}", "X-AWEB-Timestamp": timestamp},
+            )
+        if response.status_code != 200:
+            raise AssertionError(f"rotate_team_key refused: {response.status_code} {response.text}")
 
     async def add_certificate(self, cert: dict[str, Any]) -> None:
         name, domain = cert["team_id"].split(":", 1)

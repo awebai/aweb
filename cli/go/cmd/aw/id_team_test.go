@@ -4074,6 +4074,13 @@ func TestTeamFetchCertInstallsFetchedCertificate(t *testing.T) {
 		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/namespaces/acme.com/teams/backend/certificates/") {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
+		if strings.HasSuffix(r.URL.Path, "/status") {
+			// fetch-cert checks the fetched certificate against the team's current key.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": "backend:acme.com", "team_did_key": teamDID, "status": "active", "revoked_at": nil,
+			})
+			return
+		}
 		gotAuth.set(strings.TrimSpace(r.Header.Get("Authorization")))
 		certificateID := strings.TrimPrefix(r.URL.Path, "/v1/namespaces/acme.com/teams/backend/certificates/")
 		responseCert := cert

@@ -9,6 +9,7 @@ from __future__ import annotations
 from aweb.human_kind import is_verified_human
 
 from aweb.identity_auth_deps import current_membership
+from aweb.member_team_key import member_key_columns_sql, member_key_current
 
 
 async def messaging_participants_by_aliases(
@@ -28,8 +29,8 @@ async def messaging_participants_by_aliases(
                   (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
                   did_aw AS policy_did_aw,
                   inbound_mode, status, deleted_at, agent_type, human_verified_key, certificate_id,
-                  identity_scope
-           FROM {{tables.agents}}
+                  identity_scope, """ + member_key_columns_sql("a") + """
+           FROM {{tables.agents}} AS a
            WHERE team_id=$1 AND alias=ANY($2::text[]) AND deleted_at IS NULL""",
         team_id,
         aliases,
@@ -37,6 +38,8 @@ async def messaging_participants_by_aliases(
     result = []
     for row in rows:
         row = dict(row)
+        if not member_key_current(row):
+            continue
         if is_verified_human(row):
             if team_id != selected_team_id or row.get("status") != "active":
                 continue

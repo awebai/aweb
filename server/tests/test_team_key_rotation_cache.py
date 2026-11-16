@@ -56,7 +56,7 @@ class LegacyCacheRegistry(LegacyTeamFacts, CachedRegistryClient):
 
 
 @pytest_asyncio.fixture
-async def world(monkeypatch):
+async def world(monkeypatch, aweb_cloud_db):
     monkeypatch.delenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", raising=False)
     clock = [1_000_000]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
@@ -68,6 +68,8 @@ async def world(monkeypatch):
         member=member, member_did=member_did, keys={"backend": old_did, "other": old_did},
         key_reads=0, revocation_reads=0, revoked=[], status=200,
         entered=asyncio.Event(), release=None, clients=[],
+        # The real aweb schema holds the team-key pins verification reads.
+        db_infra=SimpleNamespace(get_manager=lambda _name: aweb_cloud_db.aweb_db),
     )
 
     async def handler(request):
@@ -131,7 +133,7 @@ async def _verify(env, *, signer="new", name="backend", registry=None, cert_patc
     headers.update(headers_patch or {})
     request = _request_with_app_state(headers)
     request.app.state.awid_registry_client = registry or env.registry
-    return await verify_request_certificate(request, db=object())
+    return await verify_request_certificate(request, db=env.db_infra)
 
 
 async def _refused(env, **kwargs):
@@ -152,7 +154,7 @@ async def test_external_rotation_recovers_on_first_request_and_updates_cache(wor
     assert (await _verify(env))["verified_team_did_key"] == env.new_did
     assert env.key_reads == 1
     assert await env.registry.get_team_public_key("acme.com", "backend") == env.new_did
-    assert await _refused(env, signer="old") == "bad_signature"
+    assert (await _refused(env, signer="old"))["code"] == "team_key_not_current"
     assert env.key_reads == 1
 
 
@@ -160,6 +162,16 @@ async def test_external_rotation_recovers_on_first_request_and_updates_cache(wor
 async def test_bad_certificate_flood_is_coalesced_including_slow_attempt(world):
     env = world
     env.release = asyncio.Event()
+    # Count the callers that reached the shared refresh: verification awaits
+    # its database before it, so they arrive asynchronously.
+    arrived = []
+    refresh = env.registry.refresh_team_key_after_signature_failure
+
+    async def counted_refresh(*args, **kwargs):
+        arrived.append(None)
+        return await refresh(*args, **kwargs)
+
+    env.registry.refresh_team_key_after_signature_failure = counted_refresh
     calls = [asyncio.create_task(_refused(env)) for _ in range(16)]
     try:
         await asyncio.wait_for(env.entered.wait(), timeout=1)
@@ -168,7 +180,9 @@ async def test_bad_certificate_flood_is_coalesced_including_slow_attempt(world):
         env.clock[0] += 6
         more = [asyncio.create_task(_refused(env)) for _ in range(8)]
         calls.extend(more)
-        await asyncio.sleep(0)
+        async with asyncio.timeout(5):
+            while len(arrived) < len(calls):
+                await asyncio.sleep(0.01)
         assert env.key_reads == 1
     finally:
         env.release.set()
@@ -180,9 +194,9 @@ async def test_bad_certificate_flood_is_coalesced_including_slow_attempt(world):
 async def test_cooldown_is_shared_by_clients_and_independent_per_team(world):
     env = world
     other_client = env.client()
-    assert await _refused(env) == "bad_signature"
+    assert (await _refused(env))["code"] == "team_key_not_current"
     assert env.key_reads == 1
-    assert await _refused(env, registry=other_client) == "bad_signature"
+    assert (await _refused(env, registry=other_client))["code"] == "team_key_not_current"
     assert env.key_reads == 1
     await _refused(env, name="other", registry=other_client)
     assert env.key_reads == 2
@@ -223,7 +237,7 @@ async def test_unchanged_or_failed_refresh_keeps_401_and_original_fact_age(world
     before = env.redis.values[cache_key]
     env.clock[0] += 2
     env.status = status
-    assert await _refused(env) == "bad_signature"
+    assert (await _refused(env))["code"] == "team_key_not_current"
     assert env.key_reads == 1
     assert env.redis.values[cache_key] == before
     await _refused(env)
@@ -249,7 +263,11 @@ async def test_redis_admission_failure_never_falls_back_to_an_unbounded_read(wor
 @pytest.mark.asyncio
 async def test_bad_signature_under_refreshed_key_never_drives_revocation_read(world):
     world.keys["backend"] = world.new_did
-    await _refused(world, cert_patch={"signature": sign_message(world.member, b"wrong certificate")})
+    # A certificate naming the current key whose signature fails is not a
+    # superseded certificate: it keeps the plain signature refusal.
+    assert await _refused(
+        world, cert_patch={"signature": sign_message(world.member, b"wrong certificate")},
+    ) == "bad_signature"
     assert world.key_reads == 1
     assert world.revocation_reads == 0
 

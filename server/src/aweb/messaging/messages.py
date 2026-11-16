@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from aweb.human_kind import human_predicate_sql, effective_agent_type
+from aweb.member_team_key import member_key_current_sql
 
 from aweb.agent_wake import record_did_wakes
 from aweb.attachment_service import attachment_transaction
@@ -167,10 +168,11 @@ async def _active_team_ids_for_identity(db, dids: list[str]) -> set[str]:
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
-        SELECT DISTINCT team_id
-        FROM {{tables.agents}}
-        WHERE deleted_at IS NULL
-          AND ((did_aw = ANY($1::text[]) AND did_aw_verified_key = did_key) OR did_key = ANY($1::text[]))
+        SELECT DISTINCT a.team_id
+        FROM {{tables.agents}} AS a
+        WHERE a.deleted_at IS NULL
+          AND ((a.did_aw = ANY($1::text[]) AND a.did_aw_verified_key = a.did_key) OR a.did_key = ANY($1::text[]))
+          AND """ + member_key_current_sql("a") + """
         """,
         dids,
     )

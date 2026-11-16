@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from aweb.human_kind import is_verified_human
+from aweb.member_team_key import member_key_current_sql
 
 from aweb.agent_wake import record_did_wakes
 from aweb.messaging.chat_policy import HumanChatRefused, recipient_label
@@ -366,11 +367,12 @@ async def _authorize_policy(
     if recipient_team and not (recipient_global and mode == "contacts_only"):
         same_team = await tx.fetch_one(
             """
-            SELECT agent_id FROM {{tables.agents}}
-            WHERE team_id = $1 AND deleted_at IS NULL
-              AND ((did_aw = $2 AND did_aw_verified_key = did_key) OR did_key = $2)
+            SELECT a.agent_id FROM {{tables.agents}} AS a
+            WHERE a.team_id = $1 AND a.deleted_at IS NULL
+              AND ((a.did_aw = $2 AND a.did_aw_verified_key = a.did_key) OR a.did_key = $2)
+              AND """ + member_key_current_sql("a") + """
             LIMIT 1
-            FOR SHARE
+            FOR SHARE OF a
             """,
             recipient_team,
             envelope.sender_did_aw,
