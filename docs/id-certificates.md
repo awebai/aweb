@@ -75,15 +75,20 @@ secret use, increase permissions, or replace a controller-signed owner act.
 Manifest parameters named `human` or `human-domain` are reserved for CLI
 identity selection and refused at installation.
 
-Every signature prompts at the controlling terminal and wipes the decrypted
-key afterwards. A send needs both a mail-envelope signature and request
-signature; lookups, reads, acknowledgments and retries can require additional
-prompts. Prompts are numbered within the command. Mail send prompts identify
-the recipient, subject and body hash; a reply's preliminary read identifies the
-source message and proposed body's hash, then its send identifies the resolved
-recipient and subject. Prompting is a custody safeguard, not a remotely
+One person command unlocks the key at its first signature with one passphrase
+prompt at the controlling terminal. The key stays in memory for that command,
+including browser or confirmation waits, and is wiped on success, error or
+interruption. Another command unlocks again. A send still needs both a
+mail-envelope signature and request signature; lookups, reads, acknowledgments
+and retries can require additional signatures. Each signature's numbered
+description is printed on stderr before signing. The unlock prompt names the
+selected human and operation; descriptions identify the recipient, subject and
+body hash when those are known. Prompting is a custody safeguard, not a remotely
 verifiable assertion of a fresh human gesture. Known agent-runtime markers
 and a missing controlling terminal refuse this path.
+
+Ordinary human mail carries its ID chain and no saved enrollment or creation
+evidence. `aw id proof` exports that evidence separately.
 
 This initial path supports plaintext mail, not human encryption-key custody.
 Encrypted sends or replies refuse when that custody is unavailable; there is

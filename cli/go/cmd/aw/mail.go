@@ -113,7 +113,11 @@ var mailSendCmd = &cobra.Command{
 		"that conversation; its title stays the first message's subject, so --subject\n" +
 		"is refused there. JSON returns message_id and conversation_id. A server that\n" +
 		"answers a new thread with another conversation_id fails without retry; the\n" +
-		"message may already have been sent into that conversation.",
+		"message may already have been sent into that conversation.\n\n" +
+		"With --human, unlock once at a real terminal for this command; each signature\n" +
+		"is described on stderr and the key is wiped at exit. Ordinary human mail\n" +
+		"carries the ID chain and no saved enrollment or creation evidence.\n" +
+		"Use aw id proof to export that evidence for someone else to verify.",
 	Args: func(cmd *cobra.Command, args []string) error {
 		recipient := strings.TrimSpace(mailSendTo+mailSendToDID+mailSendToAddress) != ""
 		if strings.TrimSpace(mailSendConversationID) != "" {

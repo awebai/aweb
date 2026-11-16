@@ -91,6 +91,7 @@ def retain(args) -> None:
         "approval-record.json",
         "controller-public.json",
         "command-failure.stderr",
+        "prompt-counts.json",
     )
     paths = [work / name for name in names if (work / name).exists()]
     public = work / "public"
@@ -534,6 +535,7 @@ async def human_command(
         "aw", args, cwd=str(home), env=env, encoding="utf-8", timeout=180, echo=False
     )
     transcript = []
+    unlock_prompts = 0
     registered, confirmed = False, False
     try:
         while True:
@@ -557,6 +559,9 @@ async def human_command(
                     approval_ready.set()
                 continue
             if found < 3:
+                if found == 2:
+                    unlock_prompts += 1
+                    assert unlock_prompts <= 1, "person_command_prompted_more_than_once"
                 child.sendline("disposable adcl6 human passphrase")
             elif found == 3:
                 assert actor is not None and not registered, (
@@ -587,6 +592,18 @@ async def human_command(
                 f"human aw exited {child.exitstatus}/{child.signalstatus}"
             )
         assert not list(home.rglob("signing.key")), "human_key_written_into_agent_home"
+        if "--human" in args:
+            assert unlock_prompts == 1, "person_command_did_not_unlock_once"
+            counts_file = Path("/work/prompt-counts.json")
+            counts = json.loads(counts_file.read_text()) if counts_file.exists() else []
+            counts.append(
+                {
+                    "person": args[args.index("--human") + 1],
+                    "command": args[4:7],
+                    "unlock_prompts": unlock_prompts,
+                }
+            )
+            save(counts_file, counts)
         if not json_output:
             return text
         start = re.search(r"[\[{]", text)

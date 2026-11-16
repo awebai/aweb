@@ -30,6 +30,9 @@ Your identity key stays in the passphrase-protected OS keychain. For a new perso
 first run aw id human init and obtain a pending --intent FILE from your issuer.
 For an existing person, --issuer URL asks that issuer for an enrollment intent.
 After the first use, the issuer is remembered with your human record.
+The first signature asks once for your passphrase. The key stays unlocked in
+memory for this command, including browser and "type yes" waits, and is wiped
+when the command ends or is interrupted. Each signature is described on stderr.
 
 The signed intent supplies the approval service and RP ID; --approval-origin is
 an optional equality pin. You see the service before opening its enrollment page.

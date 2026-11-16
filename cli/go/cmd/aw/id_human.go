@@ -43,7 +43,7 @@ var (
 			"Enrollment asks you to register and confirm a key in the named browser.\n" +
 			"The existing `aw id parent request` exchange is also supported.\n\n" +
 			"The human key is kept in the OS keychain, encrypted under a passphrase you\n" +
-			"choose; every signature asks for that passphrase on the terminal. This needs\n" +
+			"choose; person commands unlock it once on the terminal and wipe it at exit. This needs\n" +
 			"a human at an interactive terminal: it refuses without one and inside an\n" +
 			"agent runtime. A run that fails resumes from where it stopped.",
 		RunE: runIDHumanInit,

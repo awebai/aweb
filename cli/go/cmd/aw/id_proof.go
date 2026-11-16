@@ -18,7 +18,8 @@ var idProofMessageFile, idProofOut string
 var idProofCmd = &cobra.Command{
 	Use: "proof", Short: "Export a message signed by your human key with its saved evidence",
 	Long: `Sign the text in --message-file with your human key at a terminal, asking for
-its keychain passphrase. The JSON export carries your ID chain and any saved
+its keychain passphrase once for this command and wiping the key at exit.
+The JSON export carries your ID chain and any saved
 enrollment evidence. It needs no team or mail server. Missing enrollment is not
 a refusal and adds no evidence. Run with --human ID --human-domain DOMAIN.
 Saved evidence rides only in proof files; ordinary mail does not yet carry it.

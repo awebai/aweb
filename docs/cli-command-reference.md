@@ -743,7 +743,8 @@ Flags:
 Run as an existing enrolled person with --human ID --human-domain DOMAIN.
 The issuer's approved-mode endpoint asks for human approval through the existing
 428 protocol. Review the exact act in your approval-service browser page. Every
-identity signature uses your passphrase-protected keychain key at this terminal.
+identity signature uses your keychain key, unlocked once at this terminal for
+this command, including the approval wait. The key is wiped at command exit.
 An agent requester uses the generic aw id request command instead.
 
 This command returns a pending intent; it never enrolls the new person. The new
@@ -773,6 +774,9 @@ Your identity key stays in the passphrase-protected OS keychain. For a new perso
 first run aw id human init and obtain a pending --intent FILE from your issuer.
 For an existing person, --issuer URL asks that issuer for an enrollment intent.
 After the first use, the issuer is remembered with your human record.
+The first signature asks once for your passphrase. The key stays unlocked in
+memory for this command, including browser and "type yes" waits, and is wiped
+when the command ends or is interrupted. Each signature is described on stderr.
 
 The signed intent supplies the approval service and RP ID; --approval-origin is
 an optional equality pin. You see the service before opening its enrollment page.
@@ -802,7 +806,7 @@ Enrollment asks you to register and confirm a key in the named browser.
 The existing `aw id parent request` exchange is also supported.
 
 The human key is kept in the OS keychain, encrypted under a passphrase you
-choose; every signature asks for that passphrase on the terminal. This needs
+choose; person commands unlock it once on the terminal and wipe it at exit. This needs
 a human at an interactive terminal: it refuses without one and inside an
 agent runtime. A run that fails resumes from where it stopped.
 
@@ -819,7 +823,7 @@ Flags:
 
 Register the certificate handed to you by your organization's operator or
 approved issuer. Run this yourself with --human ID --human-domain DOMAIN at a
-terminal; each signature asks for your keychain passphrase. Prepare your human ID
+terminal; unlock once with your keychain passphrase for this command. Prepare your human ID
 first with aw id human init. This registers your ID without enrolling an approval
 key. Afterwards you may optionally run aw id human enroll, or create a portable
 message with aw id proof --message-file FILE for anyone to check with aw verify.
@@ -1061,7 +1065,8 @@ Flags:
 ### `id proof`
 
 Sign the text in --message-file with your human key at a terminal, asking for
-its keychain passphrase. The JSON export carries your ID chain and any saved
+its keychain passphrase once for this command and wiping the key at exit.
+The JSON export carries your ID chain and any saved
 enrollment evidence. It needs no team or mail server. Missing enrollment is not
 a refusal and adds no evidence. Run with --human ID --human-domain DOMAIN.
 Saved evidence rides only in proof files; ordinary mail does not yet carry it.
@@ -3277,6 +3282,11 @@ that conversation; its title stays the first message's subject, so --subject
 is refused there. JSON returns message_id and conversation_id. A server that
 answers a new thread with another conversation_id fails without retry; the
 message may already have been sent into that conversation.
+
+With --human, unlock once at a real terminal for this command; each signature
+is described on stderr and the key is wiped at exit. Ordinary human mail
+carries the ID chain and no saved enrollment or creation evidence.
+Use aw id proof to export that evidence for someone else to verify.
 
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`

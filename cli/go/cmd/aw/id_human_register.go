@@ -20,7 +20,7 @@ var idHumanRegisterCmd = &cobra.Command{
 	Use: "register FILE", Short: "Register your issued human certificate with your own key",
 	Long: `Register the certificate handed to you by your organization's operator or
 approved issuer. Run this yourself with --human ID --human-domain DOMAIN at a
-terminal; each signature asks for your keychain passphrase. Prepare your human ID
+terminal; unlock once with your keychain passphrase for this command. Prepare your human ID
 first with aw id human init. This registers your ID without enrolling an approval
 key. Afterwards you may optionally run aw id human enroll, or create a portable
 message with aw id proof --message-file FILE for anyone to check with aw verify.`,
