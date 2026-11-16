@@ -268,12 +268,11 @@ class ContentBoundaryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result.success, result.error)
         self.assertEqual(self.adapter.outbound, ["ordinary answer"])
 
-    async def test_exact_home_notice_replaced_without_rewriting_other_text(self):
+    async def test_exact_home_notice_suppressed_without_rewriting_other_text(self):
         notice = t("gateway.notify.no_home_channel", platform="Aweb", sethome_cmd="/sethome")
-        await self.adapter.send("chat:conversation", notice, reply_to="input")
-        self.assertNotIn("/sethome", self.adapter.outbound[-1])
-        self.assertIn("AWEB_HOME_CHANNEL", self.adapter.outbound[-1])
-        self.assertIn("local", self.adapter.outbound[-1].lower())
+        result = await self.adapter.send("chat:conversation", notice, reply_to="input")
+        self.assertTrue(result.success, result.error)
+        self.assertEqual(self.adapter.outbound, [])
         ordinary = "The document mentions /sethome as an old command."
         await self.adapter.send("chat:conversation", ordinary, reply_to="input")
         self.assertEqual(self.adapter.outbound[-1], ordinary)
