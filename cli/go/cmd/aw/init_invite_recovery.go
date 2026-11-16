@@ -92,12 +92,12 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 		}
 	} else {
 		// The lock/record alone grant no right to reuse another identity.
-		if !releasedInitTarget(wd, home.Root) {
-			if err := ensureConnectTargetClean(wd); err != nil {
+		if scope == awid.IdentityModeGlobal || !releasedInitTarget(wd, home.Root) {
+			if err := ensureInitInviteTarget(wd); err != nil {
 				return err
 			}
 		}
-		invite, err := createWorkspaceTeamInviteForTeamAt(source, sourceHome, team)
+		invite, err := createWorkspaceTeamInviteForTeamAt(source, sourceHome, team, scope)
 		if err != nil {
 			return fmt.Errorf("%w; alternatively use --admission-team-id %s with host authorization", err, team)
 		}

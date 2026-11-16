@@ -395,7 +395,7 @@ func runInitIndependentInvite(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureConnectTargetClean(wd); err != nil {
+	if err := ensureInitInviteTarget(wd); err != nil {
 		return err
 	}
 	raw, origin, err := decodeJoinToken(initInvite)
@@ -419,7 +419,7 @@ func runInitJoinFrom(cmd *cobra.Command) error {
 
 func runInitAdmissionTeamID(cmd *cobra.Command) error {
 	wd, _ := os.Getwd()
-	if err := ensureConnectTargetClean(wd); err != nil {
+	if err := ensureInitInviteTarget(wd); err != nil {
 		return err
 	}
 	if strings.TrimSpace(initExpectedAccountID) == "" {
@@ -475,6 +475,24 @@ func ensureTeamAdmissionAuthForInit(cmd *cobra.Command) error {
 
 func initInviteIdentityScope() string {
 	return teamAcceptScopeFromGlobal(initGlobal)
+}
+
+// Local init creates a key; global init reuses the selected identity and key.
+// Neither is permission to replace an existing workspace binding.
+func ensureInitInviteTarget(workingDir string) error {
+	if !initGlobal {
+		return ensureConnectTargetClean(workingDir)
+	}
+	if _, _, err := resolveGlobalIdentityForTeamAccept(workingDir, ""); err != nil {
+		return err
+	}
+	path := awconfig.WorktreeWorkspacePath(workingDir)
+	if _, err := os.Stat(path); err == nil {
+		return usageError("refusing to overwrite existing %s", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return ensureAwebRuntimeGitIgnored(workingDir)
 }
 
 func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferredAwebURL string, parentHome ...string) error {

@@ -34,7 +34,7 @@ func TestInitGlobalInviteTargetRefusalsBeforeIssuance(t *testing.T) {
 	const team = "shared:aweb.ai"
 	source := t.TempDir()
 	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, TeamID: team, Alias: "source", DID: did, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: key})
-	for _, outcome := range []string{"join-from", "admission"} {
+	for _, outcome := range []string{"join-from", "admission", "invite"} {
 		for _, state := range []string{"missing", "local", "key-mismatch", "connected"} {
 			t.Run(outcome+"/"+state, func(t *testing.T) {
 				target := t.TempDir()
@@ -67,8 +67,10 @@ func TestInitGlobalInviteTargetRefusalsBeforeIssuance(t *testing.T) {
 				args := []string{"init", "--global", "--name", "alice", "--json"}
 				if outcome == "join-from" {
 					args = append(args, "--join-from", source)
-				} else {
+				} else if outcome == "admission" {
 					args = append(args, "--admission-team-id", team, "--expect-account", "acct-test")
+				} else {
+					args = append(args, "--invite", hostedJoinTokenForTest(t, "aw_inv_global", server.URL))
 				}
 				command := exec.CommandContext(ctx, bin, args...)
 				command.Dir, command.Env = target, append(testCommandEnv(home), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL="+server.URL, "AW_NO_UPDATE_CHECK=1")

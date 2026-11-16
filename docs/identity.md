@@ -205,7 +205,8 @@ Rules:
 - A global join without an existing global identity should fail with guidance to
   claim/create a global identity first.
 
-- `aw init --join-from ...` and `aw init --admission-team-id ...` follow the same
+- `aw init --join-from ...`, `aw init --admission-team-id ...` and
+  `aw init --invite ...` follow the same
   rule: local is the default, while `--global` is an opt-in to reuse the current
   self-custodial global identity. They do not silently downgrade `--global` to a
   local join. `aw init --workspace-team` is the only `aw init` outcome that
@@ -214,6 +215,10 @@ Rules:
   account id (`--expect-account`) chosen from `aw auth status --json`; the CLI
   sends it as `expected_account_id` and fails closed if the logged-in account or
   recorded owner does not match.
+- These global init joins preserve the existing identity and signing key, but
+  refuse to overwrite an existing `workspace.yaml`. Use ordinary `aw init` to
+  reconnect that workspace, or a separate invite acceptance to add membership
+  without replacing its workspace binding.
 
 A parent source and a team invite can be selected independently:
 `aw init --parent <creator-home> --invite <token>`, or

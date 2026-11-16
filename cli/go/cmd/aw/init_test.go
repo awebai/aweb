@@ -1080,7 +1080,7 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	}
 	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, RegistryURL: registryURL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceKey})
 	sourceBefore := snapshotJoinFiles(t, source)
-	for _, outcome := range []string{"join-from", "admission"} {
+	for _, outcome := range []string{"join-from", "admission", "invite"} {
 		t.Run(outcome, func(t *testing.T) {
 			sawGlobalAccept = false
 			target := t.TempDir()
@@ -1095,8 +1095,10 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 			args := []string{"init", "--global", "--name", "alice", "--do-not-touch-agents-md", "--json"}
 			if outcome == "join-from" {
 				args = append(args, "--join-from", source)
-			} else {
+			} else if outcome == "admission" {
 				args = append(args, "--admission-team-id", teamID, "--expect-account", "acct-test", "--server-name", server.URL)
+			} else {
+				args = append(args, "--invite", hostedJoinTokenForTest(t, "aw_inv_global", server.URL))
 			}
 			command := exec.CommandContext(ctx, bin, args...)
 			command.Dir = target

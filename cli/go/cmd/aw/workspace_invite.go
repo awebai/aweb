@@ -73,7 +73,8 @@ func createWorkspaceTeamInviteAt(workingDir, identityHome string) (workspaceTeam
 	return createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, "")
 }
 
-func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID string) (workspaceTeamInvite, error) {
+func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID string, scopes ...string) (workspaceTeamInvite, error) {
+	localMember := len(scopes) == 0 || scopes[0] == awid.IdentityModeLocal
 	workspace, teamState, rootDir, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome)
 	if err != nil {
 		return workspaceTeamInvite{}, err
@@ -104,15 +105,15 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 	var token, expiry string
 	if hasTeamKey {
 		registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
-		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, true, "", workingDir, identityHome)
+		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localMember, "", workingDir, identityHome)
 	} else if strings.TrimSpace(awebURL) != "" {
 		var created *awid.SpawnCreateInviteResponse
-		created, err = createHostedTeamInvite(workingDir, identityHome, teamID, true)
+		created, err = createHostedTeamInvite(workingDir, identityHome, teamID, localMember)
 		if err == nil {
 			token, expiry = created.Token, created.ExpiresAt
 		}
 	} else {
-		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, true, "", workingDir, identityHome)
+		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, localMember, "", workingDir, identityHome)
 	}
 	if err != nil {
 		return workspaceTeamInvite{}, err
