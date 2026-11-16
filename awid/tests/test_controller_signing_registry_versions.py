@@ -51,7 +51,7 @@ uvicorn.run(create_app(), host='127.0.0.1', port=int(sys.argv[2]), log_level='wa
 async def test_controller_continuity_and_explicit_reset_preserve_distinct_semantics(
     registry_version, awid_db_infra
 ):
-    keys = [bytes([i]) * 32 for i in (31, 32, 33, 34)]
+    keys = [bytes([i]) * 32 for i in (31, 32, 33, 34, 35)]
     dids = [did_key_from_signing_key(k) for k in keys]
     records = {"_awid.example.test.": dids[0]}
 
@@ -269,6 +269,24 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
             assert (await sdk.get_namespace(controller.domain)).controller_did == dids[
                 1
             ]
+            child_reset = ControllerDescriptor(
+                "namespace", child.domain, dids[4], "4", 1
+            )
+            await sdk.controller_request(
+                parse_controller_request(
+                    {
+                        "operation": "namespace_reset",
+                        "domain": child.domain,
+                        "new_controller_did": child_reset.did_key,
+                        "parent_domain": controller.domain,
+                    }
+                ),
+                controllers={"controller": child_reset, "parent": next_controller},
+                signer=signer,
+            )
+            assert (
+                await sdk.get_namespace(child.domain)
+            ).controller_did == child_reset.did_key
             records["_awid.example.test."] = dids[2]
             reset = ControllerDescriptor(
                 "namespace", controller.domain, dids[2], "2", 2

@@ -79,8 +79,10 @@ registry origin comes from the holder configuration.
 
 Local malformed inputs, wrong roles and invalid signer answers raise
 `ControllerSigningError` before submission. Registry refusals preserve
-`RegistryError`'s status/code/detail. Writes send once. A lost or unreadable
-answer raises `ControllerRequestUncertain`, with `operation` and
+`RegistryError`'s status/code/detail for registry4xx refusals. Writes send once.
+Any other failed write answer, including5xx/gateway errors, lost or unreadable
+answers and a2xx arriving after the time budget, raises
+`ControllerRequestUncertain`, with `operation` and
 `request_digest`: the effect may have committed. Reconcile through current
 reads and the holder's durable journal; do not blindly retry or report an
 effect as unapplied. Cached clients invalidate affected entries before and

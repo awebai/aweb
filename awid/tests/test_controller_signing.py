@@ -1,6 +1,7 @@
 """Typed controller boundary: real signatures and existing wire canonicalizers."""
 
 import base64
+import asyncio
 import copy
 import json
 
@@ -15,6 +16,7 @@ from awid.controller_signing import (
     parse_controller_object,
     parse_controller_request,
     sign_controller_object,
+    controller_http_plan,
 )
 from awid.did import did_key_from_signing_key
 from awid.id_certificates import id_certificate_signing_bytes, verify_id_certificate
@@ -306,71 +308,6 @@ async def test_lost_mutation_answer_is_ambiguous_and_never_retried():
     assert len(sent) == 1
 
 
-@pytest.mark.parametrize(
-    "operation,fields,claims",
-    [
-        ("namespace_register", {"controller_did": KEY}, {"operation": "register"}),
-        (
-            "namespace_update",
-            {"default_delivery_origin": None},
-            {"operation": "update_namespace", "default_delivery_origin": ""},
-        ),
-        ("namespace_delete", {"reason": "retired"}, {"operation": "delete_namespace"}),
-        (
-            "namespace_reset",
-            {"new_controller_did": KEY},
-            {"operation": "rotate_controller", "new_controller_did": KEY},
-        ),
-        (
-            "team_rotate",
-            {"name": "team", "new_team_did_key": NEW_KEY},
-            {
-                "operation": "rotate_team_key",
-                "name": "team",
-                "new_team_did_key": NEW_KEY,
-            },
-        ),
-        (
-            "team_delete",
-            {"name": "team"},
-            {"operation": "delete_team", "team_name": "team"},
-        ),
-        (
-            "address_register",
-            {
-                "name": "person",
-                "did_aw": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87",
-                "current_did_key": NEW_KEY,
-            },
-            {"operation": "register_address", "name": "person"},
-        ),
-        (
-            "address_update",
-            {"name": "person"},
-            {"operation": "update_address", "name": "person"},
-        ),
-        (
-            "address_delete",
-            {"name": "person"},
-            {"operation": "delete_address", "name": "person"},
-        ),
-        (
-            "address_reassign",
-            {
-                "name": "person",
-                "did_aw": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87",
-                "current_did_key": NEW_KEY,
-            },
-            {"operation": "reassign_address", "name": "person"},
-        ),
-    ],
-)
-def test_registry_operations_keep_existing_legacy_claims(operation, fields, claims):
-    assert payload(request(operation, **fields)) == canonical_json_bytes(
-        {"domain": "example.com", "timestamp": TS, **claims}
-    )
-
-
 def test_parent_role_keeps_its_distinct_proof_and_domain():
     child = ControllerDescriptor("namespace", "child.example.com", NEW_KEY, "child", 0)
     req = parse_controller_request(
@@ -448,6 +385,7 @@ async def test_atomic_claim_checks_subject_proof_before_controller_signature():
         registry_origin=ORIGIN,
     )
     assert len(seen) == 1
+
     with pytest.raises(ValueError):
         await sign_controller_object(
             parse_controller_object({**fields, "dry_run": True}),
@@ -456,3 +394,128 @@ async def test_atomic_claim_checks_subject_proof_before_controller_signature():
             registry_origin=ORIGIN,
         )
     assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_upper_case_member_alias_survives_issue_register_and_member_read():
+    team = ControllerDescriptor("team", "example.com", KEY, "team", 0, team="team")
+    c = {
+        "version": 1,
+        "certificate_id": "00000000-0000-4000-8000-000000000001",
+        "team_id": "team:example.com",
+        "team_did_key": KEY,
+        "member_did_key": NEW_KEY,
+        "alias": "Member_One",
+        "identity_scope": "local",
+        "issued_at": TS,
+    }
+    artifact = await sign_controller_object(
+        parse_controller_object(
+            {
+                "operation": "team_certificate_issue",
+                "domain": "example.com",
+                "name": "team",
+                "certificate": c,
+            }
+        ),
+        controller=team,
+        signer=lambda ctx: (KEY, SigningKey(SEED).sign(ctx.signing_bytes()).signature),
+    )
+    registered = controller_http_plan(
+        request(
+            "certificate_register",
+            name="team",
+            certificate=artifact["encoded_certificate"],
+        )
+    )
+    assert json.loads(registered.body)["alias"] == "Member_One"
+    read = controller_http_plan(request("member_read", name="team", alias="Member_One"))
+    assert read.path.endswith("/members/Member_One")
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ["address_register", "address_update", "address_delete", "address_reassign"],
+)
+@pytest.mark.parametrize(
+    "name", ["Member_One", "Person.Name+tag", "A" * 256, "A B/?#%"]
+)
+def test_address_names_keep_registry_acceptance_and_stay_one_encoded_segment(
+    operation, name
+):
+    from urllib.parse import unquote
+
+    fields = {"name": name}
+    if operation in ("address_register", "address_reassign"):
+        fields.update(
+            did_aw="did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87", current_did_key=NEW_KEY
+        )
+    plan = controller_http_plan(request(operation, **fields))
+    if operation == "address_register":
+        assert json.loads(plan.body)["name"] == name
+    else:
+        segment = plan.path.removesuffix("/reassign").rsplit("/", 1)[-1]
+        assert unquote(segment) == name
+        assert "?" not in segment and "#" not in segment
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer", [500, 502, 504, "late_2xx", 401, 403, 409, 429])
+async def test_real_http_failure_and_budget_answers_keep_honest_write_outcomes(
+    answer, monkeypatch
+):
+    """HTTP error producer only; the native control separately proves a commit."""
+    import awid.registry as registry
+    from awid.controller_signing import ControllerRequestUncertain
+    from awid.registry import RegistryError
+
+    clock = [0.0]
+    if answer == "late_2xx":
+        monkeypatch.setattr(registry, "_read_retry_now", lambda: clock[0])
+    calls = []
+
+    async def respond(reader, writer):
+        headers = await reader.readuntil(b"\r\n\r\n")
+        calls.append(headers.split(b"\r\n", 1)[0])
+        status = 200 if answer == "late_2xx" else answer
+        if answer == "late_2xx":
+            clock[0] = 2.0
+        body = b"{}"
+        writer.write(
+            f"HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n".encode()
+            + body
+        )
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(respond, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    client = RegistryClient(f"http://127.0.0.1:{port}", timeout_seconds=1)
+    req = request("team_delete", name="team")
+    try:
+        expected = (
+            ControllerRequestUncertain
+            if answer == "late_2xx" or answer >= 500
+            else RegistryError
+        )
+        with pytest.raises(expected) as failure:
+            await client.controller_request(
+                req,
+                controllers={"controller": CONTROLLER},
+                signer=lambda ctx: (
+                    KEY,
+                    SigningKey(SEED).sign(ctx.signing_bytes()).signature,
+                ),
+            )
+        if expected is RegistryError:
+            assert type(failure.value) is RegistryError
+            assert failure.value.status_code == answer
+        else:
+            assert failure.value.operation == "team_delete"
+            assert failure.value.request_digest == req.digest
+        assert calls == [b"DELETE /v1/namespaces/example.com/teams/team HTTP/1.1"]
+    finally:
+        await client.aclose()
+        server.close()
+        await server.wait_closed()

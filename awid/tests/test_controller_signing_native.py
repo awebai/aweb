@@ -94,7 +94,7 @@ async def test_typed_team_membership_and_address_lifecycle(controller_app):
                     "team_did_key": team.did_key,
                     "member_did_key": subject_key,
                     "member_did_aw": subject.did_aw,
-                    "alias": "person",
+                    "alias": "Member_One",
                     "identity_scope": "global",
                     "issued_at": datetime.now(timezone.utc).strftime(
                         "%Y-%m-%dT%H:%M:%SZ"
@@ -113,30 +113,32 @@ async def test_typed_team_membership_and_address_lifecycle(controller_app):
             "certificate_list", team, name="typed", active_only=True, limit=1
         )
         assert [c["certificate_id"] for c in page["certificates"]] == [certificate_id]
+        member = await run("member_read", team, name="typed", alias="Member_One")
+        assert member["alias"] == "Member_One"
         read = await run("team_read", team, name="typed")
         assert read["visibility"] == "private"
         await run("team_visibility", team, name="typed", visibility="public")
 
         address = await run(
             "address_register",
-            name="person",
+            name="Member_One",
             did_aw=subject.did_aw,
             current_did_key=subject_key,
         )
         assert address["did_aw"] == subject.did_aw
-        await run("address_update", name="person")
+        await run("address_update", name="Member_One")
         other_seed = bytes(range(3, 35))
         other_key = did_key_from_signing_key(other_seed)
         other = await sdk.register_did(other_key, other_seed)
         reassigned = await run(
             "address_reassign",
-            name="person",
+            name="Member_One",
             did_aw=other.did_aw,
             current_did_key=other_key,
         )
         assert reassigned["did_aw"] == other.did_aw
-        await run("address_delete", name="person")
-        assert await sdk.resolve_address("local", "person") is None
+        await run("address_delete", name="Member_One")
+        assert await sdk.resolve_address("local", "Member_One") is None
 
         record = build_team_server_record(
             "typed:local",
@@ -220,12 +222,18 @@ async def test_new_namespace_delete_method_is_real_and_has_wrong_authority_neigh
         await sdk.aclose()
 
 
+@pytest.mark.parametrize("fault", ["lost", 502, 504, "late_2xx"])
 async def test_applied_mutation_with_lost_answer_invalidates_real_cached_authority(
     controller_app,
+    fault,
+    monkeypatch,
 ):
     from awid.controller_signing import ControllerRequestUncertain
 
     env = controller_app
+    import awid.registry as registry_module
+
+    original_clock = registry_module._read_retry_now
     actual = httpx.ASGITransport(app=env.app, client=("127.9.8.6", 12345))
 
     class DropAnswer(httpx.AsyncBaseTransport):
@@ -236,8 +244,16 @@ async def test_applied_mutation_with_lost_answer_invalidates_real_cached_authori
             if request.method == "POST" and request.url.path.endswith("/visibility"):
                 self.calls += 1
                 assert response.status_code == 200
-                await response.aclose()
-                raise httpx.ReadError("the applied answer was lost")
+                if fault == "lost":
+                    await response.aclose()
+                    raise httpx.ReadError("the applied answer was lost")
+                if fault == "late_2xx":
+                    late = original_clock() + 60
+                    monkeypatch.setattr(
+                        registry_module, "_read_retry_now", lambda: late
+                    )
+                else:
+                    response.status_code = fault
             return response
 
     transport = DropAnswer()
@@ -270,6 +286,7 @@ async def test_applied_mutation_with_lost_answer_invalidates_real_cached_authori
                 ),
             )
         assert transport.calls == 1
+        monkeypatch.setattr(registry_module, "_read_retry_now", original_clock)
         assert (await sdk.get_team("local", "base")).visibility == "private"
     finally:
         await sdk._invalidate_team_cache("local", "base")

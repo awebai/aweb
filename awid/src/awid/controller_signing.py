@@ -76,7 +76,7 @@ def _require(condition, code="request_invalid"):
         raise ControllerSigningError(code)
 
 
-def _segment(value):
+def _domain_label(value):
     return (
         type(value) is str
         and bool(value)
@@ -85,11 +85,38 @@ def _segment(value):
     )
 
 
+def _team_name(value):
+    return (
+        type(value) is str
+        and 1 <= len(value) <= 128
+        and re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", value) is not None
+    )
+
+
+def _alias(value):
+    # Existing product alias profile (server input_validation, auth, aw).
+    return (
+        type(value) is str
+        and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", value) is not None
+    )
+
+
+def _address_name(value):
+    # The registry imposes length, not a team/alias character profile.
+    return type(value) is str and 1 <= len(value) <= 256
+
+
+def _address_segment(value):
+    return (
+        quote(value, safe="") if value not in (".", "..") else value.replace(".", "%2E")
+    )
+
+
 def _domain(value):
     _require(
         type(value) is str
         and len(value) <= 253
-        and all(_segment(p) and "_" not in p for p in value.split(".")),
+        and all(_domain_label(p) and "_" not in p for p in value.split(".")),
         "domain_invalid",
     )
 
@@ -160,7 +187,7 @@ class ControllerDescriptor:
             type(self.generation) is int and self.generation >= 0, "controller_invalid"
         )
         _require(
-            (_segment(self.team) if self.scope == "team" else self.team is None),
+            (_team_name(self.team) if self.scope == "team" else self.team is None),
             "controller_scope",
         )
 
@@ -226,8 +253,16 @@ def _validate(operation, domain, parameters, definitions):
         and parameters.keys() <= set((required + " " + optional).split())
     )
     for name, value in parameters.items():
-        if name in ("name", "alias", "address_name"):
-            _require(_segment(value))
+        if name == "name":
+            _require(
+                _address_name(value)
+                if operation.startswith("address_")
+                else _team_name(value)
+            )
+        elif name == "alias":
+            _require(_alias(value))
+        elif name == "address_name":
+            _require(_address_name(value))
         elif name in (
             "controller_did",
             "new_controller_did",
@@ -318,7 +353,7 @@ def _validate(operation, domain, parameters, definitions):
             and c["version"] == 1
             and c["team_id"] == build_team_id(domain, parameters["name"])
             and c.get("identity_scope", c.get("lifetime")) in ("local", "global")
-            and _segment(c["alias"])
+            and _alias(c["alias"])
             and type(c["certificate_id"]) is str,
             "object_invalid",
         )
@@ -585,14 +620,14 @@ def controller_http_plan(request: ControllerRequest) -> ControllerHTTPPlan:
         elif op == "address_reassign":
             method, path, wire = (
                 "POST",
-                base + f"/addresses/{p['name']}/reassign",
+                base + f"/addresses/{_address_segment(p['name'])}/reassign",
                 "reassign_address",
             )
             body = {k: p[k] for k in ("did_aw", "current_did_key")}
         else:
             method = "PUT" if op == "address_update" else "DELETE"
             path, wire = (
-                base + f"/addresses/{p['name']}",
+                base + f"/addresses/{_address_segment(p['name'])}",
                 op.replace("address_", "") + "_address",
             )
             body = {} if method == "PUT" else None

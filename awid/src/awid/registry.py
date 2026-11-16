@@ -703,7 +703,8 @@ class RegistryClient:
 
         Destination is this client's configured registry, without discovery.
         Returns the registry's public JSON result, never reusable credentials.
-        A failed transport after submission raises ControllerRequestUncertain;
+        A write without a parsed success or a registry 4xx refusal raises
+        ControllerRequestUncertain, including a gateway error or late success;
         the holder reconciles it through current reads and its durable journal.
         """
         from awid.controller_signing import (
@@ -727,7 +728,9 @@ class RegistryClient:
                     for role in roles]
         for context in contexts:
             context.signing_bytes()  # validate every role before any signing
-        headers = {"Content-Type": "application/json", "X-AWEB-Timestamp": timestamp}
+        headers = {"Content-Type": "application/json"}
+        if plan.format != "object":
+            headers["X-AWEB-Timestamp"] = timestamp
         body = plan.body
         for context in contexts:
             signature = await checked_controller_signature(context, signer)
@@ -750,7 +753,7 @@ class RegistryClient:
             return await self._request_json(plan.method, plan.path, headers=headers,
                                             content=body, registry_url=pin)
         except RegistryError as exc:
-            if mutation and isinstance(exc.__cause__, (httpx.TransportError, TimeoutError)):
+            if mutation and not 400 <= exc.status_code < 500:
                 raise ControllerRequestUncertain(request) from exc
             raise
         except (ValueError, UnicodeError) as exc:
