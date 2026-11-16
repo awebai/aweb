@@ -17,7 +17,6 @@ from redis.asyncio import Redis
 from awid.db_config import build_database_config
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
-from awid_service.config import get_settings
 from awid_service.main import create_app
 from approval_service.grading import EnrollmentGrading
 
@@ -69,7 +68,6 @@ async def native_holder(tmp_path, test_db_factory):
     }
     os.environ["AWID_DATABASE_URL"] = database.config.get_dsn()
     os.environ["AWID_REDIS_URL"] = os.environ["REDIS_URL"]
-    get_settings.cache_clear()
     pool = await AsyncDatabaseManager.create_shared_pool(
         build_database_config(
             connection_string=database.config.get_dsn(),
@@ -111,4 +109,3 @@ async def native_holder(tmp_path, test_db_factory):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
-        get_settings.cache_clear()
