@@ -234,6 +234,15 @@ A conditioned join requires current registry evidence: a revoked or replaced
 person refuses, and unavailable status refuses with `evidence_unavailable`.
 There is no fallback to admission without this check.
 
+For teams whose key is on the host, this changes `--member-global` invites:
+when their issuer has a verified human, they previously carried no human
+condition. They now default to that human too. A registered identity without a
+current valid chain to that person is refused where it could previously join.
+To admit an agent regardless of whose it is, use the controller's own
+`aw id team add-member` on a host holding the team key, or a person's generic
+admission invite on a hosted team. There is deliberately no `anyone` value for
+`--for-human`.
+
 On another machine, an invite for a different human does not authorize the
 issuer to become the parent. First obtain a chain from the joiner's own creator
 with `aw id child invite`, `aw id parent request --domain <creator-domain>`,
