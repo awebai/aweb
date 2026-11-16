@@ -2313,13 +2313,13 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			prior = nil
 		}
 	}
-	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material, mintedKey, opts.ParentFromSource, recoveryPath)
+	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material, mintedKey, opts.ParentFromSource, opts.ParentHome, recoveryPath)
 	if err != nil {
 		return nil, err
 	}
-	opts.ParentHome, err = creation.selectParent(opts.ParentHome)
-	if err != nil {
-		return nil, err
+	opts.ParentHome = creation.ParentHome
+	if creation.IssuerCreationStarted && !creation.parentageSelected() {
+		return nil, uncertainHostedInviteError(home.Root, creation.TeamID, errors.New("retained creation has no recorded key mint or explicit parent; reconcile the earlier attempt before retrying"))
 	}
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err

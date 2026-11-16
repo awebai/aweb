@@ -151,7 +151,7 @@ func (state *hostedInviteCreation) save(path string) error {
 	return awid.AtomicWriteFile(path, raw)
 }
 
-func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial, mintedKey, parentFromSource bool, recoveryPath string) (*hostedInviteCreation, error) {
+func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial, mintedKey, parentFromSource bool, parentHome, recoveryPath string) (*hostedInviteCreation, error) {
 	digest := sha256.Sum256([]byte(token))
 	state := &hostedInviteCreation{MintedKey: mintedKey, ParentFromSource: parentFromSource, AcceptAttempted: new(bool), TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
 	if prior != nil {
@@ -162,9 +162,12 @@ func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreatio
 			return nil, errors.New("hosted invite retry changed the original token, child key, scope or creation selection")
 		}
 		state = prior
-		if state.InviteID != "" {
-			return state, nil
-		}
+	}
+	if _, err := state.selectParent(parentHome); err != nil {
+		return nil, err
+	}
+	if state.InviteID != "" {
+		return state, nil
 	}
 	if state.Tree == nil {
 		var err error
@@ -234,7 +237,7 @@ func (state *hostedInviteCreation) prepareRequest(root string, material workspac
 			return nil, nil
 		}
 	}
-	if !state.IssuerCreationStarted && (!state.MintedKey && state.ParentHome == "" && !state.ParentFromSource || state.Tree.Domain == "") {
+	if !state.parentageSelected() || state.Tree.Domain == "" {
 		state.MembershipOnly = true
 		return nil, missingInviteHumanChain(state.ForHuman)
 	}
@@ -294,6 +297,10 @@ Finally retry your original invite command with the SAME token, name, scope and 
 		}
 	}
 	return state.Tree.request(bundle), nil
+}
+
+func (state *hostedInviteCreation) parentageSelected() bool {
+	return state.MintedKey || state.ParentHome != "" || state.ParentFromSource
 }
 
 // A pending local invite already has its final child key, but no membership or

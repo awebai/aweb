@@ -14,7 +14,7 @@ import (
 
 func TestHostedExistingGlobalPinnedInviteDoesNotCreateParentage(t *testing.T) {
 	for _, issuer := range []string{"registered", "local"} {
-		for _, scenario := range []string{"ordinary", "lost response retry", "condition retry", "unsolicited parentage"} {
+		for _, scenario := range []string{"ordinary", "lost response retry", "condition retry", "unsolicited parentage", "unrecorded creation"} {
 			t.Run(issuer+"/"+scenario, func(t *testing.T) {
 				t.Setenv("HOME", t.TempDir())
 				v := loadWhoVectors(t)
@@ -81,6 +81,17 @@ func TestHostedExistingGlobalPinnedInviteDoesNotCreateParentage(t *testing.T) {
 					}
 				})
 				opts := teamAcceptInviteOptions{Name: "child", Scope: "global", NoAddress: true, AwebURL: service.URL}
+				if scenario == "unrecorded creation" {
+					tree, err := newHostedIDTreeRecovery(hostedIdentityContext{})
+					if err != nil {
+						t.Fatal(err)
+					}
+					attempted := true
+					state := &hostedInviteCreation{Tree: tree, IssuerCreationStarted: true, AcceptAttempted: &attempted, TokenHash: strings.TrimPrefix(hostedTeamInviteRecordID("aw_inv_existing"), "hosted-"), AwebURL: service.URL, Alias: "child", Scope: "global", NoAddress: true, DIDKey: did, StableID: stable, InviteID: "11111111-1111-4111-8111-111111111111", TeamID: "backend:example.com"}
+					if err := state.save(filepath.Join(root, hostedInviteRecoveryFile)); err != nil {
+						t.Fatal(err)
+					}
+				}
 				join := func() error {
 					_, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_existing", opts)
 					return err
@@ -101,6 +112,10 @@ func TestHostedExistingGlobalPinnedInviteDoesNotCreateParentage(t *testing.T) {
 					if awid.IDCertificateErrorCode(err) != "human_required" || accepts != 0 || !strings.Contains(err.Error(), "own creator") {
 						t.Fatalf("conditioned chainless join: accepts=%d err=%v", accepts, err)
 					}
+				} else if scenario == "unrecorded creation" {
+					if err == nil || !strings.Contains(err.Error(), "reconcile") || accepts != 0 {
+						t.Fatalf("unrecorded creation was reissued or silently downgraded: %v", err)
+					}
 				} else if scenario == "unsolicited parentage" {
 					if err == nil {
 						t.Fatal("membership-only response requested registration")
@@ -108,7 +123,11 @@ func TestHostedExistingGlobalPinnedInviteDoesNotCreateParentage(t *testing.T) {
 				} else if err != nil {
 					t.Fatal(err)
 				}
-				if previews != 1 || registryCalls != 0 {
+				wantPreviews := 1
+				if scenario == "unrecorded creation" {
+					wantPreviews = 0
+				}
+				if previews != wantPreviews || registryCalls != 0 {
 					t.Fatalf("preview=%d registry effects/reads=%d", previews, registryCalls)
 				}
 				if _, err := os.Stat(filepath.Join(root, "id-chain.json")); !os.IsNotExist(err) {
