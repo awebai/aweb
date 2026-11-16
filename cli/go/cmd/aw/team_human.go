@@ -2329,6 +2329,19 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		}
 		return nil, err
 	}
+	actorHome, err := identityHomeForDir(anchorDir)
+	if err != nil {
+		return nil, err
+	}
+	if global {
+		chain, err := awconfig.LoadInstalledIDChain(actorHome.Root)
+		if err != nil {
+			return nil, err
+		}
+		if chain != nil {
+			return nil, usageError("a global agent created here would have no parent and cannot meet the team's default human condition; use aw id team add-member for the controller's unconditional admission path")
+		}
+	}
 	memberAddress := ""
 	if global {
 		identityExists, err := teamCreateHasIdentityMaterial(homeDir)
@@ -2345,10 +2358,6 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		}
 	}
 	localInvite := !global
-	actorHome, err := identityHomeForDir(anchorDir)
-	if err != nil {
-		return nil, err
-	}
 	hasTeamKey := false
 	if !awconfig.IsGrantHome(actorHome.Root) {
 		hasTeamKey, err = awconfig.TeamKeyExists(domain, team)
