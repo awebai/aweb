@@ -238,6 +238,11 @@ A definitive hosted human-condition refusal releases the pending join when no
 earlier submission is uncertain. The identity, key and chain remain available
 for a correct invite. An interrupted attempt or unavailable evidence keeps the
 original invite and selection for resumption.
+If a first submission timed out and its retry then returned 409, first confirm
+with the hosting service that the first attempt did not apply, then, with no
+join running, remove only `<identity-home>/hosted-invite-creation.json` (normally
+`.aw/hosted-invite-creation.json`) to abandon that pending attempt and use a
+correct invite.
 
 For teams whose key is on the host, this changes `--member-global` invites:
 when their issuer has a verified human, they previously carried no human
