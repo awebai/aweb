@@ -1825,9 +1825,6 @@ func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, loca
 // createHostedTeamInvite creates a single-use hosted invite and returns the
 // service's response, which carries its expiry.
 func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember bool, forHuman ...string) (*awid.SpawnCreateInviteResponse, error) {
-	if !localMember {
-		return nil, usageError("--member-global is not supported for hosted team invites")
-	}
 	var client *aweb.Client
 	var selected *awconfig.Selection
 	var err error
@@ -1904,7 +1901,7 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 		if err := awconfig.SaveTeamInvite(&awconfig.TeamInvite{
 			InviteID: hostedTeamInviteRecordID(created.Token),
 			Domain:   domain, TeamName: name,
-			IdentityScope: awid.IdentityModeLocal, IDChild: link,
+			IdentityScope: teamAcceptScopeFromGlobal(!localMember), IDChild: link,
 		}); err != nil {
 			return nil, err
 		}

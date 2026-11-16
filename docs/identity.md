@@ -275,7 +275,13 @@ including when the invite issuer is local. A global identity without a chain
 cannot obtain its parent certificate from a local `did:key` issuer.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
-<token>`. A hosted local accept into an explicit external `--identity-home`
+<token>`. Hosted invite issuance accepts `--member-global` as well as
+`--member-local`; it uses the selected member's existing hosted invite
+authority and preserves any human condition. The recipient selects `--global`
+on acceptance to reuse its existing self-custodial global identity; issuing the
+invite does not create that identity.
+
+A hosted local accept into an explicit external `--identity-home`
 auto-connects that root when the invite names an aweb service; if connection
 fails after membership installation, the printed recovery command is `aw
 --identity-home <root> workspace connect --service <url>` and does not reuse the
