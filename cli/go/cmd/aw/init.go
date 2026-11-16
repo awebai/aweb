@@ -390,7 +390,19 @@ func runInitJoinFrom(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("%w; alternatively use --admission-team-id %s with host authorization", err, teamID)
 	}
-	return acceptInitInviteAndConnect(cmd, wd, invite.Token, invite.AwebURL)
+	accepted, err := acceptProvisionedTeamInvite(sourceWorkingDir, sourceIdentityHome, wd, invite.Token, teamAcceptInviteOptions{
+		IdentityHome: awconfig.WorktreeIdentityHome(wd),
+		Name:         resolveAliasValue(resolveInitLocalName()),
+		Scope:        initInviteIdentityScope(),
+		AwebURL:      strings.TrimSpace(invite.AwebURL),
+	})
+	if err != nil {
+		return err
+	}
+	if err := recordAcceptedTeamMembership(wd, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true}); err != nil {
+		return err
+	}
+	return connectInitAcceptedInvite(cmd, wd, invite.AwebURL, accepted)
 }
 
 func runInitAdmissionTeamID(cmd *cobra.Command) error {
@@ -462,6 +474,10 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferred
 	if err != nil {
 		return err
 	}
+	return connectInitAcceptedInvite(cmd, workingDir, preferredAwebURL, accepted)
+}
+
+func connectInitAcceptedInvite(cmd *cobra.Command, workingDir, preferredAwebURL string, accepted *acceptedTeamInvite) error {
 	awebURL := firstNonEmptyString(strings.TrimSpace(preferredAwebURL), strings.TrimSpace(accepted.AwebURL), strings.TrimSpace(accepted.Output.AwebURL))
 	if awebURL == "" {
 		return usageError("accepted invite did not include an aweb URL; rerun aw init with --aweb-url")

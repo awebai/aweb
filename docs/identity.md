@@ -214,6 +214,12 @@ Rules:
   sends it as `expected_account_id` and fails closed if the logged-in account or
   recorded owner does not match.
 
+For a new local agent, `--join-from` completes the existing parent
+request/approve/import exchange when a hosted invite names the selected
+self-custodial source as its ID parent. The source may be a workspace directory
+or an explicit identity home; its verified ancestry is installed in the child
+before connection. A chainless source retains the ordinary unknown ancestry.
+
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
 <token>`. A hosted local accept into an explicit external `--identity-home`
 auto-connects that root when the invite names an aweb service; if connection

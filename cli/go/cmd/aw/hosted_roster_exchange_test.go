@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/binary"
@@ -22,13 +23,18 @@ import (
 // The hosted boundary is HTTP; the child's proof, parent approval, import and
 // chain verification run the production exchange, with no substituted signer.
 func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
-	for _, scenario := range []string{"three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent"} {
+	for _, scenario := range []string{"three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent"} {
 		t.Run(scenario, func(t *testing.T) {
 			resetTeamHumanCreateGlobals(t)
 			v := loadWhoVectors(t)
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("AW_CONFIG_PATH", "")
 			root := t.TempDir()
+			joinFrom := strings.HasPrefix(scenario, "join-from")
+			childDir := root + "-child"
+			if joinFrom {
+				childDir = t.TempDir()
+			}
 			t.Chdir(root)
 			t.Setenv("AWEB_IDENTITY_HOME", "")
 			t.Setenv("AWEB_API_KEY", "")
@@ -44,7 +50,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			}
 			status := v.Statuses["normal"]
 			worktree := strings.HasPrefix(scenario, "cert-only")
-			if scenario == "revoked parent" || scenario == "cert-only revoked parent" {
+			if strings.Contains(scenario, "revoked parent") {
 				status = v.Statuses["alice-revoked-now"]
 			}
 			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -108,8 +114,8 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 						t.Error("child binding changed")
 					}
 					childHome := filepath.Join(root, "agents", "instances", req.Alias, ".aw")
-					if worktree {
-						childHome = filepath.Join(root+"-child", ".aw")
+					if worktree || joinFrom {
+						childHome = filepath.Join(childDir, ".aw")
 					}
 					pending, err := loadHostedInviteCreation(filepath.Join(childHome, hostedInviteRecoveryFile))
 					if err != nil || pending == nil || pending.DIDKey != req.DID || pending.Tree.RequestID != req.IDTree.RequestID {
@@ -133,6 +139,51 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			workspace := workspaceBinding(origin, team, "coordinator", "workspace-parent")
 			writeTeamCertificateWorkspaceForTest(t, root, workspace, &testSelectionFixture{SigningKey: parentKey, IdentityScope: "local"})
 			writeWorkspaceBindingForTest(t, root, workspace)
+			if joinFrom {
+				oldFrom, oldTeam, oldName, oldGlobal, oldJSON := initJoinFrom, initJoinTeam, initName, initGlobal, jsonFlag
+				t.Cleanup(func() {
+					initJoinFrom, initJoinTeam, initName, initGlobal, jsonFlag = oldFrom, oldTeam, oldName, oldGlobal, oldJSON
+				})
+				initJoinFrom, initJoinTeam, initName, initGlobal, jsonFlag = root, team, "child", false, true
+				if scenario == "join-from identity home" {
+					initJoinFrom = filepath.Join(root, ".aw")
+				}
+				var joinErr error
+				withTestWorkingDir(t, childDir, func() {
+					var out bytes.Buffer
+					joinErr = runInitJoinFrom(authTestCmd(&out))
+				})
+				if scenario == "join-from revoked parent" {
+					if joinErr == nil || accepts != 0 {
+						t.Fatalf("revoked source accepted: err=%v accepts=%d", joinErr, accepts)
+					}
+					assertHostedPendingChildKey(t, filepath.Join(childDir, ".aw"))
+					if !strings.Contains(joinErr.Error(), "child key and request retained") || strings.Contains(joinErr.Error(), "id parent request") {
+						t.Fatalf("failed provisioning printed the manual invite recipe: %v", joinErr)
+					}
+					return
+				}
+				if joinErr != nil {
+					t.Fatalf("hosted join-from failed: %v", joinErr)
+				}
+				if accepts != 1 || previews != 1 {
+					t.Fatalf("accepts=%d previews=%d", accepts, previews)
+				}
+				chain, err := awconfig.LoadInstalledIDChain(filepath.Join(childDir, ".aw"))
+				if err != nil || chain == nil {
+					t.Fatalf("child chain missing: %v", err)
+				}
+				certificates := chain.Bundle["certificates"].([]any)
+				leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+				if leaf["parent"].(map[string]any)["id"] != parent {
+					t.Fatalf("child parent is not source: %+v", leaf)
+				}
+				verdict, err := executeWho(context.Background(), whoOptions{WorkingDir: childDir})
+				if err != nil || verdict.Outcome != "nearest_human" || verdict.HumanID == nil || *verdict.HumanID != v.Keys["alice"].DIDAW {
+					t.Fatalf("join-from ancestry=%+v err=%v", verdict, err)
+				}
+				return
+			}
 			if worktree {
 				// Normal local constructor state has a key, certificate and
 				// chain, with no global identity file and no stored API key.

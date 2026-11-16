@@ -708,6 +708,14 @@ func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T)
 		t.Fatalf("create=%t accept=%t connect=%t", sawCreateInvite, sawAccept, sawConnect)
 	}
 	assertInitJoinTarget(t, target, teamID, "target", acceptedDID, sourceBefore, source)
+	chain, err := awconfig.LoadInstalledIDChain(filepath.Join(target, ".aw"))
+	if err != nil || chain != nil {
+		t.Fatalf("chainless source unexpectedly issued a chain: chain=%+v err=%v", chain, err)
+	}
+	verdict, err := executeWho(context.Background(), whoOptions{WorkingDir: target})
+	if err != nil || verdict.Outcome != "unknown" {
+		t.Fatalf("chainless source ancestry=%+v err=%v", verdict, err)
+	}
 }
 
 func TestInitJoinFromControllerKeySuccessPreservesSourceAndConnectsTarget(t *testing.T) {
