@@ -88,6 +88,10 @@ func idRecordTime(now time.Time) string { return now.UTC().Format("2006-01-02T15
 // certificate re-derives exactly that id, and it verifies under a key from
 // the parent's own history. The entry's name and time prove nothing.
 func idIssuanceRecorded(store IDIssuanceStore, parent *idStatusIdentity, id string) error {
+	return idIssuanceRecordedByKey(store, id, func(key string) bool { return parentKeyHistoryHas(parent, key) })
+}
+
+func idIssuanceRecordedByKey(store IDIssuanceStore, id string, keyInHistory func(string) bool) error {
 	refused := idCertificateRefusal("issuance_not_recorded")
 	entry, err := store.Entry(id)
 	if err != nil {
@@ -104,7 +108,7 @@ func idIssuanceRecorded(store IDIssuanceStore, parent *idStatusIdentity, id stri
 		return refused
 	}
 	issuer := c["issuer_key"].(string)
-	if !parentKeyHistoryHas(parent, issuer) || VerifyIDCertificate(entry.Signed, issuer) != nil {
+	if !keyInHistory(issuer) || VerifyIDCertificate(entry.Signed, issuer) != nil {
 		return refused
 	}
 	return nil

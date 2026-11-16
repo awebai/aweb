@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -51,7 +52,7 @@ var (
 			"the fingerprint shown here through a different trusted channel.\n\n" +
 			"With --resign, a local agent (whose ID is its did:key) instead asks the parent\n" +
 			"of the certificate it carries to re-sign it with the parent's current key,\n" +
-			"after the parent rotated its key.",
+			"after its key or ancestry changed.",
 		Args: cobra.NoArgs,
 		RunE: runIDParentRequest,
 	}
@@ -91,6 +92,7 @@ type idParentOptions struct {
 	RegistryURL     string
 	NoRegister      bool
 	TXTResolver     awid.TXTResolver
+	HTTPClient      *http.Client
 	HumanAtTerminal func() error
 	Keychain        awid.HumanKeyStore
 	Prompt          awid.PassphrasePrompt
@@ -241,14 +243,26 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 	if strings.HasPrefix(strings.TrimSpace(parentID), "did:key:") && (r.kind != "agent" || !strings.HasPrefix(r.id, "did:key:")) {
 		return idParentRequestOutput{}, nil, usageError("a local did:key parent can issue only a local did:key agent; use a registered parent for registered children")
 	}
-	// A first certificate only: importing one would replace the identity's
-	// working chain before AWID accepted the new certificate.
+	// A first person certificate may replace only this agent's direct
+	// namespace certificate. The response must prove a human parent.
 	installed, err := awconfig.LoadInstalledIDChain(r.dir)
 	if err != nil {
 		return idParentRequestOutput{}, nil, err
 	}
+	replaces := ""
 	if installed != nil {
-		return idParentRequestOutput{}, nil, usageError("%s already has an installed ID chain; a request issues only a first certificate", r.id)
+		certificates := installed.Bundle["certificates"].([]any)
+		oldDomain := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
+		if strings.HasPrefix(r.id, "did:aw:") && oldDomain != r.domain {
+			return idParentRequestOutput{}, nil, usageError("this agent is registered under %s; a person whose home domain is %s cannot adopt it yet", oldDomain, r.domain)
+		}
+		if !organizationOnlyAgent(installed.Bundle, r.id, oldDomain) || parent == nil || !strings.HasPrefix(parentID, "did:aw:") {
+			return idParentRequestOutput{}, nil, usageError("%s already has an installed ID chain; only an organization-only agent may request its first person parent", r.id)
+		}
+		replaces, err = awid.IDCertificateID(certificates[0].(map[string]any)["certificate"].(map[string]any))
+		if err != nil {
+			return idParentRequestOutput{}, nil, err
+		}
 	}
 	if parent == nil {
 		parent = map[string]any{"kind": "namespace", "id": r.domain}
@@ -269,7 +283,7 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 	if err != nil {
 		return idParentRequestOutput{}, nil, err
 	}
-	if err := r.requests().Put(&awconfig.IDOutgoingRequest{RequestID: requestID, InvitationID: invitationID, Request: string(raw), State: awconfig.IDRequestOutstanding}); err != nil {
+	if err := r.requests().Put(&awconfig.IDOutgoingRequest{RequestID: requestID, InvitationID: invitationID, Request: string(raw), State: awconfig.IDRequestOutstanding, ReplacesCertificateID: replaces}); err != nil {
 		return idParentRequestOutput{}, nil, err
 	}
 	fingerprint, err := awid.IDKeyFingerprint(r.didKey)
@@ -277,6 +291,19 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 		return idParentRequestOutput{}, nil, err
 	}
 	return idParentRequestOutput{RequestID: requestID, InvitationID: invitationID, ID: r.id, Kind: r.kind, Fingerprint: fingerprint}, raw, nil
+}
+
+// organizationOnlyAgent recognizes precisely namespace -> this agent, in its
+// existing domain. It never authorizes the new person; import verifies that
+// person's chain and exact signature independently.
+func organizationOnlyAgent(chain map[string]any, id, domain string) bool {
+	certificates, _ := chain["certificates"].([]any)
+	if len(certificates) != 1 {
+		return false
+	}
+	signed, _ := certificates[0].(map[string]any)
+	c, _ := signed["certificate"].(map[string]any)
+	return c["id"] == id && c["kind"] == "agent" && c["domain"] == domain && reflect.DeepEqual(c["parent"], map[string]any{"kind": "namespace", "id": domain})
 }
 
 // executeIDParentResign builds, signs and records a re-sign request for the
@@ -342,10 +369,11 @@ var invitationIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{
 func idInvitationIDPattern(id string) bool { return invitationIDPattern.MatchString(id) }
 
 type idParentImportOutput struct {
-	RequestID    string `json:"request_id"`
-	ID           string `json:"id"`
-	Registration string `json:"registration"`
-	RegisteredAt string `json:"registered_at,omitempty"`
+	RequestID           string `json:"request_id"`
+	ID                  string `json:"id"`
+	Registration        string `json:"registration"`
+	RegisteredAt        string `json:"registered_at,omitempty"`
+	InstallationPending bool   `json:"installation_pending,omitempty"`
 }
 
 func runIDParentImport(cmd *cobra.Command, args []string) error {
@@ -386,6 +414,17 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	if outgoing == nil {
 		return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 	}
+	if outgoing.ReplacesCertificateID != "" {
+		signed, err := awid.ParseIDCertificateRequest([]byte(outgoing.Request))
+		if err != nil {
+			return idParentImportOutput{}, err
+		}
+		domain := signed["request"].(map[string]any)["domain"].(string)
+		if opts.Domain != "" && opts.Domain != domain {
+			return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
+		}
+		r.domain = domain
+	}
 	call, cancel := commandAPIContext(nil, ctx)
 	authority, err := awid.DiscoverAuthoritativeRegistry(call, opts.TXTResolver, r.domain)
 	cancel()
@@ -396,10 +435,13 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	if err != nil {
 		return idParentImportOutput{}, err
 	}
-	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
+	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
 	registry.DefaultRegistryURL = registryURL
 
 	chain := response["chain"].(map[string]any)
+	if outgoing.Response != "" && outgoing.Response != string(raw) {
+		return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
+	}
 	if outgoing.State == awconfig.IDRequestOutstanding {
 		signed, err := awid.ParseIDCertificateRequest([]byte(outgoing.Request))
 		if err != nil {
@@ -407,11 +449,17 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 		}
 		subject := awid.IDChainSubject{ID: r.id, DIDKey: r.didKey}
 		evidence := idStatusAt(registry, opts.TXTResolver, registryURL).IDChainEvidence(ctx, chain, subject, r.domain)
+		if err := validateParentReplacement(r, outgoing, signed, chain); err != nil {
+			return idParentImportOutput{}, err
+		}
 		imported, err := awid.ImportIDCertificateResponse(signed, raw, evidence, r.domain)
 		if err != nil {
 			return idParentImportOutput{}, err
 		}
-		if err := installImportedChain(r.dir, outgoing.RequestID, raw, imported.Chain); err != nil {
+		if outgoing.ReplacesCertificateID != "" && imported.RegistrationPending {
+			return importRegisteredAdoption(ctx, opts, r, outgoing, raw, signed, imported.Chain, registry, registryURL)
+		}
+		if err := installParentChain(r.dir, "parent-import", outgoing.RequestID, raw, imported.Chain, func() error { return validateParentReplacement(r, outgoing, signed, imported.Chain) }); err != nil {
 			return idParentImportOutput{}, err
 		}
 		outgoing.State, outgoing.Response = awconfig.IDRequestImported, string(raw)
@@ -461,8 +509,93 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	return out, nil
 }
 
+// Check again at import: another outstanding request must not move an agent
+// from one person to another. An identical installed response permits recovery
+// from an interrupted credential update before the request state was saved.
+func validateParentReplacement(r *requester, outgoing *awconfig.IDOutgoingRequest, signed, chain map[string]any) error {
+	request := signed["request"].(map[string]any)
+	if request["operation"] == "resign" {
+		return nil
+	}
+	installed, err := awconfig.LoadInstalledIDChain(r.dir)
+	if err != nil {
+		return err
+	}
+	if installed == nil && outgoing.ReplacesCertificateID == "" {
+		return nil
+	}
+	if installed != nil && reflect.DeepEqual(installed.Bundle, chain) {
+		return nil
+	}
+	mismatch := &awid.IDCertificateError{Code: "request_binding_mismatch"}
+	certificates := chain["certificates"].([]any)
+	if outgoing.ReplacesCertificateID == "" || len(certificates) < 2 {
+		return mismatch
+	}
+	parent := certificates[len(certificates)-2].(map[string]any)["certificate"].(map[string]any)
+	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+	if parent["kind"] != "human" || parent["domain"] != leaf["domain"] || leaf["domain"] != r.domain {
+		return mismatch
+	}
+	if installed == nil {
+		return mismatch
+	}
+	oldCerts := installed.Bundle["certificates"].([]any)
+	old := oldCerts[len(oldCerts)-1].(map[string]any)["certificate"].(map[string]any)
+	if !organizationOnlyAgent(installed.Bundle, r.id, old["domain"].(string)) {
+		return mismatch
+	}
+	if strings.HasPrefix(r.id, "did:aw:") && old["domain"] != r.domain {
+		return mismatch
+	}
+	id, err := awid.IDCertificateID(old)
+	if err != nil {
+		return err
+	}
+	if id != outgoing.ReplacesCertificateID {
+		return mismatch
+	}
+	return nil
+}
+
+// A registered adoption keeps its working chain until AWID accepts the atomic
+// head replacement. Retain the exact signed response and expected head before
+// the write; a lost answer retries those same bytes, never another signature.
+func importRegisteredAdoption(ctx context.Context, opts idParentOptions, r *requester, outgoing *awconfig.IDOutgoingRequest, raw []byte, signed, chain map[string]any, registry *awid.RegistryClient, registryURL string) (idParentImportOutput, error) {
+	out := idParentImportOutput{RequestID: outgoing.RequestID, ID: r.id, Registration: "pending", InstallationPending: true}
+	if outgoing.Response != "" && outgoing.Response != string(raw) {
+		return out, &awid.IDCertificateError{Code: "request_binding_mismatch"}
+	}
+	outgoing.Response, outgoing.Registration = string(raw), "pending"
+	if err := r.requests().Put(outgoing); err != nil {
+		return out, err
+	}
+	if opts.NoRegister {
+		return out, nil
+	}
+	call, cancel := commandAPIContext(nil, ctx)
+	receipt, err := registry.RegisterIDCertificateAt(call, registryURL, chain, r.signer("register its person parent at "+registryURL), &outgoing.ReplacesCertificateID, &outgoing.InvitationID)
+	cancel()
+	if err != nil {
+		return out, fmt.Errorf("register adoption (run import again to retry): %w", err)
+	}
+	if err := installParentChain(r.dir, "parent-import", outgoing.RequestID, raw, chain, func() error { return validateParentReplacement(r, outgoing, signed, chain) }); err != nil {
+		return out, err
+	}
+	outgoing.State, outgoing.Registration = awconfig.IDRequestImported, "registered"
+	outgoing.RegisteredAt, _ = receipt["registered_at"].(string)
+	if err := r.requests().Put(outgoing); err != nil {
+		return out, err
+	}
+	out.Registration, out.RegisteredAt, out.InstallationPending = outgoing.Registration, outgoing.RegisteredAt, false
+	return out, nil
+}
+
 func formatIDParentImport(v any) string {
 	out := v.(idParentImportOutput)
+	if out.InstallationPending {
+		return fmt.Sprintf("Retained the signed adoption response for %s.\nAWID registration is pending; run import again to register and install it.\n", out.ID)
+	}
 	switch out.Registration {
 	case "registered":
 		return fmt.Sprintf("Installed the certificate of %s.\nRegistered at AWID; authority is checked against the tree at each use.\n", out.ID)
@@ -476,10 +609,19 @@ func formatIDParentImport(v any) string {
 // home as one credential update, so a custody service serving home rebuilds
 // from it. Registration at AWID is not part of the update.
 func installImportedChain(home, requestID string, response []byte, chain map[string]any) error {
+	return installParentChain(home, "parent-import", requestID, response, chain, nil)
+}
+
+func installParentChain(home, command, requestID string, response []byte, chain map[string]any, check func() error) error {
 	sum := sha256.Sum256(response)
-	op := awconfig.CredentialOperation{Command: "parent-import", Intent: awconfig.CredentialIntent(map[string]any{
+	op := awconfig.CredentialOperation{Command: command, Intent: awconfig.CredentialIntent(map[string]any{
 		"request_id": requestID, "response_sha256": hex.EncodeToString(sum[:])})}
 	return credentialUpdateError(awconfig.UpdateCredentials(home, op, func(begin func() error) error {
+		if check != nil {
+			if err := check(); err != nil {
+				return err
+			}
+		}
 		if err := begin(); err != nil {
 			return err
 		}

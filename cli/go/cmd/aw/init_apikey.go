@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -29,19 +30,20 @@ const maxWorkspaceAPIKeyLength = 4096
 const apiKeyPartialInitVersion = 1
 
 type apiKeyInitRequest struct {
-	WorkingDir      string
-	IdentityHome    string
-	AwebURL         string
-	RegistryURL     string
-	APIKey          string
-	Name            string
-	Alias           string
-	Role            string
-	HumanName       string
-	AgentType       string
-	Global          bool
-	SelectedTeamID  string
-	CanonicalTeamID string
+	CreationInvitation *awid.IDCreationInvitation
+	WorkingDir         string
+	IdentityHome       string
+	AwebURL            string
+	RegistryURL        string
+	APIKey             string
+	Name               string
+	Alias              string
+	Role               string
+	HumanName          string
+	AgentType          string
+	Global             bool
+	SelectedTeamID     string
+	CanonicalTeamID    string
 	// InboundMode is "open", "team_and_contacts" or "contacts_only" when --inbound-mode is
 	// set on a global init, "" otherwise. The runner forwards it to
 	// /api/v1/workspaces/init only when non-empty; the server defaults
@@ -172,6 +174,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		return connectOutput{}, err
 	}
 	req.SelectedTeamID, req.CanonicalTeamID = selectedTeam.TeamID, selectedTeam.CanonicalTeamID
+	req.CreationInvitation = selectedTeam.CreationInvitation
 
 	material, err := prepareAPIKeyBootstrapIdentity(req, name, registry)
 	if err != nil {
@@ -435,6 +438,15 @@ func prepareAPIKeyBootstrapIdentity(
 	if state != nil {
 		if err := validateAPIKeyPartialInitContext(path, state, req, name, registryURL); err != nil {
 			return apiKeyBootstrapIdentityMaterial{}, err
+		}
+		if state.IDTree != nil {
+			selected, err := newAPIKeyCreationRecovery(req)
+			if err != nil {
+				return apiKeyBootstrapIdentityMaterial{}, err
+			}
+			if state.IDTree.InvitationID != selected.InvitationID || state.IDTree.Domain != selected.Domain || !reflect.DeepEqual(state.IDTree.Parent, selected.Parent) {
+				return apiKeyBootstrapIdentityMaterial{}, errors.New("creation invitation changed since partial API-key init; retry the original invitation")
+			}
 		}
 		if state.IDTree == nil {
 			state.IDTree, err = newAPIKeyCreationRecovery(req)
@@ -982,6 +994,24 @@ func (response *apiKeyBootstrapResponse) UnmarshalJSON(raw []byte) error {
 }
 
 func newAPIKeyCreationRecovery(req apiKeyInitRequest) (*hostedIDTreeRecovery, error) {
+	if inv := req.CreationInvitation; inv != nil {
+		if err := inv.Validate(); err != nil {
+			return nil, err
+		}
+		name := strings.TrimSpace(req.Alias)
+		if req.Global {
+			name = strings.TrimSpace(req.Name)
+		}
+		if name != inv.Name || initIdentityScopeValue(req.Global) != inv.IdentityScope {
+			return nil, errors.New("creation invitation differs from requested name or identity scope")
+		}
+		tree, err := newHostedIDTreeRecovery(hostedIdentityContext{Domain: inv.Domain, ParentKind: "identity", ParentID: fmt.Sprint(inv.Parent["id"])})
+		if err != nil {
+			return nil, err
+		}
+		tree.InvitationID = inv.ID
+		return tree, nil
+	}
 	association := hostedIdentityContext{}
 	if req.CanonicalTeamID != "" {
 		domain, _, err := awid.ParseTeamID(req.CanonicalTeamID)

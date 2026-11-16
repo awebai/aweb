@@ -436,7 +436,8 @@ func runInitAdmissionTeamID(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	resp, err := issueTeamAdmissionInvite(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), requestID, resolveAliasValue(resolveInitLocalName()))
+	alias := resolveAliasValue(resolveInitLocalName())
+	resp, err := issueTeamAdmissionInviteForCreation(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), requestID, alias, &awid.IDCreationIntent{Name: alias, IdentityScope: initInviteIdentityScope()})
 	if err != nil {
 		return err
 	}

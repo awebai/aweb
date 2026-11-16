@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +113,7 @@ type idChildOptions struct {
 	WorkingDir      string
 	RegistryURL     string
 	TXTResolver     awid.TXTResolver
+	HTTPClient      *http.Client
 	HumanAtTerminal func() error
 	Keychain        awid.HumanKeyStore
 	Prompt          awid.PassphrasePrompt
@@ -183,7 +185,7 @@ func selectChildIssuer(ctx context.Context, opts idChildOptions) (*selectedChild
 		if err != nil {
 			return nil, err
 		}
-		registry := newAWIDRegistryClient(nil, opts.TXTResolver)
+		registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
 		registry.DefaultRegistryURL = human.record.RegistryURL
 		issuer := human.issuer(opts.Keychain, opts.Prompt, opts.TXTResolver, registry, human.record.RegistryURL)
 		return &selectedChildIssuer{childIssuer: issuer, domain: domain, registryURL: human.record.RegistryURL, kind: "human"}, nil
@@ -202,7 +204,7 @@ func childIssuerRegistry(ctx context.Context, opts idChildOptions, domain string
 	if err != nil {
 		return nil, "", err
 	}
-	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
+	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
 	registry.DefaultRegistryURL = registryURL
 	return registry, registryURL, nil
 }
@@ -233,6 +235,10 @@ func currentAgentIssuer(opts idChildOptions) (*selectedChildIssuer, error) {
 	registry, err := resolveIdentityRegistryClient(identity)
 	if err != nil {
 		return nil, err
+	}
+	if opts.HTTPClient != nil {
+		registry.HTTPClient = opts.HTTPClient
+		registry.Resolver.HTTPClient = opts.HTTPClient
 	}
 	registryURL := opts.RegistryURL
 	if registryURL == "" {
@@ -623,6 +629,9 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 			return nil, err
 		}
 		r := signed["request"].(map[string]any)
+		if out.Operation == "resign" && r["domain"] != issuer.domain {
+			return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", r["domain"], issuer.domain)
+		}
 		if evidence, err = issuer.evidence(ctx, r["id"].(string), r["subject_key"].(string)); err != nil {
 			return nil, err
 		}
