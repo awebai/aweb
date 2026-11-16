@@ -59,6 +59,7 @@ from awid.log import (
 )
 from awid.ratelimit import normalize_service_token
 from awid.registry_auth import RegistryRequestAuth, path_signature_headers
+from awid.registry_paths import address_segment
 from awid.registry_transport import RegistryOverrideTransport
 from awid.registry_types import (
     RegistryError as RegistryError,
@@ -1330,7 +1331,7 @@ class RegistryClient:
     ) -> Address | None:
         data = await self._request_optional_json(
             "GET",
-            f"/v1/namespaces/{domain}/addresses/{name}",
+            f"/v1/namespaces/{domain}/addresses/{address_segment(name)}",
             registry_url=await self._registry_url_for_domain(domain),
         )
         return None if data is None else _address_from_json(data)
@@ -1683,7 +1684,7 @@ class RegistryClient:
         return _address_from_json(
             await self._request_json(
                 "PUT",
-                f"/v1/namespaces/{domain}/addresses/{name}",
+                f"/v1/namespaces/{domain}/addresses/{address_segment(name)}",
                 headers=self._signed_address_headers(
                     domain=domain,
                     name=name,
@@ -1704,7 +1705,7 @@ class RegistryClient:
         registry_url = await self._registry_url_for_domain(domain)
         await self._request_json(
             "DELETE",
-            f"/v1/namespaces/{domain}/addresses/{name}",
+            f"/v1/namespaces/{domain}/addresses/{address_segment(name)}",
             headers=self._signed_address_headers(
                 domain=domain,
                 name=name,
@@ -1730,7 +1731,7 @@ class RegistryClient:
         return _address_from_json(
             await self._request_json(
                 "POST",
-                f"/v1/namespaces/{domain}/addresses/{name}/reassign",
+                f"/v1/namespaces/{domain}/addresses/{address_segment(name)}/reassign",
                 headers=self._signed_address_headers(
                     domain=domain,
                     name=name,

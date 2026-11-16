@@ -38,6 +38,7 @@ from awid.id_tree_requests import (
     rotate_claims,
 )
 from awid.log import canonical_server_origin, identity_state_hash, log_entry_payload
+from awid.registry_paths import address_segment
 from awid.registry_types import RegistryError
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_certificate import check_team_certificate
@@ -104,12 +105,6 @@ def _alias(value):
 def _address_name(value):
     # The registry imposes length, not a team/alias character profile.
     return type(value) is str and 1 <= len(value) <= 256
-
-
-def _address_segment(value):
-    return (
-        quote(value, safe="") if value not in (".", "..") else value.replace(".", "%2E")
-    )
 
 
 def _domain(value):
@@ -620,14 +615,14 @@ def controller_http_plan(request: ControllerRequest) -> ControllerHTTPPlan:
         elif op == "address_reassign":
             method, path, wire = (
                 "POST",
-                base + f"/addresses/{_address_segment(p['name'])}/reassign",
+                base + f"/addresses/{address_segment(p['name'])}/reassign",
                 "reassign_address",
             )
             body = {k: p[k] for k in ("did_aw", "current_did_key")}
         else:
             method = "PUT" if op == "address_update" else "DELETE"
             path, wire = (
-                base + f"/addresses/{_address_segment(p['name'])}",
+                base + f"/addresses/{address_segment(p['name'])}",
                 op.replace("address_", "") + "_address",
             )
             body = {} if method == "PUT" else None
