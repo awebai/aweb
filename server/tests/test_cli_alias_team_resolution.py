@@ -2,7 +2,7 @@
 
 Disposable SQL provisions two teams. All certificate registrations/revocations,
 roster reads, mail/chat sends and inbox reads use real production services. The
-fault is a genuinely unreachable client-only registry origin (or a conflicting
+fault is an unavailable client-only registry transport (or a conflicting
 registry pin), never a substituted response or product test hook.
 """
 
@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import socket
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -27,14 +26,18 @@ from tests.test_messages_http import _encode_certificate, _make_certificate, _ma
 
 @asynccontextmanager
 async def unavailable_origin():
-    # Hold the port without listening: real TCP connect refuses it, and no
-    # unrelated process can acquire it during the CLI invocation.
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
+    # Keep the port owned and fail with a real TCP close, without serving HTTP.
+    # A bound but non-listening socket silently times out on some platforms.
+    async def close_connection(_reader, writer):
+        writer.close()
+        await writer.wait_closed()
+
+    server = await asyncio.start_server(close_connection, "127.0.0.1", 0)
     try:
-        yield f"http://127.0.0.1:{sock.getsockname()[1]}"
+        yield f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}"
     finally:
-        sock.close()
+        server.close()
+        await server.wait_closed()
 
 
 async def run_aw(binary, cwd, env, *args):
