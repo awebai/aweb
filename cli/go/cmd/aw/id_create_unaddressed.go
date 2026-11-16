@@ -16,13 +16,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// A registered identity with no address (human-assurance-contract.md
-// section 2): a fresh self-custodial key that registers its own did:aw
-// mapping at the chosen registry and claims no namespace address, so no
-// namespace controller key is needed. It is what a deployment root is before
-// a human endorses it. Creation is resumable: the key is kept privately
-// before anything is sent, so a run killed at any point is completed by the
-// next with the same key, never replaced by a second identity.
+// A registered identity with no address registers its own did:aw mapping
+// at the chosen registry without claiming a namespace address. Creation keeps
+// the private key before sending, so an interrupted run resumes with that key.
 //
 // A local identity is the same creation registered nowhere: a key-only home
 // (a did:key, no did:aw, address, registry or membership) that the

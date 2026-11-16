@@ -3,8 +3,8 @@
 Terminates TLS for every public origin of the deployment with the operator's
 certificate and key, and routes each Host to its service. It refuses a request
 whose Host its TLS SNI does not name (`strict_sni_host`), and each site refuses
-any authority but its own host on port 443 with 421, so the signer's request
-host never reaches its human host. Use it on a machine with no reverse proxy
+any authority but its own host on port 443 with 421, so an app's API
+host never reaches its console host. Use it on a machine with no reverse proxy
 of its own; an operator who already terminates TLS leaves the section out and
 routes to the services' published ports.
 
@@ -18,7 +18,7 @@ routes to the services' published ports.
 
 The sites are not inputs: one per origin the deployment has (`aweb.publicOrigin`,
 `secrets.publicOrigin` and `consoleOrigin`, `logs.publicOrigin` and
-`consoleOrigin`, `signer.requestOrigin` and `humanOrigin`), each on port 443,
+`consoleOrigin`), each on port 443,
 to the service's fixed port. `teamctl` renders the configuration into
 `RUN_DIR/front/Caddyfile` (`render_env.py --front deployment.yaml`) and mounts
 it read-only.

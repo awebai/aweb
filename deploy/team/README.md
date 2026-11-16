@@ -1,7 +1,7 @@
 # One team's deployment
 
 What a team runs in its own cluster or on its own machine: the aweb server,
-the protected signer, the Secrets and Logs apps, and the OATS team container
+the Secrets and Logs apps, and the OATS team container
 behind an egress boundary. One set of images and one configuration file; a
 Helm chart (Kubernetes) and a Compose file (one machine) are two thin layers
 over them.
@@ -15,7 +15,7 @@ This directory holds what both layers share.
 | `render_env.py` | Checks a `deployment.yaml` against the schema and prints the env file the Compose layer reads: `python render_env.py deployment.yaml > .env`. It needs PyYAML and jsonschema, which the aweb server image has. |
 | `compose.yaml` | The Compose layer: the two networks, Redis, the bundled PostgreSQL and aweb. From this directory: `docker compose --env-file .env up -d`. |
 | `compose.front.yaml` | The optional TLS front: the operator's certificate for every public origin, Host checked against SNI (`descriptors/front.md`). |
-| `compose.secrets.yaml`, `compose.logs.yaml`, `compose.signer.yaml`, `compose.agents.yaml` | One optional component each; the agents' file holds the team container and its egress, extended from the pinned OATS source. The env file's `COMPOSE_FILE` names those `deployment.yaml` has; Compose never loads the others. |
+| `compose.secrets.yaml`, `compose.logs.yaml`, `compose.agents.yaml` | One optional component each; the agents' file holds the team container and its egress, extended from the pinned OATS source. The env file's `COMPOSE_FILE` names those `deployment.yaml` has; Compose never loads the others. |
 | `teamctl` | The operator command on one machine: `teamctl start` renders `deployment.yaml`, starts the bundle and checks it is ready; with agents it derives egress's policy and holds the agent until the ingress and boundary probes pass. `teamctl connect` prints the origins and the deployment's `docker compose` command. It needs `uv` and this repository's checkout. |
 | `egress_policy.py` | Derives the agents' egress policy from the deployment once its services are up. |
 | `compose.test.yaml` | The journey's test world: its own registry, DNS, SMTP, TLS front and aw. Never in a production deployment. |
@@ -60,17 +60,15 @@ is the `x-env` of that input in the schema, so the mapping is written once.
   `user default on #<SHA-256 of the password, hex> ~* &* +@all`: the hash,
   not the password, which only aweb's `redis-url` holds.
 - **A service is reached by its component name:** `aweb:8000`,
-  `signer:8080`, `secrets:8770`, `logs:8765`, `postgres:5432`, `redis:6379`,
+  `secrets:8770`, `logs:8765`, `postgres:5432`, `redis:6379`,
   `egress`. Ports and service uids are fixed, not inputs.
-- **Three networks.** `services` holds aweb, signer, secrets, logs and
+- **Three networks.** `services` holds aweb, secrets, logs and
   postgres. `backend` holds aweb and redis alone: nothing else reaches
   Redis. `agents` holds the team container and `egress`; it is internal,
   has IPv6 off and gives no route to the host's bridge gateway, so `egress`
-  is the only way out. Egress reaches exactly five origins (aweb, Secrets,
-  Logs, the signer's request origin for prepare and receipt, and the
-  registry) at the addresses they resolve to when the deployment starts, and
+  is the only way out. Egress reaches exactly four origins (aweb, Secrets, Logs and the registry) at the addresses they resolve to when the deployment starts, and
   denies PostgreSQL. Agents are not admitted until the TLS ingress is shown
-  to refuse the signer's request SNI carrying its human Host.
+  to refuse an app API SNI carrying its console Host.
   `team.registryRoute` says where the registry runs. With `external`, the
   default, it is the registry's operator's, such as the public registry:
   its route gets a positive control only, and a registry service or one of
@@ -110,3 +108,8 @@ One file per component with three tables and four lines:
 3. Platform-only inputs: key, platform, why.
 
 Then: image, port, health endpoint, depends on.
+
+Agent deployments provide `team.namespaceAuthorities`, a list of public
+`domain` and `controllerDidKey` pins. The egress resolver encodes those pins
+as AWID TXT records; no signer profile or private key is involved. The API
+and console origins of Secrets remain separate under the ingress probes.

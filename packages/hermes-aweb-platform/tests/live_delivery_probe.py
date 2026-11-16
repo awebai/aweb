@@ -171,6 +171,7 @@ async def main():
     original_complete = cls.on_processing_complete
     original_turn = GatewayRunner._handle_message_with_agent
     original_handle = cls.handle_message
+    original_send = cls.send
     empty = asyncio.Event()
     release = asyncio.Event()
     hint = asyncio.Event()
@@ -187,6 +188,27 @@ async def main():
     pending = None
     pending_key = None
     connect_measurements = []
+    aw_sends = []
+    home_notice_results = []
+    home_logs = []
+
+    class HomeHintLog(logging.Handler):
+        def emit(self, record):
+            if "AWEB_HOME_CHANNEL" in record.getMessage():
+                home_logs.append({"level": record.levelname, "text": record.getMessage()})
+
+    home_log = HomeHintLog()
+    plugin_logger = logging.getLogger(cls.__module__)
+    if CASE == "home_notice":
+        plugin_logger.addHandler(home_log)
+
+    async def observe_send(self, chat_id, content, reply_to=None, metadata=None):
+        result = await original_send(self, chat_id, content, reply_to=reply_to, metadata=metadata)
+        if CASE == "home_notice":
+            from agent.i18n import t
+            if content == t("gateway.notify.no_home_channel", platform="Aweb", sethome_cmd="/sethome"):
+                home_notice_results.append({"chat_id": chat_id, "success": result.success})
+        return result
 
     async def connect(self, *, is_reconnect=False):
         return await observe_connect(original_connect, self, connect_measurements, is_reconnect=is_reconnect)
@@ -200,6 +222,9 @@ async def main():
     async def io(self, *args):
         nonlocal dropped
         result = await original_io(self, *args)
+        if CASE == "home_notice" and args[:2] in (("mail", "reply"), ("chat", "send"), ("chat", "send-and-leave")):
+            aw_sends.append({"message_id": result.get("message_id"),
+                             "body": Path(args[args.index("--body-file") + 1]).read_text()})
         if args[:2] == ("mail", "reply"):
             replies.append({"input": args[2], "body": Path(args[args.index("--body-file") + 1]).read_text()})
         if CASE == "mail_retry" and args[:2] == ("mail", "show") and args[-1] == target and not dropped:
@@ -324,6 +349,7 @@ async def main():
     cls.connect = connect
     cls._run_aw_json = io
     cls.handle_message = ingress_event
+    cls.send = observe_send
     GatewayRunner._handle_message_with_agent = ordinary_turn
     cls._handle_aw_event = event
     cls.on_processing_complete = complete
@@ -530,18 +556,43 @@ async def main():
             assert_content(ids)
             print(json.dumps({"case": CASE, "input_ids": ids, "reply_inputs": [r["input"] for r in replies], "turns": turns}))
         elif CASE == "home_notice":
-            first = await send("first plain message")
-            session = first["session_id"]
-            rows = await read_chat_inputs(session, [first["message_id"]])
-            async def notice_and_error():
+            inputs, histories = [], []
+
+            async def first_response(session):
                 rows = await history(session)
-                return rows if len([r for r in rows if r.get("from_agent") == "hermes"]) >= 2 else None
-            rows = await until(notice_and_error, "first-contact notice/provider response missing")
-            outgoing = [r["body"] for r in rows if r.get("from_agent") == "hermes"]
-            assert any("AWEB_HOME_CHANNEL" in body and "local" in body.lower() for body in outgoing), outgoing
-            assert all("/sethome" not in body for body in outgoing), outgoing
-            assert_content([first["message_id"]])
-            print(json.dumps({"case": CASE, "rows": rows, "turns": turns}))
+                return rows if any(r.get("from_agent") == "hermes" for r in rows) else None
+
+            for text in ("first plain message", "second new conversation"):
+                first = await send(text)
+                inputs.append(first)
+                await read_chat_inputs(first["session_id"], [first["message_id"]])
+                rows = await until(lambda session=first["session_id"]: first_response(session),
+                                   "real provider response missing")
+                outgoing = [r for r in rows if r.get("from_agent") == "hermes"]
+                assert len(outgoing) == 1, rows
+                assert "AWEB_HOME_CHANNEL" not in outgoing[0]["body"], outgoing
+                histories.append(rows)
+            assert len(aw_sends) == 2, aw_sends
+            assert len(home_notice_results) == 2 and all(r["success"] for r in home_notice_results), home_notice_results
+            assert len(home_logs) == 1 and home_logs[0]["level"] == "INFO", home_logs
+            assert "optional" in home_logs[0]["text"] and "restart" in home_logs[0]["text"], home_logs
+            os.environ["AWEB_HOME_CHANNEL"] = "alice"
+            third = await send("home configured locally")
+            inputs.append(third)
+            await read_chat_inputs(third["session_id"], [third["message_id"]])
+            rows = await until(lambda: first_response(third["session_id"]), "configured-home response missing")
+            assert len([r for r in rows if r.get("from_agent") == "hermes"]) == 1, rows
+            histories.append(rows)
+            assert len(aw_sends) == 3 and len(home_notice_results) == 2 and len(home_logs) == 1
+            from agent.i18n import t
+            quote = "Quoted text:\n" + t("gateway.notify.no_home_channel", platform="Aweb", sethome_cmd="/sethome")
+            result = await adapter.send("chat:" + third["session_id"], quote, reply_to=third["message_id"])
+            assert result.success and aw_sends[-1]["body"] == quote, aw_sends
+            assert len(aw_sends) == 4 and len(home_logs) == 1
+            assert_content([r["message_id"] for r in inputs])
+            print(json.dumps({"case": CASE, "histories": histories, "aw_sends": aw_sends,
+                              "home_notice_results": home_notice_results, "home_logs": home_logs,
+                              "turns": turns}))
     finally:
         release.set()
         (HOME / "release").touch()
@@ -557,6 +608,8 @@ async def main():
         cls.on_processing_complete = original_complete
         cls.handle_message = original_handle
         GatewayRunner._handle_message_with_agent = original_turn
+        cls.send = original_send
+        plugin_logger.removeHandler(home_log)
 
 
 try:

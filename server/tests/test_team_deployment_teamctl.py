@@ -116,7 +116,7 @@ def test_restore_fails_closed_without_the_lab_rehearsal_scope(tmp_path):
     (tmp_path / "backup").mkdir()
     result = run(tmp_path, "restore", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
     assert result.returncode == 1
-    for task in ("aweb-acyp", "aweb-acgh.16.23", "aweb-acyw", "aweb-acxy.4"):
+    for task in ("aweb-acyp", "aweb-acgh.16.23", "aweb-acxy.4"):
         assert task in result.stderr
     assert calls(tmp_path) == []
 
@@ -149,19 +149,6 @@ def test_render_writes_the_env_file_and_the_fronts_configuration_and_starts_noth
     assert f"FRONT_CONFIG_DIR={tmp_path / 'run' / 'front'}\n" in env
     assert (tmp_path / "run" / "front" / "Caddyfile").read_text().startswith("{\n  auto_https off\n")
     assert calls(tmp_path) == []
-
-
-def test_backup_leaves_the_signers_live_controller_key_out_of_the_secrets_archive(tmp_path):
-    # The controller's backup is the owner's separately protected offline copy
-    # (HOST.md); the generic backup never holds the live private volume.
-    secrets = tmp_path / "secrets"
-    (secrets / "signer" / "private-controller").mkdir(parents=True)
-    config = {**EXAMPLE, "compose": {**EXAMPLE["compose"], "secretsDir": str(secrets)}}
-    path = deployment(tmp_path, config)
-    result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
-    assert result.returncode == 0, result.stderr
-    archived = [call for call in calls(tmp_path) if "tarfile" in call and "/source:ro" in call]
-    assert len(archived) == 1 and "./signer/private-controller" in archived[0].split(), archived
 
 
 def test_backup_leaves_the_agents_harness_login_out_of_the_secrets_archive(tmp_path):
@@ -203,13 +190,12 @@ def test_start_reloads_the_running_front_with_the_rendered_sites(tmp_path):
 
 
 def agents_deployment(tmp_path: Path, team: dict) -> str:
-    """A deployment with agents, its signer's profile and a clean OATS checkout
+    """A deployment with agents and public namespace pins and a clean OATS checkout
     holding the two fragments teamctl records."""
-    import json
     import subprocess
 
     from tests.test_team_deployment_egress_policy import CONTROLLER
-    from tests.test_team_deployment_render_env import AGENTS, APPS, EGRESS, PROFILE, SIGNER
+    from tests.test_team_deployment_render_env import AGENTS, APPS, EGRESS
 
     oats = tmp_path / "oats"
     for fragment in ("container/agent/compose.agent.yaml", "container/agent/egress/compose.egress.yaml"):
@@ -223,17 +209,12 @@ def agents_deployment(tmp_path: Path, team: dict) -> str:
     subprocess.run(["git", "init", "-q", str(oats)], check=True)
     subprocess.run([*git, "add", "."], check=True)
     subprocess.run([*git, "commit", "-q", "-m", "fragments"], check=True)
-    profile = tmp_path / "profile.json"
-    profile.write_text(json.dumps({
-        **PROFILE, "registry_origin": team.get("registryUrl", "https://api.awid.ai"),
-        "namespace_authorities": [{"domain": "example.com", "controller_did": CONTROLLER}],
-    }), encoding="utf-8")
     agents = {**AGENTS, "compose": {**AGENTS["compose"], "oatsSource": str(oats)}}
-    return deployment(tmp_path, {**EXAMPLE, "team": team, "agents": agents, "egress": EGRESS,
-                                 "signer": {**SIGNER, "profileFile": str(profile)}, **APPS})
+    return deployment(tmp_path, {**EXAMPLE, "team": {**team, "namespaceAuthorities": [{"domain": "example.com", "controllerDidKey": CONTROLLER}]}, "agents": agents, "egress": EGRESS,
+                                 **APPS})
 
 
-BASE_SERVICES = ["postgres", "redis", "aweb", "secrets", "logs", "signer", "egress", "agent"]
+BASE_SERVICES = ["postgres", "redis", "aweb", "secrets", "logs", "egress", "agent"]
 PUBLIC_REGISTRY_ADDRESSES = ["104.21.0.10", "172.67.0.10"]
 
 
@@ -245,7 +226,7 @@ def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry:
     # isolation, a first line from each followed log, and the probe's pass.
     import json
 
-    resolved = {"origins": {role: ["172.31.0.250"] for role in ("aweb", "secrets", "logs", "signer")},
+    resolved = {"origins": {role: ["172.31.0.250"] for role in ("aweb", "secrets", "logs")},
                 "backends": {"postgres": "172.31.0.3", "redis": "172.31.0.4"}}
     resolved["origins"]["registry"] = registry
     answers = {
@@ -283,18 +264,17 @@ def test_start_probes_the_public_registry_as_an_external_route_with_no_backend_l
     result = start_with_agents(tmp_path, {"id": "devteam:example.com"}, BASE_SERVICES, PUBLIC_REGISTRY_ADDRESSES)
     assert "ingress probe: exit 0, OATS_EGRESS_INGRESS_PASS" in result.stdout, result.stdout + result.stderr
     made = calls(tmp_path)
-    assert followed(tmp_path) == ["aweb", "logs", "secrets", "signer"]
-    assert len(probes(made)) == 1 and "--human-log /logs/signer.log" in probes(made)[0]
+    assert followed(tmp_path) == ["aweb", "logs", "secrets"]
+    assert len(probes(made)) == 1 and "--human-log /logs/secrets.log" in probes(made)[0]
     routes = json.loads((tmp_path / "run" / "ingress-logs" / "route-logs.json").read_text())
     assert routes["registry"] == {"path": "/health", "external": True}
-    assert routes["signer"] == {"path": "/readyz", "log": "/logs/signer.log"}
 
 
 def test_start_probes_a_local_registry_through_its_own_log(tmp_path):
     team = {"id": "devteam:example.com", "registryUrl": "https://registry.example.com", "registryRoute": "local"}
     result = start_with_agents(tmp_path, team, [*BASE_SERVICES, "registry"], ["172.31.0.250"])
     assert "ingress probe: exit 0, OATS_EGRESS_INGRESS_PASS" in result.stdout, result.stdout + result.stderr
-    assert followed(tmp_path) == ["aweb", "logs", "registry", "secrets", "signer"]
+    assert followed(tmp_path) == ["aweb", "logs", "registry", "secrets"]
     routes = json.loads((tmp_path / "run" / "ingress-logs" / "route-logs.json").read_text())
     assert routes["registry"] == {"path": "/health", "log": "/logs/registry.log"}
 

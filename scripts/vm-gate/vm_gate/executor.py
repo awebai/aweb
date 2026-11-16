@@ -198,8 +198,35 @@ exit "$status"
             if result.returncode:
                 raise Infrastructure("remote host contract failed")
 
+    def observe_host_metrics(self, phase):
+        """Telemetry has its own short budget and cannot replace required evidence."""
+        name = "host-metrics-" + phase
+        observation = {"status": "unavailable"}
+        try:
+            result = self.transport.run(
+                f"timeout --signal=TERM --kill-after=1s 3s python3 "
+                f"{REMOTE}/operator/vm_gate/host_metrics.py {LOGS}/{name}.json",
+                timeout=min(5, self.remaining()),
+                check=False,
+            )
+            observation.update(
+                status="collected" if result.returncode == 0 else "failed",
+                returncode=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+            )
+        except (Infrastructure, OSError, subprocess.SubprocessError) as error:
+            observation.update(error=type(error).__name__, message=str(error))
+        try:
+            (self.directory / (name + "-observation.json")).write_text(
+                json.dumps(observation, indent=2) + "\n"
+            )
+        except OSError:
+            pass  # An unwritable telemetry sidecar cannot suppress the primary archive.
+
     def execute(self, server, timeout):
         self.deadline = time.monotonic() + timeout + 45
+        self.observe_host_metrics("before")
         self.run(
             f"nohup python3 {REMOTE}/operator/vm_gate/memory.py {LOGS}/memory.jsonl >{LOGS}/sampler.log 2>&1 </dev/null & echo $! >{LOGS}/sampler.pid",
             "sampler-start",
@@ -223,6 +250,7 @@ exit "$status"
 
     def collect(self, server, timeout):
         self.deadline = time.monotonic() + timeout
+        self.observe_host_metrics("after")
         self.run(
             f'if test -f {LOGS}/sampler.pid; then kill -TERM "$(cat {LOGS}/sampler.pid)"; fi; docker ps -a --no-trunc >{LOGS}/docker-after.txt; docker network ls >{LOGS}/networks-after.txt; docker volume ls >{LOGS}/volumes-after.txt',
             "after-state",

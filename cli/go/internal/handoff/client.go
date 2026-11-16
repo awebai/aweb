@@ -343,7 +343,7 @@ func refusal(status int, body []byte) error {
 	if code == "" {
 		code = "handoff_http_" + fmt.Sprint(status)
 	}
-	return told(code, fmt.Errorf("the app answered %d", status), Facts{})
+	return coded(code, fmt.Errorf("the app answered %d", status))
 }
 
 // RefusalCode is the `detail` code of an app's refusal body, or "".

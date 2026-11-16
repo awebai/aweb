@@ -41,48 +41,6 @@ identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
 
-### `protected-service-profile-v1.json` and `protected-service-request-v1.json` — implementation fixtures
-
-The [protected-service profile seam](../protected-service-profile.md) supplies
-one public operator-provisioned configuration and matching prepare/receipt
-covering-v2 proofs. They contain public synthetic identities and signatures,
-no private key material, and assert no deployed service or registry state.
-`server/tests/test_protected_service_profile.py` validates the profile and both
-request proofs against the shared strict configuration and reviewed verifier.
-CLI consumers use these same root bytes for cross-language parity. The fixed
-timestamp is exercised under the test clock; live proofs require current time.
-
-### `human-assurance-v1.json` — frozen policy contract
-
-The [human-assurance contract](../human-assurance-contract.md) defines the
-shared protected-signing operation catalog and its positive/refusal policy
-scenarios for hosted and independent implementations. The fixture separates
-live exact-act approvals from bounded unattended operations, with typed
-custody, requester and receipt boundaries. These are implementation acceptance
-inputs, not cryptographic known answers or evidence that runtime paths have
-passed. Implementations must exercise the applicable cases against their
-shared signer and adapters; static catalog validation is not runtime acceptance.
-
-### `human-assurance-owner-removal-v1.json` — additive policy contract
-
-The current owner's live approval can revoke an exact agent/service or
-unknown-kind membership outside a root's admission bucket, including
-pre-cutover and retired-root members. The main-view Kind row displays
-"agent or person not confirmed" for frozen `kind not verified`, whose exact
-value remains in Technical details (coordinator `32499ce5`); verified humans use `team.human.remove` exclusively. The unchanged base
-inventory remains in `human-assurance-v1.json`.
-The definition implements this additive `owner_approved` row. These policy
-scenarios do not themselves establish a successful native run. The frozen
-classification has exactly two values: `agent` (including service agents) and
-`kind not verified`; requester-key provenance never substitutes for owner UV.
-
-### `protected-operation-availability-v1.json` — prepare availability
-
-Unknown/unserved operation selectors, missing consumer/signing adapters,
-malformed requests and incorrect request origins retain distinct refusal
-codes. The shared HTTP mount consumes these cases without an operation store;
-successful signing and current-authority execution remain separate boundaries.
-
 ### `id-certificates-v1.json` — contract candidate
 
 The [identity certificates contract](../id-certificates.md) freezes
@@ -1093,24 +1051,3 @@ derivation; they are never message/provenance fields. Author projections test
 exact session/subject/signer binding and external/untrusted guest assurance.
 They assume independently verified signer facts and do not authorize membership
 or activate managed chat. See [P3 readiness](../human-channels-participants.md).
-
-### `human-assurance-execution-intent-v1.json` — execution-issued artifacts
-
-Proposed `intent_v1` approval binds one static artifact template and original
-issuance window. Execution issues only definition-owned time fields, retaining
-one artifact/signature/exact delivery. Mailed pending work can wait up to24h;
-UV and consumer freshness do not grow. Old clients fail closed with
-`upgrade_aw_required`; there is no parallel frozen-artifact execution path.
-Late applied reads verify history without another POST. Saved old unfinished
-operations are never
-resent, and ambiguous outcomes retain their reconciliation pointer. The
-coordinated server/three-client/consumer readiness precedes deployment. These are
-policy scenarios, not served-source or native evidence.
-
-### `human-assurance-owner-initiation-v1.json` — owner-session prepare
-
-Proposed human-origin/CSRF write creates one pending exact intent from a current
-B3 owner session, independently of an agent/terminal. Host requester identity
-is provenance only; the same executor still requires one fresh exact-act UV.
-No write route is built before security text ACK. Until then the all-current-
-members inventory is read-only. These scenarios do not claim implementation.

@@ -410,12 +410,10 @@ Subcommands:
 - `child` Invite, receive and approve requests from children you issue
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
-- `endorse` Have a human endorse this agent as the deployment's root, through the protected service
 - `grant` Scoped, revocable session grants derived from this identity
 - `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
-- `operation` Inspect protected operations this identity requested
 - `parent` Request and import your own certificate from a parent
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
@@ -662,33 +660,6 @@ Show local E2E encryption key state
 
 Flags:
 - `-h, --help help for show`
-
-## `id endorse`
-
-### `id endorse`
-
-Ask the protected service named by --protected-profile to have --human endorse
-this registered agent as the deployment's root for --team. The human approves the
-exact act on the service's page; nothing is signed here. Before the page is shown,
-aw checks the admission policy the service froze against its own read of every
-team's policy. Endorsement grants no resource permissions and creates no policy.
-
-Without --operation-id, aw keeps a new UUID before anything is sent, and running
-the same command again continues that request. With --operation-id, running
-again with the same id and inputs resumes that operation; changed inputs refuse
-operation_conflict. Once the endorsement commits, aw registers the root's new
-certificate at the pinned registry and reads it back.
-
-Flags:
-- `--deployment-label string The deployment's name, shown to the human`
-- `-h, --help help for endorse`
-- `--human string The did:aw of the human who endorses this root`
-- `--no-browser Do not open a browser; the page is only reported`
-- `--no-wait Exit without waiting for the approver; run the same command again to finish`
-- `--operation-id string The UUID for this endorsement; by default aw continues the same unfinished request or starts a new one`
-- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
-- `--replace string The id of an earlier unfinished endorsement of this root, which stays kept, to ask for a separately approved one`
-- `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
 
 ## `id grant`
 
@@ -956,42 +927,6 @@ Flags:
 - `--namespace string Namespace domain (e.g. acme.com)`
 - `--origin string Canonical aweb server origin (e.g. https://aweb.acme.com)`
 
-## `id operation`
-
-### `id operation`
-
-Inspect protected operations this identity requested
-
-Subcommands:
-- `status` Read a protected operation's receipt without performing it
-
-Flags:
-- `-h, --help help for operation`
-
-## `id operation status`
-
-### `id operation status`
-
-Read, once, the receipt of a protected operation this identity requested at the
-service named by --protected-profile. Nothing is prepared, executed, approved or
-resumed, and aw's own saved request is left as it is. The service may record an
-outcome that is already confirmed; it never starts or extends anything for a read.
-
-The state is the service's receipt: pending (with its reason and deadline),
-committed (its result, which this read does not verify), refused or unknown
-(with a code), or none when the service holds no such operation for this
-requester in that scope. none does not prove an earlier request never took
-effect elsewhere. A read that is refused or cannot be made is an error, not a
-state.
-
-A request aw saved is read under the profile's one binding for its scope; without
-one, the profile must have exactly one binding.
-
-Flags:
-- `-h, --help help for status`
-- `--operation-id string The UUID of the operation to read`
-- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
-
 ## `id parent`
 
 ### `id parent`
@@ -1169,8 +1104,6 @@ holders, service projection, or diagnostics.
 Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
-- `admission-policy` Read a protected team's agent admission policy from its protected service
-- `admit` Admit an agent to a protected team through its protected service, as the endorsed root
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
 - `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
@@ -1183,7 +1116,6 @@ Subcommands:
 - `members` List a team's members from AWID certificates
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
-- `remove-agent` Remove an agent from a protected team through its protected service, as the endorsed root or with the owner's approval
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
 - `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
@@ -1256,52 +1188,6 @@ Flags:
 - `--name string Member name to use with --did`
 - `--namespace string Namespace domain`
 - `--team string Team name`
-
-## `id team admission-policy`
-
-### `id team admission-policy`
-
-Read a team's agent admission policy from the protected service named by
---protected-profile, proving this identity's current key.
-
-The answer says whether the team is protected or legacy and, for a protected
-team, the immutable policy version and digest an admission binds. A protected
-team without a policy refuses admission_policy_missing: the operator provisions
-or approves one; aw never creates it. A read that cannot be answered refuses
-receipt_unavailable and never means the team has no policy.
-
-Flags:
-- `-h, --help help for admission-policy`
-- `--protected-profile string The operator-provisioned protected-service profile to read the policy from (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
-- `--team string The team (name:domain) whose policy to read; the profile must bind its controller`
-
-## `id team admit`
-
-### `id team admit`
-
-Admit one agent to a protected team as an ordinary member, through the protected
-service named by --protected-profile, proving this identity's key as the
-deployment's endorsed root. No human approves it: the service admits only within
-the team's admission policy, whose version and digest the caller names as read
-from aw id team admission-policy.
-
-Without --operation-id, aw keeps a new UUID before anything is sent, and running
-the same command again continues that request. With --operation-id, running
-again with the same id and the same inputs resumes that operation and returns its
-original certificate; changed inputs under the id refuse operation_conflict. The
-verified membership certificate is written to --certificate-out.
-
-Flags:
-- `--alias string The agent's member alias`
-- `--certificate-out string Where to write the agent's membership certificate`
-- `-h, --help help for admit`
-- `--member-id string The agent's did:aw, when it is a registered identity; omit for a local agent`
-- `--member-key string The agent's did:key`
-- `--operation-id string The UUID for this admission; by default aw continues the same unfinished request or starts a new one`
-- `--policy-digest string The admission policy digest the caller read (sha256:<hex>)`
-- `--policy-version int The admission policy version the caller read`
-- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
-- `--team string The protected team (name:domain)`
 
 ## `id team cleanup-cloud`
 
@@ -1416,10 +1302,10 @@ Flags:
 
 ### `id team install-cert`
 
-Install a team membership certificate file, such as the one `aw id team admit`
-wrote with --certificate-out, into the explicit --identity-home whose identity it
-names. The certificate is checked against the registry before anything is
-written; then `aw service init` connects the home's workspace.
+Install an issued team membership certificate file into the explicit
+--identity-home whose identity it names. The certificate is checked against
+the registry before anything is written; then `aw service init` connects
+the home's workspace.
 
 Running it again with the same certificate reports already_installed and
 completes an install that was interrupted. Refusals, with their --json codes:
@@ -1560,42 +1446,6 @@ Flags:
 - `--namespace string Namespace domain`
 - `--registry string Registry origin override`
 - `--team string Team name`
-
-## `id team remove-agent`
-
-### `id team remove-agent`
-
-Remove one agent's membership of a protected team, through the protected service
-named by --protected-profile, proving this identity's key as the deployment's
-endorsed root that admitted it. The membership is the one --certificate names:
-the certificate file aw id team admit wrote, or the agent home's installed copy.
-No human approves it, and nothing in the agent's home is changed.
-
-Without --operation-id, aw keeps a new UUID before anything is sent, and running
-the same command again continues that request. With --operation-id, running
-again with the same id and the same inputs resumes that operation and returns its
-receipt; changed inputs under the id refuse operation_conflict.
-
-With --owner-approved, the team's current owner approves the removal live, on
-the protected service's page, and any agent membership of the team can be
-removed, whoever admitted it. This identity asks as the registered requester the
-profile grants; it authorizes nothing itself. Name the membership with
---certificate, or with --team and --certificate-id, which reads the team's
-active listing at the profile's registry as this member. Running the same
-command again continues a removal not yet finished, even once its certificate
-has left the listing.
-
-Flags:
-- `--certificate string The agent's team certificate file`
-- `--certificate-id string With --owner-approved and --team: the certificate id, selected from the team's active listing`
-- `-h, --help help for remove-agent`
-- `--no-browser With --owner-approved: do not open a browser; the page is printed`
-- `--no-wait With --owner-approved: show the approval page and return; run the same command again to continue`
-- `--operation-id string The UUID for this removal; by default aw continues the same unfinished request or starts a new one`
-- `--owner-approved Remove with the team owner's live approval instead of as the endorsed root`
-- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
-- `--replace string With --owner-approved: the id of an earlier unfinished removal of this membership, which stays kept, to ask for a separately approved one`
-- `--team string With --owner-approved and --certificate-id: the team (name:domain) whose membership is removed`
 
 ## `id team remove-member`
 
@@ -2167,10 +2017,10 @@ Flags:
 ### `team admin log-key sign`
 
 Complete a log key record through exactly one route:
-  --team-key-did and --signature attach a signature produced elsewhere, such as by the
-  deployment's protected signer, after verifying it over the record's signing bytes;
-  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/ on
-  this machine, which is outside the route of a deployment whose signer holds that key.
+  --team-key-did and --signature attach a signature produced elsewhere, after
+  verifying it over the record's signing bytes;
+  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/
+  on this machine.
 With no route, or both, it refuses. The signed record is written to --out (or stdout).
 
 Flags:
@@ -4387,7 +4237,6 @@ Designate or revoke a holder of an app role, as the team owner
 
 Subcommands:
 - `designate` Designate a human member as a holder of an app role
-- `resume` Resume a protected role act whose prepare answer was lost, from its saved request
 - `revoke` End a holder's holding of an app role
 
 Flags:
@@ -4409,16 +4258,6 @@ Flags:
 - `--role string The app role, as its manifest names it`
 - `--yes Sign what is shown without asking`
 
-## `app role resume`
-
-### `app role resume`
-
-Resume a protected role act whose prepare answer was lost, from its saved request
-
-Flags:
-- `-h, --help help for resume`
-- `--protected-profile string The profile the operation was prepared through`
-
 ## `app role revoke`
 
 ### `app role revoke`
@@ -4426,11 +4265,8 @@ Flags:
 End a holder's holding of an app role
 
 Flags:
-- `--approver string With --protected-profile, the did:aw of the human who approves the act`
 - `-h, --help help for revoke`
 - `--principal string The holder's did:aw`
-- `--protected-profile string Prepare the act at the protected service this operator-provisioned profile names; the controlling human approves it there`
-- `--replace string With --protected-profile, the id of an earlier unfinished request for this same act, which stays kept, to ask for a separately approved act`
 - `--role string The app role, as its manifest names it`
 - `--yes Sign what is shown without asking`
 

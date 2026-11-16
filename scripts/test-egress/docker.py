@@ -17,6 +17,20 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def runner_args(token, dns_ip, image, profile='portable'):
+    # Portable CI limits remain the default. CCX33 is opt-in until measured.
+    cpus, memory = {'portable': ('2', '8g'), 'ccx33': ('7', '16g')}[profile]
+    return ['run', '-d', '--init', '--user', '1000:1000', '--network', token,
+            '--dns', dns_ip, '--dns-search', '.',
+            '--add-host', '127.0.0.1.nip.io:127.0.0.1',
+            '--add-host', 'signer.example.com:127.0.0.1',
+            '--name', token + '-runner', '--cpus', cpus, '--memory', memory,
+            '--pids-limit', '2048',
+            '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres',
+            '-e', 'PGPASSWORD=postgres', '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',
+            image, 'sleep', 'infinity']
+
+
 def docker(*args):
     return subprocess.check_output(['docker', *args], text=True).strip()
 
@@ -68,6 +82,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--evidence', type=Path, required=True)
     parser.add_argument('--image', help='already prepared source/dependency image')
+    parser.add_argument('--profile', choices=('portable', 'ccx33'), default='portable',
+                        help='bounded runner resources; CCX33 is an explicit measurement profile')
     parser.add_argument('--command', nargs=argparse.REMAINDER, help='guard qualification command instead of make targets')
     parser.add_argument('targets', nargs='*', default=['test-server', 'test-awid', 'test-cli', 'test-channel', 'test-channel-name-live-contract', 'test-channel-core', 'test-pi-extension'])
     args = parser.parse_args()
@@ -117,14 +133,7 @@ def main():
         containers.append(dns)
         info = json.loads(docker('inspect', dns))[0]
         dns_ip = info['NetworkSettings']['Networks'][token]['IPAddress']
-        runner = docker('run', '-d', '--init', '--user', '1000:1000', '--network', token, '--dns', dns_ip,
-                        '--dns-search', '.',  # Do not expand reserved fixtures using the host's search suffix.
-                        '--add-host', '127.0.0.1.nip.io:127.0.0.1',
-                        '--add-host', 'signer.example.com:127.0.0.1',
-                        '--name', token + '-runner', '--cpus', '2', '--memory', '8g', '--pids-limit', '2048',
-                        '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres', '-e', 'PGPASSWORD=postgres',
-                        '-e', 'REDIS_URL=redis://127.0.0.1:6379/0',
-                        image, 'sleep', 'infinity')
+        runner = docker(*runner_args(token, dns_ip, image, args.profile))
         containers.append(runner)
         containers.append(docker(*postgres_args(runner)))
         containers.append(docker('run', '-d', '--network', 'container:' + runner,

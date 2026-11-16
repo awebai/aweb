@@ -15,15 +15,13 @@ everything below. Each row is what one artifact gives on its own.
 | Secrets' database **and** the matching local custody key (`secrets/custody-key`), or authorized KMS Decrypt on the key `secrets.kmsKeyId` names | **Every value it retains sealed under that key, in plaintext**, the 1Password backend's token included; with that token, the vault's items. | Decrypt outside every application policy. | `naapp/secrets/src/aweb_secrets/custody/sealing.py`, `providers.py`, `opening.py`; `naapp/secrets/deploy/OPERATIONS.md` |
 | Logs' database | Every retained event's content. | Purge any event's content, naming any act. Alter or drop rows, which verify reports. | `naapp/logs/deploy/README.md`; `naapp/secrets/deploy/OPERATIONS.md`, Logs row |
 | Logs' database **and** its `logs-chain` key | | Drop, reorder or purge events and re-sign receipts and checkpoints so that the chain verifies. Changing an event's content also needs its producer's key, which the secrets directory holds. Only receipts and checkpoints held outside the deployment show it. | `naapp/secrets/deploy/OPERATIONS.md`, Logs row |
-| The signer's database | Bindings, approvals, receipts, its local audit, the bootstrap and enrollment records, and the people's WebAuthn public credentials. No controller private key. | Alter those authority and credential records, the receipts and the audit. | `server/src/aweb/protected_signing/migrations/002_operator_bootstrap.sql`; `naapp-lib` passkey migrations |
-| The signer's controller custody file (`signer/private-controller/controller.key`) | | Everything the team's controller key signs: admit and remove members, sign team records, outside the signer's one supported operation. | `HOST.md`, "Controller key installation, backup and cutover" |
 | A service's member key (`aweb/<team>.key`, `secrets/awid-member-key`, `logs/awid-member-key`) | What that member reads in the team. | Act as that member. | |
 | The front's key (`front/key.pem`) | | Serve the deployment's origins as the deployment. | `descriptors/front.md` |
 | The agents' state (`agents.compose.stateDir`) and login | Every seat's key; the harness's locally retained session transcripts (under `/state/home/.claude` when that launch configuration is selected); each `aw` interaction and communication log; the harness login token. | Act as every seat, and as the harness account. | `deploy/team/access/agents.md` |
 | The services network | Plaintext HTTP between the services and plaintext PostgreSQL. Redis needs its password, held in `aweb/redis-url`. | | `deploy/team/compose.yaml` |
 
 A backup made with `teamctl backup` holds every database and all of the files
-above but two, which it leaves out: the signer's controller custody and the
+above except the
 agents' harness login, which is minted again rather than restored. Whoever
 holds the backup holds all the rest (`OPERATIONS.md`).
 

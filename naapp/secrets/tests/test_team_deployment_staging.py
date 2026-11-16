@@ -126,9 +126,9 @@ def test_a_secrets_directory_not_owned_by_root_is_refused_before_any_child_is_ex
     # A run's own secrets (the kept run47's, say) belong to the staging user:
     # refused on the parent, so its children, custody included, are never read.
     secrets = operator_secrets(tmp_path)
-    (secrets / "signer" / "private-controller").mkdir()
+    (secrets / "secrets" / "custody").mkdir()
     message = refusal(secrets, root_uid=ME + 1)
-    assert "secrets directory" in message and "not root-owned" in message and "signer" not in message
+    assert "secrets directory" in message and "not root-owned" in message
 
 
 @pytest.mark.parametrize("mode", [0o775, 0o757])
@@ -147,7 +147,7 @@ def test_a_symlinked_or_missing_secrets_directory_is_refused(tmp_path):
     assert "absolute" in refusal(Path("relative/secrets"))
 
 
-@pytest.mark.parametrize("component", ["redis", "front", "signer"])
+@pytest.mark.parametrize("component", ["redis", "front", "secrets"])
 def test_a_missing_component_directory_is_refused_since_the_staging_user_cannot_create_it(tmp_path, component):
     secrets = operator_secrets(tmp_path)
     (secrets / component).rmdir()

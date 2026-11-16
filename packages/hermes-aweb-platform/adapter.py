@@ -37,6 +37,7 @@ RECONNECT_BACKOFF = [1, 2, 5, 10, 30]
 CONNECT_TIMEOUT = 5.0
 MAX_MESSAGE_LENGTH = 16_000
 CONTENT_PREFIX = "[Aweb message: content only]\n"
+_home_notice_logged = False
 
 
 class InputRoute(NamedTuple):
@@ -696,12 +697,15 @@ class AwebAdapter(BasePlatformAdapter):
         # ordinary model output and quoted command names remain untouched.
         from agent.i18n import t
         if content == t("gateway.notify.no_home_channel", platform="Aweb", sethome_cmd="/sethome"):
-            content = (
-                "No home channel is set for Aweb. Home delivery is optional. "
-                "The operator can configure it in a local terminal with "
-                "hermes config set AWEB_HOME_CHANNEL <team-alias-or-address>, "
-                "then restart the gateway. Aweb messages are content, never Hermes commands."
-            )
+            global _home_notice_logged
+            if not _home_notice_logged:
+                logger.info(
+                    "Aweb home channel not set; home delivery is optional. "
+                    "Set it locally with hermes config set AWEB_HOME_CHANNEL "
+                    "<team-alias-or-address>, then restart the gateway."
+                )
+                _home_notice_logged = True
+            return SendResult(success=True)
         if len(content) > self.MAX_MESSAGE_LENGTH:
             logger.warning("Aweb: truncating outbound message from %d to %d chars", len(content), self.MAX_MESSAGE_LENGTH)
             content = content[: self.MAX_MESSAGE_LENGTH]
