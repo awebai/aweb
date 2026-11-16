@@ -60,7 +60,7 @@ func TestInitGlobalExpiredInvitePreservesExistingHome(t *testing.T) {
 	}
 }
 
-func TestInitGlobalJoinFromLocalParentRefusesBeforeSubmissionAndResumes(t *testing.T) {
+func TestInitGlobalJoinFromLocalParentRefusesBeforeInviteOrHomeWrites(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	home := t.TempDir()
@@ -73,8 +73,13 @@ func TestInitGlobalJoinFromLocalParentRefusesBeforeSubmissionAndResumes(t *testi
 	pub, key, _ := awid.GenerateKeypair()
 	did, stable := awid.ComputeDIDKey(pub), awid.ComputeStableID(pub)
 	const team = "shared:example.com"
-	var previews, accepts atomic.Int32
+	var previews, accepts, creates atomic.Int32
 	service := newLocalHTTPServerHandlerWithURL(t, func(origin string, w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/spawn/create-invite" {
+			creates.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "token": "aw_inv_explicit_source", "id_tree": map[string]any{"v": 1, "issuer_id": parent, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
+			return
+		}
 		if r.URL.Path != "/api/v1/spawn/invite-preview" {
 			accepts.Add(1)
 			http.Error(w, "must refuse before submission", 500)
@@ -93,10 +98,7 @@ func TestInitGlobalJoinFromLocalParentRefusesBeforeSubmissionAndResumes(t *testi
 	if err := awid.SaveSigningKey(filepath.Join(root, "signing.key"), key); err != nil {
 		t.Fatal(err)
 	}
-	state := &initInviteRecovery{Source: source, TeamID: team, Alias: "child", Scope: "global", Token: "aw_inv_explicit_source", Origin: service.URL, DIDKey: did}
-	if err := state.save(filepath.Join(root, initInviteRecoveryFile)); err != nil {
-		t.Fatal(err)
-	}
+	before := snapshotJoinFiles(t, root)
 	for attempt := 0; attempt < 2; attempt++ {
 		command := exec.CommandContext(ctx, bin, "init", "--join-from", source, "--global", "--name", "child", "--json")
 		command.Dir, command.Env = target, append(testCommandEnv(home), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AW_NO_UPDATE_CHECK=1")
@@ -104,13 +106,12 @@ func TestInitGlobalJoinFromLocalParentRefusesBeforeSubmissionAndResumes(t *testi
 		if err == nil || !strings.Contains(string(out), "unregistered_parent") || !strings.Contains(string(out), "aw id parent request --human") || !strings.Contains(string(out), "registered source") {
 			t.Fatalf("explicit local parent: %v\n%s", err, out)
 		}
-		retained, err := loadHostedInviteCreation(filepath.Join(root, hostedInviteRecoveryFile))
-		if err != nil || retained == nil || !retained.ParentFromSource || retained.MintedKey {
-			t.Fatalf("lost explicit source on resume: %v", err)
+		if after := snapshotJoinFiles(t, root); !reflect.DeepEqual(before, after) {
+			t.Fatalf("impossible parent choice changed the existing home: before=%v after=%v", before, after)
 		}
 	}
-	if accepts.Load() != 0 || previews.Load() != 1 {
-		t.Fatalf("explicit-parent retry made preview=%d submit=%d calls", previews.Load(), accepts.Load())
+	if accepts.Load() != 0 || previews.Load() != 0 || creates.Load() != 0 {
+		t.Fatalf("impossible parent choice made create=%d preview=%d submit=%d calls", creates.Load(), previews.Load(), accepts.Load())
 	}
 }
 
