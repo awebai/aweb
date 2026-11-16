@@ -139,7 +139,7 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 	seed, _ := hex.DecodeString(v.Keys["root_agent"].SeedHex)
 	issuerKey := ed25519.NewKeyFromSeed(seed)
 	issuer := v.Keys["root_agent"].DIDKey
-	for _, scenario := range []string{"valid", "outage resume", "native issued later", "wrong parent", "bogus signature"} {
+	for _, scenario := range []string{"valid", "outage resume", "preview retry", "native issued later", "wrong parent", "bogus signature"} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			var available atomic.Bool
@@ -174,6 +174,10 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 				switch r.URL.Path {
 				case "/api/v1/spawn/invite-preview":
 					previews++
+					if scenario == "preview retry" && previews == 1 {
+						http.Error(w, "preview unavailable", 503)
+						return
+					}
 					mode := "host_managed"
 					if scenario == "native issued later" {
 						mode = "self_custodial"
@@ -233,6 +237,16 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 			origin = server.URL
 			opts := teamAcceptInviteOptions{Name: "child", Scope: "local", AwebURL: origin, Registry: registry, TXTResolver: resolver}
 			accepted, err := acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_local", opts)
+			if scenario == "preview retry" {
+				if err == nil || accepts != 0 {
+					t.Fatal("preview outage submitted membership")
+				}
+				pending, loadErr := loadHostedInviteCreation(filepath.Join(dir, ".aw", hostedInviteRecoveryFile))
+				if loadErr != nil || pending == nil || !pending.MintedKey {
+					t.Fatalf("preview retry lost fresh-key provenance: %+v %v", pending, loadErr)
+				}
+				accepted, err = acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_local", opts)
+			}
 			if scenario == "native issued later" {
 				if err == nil || accepts != 0 {
 					t.Fatal("native issuer absence did not pend before membership")
@@ -302,7 +316,11 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 			} else if err != nil || installed == nil || accepted.Output.Responsibility.Outcome != "no_human" || accepted.Output.IDRegistration != "not_required" {
 				t.Fatalf("accepted=%+v installed=%+v err=%v", accepted, installed, err)
 			}
-			if accepts != 1 || previews != 1 || writes.Load() != 0 {
+			wantPreviews := 1
+			if scenario == "preview retry" {
+				wantPreviews = 2
+			}
+			if accepts != 1 || previews != wantPreviews || writes.Load() != 0 {
 				t.Fatalf("previews=%d accepts=%d registry writes=%d", previews, accepts, writes.Load())
 			}
 		})
