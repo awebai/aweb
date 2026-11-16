@@ -1,12 +1,11 @@
 # Self-hosted key holder
 
-This is the first-path implementation of [the key holder](../docs/human-approval-architecture.md#the-key-holder).
+The holder implements [organisation key custody](../docs/human-approval-architecture.md#the-key-holder).
+ID issuance, approval-key enrollment and act approval are separate operations.
 The approval bytes and checks come from the pinned approval-service library.
-The joined service/browser journey is qualified separately under adcl.6.
 
 Install the locked source environment with `uv sync --frozen --project key-holder`.
 The pinned approval library is fetched from its public HTTPS repository; no GitHub credentials are required.
-Releases remain held; the SDK's current source label is not a release artifact.
 
 Create a **new** state directory inside a private parent directory:
 
@@ -21,58 +20,76 @@ generated inside the holder. Use `descriptor` to read a descriptor and
 `migrate` explicitly applies ordered holder-store migrations; serving never
 applies them. Mount the private state only into the holder, under its own UID.
 
-Start the JSON service (the audience is configured, never taken from Host):
+The default issuing rule is `operator`. No awsign configuration is required:
 
 ```sh
-uv run --frozen --project key-holder aweb-key-holder \
-  --state /private/holder/state \
-  --registry-origin https://api.awid.ai \
-  --origin https://holder.example.org \
-  --approval-origin https://awsign.com --rp-id awsign.com \
-  --grading passkey_only serve --bind 127.0.0.1 --port 8081
+aweb-key-holder --state /private/holder/state \
+  --registry-origin https://api.awid.ai --origin https://holder.example.org \
+  serve --bind 127.0.0.1 --port 8081
 ```
+
+The private operator command issues only a person's signed certificate:
+
+```sh
+aweb-key-holder --state /private/holder/state \
+  --registry-origin https://api.awid.ai --origin https://holder.example.org \
+  issue-person --person <did:aw> --identity-key <did:key>
+```
+
+The person registers that certificate with their own identity key. There is no
+enrollment or creation evidence. Agents cannot invoke this private command.
+To require approval for public human issuance, the operator persists the rule:
+
+```sh
+aweb-key-holder --state /private/holder/state configure --human-issuance approved
+```
+
+Then restart the same state volume with `--approval-origin https://awsign.com
+--rp-id awsign.com --grading passkey_only` in addition to the normal runtime
+flags. `approved` without this configuration refuses `approval_not_configured`.
+`configure --human-issuance operator` restores private issuance. In operator
+mode, `POST /v1/humans` explicitly refuses `human_issuance_operator`.
+The operator's `issue-person` command remains available in approved mode for
+the first person and recovery, and uses the same signature audit.
 
 Production operators can instead select `--grading hardware --mds-cache <path>`.
 That loads the shared pinned metadata policy and refuses unavailable input;
 it cannot fall back to passkey-only grading. The first gate's fixed minimum is
 passkey UV. There is no runtime rule-lowering command.
 
-The first path uses these interfaces:
+The enrollment and approval interfaces are:
 
-1. Operator-only `registry` reads one typed SDK request from stdin, submits it
-   to the pinned registry and returns its result. `--team <name>` selects an
-   owned team descriptor. Authorization headers remain inside this exchange.
-2. Operator-only `bootstrap --person <id> --identity-key <did:key>` prepares the
-   first person's signed intent. Live retries retain its original bounds;
-   an expired pending intent without evidence can be reissued for that person.
-   It cannot bootstrap a second person. The target must be a fresh ID-tree
-   enrollment, not an existing ID relabeled with creation evidence.
-3. The requester carries the intent to awsign. For controller bootstrap,
-   `authorize --person <id> --purpose <enrollment-purpose> --issued-at <unix>`
-   reads the exact service body from stdin and returns `{"authorization":…}`.
-   This supplies the narrow `approval.Client.Authorize` callback; it accepts
-   only this stored bootstrap's closed enrollment operations.
-4. Operator `bind --person <id> --registration-count <reported-count>` reads the
-   service's material answer from stdin. It verifies the raw registrations and
-   returns the binding and frozen confirmation request. `finish --person <id>`
-   consumes the assembled creation receipt from stdin and returns the service
-   activation body (I, B, C, E and chain). The subject registers its ID using
-   its own identity key. Then `activate --person <id>` checks committed public
-   identity before admitting this person as an approver.
-5. Later callers use `POST /v1/humans` with `person`, `identity_key` and
-   `approver`. They authenticate using aw's existing covering identity profile,
-   including `X-AWEB-DID-AW` and the current chain in `X-AWID-ID-Chain`. Current
-   IDs in this namespace may ask; an already activated, currently valid person
-   must approve. A missing enrollment projection is unavailable, never absence.
-6. The endpoint returns the shared 428. `aw id request` carries its request to
-   awsign and presents the shared presentation body back to the **same**
-   endpoint, signed by the **same** identity key. The holder verifies the
-   receipt and its own nonce, then atomically records the authorization and
-   pending certificate. An idempotent retry returns the retained intent.
-7. That requester completes the later enrollment with signed POSTs to
-   `/v1/enrollments/{person}/binding` (body: `material`, `registration_count`),
-   `/finish` (body: the creation receipt), and `/activate` (body: `{}`). Only
-   activation also accepts that exact new person's current key as its carrier.
+- `bootstrap --person <id> --identity-key <key>` prepares the first fresh
+  person's creation-with-enrollment intent. Approved `POST /v1/humans` uses the
+  generic 428 request/receipt/presentation path and returns the next person's
+  intent. Both name the target person's own current identity key as requester.
+- An existing person starts with `POST /v1/enrollments/{person}`, body
+  `{"requester":{"kind":"identity","id":"<person>","key":"<current key>"}}`.
+  The request must be signed by that person's own current identity key using
+  the covering HTTP profile. The holder verifies its current namespace and
+  exact committed certificate. Earlier controller epochs remain valid when
+  the registry validates them. A foreign person or the organisation controller
+  carrying somebody else's enrollment is refused.
+- The person carries the signed intent to awsign; their one `aw id human enroll`
+  command drives the browser registration and confirmation. After registration,
+  signed `POST /v1/enrollments/{person}/binding` takes `material` and the person's
+  reported `registration_count`. The holder independently verifies the same raw
+  registration before signing B. `/finish` takes the confirmation receipt;
+  `/activate` takes `{}` and checks committed current public identity.
+- New pending people need no certificate header for their own enrollment calls.
+  The holder checks the exact target ID/key against the registry key mapping;
+  this admission never applies to an act route. Committed people carry their
+  full checked chain. Every request uses the covering identity profile and
+  `X-AWEB-DID-AW`; committed chains use `X-AWID-ID-Chain`.
+- Creation emits the existing creation statement. Later enrollment emits
+  `human_enrolled_later`, with the current binding and confirmation commitment,
+  issuer-authenticated grade and issuer-clock `since`. It never changes how the
+  ID was created: "can approve since T (issuer's statement), grade G".
+  Any activated, currently valid person in the organisation, enrolled at creation
+  or later, may approve `human.add` when the issuing setting is `approved`.
+- The old private `authorize`/`bind`/`finish` controller workflow is retained for
+  outstanding controller-carried intents only. New enrollment does not call
+  the operator authorization callback.
 
 The enforcer never contacts awsign. A signed pending certificate or creation
 sidecar alone does not activate a person. Each returned signature has a durable
@@ -90,7 +107,7 @@ the completed ceremony's deadline.
 
 **Enroll two people before relying on this slice.** Holder-side
 replace/recreate is not implemented: losing the sole activated person's keys
-leaves nobody able to approve, and bootstrap remains closed. This slice also
+requires a private operator-issued fresh person if the identity key is also lost. This slice also
 has no local deactivation command. An approver ceases to qualify when current
 registry evidence rejects them, within the shared 60-second freshness bound.
 

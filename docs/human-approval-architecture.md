@@ -185,7 +185,8 @@ Issuing a person without an approval service is supported and yields an ID
 without evidence. The issuing setting is `operator` by default: a private
 operator command issues the ID. With awsign configured, an organisation may
 select `approved`, requiring an enrolled person's approval. Agents cannot issue
-people unattended in either mode.
+people unattended in either mode. Any activated, currently valid person of the
+organisation, enrolled at creation or later, may approve `human.add` in approved mode.
 
 The process that asks it to sign cannot read its memory or storage, cannot
 sign directly, and cannot change its rules. Its database permissions and
