@@ -201,6 +201,10 @@ exit "$status"
     def execute(self, server, timeout):
         self.deadline = time.monotonic() + timeout + 45
         self.run(
+            f"python3 {REMOTE}/operator/vm_gate/host_metrics.py {LOGS}/host-metrics-before.json",
+            "host-metrics-before",
+        )
+        self.run(
             f"nohup python3 {REMOTE}/operator/vm_gate/memory.py {LOGS}/memory.jsonl >{LOGS}/sampler.log 2>&1 </dev/null & echo $! >{LOGS}/sampler.pid",
             "sampler-start",
         )
@@ -223,6 +227,11 @@ exit "$status"
 
     def collect(self, server, timeout):
         self.deadline = time.monotonic() + timeout
+        self.run(
+            f"python3 {REMOTE}/operator/vm_gate/host_metrics.py {LOGS}/host-metrics-after.json",
+            "host-metrics-after",
+            check=False,
+        )
         self.run(
             f'if test -f {LOGS}/sampler.pid; then kill -TERM "$(cat {LOGS}/sampler.pid)"; fi; docker ps -a --no-trunc >{LOGS}/docker-after.txt; docker network ls >{LOGS}/networks-after.txt; docker volume ls >{LOGS}/volumes-after.txt',
             "after-state",
