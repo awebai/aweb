@@ -503,7 +503,9 @@ async def command(*args, data=None, cwd=None, env=None, timeout=120):
     return out
 
 
-async def human_command(home, args, *, actor=None, json_output=True):
+async def human_command(
+    home, args, *, actor=None, json_output=True, approval_ready=None
+):
     """Run the installed human client at a real PTY, with a real Secret Service.
 
     The fixture types only its disposable passphrase and browser-completion
@@ -528,13 +530,18 @@ async def human_command(home, args, *, actor=None, json_output=True):
                     r"Passphrase for that human key: ",
                     r"Register your key in that browser, then type yes to continue \[y/N\]: ",
                     r"Confirm your enrollment in that browser, then type yes to continue \[y/N\]: ",
+                    "Waiting for human approval at the person's known approval service.",
                     pexpect.EOF,
                 ],
                 async_=True,
             )
             transcript.append(child.before)
-            if found == 5:
+            if found == 6:
                 break
+            if found == 5:
+                if approval_ready is not None:
+                    approval_ready.set()
+                continue
             if found < 3:
                 child.sendline("disposable adcl6 human passphrase")
             elif found == 3:
@@ -616,12 +623,13 @@ class Person:
             self.home / ".awid" / "humans" / ORG / self.identity.removeprefix("did:aw:")
         )
 
-    async def aw(self, *args, actor=None, json_output=True):
+    async def aw(self, *args, actor=None, json_output=True, approval_ready=None):
         return await human_command(
             self.home,
             ["--human", self.identity, "--human-domain", ORG, *args],
             actor=actor,
             json_output=json_output,
+            approval_ready=approval_ready,
         )
 
 
@@ -1182,6 +1190,7 @@ async def driver():
                 "aw human add carries exact second-person approval through Chromium"
             ):
                 intent_path = work / "second-pending-intent.json"
+                approval_ready = asyncio.Event()
                 pending = asyncio.create_task(
                     first.aw(
                         "id",
@@ -1194,6 +1203,7 @@ async def driver():
                         "--out",
                         str(intent_path),
                         json_output=False,
+                        approval_ready=approval_ready,
                     )
                 )
                 try:
@@ -1225,6 +1235,22 @@ async def driver():
                     assert enrollment is not None and not enrollment.enrolled, (
                         "human_issued_before_approval"
                     )
+                    # R is retained before submission. Wait for aw's actual
+                    # successful submit/poll before login snapshots the UI list.
+                    ready = asyncio.create_task(approval_ready.wait())
+                    try:
+                        done, _ = await asyncio.wait(
+                            (ready, pending),
+                            timeout=90,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if pending in done:
+                            await pending
+                        assert ready in done, "requester_did_not_reach_approval_wait"
+                    finally:
+                        if not ready.done():
+                            ready.cancel()
+                            await asyncio.gather(ready, return_exceptions=True)
                     await first_browser.login(first.identity)
                     _, needs = make_needs_human(request, origin=SITE)
                     await first_browser.approve(
