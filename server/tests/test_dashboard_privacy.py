@@ -141,6 +141,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
             sock.bind((host, 0))
             base_url = f"{scheme}://{host}:{sock.getsockname()[1]}"
             app.state.public_origin = base_url
+            monkeypatch.setenv("AWEB_DISCOVERY_ORIGIN", base_url)
             server_tls = {"ssl_certfile": str(certificates.cert_file), "ssl_keyfile": str(certificates.key_file)} if certificates else {}
             server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none", **server_tls))
             serving = asyncio.create_task(server.serve(sockets=[sock]))
