@@ -27,7 +27,6 @@ from aweb_naapp.console.handoff_store import HandoffStore
 from aweb_naapp.runtime.passkeys import RelyingParty
 from tests.test_independent_protected_signer import DOMAIN, did
 from tests.test_protected_admission_native import admissions as admissions  # noqa: F401
-from tests.test_protected_boundary_retention_native import activate
 from tests.test_protected_endorse_page_browser import HOST, open_with_passkey
 from tests.test_protected_owner_initiation_native import independent_reader
 from tests.test_protected_owner_removal_native import revoked
@@ -44,7 +43,6 @@ async def owner_origin(a, tmp_path, *, headless=True):
     from aweb.protected_signing.owner import owner_router
 
     c = a.w.app
-    await activate(a, tmp_path)
     await apply_console_migrations(c.db)
     tls = make_certificates(tmp_path, [HOST], ["127.0.0.1"])
     with socket.socket() as listener:
