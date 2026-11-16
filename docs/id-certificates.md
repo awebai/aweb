@@ -224,7 +224,8 @@ requires a new local key plus member certificate, or registered enrollment that
 replaces the old local membership. Initial certification of a previously
 chainless local key is not re-parenting. Neither is the first certificate under
 a person for an agent whose only parent so far is its namespace (§6). Explicit
-registered enrollment may keep its private key and acquire a stable ID, without guessing its past. Local
+registered enrollment may keep its private key and acquire a stable ID, without
+guessing its past. Local
 descendants do not silently change their parent ID when that conversion occurs.
 
 ### Team-row human classification
@@ -1003,6 +1004,26 @@ accepts a parent source independent of the invite. `aw init --join-from`
 remains the shorthand for taking both from the same source; OATS spawn is
 unchanged. Existing identities are not re-parented by joining a team.
 
+Hosted invite creation accepts optional `for_human` (a `did:aw` person ID).
+Omission selects the issuer's verified nearest human or no condition; explicit
+null or an empty string is refused. The resolved value is stored with the invite
+and returned as `for_human: string | null` in creation and preview. A client
+requesting an explicit condition refuses if the service does not echo it.
+The bearer token cannot replace this stored condition. Hosted acceptance may
+carry top-level `id_chain`, bound to its authenticated joining key: this is
+membership only. The existing `id_tree` remains the fresh-child exchange;
+both paths must satisfy the same condition before membership is granted.
+Current registry evidence is required for a conditioned acceptance, including
+on the local controller path. Revoked or replaced person ancestry refuses;
+unavailable status gives `evidence_unavailable`, without admission fallback.
+
+`--parent <home>` is same-machine creation only. For a different-human invite
+without a chain on another machine, the refusal names the joiner's own parent
+request/import exchange, never the issuer as parent. The caller obtains that
+chain first, then joins from its key-and-chain home without prior membership.
+A fresh identity created by the invite issuer must also match the condition;
+a stable client cannot turn an invite for another person into its issuer's child.
+
 Creating a person's ID needs no approval service. Enrolling an approval key
 and approving an act are separate, optional operations, as defined in the
 [approval architecture](human-approval-architecture.md#creation-enrolment-and-approval).
@@ -1068,19 +1089,63 @@ or retroactively attach unrelated legacy agents.
 ### First adoption under a person
 
 An agent immediately under its organisation's namespace may be adopted once
-by a person of that organisation, keeping its ID and key. Recorded-creator or
-owner/admin authority is required. The person explicitly
+through the adoption path by a person of that organisation, keeping its ID and
+key. Recorded-creator or owner/admin authority is required. The person explicitly
 signs for that named agent and key under their checked session or local command.
 A chain already containing a person refuses adoption. An agent immediately
 under another agent is not adopted independently; only its namespace-parented
-root qualifies. Registered agents use the
-existing atomic re-parent. Local agents install the person-parented chain in
-place of the organisation chain. The old local certificate remains
-cryptographically valid and reports `no_human`. Existing descendants report
-`no_human` until their carried ancestry is refreshed. The refresh for an
-ancestor's new certificate is part of this work and must be shown by a run.
-An awsign root receipt is optional evidence on this
-same adoption, not a second parent-signing operation.
+root qualifies. An awsign root receipt is optional evidence on this same
+adoption, not a second parent-signing operation.
+
+Registered adoption requires the person's home domain to equal the agent's
+domain; cross-domain adoption of a registered agent is not supported.
+Registered adoption uses the existing atomic registry head replacement. Moving
+a registered agent between people remains the separate explicit re-parenting
+operation in §3, with the new parent's signature, subject key proof and expected
+head; it is not another adoption. A local agent that already has a person parent
+cannot be moved to another person. For its first adoption, it installs the
+person-parented chain in place of the organisation chain. The old local
+certificate remains cryptographically valid and reports `no_human` if presented.
+
+Existing descendants retain copies of the old ancestry until refreshed. They
+may report `no_human`, or refuse a superseded registered ancestor certificate.
+The commands below refresh same-domain descendants to the new ancestry.
+The refresh is explicit, level by level; it does not happen automatically.
+A deployment may instead respawn its agents under the adopted parent.
+
+For that one-time organization-only adoption, `parent request` accepts an
+installed chain only when it is exactly namespace → this agent in the
+installed certificate's own domain, and the requested parent is a registered
+identity. A local agent may request its first person in another domain. Import verifies that
+the new parent is a human, verifies the exact requested binding and refuses a
+second adoption, including an older outstanding request. A registered agent
+retains its working chain until the registry accepts replacement of its exact
+old head. `--no-register` retains the signed adoption response with registration
+pending; it leaves that working chain installed. A retry reuses the same
+response, invitation ID and expected head.
+
+Local children spawned before a same-domain adoption retain the old ancestry
+until refreshed.
+Use `aw id parent request --resign`, transfer to the actual parent for
+`aw id child receive` and `approve`, then `aw id parent import` on the child.
+This exchange also works when the parent's key did not rotate: it carries the
+parent's newly verified ancestry and keeps the child's ID, key and immediate
+parent. An unregistered parent proves its authority through its carried chain
+and exact signing key; it has no registry identity row. Repeat down the tree
+for local descendants. Use `aw id parent refresh` to fetch and verify current
+registered ancestry while preserving the local certificates beneath it. A
+registered agent uses that same command to refresh its whole chain without
+re-signing its own certificate.
+Branches with only local ancestors require the parent exchange above.
+
+After a local cross-domain adoption, existing children's old-domain certificates
+cannot be refreshed: re-signing keeps their domain and a chain cannot cross
+domains. Their old chains remain valid and report `no_human`; the parent's
+re-sign approval refuses with guidance to respawn under the adopted parent,
+without signing or installing a mixed-domain chain. The child cannot discover a
+local parent's changed domain from its carried copy alone, so request export
+may succeed; the parent detects it on approval. Children spawned after adoption
+use the person's domain and show that person.
 
 ### Self-custodial child requests and re-sign transport
 
@@ -1092,6 +1157,25 @@ host-managed invitation continues to use its host's existing invitation record
 and verified-account checks; presenting it on this file path refuses
 `invitation_mode_mismatch`. AWID is the registration/time witness, not the
 pending-request mailbox. Membership remains a separate operation.
+
+Hosted creation may advertise an additive public `creation_invitation` beside
+its existing team or invitation preview metadata:
+`{id,parent:{kind:"identity",id},domain,name,identity_scope}`. The checked creator
+session fixes this person parent, home domain and named child's local/global
+scope before the setup key or invite is redeemed. Its domain may differ from
+the membership team's namespace. A new client copies these exact fields into
+its existing `id_tree` request, adding `invitation_id` equal to the preview's
+`id`; the independent `request_id` identifies retries. It retains that selection
+and its child key before creation, verifies the returned chain against the
+selected parent and domain, and refuses changes on retry. An advertised null or
+malformed invitation refuses. Absence preserves the existing creation behavior.
+A named `init --admission-team-id` sends optional `creation:{name,identity_scope}`
+under its checked CLI login. Chosen-organization team creation can fix that same
+intent with `--first-agent-name` and `--first-agent-local` or
+`--first-agent-global`; without a named child it still returns an untyped
+membership invitation. Generic admission invitations remain unchanged.
+Released clients that still ask for namespace parentage continue to receive it;
+a setup credential's account association alone never selects a person signer.
 
 The child exports canonical UTF-8 JSON with exactly this wrapper:
 
@@ -1259,6 +1343,14 @@ human signing prompt retain their existing rules. For a human prepared on a
 different machine, the issuer fixes the invitation and parent BEFORE CSR
 export; key/DID preparation may precede that, but `--domain` alone cannot
 produce an issue CSR without its required invitation ID and parent.
+
+`aw id parent install <chain-file|->` installs an already-issued public chain
+in another home holding the same local key. It requires the leaf ID to equal
+that home's own did:key, verifies the whole chain against current authority,
+and accepts only an empty home or the identical installed chain. It has no
+outgoing-request requirement and cannot replace a different chain. This lets
+several homes sharing a local key carry the same verified certificate; it
+creates no new key, signature, registration or ancestry.
 
 The CLI surfaces are `aw id parent request` (issue or --resign),
 `aw id parent import <response>`, and `aw id child invite`, `receive <request>`,

@@ -12,6 +12,7 @@ import (
 const spawnAcceptInvitePath = "/api/v1/spawn/accept-invite"
 
 type SpawnCreateInviteRequest struct {
+	ForHuman         *string        `json:"for_human,omitempty"`
 	IDChain          map[string]any `json:"id_chain,omitempty"`
 	AliasHint        string         `json:"alias_hint,omitempty"`
 	AccessMode       string         `json:"access_mode,omitempty"`
@@ -20,6 +21,7 @@ type SpawnCreateInviteRequest struct {
 }
 
 type SpawnCreateInviteResponse struct {
+	ForHuman      *string            `json:"for_human"`
 	IDTree        *SpawnInviteIDTree `json:"id_tree"`
 	InviteID      string             `json:"invite_id"`
 	Token         string             `json:"token"`
@@ -46,17 +48,20 @@ type SpawnInviteIDTree struct {
 // SpawnInvitePreviewResponse carries public selection metadata, not a signature
 // or authorization to issue a child certificate.
 type SpawnInvitePreviewResponse struct {
-	IDTreePresent   bool               `json:"-"`
-	InviteID        string             `json:"invite_id"`
-	IDTree          *SpawnInviteIDTree `json:"id_tree"`
-	CanonicalTeamID string             `json:"canonical_team_id"`
-	IdentityScope   string             `json:"identity_scope"`
-	ServerURL       string             `json:"server_url"`
-	ExpiresAt       *string            `json:"expires_at"`
-	Status          string             `json:"status"`
+	ForHuman           *string               `json:"for_human"`
+	CreationInvitation *IDCreationInvitation `json:"creation_invitation,omitempty"`
+	IDTreePresent      bool                  `json:"-"`
+	InviteID           string                `json:"invite_id"`
+	IDTree             *SpawnInviteIDTree    `json:"id_tree"`
+	CanonicalTeamID    string                `json:"canonical_team_id"`
+	IdentityScope      string                `json:"identity_scope"`
+	ServerURL          string                `json:"server_url"`
+	ExpiresAt          *string               `json:"expires_at"`
+	Status             string                `json:"status"`
 }
 
 type SpawnAcceptInviteRequest struct {
+	IDChain            map[string]any                   `json:"id_chain,omitempty"`
 	IDTree             *IDTreeCreationRequest           `json:"id_tree,omitempty"`
 	Token              string                           `json:"token"`
 	Alias              string                           `json:"alias,omitempty"`
@@ -196,5 +201,7 @@ func (response *SpawnInvitePreviewResponse) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	_, response.IDTreePresent = fields["id_tree"]
-	return nil
+	inv, err := DecodeIDCreationInvitation(raw)
+	response.CreationInvitation = inv
+	return err
 }

@@ -204,6 +204,7 @@ Rules:
   must not mint a new `did:aw` merely because the identity joins another team.
 - A global join without an existing global identity should fail with guidance to
   claim/create a global identity first.
+
 - `aw init --join-from ...` and `aw init --admission-team-id ...` follow the same
   rule: local is the default, while `--global` is an opt-in to reuse the current
   self-custodial global identity. They do not silently downgrade `--global` to a
@@ -213,6 +214,65 @@ Rules:
   account id (`--expect-account`) chosen from `aw auth status --json`; the CLI
   sends it as `expected_account_id` and fails closed if the logged-in account or
   recorded owner does not match.
+
+A parent source and a team invite can be selected independently:
+`aw init --parent <creator-home> --invite <token>`, or
+`aw id team accept-invite --local --parent <creator-home> --token-stdin`.
+`aw team join` accepts the same `--parent` option. The creator home must be on
+this machine; its own key signs the fresh child's ID certificate. An existing
+chain is never changed by joining: omit `--parent` to reuse it. Local identities
+still join only their first team; use a global identity to reuse membership
+across teams.
+
+`aw team invite --for-human <did:aw>` and `aw id team invite --for-human <did:aw>`
+admit agents whose verified nearest human is that person. Without the option,
+the issuer's verified nearest human is the default; an issuer with none sets no
+condition. The dashboard's generic invite uses that same default. The condition
+is stored with the invite, never trusted from the bearer token, and is checked
+before membership is granted, including for an issuer-created fresh child.
+A conditioned join requires current registry evidence: a revoked or replaced
+person refuses, and unavailable status refuses with `evidence_unavailable`.
+There is no fallback to admission without this check.
+
+A definitive hosted human-condition refusal releases the pending join when no
+earlier submission is uncertain. The identity, key and chain remain available
+for a correct invite. An interrupted attempt or unavailable evidence keeps the
+original invite and selection for resumption.
+If a first submission timed out and its retry then returned 409, first confirm
+with the hosting service that the first attempt did not apply, then, with no
+join running, remove only `<identity-home>/hosted-invite-creation.json` (normally
+`.aw/hosted-invite-creation.json`) to abandon that pending attempt and use a
+correct invite.
+
+For teams whose key is on the host, this changes `--member-global` invites:
+when their issuer has a verified human, they previously carried no human
+condition. They now default to that human too. A registered identity without a
+current valid chain to that person is refused where it could previously join.
+To admit an agent regardless of whose it is, use the controller's own
+`aw id team add-member` on a host holding the team key, or a person's generic
+admission invite on a hosted team. There is deliberately no `anyone` value for
+`--for-human`.
+
+On another machine, an invite for a different human does not authorize the
+issuer to become the parent. First obtain a chain from the joiner's own creator
+with `aw id child invite`, `aw id parent request --domain <creator-domain>`,
+and `aw id parent import --domain <creator-domain>`, then retry the same join in
+that key-and-chain home. No prior team membership is required. The refusal
+names this exchange; it does not name the invite issuer as the parent.
+
+
+
+
+For a new local agent, `--join-from` completes the existing parent
+request/approve/import exchange when a hosted invite names the selected
+self-custodial source as its ID parent. The source may be a workspace directory
+or an explicit identity home; its verified ancestry is installed in the child
+before connection. A chainless source retains the ordinary unknown ancestry.
+Hosted invite acceptance on another machine uses the printed parent exchange
+before retrying the same invite.
+A global acceptor with its own current valid chain joins by membership only,
+including when the invite issuer is local. A global identity without a chain
+cannot obtain its parent certificate from a local `did:key` issuer.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
 <token>`. A hosted local accept into an explicit external `--identity-home`
