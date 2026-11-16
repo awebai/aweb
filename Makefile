@@ -184,9 +184,14 @@ test-signer-operation-names:
 	python3 scripts/check_signer_operation_names.py
 	python3 -m unittest discover -s scripts -p "test_signer_operation_names.py" -v
 
-test-sot-source-inventories: test-signer-operation-names
+test-sot-source-inventories: test-signer-operation-names test-retired-protection
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
+
+.PHONY: test-retired-protection
+test-retired-protection:
+	python3 scripts/check_retired_protection.py
+	python3 -m unittest discover -s scripts -p "test_check_retired_protection.py" -v
 
 .PHONY: test-identity-primitives
 test-identity-primitives:
