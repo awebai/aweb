@@ -5,9 +5,9 @@ ID issuance, approval-key enrollment and act approval are separate operations.
 The approval bytes and checks come from the pinned approval-service library.
 
 Install the locked source environment with `uv sync --frozen --project key-holder`.
-The approval library and matching post-deletion AWID SDK are pinned to immutable
-public Git sources; no GitHub credentials are required. At server release,
-replace the temporary SDK source with the released `awid-service` version.
+The approval library is pinned to a public Git commit; no GitHub credentials
+are required. The holder uses the adjacent `../awid` from this same checkout.
+The service's standalone development pin does not override that source.
 
 Create a **new** state directory inside a private parent directory:
 
@@ -61,8 +61,9 @@ Set `--mds-manifest FILE` to the operator-installed reviewed pin and
 `--mds-cache DIR` to its private artifact cache. The shared watcher checks the
 file each minute and installs only a fully verified, non-rollback replacement.
 It logs the seven-day expiry warning and failed reloads. A bad pin retains the
-previous snapshot only until its original expiry; it cannot select passkey-only
-grading. The initial bundled pin expires on 2026-12-01, or an input CRL's earlier
+previous snapshot only until its original expiry. Hardware-attested registration
+then refuses with a metadata error; unattested passkeys remain available. The
+watcher continues after a bad replacement; the policy remains hardware grading. The initial bundled pin expires on 2026-12-01, or an input CRL's earlier
 deadline. Operators install the maintainer-reviewed renewal before that date;
 the running holder observes the new file without restarting. The first gate's fixed minimum is
 passkey UV. There is no runtime rule-lowering command.
