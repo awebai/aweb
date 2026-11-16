@@ -124,10 +124,11 @@ code.
 A `credential` handoff grants nothing, so for it an unknown installation or
 role is refused only later, by the page's ceremony.
 
-### 1a. A session start by the holder's direct child (proposed; acxy.1/.2/.5)
+### 1a. A session start by the holder's direct child (proposed)
 
-Status: accepted direction (aweb 20173df8, Athena, servers, console,
-human-kind), folded into the next acxy.1 delta for one review; not frozen.
+Status: proposed under the retired human-assurance design (acxy); not frozen.
+Superseded by the human-approval architecture (aweb-adcl) and re-decided in
+adcl.5.
 
 A `session` start may be signed by H, as above, or by a requester Q: an agent
 whose freshly verified ID chain has H as its **direct** parent. This admits Q

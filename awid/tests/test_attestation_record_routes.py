@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from awid.attestation_records import sign_record
-from test_controller_request_v2_http import certificate_body, controller_app, keypair, send  # noqa: F401
+from test_controller_request_v2_http import certificate_body, keypair, send  # noqa: F401
 
 TEAM_ID = "base:local"
 BASE = "/v1/namespaces/local/teams/base"

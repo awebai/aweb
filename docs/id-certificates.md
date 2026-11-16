@@ -639,11 +639,10 @@ claim that a local member revocation is a global ID revocation.
 
 Org/team membership removal is a separate act: it ends that org's owner/role
 authority immediately under the host's transaction and never revokes a human
-ID shared with other orgs. Domain-ID offboarding uses the portable signer:
-hosted and BYOT operators use their own protected namespace signer for the
-current authorized human's live exact-act approval under the
-[human-assurance contract](human-assurance-contract.md). A session or admin
-label alone does not authorize that signature. If the inviter has left, the root
+ID shared with other orgs. Domain-ID offboarding is signed with
+the namespace key by its holder (the operator, or the organization's key
+holder) for the current authorized human. A session or admin label alone does
+not authorize that signature. If the inviter has left, the root
 signs. Retained branches must complete re-parenting before revoke; a partial
 failure is reported and must not be advertised as completed preservation.
 ID revocation is subject to the 60-second status bound, not instant worldwide
