@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# One disposable first-path composition. Execute only after coordinator plan GO.
+set -euo pipefail
+umask 0077
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+[[ $# == 2 ]] || { echo 'usage: e2e-adcl6-first-path.sh APPROVAL_GIT_ARCHIVE HOLDER_GIT_ARCHIVE' >&2; exit 2; }
+APPROVAL_ARCHIVE="$1"
+HOLDER_ARCHIVE="$2"
+[[ "$APPROVAL_ARCHIVE" = /* && -f "$APPROVAL_ARCHIVE" && "$HOLDER_ARCHIVE" = /* && -f "$HOLDER_ARCHIVE" ]] || { echo 'input archives must be existing absolute paths' >&2; exit 2; }
+PROJECT="aweb-adcl6-${RANDOM}-$$"
+BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
+[[ "$BIND_ROOT" = /* && -d "$BIND_ROOT" ]] || { echo 'AWEB_DOCKER_BIND_ROOT must be an existing absolute directory' >&2; exit 2; }
+RUNTIME="$(mktemp -d "$BIND_ROOT/aweb-adcl6.XXXXXX")"
+OUTPUT="${ADCL6_EVIDENCE_DIR:-$ROOT/../reports/$PROJECT}"
+mkdir -p "$OUTPUT"
+chmod 0700 "$OUTPUT"
+IMAGE="$PROJECT-runtime:journey"
+compose() { docker compose -p "$PROJECT" -f "$RUNTIME/compose.json" "$@"; }
+cleanup() {
+  primary=$?
+  trap - EXIT
+  cleanup_status=0
+  if [[ -f "$RUNTIME/compose.json" ]]; then
+    compose logs --no-color >"$OUTPUT/services.log" 2>&1 || cleanup_status=1
+    compose down -v --remove-orphans >"$OUTPUT/docker-cleanup.log" 2>&1 || cleanup_status=1
+    if docker image inspect "$IMAGE" >/dev/null 2>&1; then docker image rm "$IMAGE" >>"$OUTPUT/docker-cleanup.log" 2>&1 || cleanup_status=1; fi
+    for kind in container volume network; do
+      case "$kind" in
+        container) remaining="$(docker ps -aq --filter label=com.docker.compose.project="$PROJECT")" ;;
+        volume) remaining="$(docker volume ls -q --filter label=com.docker.compose.project="$PROJECT")" ;;
+        network) remaining="$(docker network ls -q --filter label=com.docker.compose.project="$PROJECT")" ;;
+      esac
+      [[ -z "$remaining" ]] || cleanup_status=1
+      printf '%s: %s\n' "$kind" "$remaining" >>"$OUTPUT/inventory.txt"
+    done
+  fi
+  for name in ca.crt adcl6.test.zone; do [[ ! -f "$RUNTIME/public/$name" ]] || cp "$RUNTIME/public/$name" "$OUTPUT/$name"; done
+  [[ ! -f "$RUNTIME/tls/server.crt" ]] || cp "$RUNTIME/tls/server.crt" "$OUTPUT/server.crt"
+  # Only public evidence and private receipt/act diagnostics are retained.
+  # Identity homes, browser profile and the holder's private volume are erased.
+  for name in inputs.json; do [[ ! -f "$RUNTIME/$name" ]] || cp "$RUNTIME/$name" "$OUTPUT/$name"; done
+  if [[ -d "$RUNTIME/work" ]]; then
+    for name in journey.json first-activation.json second-activation.json first-outside.json second-outside.json approval-record.json controller-public.json command-failure.stderr; do
+      [[ ! -f "$RUNTIME/work/$name" ]] || cp "$RUNTIME/work/$name" "$OUTPUT/$name"
+    done
+    [[ ! -d "$RUNTIME/work/public" ]] || cp -R "$RUNTIME/work/public" "$OUTPUT/public-exports"
+  fi
+  python3 - "$OUTPUT/outcome.json" "$primary" "$cleanup_status" <<'PY'
+import json,sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps({'primary_exit':int(sys.argv[2]),'cleanup_exit':int(sys.argv[3])})+'\n')
+PY
+  rm -rf "$RUNTIME"
+  [[ "$primary" -eq 0 && "$cleanup_status" -eq 0 ]] || exit 1
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+python3 "$ROOT/scripts/adcl6_first_path.py" prepare --runtime "$RUNTIME" --project "$PROJECT" --approval-archive "$APPROVAL_ARCHIVE" --holder-archive "$HOLDER_ARCHIVE"
+mkdir "$RUNTIME/tls"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=adcl6-fixture-CA -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign -keyout "$RUNTIME/tls/ca.key" -out "$RUNTIME/public/ca.crt" >"$OUTPUT/tls-build.log" 2>&1
+openssl req -newkey rsa:2048 -nodes -subj /CN=approval.adcl6.test -keyout "$RUNTIME/tls/server.key" -out "$RUNTIME/tls/server.csr" >>"$OUTPUT/tls-build.log" 2>&1
+cat >"$RUNTIME/tls/extensions" <<'EOF'
+subjectAltName=DNS:awid.adcl6.test,DNS:approval.adcl6.test,DNS:holder.adcl6.test
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+EOF
+openssl x509 -req -days 1 -in "$RUNTIME/tls/server.csr" -CA "$RUNTIME/public/ca.crt" -CAkey "$RUNTIME/tls/ca.key" -CAcreateserial -extfile "$RUNTIME/tls/extensions" -out "$RUNTIME/tls/server.crt" >>"$OUTPUT/tls-build.log" 2>&1
+chmod 0644 "$RUNTIME/public/ca.crt" "$RUNTIME/tls/server.crt"
+cp "$RUNTIME/public/ca.crt" "$RUNTIME/build/fixture-ca.crt"
+docker build --label com.docker.compose.project="$PROJECT" -t "$IMAGE" "$RUNTIME/build" >"$OUTPUT/image-build.log" 2>&1
+docker image inspect "$IMAGE" >"$OUTPUT/image.json"
+docker run --rm "$IMAGE" cat /package-inventory.txt >"$OUTPUT/package-inventory.txt"
+docker run --rm "$IMAGE" cat /wheel-hashes.txt >"$OUTPUT/wheel-hashes.txt"
+compose config >"$OUTPUT/compose-resolved.yml"
+compose run --rm -T --no-deps --user 0:0 holder sh -ec 'chown 1003:1003 /state; chmod 0700 /state' >"$OUTPUT/state-init.log" 2>&1
+compose up -d dns pg-awid pg-approval redis awid approval holder https >"$OUTPUT/startup.log" 2>&1
+compose run --rm -T --no-deps driver >"$OUTPUT/journey.log" 2>&1
+cat "$OUTPUT/journey.log"
