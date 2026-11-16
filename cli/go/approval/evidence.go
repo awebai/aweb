@@ -18,8 +18,6 @@ type Link struct {
 	ID          string `json:"id"`
 	Certificate string `json:"certificate"`
 	Key         string `json:"key,omitempty"`
-	// FirstKey is independently acquired from this ID's verified public log.
-	FirstKey string `json:"-"`
 }
 type Check struct {
 	Status string `json:"status"`
@@ -137,10 +135,8 @@ func CheckCreationEvidence(link Link, statement, receipt map[string]any, trust, 
 	if e != nil || verified != awid.Verified {
 		return fail("invalid", "signature_invalid")
 	}
-	if link.FirstKey == "" {
-		return fail("unavailable", "identity_log_unavailable")
-	}
-	if link.Key != link.FirstKey {
+	subjectKey, err := awid.ExtractPublicKey(link.Key)
+	if err != nil || awid.ComputeStableID(subjectKey) != link.ID {
 		return fail("invalid", "creation_key_inconsistent")
 	}
 	r.Statement = Check{"valid", "checked"}

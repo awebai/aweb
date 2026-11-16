@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"time"
 
 	proof "github.com/awebai/approval-service/verify"
@@ -11,41 +10,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-type evidenceTrust func(context.Context, []any, string, string, string) (*proof.Trust, string, error)
-
-// Reuse the shared verifier on one public observation, then read the first
-// key from that SAME genesis-verified log, never from the portable sidecar.
-func publicEvidenceTrust(client *awid.IDStatusClient) evidenceTrust {
-	return func(ctx context.Context, chain []any, person, key, domain string) (*proof.Trust, string, error) {
-		bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": chain}
-		evidence := client.IDChainEvidence(ctx, bundle, awid.IDChainSubject{ID: person, DIDKey: key}, domain)
-		if evidence == nil {
-			return nil, "", errors.New("identity_log_unavailable")
-		}
-		observed := time.Now().Unix()
-		checked, err := proof.DeriveTrust(chain, person, key, domain, proof.PublicObservation{Status: evidence.Status, NamespaceAuthority: evidence.NamespaceAuthority, AcquiredAt: observed, AgeSeconds: evidence.AgeSeconds}, observed)
-		if err != nil {
-			return nil, "", err
-		}
-		identities, _ := evidence.Status["identities"].([]any)
-		for _, value := range identities {
-			row, _ := value.(map[string]any)
-			if row["id"] != person {
-				continue
-			}
-			history, _ := row["key_history"].([]any)
-			if len(history) > 0 {
-				first, _ := history[0].(map[string]any)
-				entry, _ := first["entry"].(map[string]any)
-				firstKey, _ := entry["new_did_key"].(string)
-				if firstKey != "" {
-					return &checked, firstKey, nil
-				}
-			}
-		}
-		return nil, "", errors.New("identity_log_unavailable")
-	}
-}
+type evidenceTrust func(context.Context, []any, string, string, string) (*proof.Trust, error)
 
 // The export-side collection only associates portable E/C objects with an
 // already checked certificate. It never supplies a trust anchor or chain verdict.
@@ -137,7 +102,7 @@ func exportEvidenceReports(ctx context.Context, raw json.RawMessage, bundle awid
 		link.Key, _ = subject["key"].(string)
 		var trust *proof.Trust
 		if source != nil && link.Key != "" {
-			trust, link.FirstKey, _ = source(ctx, certificates[:i+1], id, link.Key, out.Domain)
+			trust, _ = source(ctx, certificates[:i+1], id, link.Key, out.Domain)
 		}
 		reports = append(reports, approval.CheckCreationEvidence(link, statement, receipt, trust, trust, time.Now().Unix()))
 	}

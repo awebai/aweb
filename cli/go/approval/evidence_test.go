@@ -1,7 +1,10 @@
 package approval
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	proof "github.com/awebai/approval-service/verify"
+	"github.com/awebai/aw/awid"
 	"strings"
 	"testing"
 )
@@ -16,7 +19,7 @@ func creationFixture(t *testing.T) (map[string]any, *proof.Trust) {
 }
 func TestCreationEvidenceReportsIssuerProofAndCurrentnessSeparately(t *testing.T) {
 	a, trust := creationFixture(t)
-	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: trust.IdentityKey}
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
 	statement := a["evidence"].(map[string]any)
 	receipt := a["creation_receipt"].(map[string]any)
 	checked := CheckCreationEvidence(link, statement, receipt, trust, trust, 1100)
@@ -42,7 +45,7 @@ func TestCreationEvidenceReportsIssuerProofAndCurrentnessSeparately(t *testing.T
 
 func TestCreationEvidenceContinuityFollowsCurrentSubject(t *testing.T) {
 	a, trust := creationFixture(t)
-	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: trust.IdentityKey}
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
 	statement := a["evidence"].(map[string]any)
 	receipt := a["creation_receipt"].(map[string]any)
 	checked := CheckCreationEvidence(link, statement, receipt, trust, trust, 1100)
@@ -68,7 +71,7 @@ func TestCreationEvidenceHardwareTextAttributesGradeToIssuer(t *testing.T) {
 
 func TestCreationEvidenceCurrentSubjectWithoutCheckedProofHasUnknownContinuity(t *testing.T) {
 	a, trust := creationFixture(t)
-	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: trust.IdentityKey}
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
 	statement := a["evidence"].(map[string]any)
 	raw, err := proof.Canonical(a["creation_receipt"])
 	if err != nil {
@@ -103,7 +106,7 @@ func TestCreationEvidenceTransitionProfileIsUnsupportedNotInvalid(t *testing.T) 
 	for _, mode := range []string{"unbroken", "assisted", "recreated"} {
 		t.Run(mode, func(t *testing.T) {
 			a, trust := creationFixture(t)
-			link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: trust.IdentityKey}
+			link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
 			statement := a["evidence"].(map[string]any)
 			statement["evidence"].(map[string]any)["transition"] = map[string]any{"mode": mode}
 			report := CheckCreationEvidence(link, statement, a["creation_receipt"].(map[string]any), trust, trust, 1100)
@@ -116,28 +119,40 @@ func TestCreationEvidenceTransitionProfileIsUnsupportedNotInvalid(t *testing.T) 
 		})
 	}
 }
-func TestCreationEvidenceRequiresOwnLogFirstKey(t *testing.T) {
-	for _, tc := range []struct{ name, firstKey, status, reason string }{
-		{"first key", "same", "valid", "checked"},
-		{"later key", "different", "invalid", "creation_key_inconsistent"},
-		{"log unavailable", "", "unavailable", "identity_log_unavailable"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			a, trust := creationFixture(t)
-			first := tc.firstKey
-			if first == "same" {
-				first = trust.IdentityKey
-			} else if first == "different" {
-				first = trust.Issuer
-			}
-			link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: first}
-			report := CheckCreationEvidence(link, a["evidence"].(map[string]any), a["creation_receipt"].(map[string]any), trust, trust, 1100)
-			if report.Statement.Status != tc.status || report.Statement.Reason != tc.reason {
-				t.Fatalf("first-key result: %+v", report)
-			}
-			if tc.name != "first key" && report.Continuity == "unbroken" {
-				t.Fatal("inconsistent creation gained continuity")
-			}
-		})
+
+// No registry reader is constructed or passed: this is an as-of Trust input
+// and the actual shared creation proof, with no separately acquired first key.
+func TestCreationEvidenceFirstKeyCheckNeedsNoRegistryReader(t *testing.T) {
+	a, trust := creationFixture(t)
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
+	report := CheckCreationEvidence(link, a["evidence"].(map[string]any), a["creation_receipt"].(map[string]any), trust, trust, 1100)
+	if report.Statement.Status != "valid" || report.Proof.Status != "valid" || report.Continuity != "unbroken" {
+		t.Fatalf("offline genesis check: %+v", report)
+	}
+}
+func TestCreationEvidenceRejectsSubjectKeyWhoseStableIDDiffers(t *testing.T) {
+	a, trust := creationFixture(t)
+	// A stable ID anchored in another first key, but a current subject key
+	// equal to this fixture's key: an issuer cannot label that initial creation.
+	issuerPub, issuerKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	trust.Person = awid.ComputeStableID(issuerPub)
+	trust.Issuer = awid.ComputeDIDKey(issuerPub)
+	trust.IssuerPublicKey = issuerPub
+	statement := a["evidence"].(map[string]any)
+	body := statement["evidence"].(map[string]any)
+	body["subject"].(map[string]any)["id"] = trust.Person
+	body["issuer"] = trust.Issuer
+	raw, err := proof.Canonical(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement["signature"] = base64.RawURLEncoding.EncodeToString(ed25519.Sign(issuerKey, append([]byte("aweb.human-id-evidence/1\n"), raw...)))
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
+	report := CheckCreationEvidence(link, statement, a["creation_receipt"].(map[string]any), trust, trust, 1100)
+	if report.Statement.Status != "invalid" || report.Statement.Reason != "creation_key_inconsistent" || report.Continuity == "unbroken" {
+		t.Fatalf("inconsistent initial creation: %+v", report)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	proof "github.com/awebai/approval-service/verify"
 	"github.com/awebai/aw/approval"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -189,7 +190,13 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 	}
 	opts.Status = status
 	if opts.EvidenceTrust == nil {
-		opts.EvidenceTrust = publicEvidenceTrust(status)
+		opts.EvidenceTrust = func(ctx context.Context, chain []any, person, key, domain string) (*proof.Trust, error) {
+			checked, err := proof.ReadTrust(ctx, status, chain, person, key, domain)
+			if err != nil {
+				return nil, err
+			}
+			return &checked, nil
+		}
 	}
 	opts.RegistryURL = "" // The route above already enforces the explicit override.
 	out, err := executeWhoReceived(ctx, message, opts)

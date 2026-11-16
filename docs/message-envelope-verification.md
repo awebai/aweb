@@ -52,9 +52,9 @@ profiles and malformed evidence inside valid JSON do not change the message or
 ID-chain verdict or exit status. Transition/adoption profiles are not implemented
 by this initial human-creation reader. An evidence body with a `transition` member
 reports "evidence profile unsupported", with unknown continuity, rather than
-invalid evidence. Initial creation without a transition must name the first key
-in that ID's independently verified public log; a different first key is
-`creation_key_inconsistent`, and an unavailable log is reported as unavailable.
+invalid evidence. Initial creation without a transition must name a subject key whose computed
+stable ID equals the person ID; mismatch is `creation_key_inconsistent`. This
+consistency check is local and requires no registry reader.
 The outer export rejects duplicate members,
 including escaped or case-insensitive names for the same field. Unrelated unknown
 outer fields and malformed JSON remain invalid.
