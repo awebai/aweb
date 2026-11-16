@@ -17,11 +17,7 @@ ARCHIVE = Path(__file__).parent / "fixtures" / "retired_lock_migrations"
 MODULES = {
     "awid": (ROOT / "awid/src/awid_service/migrations", "awid-service", 15),
     "hooks": (ROOT / "naapp-lib/src/aweb_naapp/hooks/migrations", "aweb_naapp_hooks", 2),
-    "signer": (
-        ROOT / "naapp-lib/src/aweb_naapp/runtime/protected_signer/migrations",
-        "aweb_naapp_protected_signer",
-        10,
-    ),
+
 }
 
 
@@ -58,21 +54,7 @@ async def seed(db, module: str, *, retired: bool) -> None:
             "(scope,team_id,nonce,act_sha256,expires_at) "
             "VALUES('app','ordinary:example.test','used-once','digest',NOW()+interval '1 hour')"
         )
-    else:
-        await db.execute(
-            "INSERT INTO {{tables.protected_signer_operations}} "
-            "(operation_id,handoff_id,requester,intent,request,digest,candidate_links,expires_at,scope,result) "
-            "VALUES('kept','handoff','requester',$1,$2,'digest','{}',NOW()+interval '1 hour','{}',$3::jsonb)",
-            b"intent",
-            b"request",
-            '{"kept":true}',
-        )
-        if retired:
-            await db.execute(
-                "UPDATE {{tables.protected_signer_operations}} SET retained_effect='{}' "
-                "WHERE operation_id='kept'"
-            )
-    if retired and module != "signer":
+    if retired:
         await db.execute(
             "INSERT INTO {{tables.protected_effect_receipts}} "
             "(operation_id,team_id,service_id,operation,variant,artifact_sha256,header_sha256) "
@@ -96,12 +78,6 @@ async def assert_cleanup_and_preserved_authority(db, module: str) -> None:
         assert await db.fetch_value(
             "SELECT nonce FROM {{tables.owner_act_nonces}} WHERE scope='app'"
         ) == "used-once"
-    else:
-        row = await db.fetch_one(
-            "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id='kept'"
-        )
-        assert row is not None and row["result"] == '{"kept": true}'
-        assert "retained_effect" not in row
 
 
 @pytest.mark.asyncio

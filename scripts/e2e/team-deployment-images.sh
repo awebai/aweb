@@ -35,13 +35,12 @@ build() {
 }
 
 build aweb "$sha" -f "$src/server/Dockerfile" "$src"
-build aweb-protected "$sha" -f "$src/server/Dockerfile" --build-arg AWEB_EXTRA=protected "$src"
 build secrets "$sha" -f "$src/naapp/secrets/Dockerfile" --build-arg SOURCE_COMMIT="$sha" "$src"
 build logs "$sha" -f "$src/naapp/logs/Dockerfile" --build-arg SOURCE_COMMIT="$sha" "$src"
 # The journey's test world: its registry, the aw machines and the approver's browser.
 build awid "$sha" -f "$src/awid/Dockerfile" "$src"
 build cli "$sha" -f "$src/scripts/federation-cli.Dockerfile" "$src"
-build chromium "$sha" -f "$src/naapp/secrets/e2e/protected/chromium.Dockerfile" "$src"
+build chromium "$sha" -f "$src/naapp/secrets/e2e/browser/chromium.Dockerfile" "$src"
 
 if [[ -n "$oats" ]]; then
   [[ -z "$(git -C "$oats" status --porcelain)" ]] || { echo "the OATS checkout has changes" >&2; exit 1; }

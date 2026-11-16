@@ -25,25 +25,10 @@ type Loopback struct {
 	server   *http.Server
 	codes    chan string
 
-	// wake is a governance completion: it carries only handoff_id, as a hint
-	// to read the receipt, and never a code (human-assurance-contract.md).
-	wake bool
-
 	mu        sync.Mutex
 	handoffID string
 	accepted  bool
 	closeOnce sync.Once
-}
-
-// ListenWake is a loopback for a governance approval: the browser's return
-// carries only the handoff id and wakes aw to read the receipt.
-func ListenWake() (*Loopback, error) {
-	l, err := ListenLoopback()
-	if err != nil {
-		return nil, err
-	}
-	l.wake = true
-	return l, nil
 }
 
 // ListenLoopback listens on a random port of 127.0.0.1.
@@ -114,17 +99,10 @@ func (l *Loopback) accept(r *http.Request) (string, bool) {
 	if err != nil || len(query["handoff_id"]) != 1 {
 		return "", false
 	}
-	code := ""
-	if l.wake {
-		if len(query) != 1 {
-			return "", false
-		}
-	} else {
-		if len(query) != 2 || len(query["code"]) != 1 || !canonicalToken(query["code"][0]) {
-			return "", false
-		}
-		code = query["code"][0]
+	if len(query) != 2 || len(query["code"]) != 1 || !canonicalToken(query["code"][0]) {
+		return "", false
 	}
+	code := query["code"][0]
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.accepted || l.handoffID == "" || query["handoff_id"][0] != l.handoffID {

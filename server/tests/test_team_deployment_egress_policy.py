@@ -12,25 +12,18 @@ spec.loader.exec_module(egress_policy)
 
 CONTROLLER = "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"
 CONFIG = {
-    "team": {"id": "devteam:example.com", "registryUrl": "https://registry.example.com"},
+    "team": {"id": "devteam:example.com", "registryUrl": "https://registry.example.com", "namespaceAuthorities": [{"domain": "example.com", "controllerDidKey": CONTROLLER}]},
     "aweb": {"publicOrigin": "https://aweb.example.com"},
-    "secrets": {"publicOrigin": "https://secrets.example.com"},
+    "secrets": {"publicOrigin": "https://secrets.example.com", "consoleOrigin": "https://approve.example.com"},
     "logs": {"publicOrigin": "https://logs.example.com"},
-    "signer": {"requestOrigin": "https://sign.example.com", "humanOrigin": "https://approve.example.com"},
     "agents": {"resolverIp": "172.30.0.2"},
     "egress": {"privateIngressAddresses": ["172.31.0.250"]},
 }
-PROFILE = {
-    "request_origin": "https://sign.example.com",
-    "human_origin": "https://approve.example.com",
-    "registry_origin": "https://registry.example.com",
-    "namespace_authorities": [{"domain": "example.com", "controller_did": CONTROLLER}],
-}
-INGRESS = {role: ["172.31.0.250"] for role in ("aweb", "secrets", "logs", "signer", "registry")}
+INGRESS = {role: ["172.31.0.250"] for role in ("aweb", "secrets", "logs", "registry")}
 
 
-def test_the_policy_names_exactly_the_five_origins_agents_use_at_their_pinned_addresses():
-    policy = egress_policy.derive(CONFIG, PROFILE, INGRESS, ["172.31.0.3", "172.31.0.4"])
+def test_the_policy_names_exactly_the_four_origins_agents_use_at_their_pinned_addresses():
+    policy = egress_policy.derive(CONFIG, INGRESS, ["172.31.0.3", "172.31.0.4"])
     assert policy == {
         "frontAddress": "172.30.0.2",
         "privateIngressAddresses": ["172.31.0.250"],
@@ -46,22 +39,9 @@ def test_the_policy_names_exactly_the_five_origins_agents_use_at_their_pinned_ad
             "aweb": {"origin": "https://aweb.example.com", "addresses": ["172.31.0.250"]},
             "secrets": {"origin": "https://secrets.example.com", "addresses": ["172.31.0.250"]},
             "logs": {"origin": "https://logs.example.com", "addresses": ["172.31.0.250"]},
-            "signer": {"origin": "https://sign.example.com", "addresses": ["172.31.0.250"]},
             "registry": {"origin": "https://registry.example.com", "addresses": ["172.31.0.250"]},
         },
     }
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("request_origin", "https://other-sign.example.com"),
-        ("registry_origin", "https://other-registry.example.com"),
-    ],
-)
-def test_a_profile_that_names_another_signer_or_registry_is_refused(field, value):
-    with pytest.raises(egress_policy.Refused, match=field):
-        egress_policy.derive(CONFIG, {**PROFILE, field: value}, INGRESS, [])
 
 
 @pytest.mark.parametrize(
@@ -70,10 +50,10 @@ def test_a_profile_that_names_another_signer_or_registry_is_refused(field, value
 )
 def test_each_origin_is_pinned_to_one_to_eight_distinct_ipv4_addresses(addresses):
     with pytest.raises(egress_policy.Refused, match="aweb"):
-        egress_policy.derive(CONFIG, PROFILE, {**INGRESS, "aweb": addresses}, [])
+        egress_policy.derive(CONFIG, {**INGRESS, "aweb": addresses}, [])
 
 
-POLICY = egress_policy.derive(CONFIG, PROFILE, INGRESS, ["172.31.0.6", "172.32.0.3"])
+POLICY = egress_policy.derive(CONFIG, INGRESS, ["172.31.0.6", "172.32.0.3"])
 IMAGES = {"agent": "registry.example/agent@sha256:" + "a" * 64, "egress": "registry.example/egress@sha256:" + "b" * 64}
 BACKENDS = {"postgres": "172.31.0.6", "redis": "172.32.0.3"}
 PROTECTED = ["/srv/team/secrets", "/var/lib/docker/volumes/team_postgres_data/_data", "/run/docker.sock"]
@@ -113,7 +93,7 @@ def test_the_boundary_plan_names_the_deployment_s_runtime_and_the_probe_s_creden
         ],
         "protectedSources": PROTECTED,
         "policy": POLICY,
-        "allowedPaths": {"aweb": "/ready", "secrets": "/ready", "logs": "/ready", "signer": "/readyz", "registry": "/health"},
+        "allowedPaths": {"aweb": "/ready", "secrets": "/ready", "logs": "/ready", "registry": "/health"},
         "deniedBackends": [
             {"role": "postgres", "address": "172.31.0.6", "port": 5432},
             {"role": "redis", "address": "172.32.0.3", "port": 6379, "controlNetwork": "team_backend"},
@@ -169,24 +149,24 @@ def with_external(external: dict) -> dict:
 
 
 def test_the_external_roles_name_only_their_fixed_origins_and_the_operator_s_resolvers():
-    policy = egress_policy.derive(with_external(EXTERNAL), PROFILE, INGRESS, [])
+    policy = egress_policy.derive(with_external(EXTERNAL), INGRESS, [])
     assert policy["externalTargets"] == {
         "model": {"origin": "https://api.anthropic.com"},
         "source": {"origin": "https://github.com"},
     }
     assert policy["externalResolverAddresses"] == ["9.9.9.9", "149.112.112.112"]
-    assert set(policy["targets"]) == {"aweb", "secrets", "logs", "signer", "registry"}
+    assert set(policy["targets"]) == {"aweb", "secrets", "logs", "registry"}
 
 
 def test_a_role_left_off_is_not_an_external_target():
     policy = egress_policy.derive(with_external({"model": True, "source": False, "resolvers": ["9.9.9.9"]}),
-                                  PROFILE, INGRESS, [])
+                                  INGRESS, [])
     assert policy["externalTargets"] == {"model": {"origin": "https://api.anthropic.com"}}
 
 
 def test_without_external_roles_the_policy_has_no_external_fields():
     for config in (CONFIG, with_external({"source": False, "model": False})):
-        policy = egress_policy.derive(config, PROFILE, INGRESS, [])
+        policy = egress_policy.derive(config, INGRESS, [])
         assert "externalTargets" not in policy and "externalResolverAddresses" not in policy
 
 
@@ -212,7 +192,7 @@ def test_without_external_roles_the_policy_has_no_external_fields():
 )
 def test_external_resolvers_are_one_to_four_distinct_public_ipv4_addresses_given_with_a_role(external, match):
     with pytest.raises(egress_policy.Refused, match=match):
-        egress_policy.derive(with_external(external), PROFILE, INGRESS, [])
+        egress_policy.derive(with_external(external), INGRESS, [])
 
 
 def test_a_resolver_cannot_be_one_of_the_deployment_s_own_addresses():
@@ -224,12 +204,11 @@ def test_a_resolver_cannot_be_one_of_the_deployment_s_own_addresses():
         (with_external({"model": True, "resolvers": ["203.0.113.9"]}), ["203.0.113.9"]),
     ):
         with pytest.raises(egress_policy.Refused, match="egress.external.resolvers: .* is one of the deployment's"):
-            egress_policy.derive(config, PROFILE, ingress, denied)
+            egress_policy.derive(config, ingress, denied)
 
 
-SERVICES = ["postgres", "redis", "aweb", "secrets", "logs", "signer", "front"]
-PUBLIC_REGISTRY = {**CONFIG, "team": {"id": "devteam:example.com"}}
-PUBLIC_PROFILE = {**PROFILE, "registry_origin": "https://api.awid.ai"}
+SERVICES = ["postgres", "redis", "aweb", "secrets", "logs", "front"]
+PUBLIC_REGISTRY = {**CONFIG, "team": {"id": "devteam:example.com", "namespaceAuthorities": CONFIG["team"]["namespaceAuthorities"]}}
 PUBLIC_ADDRESSES = {**INGRESS, "registry": ["104.21.0.10", "172.67.0.10"]}
 
 
@@ -240,17 +219,17 @@ def local_route(role: str) -> dict:
 def test_the_public_registry_is_probed_as_an_external_route_without_a_backend_log():
     # The deployment's default registry is the public one, which is no service
     # of the deployment: its route has a positive control and no log witness.
-    policy = egress_policy.derive(PUBLIC_REGISTRY, PUBLIC_PROFILE, PUBLIC_ADDRESSES, [])
+    policy = egress_policy.derive(PUBLIC_REGISTRY, PUBLIC_ADDRESSES, [])
     routes = egress_policy.ingress_routes(PUBLIC_REGISTRY, policy, SERVICES)
     assert routes == {
-        **{role: local_route(role) for role in ("aweb", "secrets", "logs", "signer")},
+        **{role: local_route(role) for role in ("aweb", "secrets", "logs")},
         "registry": {"path": "/health", "external": True},
     }
 
 
 def test_a_local_registry_route_keeps_its_backend_log():
     config = {**CONFIG, "team": {**CONFIG["team"], "registryRoute": "local"}}
-    policy = egress_policy.derive(config, PROFILE, INGRESS, [])
+    policy = egress_policy.derive(config, INGRESS, [])
     routes = egress_policy.ingress_routes(config, policy, [*SERVICES, "registry"])
     assert routes == {role: local_route(role) for role in egress_policy.ROLES}
 
@@ -258,13 +237,13 @@ def test_a_local_registry_route_keeps_its_backend_log():
 def test_a_local_registry_route_needs_the_registry_service():
     # A missing local registry never becomes an external route.
     config = {**CONFIG, "team": {**CONFIG["team"], "registryRoute": "local"}}
-    policy = egress_policy.derive(config, PROFILE, INGRESS, [])
+    policy = egress_policy.derive(config, INGRESS, [])
     with pytest.raises(egress_policy.Refused, match="registry: .*not a service of this deployment"):
         egress_policy.ingress_routes(config, policy, SERVICES)
 
 
 def test_an_external_registry_route_refuses_a_deployment_that_runs_a_registry():
-    policy = egress_policy.derive(PUBLIC_REGISTRY, PUBLIC_PROFILE, PUBLIC_ADDRESSES, [])
+    policy = egress_policy.derive(PUBLIC_REGISTRY, PUBLIC_ADDRESSES, [])
     # A deployment that ran its own registry before the route was declared
     # is told the setting that keeps it.
     with pytest.raises(egress_policy.Refused,
@@ -276,15 +255,15 @@ def test_an_external_registry_route_refuses_a_deployment_that_runs_a_registry():
 def test_an_external_registry_route_refuses_an_address_of_the_deployments_own(address):
     # The front, the agents' resolver or a denied backend: a registry reached
     # there is the deployment's own, and only its log could witness it.
-    policy = egress_policy.derive(PUBLIC_REGISTRY, PUBLIC_PROFILE, {**PUBLIC_ADDRESSES, "registry": [address]},
+    policy = egress_policy.derive(PUBLIC_REGISTRY, {**PUBLIC_ADDRESSES, "registry": [address]},
                                   ["172.31.0.3"])
     with pytest.raises(egress_policy.Refused, match=f"registry: .*{address}.*the deployment's own"):
         egress_policy.ingress_routes(PUBLIC_REGISTRY, policy, SERVICES)
 
 
-@pytest.mark.parametrize("role", ["aweb", "secrets", "logs", "signer"])
+@pytest.mark.parametrize("role", ["aweb", "secrets", "logs"])
 def test_every_other_route_is_local_and_needs_its_service(role):
-    policy = egress_policy.derive(PUBLIC_REGISTRY, PUBLIC_PROFILE, PUBLIC_ADDRESSES, [])
+    policy = egress_policy.derive(PUBLIC_REGISTRY, PUBLIC_ADDRESSES, [])
     with pytest.raises(egress_policy.Refused, match=f"{role}: .*not a service of this deployment"):
         egress_policy.ingress_routes(PUBLIC_REGISTRY, policy, [s for s in SERVICES if s != role])
 
@@ -293,7 +272,7 @@ def test_a_local_registry_route_refuses_a_registry_outside_the_deployments_priva
     # A registry declared local is reached only through the deployment's own
     # ingress, never at the public origin.
     config = {**CONFIG, "team": {**CONFIG["team"], "registryRoute": "local"}}
-    policy = egress_policy.derive(config, PROFILE, {**INGRESS, "registry": ["172.31.0.250", "104.21.0.10"]}, [])
+    policy = egress_policy.derive(config, {**INGRESS, "registry": ["172.31.0.250", "104.21.0.10"]}, [])
     with pytest.raises(egress_policy.Refused,
                        match="registry: team.registryRoute is local, but 104.21.0.10 is not one of the deployment's"
                              " private ingress addresses"):

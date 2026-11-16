@@ -1,13 +1,10 @@
-"""One browser page for app handoffs and protected governance.
+"""One browser page for app session and credential handoffs.
 
 The page selects only the stored purpose. The existing JSON routes admit the
 browser, bind its CSRF token and verify every ceremony and effect.
 """
 
-import json
-from html import escape
 from importlib.resources import files
-from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
@@ -18,9 +15,6 @@ from aweb_naapp.console.handoff_store import HandoffStore
 from aweb_naapp.css import CSS_SHA256
 
 _ASSETS = files("aweb_naapp.console.browser")
-
-if TYPE_CHECKING:
-    from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
 
 
 def _unavailable(error: HTTPException) -> HTMLResponse:
@@ -55,7 +49,6 @@ def handoff_page_router(
     *,
     store: HandoffStore,
     limiter: LoginLimiter,
-    protected_operations: "ProtectedOperationsHTTP | None" = None,
 ) -> APIRouter:
     router = APIRouter(route_class=ConsoleRoute)
     # A factory mounted by itself serves the same shared toolkit assets as
@@ -70,43 +63,10 @@ def handoff_page_router(
     async def stylesheet() -> Response:
         return Response(_ASSETS.joinpath("handoff.css").read_text(), media_type="text/css")
 
-    @router.get("/handoff-assets/canonical-json.mjs")
-    async def canonical_json() -> Response:
-        return Response(
-            files("aweb_naapp").joinpath("assets/canonical-json.mjs").read_text(),
-            media_type="text/javascript",
-        )
-
-    @router.get("/handoff-assets/protected-presentation.mjs")
-    async def protected_presentation() -> Response:
-        return Response(
-            files("aweb_naapp").joinpath("assets/protected-presentation.mjs").read_text(),
-            media_type="text/javascript",
-        )
-
-    @router.get("/handoff-assets/protected-display.mjs")
-    async def protected_display() -> Response:
-        return Response(
-            files("aweb_naapp").joinpath("assets/protected-display.mjs").read_text(),
-            media_type="text/javascript",
-        )
-
-    @router.get("/handoff-assets/operations.mjs")
-    async def protected_operation_table() -> Response:
-        table = {}
-        if protected_operations is not None:
-            from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
-
-            table = presentation_catalog()
-        return Response(
-            "export const operationTable = " + json.dumps(table) + ";\n",
-            media_type="text/javascript",
-        )
-
     @router.get("/handoff/{handoff_id}")
     async def page(handoff_id: str, request: Request) -> HTMLResponse:
         # The HTML contains only stored routing facts: UUID, purpose and the
-        # protected console's login scope/storage-key name. Payload and CSRF
+        # app's handoff identifier. Payload and CSRF
         # material still require the existing authenticated JSON ceremonies.
         try:
             await limiter.admit(request, "console.handoff")
@@ -116,27 +76,13 @@ def handoff_page_router(
                 "AND expires_at>clock_timestamp() AND completed_at IS NULL AND released_at IS NULL",
                 identifier,
             )
-            routing = None
-            if purpose is None and protected_operations is not None:
-                routing = await protected_operations.page_context(str(identifier))
-                if routing is not None:
-                    purpose = "governance"
-            if purpose not in ("credential", "session", "governance"):
-                raise HTTPException(403, "handoff_refused")
-            if purpose == "governance" and (
-                not isinstance(routing, dict)
-                or not isinstance(routing.get("b3_scope"), str)
-                or not routing["b3_scope"]
-                or not isinstance(routing.get("csrf_key"), str)
-                or not routing["csrf_key"]
-            ):
+            if purpose not in ("credential", "session"):
                 raise HTTPException(403, "handoff_refused")
         except HTTPException as error:
             if error.status_code not in (403, 429):
                 raise
             return _unavailable(error)
         credential = purpose == "credential"
-        governance = purpose == "governance"
         title = "Create a passkey" if credential else "Sign in with a passkey"
         explanation = (
             "Create a passkey for the identity below. This step alone does not grant access."
@@ -145,37 +91,6 @@ def handoff_page_router(
             "the terminal to continue."
         )
         action = "Create passkey" if credential else "Sign in with passkey"
-        data = ""
-        governance_fields = ""
-        if governance:
-            assert routing is not None  # Validated before leaving the HTML refusal boundary.
-            title = "Review this request"
-            # A mailed personal link opens the request directly; without one,
-            # the approver signs in first. The script chooses, and replaces
-            # this text with what the request asks for.
-            explanation = "Sign in with your passkey to see the request."
-            data = (
-                f' data-login-scope="{escape(routing["b3_scope"], quote=True)}"'
-                f' data-console-csrf-key="{escape(routing["csrf_key"], quote=True)}"'
-            )
-            # Juan 2026-11-13, via coordinator: the request leads, the
-            # fingerprint stays in sight and the full digest is one step away.
-            governance_fields = (
-                '<section id="handoff-governance" class="card" aria-labelledby="handoff-governance-title" hidden>'
-                '<h2 id="handoff-governance-title">What this request does</h2>'
-                '<ul id="handoff-consequences"></ul><dl id="handoff-names"></dl>'
-                '<dl id="handoff-facts"><dt>Requested by</dt><dd id="handoff-requested"></dd>'
-                '<dt>Expires</dt><dd id="handoff-expires"></dd>'
-                '<dt>Fingerprint</dt><dd id="handoff-fingerprint"></dd></dl>'
-                '<details id="handoff-details"><summary>Technical details</summary>'
-                '<dl id="handoff-technical"></dl>'
-                '<dl><dt>Act</dt><dd id="handoff-act"></dd>'
-                '<dt>Full digest</dt><dd id="handoff-digest"></dd></dl>'
-                "<details><summary>View the frozen operation</summary>"
-                '<pre id="handoff-payload"></pre></details></details></section>'
-            )
-        # A governance request may reach a person who has no terminal at all.
-        eyebrow = "" if governance else '<p class="handoff-eyebrow">Terminal request</p>'
         return HTMLResponse(
             '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
@@ -183,9 +98,9 @@ def handoff_page_router(
             f'<link rel="stylesheet" href="/css/aweb.{CSS_SHA256[:12]}.css">'
             '<link rel="stylesheet" href="/handoff-assets/handoff.css">'
             '<script type="module" src="/handoff-assets/handoff.js"></script></head>'
-            f'<body data-handoff-id="{identifier}" data-purpose="{purpose}"{data} data-handoff-state="loading">'
+            f'<body data-handoff-id="{identifier}" data-purpose="{purpose}" data-handoff-state="loading">'
             '<main class="handoff">'
-            f"{eyebrow}"
+            '<p class="handoff-eyebrow">Terminal request</p>'
             f'<h1 id="handoff-title" tabindex="-1">{title}</h1><p id="handoff-explanation">{explanation}</p>'
             '<p class="handoff-origin">On <span id="handoff-origin"></span></p>'
             '<section id="handoff-scope" class="card" aria-label="Requested identity and role" hidden>'
@@ -194,13 +109,10 @@ def handoff_page_router(
             '<dt>Installation</dt><dd id="handoff-installation"></dd>'
             '<dt id="handoff-requester-label" hidden>Requested by</dt>'
             '<dd id="handoff-requester" hidden></dd></dl></section>'
-            f"{governance_fields}"
             '<p id="handoff-status" role="status" aria-live="polite" tabindex="-1">Preparing your request…</p>'
-            '<p id="handoff-choice-note" hidden>Both choices ask for your passkey.</p>'
             '<div class="handoff-choices">'
             f'<button id="handoff-action" class="btn primary" type="button" disabled>{action}</button>'
-            '<button id="handoff-deny" class="btn secondary" type="button" hidden>Deny</button></div>'
-            '<p id="handoff-outcome-text" hidden></p>'
+            "</div>"
             '<section id="handoff-allow" aria-labelledby="handoff-allow-title" hidden>'
             '<h2 id="handoff-allow-title" tabindex="-1">Allow this terminal session?</h2>'
             "<p>The terminal will be able to act as this identity in this role for up to 15 minutes.</p>"

@@ -10,18 +10,12 @@ records and its private ones.
 | Public: registered addresses, `did:aw` key-change logs and published team-server records. Private teams are not anonymously enumerable, but a lookup of an exact team name discloses that the team exists (`team_private` 403). | `awid/src/awid_service/routes/teams.py`, `did.py`, `dns_addresses.py` |
 | Private teams too, from its database whatever the API's privacy: the roster, the certificate blobs and the revocations | `awid/src/awid_service/routes/teams.py` |
 
-The current team-key lookup is trusted through the registry's HTTPS, not
-through an independently checked signature over that lookup. Replacing that
-answer can make forged team certificates pass aweb's, Secrets' and Logs'
-membership-signature check; their other request, identity, grant and policy
-checks still apply (`awid/src/awid/registry.py`,
-`server/src/aweb/team_auth_deps.py`, `naapp-lib/src/aweb_naapp/runtime/team_auth.py`).
-Signed records keep their own signatures, and this gives the registry neither
-the legitimate controller and member private keys nor the content of existing
-self-custodial `--e2ee` messages. The signer compares the registry's key with
-the one in its custody and refuses on a difference (`authority_changed`): there
-a substitution stops signing rather than forging it
-(`server/src/aweb/protected_signing/authority.py`).
+Team-key acceptance follows the [public team-key pin contract](../../../docs/trust-model.md#team-key-pins-approved-2026-11-12).
+The registry stores and serves controller-signed team-key acts; it does not gain
+controller signing authority. The other request, identity, grant and application
+policy checks remain separate. Database access does not give the operator the
+legitimate controller or member private keys or the plaintext of self-custodial
+`--e2ee` messages. The retired in-tree signer provides no additional boundary.
 
 ### The registry service token
 

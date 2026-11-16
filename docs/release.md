@@ -6,7 +6,7 @@ commit.
 
 | Tag | Published artifact |
 |---|---|
-| `server-vX.Y.Z` | PyPI `aweb`, and the `ghcr.io/awebai/aweb-server` and `ghcr.io/awebai/aweb-protected` images |
+| `server-vX.Y.Z` | PyPI `aweb`, and the `ghcr.io/awebai/aweb-server` image |
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
 | `aweb-naapp-vX.Y.Z` | PyPI `aweb-naapp`, the shared naapp toolkit in `naapp-lib/`, then its dev-only test support `aweb-naapp-testing` (`naapp-lib/testing/`) at the same version |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
@@ -419,31 +419,21 @@ so each needs only its own registry credentials. Runnerless publication without
 `--only` publishes both. Both selectors still validate the tagged manifest and
 RC-to-final source identity before checking out that exact commit.
 
-A server tag publishes two images from the same tree and lock:
-`ghcr.io/awebai/aweb-server`, the coordination server, and
-`ghcr.io/awebai/aweb-protected`, the protected signer a team deployment runs as
-`signer.image` (`deploy/team/descriptors/signer.md`). Both use `server/Dockerfile`
-with the repository root context; the signer is built with
-`AWEB_EXTRA=protected`, which installs the tree's `aweb-naapp[runtime]` at the
-version its lock records. Each builds `linux/amd64` and `linux/arm64` into one
-OCI archive. Both archives are built and checked before the registry is touched,
-so a failed build publishes neither. The shared exact OCI helper checks each
-complete archive and each platform's version/source labels before publication.
-Version tags are immutable: a different existing digest refuses; an identical
-one is adopted. The publisher reads back each published index and prints one
-`release-index` line per image with its repository, digest, source SHA and
-version. Deployments pin `ghcr.io/awebai/aweb-server@sha256:...` and
-`ghcr.io/awebai/aweb-protected@sha256:...` using those receipts.
+A server tag publishes `ghcr.io/awebai/aweb-server`, the coordination server,
+from `server/Dockerfile` and the repository root. It builds Linux amd64 and
+arm64 into one OCI archive, checked before the registry is touched. The exact
+OCI helper validates the archive and each platform's version/source labels.
+Version tags are immutable: a conflicting digest refuses, an identical one is
+adopted, and each published index is read back. The printed `release-index`
+receipt carries the repository, digest, source SHA and version. Deployments pin
+`ghcr.io/awebai/aweb-server@sha256:...` from that receipt.
 
-`python3 scripts/test_server_image_publish.py` runs the dispatch, identity,
-immutability, readback and archive-handoff controls without Docker.
-`make test-server-image-build` builds both images, each for both platforms,
-through the same publisher function, validates each archive with the exact
-helper, and runs the packaged imports and server CLI as the image's non-root user
-on the Docker daemon's **native** platform only. For the signer image it also
-imports the protected host and runtime, checks that the installed `aweb`,
-`aweb-naapp` and `awid-service` versions equal the tree's manifests, and runs
-`uvicorn --help`. Every runtime probe has a 120-second bound.
+`python3 scripts/test_server_image_publish.py` covers dispatch, identity,
+immutability, readback and archive handoff without registry writes.
+`make test-server-image-build` builds the archive through the same function,
+validates it with the exact helper, and runs the packaged imports and server CLI
+as the image's non-root user on the daemon's native platform. Runtime probes
+have a 120-second bound.
 A one-host PASS qualifies only the platform printed in its receipt.
 
 Complete platform qualification requires the same archive, index and source SHA
@@ -453,9 +443,6 @@ host (Docker buildx, skopeo and build support for both architectures):
 ```sh
 AWEB_SERVER_IMAGE_ARCHIVE_OUT=/evidence/server.oci.tar make test-server-image-build
 ```
-
-The signer image's archive moves the same way with
-`AWEB_SIGNER_IMAGE_ARCHIVE_OUT` and `AWEB_SIGNER_IMAGE_ARCHIVE_IN`.
 
 The output path must not already exist. Preserve the archive and its printed
 SHA-256/size/index/source receipt. Transfer it to the authorized ARM host and

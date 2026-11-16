@@ -450,31 +450,20 @@ OCI_REPOSITORIES = {
     "secrets-v": "ghcr.io/awebai/secrets",
     "logs-v": "ghcr.io/awebai/logs",
 }
-# Further images a tag publishes from the same tree. A server tag also publishes
-# the protected signer that a team deployment runs as signer.image: the same
-# Dockerfile and lock, built with the "protected" extra.
-OCI_EXTRA_IMAGES = {
-    "server-v": (("ghcr.io/awebai/aweb-protected", "protected"),),
-}
-
-
-def oci_images(prefix: str) -> tuple[tuple[str, str], ...]:
-    """The (repository, server extra) pairs a tag publishes, in publication order."""
-    return ((OCI_REPOSITORIES[prefix], ""),) + OCI_EXTRA_IMAGES.get(prefix, ())
+def oci_images(prefix: str) -> tuple[str, ...]:
+    """The image repositories published by this tag."""
+    return (OCI_REPOSITORIES[prefix],)
 
 
 def build_oci_archive(
-    root: Path, prefix: str, version: str, source_sha: str, archive: Path, extra: str = ""
+    root: Path, prefix: str, version: str, source_sha: str, archive: Path
 ) -> None:
     """Build the release bytes once; usable by platform qualification without publishing."""
-    if extra and extra not in {image_extra for _, image_extra in OCI_EXTRA_IMAGES.get(prefix, ())}:
-        raise PublishRefusal(f"{prefix} publishes no image with extra {extra}")
     if prefix == "server-v":
         build = [
             "docker", "buildx", "build", "--file", "server/Dockerfile",
             "--platform", "linux/amd64,linux/arm64", "--provenance=false", "--sbom=false",
-            *(["--build-arg", f"AWEB_EXTRA={extra}"] if extra else []),
-            "--label", "org.opencontainers.image.title=" + ("aweb protected signer" if extra else "aweb server"),
+            "--label", "org.opencontainers.image.title=aweb server",
             "--label", f"org.opencontainers.image.version={version}",
             "--label", f"org.opencontainers.image.revision={source_sha}",
             "--output", f"type=oci,dest={archive}", ".",
@@ -571,7 +560,7 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str, *, recov
         raise PublishRefusal("GHCR_USERNAME and GHCR_TOKEN are required")
     if not shutil.which("skopeo"):
         raise PublishRefusal("skopeo is required for exact OCI publication")
-    repositories = [repository for repository, _ in oci_images(prefix)]
+    repositories = list(oci_images(prefix))
     for repository in first_publication:
         if repository not in repositories:
             raise PublishRefusal(f"{prefix} publishes no {repository}; it publishes {', '.join(repositories)}")
@@ -581,12 +570,12 @@ def publish_oci(root: Path, prefix: str, version: str, source_sha: str, *, recov
         # Every image of the tag is built and checked before the registry is
         # touched, so a failed build publishes none of them.
         staged = []
-        for position, (repository, extra) in enumerate(oci_images(prefix)):
+        for position, repository in enumerate(oci_images(prefix)):
             staging = Path(temporary) / str(position)
             staging.mkdir()
             archive = staging / "image.oci.tar"
             identities = staging / "identities.json"
-            build_oci_archive(root, prefix, version, source_sha, archive, extra)
+            build_oci_archive(root, prefix, version, source_sha, archive)
             run(
                 root, "bash", "scripts/oci-exact-publish.sh", "inspect-staged",
                 "--archive", str(archive), "--version", version,
