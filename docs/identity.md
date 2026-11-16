@@ -234,6 +234,11 @@ A conditioned join requires current registry evidence: a revoked or replaced
 person refuses, and unavailable status refuses with `evidence_unavailable`.
 There is no fallback to admission without this check.
 
+A definitive hosted human-condition refusal releases the pending join when no
+earlier submission is uncertain. The identity, key and chain remain available
+for a correct invite. An interrupted attempt or unavailable evidence keeps the
+original invite and selection for resumption.
+
 For teams whose key is on the host, this changes `--member-global` invites:
 when their issuer has a verified human, they previously carried no human
 condition. They now default to that human too. A registered identity without a

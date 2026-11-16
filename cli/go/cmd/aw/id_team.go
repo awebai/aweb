@@ -2172,7 +2172,7 @@ func rollbackDefaultAddressClaimAfterCertificateFailure(
 	return fmt.Errorf("%w; newly claimed default address %s was rolled back", cause, address)
 }
 
-func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
+func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAcceptInviteOptions) (accepted *acceptedTeamInvite, resultErr error) {
 	scope := strings.TrimSpace(opts.Scope)
 	if scope == "" {
 		scope = awid.IdentityModeLocal
@@ -2300,6 +2300,17 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
 	}
+	submittedBefore := creation.AcceptAttempted != nil && *creation.AcceptAttempted
+	knownUnsubmitted := creation.AcceptAttempted != nil && !*creation.AcceptAttempted
+	defer func() {
+		// Never discard a retained answer or an earlier uncertain submission.
+		// Older records have no submission fact; their frozen proof can still
+		// be definitively refused locally, but a server answer is ambiguous.
+		localMismatch := awid.IDCertificateErrorCode(resultErr) == "human_mismatch"
+		if creation.ResponseJSON == "" && !submittedBefore && (knownUnsubmitted || localMismatch) {
+			resultErr = releaseRefusedHostedInvite(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root), resultErr)
+		}
+	}()
 	if opts.ParentHome != "" {
 		if err := completeExplicitInviteParent(ctx, workingDir, home.Root, token, opts.ParentHome); err != nil {
 			return nil, err
@@ -2424,6 +2435,11 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		resp = &awid.SpawnAcceptInviteResponse{}
 		err = json.Unmarshal([]byte(creation.ResponseJSON), resp)
 	} else {
+		attempted := true
+		creation.AcceptAttempted = &attempted
+		if err := creation.save(recoveryPath); err != nil {
+			return nil, err
+		}
 		resp, err = client.AcceptSpawnInvite(ctx, req)
 	}
 	if err != nil {

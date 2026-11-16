@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -82,6 +83,7 @@ func (e *hostedInviteSignaturePendingError) Error() string { return e.err.Error(
 func (e *hostedInviteSignaturePendingError) Unwrap() error { return e.err }
 
 type hostedInviteCreation struct {
+	AcceptAttempted       *bool                 `json:"accept_attempted,omitempty"`
 	ForHuman              *string               `json:"for_human,omitempty"`
 	MembershipChain       map[string]any        `json:"membership_chain,omitempty"`
 	IssuerCreationStarted bool                  `json:"issuer_creation_started,omitempty"`
@@ -130,7 +132,7 @@ func (state *hostedInviteCreation) save(path string) error {
 
 func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial) (*hostedInviteCreation, error) {
 	digest := sha256.Sum256([]byte(token))
-	state := &hostedInviteCreation{TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
+	state := &hostedInviteCreation{AcceptAttempted: new(bool), TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
 	if prior != nil {
 		if state.TokenHash != prior.TokenHash || state.AwebURL != prior.AwebURL || state.Alias != prior.Alias || state.Address != prior.Address || state.Scope != prior.Scope || state.NoAddress != prior.NoAddress || state.DIDKey != prior.DIDKey || state.StableID != prior.StableID {
 			return nil, errors.New("hosted invite retry changed the original token, child key, scope or creation selection")
@@ -289,4 +291,24 @@ func pendingHostedInviteRequester(opts idParentOptions) (*requester, error) {
 		return nil, errors.New("pending hosted invite child key changed")
 	}
 	return &requester{id: state.DIDKey, didKey: state.DIDKey, domain: domain, kind: "agent", dir: home.Root, expectedParent: expectedParent, signer: func(string) awid.IDCertificateSigner { return awid.KeySigner(key) }}, nil
+}
+
+// A condition refusal grants no membership. It releases the operation selection,
+// never the identity, signed ancestry, or a retained successful Cloud answer.
+func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) error {
+	definitive := awid.IDCertificateErrorCode(refusal) == "human_mismatch"
+	status, hasStatus := awid.HTTPStatusCode(refusal)
+	if hasStatus && status == http.StatusConflict && awid.RefusalCode(refusal) == "human_condition_mismatch" {
+		definitive = true
+	}
+	if !definitive {
+		return refusal
+	}
+	if err := removeHostedAcceptPendingMarker(markerPath); err != nil {
+		return errors.Join(refusal, fmt.Errorf("release refused invite marker: %w", err))
+	}
+	if err := os.Remove(recoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(refusal, fmt.Errorf("release refused invite recovery: %w", err))
+	}
+	return refusal
 }
