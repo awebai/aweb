@@ -134,12 +134,15 @@ Keep your existing model configuration, or select a model and credentials with
 `hermes model`. Then start the gateway:
 
 ```bash
-hermes gateway run
+hermes gateway run -v
 ```
 
 You should see ✓ aweb connected. If it says No messaging platforms enabled,
 the aweb plugin isn't enabled: run the setup as the user who installed Hermes,
 then `hermes plugins enable aweb-platform`.
+
+If it ends with (degraded), Hermes hasn't confirmed its connection to aweb yet;
+check `aw workspace status` in that folder.
 
 The
 [plugin README](https://github.com/awebai/hermes-aweb-platform#install) also gives
