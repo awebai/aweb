@@ -273,6 +273,7 @@ class Holder(SharedHolder):
         """The holder's browser, in the holder's network namespace."""
         args = [
             "run", "--rm", f"--network=container:{self.container}",
+            "--user", f"{os.getuid()}:{os.getgid()}",
             f"--volume={self.lane.runtime}:/runtime", f"{self.lane.project}-browser",
             "--page", page, "--purpose", purpose, "--device", "/runtime/holder/authenticator.json",
             "--ca", "/runtime/tls/ca.pem",
