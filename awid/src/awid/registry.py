@@ -746,7 +746,8 @@ class RegistryClient:
                 if context.role == "parent":
                     headers["X-AWEB-Parent-Timestamp"] = timestamp
                 if plan.format == "covering":
-                    headers["X-AWEB-Signed-Payload"] = base64.urlsafe_b64encode(context.signing_bytes()).rstrip(b"=").decode()
+                    signed = "X-AWEB-Parent-Signed-Payload" if context.role == "parent" else "X-AWEB-Signed-Payload"
+                    headers[signed] = base64.urlsafe_b64encode(context.signing_bytes()).rstrip(b"=").decode()
         mutation = plan.method != "GET"
         if mutation:
             await self._invalidate_controller_request(request, pin)
