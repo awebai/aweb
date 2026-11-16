@@ -27,7 +27,8 @@ type TeamInviteIDChild struct {
 }
 
 type TeamInvite struct {
-	IDChild *TeamInviteIDChild `json:"id_child,omitempty"`
+	ForHuman *string            `json:"for_human,omitempty"`
+	IDChild  *TeamInviteIDChild `json:"id_child,omitempty"`
 
 	InviteID      string `json:"invite_id" yaml:"invite_id"`
 	Domain        string `json:"domain" yaml:"domain"`

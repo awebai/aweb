@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
@@ -37,10 +38,11 @@ var teamAdmissionInviteCmd = &cobra.Command{
 }
 
 type teamAdmissionInviteRequest struct {
-	AliasHint         string `json:"alias_hint,omitempty"`
-	RequestID         string `json:"request_id"`
-	ExpiresInSeconds  int    `json:"expires_in_seconds"`
-	ExpectedAccountID string `json:"expected_account_id"`
+	Creation          *awid.IDCreationIntent `json:"creation,omitempty"`
+	AliasHint         string                 `json:"alias_hint,omitempty"`
+	RequestID         string                 `json:"request_id"`
+	ExpiresInSeconds  int                    `json:"expires_in_seconds"`
+	ExpectedAccountID string                 `json:"expected_account_id"`
 }
 
 type teamAdmissionInviteResponse struct {
@@ -113,6 +115,10 @@ func runTeamAdmissionInvite(ctx context.Context, cmd *cobra.Command) error {
 }
 
 func issueTeamAdmissionInvite(ctx context.Context, teamID, requestID, aliasHint string) (teamAdmissionInviteResponse, error) {
+	return issueTeamAdmissionInviteForCreation(ctx, teamID, requestID, aliasHint, nil)
+}
+
+func issueTeamAdmissionInviteForCreation(ctx context.Context, teamID, requestID, aliasHint string, creation *awid.IDCreationIntent) (teamAdmissionInviteResponse, error) {
 	teamID = strings.TrimSpace(teamID)
 	if teamID == "" {
 		return teamAdmissionInviteResponse{}, usageError("--team-id is required")
@@ -130,7 +136,7 @@ func issueTeamAdmissionInvite(ctx context.Context, teamID, requestID, aliasHint 
 		return teamAdmissionInviteResponse{}, err
 	}
 	path := strings.Replace(teamAdmissionInvitePathTemplate, "{team_id}", url.PathEscape(teamID), 1)
-	req := teamAdmissionInviteRequest{AliasHint: strings.TrimSpace(aliasHint), RequestID: requestID, ExpiresInSeconds: 600, ExpectedAccountID: expectedAccountID}
+	req := teamAdmissionInviteRequest{Creation: creation, AliasHint: strings.TrimSpace(aliasHint), RequestID: requestID, ExpiresInSeconds: 600, ExpectedAccountID: expectedAccountID}
 	var resp teamAdmissionInviteResponse
 	if err := postCLIAuthJSON(ctx, cfg.Issuer, path, cfg.AccessToken, req, &resp); err != nil {
 		if cliAuthErrorCode(err) == "cli_account_owner_mismatch" {

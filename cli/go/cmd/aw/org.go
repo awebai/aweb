@@ -210,10 +210,26 @@ func runOrgTeamCreate(cmd *cobra.Command, name string) error {
 	if org == "" || name == "" {
 		return usageError("--org and a team name are required")
 	}
-	for _, incompatible := range []string{"byot", "namespace", "registry", "service", "first-agent-name", "first-agent-local", "first-agent-global", "alias", "username", "home", "runtime", "library-url", "agent", "profile", "blueprint", "team"} {
+	for _, incompatible := range []string{"byot", "namespace", "registry", "service", "alias", "username", "home", "runtime", "library-url", "agent", "profile", "blueprint", "team"} {
 		if cmd.Flags().Changed(incompatible) {
 			return usageError("--%s cannot be combined with --org; chosen-org creation returns an invite without creating a local workspace", incompatible)
 		}
+	}
+	var creation *awid.IDCreationIntent
+	named, _ := cmd.Flags().GetString("first-agent-name")
+	if cmd.Flags().Changed("first-agent-name") || cmd.Flags().Changed("first-agent-local") || cmd.Flags().Changed("first-agent-global") {
+		if strings.TrimSpace(named) == "" {
+			return usageError("--first-agent-name is required for a named creation invitation")
+		}
+		normalized, err := normalizeIDCreateName(strings.TrimSpace(named))
+		if err != nil {
+			return err
+		}
+		scope, err := resolveTeamHumanCreateFirstAgentScope()
+		if err != nil {
+			return err
+		}
+		creation = &awid.IDCreationIntent{Name: normalized, IdentityScope: scope}
 	}
 	requestID, _ := cmd.Flags().GetString("request-id")
 	requestID = strings.TrimSpace(requestID)
@@ -236,11 +252,12 @@ func runOrgTeamCreate(cmd *cobra.Command, name string) error {
 	}
 	displayName, _ := cmd.Flags().GetString("display-name")
 	request := struct {
-		Org         string `json:"org"`
-		Name        string `json:"name"`
-		DisplayName string `json:"display_name,omitempty"`
-		RequestID   string `json:"request_id"`
-	}{org, name, strings.TrimSpace(displayName), requestID}
+		Creation    *awid.IDCreationIntent `json:"creation,omitempty"`
+		Org         string                 `json:"org"`
+		Name        string                 `json:"name"`
+		DisplayName string                 `json:"display_name,omitempty"`
+		RequestID   string                 `json:"request_id"`
+	}{creation, org, name, strings.TrimSpace(displayName), requestID}
 	var out hostedSiblingOutput
 	if err := postCLIAuthJSON(ctx, cfg.Issuer, "/api/v1/cli/teams", cfg.AccessToken, request, &out); err != nil {
 		return orgCommandError(cmd, fmt.Errorf("team create (request_id=%s; replay with the same --request-id and parameters): %w", requestID, err))

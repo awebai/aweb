@@ -708,6 +708,14 @@ func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T)
 		t.Fatalf("create=%t accept=%t connect=%t", sawCreateInvite, sawAccept, sawConnect)
 	}
 	assertInitJoinTarget(t, target, teamID, "target", acceptedDID, sourceBefore, source)
+	chain, err := awconfig.LoadInstalledIDChain(filepath.Join(target, ".aw"))
+	if err != nil || chain != nil {
+		t.Fatalf("chainless source unexpectedly issued a chain: chain=%+v err=%v", chain, err)
+	}
+	verdict, err := executeWho(context.Background(), whoOptions{WorkingDir: target})
+	if err != nil || verdict.Outcome != "unknown" {
+		t.Fatalf("chainless source ancestry=%+v err=%v", verdict, err)
+	}
 }
 
 func TestInitJoinFromControllerKeySuccessPreservesSourceAndConnectsTarget(t *testing.T) {
@@ -891,6 +899,13 @@ func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 			}
 			if !uuidV4PatternForTest.MatchString(req.RequestID) {
 				t.Fatalf("admission request_id %q is not a random (version 4) UUID", req.RequestID)
+			}
+			raw, _ := json.Marshal(req)
+			var wire map[string]any
+			json.Unmarshal(raw, &wire)
+			creation, _ := wire["creation"].(map[string]any)
+			if creation["name"] != "target" || creation["identity_scope"] != "local" {
+				t.Errorf("admission lost named intent: %v", wire)
 			}
 			if req.AliasHint != "target" || req.ExpectedAccountID != "acct-test" {
 				t.Fatalf("admission req=%+v", req)
