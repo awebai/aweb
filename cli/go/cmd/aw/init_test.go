@@ -892,6 +892,13 @@ func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 			if !uuidV4PatternForTest.MatchString(req.RequestID) {
 				t.Fatalf("admission request_id %q is not a random (version 4) UUID", req.RequestID)
 			}
+			raw, _ := json.Marshal(req)
+			var wire map[string]any
+			json.Unmarshal(raw, &wire)
+			creation, _ := wire["creation"].(map[string]any)
+			if creation["name"] != "target" || creation["identity_scope"] != "local" {
+				t.Errorf("admission lost named intent: %v", wire)
+			}
 			if req.AliasHint != "target" || req.ExpectedAccountID != "acct-test" {
 				t.Fatalf("admission req=%+v", req)
 			}

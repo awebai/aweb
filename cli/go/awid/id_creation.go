@@ -65,6 +65,13 @@ func DecodeIDTreeCreationResponse(raw []byte) (IDTreeCreationResponse, error) {
 	return response, nil
 }
 
+// IDCreationIntent fixes the child's name and scope when its creator asks a
+// hosted operator to prepare an invitation. It contains no parent authority.
+type IDCreationIntent struct {
+	Name          string `json:"name"`
+	IdentityScope string `json:"identity_scope"`
+}
+
 // IDCreationInvitation is public intent fixed by a checked person session
 // before a setup key or invite can be redeemed. It selects authority; it is
 // not a signature and cannot replace response-chain verification.

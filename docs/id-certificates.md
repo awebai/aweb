@@ -1060,6 +1060,11 @@ its existing `id_tree` request, adding `invitation_id` equal to the preview's
 and its child key before creation, verifies the returned chain against the
 selected parent and domain, and refuses changes on retry. An advertised null or
 malformed invitation refuses. Absence preserves the existing creation behavior.
+A named `init --admission-team-id` sends optional `creation:{name,identity_scope}`
+under its checked CLI login. Chosen-organization team creation can fix that same
+intent with `--first-agent-name` and `--first-agent-local` or
+`--first-agent-global`; without a named child it still returns an untyped
+membership invitation. Generic admission invitations remain unchanged.
 Released clients that still ask for namespace parentage continue to receive it;
 a setup credential's account association alone never selects a person signer.
 
