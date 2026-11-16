@@ -923,7 +923,7 @@ async def driver():
             }
             save(work / "public" / (subject.name + ".json"), export)
             script = (
-                "mkdir -p /tmp/fresh-home /tmp/fresh-cwd; cd /tmp/fresh-cwd; env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp/fresh-home TMPDIR=/tmp SSL_CERT_FILE=/public/ca.crt aw verify --registry "
+                "set -e; mkdir -p /tmp/fresh-home /tmp/fresh-cwd; cd /tmp/fresh-cwd; env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp/fresh-home TMPDIR=/tmp SSL_CERT_FILE=/public/ca.crt aw verify --registry "
                 + REGISTRY
                 + " --json /exports/"
                 + subject.name
