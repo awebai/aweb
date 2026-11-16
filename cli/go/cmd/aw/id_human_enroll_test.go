@@ -37,7 +37,10 @@ func TestHumanEnrollmentClientUsesFrozenAuthorizations(t *testing.T) {
 	for _, c := range corpus.Cases {
 		requester, _ := c["expected_requester"].(map[string]any)
 		purpose, _ := c["purpose"].(string)
-		if c["accept"] != true || requester["kind"] != "identity" || !strings.HasPrefix(purpose, "enrollment_") || c["test_signing_seed"] == nil {
+		// The callback uses the same frozen identity authorization producer on
+		// every service purpose. Pending-person enrollment vectors are supplied
+		// by the producer with its new HTTP admission path.
+		if c["accept"] != true || requester["kind"] != "identity" || c["test_signing_seed"] == nil {
 			continue
 		}
 		count++

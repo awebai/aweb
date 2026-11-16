@@ -26,6 +26,7 @@ key. Afterwards you may optionally run aw id human enroll, or create a portable
 message with aw id proof --message-file FILE for anyone to check with aw verify.`,
 	Args: cobra.ExactArgs(1), Annotations: map[string]string{humanCommandAnnotation: "prepared"},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		activeHuman.operation = "register your issued human certificate"
 		raw, err := readFileBounded(args[0], maxResponseBytes)
 		if err != nil {
 			return err
@@ -121,16 +122,7 @@ func registerHumanChain(ctx context.Context, human *humanParticipation, chain ma
 	signer := func(description string) awid.IDCertificateSigner {
 		return func(payload []byte) (string, []byte, error) { return human.sign(payload, description) }
 	}
-	err = registry.RegisterIdentitySigned(ctx, registryURL, record.DIDKey, record.StableID, signer("register your human ID at "+registryURL))
-	var already *awid.AlreadyRegisteredError
-	if errors.As(err, &already) && already.ExistingDIDKey == record.DIDKey {
-		err = nil
-	}
-	if err != nil {
-		return idHumanInitOutput{}, err
-	}
-	record.State, record.RegistryURL = awconfig.HumanDIDRegistered, registryURL
-	if err := awconfig.SaveHumanRecord(record); err != nil {
+	if err := registerHumanDID(ctx, human, registry, registryURL); err != nil {
 		return idHumanInitOutput{}, err
 	}
 	receipt, err := registry.RegisterIDCertificateAt(ctx, registryURL, chain, signer("register your issued human certificate at "+registryURL), nil, nil)
@@ -152,4 +144,25 @@ func registerHumanChain(ctx context.Context, human *humanParticipation, chain ma
 	}
 	human.chain = chain
 	return idHumanInitOutput{Status: "registered", ID: record.StableID, DIDKey: record.DIDKey, Domain: record.Domain, RegistryURL: registryURL, RegisteredAt: record.RegisteredAt}, nil
+}
+
+// Publishing a prepared person's key mapping is separate from issuing or
+// registering its ID certificate. Enrollment may need the mapping first.
+func registerHumanDID(ctx context.Context, human *humanParticipation, registry *awid.RegistryClient, registryURL string) error {
+	record := human.record
+	if record.State == awconfig.HumanRegistered {
+		return nil
+	}
+	err := registry.RegisterIdentitySigned(ctx, registryURL, record.DIDKey, record.StableID, func(payload []byte) (string, []byte, error) {
+		return human.sign(payload, "register your human key mapping at "+registryURL)
+	})
+	var already *awid.AlreadyRegisteredError
+	if errors.As(err, &already) && already.ExistingDIDKey == record.DIDKey {
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
+	record.State, record.RegistryURL = awconfig.HumanDIDRegistered, registryURL
+	return awconfig.SaveHumanRecord(record)
 }

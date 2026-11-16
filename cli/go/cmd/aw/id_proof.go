@@ -42,6 +42,7 @@ func runIDProof(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	h := activeHuman
+	h.operation = "export your message proof"
 	messageID, err := awid.GenerateUUID4()
 	if err != nil {
 		return err
