@@ -223,6 +223,11 @@ def verify_id_certificate(signed: dict[str, Any], *, issuer_key: str) -> None:
     verify_ed25519(issuer_key, id_certificate_signing_bytes(c), signature)
 
 
+def validate_id_certificate(certificate: dict[str, Any]) -> None:
+    """Validate an unsigned certificate's shape, without asserting authority."""
+    _shape({"certificate": certificate, "signature": ""})
+
+
 async def sign_id_certificate(
     certificate: dict[str, Any],
     *,
@@ -240,7 +245,7 @@ async def sign_id_certificate(
     # Isolate nested caller data across an await, so the returned artifact is
     # exactly the certificate whose immutable bytes went to the signer.
     snapshot = json.loads(_canonical(certificate))
-    _shape({"certificate": snapshot, "signature": ""})
+    validate_id_certificate(snapshot)
     signature = await _signature_by(signer, id_certificate_signing_bytes(snapshot), snapshot["issuer_key"])
     return {
         "certificate": snapshot,
