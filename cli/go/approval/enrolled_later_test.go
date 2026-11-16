@@ -46,6 +46,7 @@ func TestLaterEnrollmentReportsApprovalSinceWithoutChangingCreation(t *testing.T
 		t.Fatal(err)
 	}
 	trust := &proof.Trust{Person: v["person"].(string), Organisation: v["organisation"].(string), IdentityKey: v["identity_key"].(string), Certificate: v["certificate"].(string), Issuer: v["issuer"].(string), IssuerPublicKey: key, ObservedAt: now}
+	trust.NamespaceIssuer, _ = v["namespace_issuer"].(string)
 	activation := c["activation"].(map[string]any)
 	statement := activation["evidence"].(map[string]any)
 	before, err := proof.Canonical(statement)
