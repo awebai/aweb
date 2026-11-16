@@ -36,6 +36,18 @@ Nothing in the registry or on a server records whether an organisation uses a
 key holder. The registry cannot know where a key lives. A key holder is an
 organisation's own protection, not a public claim.
 
+## Creation, enrolment and approval
+
+Creating a person's ID, enrolling an approval key and approving an act are
+separate, optional operations. ID creation needs no approval service. The same
+enrolment operation serves a new or an existing person; approving an act uses
+the receipt flow below when the enforcer's rule requires it.
+
+An agent's creator signs its parent certificate. Team membership is separate;
+an invite admits agents answering to its specified human, without changing
+parentage. [Invitations and adoption](id-certificates.md#6-invitations-adoption-and-migration)
+defines creation and the first adoption under a person.
+
 ## Approving an act
 
 1. Each server and application declares the operations it can require a person
@@ -103,13 +115,12 @@ people may approve, and which grade of key is needed.
 
 ### Creation
 
-A person's ID is created together with the enrolment of a key. Both are one
-act, bound to the same pending certificate, subject and key, and authorised by
-the organisation. An organisation may require an existing person's approval
-for each later person.
-
-An ID created without enrolling a key carries no evidence. It is not refused. A
-verifier reports it as without evidence.
+Enrolment accompanying ID creation is bound to the same pending certificate,
+subject and key, and can establish creation evidence. An ID created without
+enrolment is valid and reports "no evidence". Later enrolment enables approval
+and reports "can approve since T, grade G"; it never adds a creation claim.
+For an existing person, the person's current identity key authorises enrolment
+and the issuer checks the registration before signing the binding.
 
 ### Grades
 
@@ -168,6 +179,12 @@ The key holder is a separate process. Keys are created inside it and leave it
 only as a backup encrypted to a key the operator keeps offline. The key of a
 parent domain is kept in a key holder as well. It offers a closed list of operations. Each is either routine, signed
 without a person under a fixed rule, or requires a receipt.
+
+Issuing a person without an approval service is supported and yields an ID
+without evidence. The issuing setting is `operator` by default: a private
+operator command issues the ID. With awsign configured, an organisation may
+select `approved`, requiring an enrolled person's approval. Agents cannot issue
+people unattended in either mode.
 
 The process that asks it to sign cannot read its memory or storage, cannot
 sign directly, and cannot change its rules. Its database permissions and
