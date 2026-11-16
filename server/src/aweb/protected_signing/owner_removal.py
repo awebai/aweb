@@ -102,7 +102,7 @@ async def prepare_owner_selection(c, selection, session):
     async with c.db.transaction() as tx:
         context = await c.authority.context_for_scope(session.scope, tx=tx)
     human = AdmittedHuman(context.human_id, session.subject, session.scope, context)
-    key = getattr(c.authority.custody, "service_did_key", None)
+    key = c.authority.custody.team_key_did
     actor = _admitted_owner_initiation(selection, human=human, session=session, host_key_did=key)
     saved = await c.signer.owner_prepared(actor)
     if saved is not None:

@@ -672,8 +672,11 @@ async def test_agent_requester_cannot_execute_a_live_floor_operation(world):
 
 
 @pytest.mark.asyncio
-async def test_unmarked_owner_act_is_unserved_before_pending_or_signing(world):
-    with pytest.raises(SignerRefused, match="operation_not_served"):
-        await prepare(world)
-    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.protected_signer_operations}}") == 0
+async def test_owner_act_prepares_without_registry_protection_but_does_not_sign(world):
+    prepared = await prepare(world)
+    row = await world.db.fetch_one(
+        "SELECT result,signed_result FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        prepared.operation_id,
+    )
+    assert row is not None and row["result"] is None and row["signed_result"] is None
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_operation_signed'") == 0

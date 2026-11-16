@@ -166,10 +166,6 @@ def load_custodies(settings, *, profile, scope):
     private_keys = ({custody.team_key_did for _, custody in custodians}
                     | {binding.authority_key_did for binding in profile.bindings}
                     | set(profile.namespace_keys().values()))
-    service_keys = {custody.service_did_key for _,custody in custodians if custody.service_did_key is not None}
-    if service_keys & private_keys:
-        raise SignerRefused("custody_not_isolated")
-    private_keys |= service_keys
     if any(did_key_from_signing_key(key) in private_keys for key in keys.values()):
         raise SignerRefused("custody_not_isolated")
     return selected, keys, custodians
@@ -177,7 +173,7 @@ def load_custodies(settings, *, profile, scope):
 
 @asynccontextmanager
 async def open_composition(
-    settings, *, profile, scope, mailer, registry_transport=None, consumer_transport=None
+    settings, *, profile, scope, mailer, registry_transport=None
 ):
     """The same isolated custody and owned DB/client for host and local admin."""
     selected, keys, custodians = load_custodies(settings, profile=profile, scope=scope)
@@ -221,7 +217,7 @@ async def open_composition(
         yield composition
 
 
-def create_app(settings=None, *, mailer=None, registry_transport=None, consumer_transport=None):
+def create_app(settings=None, *, mailer=None, registry_transport=None):
     """Own one DB/registry lifetime and mount the sole shared human page.
 
     In-process hosts may supply their existing configured mailer/transport;
@@ -252,7 +248,6 @@ def create_app(settings=None, *, mailer=None, registry_transport=None, consumer_
                     scope=scope,
                     mailer=configured_mailer,
                     registry_transport=registry_transport,
-                    consumer_transport=consumer_transport,
                 )
             )
             db = composition.db

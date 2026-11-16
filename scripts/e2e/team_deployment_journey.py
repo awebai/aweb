@@ -97,9 +97,8 @@ UPSTREAMS = {
 MAIL = f"mail.{DOMAIN}"
 # The deployment's front and the world's registry front run this Caddy.
 FRONT_IMAGE = "caddy:2.10-alpine"
-# The role the round trip revokes, of this deployment's Secrets app.
+# The role assigned by the designate setup for this deployment's Secrets app.
 ROLE = "secrets.owner"
-# The time the journey allows a human to approve on the page.
 # The agents' uid: the signer refuses custody a worker could read.
 AGENT_UID = 20001
 # The component directories an operator-provided secrets directory holds,

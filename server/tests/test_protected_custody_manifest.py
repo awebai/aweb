@@ -57,14 +57,14 @@ def test_every_provisioned_authority_uses_its_matching_private_file(slots):
     assert [key.authority_kind for _, key in custody] == ["team_controller", "human_identity"]
 
 
-def test_real_host_settings_keep_service_attestation_key_optional(slots, tmp_path, monkeypatch):
+def test_real_host_settings_load_only_profile_controller_keys(slots, tmp_path, monkeypatch):
     settings, profile, _, _, _ = slots
     actual = HostSettings(profile_file=FIXTURE, scope_file=tmp_path / "scope.json",
         controller_key_file=settings.controller_key_file, controller_keys_file=settings.controller_keys_file,
         member_keys_file=settings.member_keys_file, worker_uids=settings.worker_uids,
         database_url="postgresql://unused", _env_file=None)
     _, _, custody = load_custodies(actual, profile=profile, scope=profile.bindings[0].scope.model_dump(mode="json"))
-    assert all(key.service_did_key is None for _, key in custody)
+    assert [key.team_key_did for _, key in custody] == [binding.authority_key_did for binding in profile.bindings]
 
 
 @pytest.mark.parametrize("case", ["missing", "extra", "relative", "selected_mismatch", "swapped", "symlink", "member_is_human_key", "member_is_namespace_key"])

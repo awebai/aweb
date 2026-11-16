@@ -58,10 +58,9 @@ async def test_selected_role_uses_its_own_fresh_authority(monkeypatch, role, mat
             reads.append(("human", principal))
             return SimpleNamespace(current_did_key=human_key)
 
-        async def get_team_fresh(self, domain, name):
+        async def get_team_public_key_fresh(self, domain, name):
             reads.append(("team", domain, name))
-            return SimpleNamespace(team_id=context.authority_id, team_did_key=controller_key,
-                protection={"mode": "legacy"})
+            return controller_key
 
         async def get_namespace_fresh(self, domain):
             reads.append(("namespace", domain))
@@ -94,7 +93,7 @@ async def test_selected_role_uses_its_own_fresh_authority(monkeypatch, role, mat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("evidence", ["missing", "outage"])
-async def test_team_authority_never_infers_legacy_from_missing_or_failed_projection(monkeypatch, evidence):
+async def test_team_authority_refuses_missing_or_unavailable_current_key(monkeypatch, evidence):
     from awid.registry_types import RegistryError
 
     context = ProtectedServiceProfile.from_json(FIXTURE.read_bytes()).bindings[0].context()
@@ -107,18 +106,15 @@ async def test_team_authority_never_infers_legacy_from_missing_or_failed_project
     monkeypatch.setattr(IndependentAuthority, "_own_human", current_human)
 
     class Registry:
-        async def get_team_fresh(self, domain, name):
+        async def get_team_public_key_fresh(self, domain, name):
             if evidence == "outage":
                 raise RegistryError("registry unavailable", status_code=503)
-            return SimpleNamespace(team_id=context.authority_id, team_did_key=controller, protection=None)
-
-        async def get_team_public_key_fresh(self, *args):
-            pytest.fail("key-only evidence cannot substitute for current protection")
+            return None
 
     authority = IndependentAuthority(object(), context=context, registry=Registry(),
         custody=SimpleNamespace(service_id=context.service_id, team_id=context.authority_id,
             authority_kind=context.authority_kind, team_key_did=controller))
-    with pytest.raises(SignerRefused, match="evidence_unavailable"):
+    with pytest.raises(SignerRefused, match="evidence_unavailable" if evidence == "outage" else "authority_changed"):
         await authority.observe(context, purpose="prepare")
 
 

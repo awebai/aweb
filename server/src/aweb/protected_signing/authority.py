@@ -84,8 +84,7 @@ class IndependentAuthority:
                 name, domain = c.authority_id.split(":", 1)
                 if domain != c.authority_domain:
                     raise SignerRefused("scope_refused")
-                team = await self.registry.get_team_fresh(domain, name)
-                team_key = team.team_did_key if team is not None else None
+                team_key = await self.registry.get_team_public_key_fresh(domain, name)
             elif c.authority_kind == "namespace_controller":
                 if c.authority_id != c.authority_domain:
                     raise SignerRefused("scope_refused")

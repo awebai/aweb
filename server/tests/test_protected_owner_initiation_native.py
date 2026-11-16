@@ -78,7 +78,7 @@ async def test_current_owner_can_prepare_without_a_root_grant_but_login_cannot_s
         assert response.status_code == 200, response.text
         frozen = response.json()
         request = frozen["payload"]["request"]
-        assert request["requester"] == request["requester_key"] == custody.service_did_key
+        assert request["requester"] == request["requester_key"] == custody.team_key_did
         assert request["target_kind"] == "kind not verified" and request["approval_format"] == "intent_v1"
         assert request["subject"]["certificate_id"] == certificate["certificate_id"]
         row = await a.w.db.fetch_one("SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", body["operation_id"])
