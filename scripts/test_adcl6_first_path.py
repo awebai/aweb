@@ -7,7 +7,14 @@ import stat
 import tempfile
 import unittest
 
-from adcl6_first_path import save
+from adcl6_first_path import (
+    AUDIENCE,
+    ORG,
+    assert_approval_display,
+    assert_approval_target,
+    assert_outside_verdict,
+    save,
+)
 
 
 class SaveTests(unittest.TestCase):
@@ -36,6 +43,52 @@ class SaveTests(unittest.TestCase):
             )
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
             self.assertFalse(path.with_suffix(".json.tmp").exists())
+
+
+class ApprovalAssertionTests(unittest.TestCase):
+    def test_display_accepts_expected_digest_and_refuses_another(self):
+        text = f"human.add first second {ORG} {AUDIENCE}"
+        assert_approval_display("a" * 64, text, "a" * 64, "first", "second")
+        with self.assertRaisesRegex(AssertionError, "approval_digest_mismatch"):
+            assert_approval_display("b" * 64, text, "a" * 64, "first", "second")
+
+    def test_request_accepts_expected_target_and_refuses_another(self):
+        request = {"approver": "first", "act": {"target": {"person": "second"}}}
+        assert_approval_target(request, "first", "second")
+        request["act"]["target"]["person"] = "third"
+        with self.assertRaisesRegex(AssertionError, "approval_target_mismatch"):
+            assert_approval_target(request, "first", "second")
+
+    def test_display_refuses_another_target_even_with_right_digest(self):
+        text = f"human.add first third {ORG} {AUDIENCE}"
+        with self.assertRaisesRegex(AssertionError, "approval_display_mismatch:second"):
+            assert_approval_display("a" * 64, text, "a" * 64, "first", "second")
+
+
+class OutsideAssertionTests(unittest.TestCase):
+    def test_low_grade_and_broken_continuity_cannot_pass_the_phase(self):
+        evidence = {
+            "statement": {"status": "valid", "reason": "checked"},
+            "proof": {"status": "valid", "reason": "checked"},
+            "issuer_authenticated_grade": "passkey_uv",
+            "proof_binds_grade": True,
+            "currentness": "current",
+            "continuity": "unbroken",
+        }
+        result = {
+            "identity_valid": True,
+            "human_id": "person",
+            "kind": "human",
+            "evidence": [evidence],
+        }
+        assert_outside_verdict(result, "person")
+        evidence["issuer_authenticated_grade"] = "password_only"
+        with self.assertRaisesRegex(AssertionError, "outside_grade_below_passkey_uv"):
+            assert_outside_verdict(result, "person")
+        evidence["issuer_authenticated_grade"] = "passkey_uv"
+        evidence["continuity"] = "broken"
+        with self.assertRaisesRegex(AssertionError, "outside_continuity_broken"):
+            assert_outside_verdict(result, "person")
 
 
 if __name__ == "__main__":

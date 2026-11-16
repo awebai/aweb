@@ -518,6 +518,41 @@ class Person:
     activation: dict | None = None
 
 
+def assert_outside_verdict(result, identity):
+    assert result["identity_valid"] is True, (
+        "outside_identity_invalid:" + result["reason"]
+    )
+    assert result["human_id"] == identity and result["kind"] == "human", (
+        "outside_human_mismatch"
+    )
+    assert len(result["evidence"]) == 1, "outside_evidence_missing"
+    (evidence,) = result["evidence"]
+    for part in ("statement", "proof"):
+        checked = evidence[part]
+        assert checked["status"] == "valid", (
+            f"outside_{part}_{checked['status']}:{checked['reason']}"
+        )
+    assert (
+        evidence["issuer_authenticated_grade"] == "passkey_uv"
+        and evidence["proof_binds_grade"] is True
+    ), "outside_grade_below_passkey_uv"
+    assert evidence["currentness"] == "current", "outside_subject_not_current"
+    assert evidence["continuity"] == "unbroken", (
+        "outside_continuity_" + evidence["continuity"]
+    )
+
+
+def assert_approval_target(request, first, second):
+    assert request["approver"] == first, "approval_approver_mismatch"
+    assert request["act"]["target"]["person"] == second, "approval_target_mismatch"
+
+
+def assert_approval_display(actual_digest, text, digest, first, second):
+    assert actual_digest == digest, "approval_digest_mismatch"
+    for value in (first, second, ORG, AUDIENCE, "human.add"):
+        assert value in text, "approval_display_mismatch:" + value
+
+
 @dataclass
 class BrowserActor:
     page: object
@@ -557,8 +592,13 @@ class BrowserActor:
             has=self.page.get_by_text(digest, exact=True)
         )
         await expect(row).to_have_count(1)
-        for text in (first, second, ORG, AUDIENCE, "human.add"):
-            await expect(row).to_contain_text(text)
+        assert_approval_display(
+            await row.get_by_text(digest, exact=True).inner_text(),
+            await row.inner_text(),
+            digest,
+            first,
+            second,
+        )
         await row.get_by_role("button", name="Approve", exact=True).click()
         await expect(row).to_have_count(0)
 
@@ -965,25 +1005,7 @@ async def driver():
                 script,
             )
             result = json.loads(raw)
-            assert (
-                result["identity_valid"] is True
-                and result["human_id"] == subject.identity
-                and result["kind"] == "human"
-            )
-            (evidence,) = result["evidence"]
-            assert (
-                evidence["statement"]["status"]
-                == evidence["proof"]["status"]
-                == "valid"
-            )
-            assert (
-                evidence["issuer_authenticated_grade"] == "passkey_uv"
-                and evidence["proof_binds_grade"] is True
-            )
-            assert (
-                evidence["currentness"] == "current"
-                and evidence["continuity"] == "unbroken"
-            )
+            assert_outside_verdict(result, subject.identity)
             save(work / (subject.name + "-outside.json"), result)
 
         async def enroll(subject, intent, actor, caller):
@@ -1107,10 +1129,7 @@ async def driver():
                         "request_bytes"
                     ]
                     request = parse(decode(original))
-                    assert (
-                        request["approver"] == first.identity
-                        and request["act"]["target"]["person"] == second.identity
-                    )
+                    assert_approval_target(request, first.identity, second.identity)
                     assert not (
                         await registry.resolve_key_fresh(second.identity)
                     ).id_tree.enrolled
@@ -1160,11 +1179,29 @@ def main():
     retention = modes.add_parser("retain")
     retention.add_argument("--uid", required=True, type=int)
     retention.add_argument("--gid", required=True, type=int)
+    check = modes.add_parser("check-saved-export")
+    check.add_argument("--probe", required=True, type=Path)
+    check.add_argument("--original-export", required=True, type=Path)
+    check.add_argument("--original-verdict", required=True, type=Path)
+    check.add_argument("--export", required=True, type=Path)
     args = parser.parse_args()
     if args.mode == "prepare":
         prepare(args)
     elif args.mode == "retain":
         retain(args)
+    elif args.mode == "check-saved-export":
+        raw = subprocess.check_output(
+            [
+                str(args.probe),
+                str(args.original_export),
+                str(args.original_verdict),
+                str(args.export),
+            ]
+        )
+        print(raw.decode().strip(), flush=True)
+        assert_outside_verdict(
+            json.loads(raw), json.loads(args.original_verdict.read_text())["id"]
+        )
     else:
         try:
             asyncio.run(driver())
