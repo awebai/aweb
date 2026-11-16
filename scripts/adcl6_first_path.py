@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""One real self-custody add-human journey. Invoked by e2e-adcl6-first-path.sh.
+"""Component journey, not a claim that aw provides an add-human product flow.
 
-The prepare command only stages a concrete Compose fixture. The driver uses the
-actual installed service/holder/SDK, aw requester, and Chromium ceremonies.
+aw performs the signed 428 approval loop and the outside verification. The
+driver performs the enrollment exchange, creates the person identity, registers
+its ID certificate, and constructs/signs the evidence-bearing message. It also
+automates real Chromium ceremonies against the installed services. prepare only
+stages the concrete Compose fixture; e2e-adcl6-first-path.sh invokes the journey.
 """
 
 from __future__ import annotations
@@ -36,6 +39,16 @@ AUDIENCE = "https://holder.adcl6.test"
 RP = "approval.adcl6.test"
 DNS = "172.29.190.53"
 NETWORK = "172.29.190.0/24"
+STEP_OWNERS = {
+    "aw": ["signed 428 approval request/submit/poll/presentation", "outside aw verify"],
+    "driver": [
+        "approval-service enrollment start/material/confirm/activate exchange",
+        "person identity creation, signing.key/identity.yaml, and DID registration",
+        "subject ID certificate registration",
+        "evidence-bearing message construction and signing",
+        "Chromium virtual-authenticator ceremony automation",
+    ],
+}
 
 
 def save(path: Path, value) -> None:
@@ -666,6 +679,8 @@ async def driver():
 
     work = Path("/work")
     report = {
+        "journey_kind": "component",
+        "step_owners": STEP_OWNERS,
         "completed": False,
         "phases": [],
         "aw": AW,
