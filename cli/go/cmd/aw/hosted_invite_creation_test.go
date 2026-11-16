@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -21,6 +22,23 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestHostedInviteGlobalReuseStillRefusesALocalPinnedParent(t *testing.T) {
+	v := loadWhoVectors(t)
+	var origin string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/spawn/invite-preview" {
+			t.Fatalf("unexpected %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:example.com", "identity_scope": "unknown", "server_url": origin, "status": "active", "id_tree": map[string]any{"v": 1, "issuer_id": v.Keys["coordinator"].DIDKey, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
+	}))
+	origin = server.URL
+	_, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_global_neighbor", origin, "child", "", false, workspaceTeamIdentityMaterial{IdentityScope: awid.IdentityModeGlobal, DIDKey: v.Keys["root_agent"].DIDKey, StableID: v.Keys["root_agent"].DIDAW})
+	var refusal *awid.IDCertificateError
+	if !errors.As(err, &refusal) || refusal.Code != "unregistered_parent" {
+		t.Fatalf("global neighbor changed: %v", err)
+	}
+}
 
 func TestHostedInviteRequiresPinnedPreviewBeforeAccept(t *testing.T) {
 	for _, tc := range []struct {

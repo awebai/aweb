@@ -272,6 +272,13 @@ func acceptProvisionedTeamInvite(anchorDir, issuerHome, childDir, token string, 
 	if !errors.As(err, &pending) {
 		return accepted, err
 	}
+	// A current local link owns its retained exchange. Do not replace that
+	// invitation/request with the compatibility completion for older invites.
+	if _, linkErr := awconfig.LoadTeamInvite(hostedTeamInviteRecordID(token)); linkErr == nil {
+		return nil, err
+	} else if !errors.Is(linkErr, os.ErrNotExist) {
+		return nil, linkErr
+	}
 	ctx, cancel := commandAPIContext(nil)
 	exchangeErr := completeHostedProvisioningIDChild(ctx, anchorDir, issuerHome, childDir, opts.IdentityHome)
 	cancel()

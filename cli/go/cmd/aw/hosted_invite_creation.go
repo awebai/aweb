@@ -9,14 +9,69 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/spf13/cobra"
 )
 
 const hostedInviteRecoveryFile = "hosted-invite-creation.json"
+
+// This is a private local record key, never a second bearer token.
+func hostedTeamInviteRecordID(token string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return "hosted-" + hex.EncodeToString(digest[:])
+}
+
+func localHostedInviteLink(token string, state *hostedInviteCreation) (*awconfig.TeamInvite, error) {
+	invite, err := awconfig.LoadTeamInvite(hostedTeamInviteRecordID(token))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if invite.InviteID != hostedTeamInviteRecordID(token) || invite.IDChild == nil ||
+		invite.IDChild.Parent != state.Tree.Parent["id"] || invite.IDChild.Domain != state.Tree.Domain ||
+		invite.AwebURL != state.AwebURL || awid.BuildTeamID(invite.Domain, invite.TeamName) != state.TeamID {
+		return nil, errors.New("local hosted invite link differs from the pinned preview")
+	}
+	return invite, nil
+}
+
+func completeLocalHostedInvite(ctx context.Context, invite *awconfig.TeamInvite, state *hostedInviteCreation, wd, home string) error {
+	link := invite.IDChild
+	if link.ChildHome == "" {
+		// Hosted acceptance has already retained this new key before preview.
+		link.ChildHome, link.ChildDIDKey = home, state.DIDKey
+	}
+	if _, err := bindTeamInviteIDChild(ctx, invite, home); err != nil {
+		return err
+	}
+	return completeTeamInviteIDChild(ctx, invite, wd, home)
+}
+
+// Only the recipe's explicit, retained local-agent home can make this transition.
+func pendingHostedExchangeTarget(cmd *cobra.Command, home awconfig.IdentityHome) (bool, error) {
+	if home.Source != awconfig.IdentityHomeFlag || (cmd != idParentRequestCmd && cmd != idParentImportCmd) || idParentHuman != "" {
+		return false, nil
+	}
+	for _, name := range []string{"grant.yaml", "identity.yaml", "teams.yaml", "workspace.yaml"} {
+		if _, err := os.Lstat(filepath.Join(home.Root, name)); err == nil {
+			return false, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
+	}
+	_, err := pendingHostedInviteRequester(idParentOptions{WorkingDir: mustGetwd(), IdentityHome: home.Root, Domain: idParentDomain})
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
 
 // A provisioning caller may complete the existing local parent exchange. Other
 // callers retain the ordinary explicit request/import diagnostic and state.

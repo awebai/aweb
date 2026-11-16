@@ -1845,6 +1845,26 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 	if strings.TrimSpace(created.Token) == "" {
 		return nil, fmt.Errorf("hosted team invite response is missing token")
 	}
+	if chain != nil && created.IDTree.Mode == "self_custodial" {
+		link, err := prepareTeamInviteIDChild(ctx, idChildOptions{WorkingDir: workingDir, IdentityHome: selected.IdentityHome, Now: time.Now})
+		if err != nil {
+			return nil, err
+		}
+		if link == nil || link.Parent != created.IDTree.IssuerID || link.Domain != created.IDTree.Domain {
+			return nil, errors.New("hosted invite child link differs from the selected issuer")
+		}
+		domain, name, err := awid.ParseTeamID(teamID)
+		if err != nil {
+			return nil, err
+		}
+		origin, err := normalizeAwebBaseURL(firstNonEmptyString(selected.AwebURL, selected.BaseURL))
+		if err != nil {
+			return nil, err
+		}
+		if err := awconfig.SaveTeamInvite(&awconfig.TeamInvite{InviteID: hostedTeamInviteRecordID(created.Token), Domain: domain, TeamName: name, IdentityScope: awid.IdentityModeLocal, AwebURL: origin, IDChild: link}); err != nil {
+			return nil, err
+		}
+	}
 	return created, nil
 }
 
@@ -2202,9 +2222,23 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
 	}
+	var localLink *awconfig.TeamInvite
+	if scope == awid.IdentityModeLocal && creation.Tree.Mode == "self_custodial" {
+		localLink, err = localHostedInviteLink(token, creation)
+		if err != nil {
+			return nil, &hostedInviteSignaturePendingError{err: fmt.Errorf("native agent signature pending in %s; child key and request retained: %w", home.Root, err)}
+		}
+	}
 	var treeRequest *awid.IDTreeCreationRequest
 	if creation.ResponseJSON == "" {
 		treeRequest, err = creation.prepareRequest(home.Root, material)
+		var pending *hostedInviteSignaturePendingError
+		if errors.As(err, &pending) && localLink != nil {
+			if exchangeErr := completeLocalHostedInvite(ctx, localLink, creation, workingDir, home.Root); exchangeErr != nil {
+				return nil, &hostedInviteSignaturePendingError{err: fmt.Errorf("native agent signature pending in %s; child key and request retained: %w", home.Root, exchangeErr)}
+			}
+			treeRequest, err = creation.prepareRequest(home.Root, material)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -2353,6 +2387,11 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 
 	if err := os.Remove(recoveryPath); err != nil {
 		return nil, err
+	}
+	if localLink != nil {
+		if err := awconfig.DeleteTeamInvite(localLink.InviteID); err != nil {
+			return nil, err
+		}
 	}
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
