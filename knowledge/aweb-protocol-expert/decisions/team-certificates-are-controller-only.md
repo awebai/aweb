@@ -32,3 +32,8 @@ and the column buys nothing.
 Member-mediated invites entering scope. At that point the seam is three-lane:
 self-hosted local signer, hosted server-side mint, and add-member as a register
 entry point. Do not re-propose the column as a standalone improvement.
+
+Who signs an agent's parentage, as distinct from who authorizes its
+membership, is decided in
+[creator parentage and invite membership are separate authorities](/aweb-protocol-expert/decisions/creator-parentage-and-invite-membership-are-separate.md);
+it leaves this registry authority unchanged.
