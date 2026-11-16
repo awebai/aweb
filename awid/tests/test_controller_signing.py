@@ -33,39 +33,65 @@ CONTROLLER = ControllerDescriptor("namespace", "example.com", KEY, "namespace-1"
 
 def request(operation="team_register", **parameters):
     if operation == "team_register":
-        parameters = {"name": "team", "display_name": "Team", "team_did_key": NEW_KEY,
-                      "visibility": "private", **parameters}
-    return parse_controller_request({"operation": operation, "domain": "example.com", **parameters})
+        parameters = {
+            "name": "team",
+            "display_name": "Team",
+            "team_did_key": NEW_KEY,
+            "visibility": "private",
+            **parameters,
+        }
+    return parse_controller_request(
+        {"operation": operation, "domain": "example.com", **parameters}
+    )
 
 
 def payload(req, controller=CONTROLLER, role="controller"):
-    return build_controller_payload(req, controller=controller, role=role,
-                                    timestamp=TS, registry_origin=ORIGIN)
+    return build_controller_payload(
+        req, controller=controller, role=role, timestamp=TS, registry_origin=ORIGIN
+    )
 
 
 def test_legacy_team_bytes_are_existing_claims_not_a_body_or_audience_claim():
-    assert payload(request()) == canonical_json_bytes({
-        "domain": "example.com", "operation": "create_team", "name": "team", "timestamp": TS,
-    })
+    assert payload(request()) == canonical_json_bytes(
+        {
+            "domain": "example.com",
+            "operation": "create_team",
+            "name": "team",
+            "timestamp": TS,
+        }
+    )
 
 
-@pytest.mark.parametrize("fields", [
-    {"operation": "sign", "domain": "example.com", "payload": "anything"},
-    {"operation": "team_register", "domain": "example.com", "path": "/arbitrary"},
-    {"operation": "namespace_delete", "domain": "example.com/elsewhere"},
-    {"operation": "namespace_delete", "domain": ".."},
-    {"operation": "namespace_delete", "domain": "EXAMPLE.COM"},
-    {"operation": "team_delete", "domain": "example.com", "name": "../x"},
-    {"operation": "team_visibility", "domain": "example.com", "name": "t", "visibility": "hidden"},
-])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"operation": "sign", "domain": "example.com", "payload": "anything"},
+        {"operation": "team_register", "domain": "example.com", "path": "/arbitrary"},
+        {"operation": "namespace_delete", "domain": "example.com/elsewhere"},
+        {"operation": "namespace_delete", "domain": ".."},
+        {"operation": "namespace_delete", "domain": "EXAMPLE.COM"},
+        {"operation": "team_delete", "domain": "example.com", "name": "../x"},
+        {
+            "operation": "team_visibility",
+            "domain": "example.com",
+            "name": "t",
+            "visibility": "hidden",
+        },
+    ],
+)
 def test_untyped_or_unshaped_operation_refuses(fields):
     with pytest.raises(ControllerSigningError):
         parse_controller_request(fields)
 
 
 def test_request_freezes_nested_input_and_returns_detached_parameters():
-    fields = {"operation": "team_rotate", "domain": "example.com", "name": "team",
-              "new_team_did_key": NEW_KEY, "resigned_records": {"team_custodians": []}}
+    fields = {
+        "operation": "team_rotate",
+        "domain": "example.com",
+        "name": "team",
+        "new_team_did_key": NEW_KEY,
+        "resigned_records": {"team_custodians": []},
+    }
     req = parse_controller_request(fields)
     before = req.parameters
     fields["resigned_records"]["team_custodians"].append({"untrusted": True})
@@ -74,11 +100,19 @@ def test_request_freezes_nested_input_and_returns_detached_parameters():
 
 
 def test_continuity_keeps_distinct_old_new_roles_and_current_epoch():
-    req = request("namespace_rotate", from_seq=2, previous_did_key=KEY, new_did_key=NEW_KEY)
+    req = request(
+        "namespace_rotate", from_seq=2, previous_did_key=KEY, new_did_key=NEW_KEY
+    )
     claims = rotate_claims(from_seq=2, previous_did_key=KEY, new_did_key=NEW_KEY)
-    want = covering_payload(aud=ORIGIN, path="/v1/namespaces/example.com/rotate",
-                            domain="example.com", operation="rotate_namespace_controller",
-                            body=rotate_body("example.com", claims), timestamp=TS, claims=claims)
+    want = covering_payload(
+        aud=ORIGIN,
+        path="/v1/namespaces/example.com/rotate",
+        domain="example.com",
+        operation="rotate_namespace_controller",
+        body=rotate_body("example.com", claims),
+        timestamp=TS,
+        claims=claims,
+    )
     assert payload(req) == want
     new = ControllerDescriptor("namespace", "example.com", NEW_KEY, "next", 4)
     assert payload(req, new, "new_controller") == want
@@ -95,13 +129,23 @@ def test_team_authority_is_not_namespace_authority():
 
 
 def id_request(kind="human"):
-    return parse_controller_object({
-        "operation": "namespace_id_issue", "domain": "example.com", "kind": kind,
-        "certificate": {"v": 1, "type": "aweb.id-certificate",
-                        "id": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87", "domain": "example.com",
-                        "parent": {"kind": "namespace", "id": "example.com"},
-                        "kind": "human", "issuer_key": KEY, "issued_at": TS},
-    })
+    return parse_controller_object(
+        {
+            "operation": "namespace_id_issue",
+            "domain": "example.com",
+            "kind": kind,
+            "certificate": {
+                "v": 1,
+                "type": "aweb.id-certificate",
+                "id": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87",
+                "domain": "example.com",
+                "parent": {"kind": "namespace", "id": "example.com"},
+                "kind": "human",
+                "issuer_key": KEY,
+                "issued_at": TS,
+            },
+        }
+    )
 
 
 @pytest.mark.asyncio
@@ -117,7 +161,9 @@ async def test_typed_object_signer_receives_operation_and_returns_checked_artifa
     req = id_request()
     result = await sign_controller_object(req, controller=CONTROLLER, signer=signer)
     verify_id_certificate(result, issuer_key=KEY)
-    assert seen[0].signing_bytes() == id_certificate_signing_bytes(result["certificate"])
+    assert seen[0].signing_bytes() == id_certificate_signing_bytes(
+        result["certificate"]
+    )
 
 
 def test_agent_request_cannot_issue_a_human_certificate():
@@ -131,8 +177,10 @@ async def test_wrong_signer_answer_returns_no_artifact(fault):
     def signer(context):
         if fault == "shape":
             return b"not a typed answer"
-        return (NEW_KEY if fault == "key" else KEY,
-                SigningKey(NEW_SEED).sign(context.signing_bytes()).signature)
+        return (
+            NEW_KEY if fault == "key" else KEY,
+            SigningKey(NEW_SEED).sign(context.signing_bytes()).signature,
+        )
 
     with pytest.raises(ControllerSigningError, match="signer_answer"):
         await sign_controller_object(id_request(), controller=CONTROLLER, signer=signer)
@@ -140,9 +188,16 @@ async def test_wrong_signer_answer_returns_no_artifact(fault):
 
 @pytest.mark.asyncio
 async def test_replacement_is_an_application_object_with_exact_existing_bytes():
-    fields = {"address": "example.com/person", "controller_did": KEY,
-              "old_did": KEY, "new_did": NEW_KEY, "timestamp": TS}
-    req = parse_controller_object({"operation": "address_replacement", "domain": "example.com", **fields})
+    fields = {
+        "address": "example.com/person",
+        "controller_did": KEY,
+        "old_did": KEY,
+        "new_did": NEW_KEY,
+        "timestamp": TS,
+    }
+    req = parse_controller_object(
+        {"operation": "address_replacement", "domain": "example.com", **fields}
+    )
 
     def signer(context):
         assert context.signing_bytes() == canonical_json_bytes(fields)
@@ -181,8 +236,11 @@ async def test_owned_transport_pins_destination_and_checks_exact_wire_before_sen
     async def forbidden_discovery(domain):
         pytest.fail("controller transport must not discover its destination")
 
-    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(transport),
-                            domain_registry_resolver=forbidden_discovery)
+    client = RegistryClient(
+        ORIGIN,
+        transport=httpx.MockTransport(transport),
+        domain_registry_resolver=forbidden_discovery,
+    )
 
     def signer(context):
         assert context.registry_origin == ORIGIN
@@ -190,7 +248,9 @@ async def test_owned_transport_pins_destination_and_checks_exact_wire_before_sen
 
     try:
         with pytest.raises(Captured):
-            await client.controller_request(request(), controllers={"controller": CONTROLLER}, signer=signer)
+            await client.controller_request(
+                request(), controllers={"controller": CONTROLLER}, signer=signer
+            )
     finally:
         await client.aclose()
     assert len(sent) == 1
@@ -208,8 +268,11 @@ async def test_bad_signature_and_missing_role_refuse_before_transport():
     try:
         for controllers in ({}, {"controller": CONTROLLER}):
             with pytest.raises(ControllerSigningError):
-                await client.controller_request(request(), controllers=controllers,
-                    signer=lambda ctx: (KEY, bytes(64)))
+                await client.controller_request(
+                    request(),
+                    controllers=controllers,
+                    signer=lambda ctx: (KEY, bytes(64)),
+                )
     finally:
         await client.aclose()
 
@@ -228,8 +291,14 @@ async def test_lost_mutation_answer_is_ambiguous_and_never_retried():
     req = request()
     try:
         with pytest.raises(ControllerRequestUncertain) as failure:
-            await client.controller_request(req, controllers={"controller": CONTROLLER},
-                signer=lambda ctx: (KEY, SigningKey(SEED).sign(ctx.signing_bytes()).signature))
+            await client.controller_request(
+                req,
+                controllers={"controller": CONTROLLER},
+                signer=lambda ctx: (
+                    KEY,
+                    SigningKey(SEED).sign(ctx.signing_bytes()).signature,
+                ),
+            )
         assert failure.value.request_digest == req.digest
         assert failure.value.operation == req.operation
     finally:
@@ -237,57 +306,153 @@ async def test_lost_mutation_answer_is_ambiguous_and_never_retried():
     assert len(sent) == 1
 
 
-@pytest.mark.parametrize("operation,fields,claims", [
-    ("namespace_register", {"controller_did": KEY}, {"operation": "register"}),
-    ("namespace_update", {"default_delivery_origin": None}, {"operation": "update_namespace", "default_delivery_origin": ""}),
-    ("namespace_delete", {"reason": "retired"}, {"operation": "delete_namespace"}),
-    ("namespace_reset", {"new_controller_did": KEY}, {"operation": "rotate_controller", "new_controller_did": KEY}),
-    ("team_rotate", {"name": "team", "new_team_did_key": NEW_KEY}, {"operation": "rotate_team_key", "name": "team", "new_team_did_key": NEW_KEY}),
-    ("team_delete", {"name": "team"}, {"operation": "delete_team", "team_name": "team"}),
-    ("address_register", {"name": "person", "did_aw": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87", "current_did_key": NEW_KEY}, {"operation": "register_address", "name": "person"}),
-    ("address_update", {"name": "person"}, {"operation": "update_address", "name": "person"}),
-    ("address_delete", {"name": "person"}, {"operation": "delete_address", "name": "person"}),
-    ("address_reassign", {"name": "person", "did_aw": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87", "current_did_key": NEW_KEY}, {"operation": "reassign_address", "name": "person"}),
-])
+@pytest.mark.parametrize(
+    "operation,fields,claims",
+    [
+        ("namespace_register", {"controller_did": KEY}, {"operation": "register"}),
+        (
+            "namespace_update",
+            {"default_delivery_origin": None},
+            {"operation": "update_namespace", "default_delivery_origin": ""},
+        ),
+        ("namespace_delete", {"reason": "retired"}, {"operation": "delete_namespace"}),
+        (
+            "namespace_reset",
+            {"new_controller_did": KEY},
+            {"operation": "rotate_controller", "new_controller_did": KEY},
+        ),
+        (
+            "team_rotate",
+            {"name": "team", "new_team_did_key": NEW_KEY},
+            {
+                "operation": "rotate_team_key",
+                "name": "team",
+                "new_team_did_key": NEW_KEY,
+            },
+        ),
+        (
+            "team_delete",
+            {"name": "team"},
+            {"operation": "delete_team", "team_name": "team"},
+        ),
+        (
+            "address_register",
+            {
+                "name": "person",
+                "did_aw": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87",
+                "current_did_key": NEW_KEY,
+            },
+            {"operation": "register_address", "name": "person"},
+        ),
+        (
+            "address_update",
+            {"name": "person"},
+            {"operation": "update_address", "name": "person"},
+        ),
+        (
+            "address_delete",
+            {"name": "person"},
+            {"operation": "delete_address", "name": "person"},
+        ),
+        (
+            "address_reassign",
+            {
+                "name": "person",
+                "did_aw": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87",
+                "current_did_key": NEW_KEY,
+            },
+            {"operation": "reassign_address", "name": "person"},
+        ),
+    ],
+)
 def test_registry_operations_keep_existing_legacy_claims(operation, fields, claims):
-    assert payload(request(operation, **fields)) == canonical_json_bytes({"domain": "example.com", "timestamp": TS, **claims})
+    assert payload(request(operation, **fields)) == canonical_json_bytes(
+        {"domain": "example.com", "timestamp": TS, **claims}
+    )
 
 
 def test_parent_role_keeps_its_distinct_proof_and_domain():
     child = ControllerDescriptor("namespace", "child.example.com", NEW_KEY, "child", 0)
-    req = parse_controller_request({"operation": "namespace_register", "domain": child.domain,
-                                    "controller_did": NEW_KEY, "parent_domain": "example.com"})
+    req = parse_controller_request(
+        {
+            "operation": "namespace_register",
+            "domain": child.domain,
+            "controller_did": NEW_KEY,
+            "parent_domain": "example.com",
+        }
+    )
     assert json.loads(payload(req, CONTROLLER, "parent")) == {
-        "domain": child.domain, "child_domain": child.domain, "controller_did": NEW_KEY,
-        "operation": "authorize_subdomain_registration", "timestamp": TS}
+        "domain": child.domain,
+        "child_domain": child.domain,
+        "controller_did": NEW_KEY,
+        "operation": "authorize_subdomain_registration",
+        "timestamp": TS,
+    }
     with pytest.raises(ControllerSigningError, match="controller_scope"):
         payload(req, child, "parent")
 
 
 @pytest.mark.asyncio
 async def test_atomic_claim_checks_subject_proof_before_controller_signature():
-    from awid.atomic_claim import AtomicAddressClaimFields, atomic_address_claim_identity_canonical, atomic_address_claim_identity_proof_hash, atomic_address_claim_namespace_canonical
+    from awid.atomic_claim import (
+        AtomicAddressClaimFields,
+        atomic_address_claim_identity_canonical,
+        atomic_address_claim_identity_proof_hash,
+        atomic_address_claim_namespace_canonical,
+    )
     from awid.did import stable_id_from_did_key
     from awid.signing import sign_message
 
-    f = AtomicAddressClaimFields("claim_identity_address", "example.com", "person",
-        stable_id_from_did_key(NEW_KEY), NEW_KEY, ORIGIN, TS, False, "self", "self")
+    f = AtomicAddressClaimFields(
+        "claim_identity_address",
+        "example.com",
+        "person",
+        stable_id_from_did_key(NEW_KEY),
+        NEW_KEY,
+        ORIGIN,
+        TS,
+        False,
+        "self",
+        "self",
+    )
     proof = sign_message(NEW_SEED, atomic_address_claim_identity_canonical(f))
-    fields = {"operation": "address_claim_proof", "domain": "example.com", "address_name": "person",
-              "did_aw": f.did_aw, "current_did_key": NEW_KEY, "timestamp": TS, "dry_run": False,
-              "identity_custody": "self", "namespace_custody": "self", "identity_signature": proof}
+    fields = {
+        "operation": "address_claim_proof",
+        "domain": "example.com",
+        "address_name": "person",
+        "did_aw": f.did_aw,
+        "current_did_key": NEW_KEY,
+        "timestamp": TS,
+        "dry_run": False,
+        "identity_custody": "self",
+        "namespace_custody": "self",
+        "identity_signature": proof,
+    }
     seen = []
 
     def signer(context):
         seen.append(context)
-        expected = atomic_address_claim_namespace_canonical(f, atomic_address_claim_identity_proof_hash(atomic_address_claim_identity_canonical(f), proof))
+        expected = atomic_address_claim_namespace_canonical(
+            f,
+            atomic_address_claim_identity_proof_hash(
+                atomic_address_claim_identity_canonical(f), proof
+            ),
+        )
         assert context.signing_bytes() == expected
         return KEY, SigningKey(SEED).sign(expected).signature
 
-    await sign_controller_object(parse_controller_object(fields), controller=CONTROLLER,
-                                 signer=signer, registry_origin=ORIGIN)
+    await sign_controller_object(
+        parse_controller_object(fields),
+        controller=CONTROLLER,
+        signer=signer,
+        registry_origin=ORIGIN,
+    )
     assert len(seen) == 1
     with pytest.raises(ValueError):
-        await sign_controller_object(parse_controller_object({**fields, "dry_run": True}),
-                                     controller=CONTROLLER, signer=signer, registry_origin=ORIGIN)
+        await sign_controller_object(
+            parse_controller_object({**fields, "dry_run": True}),
+            controller=CONTROLLER,
+            signer=signer,
+            registry_origin=ORIGIN,
+        )
     assert len(seen) == 1

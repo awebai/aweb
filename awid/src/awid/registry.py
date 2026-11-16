@@ -753,6 +753,12 @@ class RegistryClient:
             if mutation and isinstance(exc.__cause__, (httpx.TransportError, TimeoutError)):
                 raise ControllerRequestUncertain(request) from exc
             raise
+        except (ValueError, UnicodeError) as exc:
+            # A successful write with an unreadable answer can already have
+            # committed. The caller's journal must reconcile that ambiguity too.
+            if mutation:
+                raise ControllerRequestUncertain(request) from exc
+            raise
         finally:
             if mutation:
                 await self._invalidate_controller_request(request, pin)
