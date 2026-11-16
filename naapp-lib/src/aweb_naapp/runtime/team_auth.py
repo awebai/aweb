@@ -34,6 +34,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 from awid.did import did_key_from_signing_key, public_key_from_did, validate_stable_id
+from awid.external_authority import SystemTXTOutcomeResolver, TXTOutcomeResolver
 from awid.log import canonical_server_origin
 from awid.registry_auth import RegistryRequestAuth
 from awid.signing import (
@@ -46,9 +47,13 @@ from awid.team_certificate import (
     decode_team_certificate,
     refusal_answer,
 )
-from awid.external_authority import SystemTXTOutcomeResolver, TXTOutcomeResolver
 from awid.team_ids import parse_team_id
-from awid.team_key_acts import MemoryTeamKeyPins, TeamKeyPinStore, TeamKeyUnverified, pinned_team_key
+from awid.team_key_acts import (
+    MemoryTeamKeyPins,
+    TeamKeyPinStore,
+    TeamKeyUnverified,
+    pinned_team_key,
+)
 from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
