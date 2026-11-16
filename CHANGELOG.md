@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+- The Python controller client (`awid.registry.RegistryClient`, both its
+  typed `controller_request` and its namespace, team, certificate and address
+  methods) signs every registry write in the covering-v2 form: the signature
+  covers the destination registry, the method, the path and the exact body
+  bytes sent, instead of the operation's claims alone. A server or aweb Cloud
+  built from this release needs a registry at **awid-service 0.5.39 or
+  later**, the release it was tested against, with `AWID_PUBLIC_ORIGINS` set to
+  the origin clients write to (without it the registry answers 503). An older
+  registry refuses these writes; the client does not fall back to the legacy
+  form.
+- While team-key pin enforcement is off (`AWEB_ENFORCE_TEAM_KEY_PINS`, the
+  default), a registry answer whose own key act names a different key than
+  the one it serves no longer moves the pin, in either mode: the pinned key is
+  used and `team_key_pin_kept` is logged. A process whose registry read
+  predates a rotation therefore cannot move the team back to the old key and
+  drop its members. Each server remembers its answer for a team's served key
+  for 60 seconds.
+- **Do not rotate a team key until members run an `aw` release that refreshes
+  its certificate on `team_key_not_current`.** Stable `aw` 1.36.58 does not;
+  until then each member needs its new certificate id and
+  `aw id team fetch-cert ... --cert-id <new id> --force`. No hosted team's key
+  rotates until aweb Cloud records the accepted team key on its agents
+  (`aweb-adfr`). See `deploy/team/OPERATIONS.md`, "Before rotating the team
+  key".
+
 - Candidate-only root endorsement, signer admission/removal, signer operation
   status and protected-profile commands and the in-tree signer host are removed.
   Root approval and unattended admission through a key holder are not built;
