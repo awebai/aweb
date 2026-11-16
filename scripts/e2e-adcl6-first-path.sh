@@ -3,10 +3,9 @@
 set -euo pipefail
 umask 0077
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-[[ $# == 2 ]] || { echo 'usage: e2e-adcl6-first-path.sh APPROVAL_GIT_ARCHIVE HOLDER_GIT_ARCHIVE' >&2; exit 2; }
+[[ $# == 1 ]] || { echo 'usage: e2e-adcl6-first-path.sh APPROVAL_GIT_ARCHIVE (aw and holder build from this checkout)' >&2; exit 2; }
 APPROVAL_ARCHIVE="$1"
-HOLDER_ARCHIVE="$2"
-[[ "$APPROVAL_ARCHIVE" = /* && -f "$APPROVAL_ARCHIVE" && "$HOLDER_ARCHIVE" = /* && -f "$HOLDER_ARCHIVE" ]] || { echo 'input archives must be existing absolute paths' >&2; exit 2; }
+[[ "$APPROVAL_ARCHIVE" = /* && -f "$APPROVAL_ARCHIVE" ]] || { echo 'approval archive must be an existing absolute path' >&2; exit 2; }
 PROJECT="aweb-adcl6-${RANDOM}-$$"
 BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 [[ "$BIND_ROOT" = /* && -d "$BIND_ROOT" ]] || { echo 'AWEB_DOCKER_BIND_ROOT must be an existing absolute directory' >&2; exit 2; }
@@ -72,7 +71,7 @@ PY
 trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
-python3 "$ROOT/scripts/adcl6_first_path.py" prepare --runtime "$RUNTIME" --project "$PROJECT" --approval-archive "$APPROVAL_ARCHIVE" --holder-archive "$HOLDER_ARCHIVE" --architecture "$ARCHITECTURE"
+python3 "$ROOT/scripts/adcl6_first_path.py" prepare --runtime "$RUNTIME" --project "$PROJECT" --approval-archive "$APPROVAL_ARCHIVE" --architecture "$ARCHITECTURE"
 mkdir "$RUNTIME/tls"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=adcl6-fixture-CA -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign -addext subjectKeyIdentifier=hash -keyout "$RUNTIME/tls/ca.key" -out "$RUNTIME/public/ca.crt" >"$OUTPUT/tls-build.log" 2>&1
 openssl req -newkey rsa:2048 -nodes -subj /CN=approval.adcl6.test -keyout "$RUNTIME/tls/server.key" -out "$RUNTIME/tls/server.csr" >>"$OUTPUT/tls-build.log" 2>&1

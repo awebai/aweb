@@ -744,6 +744,7 @@ Run as an existing enrolled person with --human ID --human-domain DOMAIN.
 The issuer's approved-mode endpoint asks for human approval through the existing
 428 protocol. Review the exact act in your approval-service browser page. Every
 identity signature uses your passphrase-protected keychain key at this terminal.
+An agent requester uses the generic aw id request command instead.
 
 This command returns a pending intent; it never enrolls the new person. The new
 person first prepares their own key with aw id human init and gives you its ID
@@ -1063,6 +1064,7 @@ Sign the text in --message-file with your human key at a terminal, asking for
 its keychain passphrase. The JSON export carries your ID chain and any saved
 enrollment evidence. It needs no team or mail server. Missing enrollment is not
 a refusal and adds no evidence. Run with --human ID --human-domain DOMAIN.
+Saved evidence rides only in proof files; ordinary mail does not yet carry it.
 
 Next: give the output file to anyone. On another machine they run:
   aw verify FILE

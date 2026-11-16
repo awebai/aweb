@@ -21,6 +21,7 @@ var idProofCmd = &cobra.Command{
 its keychain passphrase. The JSON export carries your ID chain and any saved
 enrollment evidence. It needs no team or mail server. Missing enrollment is not
 a refusal and adds no evidence. Run with --human ID --human-domain DOMAIN.
+Saved evidence rides only in proof files; ordinary mail does not yet carry it.
 
 Next: give the output file to anyone. On another machine they run:
   aw verify FILE

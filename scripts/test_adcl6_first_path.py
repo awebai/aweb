@@ -33,15 +33,34 @@ class RunningTreeTests(unittest.TestCase):
                 file = root / path
                 file.parent.mkdir()
                 file.write_text(path)
+
             def commit():
                 subprocess.run(["git", "add", "."], cwd=root, check=True)
-                subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture"], cwd=root, check=True)
-                return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+                subprocess.run(
+                    [
+                        "git",
+                        "-c",
+                        "user.name=Fixture",
+                        "-c",
+                        "user.email=fixture@example.test",
+                        "commit",
+                        "-qm",
+                        "fixture",
+                    ],
+                    cwd=root,
+                    check=True,
+                )
+                return subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=root, text=True
+                ).strip()
+
             first = commit()
             archive = Path(directory) / "source.tar"
             self.assertEqual(archive_running_tree(root, archive), first)
             with tarfile.open(archive) as contents:
-                self.assertEqual(contents.extractfile("cli/go/source.txt").read(), b"first")
+                self.assertEqual(
+                    contents.extractfile("cli/go/source.txt").read(), b"first"
+                )
                 self.assertIsNotNone(contents.getmember("awid/source.txt"))
                 self.assertIsNotNone(contents.getmember("key-holder/source.txt"))
             source.write_text("second")
@@ -51,7 +70,9 @@ class RunningTreeTests(unittest.TestCase):
             self.assertNotEqual(first, second)
             self.assertEqual(archive_running_tree(root, archive), second)
             with tarfile.open(archive) as contents:
-                self.assertEqual(contents.extractfile("cli/go/source.txt").read(), b"second")
+                self.assertEqual(
+                    contents.extractfile("cli/go/source.txt").read(), b"second"
+                )
 
 
 class SaveTests(unittest.TestCase):

@@ -22,6 +22,7 @@ var idHumanAddCmd = &cobra.Command{
 The issuer's approved-mode endpoint asks for human approval through the existing
 428 protocol. Review the exact act in your approval-service browser page. Every
 identity signature uses your passphrase-protected keychain key at this terminal.
+An agent requester uses the generic aw id request command instead.
 
 This command returns a pending intent; it never enrolls the new person. The new
 person first prepares their own key with aw id human init and gives you its ID

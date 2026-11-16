@@ -28,8 +28,6 @@ import time
 import tomllib
 from urllib.parse import quote
 
-AW = "35b93d6c8979af7a1dde2e44d3ee4e285bba8c27"
-HOLDER = "35b93d6c8979af7a1dde2e44d3ee4e285bba8c27"
 APPROVAL = "aa736fbd4164f9378cd0bba67264d8a69a263594"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
@@ -138,29 +136,46 @@ def extract(archive: Path, expected: str, destination: Path, prefixes=()) -> Non
         source.extractall(destination, members=members, filter="data")
 
 
+def archive_running_tree(root: Path, archive: Path) -> str:
+    if subprocess.run(["git", "diff", "--quiet", "HEAD", "--"], cwd=root).returncode:
+        raise RuntimeError("journey requires a clean checked-out source tree")
+    source_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=root, text=True
+    ).strip()
+    with archive.open("wb") as stream:
+        subprocess.run(
+            [
+                "git",
+                "archive",
+                "--format=tar",
+                source_sha,
+                "cli/go",
+                "awid",
+                "key-holder",
+            ],
+            cwd=root,
+            stdout=stream,
+            check=True,
+        )
+    return source_sha
+
+
 def prepare(args) -> None:
     runtime = args.runtime.resolve()
     build = runtime / "build"
     build.mkdir(mode=0o700)
     extract(args.approval_archive, APPROVAL, build / "approval")
-    extract(args.holder_archive, HOLDER, build / "holder", ("awid/", "key-holder/"))
-    # Build the requested product revision from a temporary archive, even if
-    # the held branch has since merged newer main. This is not a worktree or
-    # a runtime source overlay; only its compiled binary enters the image.
+    # Build aw and holder from this clean checkout, including the landing merge.
+    # Only compiled artifacts/wheels enter the application image.
     root = Path(__file__).resolve().parents[1]
+    archive = runtime / "source.tar"
+    source_sha = archive_running_tree(root, archive)
+    extract(archive, source_sha, build / "holder", ("awid/", "key-holder/"))
     go_tree = subprocess.check_output(
-        ["git", "rev-parse", f"{AW}:cli/go"], cwd=root, text=True
+        ["git", "rev-parse", f"{source_sha}:cli/go"], cwd=root, text=True
     ).strip()
-    archive = runtime / "aw-source.tar"
-    with archive.open("wb") as stream:
-        subprocess.run(
-            ["git", "archive", "--format=tar", AW, "cli/go"],
-            cwd=root,
-            stdout=stream,
-            check=True,
-        )
     product = build / "aw-source"
-    extract(archive, AW, product)
+    extract(archive, source_sha, product, ("cli/go/",))
     env = dict(
         os.environ,
         GOOS="linux",
@@ -411,6 +426,7 @@ http {
             **common["environment"],
             "HOME": "/work/browser-home",
             "PROJECT": args.project,
+            "JOURNEY_SOURCE_SHA": source_sha,
             "HOLDER_CONTAINER": args.project + "-holder",
             "IMAGE": image,
             "HOST_WORK": str(runtime / "work"),
@@ -437,20 +453,18 @@ http {
     save(
         runtime / "inputs.json",
         {
-            "aw": AW,
+            "aw": source_sha,
             "architecture": args.architecture,
             "aw_go_tree": go_tree,
             "aw_build_flags": ["-trimpath", "-buildvcs=false"],
             "go_version": subprocess.check_output(["go", "version"], text=True).strip(),
-            "holder_and_awid": HOLDER,
+            "holder_and_awid": source_sha,
             "approval": APPROVAL,
             "aw_binary_sha256": hashlib.sha256((build / "aw").read_bytes()).hexdigest(),
             "approval_archive_sha256": hashlib.sha256(
                 args.approval_archive.read_bytes()
             ).hexdigest(),
-            "holder_archive_sha256": hashlib.sha256(
-                args.holder_archive.read_bytes()
-            ).hexdigest(),
+            "source_archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         },
     )
 
@@ -895,8 +909,8 @@ async def driver():
         "step_owners": STEP_OWNERS,
         "completed": False,
         "phases": [],
-        "aw": AW,
-        "holder_and_awid": HOLDER,
+        "aw": os.environ["JOURNEY_SOURCE_SHA"],
+        "holder_and_awid": os.environ["JOURNEY_SOURCE_SHA"],
         "approval": APPROVAL,
     }
     save(work / "journey.json", report)
@@ -1292,7 +1306,6 @@ def main():
     prep.add_argument("--runtime", required=True, type=Path)
     prep.add_argument("--project", required=True)
     prep.add_argument("--approval-archive", required=True, type=Path)
-    prep.add_argument("--holder-archive", required=True, type=Path)
     prep.add_argument("--architecture", choices=("amd64", "arm64"), default="amd64")
     modes.add_parser("driver")
     retention = modes.add_parser("retain")
