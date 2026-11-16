@@ -15,6 +15,7 @@ from importlib.resources import files
 from pathlib import Path
 from uuid import uuid4
 
+from approval_service.canonical import canonical
 from approval_service.verify import Refused as ApprovalRefused
 from awid.controller_signing import (
     ControllerDescriptor,
@@ -159,6 +160,29 @@ class KeyStore:
         if mode not in ("operator", "approved"):
             raise Refused("issuing_setting_invalid")
         with self._connection() as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            previous = db.execute(
+                "SELECT human_issuance FROM configuration"
+            ).fetchone()[0]
+            if previous == mode:
+                return
+            descriptor = self._descriptor(db)
+            payload = b"aweb.key-holder.setting/1\n" + canonical(
+                {
+                    "version": 1,
+                    "type": "aweb.holder.setting",
+                    "setting": "human_issuance",
+                    "from": previous,
+                    "to": mode,
+                }
+            )
+            self._sign(
+                db,
+                descriptor,
+                payload,
+                operation="human_issuance_change",
+                actor="operator",
+            )
             db.execute("UPDATE configuration SET human_issuance=?", (mode,))
 
     @contextmanager

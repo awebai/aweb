@@ -52,7 +52,8 @@ def test_approved_mode_requires_configuration_but_keeps_operator_command(tmp_pat
         grading=EnrollmentGrading("passkey_only", None),
     )
     assert holder.issue_person_certificate(*target())["state"] == "issued"
-    assert store.audit()[0]["actor"] == "operator"
+    assert store.audit()[-1]["actor"] == "operator"
+    assert store.audit()[-1]["operation"] == "namespace_id_issue"
     with pytest.raises(Refused, match="issuing_setting_invalid"):
         store.set_human_issuance("agent")
     assert store.human_issuance() == "approved"
@@ -115,3 +116,37 @@ def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
     assert reopened.descriptor() == descriptor
     assert reopened.human_issuance() == "operator"
     assert reopened.audit() == []
+
+
+def test_issuing_rule_changes_are_audited_atomically(tmp_path):
+    import base64
+
+    from approval_service.canonical import parse
+
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    store.set_human_issuance("approved")
+    store.set_human_issuance("approved")
+    store.set_human_issuance("operator")
+    rows = store.audit()
+    assert len(rows) == 2
+    changes = []
+    for row in rows:
+        assert row["operation"] == "human_issuance_change"
+        assert row["actor"] == "operator" and row["at"] > 0
+        raw = base64.b64decode(row["payload"])
+        prefix = b"aweb.key-holder.setting/1\n"
+        assert raw.startswith(prefix)
+        changes.append(parse(raw[len(prefix) :]))
+    assert [(c["from"], c["to"]) for c in changes] == [
+        ("operator", "approved"),
+        ("approved", "operator"),
+    ]
+    with store._connection() as db:
+        db.execute(
+            "CREATE TRIGGER fail_setting BEFORE UPDATE OF human_issuance ON configuration BEGIN SELECT RAISE(ABORT,'setting_failed'); END"
+        )
+    import sqlite3
+
+    with pytest.raises(sqlite3.IntegrityError, match="setting_failed"):
+        store.set_human_issuance("approved")
+    assert store.human_issuance() == "operator" and store.audit() == rows

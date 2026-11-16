@@ -47,7 +47,9 @@ aweb-key-holder --state /private/holder/state configure --human-issuance approve
 Then restart the same state volume with `--approval-origin https://awsign.com
 --rp-id awsign.com --grading passkey_only` in addition to the normal runtime
 flags. `approved` without this configuration refuses `approval_not_configured`.
-`configure --human-issuance operator` restores private issuance. In operator
+`configure --human-issuance operator` restores private issuance. Each change
+records its time and old/new values in the append-only signature audit; the
+operator role is recorded, without claiming which human ran the command. In operator
 mode, `POST /v1/humans` explicitly refuses `human_issuance_operator`.
 The operator's `issue-person` command remains available in approved mode for
 the first person and recovery, and uses the same signature audit.
