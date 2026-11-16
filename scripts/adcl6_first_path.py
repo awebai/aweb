@@ -28,8 +28,8 @@ import time
 import tomllib
 from urllib.parse import quote
 
-AW = "75533828bc541b76b1f25cf53240b967a93f2de1"
-HOLDER = "75533828bc541b76b1f25cf53240b967a93f2de1"
+AW = "6aae6de246ab1517c250d9adaf2712394485991f"
+HOLDER = "6aae6de246ab1517c250d9adaf2712394485991f"
 APPROVAL = "aa736fbd4164f9378cd0bba67264d8a69a263594"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
@@ -675,6 +675,11 @@ async def enable_holder_approval():
         "--mount",
         "type=bind,src=" + public["Source"] + ",dst=/public,readonly",
     ]
+    # Preserve Compose's ownership/configuration metadata when replacing this
+    # one service, so compose logs/down include it and release its volume/network.
+    for label, value in old["Config"]["Labels"].items():
+        if label.startswith("com.docker.compose."):
+            args += ["--label", label + "=" + value]
     for value in old["Config"]["Env"]:
         # This owned service has only image defaults and public fixture inputs.
         args += ["--env", value]
