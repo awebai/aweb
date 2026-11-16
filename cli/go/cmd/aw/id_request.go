@@ -142,7 +142,37 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	result, err := executeSignedIDRequest(method, parsedURL, identity, bodyBytes, headers, signPayload, idRequestTeamAuth)
+	approvalTarget := method + " " + parsedURL.String()
+	approvals, err := configuredApprovalClient(identity, approvalTarget)
+	if err != nil {
+		return err
+	}
+	if approvals != nil {
+		approvals.Notify = cmd.ErrOrStderr()
+	}
+	var result *idRequestExecutionResult
+	if approvals != nil && approvalResume {
+		original, receipt, readErr := readApprovalRecord(approvalRecord, approvalOrigin, approvalTarget)
+		if readErr != nil {
+			return readErr
+		}
+		headers.Set("Content-Type", "application/json")
+		bodyBytes, err = approvals.Resume(cmd.Context(), original, receipt)
+		if err != nil {
+			return err
+		}
+		result, err = executeSignedIDRequest(method, parsedURL, identity, bodyBytes, headers, signPayload, idRequestTeamAuth)
+	} else {
+		result, err = executeSignedIDRequest(method, parsedURL, identity, bodyBytes, headers, signPayload, idRequestTeamAuth)
+		if err == nil && result.Status == http.StatusPreconditionRequired && approvals != nil {
+			presentation, approvalErr := approvals.Complete428(cmd.Context(), result.Body, result.Status)
+			if approvalErr != nil {
+				return approvalErr
+			}
+			headers.Set("Content-Type", "application/json")
+			result, err = executeSignedIDRequest(method, parsedURL, identity, presentation, headers, signPayload, idRequestTeamAuth)
+		}
+	}
 	if err != nil {
 		return err
 	}

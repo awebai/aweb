@@ -1061,6 +1061,11 @@ Flags:
 Make a DIDKey-signed HTTP request with the local identity key
 
 Flags:
+- `--approval-admission string File containing this caller's public admission certificate/chain`
+- `--approval-origin string Known approval-service HTTPS origin for a needs-human response`
+- `--approval-record string Private file retaining the original approval request and receipt`
+- `--approval-requester string File containing this caller's canonical requester descriptor`
+- `--approval-resume Resume the original request from --approval-record`
 - `--body string Request body to send. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
 - `--body-file string Read request body from a file; safe for Markdown or command examples`
 - `--header stringArray Additional header in 'Name: Value' form`
