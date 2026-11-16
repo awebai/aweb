@@ -2326,12 +2326,16 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		// Never discard a retained answer or an earlier uncertain submission.
 		// Older records have no submission fact; their frozen proof can still
 		// be definitively refused locally, but a server answer is ambiguous.
-		if status, ok := awid.HTTPStatusCode(resultErr); submittedBefore && ok && status >= 400 && status < 500 && creation.ResponseJSON == "" {
-			resultErr = uncertainHostedInviteError(home.Root, creation.TeamID, resultErr)
-		}
 		localMismatch := awid.IDCertificateErrorCode(resultErr) == "human_mismatch"
 		if creation.ResponseJSON == "" && !submittedBefore && (knownUnsubmitted || localMismatch) {
 			resultErr = releaseRefusedHostedInvite(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root), resultErr)
+		}
+		// Unknown 4xx codes remain resumable, including the first answer.
+		// Give every retained refusal the same reconciliation exit.
+		if status, ok := awid.HTTPStatusCode(resultErr); ok && status >= 400 && status < 500 {
+			if _, err := os.Stat(recoveryPath); err == nil {
+				resultErr = uncertainHostedInviteError(home.Root, creation.TeamID, resultErr)
+			}
 		}
 	}()
 	if opts.ParentHome != "" {

@@ -108,8 +108,21 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 	}
 	// Membership may already have been persisted before connect failed.
 	if cert, err := loadTeamCertificateAt(wd, home.Root, team); err == nil && cert != nil {
+		bindKey := prior.DIDKey == ""
+		if bindKey {
+			key, err := awid.LoadSigningKey(filepath.Join(home.Root, "signing.key"))
+			if err != nil {
+				return fmt.Errorf("load init retry child key: %w", err)
+			}
+			prior.DIDKey = awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+		}
 		if cert.MemberDIDKey != prior.DIDKey {
 			return errors.New("init retry membership key changed")
+		}
+		if bindKey {
+			if err := prior.save(path); err != nil {
+				return err
+			}
 		}
 		if err := connectInitAcceptedInvite(cmd, wd, prior.Origin); err != nil {
 			return err
@@ -180,7 +193,7 @@ func hostedInviteDefinitiveRefusal(err error) bool {
 	}
 	switch strings.TrimSpace(awid.RefusalCode(err)) {
 	case "human_condition_mismatch":
-		return true
+		return status == 409
 	}
 	return false
 }
