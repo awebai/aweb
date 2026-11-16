@@ -20,7 +20,6 @@ from awid.did import did_key_from_signing_key
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from awid.team_server_record import build_team_server_record, verify_team_server_record
 
-pytest_plugins = ("test_controller_request_v2_http",)
 pytestmark = pytest.mark.asyncio
 
 
