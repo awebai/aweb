@@ -89,8 +89,11 @@ async def world(test_db_factory, monkeypatch):
     ))
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
     app_db = await test_db_factory.create_db(suffix="pin_library")
+    # Library connects by its DSN alone, so the DSN names the test database's
+    # schema as its search_path rather than relying on the role's.
+    library_dsn = f"{app_db.config.get_dsn()}?search_path={app_db.schema}"
     app = library_api.create_app(
-        Settings(database_url=app_db.config.get_dsn(), awid_registry_url=REGISTRY, public_origin=ORIGIN),
+        Settings(database_url=library_dsn, awid_registry_url=REGISTRY, public_origin=ORIGIN),
         awid_txt_resolver=dns_naming("example.com", NAMESPACE_KEY),
     )
 
@@ -125,8 +128,7 @@ async def world(test_db_factory, monkeypatch):
 
 
 async def _pinned_key(app_db) -> str | None:
-    # Library connects by its DSN alone, so its tables are in the default schema.
-    return await app_db.fetch_value("SELECT team_did_key FROM public.team_key_pins WHERE team_id = $1", TEAM_ID)
+    return await app_db.fetch_value("SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID)
 
 
 async def _shelf(client, headers):
