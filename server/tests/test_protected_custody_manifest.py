@@ -44,7 +44,7 @@ def slots(tmp_path):
     from pathlib import Path
 
     settings = SimpleNamespace(controller_keys_file=manifest, controller_key_file=Path(next(iter(paths.values()))),
-        service_key_file=None, member_keys_file=members, worker_uids=[65534], member_public=did_from_public_key(member_public))
+        member_keys_file=members, worker_uids=[65534], member_public=did_from_public_key(member_public))
     return settings, profile, paths, member_file, seeds
 
 
@@ -59,12 +59,10 @@ def test_every_provisioned_authority_uses_its_matching_private_file(slots):
 
 def test_real_host_settings_keep_service_attestation_key_optional(slots, tmp_path, monkeypatch):
     settings, profile, _, _, _ = slots
-    monkeypatch.delenv("AWEB_PROTECTED_SERVICE_KEY_FILE", raising=False)
     actual = HostSettings(profile_file=FIXTURE, scope_file=tmp_path / "scope.json",
         controller_key_file=settings.controller_key_file, controller_keys_file=settings.controller_keys_file,
         member_keys_file=settings.member_keys_file, worker_uids=settings.worker_uids,
         database_url="postgresql://unused", _env_file=None)
-    assert actual.service_key_file is None
     _, _, custody = load_custodies(actual, profile=profile, scope=profile.bindings[0].scope.model_dump(mode="json"))
     assert all(key.service_did_key is None for _, key in custody)
 

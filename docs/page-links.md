@@ -95,21 +95,13 @@ certificate and the same current team key, and returns the shared frozen
 Both times are integer monotonic nanoseconds and retain the facts' original fetch-start and expiry;
 a cache hit never extends that expiry. The window is at most 60 seconds.
 The proof is an in-process object, never request JSON, stored data or a token.
-On a protected team, the original literal principal is compared with the full-
-artifact-backed registered subject using the shared protected membership verifier;
-`did:aw` also retains its independent current-key check. The proof carries that
-principal and the original protection observation, and N5 checks the principal
-again against the locked creator evidence. Exchange, read admission and action
-admission recheck the original protected observation after their final local
-await, before returning or committing. A host performing further work in the
-same transaction retains that observation and rechecks it before its commit.
-An ID and controller alone cannot
-establish protected membership. Missing original evidence or unreadable exact
-registry state is 503; a conflicting registered subject is 401
-`certificate_binding_mismatch`. Historical subject-only references require the
-operator's explicitly inventoried baseline from
-[the protected-team boundary](protected-team-boundary.md); no alias or rights are
-reconstructed from a current record. Resource ACL checks remain independent.
+Membership requires a valid certificate under the team's admitted key, with
+current membership and the original creator/principal binding checked by the
+request verifier. A certificate-less retained creator reference still requires
+current registry certificate/key facts; an ID and controller alone do not
+establish membership. Unreadable facts remain unavailable, and a conflicting
+registered subject is refused as invalid. No alias or rights are reconstructed
+from a current record. Resource ACL checks remain independent.
 Phase 1 refuses unknown/revoked/rotated/incomplete evidence with 403
 `current_member_required`; unavailable facts remain 503
 `current_membership_unavailable`.

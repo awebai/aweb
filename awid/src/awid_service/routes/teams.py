@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 import re
 import secrets
 from datetime import datetime, timezone
@@ -16,7 +15,6 @@ from pgdbm.errors import QueryError
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from awid_service.protected_teams import advance_incarnation, effect_transaction, protection, project_protection, refusal, team_read_transaction
 
 from awid_service.deps import get_db
 from awid.contract import normalize_identity_scope
@@ -36,16 +34,9 @@ from awid_service.delivery_origin import validate_delivery_origin
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
 from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
 
-logger = logging.getLogger(__name__)
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
-def _validate_domain_path(domain: str) -> None:
-    if not domain.strip().rstrip("."):
-        raise HTTPException(status_code=400, detail="Invalid namespace domain")
-
-
-router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute,
-                   dependencies=[Depends(_validate_domain_path)])
+router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +382,6 @@ class TeamResponse(BaseModel):
     team_did_key: str
     visibility: str
     created_at: str
-    protection: dict
 
 
 class TeamListResponse(BaseModel):
@@ -469,9 +459,6 @@ class CertificateStatusResponse(BaseModel):
     status: Literal["active", "revoked"]
     revoked_at: str | None
 
-    protection: dict | None = None
-    certificate_sha256: str | None = None
-
 
 class CertificateResponse(BaseModel):
     team_id: str
@@ -483,8 +470,6 @@ class CertificateResponse(BaseModel):
     identity_scope: str
     issued_at: str
     revoked_at: str | None = None
-
-    certificate_sha256: str | None = None
 
 
 class CertificateFetchResponse(CertificateResponse):
@@ -573,31 +558,29 @@ async def create_team(
         request, db, domain=domain, operation="create_team", name=body.name,
     )
 
-    async with effect_transaction(request, db, domain=domain, name=body.name, operation="create_team") as tx:
-        now = datetime.now(timezone.utc)
-        try:
-            row = await tx.fetch_one(
-                """
-                INSERT INTO {{tables.teams}}
-                    (domain, name, display_name, team_did_key, visibility, created_by, created_at)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                RETURNING team_uuid, domain, name, display_name, team_did_key, visibility, created_at
-                """,
-                domain,
-                body.name,
-                body.display_name,
-                body.team_did_key,
-                body.visibility,
-                caller_did,
-                now,
-            )
-        except (QueryError, asyncpg.UniqueViolationError) as exc:
-            if not isinstance(exc if isinstance(exc, asyncpg.UniqueViolationError) else exc.__cause__, asyncpg.UniqueViolationError):
-                raise
-            raise HTTPException(status_code=409, detail="Team already exists")
+    now = datetime.now(timezone.utc)
+    try:
+        row = await db.fetch_one(
+            """
+            INSERT INTO {{tables.teams}}
+                (domain, name, display_name, team_did_key, visibility, created_by, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            RETURNING team_uuid, domain, name, display_name, team_did_key, visibility, created_at
+            """,
+            domain,
+            body.name,
+            body.display_name,
+            body.team_did_key,
+            body.visibility,
+            caller_did,
+            now,
+        )
+    except QueryError as exc:
+        if not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
+            raise
+        raise HTTPException(status_code=409, detail="Team already exists")
 
-        await advance_incarnation(tx, domain=domain, name=body.name, operation="create_team")
-        return await _team_response(tx, row)
+    return _team_response(row)
 
 
 @router.get(
@@ -651,24 +634,18 @@ async def list_teams(
             raise HTTPException(status_code=400, detail="Invalid cursor") from exc
         params.extend([cursor_ts, cursor_team_uuid])
         where_clauses.append(
-            f"(t.created_at, t.team_uuid) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
+            f"(created_at, team_uuid) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
         )
 
     params.append(validated_limit + 1)
     query = (
-        "SELECT t.team_uuid, t.domain, t.name, t.display_name, t.team_did_key, t.visibility, t.created_at,"
-        " p.mode, p.service_id, p.service_did_key, p.history_id, p.generation"
+        "SELECT t.team_uuid, t.domain, t.name, t.display_name, t.team_did_key, t.visibility, t.created_at"
         " FROM {{tables.teams}} t"
-        " LEFT JOIN {{tables.team_protection}} p ON p.domain=t.domain AND p.name=t.name"
         " WHERE " + " AND ".join(where_clauses)
         + f" ORDER BY t.created_at, t.team_uuid"
         f" LIMIT ${len(params)}"
     )
-    try:
-        rows = await db.fetch_all(query, *params)
-    except QueryError:
-        logger.exception("Authoritative team listing/protection read unavailable")
-        raise refusal("protected_state_unavailable") from None
+    rows = await db.fetch_all(query, *params)
     has_more = len(rows) > validated_limit
     page_rows = rows[:validated_limit]
     next_cursor = None
@@ -680,9 +657,7 @@ async def list_teams(
         })
 
     return TeamListResponse(
-        teams=[_team_model(r, project_protection(
-            r if r["mode"] is not None else None, team_id=build_team_id(r["domain"], r["name"]),
-        )) for r in page_rows],
+        teams=[_team_response(r) for r in page_rows],
         has_more=has_more,
         next_cursor=next_cursor,
     )
@@ -702,27 +677,26 @@ async def get_team(
 ) -> TeamResponse:
     name = _validate_team_name_path(name)
     db = db_infra.get_manager("aweb")
-    async with team_read_transaction(db, domain, name) as tx:
-        row = await tx.fetch_one(
-            """
-            SELECT team_uuid, domain, name, display_name, team_did_key, visibility, created_at
-            FROM {{tables.teams}}
-            WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
-            """,
-            domain,
-            name,
-        )
-        if row is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-        await _require_team_read_access(
-            request,
-            tx,
-            team_uuid=row["team_uuid"],
-            team_did_key=row["team_did_key"],
-            visibility=row["visibility"],
-            authorization=authorization,
-        )
-        return await _team_response(tx, row)
+    row = await db.fetch_one(
+        """
+        SELECT team_uuid, domain, name, display_name, team_did_key, visibility, created_at
+        FROM {{tables.teams}}
+        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        """,
+        domain,
+        name,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    await _require_team_read_access(
+        request,
+        db,
+        team_uuid=row["team_uuid"],
+        team_did_key=row["team_did_key"],
+        visibility=row["visibility"],
+        authorization=authorization,
+    )
+    return _team_response(row)
 
 
 @router.delete(
@@ -741,7 +715,7 @@ async def delete_team(
         request, db, domain=domain, operation="delete_team", team_name=name,
     )
 
-    async with effect_transaction(request, db, domain=domain, name=name, operation="delete_team") as tx:
+    async with db.transaction() as tx:
         row = await tx.fetch_one(
             """
             SELECT team_uuid
@@ -781,8 +755,6 @@ async def delete_team(
             row["team_uuid"],
             now,
         )
-
-        await advance_incarnation(tx, domain=domain, name=name, operation="delete_team")
 
     return {"deleted": True, "team_id": build_team_id(domain, name), "domain": domain, "name": name}
 
@@ -828,7 +800,7 @@ async def rotate_team_key(
         name=name, new_team_did_key=body.new_team_did_key,
     )
 
-    async with effect_transaction(request, db, domain=domain, name=name, operation="rotate_team_key") as tx:
+    async with db.transaction() as tx:
         old_row = await tx.fetch_one(
             """
             SELECT team_uuid, team_did_key FROM {{tables.teams}}
@@ -858,9 +830,7 @@ async def rotate_team_key(
             body.new_team_did_key,
         )
 
-        if key_changed:
-            await advance_incarnation(tx, domain=domain, name=name, operation="rotate_team_key")
-        resp = await _team_response(tx, row)
+    resp = _team_response(row)
     return TeamRotateResponse(
         **resp.model_dump(),
         key_changed=key_changed,
@@ -884,56 +854,55 @@ async def register_certificate(
         request, db, domain=domain, name=name,
         operation="register_certificate", certificate_id=body.certificate_id,
     )
-    async with effect_transaction(request, db, domain=domain, name=name, operation="register_certificate") as tx:
-        await _require_member_address_owned_by_did_aw(
-            tx,
-            member_address=body.member_address,
-            member_did_aw=body.member_did_aw,
-        )
-        team_id = build_team_id(domain, name)
-        _verify_certificate_blob(
-            body.certificate,
-            team_id=team_id,
-            team_did_key=team_row["team_did_key"],
-            body=body,
-        )
+    await _require_member_address_owned_by_did_aw(
+        db,
+        member_address=body.member_address,
+        member_did_aw=body.member_did_aw,
+    )
+    team_id = build_team_id(domain, name)
+    _verify_certificate_blob(
+        body.certificate,
+        team_id=team_id,
+        team_did_key=team_row["team_did_key"],
+        body=body,
+    )
 
-        try:
-            await tx.execute(
-                """
-                INSERT INTO {{tables.team_certificates}}
-                    (team_uuid, certificate_id, member_did_key, member_did_aw,
-                     member_address, alias, identity_scope, certificate)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                """,
-                team_row["team_uuid"],
-                body.certificate_id,
-                body.member_did_key,
-                body.member_did_aw,
-                body.member_address,
-                body.alias,
-                body.identity_scope,
-                body.certificate,
-            )
-        except (QueryError, asyncpg.UniqueViolationError) as exc:
-            cause = exc if isinstance(exc, asyncpg.UniqueViolationError) else exc.__cause__
-            if not isinstance(cause, asyncpg.UniqueViolationError):
-                raise
-            constraint_name = getattr(cause, "constraint_name", "")
-            if constraint_name == "idx_team_certificates_alias_active":
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "alias_active", "message": "Alias already active in team"},
-                )
+    try:
+        await db.execute(
+            """
+            INSERT INTO {{tables.team_certificates}}
+                (team_uuid, certificate_id, member_did_key, member_did_aw,
+                 member_address, alias, identity_scope, certificate)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            team_row["team_uuid"],
+            body.certificate_id,
+            body.member_did_key,
+            body.member_did_aw,
+            body.member_address,
+            body.alias,
+            body.identity_scope,
+            body.certificate,
+        )
+    except QueryError as exc:
+        cause = exc.__cause__
+        if not isinstance(cause, asyncpg.UniqueViolationError):
+            raise
+        constraint_name = getattr(cause, "constraint_name", "")
+        if constraint_name == "idx_team_certificates_alias_active":
             raise HTTPException(
                 status_code=409,
-                detail={
-                    "code": "certificate_already_registered",
-                    "message": "Certificate already registered",
-                },
+                detail={"code": "alias_active", "message": "Alias already active in team"},
             )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "certificate_already_registered",
+                "message": "Certificate already registered",
+            },
+        )
 
-        return CertificateRegisterResponse(registered=True, certificate_id=body.certificate_id)
+    return CertificateRegisterResponse(registered=True, certificate_id=body.certificate_id)
 
 
 @router.post(
@@ -954,21 +923,20 @@ async def set_team_visibility(
         operation="set_team_visibility", visibility=body.visibility,
     )
 
-    async with effect_transaction(request, db, domain=domain, name=name, operation="set_team_visibility") as tx:
-        row = await tx.fetch_one(
-            """
-            UPDATE {{tables.teams}}
-            SET visibility = $3
-            WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
-            RETURNING team_uuid, domain, name, display_name, team_did_key, visibility, created_at
-            """,
-            domain,
-            name,
-            body.visibility,
-        )
-        if row is None:
-            raise HTTPException(status_code=404, detail="Team not found")
-        return await _team_response(tx, row)
+    row = await db.fetch_one(
+        """
+        UPDATE {{tables.teams}}
+        SET visibility = $3
+        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        RETURNING team_uuid, domain, name, display_name, team_did_key, visibility, created_at
+        """,
+        domain,
+        name,
+        body.visibility,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return _team_response(row)
 
 
 @router.get(
@@ -1042,7 +1010,7 @@ async def list_certificates(
     params.append(validated_limit + 1)
     query = (
         "SELECT tc.id, tc.certificate_id, tc.member_did_key, tc.member_did_aw, tc.member_address,"
-        " tc.alias, tc.identity_scope, tc.issued_at, tc.revoked_at, tc.certificate, t.domain, t.name"
+        " tc.alias, tc.identity_scope, tc.issued_at, tc.revoked_at, t.domain, t.name"
         " FROM {{tables.team_certificates}} tc"
         " JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid"
         " WHERE " + " AND ".join(where_clauses)
@@ -1128,43 +1096,39 @@ async def get_team_member(
 @router.get(
     "/{name}/certificates/{certificate_id}/status",
     response_model=CertificateStatusResponse,
-    response_model_exclude_unset=True,
     dependencies=[Depends(rate_limit_dep("certificate_status", allow_trusted_service=True))],
 )
 async def certificate_status(
-    domain: str, name: str, certificate_id: str,
-    include_protection: bool = Query(default=False, alias="protection"),
+    domain: str,
+    name: str,
+    certificate_id: str,
     db_infra=Depends(get_db),
 ) -> CertificateStatusResponse:
-    """Public exact-certificate facts; protection evidence is negotiated.
+    """Public facts for one published certificate, including on private teams.
 
-    Released callers retain their exact four-field shape. Protection/hash
-    exposes no member fields and grants no private team-metadata read access.
+    Active means not revoked; callers must still verify the presented certificate
+    against the current team key. A rotation invalidates old-key signatures.
     """
     db = db_infra.get_manager("aweb")
-    if include_protection:
-        async with team_read_transaction(db, domain, name) as tx:
-            return await _certificate_status_response(tx, domain, name, certificate_id, include_protection=True)
-    return await _certificate_status_response(db, domain, name, certificate_id)
-
-
-async def _certificate_status_response(db, domain, name, certificate_id, *, include_protection=False):
     row = await db.fetch_one(
-        "SELECT t.team_did_key, tc.revoked_at, tc.certificate FROM {{tables.team_certificates}} tc "
-        "JOIN {{tables.teams}} t ON t.team_uuid=tc.team_uuid "
-        "WHERE t.domain=$1 AND t.name=$2 AND t.deleted_at IS NULL AND tc.certificate_id=$3",
+        """
+        SELECT t.team_did_key, tc.revoked_at
+        FROM {{tables.team_certificates}} tc
+        JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
+        WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
+          AND tc.certificate_id = $3
+        """,
         domain, name, certificate_id,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
-    fields = dict(team_id=build_team_id(domain, name), team_did_key=row["team_did_key"],
-        status="revoked" if row["revoked_at"] is not None else "active",
-        revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] is not None else None)
-    if include_protection:
-        from awid.protected_membership import registered_certificate_digest
-        fields.update(protection=await protection(db, domain, name),
-            certificate_sha256=registered_certificate_digest(row["certificate"]) if row["certificate"] else None)
-    return CertificateStatusResponse(**fields)
+    revoked_at = row["revoked_at"]
+    return CertificateStatusResponse(
+        team_id=build_team_id(domain, name),
+        team_did_key=row["team_did_key"],
+        status="revoked" if revoked_at is not None else "active",
+        revoked_at=revoked_at.isoformat() if revoked_at is not None else None,
+    )
 
 
 class TeamServerRecordBody(BaseModel):
@@ -1200,8 +1164,6 @@ async def _team_server_body(request: Request) -> TeamServerRecordBody:
         body.extend(chunk)
         if len(body) > _TEAM_SERVER_MAX_BODY_BYTES:
             raise HTTPException(status_code=413, detail="request body too large")
-    # Retain the bounded exact bytes for the detached consumer binding.
-    request.state.protected_effect_body = bytes(body)
     try:
         return TeamServerRecordBody.model_validate(json.loads(bytes(body)))
     except ValueError as exc:
@@ -1229,7 +1191,7 @@ async def publish_team_server(
     _validate_team_name_path(name)
     body = await _team_server_body(request)
     db = db_infra.get_manager("aweb")
-    async with effect_transaction(request, db, domain=domain, name=name, operation="publish_team_server") as tx:
+    async with db.transaction() as tx:
         team = await tx.fetch_one(
             """
             SELECT team_uuid, team_did_key FROM {{tables.teams}}
@@ -1397,29 +1359,28 @@ async def revoke_certificate(
         operation="revoke_certificate", certificate_id=body.certificate_id,
     )
 
-    async with effect_transaction(request, db, domain=domain, name=name, operation="revoke_certificate") as tx:
-        row = await tx.fetch_one(
-            """
-            UPDATE {{tables.team_certificates}}
-            SET revoked_at = NOW()
-            WHERE team_uuid = $1 AND certificate_id = $2 AND revoked_at IS NULL
-            RETURNING certificate_id
-            """,
+    row = await db.fetch_one(
+        """
+        UPDATE {{tables.team_certificates}}
+        SET revoked_at = NOW()
+        WHERE team_uuid = $1 AND certificate_id = $2 AND revoked_at IS NULL
+        RETURNING certificate_id
+        """,
+        team_row["team_uuid"],
+        body.certificate_id,
+    )
+    if row is None:
+        # Distinguish between not found and already revoked
+        exists = await db.fetch_one(
+            "SELECT 1 FROM {{tables.team_certificates}} WHERE team_uuid = $1 AND certificate_id = $2",
             team_row["team_uuid"],
             body.certificate_id,
         )
-        if row is None:
-            # Distinguish between not found and already revoked
-            exists = await tx.fetch_one(
-                "SELECT 1 FROM {{tables.team_certificates}} WHERE team_uuid = $1 AND certificate_id = $2",
-                team_row["team_uuid"],
-                body.certificate_id,
-            )
-            if exists is not None:
-                raise HTTPException(status_code=409, detail="Certificate already revoked")
-            raise HTTPException(status_code=404, detail="Certificate not found")
+        if exists is not None:
+            raise HTTPException(status_code=409, detail="Certificate already revoked")
+        raise HTTPException(status_code=404, detail="Certificate not found")
 
-        return CertificateRevokeResponse(revoked=True, certificate_id=body.certificate_id)
+    return CertificateRevokeResponse(revoked=True, certificate_id=body.certificate_id)
 
 
 @router.get(
@@ -1541,13 +1502,8 @@ async def list_revocations(
 # ---------------------------------------------------------------------------
 
 
-async def _team_response(db, row) -> TeamResponse:
-    return _team_model(row, await protection(db, row["domain"], row["name"]))
-
-
-def _team_model(row, binding) -> TeamResponse:
+def _team_response(row) -> TeamResponse:
     return TeamResponse(
-        protection=binding,
         team_id=build_team_id(row["domain"], row["name"]),
         domain=row["domain"],
         name=row["name"],
@@ -1559,10 +1515,7 @@ def _team_model(row, binding) -> TeamResponse:
 
 
 def _cert_response(row) -> CertificateResponse:
-    from awid.protected_membership import registered_certificate_digest
-    blob = row.get("certificate")
     return CertificateResponse(
-        certificate_sha256=registered_certificate_digest(blob) if blob else None,
         team_id=build_team_id(row["domain"], row["name"]),
         certificate_id=row["certificate_id"],
         member_did_key=row["member_did_key"],

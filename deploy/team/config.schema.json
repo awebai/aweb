@@ -260,28 +260,6 @@
           "pattern": "^[A-Za-z0-9-]{1,64}$",
           "x-env": "AWEB_PROTECTED_TRUSTED_CLIENT_HEADER"
         },
-        "serviceKey": {
-          "description": "The custodian installed the signer's distinct service attestation key at private-controller/service.key, beside the controller key. Without it the signer can sign no service-owned owner act.",
-          "type": "boolean"
-        },
-        "ownerActOrigins": {
-          "description": "The consumer origins the signer may deliver a retained owner act to, through its own pinned clients.",
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/origin"
-          },
-          "x-env": "AWEB_PROTECTED_OWNER_ACT_ORIGINS"
-        },
-        "effectReceiptOrigins": {
-          "description": "Of ownerActOrigins, those whose protected verifier and receipt route the operator has deployed and checked.",
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/origin"
-          },
-          "x-env": "AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS"
-        },
         "emailSmtpHost": {
           "type": "string",
           "pattern": "^[A-Za-z0-9.-]+$",

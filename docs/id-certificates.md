@@ -29,31 +29,20 @@ messages and tasks as itself. It is reusable across teams and same-domain orgs
 without new keys, a new ID certificate or re-parenting. For a human leaf, the
 responsible-human result is that human itself, not its inviter.
 
-The approved [human-assurance architecture](human-assurance-contract.md)
-places human, namespace-controller and team-controller keys in a protected
-server signer outside worker access, under either hosted or customer custody.
-Human issuance and human team admission each need their own live, exact-act,
-single-use approval. Login alone, a worker/service token and a terminal
-passphrase do not satisfy that boundary. First enrollment uses the explicit
-protected bootstrap; recovery cannot reuse bootstrap as an approval bypass.
+The [human approval and key custody architecture](human-approval-architecture.md)
+separates approval from key holding. A key holder is optional; owner-held keys
+remain supported. Approval bindings and evidence travel beside a chain rather
+than changing the v1 certificate format. Legacy identities without evidence
+remain usable and are reported as having no evidence.
 
-Ordinary human read/connect/handoff authentication is a restricted signer
-operation. Reviewed [linked-channel ingress](agent-channel-endpoints.md#4-who-may-enter-decision-c)
-can authorize its exact MAIL operation only, never governance. Customer
-namespace/controller keys remain with the customer's protected server; Cloud
-does not acquire them. Agent spawning under a valid endorsed agent parent
-remains unattended and grants no resource permission.
-
-The v1 certificate format is unchanged and does not attest to this ceremony.
-The shared signer/adapters require their own release and migration acceptance;
-existing installations are not upgraded by this contract text alone.
+Human ID issuance, team membership, address authority and resource access
+remain separate. Keys held by an independent organisation do not become Cloud
+keys. Issuing an agent under an eligible agent parent grants no resource access.
 
 ### Interactive human participation from the CLI
 
-The keychain/passphrase flow below describes the legacy CLI implementation.
-It is migration inventory, not the supported custody boundary of the approved
-architecture. The protected read/connect/handoff path replaces local human
-signing under [the human-assurance contract](human-assurance-contract.md#4-ordinary-human-authentication-without-worker-custody).
+The following describes the existing keychain/passphrase CLI implementation.
+It does not establish approval evidence or key-holder isolation.
 
 After `aw id human init` and controller-authorized team membership, select the
 human explicitly with `--human <did:aw> --human-domain <identity-domain>`.

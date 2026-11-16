@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- This candidate removes the retired team-protection and protected-effect receipt tables and retained-effect data from earlier release-candidate installations.
+- Earlier release-candidate clients and packages must be upgraded together with this candidate.
+
 - `aw workspace delete --json` reports `error.code: "certificate_revoked"`
   when the hosted self-remove route refuses the caller because its own
   certificate is already revoked (the server's `detail.code`). Such a member
@@ -14,10 +17,7 @@
   current key, including a verified empty address; an unverified sender gets
   retryable `503 address_evidence_unavailable` before delivery. Optional
   identity display reports unknown without clearing stored bindings.
-- Registry team reads that hit a database lock timeout now return retryable
-  `503 protected_state_unavailable`; invalid-binding logs identify the team.
-  Health responses advertise `capabilities.team_protection: true` so startup
-  checks can detect protection support without inferring it from a version.
+
 - `aw id operation status --operation-id <UUID>` reads a protected
   operation's receipt once, as its requester, without performing it.
   Before this, the only way to learn the outcome of a prepared operation
@@ -31,21 +31,7 @@
   - A saved request is read under the profile's one binding for its scope.
     Without a saved request, the profile must have exactly one binding.
   - A refused or failed read is an error, never a state.
-- Upgrade protection-aware releases in this order: AWID registry, then aweb
-  server, then `aw`. Registry startup on an additive schema is not rollback
-  approval: after any team is provisioned, registry binary/schema rollback is
-  unsupported, including after forward deprotection. See the [registry operator
-  notes](awid/README.md#registry-first-upgrades-and-rollback-limits) for the
-  measured compatibility, public status contract and pinned-origin requirements.
 
-- The team deployment bundle can turn on the protected signer's service-owned
-  delivery, which `human-role.revoke` requires: `signer.serviceKey` names the
-  distinct attestation key at `private-controller/service.key` (recovered
-  from its own offline copy, never minted again), and
-  `signer.ownerActOrigins` / `signer.effectReceiptOrigins` pin the consumers.
-  Each part is off unless set; the host refuses a plaintext consumer origin.
-  The protected revoke journeys now exercise that delivery, but they are not
-  yet in the candidate gate (aweb-adbi gates the Secrets lanes).
 
 - The protected signer bounds each requester's approval mail to ten notices
   an hour. A request past the budget is still created and waits as any other,

@@ -304,10 +304,7 @@ def test_the_signers_public_configuration_is_mounted_read_only_outside_its_secre
 
 def test_a_setting_the_operator_does_not_give_never_reaches_the_signer_as_a_blank():
     assert environment(SERVICES["signer"]) == {"AWEB_PROTECTED_EMAIL_CA_FILE": None}
-    for name in ("AWEB_PROTECTED_TRUSTED_CLIENT_HEADER", "AWEB_PROTECTED_SERVICE_KEY_FILE",
-                 "AWEB_PROTECTED_OWNER_ACT_ORIGINS", "AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS"):
-        # Absent stays absent: an empty service-key path is not "no key".
-        assert environment(SIGNER)[name] is None, name
+    assert environment(SIGNER)["AWEB_PROTECTED_TRUSTED_CLIENT_HEADER"] is None
 
 
 def test_the_signer_reads_every_setting_its_section_of_the_schema_renders():

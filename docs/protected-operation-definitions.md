@@ -37,13 +37,3 @@ already frozen. New authoritative alias/address/display-name snapshots need a
 separately negotiated description version that the client verifies. The page,
 mail and CLI must not resolve a live name after preparation or treat a requester
 label as identity-kind or authority evidence.
-
-The custody retention port and safe public delivery result are documented in
-`protected-operation-retention.md`. Existing unmarked consumers retain their
-released behavior; actual protected-verifier acceptance is qualified separately
-with the protected custody adapter.
-
-Implementation direction was approved by the coordinator in `653fda3e` for
-`aweb-acxy.13`, following `ec1a081a`. The explicitly cut-over protected-effect
-extension records Juan 2026-11-13, via coordinator (`7e87b394`); that extension's
-codec, custody and verifier source has its independent security review.

@@ -399,7 +399,7 @@ func serviceOwnedReceipt(t *testing.T, receipt *handoff.Receipt, id string) {
 	}
 	signing, _ := base64.StdEncoding.DecodeString(artifact["signing"])
 	raw, _ := base64.StdEncoding.DecodeString(artifact["signature"])
-	digest, err := awid.ProtectedArtifactDigest(signing, base64.RawStdEncoding.EncodeToString(raw))
+	digest, err := awid.SignedArtifactDigest(signing, base64.RawStdEncoding.EncodeToString(raw))
 	if err != nil {
 		t.Fatal(err)
 	}

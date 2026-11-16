@@ -294,8 +294,6 @@ class Team:
     visibility: str
     created_at: str
 
-    # None is older/unknown registry evidence, never an implicit legacy mode.
-    protection: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -309,7 +307,6 @@ class TeamCertificate:
     issued_at: str
     revoked_at: str | None = None
 
-    certificate_sha256: str | None = None
 
     @property
     def lifetime(self) -> str:
@@ -1424,15 +1421,9 @@ class RegistryClient:
             cursor = None
         raise RegistryError(f"AWID revocations pagination exceeded {MAX_REGISTRY_PAGES} pages", status_code=502)
 
-    async def get_team_certificate_status_fresh(self, domain, name, certificate_id, *, include_protection=False):
-        """Uncached public exact-certificate facts, with optional protection v1.
-
-        No private metadata read, controller substitution or fallback registry.
-        An older response missing negotiated evidence stays unknown to consumers.
-        """
+    async def get_team_certificate_status_fresh(self, domain, name, certificate_id):
+        """Uncached public exact-certificate status, including private teams."""
         path = f"/v1/namespaces/{quote(domain, safe='')}/teams/{quote(name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
-        if include_protection:
-            path += "?protection=1"
         return await self._request_optional_json("GET", path, registry_url=await self._registry_url_for_domain(domain))
 
     async def list_team_certificates(
@@ -3224,7 +3215,6 @@ def _address_from_json(data: dict[str, Any]) -> Address:
 
 def _team_from_json(data: dict[str, Any]) -> Team:
     return Team(
-        protection=data.get("protection"),
         team_id=data["team_id"],
         domain=data["domain"],
         name=data["name"],
@@ -3259,7 +3249,6 @@ def _team_to_json(value: Team) -> dict[str, Any]:
 
 def _team_certificate_from_json(data: dict[str, Any]) -> TeamCertificate:
     return TeamCertificate(
-        certificate_sha256=data.get("certificate_sha256"),
         certificate_id=data["certificate_id"],
         member_did_key=data["member_did_key"],
         member_did_aw=data.get("member_did_aw"),

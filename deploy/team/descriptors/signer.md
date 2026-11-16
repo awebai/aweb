@@ -83,9 +83,6 @@ discovery/default. Environment entries carry only paths or nonsecret metadata.
 | `AWEB_PROTECTED_EMAIL_USERNAME`, `...EMAIL_FROM` | nonsecret account identifier, sender address | required | Existing SMTP metadata, not password values. |
 | `AWEB_PROTECTED_EMAIL_PASSWORD_FILE` → `/run/secrets/signer/smtp-password:ro` | path to UTF-8 password | required | Existing shared Mailer file input. |
 | `AWEB_PROTECTED_EMAIL_CA_FILE` → platform CA bundle `:ro` | optional path to public trust roots | system roots | Custom SMTP CA when needed. |
-| `AWEB_PROTECTED_SERVICE_KEY_FILE` → `/run/secrets/signer/private-controller/service.key:ro` (`signer.serviceKey: true`) | private real file, 64-hex-character seed with optional LF | unset (no service-owned delivery) | The distinct service attestation key the registry's protection binding names. The host refuses it if it equals any served authority, namespace or member key. |
-| `AWEB_PROTECTED_OWNER_ACT_ORIGINS` (`signer.ownerActOrigins`) | JSON array of canonical HTTPS origins | unset (none) | Consumers the signer may deliver a retained owner act to, through its own pinned clients. Needs `signer.serviceKey`: every delivery carries its attestation. |
-| `AWEB_PROTECTED_EFFECT_RECEIPT_ORIGINS` (`signer.effectReceiptOrigins`) | JSON array, each also in `ownerActOrigins` | unset (none) | Consumers whose protected verifier and receipt route the operator deployed and checked. Needs `signer.serviceKey`. Without it every service-owned act, `human-role.revoke` included, refuses `operation_not_served` before pending or signing. |
 
 The existing `AWEB_PROTECTED_DATABASE_URL` value input remains compatible with
 the current test lane, but the team bundle **omits it**. Setting it together with
@@ -105,7 +102,6 @@ are mandatory.
 | `database-url` | recommended `1001:1001`, 0400; readable projected root-owned 0440/0444 files also use the existing shared file reader | Platform PostgreSQL provisioner: dedicated database/role, whole DSN. |
 | `private-controller/controller.key` | **1001:1001, 0400** (0600 also supported); real parent directory **1001:1001, 0700** | Authorized controller custodian → private-volume materializer. No runtime key generation/import on a miss. |
 | Additional `private-controller/*.key` files | **1001:1001, 0400** (0600 supported), same real **0700** private parent | Authorized custodian → private-volume materializer, one explicit matching profile key per slot. No projected symlinks or worker mounts. |
-| `private-controller/service.key` | **1001:1001, 0400** (0600 supported), same real **0700** private parent | Authorized custodian → private-volume materializer, once the registry's protection binding names its public key. No runtime key generation. |
 | `member-*.pem` | recommended `1001:1001`, 0400, read-only signer mount | Existing team membership provisioner, with valid ordinary member certificates. |
 | `smtp-password` | recommended `1001:1001`, 0400; readable nonwritable projected file supported by existing reader | Platform mail-account provisioner. |
 

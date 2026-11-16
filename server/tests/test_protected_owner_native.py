@@ -242,7 +242,7 @@ async def test_a_signed_but_unconfirmed_effect_is_unresolved_never_expired(admis
     # owner page never shows any of it.
     canary = "RETAINED-EFFECT-CANARY-7f3a"
     await a.w.db.execute(
-        "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb,retained_effect=$3::jsonb "
+        "UPDATE {{tables.protected_signer_operations}} SET signed_result=$2::jsonb,issued_artifact=$3::jsonb "
         "WHERE operation_id=$1",
         operation.operation_id, '{"signing":"c2lnbmVk","signature":"c2lnbmF0dXJl"}',
         '{"artifact":"' + canary + '","signature":"' + canary + '"}')

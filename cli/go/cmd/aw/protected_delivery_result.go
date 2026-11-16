@@ -38,7 +38,7 @@ func retainedSignedResult(result []byte, prepared *handoff.Prepared) ([]byte, []
 	if reason != "" {
 		return invalid()
 	}
-	digest, err := awid.ProtectedArtifactDigest(signing, base64.RawStdEncoding.EncodeToString(signature))
+	digest, err := awid.SignedArtifactDigest(signing, base64.RawStdEncoding.EncodeToString(signature))
 	if err != nil || ref["artifact_sha256"] != digest {
 		return invalid()
 	}

@@ -147,7 +147,7 @@ async def test_composed_historical_receipt_guard_covers_owner_and_requester(huma
     now = datetime.now(UTC)
     row = {"operation_id": op.operation_id, "request": json.dumps(op.intent()),
         "result": None, "signed_result": {"retained": "historical row"}, "refusal_code": None,
-        "retained_effect": None, "approval_id": None, "verification_claim": None,
+        "approval_id": None, "verification_claim": None,
         "expires_at": now + timedelta(seconds=-1 if expired else 60)}
     service = object.__new__(ProtectedSigner)
     service.clock = lambda: now

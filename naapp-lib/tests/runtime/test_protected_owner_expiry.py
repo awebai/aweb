@@ -66,14 +66,14 @@ def ports(row, actor, *, unavailable=False):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["unsigned", "signed", "retained", "issued", "claimed", "unavailable"])
+@pytest.mark.parametrize("state", ["unsigned", "signed", "issued", "claimed", "unavailable"])
 async def test_only_an_authenticated_unsigned_expiry_becomes_a_stored_final_refusal(state):
     actor, op = initiation()
     actor = replace(actor, session=replace(actor.session, expires_at=NOW + timedelta(hours=48)))
     row = owned_row(actor, op)
-    row.update(result=None, signed_result=None, retained_effect=None, issued_artifact=None, delivery_claim=None,
+    row.update(result=None, signed_result=None, issued_artifact=None, delivery_claim=None,
         refusal_code=None, approval_id="approval", candidate_links={actor.human.subject: "private"})
-    column = {"signed": "signed_result", "retained": "retained_effect", "issued": "issued_artifact", "claimed": "delivery_claim"}.get(state)
+    column = {"signed": "signed_result", "issued": "issued_artifact", "claimed": "delivery_claim"}.get(state)
     if column is not None:
         row[column] = {"original": "unresolved"}
     before = deepcopy(row)
@@ -98,7 +98,7 @@ async def test_only_an_authenticated_unsigned_expiry_becomes_a_stored_final_refu
 async def test_a_fresh_pending_owner_selection_is_not_retired():
     actor, op = initiation()
     row = owned_row(actor, op)
-    row.update(result=None, signed_result=None, retained_effect=None, issued_artifact=None, delivery_claim=None,
+    row.update(result=None, signed_result=None, issued_artifact=None, delivery_claim=None,
         refusal_code=None, approval_id="approval", candidate_links={})
     engine, events, _ = ports(row, actor)
     engine.clock = lambda: NOW
@@ -111,7 +111,7 @@ async def test_a_fresh_pending_owner_selection_is_not_retired():
 async def test_expiry_after_a_retained_signature_is_unknown_even_while_the_human_wait_is_open(code):
     actor, op = initiation()
     row = owned_row(actor, op)
-    row.update(result=None, signed_result={"signing": "retained", "signature": "retained"}, retained_effect=None,
+    row.update(result=None, signed_result={"signing": "retained", "signature": "retained"},
         refusal_code=None, approval_id="approval", verification_claim=None)
     before = deepcopy(row)
     engine = object.__new__(ProtectedSigner)
@@ -162,7 +162,7 @@ async def test_an_inflight_human_continuation_cannot_sign_after_unsigned_retirem
 
     actor, op = initiation()
     row = owned_row(actor, op)
-    row.update(result=None, signed_result=None, retained_effect=None, refusal_code=None,
+    row.update(result=None, signed_result=None, refusal_code=None,
         approval_id="approval", candidate_links={actor.human.subject: "personal"})
     initial = deepcopy(row)
     engine, _, _ = ports(row, actor)

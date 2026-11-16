@@ -33,14 +33,13 @@ func IsTeamPrivateError(err error) bool {
 
 // RegistryTeam represents a team from the awid registry.
 type RegistryTeam struct {
-	Protection  json.RawMessage `json:"protection,omitempty"`
-	TeamID      string          `json:"team_id"`
-	Domain      string          `json:"domain"`
-	Name        string          `json:"name"`
-	DisplayName string          `json:"display_name"`
-	TeamDIDKey  string          `json:"team_did_key"`
-	Visibility  string          `json:"visibility"`
-	CreatedAt   string          `json:"created_at"`
+	TeamID      string `json:"team_id"`
+	Domain      string `json:"domain"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	TeamDIDKey  string `json:"team_did_key"`
+	Visibility  string `json:"visibility"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // RegistryCertificate represents a registered team membership certificate.

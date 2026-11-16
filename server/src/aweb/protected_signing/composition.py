@@ -102,8 +102,6 @@ class IndependentProtectedSigner:
         delivery,
         policy_version=None,
         proof_context=None,
-        consumer_clients=None,
-        receipt_origins=frozenset(),
     ):
         from awid.log import require_canonical_server_origin
 
@@ -163,14 +161,8 @@ class IndependentProtectedSigner:
             definitions=tuple(row for row in OPERATIONS.values() if row.key_role == context.authority_kind),
         )
 
-        configure = getattr(custody, "configure_effects", None)
-        if callable(configure):
-            client = getattr(registry, "client", registry)
-            clients = {registry.registry_url: client._http_client, **(consumer_clients or {})}
-            configure(registry=registry, clients=clients, clock=lambda: self.signer.clock(), receipt_origins=receipt_origins)
-
     @classmethod
-    def from_profile(cls, db, *, profile, scope, registry_client, custody, delivery, proof_context=None, consumer_clients=None, receipt_origins=frozenset()):
+    def from_profile(cls, db, *, profile, scope, registry_client, custody, delivery, proof_context=None):
         """Use the host's lifespan-owned registry_client(), without another client.
 
         The profile must already come from trusted operator configuration.
@@ -191,8 +183,6 @@ class IndependentProtectedSigner:
             delivery=delivery,
             policy_version=binding.policy.version,
             proof_context=proof_context,
-            consumer_clients=consumer_clients,
-            receipt_origins=receipt_origins,
         )
 
     async def authenticate_prepare(self, request, operation):

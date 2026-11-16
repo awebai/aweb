@@ -57,7 +57,7 @@ func appliedActFor(operationID string, intent map[string]any, authority string, 
 	if err != nil {
 		return nil, err
 	}
-	digest, err := awid.ProtectedArtifactDigest(checked.Signing, checked.Signature)
+	digest, err := awid.SignedArtifactDigest(checked.Signing, checked.Signature)
 	if err != nil || reference["artifact_sha256"] != digest {
 		return invalid()
 	}

@@ -2,20 +2,46 @@
 
 These builders accept only a typed intent and its verified signed artifact.
 They do not accept a caller-selected route, HTTP body or controller envelope.
-Authentication and service attestation are retained before any network release.
+The current controller authenticates each exact request before publication.
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import re
+from collections.abc import Mapping
+from types import MappingProxyType
 from dataclasses import dataclass, field
 
+from awid.log import require_canonical_server_origin
 from awid.id_tree_requests import covering_payload
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.utc_timestamps import parse_utc_seconds
 
-from .retention import FrozenDelivery
+@dataclass(frozen=True)
+class SignedDelivery:
+    audience: str
+    method: str
+    path: str
+    headers: Mapping[str, str] = field(repr=False)
+    body: bytes = field(repr=False)
+
+    def __post_init__(self):
+        require_canonical_server_origin(self.audience)
+        if (self.method not in {"POST", "PUT", "PATCH", "DELETE"} or type(self.body) is not bytes
+            or type(self.path) is not str or not self.path.startswith("/") or self.path.startswith("//")
+            or any(ord(c) <= 32 or ord(c) == 127 or c in "#\\" for c in self.path)
+            or not isinstance(self.headers, Mapping)):
+            raise ValueError("invalid signed delivery")
+        headers = dict(self.headers)
+        names = set()
+        for name, value in headers.items():
+            if (type(name) is not str or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", name)
+                or name.lower() in names or type(value) is not str or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+                raise ValueError("invalid signed header")
+            names.add(name.lower())
+        object.__setattr__(self, "headers", MappingProxyType(headers))
 
 
 def _raw(signature: bytes) -> str:
@@ -34,7 +60,7 @@ class DeliveryPlan:
     controller_did: str
     controller_envelope: bytes | None = field(default=None, repr=False)
 
-    def authenticate(self, signature: bytes | None = None) -> FrozenDelivery:
+    def authenticate(self, signature: bytes | None = None) -> SignedDelivery:
         """Validate the exact prepared envelope; this never signs or sends."""
         headers = {"Content-Type": "application/json"}
         if self.controller_envelope is None:
@@ -59,7 +85,7 @@ class DeliveryPlan:
             headers.update({"Authorization": f"DIDKey {self.controller_did} {raw}",
                 "X-AWEB-Timestamp": timestamp,
                 "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(expected).rstrip(b"=").decode()})
-        return FrozenDelivery(self.audience, self.method, self.path, headers, self.body)
+        return SignedDelivery(self.audience, self.method, self.path, headers, self.body)
 
 
 def _verified(operation, artifact, signing, signature):

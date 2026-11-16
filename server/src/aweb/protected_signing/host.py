@@ -30,7 +30,6 @@ from fastapi.responses import JSONResponse
 from pgdbm import AsyncDatabaseManager
 from pydantic import Field, SecretStr, StrictInt, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import httpx
 
 from ..config import load_member_signing_keys
 from .composition import IndependentProtectedSigner
@@ -47,9 +46,6 @@ class HostSettings(BaseSettings):
     profile_file: Path
     scope_file: Path
     controller_key_file: Path
-    service_key_file: Path | None = None
-    owner_act_origins: tuple[str, ...] = ()
-    effect_receipt_origins: tuple[str, ...] = ()
     controller_keys_file: Path | None = None
     member_keys_file: Path
     worker_uids: list[Annotated[StrictInt, Field(gt=0)]] = Field(min_length=1)
@@ -71,13 +67,6 @@ class HostSettings(BaseSettings):
 
     @model_validator(mode="after")
     def database_source(self):
-        from awid.log import require_canonical_server_origin
-
-        # Consumer origins are canonical HTTPS origins (HOST.md): the signer
-        # sends retained acts and their attestations to them.
-        for origin in (*self.owner_act_origins, *self.effect_receipt_origins):
-            if require_canonical_server_origin(origin).split("://", 1)[0] != "https":
-                raise ValueError("protected_consumer_origin_not_https")
         if self.database_url_file is not None:
             if "database_url" in self.model_fields_set:
                 raise ValueError("protected_database_url_sources_conflict")
@@ -166,7 +155,7 @@ def load_custodies(settings, *, profile, scope):
         context = binding.context()
         custody = ProtectedControllerCustody(
             service_id=context.service_id, team_id=context.authority_id, domain=context.authority_domain,
-            key_file=paths[binding.authority_key_did], service_key_file=settings.service_key_file, worker_uids=frozenset(settings.worker_uids), authority_kind=context.authority_kind,
+            key_file=paths[binding.authority_key_did], worker_uids=frozenset(settings.worker_uids), authority_kind=context.authority_kind,
         )
         if custody.team_key_did != binding.authority_key_did:
             raise SignerRefused("authority_changed")
@@ -210,10 +199,6 @@ async def open_composition(
             member_signing_keys=keys,
         )
         resources.push_async_callback(registry.aclose)
-        consumer_clients = {}
-        if settings.owner_act_origins:
-            consumer_client = await resources.enter_async_context(httpx.AsyncClient(transport=consumer_transport, follow_redirects=False, timeout=10))
-            consumer_clients = {origin: consumer_client for origin in settings.owner_act_origins}
         groups = []
 
         async def proof_context(scope, *, tx):
@@ -223,8 +208,7 @@ async def open_composition(
 
         components = [IndependentProtectedSigner.from_profile(
             db, profile=profile, scope=binding.scope.model_dump(mode="json"), registry_client=registry, custody=custody,
-            delivery=ProtectedNotifications(db=db, mailer=mailer, human_origin=profile.human_origin), consumer_clients=consumer_clients,
-            receipt_origins=frozenset(settings.effect_receipt_origins),
+            delivery=ProtectedNotifications(db=db, mailer=mailer, human_origin=profile.human_origin),
             proof_context=proof_context if len(custodians) > 1 else None,
         ) for binding, custody in custodians]
         composition = components[0]

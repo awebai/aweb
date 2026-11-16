@@ -61,11 +61,6 @@ SOT.
 
 ## Authentication
 
-Explicitly cut-over protected teams additionally require a detached service
-attestation from the isolated executor for controller effects. Unmarked teams
-retain the rules below. The authoritative binding, exact-certificate requirement
-and cutover procedure are specified in [Protected team boundary](protected-team-boundary.md).
-
 awid write operations are authenticated by an Ed25519 signature over a
 **canonical JSON envelope of explicit structured fields** rather than over
 the request body bytes. Each operation has its own envelope shape.
@@ -1435,8 +1430,6 @@ full ordered SQL, not a copied `001` snapshot.
 - `id_identities`
 - `id_certificates`
 - `id_namespace_epochs`
-- `team_protection`
-- `protected_effect_receipts`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---
@@ -1452,21 +1445,10 @@ Three unauthenticated routes report the registry's state. None is rate limited.
 | `GET /health` | The same as `/ready` | The same response as `/ready` | Monitoring and manual checks |
 
 `/ready`, `/health` and its alias `/ops/health` are one handler. Their body is
-`{"status": "ok" | "unhealthy", "version": "<awid-service version>", "checks": {...}, "capabilities": {"team_protection": true}}`
+`{"status": "ok" | "unhealthy", "version": "<awid-service version>", "checks": {...}}`
 with either status code. `checks` holds `redis` and `database` (`"ok"` or
 `"error"`), the database `schema` and the `rate_limiter` class in use; failure
 details go to the service log, never the body.
-
-`capabilities.team_protection: true` advertises implementation support for
-explicit protection in authorized team reads and in the negotiated exact
-certificate-status read (`?protection=1`). It says nothing about a particular
-team's protection, custody, cutover eligibility or the health of dependencies.
-Only the flag grants positive capability support. For startup diagnostics, a
-successfully answered parseable version in a release line below `0.5.40` (for
-example `0.5.39`) identifies an older registry. An absent flag on `0.5.40` or
-later, including `0.5.40rc1`, remains unknown and is retried. A failed request
-or unclassifiable response remains unknown, never older. Startup diagnostics
-do not replace per-operation authority checks or renew cached evidence.
 
 Point a restarting probe at `/live` only. A probe that restarts the process on
 `/ready` or `/health` restarts every replica during a Redis or database outage,

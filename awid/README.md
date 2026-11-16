@@ -27,12 +27,9 @@ Optional environment:
 - `AWID_PORT` default `8010`
 - `AWID_DB_SCHEMA` default `awid`
 - `AWID_RATE_LIMIT_BACKEND` default `redis`
-- `AWID_PUBLIC_ORIGINS` comma-separated canonical external registry origins,
-  for example `https://registry.example.com`. Set it before protecting any
-  team or using covering controller requests. An embedding may instead set
-  `app.state.awid_public_origins` explicitly. Protected mutations fail closed
-  when their audience is not configured; Host, forwarded headers and a supplied
-  proof never configure an origin. Legacy-only startup remains supported.
+- `AWID_PUBLIC_ORIGINS` comma-separated canonical external registry origins
+  used by covering controller requests. Request or proxy headers do not
+  configure the trusted origin.
 - `AWEB_CF_EDGE_CIDRS` and `AWEB_TRUSTED_PROXY_CIDRS` default empty. Both must
   contain valid JSON-array, comma- or pipe-separated CIDR lists to use forwarded
   client IPs for rate limits. Configured proxy peers are trusted first-party
@@ -66,55 +63,8 @@ Optional environment:
 ### Private teams and public certificate status
 
 Private team metadata remains permission-gated. Anyone who knows a certificate
-ID can read its existing public status. Negotiating `?protection=1` also returns
-the team's protection binding and certificate hash, including for a private
-team. These are intentionally public governance facts; no member fields or
-certificate blob are returned. Without the query the response stays exactly
-the existing four fields. See [the protection contract](../docs/protected-team-boundary.md#binding-and-cutover).
-
-### Registry-first upgrades and rollback limits
-
-Team and negotiated certificate-status reads share the canonical namespace
-and team locks. A namespace-level controller effect holds the namespace lock
-exclusively and blocks team reads throughout that domain. Keep those effects
-short and perform no network work under effect locks. A read that reaches the
-database lock timeout answers `503 protected_state_unavailable` with
-`Retry-After: 1`; retry rather than treating it as an older registry or legacy
-team. Invalid protection projections also log the affected team ID.
-
-The health aliases `/health`, `/ready` and `/ops/health` add
-`capabilities.team_protection: true` while preserving their existing fields.
-This advertises implementation of explicit team protection and negotiated
-certificate status, not a team's state or readiness to cut over. An older
-registry may omit the flag; see [startup capability diagnostics](../docs/awid-sot.md#health-probes)
-for the distinction between older and unknown responses.
-
-Upgrade the registry before deploying consumers that require its explicit
-protection projection. Migrations 012–015 add tables; the native compatibility
-check starts the published 0.5.39 registry on that schema and exercises legacy
-reads and mutations. Startup compatibility alone is not rollback approval.
-
-After any team has been provisioned, **no registry binary or schema rollback is
-supported**, including after forward deprotection. Version 0.5.39 starts but
-does not enforce protected teams: a key-only mutation it accepts is refused by
-0.5.40. After deprotection it can also rotate the controller without advancing
-retained protection generation. Never restore a pre-cutover registry backup to
-undo protection. Reconcile and repair forward while preserving its history.
-Whether an untouched, never-provisioned legacy installation can downgrade is a
-separate compatibility decision.
-
-To repeat the isolated startup/enforcement matrix, provide a disposable
-PostgreSQL administrator URL and a dedicated Redis database. The check creates
-and removes its own database and runs the actual published 0.5.39 CLI:
-
-```bash
-AWID_COMPAT_POSTGRES_URL='<disposable-postgres-url>' \
-AWID_REDIS_URL='<dedicated-redis-url>' \
-uv run --project awid python scripts/check_awid_039_schema_compatibility.py
-```
-
-This is a compatibility test, not an operator provisioning command or a full
-client/deployment compatibility matrix.
+ID can read its public four-field status, without member fields or a signed
+certificate blob. Callers still verify certificates under the current team key.
 
 ### Session settings in the connection URL
 

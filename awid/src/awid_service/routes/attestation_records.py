@@ -28,7 +28,6 @@ from awid.signing import canonical_json_bytes
 from awid.team_ids import build_team_id
 from awid_service.attestation_rotation import MAX_FUTURE_ISSUED_AT, SignedRecord, issued_at_of
 from awid_service.deps import get_db
-from awid_service.protected_teams import effect_transaction
 from awid_service.routes.teams import (
     _presents_trusted_service_token,
     _require_team_controller,
@@ -136,7 +135,7 @@ async def publish_team_custodian(
     )
     if body.record["custodian_id"] != custodian_id:
         raise _refuse(422, "record_invalid", "custodian_id does not match the path")
-    async with effect_transaction(request, db, domain=domain, name=name, operation="publish_team_custodian") as tx:
+    async with db.transaction() as tx:
         await _lock_team_key(tx, team)
         row = await tx.fetch_one(
             """
@@ -220,7 +219,7 @@ async def publish_member_custody(
         team_did_key=team["team_did_key"], now=datetime.now(timezone.utc),
     )
     record = body.record
-    async with effect_transaction(request, db, domain=domain, name=name, operation="publish_member_custody") as tx:
+    async with db.transaction() as tx:
         await _lock_team_key(tx, team)
         _member_fields_match(record, certificate_id, await _active_certificate(tx, team["team_uuid"], certificate_id))
         custodian = await tx.fetch_one(
@@ -287,7 +286,7 @@ async def publish_member_person(
         team_did_key=team["team_did_key"], now=datetime.now(timezone.utc),
     )
     record = body.record
-    async with effect_transaction(request, db, domain=domain, name=name, operation="publish_member_person") as tx:
+    async with db.transaction() as tx:
         await _lock_team_key(tx, team)
         _member_fields_match(record, certificate_id, await _active_certificate(tx, team["team_uuid"], certificate_id))
         row = await tx.fetch_one(

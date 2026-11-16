@@ -12,7 +12,7 @@ import (
 )
 
 func appliedTestResult(id string, signing, signature []byte) map[string]any {
-	digest, _ := awid.ProtectedArtifactDigest(signing, base64.RawStdEncoding.EncodeToString(signature))
+	digest, _ := awid.SignedArtifactDigest(signing, base64.RawStdEncoding.EncodeToString(signature))
 	return map[string]any{"v": 2, "type": "aweb.protected-delivery", "artifact": map[string]any{"signing": base64.StdEncoding.EncodeToString(signing), "signature": base64.StdEncoding.EncodeToString(signature)}, "delivery": map[string]any{"mode": "service_owned", "state": "applied", "reference": map[string]any{"operation_id": id, "artifact_sha256": digest}}}
 }
 func TestAdmissionAndRemovalAcceptConfirmedServiceDelivery(t *testing.T) {

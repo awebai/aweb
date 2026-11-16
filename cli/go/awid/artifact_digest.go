@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-// ProtectedArtifactDigest matches awid.protected_effect's exact artifact binding.
+// SignedArtifactDigest binds the exact bytes of a historical signed result.
 // The input signature is canonical unpadded standard base64, never a new signing
 // interface. A digest is not proof of service authority or remote application.
-func ProtectedArtifactDigest(signing []byte, signature string) (string, error) {
+func SignedArtifactDigest(signing []byte, signature string) (string, error) {
 	if strings.ContainsAny(signature, "\r\n=") {
 		return "", fmt.Errorf("invalid protected artifact signature")
 	}

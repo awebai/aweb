@@ -1,13 +1,8 @@
-# Human assurance and protected signing
+# Approval implementation transition notes
 
-Status: **frozen implementation contract for aweb-acxy.1**. Juan approved
-the architecture on 2026-11-11 at 19:06 UTC; the coordinator directed this
-freeze after the settled review decisions. This document and the typed catalog
-[`vectors/human-assurance-v1.json`](vectors/human-assurance-v1.json) define the
-shared policy boundary for hosted and independent implementations. This is not
-a release claim: implementations must pass their positive, refusal and race
-cases. Unclassified operations and missing required evidence refuse; they do
-not block implementation of the settled groups.
+The [human approval architecture](human-approval-architecture.md) governs.
+Sections 3–6 and surviving operation details describe the current implementation
+until the approval-service protocol replaces them; this file is then removed.
 
 ## 1. Independent facts and authorities
 
@@ -33,32 +28,17 @@ verifier and generated client pin this same sentence. This wording replaces
 the earlier longer statement without changing that authority model, and ships
 with the coordinated `intent_v1` client/server release (`94664f19`).
 
-One OSS library, embedded in an existing trusted server process, controls
-human, namespace-controller and team-controller signing in supported
-deployments. Cloud imports the same published package with account/custody
-adapters; an independent operator uses its own server and registry. No Cloud
-account, Cloud credential or public-registry fallback is required. Worker
-agents retain their own **agent** keys and may sign permitted agent operations.
-
-The signer accepts named, typed operations, constructs the artifact itself,
-and refuses unknown operations, arbitrary-byte signing and key export. The
-fixed minimum below is code, not a configurable exemption. Deployments may
-add approvals, tighten scope or shorten time limits. Relaxing such additional
-policy requires its current authorized human's live approval; it cannot relax
-the minimum. A self-hosting administrator modifying the software is outside
-this enforcement claim.
+The target key holder is a separate process, as specified in the
+[architecture](human-approval-architecture.md#the-key-holder). The current
+approval implementation below is transitional, not that isolation boundary.
 
 ### What a remote verifier can establish
 
 The v1 ID certificate and team certificate formats do not acquire an assurance
 field. Their signatures establish issuer authority under their existing
 verification rules, not whether the issuer used this signer or a passkey.
-Remote consumers trust the issuer's signing policy. Explicitly cut-over protected
-teams additionally require the detached service attestation specified in
-[Protected team boundary](protected-team-boundary.md), under Juan's 2026-11-13
-approval via coordinator; unmarked teams retain the existing rule. A previously token-issued
-root cannot be relabelled as gesture-confirmed: its transition requires an
-explicit, reviewed revoke/re-endorsement plan. Existing cryptographic
+Approval bindings and evidence travel beside the chain as specified in the
+architecture; an absent statement establishes no assurance. Existing cryptographic
 verification, current-head rules, expiry and revocation remain mandatory.
 
 The browser and confirmation display are trusted. A separate trusted device
@@ -146,14 +126,9 @@ Unregistered local leaves have no portable per-ID revocation; membership
 removal is separate. The existing 60-second ID-status bound remains; do not
 promise instantaneous worldwide revocation.
 
-Team-controller rotation remains distinct from certificate revocation. It does
-not silently revoke existing member certificates. An operator handling a
-compromise must explicitly inventory/revoke affected certificates and renew
-the intended memberships; rotation alone is not containment of certificates
-issued by the old key. Every verifier still applies its existing key/history
-and revocation rules; new owner acts require the current controller. This
-preserves [the registry's explicit certificate lifecycle](awid-sot.md#certificates)
-rather than changing membership as a side effect of key maintenance.
+The target rotation rule is in [Membership and key changes](human-approval-architecture.md#membership-and-key-changes).
+The compatible member-check/client change is separate implementation work;
+removing the registry lock does not itself change released rotation behavior.
 
 The AWID rule in acxc.69 permits `AWID_SKIP_DNS_VERIFY=1` for first namespace
 registration only. PUT replacement requires proof of the new controller key
@@ -192,23 +167,8 @@ profile, never a human-endorsed root. Its protected namespace authority requires
 a live approval for new issuance; no token exception, manufactured H or agent
 parent is allowed. It cannot satisfy the endorsed-root acceptance journey.
 
-Protected provisioning authorizes **one exact default admission policy** under
-operator authority. It lists the teams and fixes the root selector to "the
-requesting root, verified as endorsed under this service_id by a current
-authorizer", agent kind only,
-member role only, and an immutable policy version and digest. Endorsing that
-root is **one live approval of one act**: its screen discloses the resulting
-bounded admission. Endorsement satisfies the existing policy; it neither
-creates nor widens it. Later changes require their own
-`team.admission-policy.change` approval. A deployment without that provisioned
-policy must not silently create one during endorsement.
-One policy may list teams across namespaces only when provisioning holds real
-authority for every listed controller. A shared account, ancestry or stored key
-reference is not that authority. The endorsement discloses the pre-existing
-list and never acquires another controller's consent. An unlisted team needs
-the separate policy floor act. Hosted .6 supplies the adapter and fresh
-protected-test-team fixture; .8 owns existing-team migration/cutover. This
-contract authorizes no customer or production provisioning.
+The existing signer has a bounded admission policy, distinct from the retired
+registry lock. The following describes that transitional operation interface.
 
 A protected admission policy names each canonical team and the authorized root
 selector. Admission authenticates the exact root ID named by the request and
@@ -236,14 +196,6 @@ explicitly authorized root, not any agent whose chain happens to contain it. The
 variant uses its separate live controller-human authority under the same
 protected policy. Grandchild issuance stays with its actual eligible parent; root-side admission supplies membership separately.
 Hosted and independent profiles use this same boundary and command semantics.
-Every agent admission **and renewal** on a protected team passes the bounded
-policy, including cache/reconciliation and hosted routes. Ordinary member
-invites cannot bypass it: legacy invite admission returns HTTP 403
-`protected_admission_required`. Clients explain the configured service/root
-admission path rather than retrying the invite or reminting an identity.
-Legacy teams retain their existing behavior until an explicit operator-approved
-migration under section 7; installing a client does not protect a team.
-
 An endorsement target is an ordinary registered agent: a current stable ID/key
 mapping in the selected registry, possession of that key, and no conflicting
 or revoked ancestry/head. An existing chainless agent is eligible for its first
@@ -687,7 +639,6 @@ No adapter implements its own ceremony, request parser or receipt store.
 | Request | GET `/protected-operations/{operation_id}` | Authorized exact-scope receipt; never re-signs. |
 | Request | POST `/protected-operations/{operation_id}/execute` | Bounded unattended operation only, rechecking its catalog authority; live-floor operations refuse here. |
 | Request | POST `/protected-handoff-starts` | Restricted preparation of the exact credential-start body; section 4 LOGIN before H signs. |
-| Request | GET `/protected-admission-policies?team_id=T` | Nonsecret setup/status read for an authorized requester. |
 | Human | GET `/handoff/{handoff_id}` | Existing shared page in its stored governance or LOGIN mode. |
 | Human | GET `/handoff/{handoff_id}/governance` | Current authorized human reads the frozen operation/state. |
 | Human | POST `/handoff/{handoff_id}/governance/options` | B3 options for this exact act/current human; `{"state":"approved"}` when that human's own retained approval of it awaits only execute (below). |
@@ -737,8 +688,7 @@ checks the same human/holding or key authority that could prepare the act;
 a cookie authenticates that inspection only with the current association,
 never a signing approval.
 
-The policy read returns `service_id`, `team_id`, `mode` (`protected` or
-`legacy`), and `policy` (the immutable version, digest, listed teams, root
+The transitional signer policy read returns `service_id`, `team_id`, and `policy` (the immutable version, digest, listed teams, root
 selector and bounds, or null when this service has no policy for the team).
 A prospective root is eligible for this read only if its registered identity
 is explicitly named by the provisioned profile, or it has an authorized pending
@@ -809,7 +759,10 @@ line (Juan 2026-11-13, via coordinator). A short fingerprint is a human
 comparison aid, never the authentication check. Clients verify the full digest
 themselves.
 
-### Mailed approval links
+### Mailed approval links (superseded implementation)
+
+The target notice rule is **no link and no act detail**. Nothing new may rely
+on the old implementation described below; the approval service replaces it.
 
 The signer mails each eligible approver their own approval notice after the
 prepare transaction commits, up to the requester's notice budget; the requester
@@ -1322,188 +1275,3 @@ resolver or delivery subsystem is created to bypass this rule.
 A usable stolen passkey plus its UV factor can add a credential. Notices
 provide detection, not prevention of that case. The receipt exposes committed
 credential changes independently of notification success.
-
-## 7. Custody migration and compatibility
-
-Worker OS users, containers, processes, mounts, backups and keychain access must
-not reach protected human/namespace/team-controller private keys or unlock
-material. Merely hiding a filename, asking for a passphrase, or checking an
-agent-runtime environment marker does not establish isolation. Existing keys
-enter protected custody through a separately approved operator-side import,
-not through worker request bodies or a key-export endpoint. Preserve the exact
-public key, ID, registry/origin bindings and issuance history. No automatic
-rotation, remint, global-registry move or production write follows from build
-authorization.
-
-Inventory the existing human keychain entries and encrypted backups,
-namespace controller stores, team-key stores, hosted DB custody, custody
-sockets and worker-visible grants. Include OATS legacy minting roots under `.aweb-roots/<label>/.aw` and configured
-`settings.oats.aweb.root`/`roots`, including their referenced team-key stores.
-An endorsed root's AGENT key held by the worker is intentional bounded
-operational custody, not a human/controller-key isolation finding. Inventory
-its admission scope/limits separately; do not confuse it with the old minting
-root's controller keys.
-A path-only scanner can report known findings but cannot certify isolation:
-OS-keychain accessibility, inherited mounts, sockets and backups matter too.
-A co-resident protected signer is possible only with an actual separate
-protection boundary (for example a different OS security principal without
-worker access); a separate process under the worker user is insufficient.
-A key for another team is not safe merely because a worker selects a different active team. The isolation finding is
-about accessibility and authority, not a directory basename. Package .8 owns
-per-installation migration approval, backup/removal and rollback limits.
-
-Released local BYOT owner-act signing continues to produce artifacts that
-remote verifiers accept for unmarked teams under the unchanged wire rules.
-The 2026-11-13 extension approved by Juan via coordinator applies only after
-explicit team cutover: AWID marks the canonical team authoritatively and each
-controller effect requires a detached attestation from a separate isolated
-service key. The original signature alone still cannot distinguish custody.
-The binding, exact-certificate checks, replay/deadline rules, controller route
-inventory and coordinated cutover are specified in
-[Protected team boundary](protected-team-boundary.md), including its fixed proof-gated
-consumer confirmation read. That read matches immutable history in the actual
-effect transaction; a missing receipt leaves application unresolved and permits
-no blind retry. Historical confirmation after expiry grants no new effect
-authority, and the signer receipt reader authority is unchanged. Package .8 must name every affected BYOT team/client and its explicit
-transition before activation; a documentation change does not perform cutover.
-Protecting an existing team is an operator-approved .8 migration, announced to
-all affected deployment owners before it takes effect. Inventory even clients
-that never opted in but currently use that team's member invites. Their exact
-fix is the configured protected-service/root admission path; coordinate their
-upgrade/cutover before enforcing the narrowing. No silent automatic opt-in,
-identity remint or local invite fallback is permitted. .7 reports findings to
-the coordinator/.8 as deployment/team/service identifiers, custody category,
-public key/ID references, affected consumer/version, readiness finding and
-proposed operator action. Reports contain no private keys or unlock material;
-an unavailable inventory result is unknown, not clean.
-Legacy artifacts remain verifiable under their original formats. The new
-signer removes unsupported human/controller signing entry points rather than
-calling them as a fallback. Existing client requests must either use the
-compatible restricted operation or return an explicit upgrade/approval-required
-refusal. Inventory every affected consumer before activation; do not silently
-weaken the signer to preserve a bearer-only governance route.
-
-Agent identity creation remains in the released parent/child exchange. A local
-agent can parent a local child; registered children require an eligible
-registered issuer under the existing ID contract. A deployment root can issue
-a registered descendant when it is that actual issuer; the chain must show the
-real parent, never an invented local intermediary. This includes first
-certification of an eligible existing chainless registered agent, after subject
-possession/current registry checks; a session grant seat retains its resident's
-ancestry and does not acquire a new parent of its own. Membership admission is a
-separate controller effect and does not mint or endorse an identity itself.
-
-
-Protected-issuer `identity.ancestry.resign/unchanged_protected_issuer` requires
-retained evidence that the original was issued by this signer after live
-approval or an explicitly approved re-endorsement. Legacy token-issued artifacts
-imported during custody migration refuse; a routine re-sign cannot upgrade
-that provenance. Require the unchanged current child ID, key, domain, kind and
-parent, its subject-possession proof, current non-revoked head and the same
-verified issuer identity/authority. Only the current issuer key (after valid
-continuity), issued timestamp and corresponding signature/certificate digest
-may change. No child-key change, parent change, rights change, expiry extension
-or refresh of a revoked/replaced endorsement qualifies. ID v1 has no new
-assurance or expiry field added by this rule. A genuinely new endorsement uses
-its own live act.
-
-## 8. Existing entry points and task mapping
-
-The following inventory is source evidence, not evidence that adapters have
-already closed these paths. Cloud contributes its hosted route-level trace;
-application contributors supply the app rows. A supported composition must
-route every key use through its classified operation or refuse it.
-
-| Existing family | Source | Required disposition |
-| --- | --- | --- |
-| Human creation, keychain signing and backup | `cli/go/cmd/aw/id_human.go`, `cli/go/awid/human_signer.go`, `cli/go/awconfig/human_keychain.go` | Protected enrollment/issuance and operator migration; no worker passphrase fallback. |
-| Human/root/agent child exchange and registration | `cli/go/cmd/aw/id_child.go`, `id_parent.go`, `id_create_parent.go` | Human/namespace uses are typed live operations; eligible agent issue/re-sign remains unattended. |
-| ID rotation, recovery and revoke | `cli/go/cmd/aw/id_rotate_key.go`, `id_rotate_key_recover.go`, `id_revoke.go` | Classify key type, continuity and target; no human/root replacement under the agent exception. |
-| Namespace address, controller, team creation and deletion | `cli/go/cmd/aw/id_namespace_*.go`, `id_team.go`, `id_team_rotate_key.go`, `id_team_server.go` | Enumerate exact controller effects; authority expansion/ownership changes require live policy, unknown operations refuse. |
-| Team invite/admission, certificate renewal, member replacement/removal | `cli/go/cmd/aw/id_team.go`, `team_spawn_authority.go`, `team_replace_key.go`, `team_human.go` | Root agent-only bounded admission; human admission separate live act; unchanged agent continuity renewal only. |
-| Human reads/connect/team-auth/mail | `cli/go/cmd/aw/human_participation.go`, `id_request.go`, `id_registry_read.go` | Section 4 typed restricted server authentication; no arbitrary installed tool/path signer. |
-| Resident custody app/message signing | `cli/go/cmd/aw/custody.go`, `custody_app.go` | Agent resident work remains scoped; never load a protected human/controller key into worker custody. |
-| Controller owner/hook acts | `cli/go/cmd/aw/hooks.go`; [owner act](owner-act.md) | Shared signer live approval and existing downstream verification/nonce consumption. |
-| Anonymous owner-act delivery | [Owner-act delivery](owner-act-delivery.md) | Allow only the valid controller act; designation checks the human's own kind/current membership, not nearest-human ancestry. |
-| Team-auth on the human origin | [Human confirmation](design/human-confirmation-from-aw.md) | Refuse; neither a valid signature nor a typed payload crosses this origin boundary. |
-| App-origin handoff starts | Section 4 and [human confirmation](design/human-confirmation-from-aw.md) | Session: current direct-child member may prepare, with H's own app LOGIN and Allow; credential: same-signer H through protected LOGIN. Neither is governance authority. |
-| Secrets narrowing through team-auth | [Secrets](design/secrets.md) | Allow only authorized narrowing/containment, with last-owner protection; no holding removal or re-enable. |
-| Logs `reader-slot` / `remove-reader` tools and old reader designation route | [Human-role holders](design/human-role-holders.md) | Refuse/remove together in package .9; use protected `human-role.*` owner acts. |
-| Token/session-only or browser-only grant completion | [Human confirmation](design/human-confirmation-from-aw.md) | Refuse; exact frozen-request passkey approval and the existing aw confirmation binding remain required. |
-| Runner register/claim/result and Logs ingest | [Secrets](design/secrets.md), catalog `runner.execute` / `logs.ingest` | Existing typed operational authority only; not owner designation or governance signing. |
-
-Hosted adapter inventories must cover every browser-session, CLI-token,
-installed-tool and linked-channel signer, including cached-member projections,
-certificate reconciliation, immediate-connect recovery and namespace/human
-re-establishment. Classify each path before minting; a cache or recovery path
-is not an exemption. The early hosted `aw id create --org --human-parent`
-branch is not made safe by a later local terminal check: its token-only human
-issuance authority must be removed. Exact hosted route traces remain with
-that implementation's owner; no private application schema governs this OSS
-contract.
-
-Existing tasks remain tracked; the build does not discard their delivery scope:
-
-| Prior work | New scope |
-| --- | --- |
-| acxt deployment-root journey | Attribution/continuity baseline only; not proof of protected controller custody. Preserve the accepted test and add .4/.7 isolation/admission controls. |
-| acxv naming cleanup | Preserve its independent landing; no replacement design name restores removed authority. |
-| acxu browser file consent | Superseded implementation by .5 shared ceremony and .6 Cloud adapter; retain the frozen historical note, no new file-transport implementation. |
-| acwd / C3 / 4.6 and existing human-role handoff | Preserve their shared app API; adapt the signer and typed scope additively in .2/.3/.5. |
-| Secrets 16.41, 16.43a+b, 16.44.3 and full provider/runner acceptance | Continue in .9 with catalog compatibility; no restart or dropped scope. |
-| Existing deployment roots and team/controller stores | .8 inventory and explicitly approved migration; .7 reports findings, never auto-remints. |
-
-## 9. Acceptance boundary
-
-The vectors pin the policy distinctions, including same/different/unknown
-nearest human, old-key continuity versus new-child lost-key recovery, issuer
-kind, first enrollment, approver sets versus credential sets and recovery.
-Each scenario varies the named inputs with all other row preconditions valid;
-its decision reason is distinct from the HTTP receipt code (an unmapped typed
-reason remains diagnostic under `operation_refused`). They are policy
-scenarios, not new cryptographic test vectors or a duplicate
-signer engine. Packages .2–.6 must exercise them against their actual shared
-implementation; static catalog validation alone is not runtime acceptance.
-
-The independent profile must use customer registry/service origins with no
-Cloud credentials, exercise private member-key reads and wrong-registry
-refusal, and prove ordinary request authentication and agent admission while
-worker-held human/controller shortcuts fail. Hosted tests must trace all
-issuance routes, including cached/recovery certificate paths and channel mail.
-Each release names exact package/client/server/registry versions; no version
-is claimed by this contract. Fresh setup and supported existing-state
-upgrade are separate acceptance journeys.
-
-## 10. Review boundary and evidence
-
-All catalog operation groups, requester/receipt ports and policy cases are
-frozen for implementation, including the final loopback-only direct-child
-start, retained-certificate source and H-signed credential-start refresh,
-laptop admission, and server-frozen endorsement policy. There is no remaining
-policy decision blocking these groups. A runtime adapter with no implemented
-trusted evidence producer, custody binding or classified route must refuse
-that operation until its implementation is available; it must not invent a
-fallback or hold the other groups.
-
-Concrete adapter route tables remain .2/.4/.5/.6 deliverables: every
-direct/cached/recovery key use maps to a catalog row or explicitly refuses.
-Implementation handbacks give an exact SHA and focused positive, refusal and
-race evidence, with one independent implementation review and security review
-where a boundary changes. No repeated unchanged consumer FIT round is needed.
-New credential-change recorder kinds must compose with the installed app's
-transactional recorder; a plain local-sink test is not proof of that integration.
-No bootstrap depends on remote Logs. Release and install acceptance remain
-separate from this contract freeze.
-
-Source contracts are [ID certificates](id-certificates.md),
-[AWID](awid-sot.md), [owner acts](owner-act.md),
-[owner-act delivery](owner-act-delivery.md),
-[human-role holders](design/human-role-holders.md) and
-[human confirmation](design/human-confirmation-from-aw.md). The application
-catalog/first-role/entry-point cases were contributed by the app-contract lane;
-its separate Secrets bootstrap correction is included with original authorship.
-The B2/B3 port and lock-order contribution was source-read at
-`27fbd08192a1997874da58abff8d151c0e7779ce`, based on the holder stack rather
-than older main B3. These sources establish reusable boundaries, not completed
-protected-signer integration. The independent reviewer must not ACK their own
-contributed portions; security review covers the assembled contract.

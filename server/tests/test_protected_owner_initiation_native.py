@@ -15,7 +15,6 @@ from fastapi import FastAPI
 
 from tests.test_independent_protected_signer import TEAM
 from tests.test_protected_admission_native import admissions as admissions  # noqa: F401
-from tests.test_protected_boundary_retention_native import activate
 from tests.test_protected_owner_removal_native import legacy_member
 
 pytest_plugins = ("tests.test_independent_protected_signer",)
@@ -24,7 +23,7 @@ pytest_plugins = ("tests.test_independent_protected_signer",)
 @asynccontextmanager
 async def owner_http(a, tmp_path):
     c = a.w.app
-    custody = await activate(a, tmp_path)
+    custody = c.authority.custody
     await apply_console_migrations(c.db)
     sessions = c.protected_sessions()
     scope = a.w.human.b3_scope
@@ -212,11 +211,9 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
         recovered = await client.get(path)
         assert recovered.status_code == 200 and recovered.json()["state"] == "committed", recovered.text
         result = recovered.json()["result"]
-        assert result["v"] == 2 and result["delivery"]["state"] == "applied"
-        assert result["delivery"]["reference"]["operation_id"] == body["operation_id"]
         issued = json.loads(signed["issued_artifact"])
-        signing = base64.b64decode(result["artifact"]["signing"], validate=True)
-        signature = base64.b64decode(result["artifact"]["signature"], validate=True)
+        signing = base64.b64decode(result["signing"], validate=True)
+        signature = base64.b64decode(result["signature"], validate=True)
         assert signing == canonical_json_bytes(issued["request"])
         assert issued["request"]["certificate_id"] == body["certificate_id"]
         a.w.controller.verify_key.verify(signing, signature)
@@ -225,7 +222,7 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
         after = await a.w.db.fetch_one(query, body["operation_id"])
         for name in ("intent", "request", "digest", "expires_at", "initiator_subject", "initiator_scope", "initiation_selection"):
             assert after[name] == before[name]
-        for name in ("issued_artifact", "signed_result", "retained_effect", "delivery_claim"):
+        for name in ("issued_artifact", "signed_result", "delivery_claim"):
             assert after[name] == signed[name] and after[name] is not None
         assert len(posts) == 1
         for kind in ("protected_operation_signed", "protected_operation_applied"):
@@ -260,7 +257,7 @@ async def test_owner_retry_retires_only_definite_unsigned_expiry_and_can_start_a
             async def no_release(operation_id, *args, **kwargs):
                 return OperationReceipt(operation_id, "unknown", code="external_effect_unresolved")
 
-            monkeypatch.setattr(signer, "_reconcile_retained", no_release)
+            monkeypatch.setattr(signer, "_reconcile_admission", no_release)
             options = await client.post(path + "/options", json={}, headers=headers)
             assert options.status_code == 200, options.text
             answer = await client.post(path + "/execute", json={"assertion": a.w.device.get(options.json())}, headers=headers)
@@ -268,7 +265,6 @@ async def test_owner_retry_retires_only_definite_unsigned_expiry_and_can_start_a
         query = "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1"
         before = await a.w.db.fetch_one(query, body["operation_id"])
         assert (before["signed_result"] is not None) == (state == "signed")
-        assert (before["retained_effect"] is not None) == (state == "signed")
         expired = before["expires_at"] + timedelta(seconds=1)
         monkeypatch.setattr(signer, "clock", lambda: expired)
         if state == "unavailable":
@@ -292,7 +288,7 @@ async def test_owner_retry_retires_only_definite_unsigned_expiry_and_can_start_a
         if state == "unsigned":
             assert response.status_code == 410 and response.json() == {"detail": "operation_expired"}, response.text
             assert after["refusal_code"] == "operation_expired"
-            assert all(after[name] is None for name in ("result", "signed_result", "retained_effect", "issued_artifact", "delivery_claim"))
+            assert all(after[name] is None for name in ("result", "signed_result", "issued_artifact", "delivery_claim"))
             assert all(after[name] == before[name] for name in ("request", "intent", "digest", "expires_at", "initiation_selection"))
             view = await owner_view(a.w.app, scope=a.w.human.b3_scope, subject=a.w.human.subject, now=expired)
             history = next(item for item in view["history"] if item["operation_id"] == body["operation_id"])
