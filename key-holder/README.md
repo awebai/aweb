@@ -5,7 +5,7 @@ The approval bytes and checks come from the pinned approval-service library.
 The joined service/browser journey is qualified separately under adcl.6.
 
 Install the locked source environment with `uv sync --frozen --project key-holder`.
-The pinned approval library currently requires access to its private repository.
+The pinned approval library is fetched from its public HTTPS repository; no GitHub credentials are required.
 Releases remain held; the SDK's current source label is not a release artifact.
 
 Create a **new** state directory inside a private parent directory:
@@ -93,8 +93,6 @@ replace/recreate is not implemented: losing the sole activated person's keys
 leaves nobody able to approve, and bootstrap remains closed. This slice also
 has no local deactivation command. An approver ceases to qualify when current
 registry evidence rejects them, within the shared 60-second freshness bound.
-The private approval-library dependency still awaits Juan's public-package
-decision; no vendored substitute is provided.
 
 For the one-container runtime, build a complete wheelhouse containing the
 reviewed SDK, holder and pinned approval-library wheels and their locked
