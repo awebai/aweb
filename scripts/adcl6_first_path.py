@@ -17,6 +17,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import tarfile
@@ -76,21 +77,24 @@ def prepare(args) -> None:
     build.mkdir(mode=0o700)
     extract(args.approval_archive, APPROVAL, build / "approval")
     extract(args.holder_archive, HOLDER, build / "holder", ("awid/", "key-holder/"))
-    # The only aw-side additions are the journey files; product Go bytes must
-    # remain exactly those ACKed at the composition's requested aw revision.
+    # Build the requested product revision from a temporary archive, even if
+    # the held branch has since merged newer main. This is not a worktree or
+    # a runtime source overlay; only its compiled binary enters the image.
     root = Path(__file__).resolve().parents[1]
-    trees = [
-        subprocess.check_output(
-            ["git", "rev-parse", f"{revision}:cli/go"], cwd=root, text=True
-        ).strip()
-        for revision in (AW, "HEAD")
-    ]
-    if trees[0] != trees[1]:
-        raise RuntimeError("aw Go tree differs from the requested 962c94dd74 input")
-    subprocess.run(
-        ["git", "diff", "--exit-code", "HEAD", "--", "cli/go"], cwd=root, check=True
-    )
-    env = dict(os.environ, GOOS="linux", GOARCH="amd64", CGO_ENABLED="0")
+    go_tree = subprocess.check_output(
+        ["git", "rev-parse", f"{AW}:cli/go"], cwd=root, text=True
+    ).strip()
+    archive = runtime / "aw-source.tar"
+    with archive.open("wb") as stream:
+        subprocess.run(
+            ["git", "archive", "--format=tar", AW, "cli/go"],
+            cwd=root,
+            stdout=stream,
+            check=True,
+        )
+    product = build / "aw-source"
+    extract(archive, AW, product)
+    env = dict(os.environ, GOOS="linux", GOARCH="amd64", CGO_ENABLED="0", GOWORK="off")
     subprocess.run(
         [
             "go",
@@ -101,10 +105,11 @@ def prepare(args) -> None:
             str(build / "aw"),
             "./cmd/aw",
         ],
-        cwd=root / "cli/go",
+        cwd=product / "cli/go",
         env=env,
         check=True,
     )
+    shutil.rmtree(product)
     (build / "journey.py").write_bytes(Path(__file__).read_bytes())
     (build / "Dockerfile").write_bytes(
         (root / "scripts/adcl6-first-path.Dockerfile").read_bytes()
@@ -328,7 +333,7 @@ http {
         runtime / "inputs.json",
         {
             "aw": AW,
-            "aw_go_tree": trees[0],
+            "aw_go_tree": go_tree,
             "aw_build_flags": ["-trimpath", "-buildvcs=false"],
             "go_version": subprocess.check_output(["go", "version"], text=True).strip(),
             "holder_and_awid": HOLDER,
