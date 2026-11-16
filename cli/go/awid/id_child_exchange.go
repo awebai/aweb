@@ -270,6 +270,11 @@ func importIDCertificateChain(expected, chain map[string]any, evidence *IDChainE
 	}
 	current, err := idIssuingKey(parent, domain, c["kind"].(string), certificates[:len(certificates)-1], evidence)
 	if err != nil {
+		// Import preserves the chain verifier's refusal contract; the
+		// signing helper names a revoked signing parent more specifically.
+		if IDCertificateErrorCode(err) == "parent_revoked" {
+			return nil, idCertificateRefusal("revoked")
+		}
 		return nil, err
 	}
 	// Parsing verified the child's signature under its own issuer_key.
