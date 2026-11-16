@@ -126,6 +126,7 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
             ),
         ),
     ],
+    ids=['recipient', 'conversation', 'from-did', 'from-stable-id', 'type', 'recipient-did', 'expired-time'],
 )
 async def test_room_refuses_wrong_signed_bindings(privacy_app, field, value):
     room = await metadata(privacy_app)

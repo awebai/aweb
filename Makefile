@@ -1,6 +1,9 @@
 # Only the internal-network Docker runner clears this prefix. Native suites use
 # the proxy; the hard runner instead preserves DNS/connection error semantics.
 TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
+# Parallel server execution is opt-in and needs the owned worker service plan.
+SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
+SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
 .PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
@@ -320,7 +323,7 @@ test-server: production-awid-sync
 	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
 		UV_CACHE_DIR=/tmp/uv-cache uv build --out-dir "$$build_dir"
-	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q $(SERVER_PYTEST_PARALLEL)
 
 # The naapp packages the candidate gate covers. Each provides `make lint` and
 # `make test`: the checks stage lints them, and the isolated unit stage runs

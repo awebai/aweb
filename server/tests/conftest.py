@@ -7,12 +7,18 @@ import subprocess
 import time
 from pathlib import Path
 
-import pytest
-import pytest_asyncio
-from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+from tests.worker_services import configure_worker_environment
 
-from awid.db_config import build_database_config
-from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
+# xdist sets its worker identity before conftest imports. Bind services before
+# pgdbm/plugin imports and test modules can capture a parent endpoint.
+configure_worker_environment(os.environ)
+
+import pytest  # noqa: E402
+import pytest_asyncio  # noqa: E402
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager  # noqa: E402
+
+from awid.db_config import build_database_config  # noqa: E402
+from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations  # noqa: E402
 
 pytest_plugins = ("pgdbm.fixtures.conftest", "tests.real_stack")
 

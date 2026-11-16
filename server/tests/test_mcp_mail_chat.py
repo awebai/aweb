@@ -489,7 +489,7 @@ async def test_mcp_auth_fails_when_proxy_trust_enabled_without_secret(aweb_cloud
     str(uuid4()),
     "",
     "nocolon",
-])
+], ids=['extra-part', 'space', 'scheme', 'uppercase', 'empty-label', 'trailing-dot', 'uuid', 'empty', 'no-colon'])
 async def test_mcp_auth_rejects_invalid_proxy_team_id(aweb_cloud_db, monkeypatch, bad_team_id):
     secret = "proxy-secret"
     actor_id = str(uuid4())

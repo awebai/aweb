@@ -88,3 +88,69 @@ pytest count/time, DNS report, primary exit and cleanup separately. Compare the
 server's pytest interval with 3064.42s and 3980.80s, while reporting source and
 host differences; the enclosing image-build/command time is a separate cost.
 No automatic repetition or default quota change follows from one result.
+
+## Opt-in parallel server experiment
+
+The normal unit path is `_candidate-unit-suites` ->
+`candidate-suite.sh --isolated-suites` -> `make test-server`. Its default is
+`uv run --offline --no-sync pytest -q`, one pytest process. Server's locked dev
+requirements include xdist, but neither its presence nor the CPU profile
+turns workers on.
+
+After source review, one proposed measurement uses:
+
+```sh
+python3 scripts/test-egress/docker.py --profile ccx33 --server-workers 7 \
+  --evidence /var/log/vm-gate/acgc-server-parallel \
+  --command make TEST_EGRESS_RUNNER= test-server
+```
+
+This selects the same Make target with `-n 7 --dist loadscope
+--max-worker-restart=0`, without filters, skips, retries or changed assertions.
+The portable/default profile and serial command remain unchanged. Worker
+restarts are disabled so a crashed worker cannot silently replace its test
+execution.
+
+Each worker gets its own PostgreSQL and Redis server in the runner's internal
+network namespace. PG listens on 5432..5438; Redis on 6379..6385. There are no
+host publications or Docker socket mounts. `server/tests/conftest.py` selects
+these endpoints before importing pgdbm, plugins or test modules, using xdist's
+worker identity and count; a missing/wrong plan refuses rather than sharing a
+service. Worker 0 keeps the parent ports for later serial suites.
+
+PostgreSQL's existing per-test database creation/drop is retained. The locked
+pgdbm 0.5.0 factory already uses a UUID plus suffix for each database
+(`testing.py:197-199`), with a pool capped at five connections and an admin
+pool capped at two. Separate per-worker servers also isolate cluster-wide
+state and connection budgets; no migrations or product pools change. Every PG
+retains the tmpfs data/WAL and zero-swap checks, role-default search_path
+control and pgcrypto setup.
+
+A Redis database number alone is insufficient: [pub/sub is independent of the
+selected database](https://redis.io/docs/latest/develop/pubsub/#database--scoping).
+The suite has fixed named pub/sub channels as well as key caches. Separate
+Redis servers isolate both; the real TCP fault proxy follows each worker URL.
+
+The opt-in limits are PG 1280 MiB/1 CPU/PID512 per worker, Redis
+128 MiB/0.25 CPU/PID128 per worker, and the existing 16-GiB/7-CPU/PID2048
+runner plus 128-MiB DNS. Their memory caps sum to 25.75 GiB, leaving 6.25 GiB
+of a nominal 32-GiB host before kernel reservation, for the host and preparation. Quotas are caps, not reserved
+cores. The completed serial measurement's sampled PostgreSQL high-water was
+569 MiB and Redis 18 MiB; those observations support this budget, not a claim
+that seven-worker native behavior has passed. Each PG keeps its existing
+1-GiB tmpfs and bounded WAL. IDs are recorded as created and removed through
+the existing reverse-order finalizer; worker/storage mappings are retained in
+`worker-services.json`.
+
+Four parametrizations with random UUID/time values now supply stable case IDs;
+inputs and assertions stay unchanged. Fresh-process collection controls cover
+all 24 affected cases. xdist 3.8.0 sets its worker environment before loading
+conftest ([locked bootstrap source](https://github.com/pytest-dev/pytest-xdist/blob/v3.8.0/src/xdist/remote.py#L384-L388)), matching the early endpoint binding.
+
+Temporary paths and the session CLI build use pytest's worker-specific
+`tmp_path_factory`; each worker builds the same checkout CLI independently.
+Live HTTP/DNS/fault-proxy listeners use kernel-assigned ports. Native
+qualification still needs all collected tests, the normal xfail policy,
+actual seven-worker/service readbacks, CPU/PSI and memory/OOM evidence, and
+separate source/Docker/provider cleanup. No parallel measurement result is
+inferred from the source and local controls.
