@@ -144,6 +144,7 @@ func CheckCreationEvidence(link Link, statement, receipt map[string]any, trust, 
 			r.Currentness = "not_current"
 			if current.IdentityKey == link.Key && current.Certificate == link.Certificate && current.Issuer == trust.Issuer {
 				r.Currentness = "current"
+				r.Continuity = "unbroken"
 			}
 		}
 	}
@@ -233,7 +234,11 @@ func FormatEvidence(r EvidenceReport) string {
 		grade = "certified hardware"
 	}
 	if r.Proof.Status == "valid" && r.ProofBindsGrade != nil && *r.ProofBindsGrade {
-		line += "created with " + grade + "; proof checked"
+		if *r.IssuerAuthenticatedGrade == "certified_hardware" {
+			line += "issuer attests certified hardware; creation proof checked"
+		} else {
+			line += "created with " + grade + "; proof checked"
+		}
 	} else {
 		line += "issuer states " + grade + "; "
 		switch r.Proof.Reason {

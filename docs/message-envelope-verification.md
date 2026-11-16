@@ -45,7 +45,8 @@ where E is the issuer-signed human creation statement and C is its optional raw
 creation receipt from the shared approval protocol. Each entry names the exact
 checked ID certificate. The report separates issuer authentication, raw proof,
 currentness and continuity. Without C it says "issuer states"; a checked creation
-proof says "created with". Hardware grade authenticates the issuer's claim; it
+proof says "created with" for passkey UV, or "issuer attests certified hardware;
+creation proof checked" for hardware. Hardware grade authenticates the issuer's claim; it
 does not mean this verifier inspected private device attestation. Unsupported
 profiles and malformed evidence inside valid JSON do not change the message or
 ID-chain verdict or exit status. Transition/adoption profiles are not implemented

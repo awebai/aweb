@@ -212,6 +212,16 @@ func (c *Client) Complete428(ctx context.Context, body []byte, status int) ([]by
 	if interval <= 0 {
 		interval = time.Second
 	}
+	wait := func() error {
+		timer := time.NewTimer(interval)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			return nil
+		}
+	}
 	notified := false
 	for {
 		if e = s.live(); e != nil {
@@ -220,6 +230,12 @@ func (c *Client) Complete428(ctx context.Context, body []byte, status int) ([]by
 		answer, status, e := c.exchange(ctx, purpose, payload)
 		if e != nil {
 			return nil, e
+		}
+		if purpose == "poll" && (status == http.StatusTooManyRequests || status >= 500 && status < 600) {
+			if e = wait(); e != nil {
+				return nil, e
+			}
+			continue
 		}
 		if _, e = s.ReadAnswer(purpose, answer, status); e != nil {
 			return nil, e
@@ -252,12 +268,8 @@ func (c *Client) Complete428(ctx context.Context, body []byte, status int) ([]by
 			fmt.Fprintln(c.Notify, "Waiting for human approval at the person's known approval service.")
 			notified = true
 		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, ctx.Err()
-		case <-timer.C:
+		if e = wait(); e != nil {
+			return nil, e
 		}
 		purpose, payload = "poll", s.Selection()
 	}

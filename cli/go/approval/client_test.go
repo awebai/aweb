@@ -2,13 +2,18 @@ package approval
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -202,5 +207,107 @@ func TestRequesterResumesRetainedReceiptWithoutService(t *testing.T) {
 	want, e := proof.Canonical(presentation)
 	if e != nil || !bytes.Equal(got, want) {
 		t.Fatal("resume lost the requester's retained C")
+	}
+}
+
+// Exercise the real HTTPS exchange and shared signed-packet/answer codecs.
+// The peer supplies controlled availability responses, not identity evidence.
+func TestRequesterPollRetriesKeepOriginalSelectionAndDeadline(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		statuses []int
+		expired  bool
+		want     string
+	}{
+		{"transient then denied", []int{429, 500, 503, 200}, false, "approval_denied"},
+		{"refusal", []int{403}, false, "requester_not_admitted"},
+		{"original deadline", []int{503}, true, "request_expired"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vectors := cases(t, "requester-service")
+			wire := find(t, vectors, func(v map[string]any) bool { return v["id"] == "submit-exact-key-and-bytes" })
+			body, e := proof.Parse(decoded(t, wire["body"].(string)))
+			if e != nil {
+				t.Fatal(e)
+			}
+			original, e := proof.Parse(decoded(t, body["request_bytes"].(string)))
+			if e != nil {
+				t.Fatal(e)
+			}
+			var clock atomic.Int64
+			clock.Store(time.Now().Unix())
+			deadline := clock.Load() + 30
+			original["not_before"] = json.Number(strconv.FormatInt(clock.Load()-1, 10))
+			original["deadline"] = json.Number(strconv.FormatInt(deadline, 10))
+			var c *Client
+			var needs map[string]any
+			var selection []byte
+			var polls int
+			peer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, e := io.ReadAll(r.Body)
+				if e != nil {
+					t.Error(e)
+					return
+				}
+				purpose := "poll"
+				if r.URL.Path == routes["submit"] {
+					purpose = "submit"
+				}
+				if _, e = proof.CheckHTTP(r.Header.Get("Authorization"), raw, proof.HTTPInput{Requester: c.Requester, Origin: c.Origin, Method: r.Method, Path: r.URL.Path, Purpose: purpose, Now: clock.Load()}); e != nil {
+					t.Error(e)
+				}
+				status := 202
+				answer := map[string]any{"version": 1, "digest": needs["digest"], "deadline": deadline, "locator": "request-locator-1", "state": "pending"}
+				if purpose == "poll" {
+					if selection == nil {
+						selection = raw
+					} else if !bytes.Equal(raw, selection) {
+						t.Error("retry changed original selection")
+					}
+					if polls >= len(tc.statuses) {
+						t.Error("unexpected poll")
+						w.WriteHeader(403)
+						return
+					}
+					status = tc.statuses[polls]
+					polls++
+					if status == 200 {
+						answer["state"] = "denied"
+						answer["approval"] = nil
+					}
+					if status >= 400 {
+						answer = map[string]any{"version": 1, "error": map[string]any{"code": "requester_not_admitted"}}
+					}
+					if tc.expired {
+						clock.Store(deadline)
+					}
+				}
+				encoded, e := proof.Canonical(answer)
+				if e != nil {
+					t.Error(e)
+					return
+				}
+				w.WriteHeader(status)
+				_, _ = w.Write(encoded)
+			}))
+			defer peer.Close()
+			c = &Client{Origin: peer.URL, Requester: original["requester"].(map[string]any), Key: ed25519.NewKeyFromSeed(decoded(t, wire["test_signing_seed"].(string))), Admission: body["admission"].(map[string]any), HTTP: peer.Client(), Now: func() time.Time { return time.Unix(clock.Load(), 0) }, PollInterval: time.Millisecond, Retain: func(kind string, raw []byte) error { return nil }}
+			status, value, e := proof.MakeNeedsHuman(original, c.Origin)
+			if e != nil {
+				t.Fatal(e)
+			}
+			needs = value
+			raw, e := proof.Canonical(needs)
+			if e != nil {
+				t.Fatal(e)
+			}
+			_, e = c.Complete428(context.Background(), raw, status)
+			if e == nil || e.Error() != tc.want {
+				t.Fatalf("got %v, want %s (polls=%d)", e, tc.want, polls)
+			}
+			if polls != len(tc.statuses) {
+				t.Fatalf("polls %d, want %d", polls, len(tc.statuses))
+			}
+		})
 	}
 }
