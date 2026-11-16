@@ -1077,8 +1077,9 @@ root qualifies. Registered agents use the
 existing atomic re-parent. Local agents install the person-parented chain in
 place of the organisation chain. The old local certificate remains
 cryptographically valid and reports `no_human`. Existing descendants report
-`no_human` until their carried ancestry is refreshed through the parent's
-re-sign/refresh exchange. An awsign root receipt is optional evidence on this
+`no_human` until their carried ancestry is refreshed. The refresh for an
+ancestor's new certificate is part of this work and must be shown by a run.
+An awsign root receipt is optional evidence on this
 same adoption, not a second parent-signing operation.
 
 ### Self-custodial child requests and re-sign transport
