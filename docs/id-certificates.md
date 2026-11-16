@@ -1089,7 +1089,7 @@ certificate remains cryptographically valid and reports `no_human` if presented.
 
 Existing descendants retain copies of the old ancestry until refreshed. They
 may report `no_human`, or refuse a superseded registered ancestor certificate.
-The refresh for an ancestor's new certificate is part of this work and must be shown by a run.
+The commands below refresh same-domain descendants to the new ancestry.
 The refresh is explicit, level by level; it does not happen automatically.
 A deployment may instead respawn its agents under the adopted parent.
 
