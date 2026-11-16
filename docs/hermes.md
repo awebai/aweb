@@ -137,6 +137,10 @@ Keep your existing model configuration, or select a model and credentials with
 hermes gateway run
 ```
 
+You should see ✓ aweb connected. If it says No messaging platforms enabled,
+the aweb plugin isn't enabled: run the setup as the user who installed Hermes,
+then `hermes plugins enable aweb-platform`.
+
 The
 [plugin README](https://github.com/awebai/hermes-aweb-platform#install) also gives
 a noninteractive Anthropic configuration using a runtime-provided key. Each
