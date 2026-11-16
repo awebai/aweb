@@ -24,6 +24,7 @@ func TestHumanEnrollmentRegistrationAndProofRequireHumanCustody(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "aw")
 	buildAwBinary(t, ctx, bin)
 	commands := map[string][]string{
+		"add":      {"id", "human", "add", "--issuer", "https://issuer.example.invalid", "--person", "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "--identity-key", "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"},
 		"enroll":   {"id", "human", "enroll", "--issuer", "https://issuer.example.invalid"},
 		"register": {"id", "human", "register", "issued.json"},
 		"proof":    {"id", "proof", "--message-file", "message.txt"},
