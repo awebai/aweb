@@ -19,7 +19,6 @@ from awid.identity_observation import (
 from awid.registry import CachedRegistryClient, RegistryClient
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from fastapi import FastAPI, HTTPException
-from nacl.signing import SigningKey
 from redis.asyncio import Redis
 from redis.asyncio.client import Pipeline
 

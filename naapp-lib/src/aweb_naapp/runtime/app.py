@@ -103,7 +103,6 @@ from aweb_naapp.runtime.human_member import (
     check_human_member as observe_human_member,
 )
 from aweb_naapp.runtime.installation import InstallationFence
-from aweb_naapp.runtime.team_key_pins import DatabaseTeamKeyPins
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -114,6 +113,7 @@ from aweb_naapp.runtime.team_auth import (
     record_observed_principal,
 )
 from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
+from aweb_naapp.runtime.team_key_pins import DatabaseTeamKeyPins
 from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp.skills import Skills
 
