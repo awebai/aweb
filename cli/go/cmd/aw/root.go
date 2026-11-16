@@ -66,6 +66,10 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		pendingExchange, err := pendingHostedExchangeTarget(cmd, home)
+		if err != nil {
+			return err
+		}
 		if home.External() {
 			// A fresh destination is meaningful only when explicitly named for an
 			// operation which creates identity state. An inherited selector is
@@ -78,7 +82,7 @@ var rootCmd = &cobra.Command{
 					keyOnlyTarget, _ = teamRequestKeyOnly(home.Root, path)
 				}
 			}
-			if !freshTarget && !keyOnlyTarget {
+			if !freshTarget && !keyOnlyTarget && !pendingExchange {
 				if err := validateSelectedIdentityHome(home); err != nil {
 					return err
 				}
@@ -90,6 +94,9 @@ var rootCmd = &cobra.Command{
 			activeIdentityHome = home
 		}
 		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
+		if pendingExchange {
+			return nil
+		}
 		if cmd == idCreateCmd && (cmd.Flags().Changed("org") || cmd.Flags().Changed("owner-identity-home") || cmd.Flags().Changed("no-address") || cmd.Flags().Changed("local")) {
 			// Validate the original creation association before any key renewal or network work.
 			return nil

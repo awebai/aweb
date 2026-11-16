@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -21,6 +22,27 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestHostedInviteGlobalReuseStillRefusesALocalPinnedParent(t *testing.T) {
+	v := loadWhoVectors(t)
+	var origin string
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/spawn/invite-preview" {
+			t.Fatalf("unexpected %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:example.com", "identity_scope": "unknown", "server_url": origin, "status": "active", "id_tree": map[string]any{"v": 1, "issuer_id": v.Keys["coordinator"].DIDKey, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
+	}))
+	origin = server.URL
+	material := workspaceTeamIdentityMaterial{IdentityScope: awid.IdentityModeGlobal, DIDKey: v.Keys["root_agent"].DIDKey, StableID: v.Keys["root_agent"].DIDAW}
+	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_global_neighbor", origin, "child", "", false, material)
+	if err == nil {
+		_, err = state.prepareRequest(t.TempDir(), material)
+	}
+	var refusal *awid.IDCertificateError
+	if !errors.As(err, &refusal) || refusal.Code != "unregistered_parent" {
+		t.Fatalf("global neighbor changed: %v", err)
+	}
+}
 
 func TestHostedInviteRequiresPinnedPreviewBeforeAccept(t *testing.T) {
 	for _, tc := range []struct {
@@ -384,19 +406,31 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 				case "/api/v1/spawn/accept-invite":
 					accepts++
 					var req awid.SpawnAcceptInviteRequest
-					json.NewDecoder(r.Body).Decode(&req)
-					if req.IDTree == nil {
-						t.Fatal("missing pinned request")
+					decoder := json.NewDecoder(r.Body)
+					decoder.UseNumber()
+					decoder.Decode(&req)
+					if !reuse {
+						if req.IDTree == nil {
+							t.Error("missing pinned request")
+							http.Error(w, "missing request", 422)
+							return
+						}
+						requestID = req.IDTree.RequestID
+					} else if req.IDTree != nil || req.IDChain == nil {
+						t.Error("existing global membership must be chain-only")
+						http.Error(w, "wrong membership request", 422)
+						return
 					}
-					requestID = req.IDTree.RequestID
 					_, teamKey, _ := awid.GenerateKeypair()
 					cert, _ := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:example.com", MemberDIDKey: req.DID, MemberDIDAW: req.StableID, Alias: "child", IdentityScope: "global"})
 					encoded, _ := awid.EncodeTeamCertificateHeader(cert)
 					var registration any = map[string]any{"expected_head": nil, "invitation_id": childInvitation}
 					if reuse {
 						registration = nil
-						if req.IDTree.IDChain == nil {
-							t.Fatal("same-parent global membership did not present its existing chain")
+						if _, err := awid.EncodeIDChainHeader(req.IDChain); err != nil {
+							t.Error("existing global membership lost its signed chain")
+							http.Error(w, "invalid chain", 422)
+							return
 						}
 					}
 					json.NewEncoder(w).Encode(map[string]any{"team_id": "cloud-team", "team_slug": "backend", "namespace": "example.com", "identity_id": "cloud-child", "alias": "child", "server_url": origin, "did": req.DID, "stable_id": req.StableID, "identity_scope": "global", "custody": "self", "created": true, "team_cert": encoded, "id_chain": bundle, "registration_request": registration})
@@ -467,11 +501,15 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 	const team = "default:hosted.aweb.ai"
 	for _, wrongIssuer := range []bool{false, true} {
 		t.Run(fmt.Sprintf("wrong-issuer=%t", wrongIssuer), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("APP_ENV", "development")
 			principal, decoy := t.TempDir(), t.TempDir()
 			calls := 0
 			var origin string
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
+				case "/v1/id-certificates/status":
+					json.NewEncoder(w).Encode(v.Statuses["normal"])
 				case "/api/v1/discovery":
 					json.NewEncoder(w).Encode(map[string]string{"aweb_url": origin, "registry_url": origin})
 				case "/api/v1/spawn/create-invite":
@@ -504,7 +542,10 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 			}))
 			defer server.Close()
 			origin = server.URL
-			writeSelectionFixtureForTest(t, principal, testSelectionFixture{AwebURL: origin, RegistryURL: origin, TeamID: team, Alias: "issuer", DID: v.Keys["root_agent"].DIDKey, Custody: "self", IdentityScope: "local", SigningKey: key})
+			registryURL := strings.Replace(origin, "127.0.0.1", "registry.example", 1)
+			t.Setenv("AWID_REGISTRY_URL", registryURL)
+			serveRosterTXT(t, idCreateDNSRecordValue(v.Keys["root"].DIDKey, registryURL))
+			writeSelectionFixtureForTest(t, principal, testSelectionFixture{AwebURL: origin, RegistryURL: registryURL, TeamID: team, Alias: "issuer", DID: v.Keys["root_agent"].DIDKey, Custody: "self", IdentityScope: "local", SigningKey: key})
 			chain := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["root-agent"].Signed}}
 			if err := awconfig.SaveInstalledIDChain(filepath.Join(principal, ".aw"), chain); err != nil {
 				t.Fatal(err)

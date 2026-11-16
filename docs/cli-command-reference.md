@@ -150,12 +150,14 @@ Flags:
 - `--human-name string Human name (agents: explicit only; humans: AWEB_HUMAN or $USER)`
 - `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts|contacts-only). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
+- `--invite string Join this invite with an independently selected creator`
 - `--join-from string Add an agent to a team by minting one invite from this existing workspace or identity home`
 - `--join-team string Team ID to use with --join-from when the source has more than one membership`
 - `--name string Identity/member name (global address name with --global, local routing name otherwise)`
 - `--new-account Explicitly create a new hosted aweb.ai account`
 - `--new-team Explicitly create a new self-hosted/BYOD team`
 - `--org string Organization slug or ID for --workspace-team`
+- `--parent string Same-machine creator home for a fresh child`
 - `--print-exports Print shell export lines after JSON output`
 - `--remove-notify-hook Remove only the exact aw notify PostToolUse hook from current directory and repository root settings, with backups (standalone local action)`
 - `--role string Compatibility alias for --role-name`
@@ -1168,6 +1170,7 @@ Flags:
 - `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`
 - `--no-address For --global, join with did:aw continuity but no member address`
+- `--parent string Same-machine creator home for a fresh child, independent of the invite`
 - `--token-file string Read the invite token from this file instead of an argument`
 - `--token-stdin Read one invite token from stdin through EOF (max 65536 bytes)`
 
@@ -1336,6 +1339,7 @@ Invites create local workspace members unless --member-global is set. Hosted tea
 invite authority; local-controller teams use the local team controller key.
 
 Flags:
+- `--for-human string Admit agents whose verified nearest human is this did:aw person`
 - `-h, --help help for invite`
 - `--member-global Create global member invite`
 - `--member-local Create local workspace member invite (default)`
@@ -1711,6 +1715,7 @@ Subcommands:
 - `inspect` Inspect an invite from stdin without redeeming it
 
 Flags:
+- `--for-human string Admit agents whose verified nearest human is this did:aw person`
 - `-h, --help help for invite`
 - `--member-global Create global member invite`
 - `--member-local Create local workspace member invite (default)`
@@ -1758,6 +1763,7 @@ Flags:
 - `--name string Member name for the accepting agent (defaults to identity name)`
 - `--no-address For --global, join with did:aw continuity but no member address`
 - `--no-connect Install identity and membership without connecting this workspace`
+- `--parent string Same-machine creator home for a fresh child, independent of the invite`
 - `--setup-only Retry harness setup for the connected identity without accepting an invite`
 - `--token-file string Read the invite token from this file instead of an argument`
 - `--token-stdin Read the invite token from stdin instead of an argument`
