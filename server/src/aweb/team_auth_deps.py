@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import verify_did_key_signature
@@ -39,6 +40,7 @@ from aweb.identity_binding import (
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.identity_address import AddressResolution
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
+from aweb.team_key_pins import pinned_team_key_for_request
 from aweb.team_auth_envelope import team_auth_signature_payload
 
 logger = logging.getLogger(__name__)
@@ -109,7 +111,7 @@ async def resolve_team_identity(
     if not (isinstance(row, dict) and row.get("team_id") == team_id and row.get("did_key") == did_key):
         row = await db.fetch_one(
             """
-            SELECT agent_id, certificate_id, did_aw, address FROM {{tables.agents}}
+            SELECT agent_id, certificate_id, accepted_team_did_key, did_aw, address FROM {{tables.agents}}
             WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
             """,
             team_id,
@@ -145,12 +147,19 @@ async def resolve_team_identity(
     # revocations, so a row still naming a replaced certificate would either
     # miss a revocation or strip a live member. The certificate presented here
     # was verified against the registry (signature and revocation) above.
+    # The team key it was verified under is recorded with it
+    # (aweb.member_team_key): a certificate under a new key may keep its id.
     presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
-    if presented_certificate_id and presented_certificate_id != (row.get("certificate_id") or "").strip():
+    verified_team_did_key = (cert_info.get("verified_team_did_key") or "").strip()
+    if presented_certificate_id and (
+        presented_certificate_id != (row.get("certificate_id") or "").strip()
+        or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
+    ):
         await db.execute(
-            "UPDATE {{tables.agents}} SET certificate_id = $2 WHERE agent_id = $1",
+            "UPDATE {{tables.agents}} SET certificate_id = $2, accepted_team_did_key = $3 WHERE agent_id = $1",
             row["agent_id"],
             presented_certificate_id,
+            verified_team_did_key or None,
         )
 
     return TeamIdentity(
@@ -243,7 +252,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 
     # -- Step 4: Resolve team public key from awid --
-    team_did_key = await _resolve_team_key(request, cert_team_id)
+    team_did_key = await _resolve_team_key(request, cert_team_id, db=_aweb_db(db))
     if not team_did_key:
         raise HTTPException(status_code=401, detail="unknown_team")
 
@@ -314,9 +323,17 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
                 refreshed_key = await refresh(domain, team_name, rejected_key=team_did_key)
             if not refreshed_key or refreshed_key == team_did_key:
                 raise
+            refreshed_key = await pinned_team_key_for_request(request, cert_team_id, refreshed_key, db=_aweb_db(db))
             team_did_key = refreshed_key
             cert_info = await check_with_registration(team_did_key, refresh_revocations=True)
     except TeamCertificateError as e:
+        if e.reason == "bad_signature" and str(cert_data.get("team_did_key") or "").strip() != team_did_key:
+            # A certificate under a key the team no longer holds: the member
+            # fetches the certificate now recorded for it and continues.
+            raise HTTPException(
+                status_code=401,
+                detail={"code": "team_key_not_current", "message": "The team certificate is under a superseded team key"},
+            ) from None
         if e.reason == "unregistered":
             logger.warning(
                 "certificate existence check failed: a certificate presented for team %s "
@@ -425,11 +442,14 @@ def _team_read_failure(exc: Exception, registry_client, team_id: str, *, operati
     return awid_dependency_http_exception(exc, operation=operation, team_id=team_id)
 
 
-async def _resolve_team_key(request: Request, team_id: str) -> str:
-    """Resolve team public key from awid registry.
+async def _resolve_team_key(request: Request, team_id: str, *, db: Any = None) -> str:
+    """Resolve the team's public key: the registry's answer, held to the key
+    this server admitted (aweb.team_key_pins).
 
     Returns the team's did:key, or empty string if the team is unknown.
-    Raises HTTPException(503) if awid is unreachable.
+    Raises HTTPException(401 team_key_unverified) when the registry names a
+    key no namespace-controller act establishes, and HTTPException(503) if
+    awid is unreachable.
     """
     try:
         domain, team_name = parse_team_id(team_id)
@@ -442,7 +462,11 @@ async def _resolve_team_key(request: Request, team_id: str) -> str:
 
     try:
         key = await registry_client.get_team_public_key(domain, team_name)
-        return key or ""
+        if not key:
+            return ""
+        return await pinned_team_key_for_request(request, team_id, key, db=db)
+    except HTTPException:
+        raise
     except AWID_DEPENDENCY_ERRORS as exc:
         raise _team_read_failure(
             exc, registry_client, build_team_id(domain, team_name),

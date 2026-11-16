@@ -15,7 +15,8 @@ async def test_sender_membership_mail_and_chat_is_current_and_participant_scoped
     stable_id = stable_id_from_did_key(sender.did)
     await env.db.execute(
         "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key, identity_scope='global', "
-        "did_aw=$1, certificate_id='privacy-alice' WHERE agent_id=$2", stable_id, sender.id,
+        "did_aw=$1, certificate_id='privacy-alice', accepted_team_did_key="
+        "(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$2", stable_id, sender.id,
     )
     mail_id = await _seed_mail(env)
     chat = await _request(env, 'alice', 'POST', '/v1/chat/sessions', {
@@ -53,7 +54,8 @@ async def test_sender_membership_revocation_and_missing_provenance(privacy_app):
     sender = env.actors['alice']
     stable_id = stable_id_from_did_key(sender.did)
     await env.db.execute(
-        "UPDATE {{tables.agents}} SET did_aw=$1, certificate_id='privacy-alice' WHERE agent_id=$2", stable_id, sender.id,
+        "UPDATE {{tables.agents}} SET did_aw=$1, certificate_id='privacy-alice', accepted_team_did_key="
+        "(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$2", stable_id, sender.id,
     )
     mail_id = await _seed_mail(env)
     await env.registry_db.execute(

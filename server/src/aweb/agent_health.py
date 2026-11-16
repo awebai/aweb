@@ -15,6 +15,7 @@ from typing import Any
 
 from aweb.agent_status import stored_status_document
 from aweb.identity_grant_status import effective_grant_status
+from aweb.member_team_key import member_key_columns_sql
 from aweb.presence import list_agent_presences_by_workspace_ids
 
 logger = logging.getLogger(__name__)
@@ -144,7 +145,8 @@ async def _connections(db, request, *, team_id: str, agent_ids: list, now: datet
         """
         SELECT g.subject_agent_id, g.team_id, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
-               a.status AS subject_status, a.deleted_at AS subject_deleted_at
+               a.status AS subject_status, a.deleted_at AS subject_deleted_at,
+               a.certificate_id, """ + member_key_columns_sql("a") + """
         FROM {{tables.identity_session_grants}} g
         JOIN {{tables.agents}} a ON a.agent_id = g.subject_agent_id
         WHERE g.team_id = $1 AND g.subject_agent_id = ANY($2::uuid[])

@@ -69,6 +69,11 @@ func TestPreparedWorkerControllerFetchAndConnect(t *testing.T) {
 			}
 			stored.set(cert)
 			w.WriteHeader(201)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/status") && strings.Contains(r.URL.Path, "/certificates/"):
+			// The team's current key, which fetch-cert checks the fetched certificate against.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id": "backend:acme.com", "team_did_key": awid.ComputeDIDKey(pub), "status": "active", "revoked_at": nil,
+			})
 		case r.Method == "GET" && strings.Contains(r.URL.Path, "/certificates/"):
 			registryCalls.Add(1)
 			cert := stored.get()

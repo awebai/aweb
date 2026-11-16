@@ -114,9 +114,9 @@ revocations require a controller or unrevoked-member path signature, or the
 trusted same-operator service credential described below. The per-certificate
 `/certificates/{certificate_id}/status` read is the narrow anonymous exception,
 including for private teams; it exposes only the four facts documented below.
-The team-server record and the principal-attestation record reads (custodians,
-custody, person) are likewise anonymous, each by exact key with one identical
-404, as documented below. Identity-private
+The team-server record, the team-key act and the principal-attestation record
+reads (custodians, custody, person) are likewise anonymous, each by exact key
+with one identical 404, as documented below. Identity-private
 reads and certificate-blob fetch have their separately documented
 authentication requirements.
 
@@ -639,9 +639,25 @@ POST   /v1/namespaces/{domain}/teams/{name}/rotate
                  "team_server":     { "record", "signature" },
                  "team_custodians": [{ "record", "signature" }],
                  "member_custody":  [{ "record", "signature" }],
-                 "member_person":   [{ "record", "signature" }] } }
+                 "member_person":   [{ "record", "signature" }] },
+               "member_certificates": [{                  (optional)
+                 "old_certificate_id": "uuid",
+                 "certificate": "<base64 certificate under the NEW key>",
+                 "custody": { "record", "signature" },   (optional)
+                 "person":  { "record", "signature" } }] } (optional)
        Note: invalidates ALL existing certificates (they were
        signed by the old key). Members need new certificates.
+       member_certificates replaces, in the same transaction, each named
+       active certificate: AWID revokes it and registers the given
+       certificate, which must be signed by the new key for the same
+       member, alias, did:aw, address and identity scope; custody and
+       person are that member's records for the new certificate, signed by
+       the new key (a custody record's custodian must be registered). An
+       old certificate that is not active: 409
+       member_certificate_not_active; a certificate or record that does
+       not hold: 422; either way nothing changes. A registry that predates
+       the field refuses it with 422. Certificates not named are left as
+       they are.
        resigned_records carries every team-key-signed record of the team
        re-signed with the NEW key: unchanged apart from team_did_key and a
        newer issued_at, exactly one per stored record of each kind, and
@@ -655,6 +671,28 @@ POST   /v1/namespaces/{domain}/teams/{name}/rotate
        413 above it. Without resigned_records the rotation still succeeds,
        and verifiers refuse the old-key records until they are re-published.
        Contract: [principal-attestation.md](principal-attestation.md) §5.
+       AWID keeps the request's signed bytes, signer and signature as the
+       team-key act, in the same transaction, also when the key is
+       unchanged (a re-attestation by the current namespace controller).
+
+GET    /v1/namespaces/{domain}/teams/{name}/key-act
+       The namespace controller's latest act naming the team's CURRENT key.
+       Auth: none, for public and private teams, like certificate status and
+       the team-server record: relying servers without a read credential must
+       verify rotations too. It shows only the current team key (which
+       certificate status already shows) and a namespace controller key.
+       Rate limit: the team_get bucket.
+       Response: { "team_id": "backend:acme.com",
+                   "team_did_key": "did:key:z6Mk...",
+                   "signer_did_key": "did:key:z6Mk...",
+                   "signed_payload": "<unpadded base64url of the signed bytes>",
+                   "signature": "<base64 Ed25519>" }
+       signed_payload is the covering-v2 envelope or the legacy
+       {domain, operation, name, new_team_did_key, timestamp} JSON, exactly as
+       signed. One identical 404 when the team is unknown or no stored act
+       names its current key. Relying servers verify it with awid.team_key_acts against
+       the controller DNS names, never against the registry's controller_did
+       ([trust-model.md](trust-model.md#team-key-pins-approved-2026-11-12)).
 
 POST   /v1/namespaces/{domain}/teams/{name}/visibility
        Set team visibility.
@@ -698,6 +736,9 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
        member. If member_address is present, awid validates that it
        resolves to member_did_aw before recording the certificate.
        Response: { "registered": true, "certificate_id": "uuid" }
+       The certificate is verified under, and inserted while holding, the
+       team row's current key (the lock rotate takes); a key change that
+       commits meanwhile refuses it 409 team_key_not_current.
 
 GET    /v1/namespaces/{domain}/teams/{name}/certificates
        List issued certificates (active and revoked).
@@ -1403,6 +1444,10 @@ Current ordered effects are:
 10. `010_id_certificates.sql` adds the identity tree's registered identities
     with their revocation, every registered ID-certificate revision, and the
     namespace controller epochs ([identity certificates](id-certificates.md)).
+11. `011_namespace_delegation.sql` adds a namespace's parent domain and parent
+    controller key for ancestor delegation.
+17. `017_team_key_acts.sql` adds the namespace controller's `rotate_team_key`
+    acts, kept exactly as signed.
 
 The following inventory is exhaustive for current **AWID application tables
 declared by** that ordered component chain. It intentionally excludes pgdbm's
@@ -1430,6 +1475,7 @@ full ordered SQL, not a copied `001` snapshot.
 - `id_identities`
 - `id_certificates`
 - `id_namespace_epochs`
+- `team_key_acts`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---

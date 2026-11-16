@@ -20,6 +20,7 @@ from aweb.identity_binding import (
 )
 from aweb.identity_address import AddressResolution
 from aweb.id_chain_auth import authenticate_id_chain
+from aweb.member_team_key import member_key_columns_sql, member_key_current
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
@@ -165,11 +166,12 @@ async def lookup_identity_agent_context(
     aweb_db = _aweb_db(db)
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, team_id, alias, did_key, did_aw, address, did_aw_verified_key, identity_scope, certificate_id
-        FROM {{tables.agents}}
-        WHERE deleted_at IS NULL
-          AND did_key = $1
-        ORDER BY created_at DESC
+        SELECT a.agent_id, a.team_id, a.alias, a.did_key, a.did_aw, a.address, a.did_aw_verified_key,
+               a.identity_scope, a.certificate_id, """ + member_key_columns_sql("a") + """
+        FROM {{tables.agents}} AS a
+        WHERE a.deleted_at IS NULL
+          AND a.did_key = $1
+        ORDER BY a.created_at DESC
         """,
         did_key,
     )
@@ -215,8 +217,11 @@ async def _enforce_current_membership(request: Request, row: dict | None) -> dic
     and agent_id are stripped, while the DID-scoped facts stand, so the
     identity keeps reading its own mailbox and loses only team attribution
     and team-gated behavior. A row with no recorded certificate predates the
-    recording (migration 017) and passes unchanged; it heals at the next
-    certificate-authenticated connect or request.
+    recording (migration 017) and has no certificate to check for
+    revocation; it heals at the next certificate-authenticated connect or
+    request. Every row, with or without one, keeps its team context only
+    while it was accepted under the team's current key
+    (aweb.member_team_key).
     """
     return await current_membership(getattr(request.app.state, "awid_registry_client", None), row)
 
@@ -228,7 +233,17 @@ async def current_membership(registry_client, row: dict | None) -> dict | None:
         return row
     team_id = (row.get("team_id") or "").strip()
     certificate_id = (row.get("certificate_id") or "").strip()
-    if not team_id or not certificate_id:
+    if not team_id:
+        return row
+    if not member_key_current(row):
+        logger.warning(
+            "identity-auth team context stripped: alias %r in %s was accepted under "
+            "a team key that is not the team's current key",
+            row.get("alias"),
+            team_id,
+        )
+        return _without_team_context(row)
+    if not certificate_id:
         return row
     revoked = await revoked_certificates(registry_client, team_id)
     if certificate_id not in revoked:
@@ -258,6 +273,11 @@ async def current_membership(registry_client, row: dict | None) -> dict | None:
             row.get("alias"),
             team_id,
         )
+    return _without_team_context(row)
+
+
+def _without_team_context(row: dict) -> dict:
+    """The row with its team context removed and its DID-scoped facts kept."""
     stripped = dict(row)
     stripped["team_id"] = None
     stripped["alias"] = None

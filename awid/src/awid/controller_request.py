@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import re
+from dataclasses import dataclass
 from urllib.parse import quote
 
 from fastapi import HTTPException, Request
@@ -29,6 +30,23 @@ CONTROLLER_OPERATIONS = frozenset({
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class ControllerProof:
+    """The exact bytes a controller signed for this request, its key and signature."""
+
+    signer_did_key: str
+    signed_payload: bytes
+    signature: str
+
+
+def verified_controller_proof(request: Request) -> ControllerProof:
+    """The proof verify_controller_json_request accepted for this request."""
+    proof = getattr(request.state, 'controller_proof', None)
+    if not isinstance(proof, ControllerProof):
+        raise RuntimeError('no verified controller proof for this request')
+    return proof
+
+
 def raw_controller_request_target(request: Request) -> str:
     raw = request.scope.get('raw_path')
     path = raw.decode('ascii') if isinstance(raw, bytes) else quote(request.scope.get('path', '/'), safe='/%')
@@ -50,6 +68,7 @@ async def verify_controller_json_request(
 
     Route helpers supply the closed operation and its existing contextual
     claims. Only the route's success records usage; proof alone is not authority.
+    The accepted proof is kept on ``request.state`` for routes that store it.
     """
     operation = payload_dict['operation']
     if operation not in CONTROLLER_OPERATIONS:
@@ -65,6 +84,11 @@ async def verify_controller_json_request(
             pending = set()
             request.state.legacy_controller_operations = pending
         pending.add(operation)
+        _, signature = parse_didkey_auth(request.headers.get(authorization_header))
+        timestamp = require_timestamp(request, header_name=timestamp_header)
+        request.state.controller_proof = ControllerProof(
+            did, canonical_json_bytes(payload_dict | {'timestamp': timestamp}), signature,
+        )
         return did
 
     did, signature = parse_didkey_auth(request.headers.get(authorization_header))
@@ -99,6 +123,7 @@ async def verify_controller_json_request(
         verify_did_key_signature(did_key=did, payload=raw, signature_b64=signature)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail='Invalid signature') from exc
+    request.state.controller_proof = ControllerProof(did, raw, signature)
     return did
 
 

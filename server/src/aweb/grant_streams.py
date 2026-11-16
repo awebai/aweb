@@ -10,6 +10,7 @@ from fastapi import HTTPException, Request
 
 from aweb.grant_expiry import never_expires
 from aweb.config import require_registered_certificates
+from aweb.member_team_key import grant_issuer_current, member_key_columns_sql
 from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_registered_certificates, _get_revoked_certificates
 
 GRANT_STREAM_RECHECK_SECONDS = 30
@@ -62,7 +63,8 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
         """
         SELECT g.team_id, g.grant_did_key, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
-               a.agent_id, a.status, a.deleted_at
+               a.agent_id, a.status, a.deleted_at,
+               a.certificate_id, """ + member_key_columns_sql("a") + """
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
         WHERE g.grant_id = $1::UUID
@@ -77,6 +79,8 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
         return "grant_expired"
     if str(row["agent_id"]) != str(identity.agent_id) or row["status"] != "active" or row["deleted_at"] is not None:
         return "grant_subject_inactive"
+    if not grant_issuer_current(row):
+        return "grant_issuer_revoked"
 
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
