@@ -225,6 +225,20 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
         assert duplicate.json() == approved.json()
         assert holder.store.audit() == after
 
+        # Known local enrollment conflicts must not ask the person to approve.
+        async def already_exists():
+            before = holder.store.audit()
+            response = await call(
+                client,
+                "/v1/humans",
+                {"person": second, "identity_key": second_key, "approver": first},
+                **first_caller,
+            )
+            assert response.status_code == 409, response.text
+            assert response.json()["error"]["code"] == "person_already_exists"
+            assert holder.store.audit() == before
+
+        await already_exists()
         expired = expire_pending(holder, second)
         old_audit = holder.store.audit()
         retried = await call(
@@ -272,12 +286,14 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
         creation = creation_receipt(bound.json(), second_device)
         finished = await call(client, base + "/finish", creation, **first_caller)
         assert finished.status_code == 200, finished.text
+        await already_exists()
         await commit_identity(registry, finished.json(), second_seed, second_key)
         activated = await call(client, base + "/activate", {}, **first_caller)
         assert activated.status_code == 200 and activated.json()["state"] == "active", (
             activated.text
         )
         assert holder.active_person(second)["identity_key"] == second_key
+        await already_exists()
 
         # Physical SQLite order is not bootstrap authority. Keep the logical
         # first-person row unchanged while placing it after the second person.

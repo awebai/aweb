@@ -126,16 +126,20 @@ class Holder:
         )
         return encode(signature)
 
+    def _check_enrollment_available(self, db, person):
+        previous = db.execute(
+            "SELECT * FROM enrollments WHERE person=?", (person,)
+        ).fetchone()
+        if previous and not expired_pending(previous):
+            raise Refused("person_already_exists")
+        return previous
+
     def _pending(
         self, db, *, person, identity_key, requester, certificate, approval=None
     ):
         root = self.store._descriptor(db)
-        previous = db.execute(
-            "SELECT * FROM enrollments WHERE person=?", (person,)
-        ).fetchone()
+        previous = self._check_enrollment_available(db, person)
         if previous:
-            if not expired_pending(previous):
-                raise Refused("person_already_exists")
             # Retire the expired operation's idempotent lookup, so an old
             # receipt cannot return this new intent. Old R is expired/stale;
             # the revision and MAC checks still precede any new effect.
@@ -395,6 +399,8 @@ class Holder:
 
     async def prepare(self, caller, *, person, identity_key, approver, chain):
         admitted = await self.admit(caller, chain)
+        with self.store._connection() as db:
+            self._check_enrollment_available(db, person)
         active = self.active_person(approver)
         await self.public.person(
             json.loads(active["chain"]),
