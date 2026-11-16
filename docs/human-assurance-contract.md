@@ -1,13 +1,14 @@
 # Human assurance and protected signing
 
-Status: **frozen implementation contract for aweb-acxy.1**. Juan approved
-the architecture on 2026-11-11 at 19:06 UTC; the coordinator directed this
-freeze after the settled review decisions. This document and the typed catalog
-[`vectors/human-assurance-v1.json`](vectors/human-assurance-v1.json) define the
-shared policy boundary for hosted and independent implementations. This is not
-a release claim: implementations must pass their positive, refusal and race
-cases. Unclassified operations and missing required evidence refuse; they do
-not block implementation of the settled groups.
+Status: **superseded by the human-approval and key-custody architecture
+approved on 2026-11-15 (aweb-adcl)**. This historical acxy contract remains
+available for existing source references and pinned compatibility tests while
+its surviving approval mechanics move to the separate approval service.
+It does not define the new architecture: applications enforce their own
+rules, the approval service returns an exact-act receipt bound to the
+enforcer's nonce and deadline, and the key holder holds organisation keys.
+The retired team-protection lock, service key and protected-effect machinery
+must not be used for new work.
 
 ## 1. Independent facts and authorities
 
