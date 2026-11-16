@@ -22,6 +22,23 @@ from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations  # noqa
 
 pytest_plugins = ("pgdbm.fixtures.conftest", "tests.real_stack")
 
+
+@pytest.fixture(scope="session")
+def server_js_runtime():
+    from tests.js_runtime_tree import prepare_runtime_tree, remove_runtime_tree, runtime_repo
+
+    source = Path(__file__).resolve().parents[2]
+    root = runtime_repo(source)
+    if root == source:
+        yield root
+        return
+    prepare_runtime_tree(source, root)
+    try:
+        yield root
+    finally:
+        remove_runtime_tree(root)
+
+
 os.environ.setdefault("APP_ENV", "testing")
 os.environ.setdefault("ENVIRONMENT", "testing")
 os.environ.setdefault("AWEB_INTERNAL_AUTH_SECRET", "test-internal-auth-secret")

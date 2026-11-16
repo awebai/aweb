@@ -149,8 +149,27 @@ conftest ([locked bootstrap source](https://github.com/pytest-dev/pytest-xdist/b
 
 Temporary paths and the session CLI build use pytest's worker-specific
 `tmp_path_factory`; each worker builds the same checkout CLI independently.
-Live HTTP/DNS/fault-proxy listeners use kernel-assigned ports. Native
-qualification still needs all collected tests, the normal xfail policy,
+Live HTTP/DNS/fault-proxy listeners use kernel-assigned ports.
+
+The activity emitter, trust-presentation and connection-restart modules share a
+session fixture for each worker's Node runtime tree. It copies the three
+packages and their already installed dependencies into a private run/worker
+path, preserving dependency `dist` files and rebinding workspace symlinks to
+that worker's core. Both plugin builds finish before the first reader starts;
+subsequent module fixtures never rebuild that tree. Activity's host is copied
+so its relative core imports stay private; channel, Pi and core readers use the
+same worker root, including the restart module's imported fixture. Teardown
+removes only that worker's tree. The serial fixture/build path stays unchanged.
+There is no writer-only lock: workers cannot remove another reader's artifacts.
+
+`scripts/test_server_runtime_trees.py` concurrently prepares two trees and
+holds a real unlink/rebuild gap in one while the kept Node host scripts read the
+other. It also removes the original shared core, which refuses with
+`ERR_MODULE_NOT_FOUND`, while private readers succeed before the writer resumes.
+Controlled npm outputs isolate the filesystem/import boundary; these controls
+do not execute product builds or replace native runtime assertions.
+
+Native qualification still needs all collected tests, the normal xfail policy,
 actual seven-worker/service readbacks, CPU/PSI and memory/OOM evidence, and
 separate source/Docker/provider cleanup. No parallel measurement result is
 inferred from the source and local controls.
