@@ -215,12 +215,9 @@ the start still proceeds, granting nothing. It needs no completed registration,
 new passkey or owner act. A `session` start never refreshes at acceptance;
 same-signer session refresh keeps its successful-login condition.
 
-Onboarding (`aw id create --human-parent H`) issues the laptop agent under H
-with H's one live approval. It does not make the agent a team member. Q gets
-its membership separately, through the team's agent admission: an admission
-under the team's protected admission policy (`GET /protected-admission-policies`)
-or a team-controller admission with its own live approval. Until then, a
-start by Q is refused by team-auth.
+Onboarding (`aw id create --human-parent H`) does not make the agent a team
+member. The agent separately obtains a team-controller-signed certificate
+through ordinary team admission. Until then, team-auth refuses its session start.
 
 ## 2. The ceremony and the loopback redirect
 

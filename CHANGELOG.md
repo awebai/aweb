@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Candidate-only root endorsement, signer admission/removal, signer operation
+  status and protected-profile commands and the in-tree signer host are removed.
+  Root approval and unattended admission through a key holder are not built;
+  ordinary team admission works as in stable releases.
+
 - This candidate removes the retired team-protection and protected-effect receipt tables and retained-effect data from earlier release-candidate installations.
 - Earlier release-candidate clients and packages must be upgraded together with this candidate.
 
@@ -17,47 +22,6 @@
   current key, including a verified empty address; an unverified sender gets
   retryable `503 address_evidence_unavailable` before delivery. Optional
   identity display reports unknown without clearing stored bindings.
-
-- `aw id operation status --operation-id <UUID>` reads a protected
-  operation's receipt once, as its requester, without performing it.
-  Before this, the only way to learn the outcome of a prepared operation
-  whose answer was never seen was to resume it.
-  - It reports the receipt's state: `pending` (with its reason and deadline),
-    `committed` (its result, not verified by the read), `refused` or
-    `unknown` (with a code). It reports `none` when the service holds no such
-    operation for this requester in that scope.
-  - It prepares, executes and settles nothing, and leaves aw's saved request
-    as it was.
-  - A saved request is read under the profile's one binding for its scope.
-    Without a saved request, the profile must have exactly one binding.
-  - A refused or failed read is an error, never a state.
-
-
-- The protected signer bounds each requester's approval mail to ten notices
-  an hour. A request past the budget is still created and waits as any other,
-  but is not mailed: the signer records that and the owner page marks it
-  "not mailed". The prepare and receipt answers are unchanged. The budget
-  is never less than one full round of a request's approvers.
-
-- The protected signer refuses a new request with 403
-  `open_requests_limit_reached` while its requester already has twenty
-  unfinished requests that need a human under one authority: an agent
-  counted by its principal, an owner's page request by that owner. A
-  place frees when its request is signed, refused or expires. aw tells the
-  refusal in words.
-
-- The owner page reads bounded pages of its own scope instead of every
-  stored operation, and a tab's saved removal retires through an exact-id
-  lookup of its stored final outcome. An approval interrupted by a failed
-  registry read after the owner's passkey touch is no longer spent: a
-  reopened page (signed-in or mailed link) finishes it with no new passkey
-  check while its original gesture window lasts, and a 503 offers Try again.
-  Unexpected signer errors are logged by route, operation id, exception
-  class and stack frames (file, line and function), never with a message
-  or locals; the controller key signs a delivery envelope only inside
-  custody, from the verified signed artifact. `aw` backs off reading a
-  pending receipt (to a one-minute cap, never past the operation's expiry)
-  instead of spending its whole read allowance.
 
 - `aw custody serve` picks up a parent import, certificate install or connect
   that changes its resident home while it runs, without a restart and
@@ -93,61 +57,8 @@
   must set `team.registryRoute: local`; without it, `teamctl start` refuses
   and names that setting.
 
-- `aw id endorse` installs the endorsed root's chain (the human's supporting
-  chain and the signed certificate it registered) in the root's home once
-  the registry read-back confirms it, so the root can issue children with
-  `aw id child invite`. A rerun of the committed endorsement installs it when
-  it is missing; `--json` reports `chain_installed`.
-
-- `aw id team remove-agent --protected-profile P --certificate F --operation-id U`
-  removes, as the deployment's endorsed root, the agent membership that
-  certificate file names, through the protected service's bounded
-  `team.agent.remove`. aw checks that the service signs exactly the registry's
-  revocation of that certificate under the profile's pinned controller key,
-  and changes nothing in the agent's home. The same `--operation-id` resumes
-  the removal; changed inputs refuse `operation_conflict`.
-
-- `aw id team remove-agent --owner-approved` removes any agent membership of a
-  protected team, whoever admitted it, once the team's current owner approves
-  it live on the protected service's page (`team.agent.remove/owner_approved`).
-  The registered requester the profile grants asks for it; its key is recorded,
-  never authority. Name the membership with `--certificate F`, or with
-  `--team T --certificate-id C`, which reads the team's active listing at the
-  profile's registry, signed by this member's key (`selector_unauthorized`
-  when the key is not in the home). `--no-wait` and `--no-browser` work as for
-  `aw id endorse`. The result names the frozen team, certificate, alias and
-  target kind, with `kind not verified` printed as the service froze it.
-  Running the same command again continues an unfinished removal from its
-  saved request, without the listing, so a removal whose answer was lost is
-  recovered by its receipt after the certificate has left the listing. The
-  saved request is forgotten only after the controller's signature over
-  exactly the frozen revocation verifies, or after the service refuses it.
-
-- The protected approvals `aw id endorse`, `aw app role revoke
-  --protected-profile` and `aw id team remove-agent --owner-approved` ask in
-  the `intent_v1` approval format: the human approves the frozen intent, and
-  the certificate, owner act or registry request is issued when they approve,
-  so a mailed approval can wait up to the operation's own window instead of
-  a few minutes. aw checks every issued artifact against the approved intent
-  and its issuance window. A protected role act is now delivered to the app
-  by the protected service, which confirms it applied; aw never posts it, and
-  a signed act without that confirmation is `application_unconfirmed` and
-  keeps its request. A service still serving the older format answers
-  `upgrade_aw_required`; this aw needs a service that serves `intent_v1`.
-
-- A request saved by an older aw in the previous approval format, or under
-  another authority generation of the same binding, is never sent again and
-  never silently replaced. Before asking for the same act on the same target,
-  aw reads its receipt once: a refusal retires it, a verified applied effect
-  settles it, and anything else keeps it quarantined in aw's private state
-  with what was observed, stopping with `operation_reconciliation_required`.
-  `--replace <operation-id>` on each of the three commands names that kept
-  request to ask for a separately approved act; the kept record stays.
-  `aw app role resume` on such a request only reads its receipt.
-
 - `aw id team install-cert --identity-home H --certificate F` installs a team
-  certificate file, such as the one `aw id team admit --certificate-out`
-  wrote, into the home whose identity it names, after checking it at the
+  certificate file into the home whose identity it names, after checking it at the
   registry: signed by the team's current key, registered and not revoked. It
   reads the certificate's public status, which needs no member authority, so
   a revoked member of a private team is refused `certificate_revoked`. A local identity takes certificates of one team only. Then
@@ -162,61 +73,16 @@
   on the finished home returns `already_exists` with the same `did_key`;
   any other home is refused with `identity_exists` and left unchanged.
 
-- `aw id endorse --no-wait` shows the approval page and exits instead of
-  waiting for the human: `--json` reports `operation_id`, `state`, `page`,
-  `digest`, `fingerprint` and `expires_at`. Running the same command again
-  with the same `--operation-id` resumes it, and once the human has approved,
-  finishes the endorsement, registering and reading back the certificate.
-  `--no-browser` reports the page without opening a browser, for setup an
-  agent drives.
-
-- `aw id create --no-address --registry R --identity-home H` creates a
-  registered identity with no address: a fresh self-custodial key registers
-  its own did:aw at R and is read back, with no namespace controller key
-  involved. It is how a deployment root is created before a human endorses
-  it. Creation is resumable: the key is kept privately before anything is
-  sent, so a rerun completes an interrupted creation with the same key. A
-  home that already holds an identity, or anything else, refuses
-  `identity_exists`. `--json` carries `did_aw` and `did_key`.
-
 - aw no longer blind-retries a `503` that carries `Retry-After`: the request
   returns at once with the service's hint, since a retry before it cannot
   succeed and repeats what the service asked to wait for. A bare `503` keeps
-  its three brief retries. A protected `aw app role revoke` waits out an
-  explicit delta-seconds hint on its installation lookup within that step's
-  own two-minute bound, then reads again; the prepare that follows has a
-  fresh two-minute bound of its own, so the act can wait up to about four
-  minutes on hints, and the command's own earlier deadline or cancellation
-  always ends it first. An inactive, mismatched or otherwise refused
-  installation still refuses at once, and nothing is prepared until the
-  lookup succeeds.
+  its three brief retries.
+
 
 - aweb server keeps a registry throttling hint on `503 identity_binding_unavailable`
   responses as `Retry-After`, including authenticated installation lookups.
   Identity mismatches and ordinary dependency failures retain their existing
   refusal behavior; the server adds no wait or retry.
-
-- `aw id team admission-policy --team T --protected-profile P` reads a
-  protected team's agent admission policy from its protected service, proving
-  this identity's key. `--json` carries the mode and the complete policy,
-  including the version and digest an admission binds; aw checks the digest
-  against the policy itself. A protected team without a policy refuses
-  `admission_policy_missing`, and a read that cannot be answered refuses
-  `receipt_unavailable`, never "no policy".
-- `aw id team admit` lets a deployment's endorsed root admit an agent to a
-  protected team through its protected service, with no human present, within
-  the admission policy version and digest the caller names. The caller supplies
-  `--operation-id`; the same id with the same inputs resumes the admission and
-  returns its original certificate, and changed inputs refuse
-  `operation_conflict`. The membership certificate is written to
-  `--certificate-out` only once it is the one the service froze, signed by the
-  team key the profile pins, for exactly the requested member.
-- `aw id endorse` asks a human, through the protected service, to endorse this
-  registered agent as the deployment's root for the listed teams. Before the
-  approval page is shown, aw compares the admission policy the service froze
-  with its own read of every team's policy. Once the human approves, aw
-  verifies the signed certificate, registers it with the root's own key at the
-  pinned registry on the human's verified chain, and reads it back.
 
 - `aw id team add-member` registers the certificate at the team namespace's
   own registry: the one `AWID_REGISTRY_URL` names, or else the one the
@@ -1304,6 +1170,7 @@
   `FOLIO_TIMESTAMP_SKEW_SECONDS` at 300, and require `FOLIO_AWID_SERVICE_TOKEN`,
   when set, to be at least 32 bytes; Folio refuses to start otherwise. The first
   boot applies the shared naapp migrations (observed principals, outbox).
+
 
 ## Release preparations
 

@@ -9,7 +9,7 @@ the page's JSON routes from the holder's own network namespace, so aw's
 loopback receives the code.
 
 The owner signs the designation locally, so aw keeps no request to replay:
-its proof is the app's own records (protected_round_trip.assert_designated),
+its proof is the app's own records (team_journey_support.assert_designated),
 and a refused duplicate leaves them unchanged.
 
 Topology, as on H: the holder (a human) runs aw on their own machine, where the
@@ -35,7 +35,7 @@ import pexpect
 import pytest
 from aweb_naapp_testing.network import make_certificates
 from nacl.signing import SigningKey
-from protected_round_trip import (
+from team_journey_support import (
     Designation,
     Holding,
     activate_hooks,
@@ -51,9 +51,9 @@ from protected_round_trip import (
     publish_team_server,
     read_only_psql,
 )
-from protected_round_trip import Holder as SharedHolder
-from protected_round_trip import await_awid_txt as shared_await_awid_txt
-from protected_round_trip import docker as _docker
+from team_journey_support import Holder as SharedHolder
+from team_journey_support import await_awid_txt as shared_await_awid_txt
+from team_journey_support import docker as _docker
 
 pytestmark = pytest.mark.e2e
 

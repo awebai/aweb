@@ -50,7 +50,7 @@ def headers(secret, key, handoff, body):
     }
 
 
-def app(db):
+def app(db, origin=ORIGIN):
     human = FastAPI()
 
     async def admitted(scope, team_id):
@@ -63,7 +63,7 @@ def app(db):
     human.include_router(
         credential_handoff_router(
             store=HandoffStore(db),
-            rp=RelyingParty(ORIGIN, "Example"),
+            rp=RelyingParty(origin, "Example"),
             admits=admitted,
             limiter=LoginLimiter(
                 db, client_identity=ClientIdentity(), limit=30, window=timedelta(minutes=1)

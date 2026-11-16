@@ -2,7 +2,6 @@
 
 import copy
 import importlib.util
-import json
 from pathlib import Path
 
 import pytest
@@ -10,6 +9,7 @@ import yaml
 
 TEAM = Path(__file__).resolve().parents[2] / "deploy" / "team"
 EXAMPLE = yaml.safe_load((TEAM / "deployment.example.yaml").read_text(encoding="utf-8"))
+EXAMPLE["team"]["namespaceAuthorities"] = [{"domain": "example.com", "controllerDidKey": "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"}]
 
 spec = importlib.util.spec_from_file_location("render_env", TEAM / "render_env.py")
 render_env = importlib.util.module_from_spec(spec)
@@ -89,119 +89,6 @@ def test_the_env_file_is_sorted_lines_and_refuses_a_value_that_would_break_one()
         render_env.env_file({"A": "1\nINJECTED=2"})
 
 
-SIGNER = {
-    "image": "ghcr.io/awebai/aweb-protected@sha256:" + "1" * 64,
-    "profileFile": "/etc/aweb-team/signer/profile.json",
-    "scopeFile": "/etc/aweb-team/signer/scope.json",
-    "requestOrigin": "https://sign.example.com",
-    "humanOrigin": "https://approve.example.com",
-    "workerUids": [20001],
-    "emailSmtpHost": "smtp.example.com",
-    "emailSmtpPort": 587,
-    "emailUsername": "notifications",
-    "emailFrom": "notifications@example.com",
-}
-
-PROFILE = {
-    "v": 1,
-    "service_id": "devteam-signer",
-    "request_origin": "https://sign.example.com",
-    "human_origin": "https://approve.example.com",
-    "rp_id": "approve.example.com",
-    "registry_origin": "https://api.awid.ai",
-}
-
-
-@pytest.fixture
-def signer(tmp_path):
-    """The signer section, with its profile file on this machine."""
-    profile = tmp_path / "profile.json"
-    profile.write_text(json.dumps(PROFILE), encoding="utf-8")
-    return {**SIGNER, "profileFile": str(profile)}
-
-
-def test_the_signer_section_keeps_a_list_as_json_and_fills_its_defaults(signer):
-    rendered = render_env.render({**EXAMPLE, "signer": signer})
-    settings = {name: value for name, value in rendered.items() if "PROTECTED" in name or name.startswith("SIGNER_")}
-    assert settings == {
-        "SIGNER_IMAGE": SIGNER["image"],
-        "SIGNER_PROFILE_SOURCE": signer["profileFile"],
-        "SIGNER_SCOPE_SOURCE": "/etc/aweb-team/signer/scope.json",
-        "SIGNER_PROFILE_FILE": "/etc/aweb/signer/profile.json",
-        "SIGNER_SCOPE_FILE": "/etc/aweb/signer/scope.json",
-        "SIGNER_REQUEST_ORIGIN": "https://sign.example.com",
-        "SIGNER_SECRETS": "signer",
-        "SIGNER_BIND_ADDRESS": "127.0.0.1",
-        "SIGNER_PORT": "8080",
-        "AWEB_PROTECTED_WORKER_UIDS": "[20001]",
-        "AWEB_PROTECTED_DATABASE_SCHEMA": "protected_signer",
-        "AWEB_PROTECTED_DATABASE_USES_TRANSACTION_POOLER": "false",
-        "AWEB_PROTECTED_HUMAN_CSRF_KEY": "aweb.protected.console.csrf",
-        "AWEB_PROTECTED_EMAIL_SMTP_HOST": "smtp.example.com",
-        "AWEB_PROTECTED_EMAIL_SMTP_PORT": "587",
-        "AWEB_PROTECTED_EMAIL_USERNAME": "notifications",
-        "AWEB_PROTECTED_EMAIL_FROM": "notifications@example.com",
-        "AWEB_PROTECTED_EMAIL_TLS": "starttls",
-    }
-    assert rendered["COMPOSE_FILE"] == "compose.yaml:compose.signer.yaml"
-
-
-def test_the_signer_trusts_a_private_smtp_authority_through_a_file_mounted_outside_its_secrets(signer):
-    rendered = render_env.render({**EXAMPLE, "signer": {**signer, "emailCaFile": "/etc/aweb-team/signer/smtp-ca.pem"}})
-    assert rendered["SIGNER_EMAIL_CA_SOURCE"] == "/etc/aweb-team/signer/smtp-ca.pem"
-    assert rendered["AWEB_PROTECTED_EMAIL_CA_FILE"] == "/etc/aweb/signer/email-ca.pem"
-    rendered = render_env.render({**EXAMPLE, "signer": signer})
-    assert "SIGNER_EMAIL_CA_SOURCE" not in rendered and "AWEB_PROTECTED_EMAIL_CA_FILE" not in rendered
-
-
-
-
-
-
-
-
-
-
-
-
-@pytest.mark.parametrize(
-    ("field", "value", "key"),
-    [
-        ("request_origin", "https://other-sign.example.com", "signer.requestOrigin"),
-        ("human_origin", "https://other-approve.example.com", "signer.humanOrigin"),
-        ("registry_origin", "https://registry.example.com", "team.registryUrl"),
-    ],
-)
-def test_the_signer_is_refused_when_its_profile_names_other_origins_or_another_registry(signer, field, value, key):
-    Path(signer["profileFile"]).write_text(json.dumps({**PROFILE, field: value}), encoding="utf-8")
-    with pytest.raises(render_env.Refused, match=key):
-        render_env.render({**EXAMPLE, "signer": signer})
-
-
-def test_the_signer_is_refused_when_its_profile_cannot_be_read(signer, tmp_path):
-    for broken in (str(tmp_path / "missing.json"), signer["profileFile"]):
-        if broken == signer["profileFile"]:
-            Path(broken).write_text("{not json", encoding="utf-8")
-        with pytest.raises(render_env.Refused, match="signer.profileFile"):
-            render_env.render({**EXAMPLE, "signer": {**signer, "profileFile": broken}})
-
-
-@pytest.mark.parametrize(
-    ("key", "value"),
-    [
-        ("workerUids", []),
-        ("workerUids", [1001]),
-        ("emailTls", "none"),
-        ("requestOrigin", "http://sign.example.com"),
-        ("databaseUrl", "postgresql://signer:s3cret@postgres:5432/signer"),
-        ("controllerKey", "00" * 32),
-    ],
-)
-def test_the_signer_section_refuses_its_own_uid_as_a_worker_plain_smtp_and_credentials(signer, key, value):
-    with pytest.raises(render_env.Refused):
-        render_env.render({**EXAMPLE, "signer": {**signer, key: value}})
-
-
 AGENTS = {
     "image": "ghcr.io/oats-project/team-agent@sha256:" + "2" * 64,
     "resolverIp": "172.30.0.2",
@@ -219,9 +106,9 @@ AGENTS = {
 EGRESS = {"image": "ghcr.io/oats-project/team-egress@sha256:" + "4" * 64, "privateIngressAddresses": ["172.31.0.250"]}
 
 
-def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan(signer):
+def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan():
     rendered = render_env.render(
-        {**EXAMPLE, "network": {"servicesCidr": "172.31.0.0/24"}, "agents": AGENTS, "signer": signer, "egress": EGRESS, **APPS}
+        {**EXAMPLE, "network": {"servicesCidr": "172.31.0.0/24"}, "agents": AGENTS, "egress": EGRESS, **APPS}
     )
     agents = {name: value for name, value in rendered.items() if name.startswith(("AGENT", "TEAM_", "AUTHORIZED")) or name in ("TEAM", "SERVICES_CIDR")}
     assert agents == {
@@ -247,22 +134,22 @@ def test_the_agents_section_renders_limits_in_bytes_and_the_address_plan(signer)
     }
 
 
-def test_agents_go_out_only_through_egress_at_their_resolver_address(signer):
-    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "signer": signer, "egress": EGRESS, **APPS})
+def test_agents_go_out_only_through_egress_at_their_resolver_address():
+    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "egress": EGRESS, **APPS})
     assert rendered["EGRESS_IMAGE"] == EGRESS["image"]
     assert rendered["EGRESS_ADDRESS"] == AGENTS["resolverIp"]
     assert rendered["AGENTS_NETWORK"] == "agents"
     assert rendered["OATS_SOURCE"] == "/srv/oats"
     assert rendered["COMPOSE_FILE"] == (
-        "compose.yaml:compose.secrets.yaml:compose.logs.yaml:compose.signer.yaml:compose.agents.yaml"
+        "compose.yaml:compose.secrets.yaml:compose.logs.yaml:compose.agents.yaml"
     )
     # The policy's ingress exceptions are the adapter's input, not a service setting.
     assert not any("INGRESS" in name for name in rendered)
 
 
-@pytest.mark.parametrize("missing", ["signer", "egress", "secrets", "logs"])
-def test_agents_need_the_signer_egress_and_the_apps_they_reach(signer, missing):
-    config = {**EXAMPLE, "agents": AGENTS, "signer": signer, "egress": EGRESS, "secrets": app("secrets"), "logs": app("logs")}
+@pytest.mark.parametrize("missing", ["egress", "secrets", "logs"])
+def test_agents_need_egress_and_the_apps_they_reach(missing):
+    config = {**EXAMPLE, "agents": AGENTS, "egress": EGRESS, "secrets": app("secrets"), "logs": app("logs")}
     del config[missing]
     with pytest.raises(render_env.Refused, match=f"agents: requires {missing}"):
         render_env.render(config)
@@ -280,7 +167,7 @@ def test_agents_need_the_signer_egress_and_the_apps_they_reach(signer, missing):
         (("compose",), None),
     ],
 )
-def test_the_agents_section_refuses_quantity_spellings_a_raw_team_id_as_a_name_and_credentials(signer, path, value):
+def test_the_agents_section_refuses_quantity_spellings_a_raw_team_id_as_a_name_and_credentials(path, value):
     agents = copy.deepcopy(AGENTS)
     target = agents
     for key in path[:-1]:
@@ -290,16 +177,8 @@ def test_the_agents_section_refuses_quantity_spellings_a_raw_team_id_as_a_name_a
     else:
         target[path[-1]] = value
     with pytest.raises(render_env.Refused) as refused:
-        render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+        render_env.render({**EXAMPLE, "agents": agents, "egress": EGRESS, **APPS})
     assert "requires" not in str(refused.value)
-
-
-def test_the_signer_must_name_the_agents_uid_as_a_worker(signer):
-    config = {**EXAMPLE, "signer": {**signer, "workerUids": [30000]}, "agents": AGENTS, "egress": EGRESS, **APPS}
-    with pytest.raises(render_env.Refused, match="signer.workerUids"):
-        render_env.render(config)
-    config["signer"]["workerUids"] = [20001]
-    assert render_env.render(config)["AWEB_PROTECTED_WORKER_UIDS"] == "[20001]"
 
 
 def app(name: str) -> dict:
@@ -424,7 +303,7 @@ def test_normalize_fills_every_default_and_leaves_absent_components_absent():
     assert normalized["team"]["registryUrl"] == "https://api.awid.ai"
     assert normalized["postgres"] == {"bundled": True, "host": "postgres", "port": 5432, "secrets": "postgres"}
     assert normalized["aweb"]["secrets"] == "aweb"
-    for component in ("secrets", "logs", "signer", "agents", "egress"):
+    for component in ("secrets", "logs", "agents", "egress"):
         assert component not in normalized
     # The operator's file is not changed.
     assert "registryUrl" not in EXAMPLE["team"]
@@ -440,10 +319,10 @@ def test_normalize_keeps_what_the_file_gives_and_its_layer_choices():
     assert "compose" not in normalized["aweb"]
 
 
-def test_normalize_fills_the_kubernetes_fields_of_a_kubernetes_agents_section(signer):
+def test_normalize_fills_the_kubernetes_fields_of_a_kubernetes_agents_section():
     agents = {key: value for key, value in AGENTS.items() if key != "compose"}
     agents["kubernetes"] = {"authorizedKeys": {"name": "team-keys"}}
-    normalized = render_env.normalize({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    normalized = render_env.normalize({**EXAMPLE, "agents": agents, "egress": EGRESS, **APPS})
     assert normalized["agents"]["kubernetes"] == {
         "fsGroup": 20001,
         "stateSize": 10737418240,
@@ -466,11 +345,11 @@ def test_normalize_refuses_what_the_schema_refuses():
         render_env.normalize({**EXAMPLE, "unknown": {}})
 
 
-def test_the_agents_trust_a_public_ca_and_read_mirrors_from_operator_paths(signer):
+def test_the_agents_trust_a_public_ca_and_read_mirrors_from_operator_paths():
     agents = {**AGENTS, "caFile": "/srv/team/agent-ca.pem", "mirrorsDir": "/srv/team/mirrors"}
-    rendered = render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    rendered = render_env.render({**EXAMPLE, "agents": agents, "egress": EGRESS, **APPS})
     assert (rendered["AGENT_CA_FILE"], rendered["AGENT_MIRRORS_DIR"]) == ("/srv/team/agent-ca.pem", "/srv/team/mirrors")
-    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "signer": signer, "egress": EGRESS, **APPS})
+    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "egress": EGRESS, **APPS})
     assert "AGENT_CA_FILE" not in rendered and "AGENT_MIRRORS_DIR" not in rendered
 
 
@@ -480,48 +359,48 @@ def kubernetes_agents(**kubernetes) -> dict:
     return agents
 
 
-def test_kubernetes_mirrors_come_from_an_existing_claim_without_a_host_directory(signer):
+def test_kubernetes_mirrors_come_from_an_existing_claim_without_a_host_directory():
     agents = kubernetes_agents(mirrorsClaim="team-mirrors")
-    normalized = render_env.normalize({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    normalized = render_env.normalize({**EXAMPLE, "agents": agents, "egress": EGRESS, **APPS})
     assert normalized["agents"]["kubernetes"]["mirrorsClaim"] == "team-mirrors"
     assert "mirrorsDir" not in normalized["agents"]
 
 
-def test_kubernetes_mirrors_without_a_claim_are_refused_naming_it(signer):
+def test_kubernetes_mirrors_without_a_claim_are_refused_naming_it():
     agents = {**kubernetes_agents(), "mirrorsDir": "/srv/team/mirrors"}
     with pytest.raises(render_env.Refused, match="agents.kubernetes: missing mirrorsClaim"):
-        render_env.normalize({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+        render_env.normalize({**EXAMPLE, "agents": agents, "egress": EGRESS, **APPS})
 
 
 @pytest.mark.parametrize("claim", ["Team_Mirrors", "-mirrors", ""])
-def test_a_mirrors_claim_is_a_kubernetes_name(signer, claim):
+def test_a_mirrors_claim_is_a_kubernetes_name(claim):
     with pytest.raises(render_env.Refused, match="mirrorsClaim"):
         render_env.normalize(
-            {**EXAMPLE, "agents": kubernetes_agents(mirrorsClaim=claim), "signer": signer, "egress": EGRESS, **APPS}
+            {**EXAMPLE, "agents": kubernetes_agents(mirrorsClaim=claim), "egress": EGRESS, **APPS}
         )
 
 
-def test_the_agents_network_gateway_is_the_first_address_of_its_subnet(signer):
-    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "signer": signer, "egress": EGRESS, **APPS})
+def test_the_agents_network_gateway_is_the_first_address_of_its_subnet():
+    rendered = render_env.render({**EXAMPLE, "agents": AGENTS, "egress": EGRESS, **APPS})
     assert rendered["AGENTS_GATEWAY"] == "172.30.0.1"
     agents = {**AGENTS, "resolverIp": "10.9.0.2", "network": {"subnet": "10.9.0.0/24", "address": "10.9.0.10"}}
-    rendered = render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+    rendered = render_env.render({**EXAMPLE, "agents": agents, "egress": EGRESS, **APPS})
     assert rendered["AGENTS_GATEWAY"] == "10.9.0.1"
 
 
 @pytest.mark.parametrize("taken", ["resolverIp", "address"])
-def test_neither_egress_nor_the_agent_may_take_the_gateway_address(signer, taken):
+def test_neither_egress_nor_the_agent_may_take_the_gateway_address(taken):
     agents = copy.deepcopy(AGENTS)
     if taken == "resolverIp":
         agents["resolverIp"] = "172.30.0.1"
     else:
         agents["network"]["address"] = "172.30.0.1"
     with pytest.raises(render_env.Refused, match="gateway"):
-        render_env.render({**EXAMPLE, "agents": agents, "signer": signer, "egress": EGRESS, **APPS})
+        render_env.render({**EXAMPLE, "agents": agents, "egress": EGRESS, **APPS})
 
 
-def test_the_agents_public_ca_and_mirrors_add_the_agent_images_own_fragments_only_when_given(signer):
-    base = {**EXAMPLE, "signer": signer, "egress": EGRESS, **APPS}
+def test_the_agents_public_ca_and_mirrors_add_the_agent_images_own_fragments_only_when_given():
+    base = {**EXAMPLE, "egress": EGRESS, **APPS}
     plain = render_env.render({**base, "agents": AGENTS})["COMPOSE_FILE"].split(":")
     assert not any("compose.agent." in name for name in plain)
     agents = {**AGENTS, "caFile": "/srv/team/agent-ca.pem", "mirrorsDir": "/srv/team/mirrors"}
@@ -553,9 +432,3 @@ def test_egress_external_takes_only_the_two_roles_as_switches_and_a_resolver_lis
 def test_egress_external_defaults_every_role_off():
     config = {**copy.deepcopy(EXAMPLE), "egress": {"image": EGRESS_IMAGE, "external": {}}}
     assert render_env.normalize(config)["egress"]["external"] == {"source": False, "model": False, "resolvers": []}
-
-
-@pytest.mark.parametrize("key,value", [("serviceKey", True), ("ownerActOrigins", ["https://app.example.com"]), ("effectReceiptOrigins", ["https://app.example.com"])])
-def test_retired_delivery_configuration_is_not_accepted(signer, key, value):
-    with pytest.raises(render_env.Refused, match=key):
-        render_env.render({**EXAMPLE, "signer": {**signer, key: value}})

@@ -141,7 +141,7 @@ func LogKeyRecordSigningBytes(rec *LogKeyRecord) ([]byte, error) {
 }
 
 // AttachLogKeyRecordSignature completes rec with a signature produced
-// elsewhere, such as by a protected signer, by the team key teamKeyDID. The
+// elsewhere by the team key teamKeyDID. The
 // signature is unpadded standard base64 of the 64 Ed25519 bytes over
 // LogKeyRecordSigningBytes. It is checked by the shared strict verifier
 // before rec changes; a refused signature leaves rec as it was. Whether

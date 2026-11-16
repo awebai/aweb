@@ -110,28 +110,7 @@ def _collect(schema: dict, value: object, out: dict[str, str]) -> None:
 
 
 # The components an operator can leave out, each in its own Compose file.
-OPTIONAL_COMPONENTS = ("secrets", "logs", "signer", "agents", "front")
-
-# Where the signer's public configuration is mounted, outside its secrets.
-SIGNER_CONFIG = "/etc/aweb/signer"
-
-
-def _check_signer_profile(config: dict, registry_url: str) -> None:
-    """The bundle and the signer's profile name the same origins and registry."""
-    signer = config["signer"]
-    try:
-        profile = json.loads(Path(signer["profileFile"]).read_text(encoding="utf-8"))
-        named = {
-            "signer.requestOrigin": (profile["request_origin"], signer["requestOrigin"]),
-            "signer.humanOrigin": (profile["human_origin"], signer["humanOrigin"]),
-            "team.registryUrl": (profile["registry_origin"], registry_url),
-        }
-    except (OSError, ValueError, TypeError, KeyError):
-        raise Refused("signer.profileFile: cannot be read as a protected service profile") from None
-    differ = [key for key, (in_profile, given) in named.items() if in_profile != given]
-    if differ:
-        raise Refused(f"{', '.join(differ)}: not the one signer.profileFile names")
-
+OPTIONAL_COMPONENTS = ("secrets", "logs", "agents", "front")
 
 def render(config: object) -> dict[str, str]:
     """The settings of the Compose layer for this configuration."""
@@ -143,26 +122,17 @@ def render(config: object) -> dict[str, str]:
     if "agents" in config and "compose" not in config["agents"]:
         raise Refused("agents: missing compose; the Compose layer needs agents.compose")
     if "agents" in config:
-        # Agents reach nothing but through egress, whose DNS answers for the
-        # namespaces the signer's profile names, and only the five origins of
-        # aweb, Secrets, Logs, the signer's requests and the registry.
-        for needed in ("signer", "egress", "secrets", "logs"):
+        # Agents reach the apps and registry only through their pinned egress.
+        for needed in ("egress", "secrets", "logs"):
             if needed not in config:
                 raise Refused(f"agents: requires {needed}")
-        # The signer refuses custody that a worker's uid could read; it has to know the agents' uid.
-        if config["agents"].get("uid", 20001) not in config["signer"]["workerUids"]:
-            raise Refused("signer.workerUids: does not name agents.uid")
+        if not config["team"].get("namespaceAuthorities"):
+            raise Refused("agents: requires team.namespaceAuthorities")
     out: dict[str, str] = {}
     # A component the file leaves out is not deployed: none of its defaults is rendered.
     for section, schema in SCHEMA["properties"].items():
         if section in config:
             _collect(schema, config[section], out)
-    if "signer" in config:
-        _check_signer_profile(config, out["AWID_REGISTRY_URL"])
-        out["SIGNER_PROFILE_FILE"] = f"{SIGNER_CONFIG}/profile.json"
-        out["SIGNER_SCOPE_FILE"] = f"{SIGNER_CONFIG}/scope.json"
-        if "emailCaFile" in config["signer"]:
-            out["AWEB_PROTECTED_EMAIL_CA_FILE"] = f"{SIGNER_CONFIG}/email-ca.pem"
     if "agents" in config:
         out["EGRESS_ADDRESS"] = config["agents"]["resolverIp"]
         # The agents network's gateway is its subnet's first address; neither
@@ -219,8 +189,6 @@ FRONT_SITES = (
     ("secrets", "consoleOrigin", "secrets:8770"),
     ("logs", "publicOrigin", "logs:8765"),
     ("logs", "consoleOrigin", "logs:8765"),
-    ("signer", "requestOrigin", "signer:8080"),
-    ("signer", "humanOrigin", "signer:8080"),
 )
 
 # Where the front's certificate chain and key are mounted.
@@ -232,7 +200,7 @@ def render_front(config: object) -> str:
     operator's certificate. A request whose Host its TLS SNI does not name is
     refused (strict_sni_host); Caddy compares hostnames alone, so each site
     also refuses, itself, any authority but its own host on port 443: the
-    signer's request host must never reach its human host."""
+    app's API host must never reach its console host."""
     config = normalize(config)
     if "front" not in config:
         raise Refused("front: missing; the deployment has no front to render")

@@ -176,15 +176,8 @@ test-python-locks:
 # and FastAPI mounts. The unit suite includes source-addition and stale-doc
 # negative controls so this gate proves it can fail rather than only matching
 # today's tree.
-# Signer and host runtime names live only in the executable catalog. Scan the
-# complete frozen contract vocabulary and literal selector dispatch, including
-# unknown selectors, before the ordinary source inventories.
-.PHONY: test-signer-operation-names
-test-signer-operation-names:
-	python3 scripts/check_signer_operation_names.py
-	python3 -m unittest discover -s scripts -p "test_signer_operation_names.py" -v
-
-test-sot-source-inventories: test-signer-operation-names
+.PHONY: test-sot-source-inventories
+test-sot-source-inventories:
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
 

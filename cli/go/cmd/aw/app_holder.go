@@ -98,32 +98,6 @@ func (a *holderApp) installation(ctx context.Context, client *aweb.Client, teamI
 	return current.InstallationID, nil
 }
 
-// installationWithinBound is a.installation, waiting out each explicit
-// Retry-After hint of an unavailable answer and reading again, while the wait
-// ends before ctx's deadline. ctx carries the caller's bound; a hint that does
-// not fit it, an unhinted or unusable answer, and every refusal end at once.
-// Cancellation ends the wait.
-func (a *holderApp) installationWithinBound(ctx context.Context, client *aweb.Client, teamID string) (string, error) {
-	for {
-		id, err := a.installation(ctx, client, teamID)
-		var unavailable *installationUnavailable
-		if err == nil || !errors.As(err, &unavailable) || !unavailable.hinted {
-			return id, err
-		}
-		deadline, bounded := ctx.Deadline()
-		if !bounded || !time.Now().Add(unavailable.retryAfter).Before(deadline) {
-			return "", err
-		}
-		timer := time.NewTimer(unavailable.retryAfter)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return "", ctx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
 // holderSessionOptions are the options of a session handoff for roleName on
 // the installed app appName, as the signing identity of this command
 // (--human, or the identity home). It opens the local browser and reports on
