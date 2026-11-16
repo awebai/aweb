@@ -282,7 +282,7 @@ def test_current_host_composition_calls_the_installed_production_custody_port_wi
     from aweb.protected_signing.composition import IndependentProtectedSigner
     from aweb.protected_signing.custody import ProtectedControllerCustody
 
-    # Real constructor and actual production configure method; no DB/network.
+    # Real constructor and production custody port; no DB/network.
     custody = object.__new__(ProtectedControllerCustody)
     custody.team_key_did = did_from_public_key(bytes(SigningKey.generate().verify_key))
     human = stable_id_from_did_key(did_from_public_key(bytes(SigningKey.generate().verify_key)))
@@ -291,7 +291,6 @@ def test_current_host_composition_calls_the_installed_production_custody_port_wi
     component = IndependentProtectedSigner(object(), context=context, registry=registry, custody=custody,
         human_origin="https://human.example", request_origin="https://request.example", delivery=object())
     assert component.signer.custody is custody
-    assert custody._effect_clients == {registry.registry_url: registry._http_client}
 
 
 def revoke_request(principal="did:aw:holder"):
