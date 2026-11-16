@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-16
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-team-key-trust with three backing notes; checked against aweb main e414fa313 and the source's review branch, where commit c7e45e9eb exists and is not on main. Reviewer names and message identifiers are omitted.
+* **Creation**: decision [measuring mode keeps the team-key pin only on an act key mismatch](/aweb-protocol-expert/decisions/measuring-mode-keeps-the-pin-only-on-act-key-mismatch.md), operator-approved (source-reported), not yet landed; lesson [released-registry tests share Redis rate limits](/aweb-protocol-expert/lessons/released-registry-tests-share-redis-rate-limits.md), naming test-owned rate-limit state as the elimination route.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
