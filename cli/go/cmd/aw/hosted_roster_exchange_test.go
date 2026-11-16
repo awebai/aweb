@@ -26,12 +26,26 @@ import (
 // The hosted boundary is HTTP; the child's proof, parent approval, import and
 // chain verification run the production exchange, with no substituted signer.
 func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
-	for _, scenario := range []string{"three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias"} {
+	for _, scenario := range []string{"three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team cleanup warning"} {
 		t.Run(scenario, func(t *testing.T) {
 			resetTeamHumanCreateGlobals(t)
 			v := loadWhoVectors(t)
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("AW_CONFIG_PATH", "")
+			var warningLog *os.File
+			if scenario == "further-team cleanup warning" {
+				var err error
+				warningLog, err = os.CreateTemp(t.TempDir(), "stderr")
+				if err != nil {
+					t.Fatal(err)
+				}
+				oldStderr := os.Stderr
+				os.Stderr = warningLog
+				t.Cleanup(func() {
+					os.Stderr = oldStderr
+					warningLog.Close()
+				})
+			}
 			root := t.TempDir()
 			joinFrom := strings.HasPrefix(scenario, "join-from")
 			furtherTeam := strings.HasPrefix(scenario, "further-team")
@@ -141,6 +155,28 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					pending, err := loadHostedInviteCreation(filepath.Join(childHome, hostedInviteRecoveryFile))
 					if err != nil || pending == nil || pending.DIDKey != req.DID || pending.Tree.RequestID != req.IDTree.RequestID {
 						t.Error("original child request/key not retained through exchange")
+					}
+					if scenario == "further-team cleanup warning" {
+						// The exchange has finished; make actual deletion fail even
+						// when tests run as root, without substituting filesystem calls.
+						dir, err := awconfig.DefaultTeamInvitesDir()
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						path := filepath.Join(dir, hostedTeamInviteRecordID("aw_inv_native_roster")+".json")
+						if err := os.Remove(path); err != nil {
+							t.Error(err)
+							return
+						}
+						if err := os.Mkdir(path, 0700); err != nil {
+							t.Error(err)
+							return
+						}
+						if err := os.WriteFile(filepath.Join(path, "held"), []byte("keep directory nonempty"), 0600); err != nil {
+							t.Error(err)
+							return
+						}
 					}
 					cert, _ := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: team, MemberDIDKey: req.DID, Alias: req.Alias, IdentityScope: "local"})
 					encoded, _ := awid.EncodeTeamCertificateHeader(cert)
@@ -301,7 +337,15 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				if err != nil || verdict.Outcome != "nearest_human" {
 					t.Fatalf("selected home ancestry=%+v err=%v", verdict, err)
 				}
-				if _, err := awconfig.LoadTeamInvite(recordID); !os.IsNotExist(err) {
+				if scenario == "further-team cleanup warning" {
+					warning, err := os.ReadFile(warningLog.Name())
+					if err != nil || !strings.Contains(string(warning), "warning: failed to delete consumed invite "+recordID+":") {
+						t.Fatalf("missing cleanup warning: %q err=%v", warning, err)
+					}
+					if _, err := os.Stat(filepath.Join(recipientHome, hostedInviteRecoveryFile)); !os.IsNotExist(err) {
+						t.Fatalf("successful accept retained recovery: %v", err)
+					}
+				} else if _, err := awconfig.LoadTeamInvite(recordID); !os.IsNotExist(err) {
 					t.Fatalf("success retained link: %v", err)
 				}
 				return

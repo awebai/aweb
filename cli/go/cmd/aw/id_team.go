@@ -2390,7 +2390,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	}
 	if localLink != nil {
 		if err := awconfig.DeleteTeamInvite(localLink.InviteID); err != nil {
-			return nil, err
+			fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", localLink.InviteID, err)
 		}
 	}
 	return &acceptedTeamInvite{
