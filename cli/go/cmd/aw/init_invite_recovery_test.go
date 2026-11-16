@@ -26,7 +26,7 @@ func TestInitJoinFromExpiredRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(home, initInviteRecoveryFile)
-			state := &initInviteRecovery{Source: "/source", TeamID: "backend:example.com", Alias: "child", Scope: "local", Token: "aw_inv_DO_NOT_PRINT", Origin: "https://fixture.invalid", ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), DIDKey: awid.ComputeDIDKey(pub)}
+			state := &initInviteRecovery{MintedKey: true, Source: "/source", TeamID: "backend:example.com", Alias: "child", Scope: "local", Token: "aw_inv_DO_NOT_PRINT", Origin: "https://fixture.invalid", ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), DIDKey: awid.ComputeDIDKey(pub)}
 			if err := state.save(path); err != nil {
 				t.Fatal(err)
 			}

@@ -19,6 +19,7 @@ const initInviteRecoveryFile = "init-invite.json"
 
 // Private: Token is a bearer credential and must never appear in diagnostics.
 type initInviteRecovery struct {
+	MintedKey  bool   `json:"minted_key"`
 	Source     string `json:"source"`
 	SourceHome string `json:"source_home"`
 	TeamID     string `json:"team_id"`
@@ -97,11 +98,15 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 				return err
 			}
 		}
+		_, keyErr := os.Stat(filepath.Join(home.Root, "signing.key"))
+		if keyErr != nil && !errors.Is(keyErr, os.ErrNotExist) {
+			return keyErr
+		}
 		invite, err := createWorkspaceTeamInviteForTeamAt(source, sourceHome, team, scope)
 		if err != nil {
 			return fmt.Errorf("%w; alternatively use --admission-team-id %s with host authorization", err, team)
 		}
-		prior = &initInviteRecovery{Source: source, SourceHome: sourceHome, TeamID: team, Alias: alias, Scope: scope, Token: invite.Token, Origin: invite.AwebURL, ExpiresAt: invite.ExpiresAt}
+		prior = &initInviteRecovery{MintedKey: errors.Is(keyErr, os.ErrNotExist), Source: source, SourceHome: sourceHome, TeamID: team, Alias: alias, Scope: scope, Token: invite.Token, Origin: invite.AwebURL, ExpiresAt: invite.ExpiresAt}
 		if err := prior.save(path); err != nil {
 			return err
 		}
@@ -201,9 +206,15 @@ func hostedInviteDefinitiveRefusal(err error) bool {
 // A definitively abandoned init retains only its generated identity, not its
 // operation selection. The existing private key marker permits a correct invite.
 func releaseInitInviteRecovery(path, wd, home string) error {
-	if _, err := os.Stat(filepath.Join(home, "signing.key")); err == nil {
-		if err := writeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(wd, home)); err != nil {
-			return err
+	state, err := loadInitInviteRecovery(path)
+	if err != nil {
+		return err
+	}
+	if state != nil && state.MintedKey {
+		if _, err := os.Stat(filepath.Join(home, "signing.key")); err == nil {
+			if err := writeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(wd, home)); err != nil {
+				return err
+			}
 		}
 	}
 	return removeInitInviteRecovery(path)
