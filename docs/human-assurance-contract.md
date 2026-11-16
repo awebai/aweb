@@ -6,7 +6,7 @@ available for existing source references and pinned compatibility tests while
 its surviving approval mechanics move to the separate approval service.
 It does not define the new architecture: applications enforce their own
 rules, the approval service returns an exact-act receipt bound to the
-enforcer's nonce and deadline, and the key holder holds organisation keys.
+enforcer's nonce and deadline, and the key holder holds organization keys.
 The retired team-protection lock, service key and protected-effect machinery
 must not be used for new work.
 
