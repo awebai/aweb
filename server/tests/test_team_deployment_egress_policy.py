@@ -44,6 +44,27 @@ def test_the_policy_names_exactly_the_four_origins_agents_use_at_their_pinned_ad
     }
 
 
+def test_distinct_namespace_authorities_keep_their_public_pins():
+    authorities = [
+        {"domain": domain, "controllerDidKey": CONTROLLER}
+        for domain in ("example.com", "other.example.com")
+    ]
+    config = {**CONFIG, "team": {**CONFIG["team"], "namespaceAuthorities": authorities}}
+    policy = egress_policy.derive(config, INGRESS, [])
+    assert [record["name"] for record in policy["authorityRecords"]] == [
+        "_awid.example.com", "_awid.other.example.com",
+    ]
+
+
+@pytest.mark.parametrize("domain", ["example.com", "EXAMPLE.COM"])
+def test_namespace_authorities_cannot_repeat_the_same_dns_name(domain):
+    authorities = [*CONFIG["team"]["namespaceAuthorities"],
+                   {"domain": domain, "controllerDidKey": CONTROLLER}]
+    config = {**CONFIG, "team": {**CONFIG["team"], "namespaceAuthorities": authorities}}
+    with pytest.raises(egress_policy.Refused, match="duplicate namespace authority"):
+        egress_policy.derive(config, INGRESS, [])
+
+
 @pytest.mark.parametrize(
     "addresses",
     [[], ["172.31.0.250"] * 2, [f"172.31.0.{n}" for n in range(1, 10)], ["fd00::1"], ["registry.example.com"]],

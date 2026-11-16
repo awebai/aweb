@@ -78,8 +78,12 @@ def derive(config: dict, addresses: dict[str, list[str]], denied: list[str]) -> 
     """The policy from the deployment's public pins and resolved service addresses."""
     origins = _origins(config)
     records = []
+    names = set()
     for authority in config["team"]["namespaceAuthorities"]:
         name = awid_txt_name(authority["domain"])
+        if name in names:
+            raise Refused("team.namespaceAuthorities: duplicate namespace authority")
+        names.add(name)
         text = awid_txt_value(authority["controllerDidKey"], origins["registry"])
         # The record agents will be answered is one AWID itself accepts.
         _parse_awid_record(text, dns_name=name)
