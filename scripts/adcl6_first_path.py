@@ -56,6 +56,40 @@ def public_file(path: Path, text: str) -> None:
     temporary.replace(path)
 
 
+def retain(args) -> None:
+    # The driver runs as the disposable Docker operator. Give only the retained
+    # diagnostics/exports back to the host operator before removing its image.
+    work = Path("/work")
+    names = (
+        "journey.json",
+        "first-activation.json",
+        "second-activation.json",
+        "first-outside.json",
+        "second-outside.json",
+        "approval-record.json",
+        "controller-public.json",
+        "command-failure.stderr",
+    )
+    paths = [work / name for name in names if (work / name).exists()]
+    public = work / "public"
+    if public.exists():
+        paths.extend(public.rglob("*"))
+        paths.append(public)
+    metadata = [
+        {
+            "path": str(p.relative_to(work)),
+            "uid": p.stat().st_uid,
+            "gid": p.stat().st_gid,
+            "mode": oct(p.stat().st_mode & 0o777),
+        }
+        for p in paths
+    ]
+    save(work / "retention.json", metadata)
+    paths.append(work / "retention.json")
+    for path in paths:
+        os.chown(path, args.uid, args.gid, follow_symlinks=False)
+
+
 def extract(archive: Path, expected: str, destination: Path, prefixes=()) -> None:
     commit = subprocess.check_output(
         ["git", "get-tar-commit-id"], stdin=archive.open("rb"), text=True
@@ -94,7 +128,13 @@ def prepare(args) -> None:
         )
     product = build / "aw-source"
     extract(archive, AW, product)
-    env = dict(os.environ, GOOS="linux", GOARCH="amd64", CGO_ENABLED="0", GOWORK="off")
+    env = dict(
+        os.environ,
+        GOOS="linux",
+        GOARCH=args.architecture,
+        CGO_ENABLED="0",
+        GOWORK="off",
+    )
     subprocess.run(
         [
             "go",
@@ -139,9 +179,13 @@ def prepare(args) -> None:
         runtime / "public/Corefile",
         """adcl6.test:53 {
   errors
-  file /zones/adcl6.test.zone adcl6.test { reload 1s }
+  file /zones/adcl6.test.zone adcl6.test {
+    reload 1s
+  }
 }
-.:53 { forward . 127.0.0.11 }
+.:53 {
+  forward . 127.0.0.11
+}
 """,
     )
     public_file(runtime / "public/adcl6.test.zone", zone(None))
@@ -183,6 +227,7 @@ http {
     image = args.project + "-runtime:journey"
     common = {
         "image": image,
+        "platform": "linux/" + args.architecture,
         "dns": [DNS],
         "environment": {
             "SSL_CERT_FILE": "/public/ca.crt",
@@ -245,6 +290,17 @@ http {
             "pg-awid": {"condition": "service_healthy"},
             "redis": {"condition": "service_healthy"},
         },
+        "healthcheck": {
+            "test": [
+                "CMD",
+                "python",
+                "-c",
+                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=2)",
+            ],
+            "interval": "2s",
+            "timeout": "3s",
+            "retries": 60,
+        },
     }
     services["approval"] = {
         **common,
@@ -263,6 +319,17 @@ http {
             "AWSIGN_TRUSTED_PROXY_IPS": "172.29.190.10",
         },
         "depends_on": {"pg-approval": {"condition": "service_healthy"}},
+        "healthcheck": {
+            "test": [
+                "CMD",
+                "python",
+                "-c",
+                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8030/health', timeout=2)",
+            ],
+            "interval": "2s",
+            "timeout": "3s",
+            "retries": 60,
+        },
     }
     holder_flags = (
         "--state /state/private --registry-origin "
@@ -297,7 +364,11 @@ http {
             str(runtime / "tls") + ":/tls:ro",
         ],
         "networks": {"default": {"ipv4_address": "172.29.190.10"}},
-        "depends_on": ["awid", "approval", "holder"],
+        "depends_on": {
+            "awid": {"condition": "service_healthy"},
+            "approval": {"condition": "service_healthy"},
+            "holder": {"condition": "service_started"},
+        },
     }
     services["driver"] = {
         **common,
@@ -333,6 +404,7 @@ http {
         runtime / "inputs.json",
         {
             "aw": AW,
+            "architecture": args.architecture,
             "aw_go_tree": go_tree,
             "aw_build_flags": ["-trimpath", "-buildvcs=false"],
             "go_version": subprocess.check_output(["go", "version"], text=True).strip(),
@@ -1067,10 +1139,16 @@ def main():
     prep.add_argument("--project", required=True)
     prep.add_argument("--approval-archive", required=True, type=Path)
     prep.add_argument("--holder-archive", required=True, type=Path)
+    prep.add_argument("--architecture", choices=("amd64", "arm64"), default="amd64")
     modes.add_parser("driver")
+    retention = modes.add_parser("retain")
+    retention.add_argument("--uid", required=True, type=int)
+    retention.add_argument("--gid", required=True, type=int)
     args = parser.parse_args()
     if args.mode == "prepare":
         prepare(args)
+    elif args.mode == "retain":
+        retain(args)
     else:
         try:
             asyncio.run(driver())
