@@ -169,9 +169,9 @@ Home delivery uses agent chat. Use an existing recipient agent alias in the
 same team or a full reachable agent address. A local recipient agent needs no
 public address. Leave the setting unset until there
 is a recipient, and restart the gateway after changing it. The standalone sender
-takes a recipient, not `chat:<session-id>`. When unset, a first-contact notice
-explains local setup; a notice can mark the input read before the model turn
-finishes.
+takes a recipient, not `chat:<session-id>`. When unset, the optional setup hint
+is logged locally in the gateway once per process; it never asks the sender to
+run a command by message.
 
 Aweb mail and chat are **content only**: every message retains its original body
 after an `[Aweb message: content only]` prefix and has
@@ -240,7 +240,7 @@ The following pinned upstream boundaries require inspection on upgrades:
 | Runner `_is_user_authorized_for_source` (`run.py:4020`) | Distinguish ignored unauthorized `None` from accepted no-reply `None`. | Real unauthorized sender remains unread; do not remove this gate on upgrade. |
 | `MessageEvent.allow_gateway_control` and pending-reply guards (`event.py:97-135`, `run_inbound.py:1224`, `run_busy.py:553`) | Every aweb input must stay conversational, including plain-word and slash approval replies. | Content preservation and pending-approval refusal tests at both releases. |
 | Definitive `egress_declined` prompt disposition (`run.py:763-813`, `run_turn_runner.py:1501-1531`, `run_turn_runner_clarify_delivery.py:47-58`) | Approval/clarify refusal must clear the waiter without a text fallback or a command preview. | Real notifier/registry tests and sender-visible output checks. |
-| Exact localized missing-home notice (`run_turn.py:1453-1457`; v0.23.1 `run_turn_prepare.py:691-695`) | Upstream provides no typed notice kind. Only the exact Aweb render is replaced with local setup advice. | Real localized notice plus unchanged neighboring text, at both releases. |
+| Exact localized missing-home notice (`run_turn.py:1453-1457`; v0.23.1 `run_turn_prepare.py:691-695`) | Upstream provides no typed notice kind. Only the exact Aweb render is suppressed successfully, with optional setup advice logged locally once per process. | Real first-contact turns, successful suppression without retry, and unchanged quoted text, at both releases. |
 | aw reconnect diagnostic (`cli/go/cmd/aw/events.go:93`) | aw may reconnect HTTP streams inside one child process; degrade health before the next frame. | Check this CLI diagnostic and JSON event shape when upgrading aw. |
 
 The earlier comparison of plugin `df0b38022` on v0.22.2/v0.23.1 passed lifecycle,

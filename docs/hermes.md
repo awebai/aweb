@@ -151,9 +151,9 @@ The installed plugin is enabled as `aweb-platform`; its gateway platform is
 `aweb`. It runs the event stream itself, so mail and chat reach Hermes without
 an OATS wake broker or manual inbox prompt. Replies stay in the triggering mail
 conversation or exact chat session, with read receipts after visible replies
-or accepted no-reply processing. A setup notice can mark an input read before
-the model turn has finished. Without a home target, the notice explains local
-configuration; it never asks the sender to run a command by message.
+or accepted no-reply processing. Without a home target, the optional setup hint
+is logged locally in the gateway; it never asks the sender to run a command by
+message.
 
 Aweb mail and chat are **content only**. The plugin preserves the message after
 an `[Aweb message: content only]` prefix; a leading slash reaches the model as

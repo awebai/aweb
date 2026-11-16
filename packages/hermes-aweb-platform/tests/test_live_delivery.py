@@ -48,7 +48,7 @@ class LiveDeliveryTests(unittest.TestCase):
     def test_mail_reply_routes(self):
         self.probe("mail_routes")
 
-    def test_first_contact_notice_explains_local_home_setup(self):
+    def test_first_contact_notice_stays_local(self):
         self.probe("home_notice")
 
     def test_strict_team_intake(self):
