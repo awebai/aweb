@@ -13,5 +13,8 @@ RUN playwright="$(sed -n '/^name = "playwright"$/{n;s/^version = "\(.*\)"$/\1/p;
     && rm -rf /var/lib/apt/lists/* /tmp/naapp-lib.lock \
     && chmod -R a+rX /opt/ms-playwright /opt/uv-tools
 COPY naapp/secrets/e2e/browser/chromium_driver.py /driver/chromium_driver.py
+RUN useradd --uid 1000 --create-home browser
+ENV HOME=/home/browser
+USER 1000:1000
 WORKDIR /driver
 ENTRYPOINT ["/opt/uv-tools/playwright/bin/python", "/driver/chromium_driver.py"]

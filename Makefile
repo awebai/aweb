@@ -139,23 +139,17 @@ build: sync-doc-copies
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-identity-primitives test-scripts test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
-test-shipping:
+# Discover the host/script controls together, including generators that import
+# the server's MCP registration. Use the locked server environment rather than
+# whichever Python happens to be installed on the host.
+.PHONY: test-scripts
+test-scripts:
+	UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
+
+test-shipping: test-scripts
 	$(MAKE) test-vm-gate
-	python3 scripts/test_fixture_repo.py
-	python3 scripts/test_shipping.py
-	python3 scripts/test_server_image_publish.py
-	python3 scripts/test_aw_npm_publication.py
-	python3 scripts/test_candidate_cleanup.py
-	python3 scripts/test_candidate_disk_floor.py
-	python3 scripts/test_candidate_input_modes.py
-	python3 scripts/test_candidate_network.py
-	python3 scripts/test_candidate_bind_ownership.py
-	python3 scripts/test_candidate_published_port.py
-	python3 scripts/test_folio_wakes_gate.py
-	python3 scripts/test_user_paths_gate.py
-	python3 scripts/test_fetch_released_aw.py
 
 .PHONY: test-server-image-build
 test-server-image-build:
@@ -604,8 +598,7 @@ check-awid-locked-suite:
 # Infrastructure acceptance for changes to the entry point (real Docker).
 .PHONY: test-naapp-e2e
 test-naapp-e2e:
-	$(MAKE) -C cli/go build
-	uv run --no-project python scripts/test_naapp_e2e.py
+	python3 scripts/test_naapp_e2e.py
 
 test-candidate-ledger:
 	bash scripts/candidate-docker-gate.sh --check-disk

@@ -58,3 +58,33 @@ search domain; a public-name lookup must still fail the guard while the child
 handles the DNS refusal successfully. Each control retains resolver configuration,
 DNS logs, runner inspection and the child exit in its evidence directory. Neither
 control needs an external DNS service or a route out of the internal network.
+
+## CCX33 measurement
+
+The portable runner retains its finite 2-CPU/8-GiB budget. It was introduced
+with the isolated CI runner (79c78411d1); the isolation contract is the internal
+network, independent DNS refusal, UID1000, no Docker socket/host credentials,
+and bounded resources, rather than the particular two-CPU value.
+
+`--profile ccx33` explicitly selects a 7-CPU/16-GiB runner for a disposable
+8-vCPU/32-GB CCX33 server-suite measurement. PID2048, service limits, non-root
+execution, network isolation and cleanup are unchanged. Seven is a CPU quota,
+not an exclusive core reservation; PostgreSQL/Redis and the host still share
+the VM. The 16-GiB cap allows more runner concurrency while leaving space for
+services and build preparation in this server-only experiment. Full candidate
+VMs keep their existing profile until the measurement is reviewed.
+
+After operator review, use ONE pinned-main server measurement, not a unit-stage
+ledger entry for a partial suite:
+
+```sh
+python3 scripts/test-egress/docker.py --profile ccx33 \
+  --evidence /var/log/vm-gate/server-measurement \
+  --command make TEST_EGRESS_RUNNER= test-server
+```
+
+Retain the actual `runner.json` resource readback, source identity, complete
+pytest count/time, DNS report, primary exit and cleanup separately. Compare the
+server's pytest interval with 3064.42s and 3980.80s, while reporting source and
+host differences; the enclosing image-build/command time is a separate cost.
+No automatic repetition or default quota change follows from one result.
