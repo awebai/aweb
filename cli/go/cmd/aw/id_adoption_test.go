@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,6 +134,16 @@ func TestParentRequestAllowsOnlyOrganizationOnlyAdoption(t *testing.T) {
 					}
 				} else if err == nil {
 					t.Fatal("ineligible adoption exported")
+				}
+				if global && scenario == "other-domain" {
+					want := "this agent is registered under example.com; a person whose home domain is other.example cannot adopt it yet"
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Fatalf("cross-domain refusal: %v", err)
+					}
+					entries, readErr := os.ReadDir(awconfig.IdentityRequestsDir(home))
+					if !os.IsNotExist(readErr) || len(entries) != 0 {
+						t.Fatal("cross-domain request was signed or retained")
+					}
 				}
 				installed, err := awconfig.LoadInstalledIDChain(home)
 				if err != nil {

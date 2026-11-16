@@ -251,10 +251,14 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 	}
 	replaces := ""
 	if installed != nil {
+		certificates := installed.Bundle["certificates"].([]any)
+		oldDomain := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
+		if strings.HasPrefix(r.id, "did:aw:") && oldDomain != r.domain {
+			return idParentRequestOutput{}, nil, usageError("this agent is registered under %s; a person whose home domain is %s cannot adopt it yet", oldDomain, r.domain)
+		}
 		if !organizationOnlyAgent(installed.Bundle, r.id, r.domain) || parent == nil || !strings.HasPrefix(parentID, "did:aw:") {
 			return idParentRequestOutput{}, nil, usageError("%s already has an installed ID chain; only an organization-only agent may request its first person parent", r.id)
 		}
-		certificates := installed.Bundle["certificates"].([]any)
 		replaces, err = awid.IDCertificateID(certificates[0].(map[string]any)["certificate"].(map[string]any))
 		if err != nil {
 			return idParentRequestOutput{}, nil, err

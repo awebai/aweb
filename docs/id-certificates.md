@@ -1077,6 +1077,8 @@ under another agent is not adopted independently; only its namespace-parented
 root qualifies. An awsign root receipt is optional evidence on this same
 adoption, not a second parent-signing operation.
 
+Registered adoption requires the person's home domain to equal the agent's
+domain; cross-domain adoption of a registered agent is not supported.
 Registered adoption uses the existing atomic registry head replacement. Moving
 a registered agent between people remains the separate explicit re-parenting
 operation in §3, with the new parent's signature, subject key proof and expected
