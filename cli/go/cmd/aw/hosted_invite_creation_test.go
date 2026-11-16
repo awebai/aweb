@@ -34,7 +34,7 @@ func TestHostedInviteGlobalExplicitSourceStillRefusesALocalPinnedParent(t *testi
 	}))
 	origin = server.URL
 	material := workspaceTeamIdentityMaterial{IdentityScope: awid.IdentityModeGlobal, DIDKey: v.Keys["root_agent"].DIDKey, StableID: v.Keys["root_agent"].DIDAW}
-	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_global_neighbor", origin, "child", "", false, material, false, true)
+	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_global_neighbor", origin, "child", "", false, material, false, true, "")
 	if err == nil {
 		_, err = state.prepareRequest(t.TempDir(), material)
 	}

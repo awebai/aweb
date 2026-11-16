@@ -2313,7 +2313,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			prior = nil
 		}
 	}
-	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material, mintedKey, opts.ParentFromSource)
+	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material, mintedKey, opts.ParentFromSource, recoveryPath)
 	if err != nil {
 		return nil, err
 	}

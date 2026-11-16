@@ -151,7 +151,7 @@ func (state *hostedInviteCreation) save(path string) error {
 	return awid.AtomicWriteFile(path, raw)
 }
 
-func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial, mintedKey, parentFromSource bool) (*hostedInviteCreation, error) {
+func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial, mintedKey, parentFromSource bool, recoveryPath string) (*hostedInviteCreation, error) {
 	digest := sha256.Sum256([]byte(token))
 	state := &hostedInviteCreation{MintedKey: mintedKey, ParentFromSource: parentFromSource, AcceptAttempted: new(bool), TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
 	if prior != nil {
@@ -161,7 +161,24 @@ func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreatio
 		if state.TokenHash != prior.TokenHash || state.AwebURL != prior.AwebURL || state.Alias != prior.Alias || state.Address != prior.Address || state.Scope != prior.Scope || state.NoAddress != prior.NoAddress || state.DIDKey != prior.DIDKey || state.StableID != prior.StableID {
 			return nil, errors.New("hosted invite retry changed the original token, child key, scope or creation selection")
 		}
-		return prior, nil
+		state = prior
+		if state.InviteID != "" {
+			return state, nil
+		}
+	}
+	if state.Tree == nil {
+		var err error
+		state.Tree, err = newHostedIDTreeRecovery(hostedIdentityContext{})
+		if err != nil {
+			return nil, err
+		}
+	}
+	// The key exists before preview. Retain its provenance first, including
+	// when preview fails and no invitation metadata can be saved yet.
+	if recoveryPath != "" {
+		if err := state.save(recoveryPath); err != nil {
+			return nil, err
+		}
 	}
 	// Preview is required. It is a possession-only read, independent of the
 	// child's later signed acceptance and of any response-selected ancestry.
@@ -173,11 +190,7 @@ func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreatio
 		return nil, errors.New("hosted invite preview omitted its invitation ID or explicit ID-tree metadata")
 	}
 	state.InviteID, state.TeamID, state.ForHuman = wire.InviteID, wire.CanonicalTeamID, wire.ForHuman
-	tree, err := newHostedIDTreeRecovery(hostedIdentityContext{})
-	state.Tree = tree
-	if err != nil {
-		return nil, err
-	}
+	tree := state.Tree
 	if inv := wire.CreationInvitation; inv != nil {
 		name := alias
 		if err := inv.Validate(); err != nil {
