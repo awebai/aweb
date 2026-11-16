@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	proof "github.com/awebai/approval-service/verify"
+	"github.com/awebai/aw/approval"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -94,8 +96,11 @@ func messageVerificationFailure(id, reason string, invalid bool) whoOutput {
 	return whoOutput{ID: id, IDChainResult: result}
 }
 
-func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) whoOutput {
+func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (out whoOutput) {
 	var export messageExport
+	defer func() {
+		out.Evidence = exportEvidenceReports(ctx, export.Evidence, export.IDChain, out, opts.EvidenceTrust)
+	}()
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&export); err != nil {
@@ -184,6 +189,15 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) who
 		opts.ReceivedEnrollment = func(context.Context, string, string) awid.IDTreeEnrollmentResult { return enrollment }
 	}
 	opts.Status = status
+	if opts.EvidenceTrust == nil {
+		opts.EvidenceTrust = func(ctx context.Context, chain []any, person, key, domain string) (*proof.Trust, error) {
+			checked, err := proof.ReadTrust(ctx, status, chain, person, key, domain)
+			if err != nil {
+				return nil, err
+			}
+			return &checked, nil
+		}
+	}
 	opts.RegistryURL = "" // The route above already enforces the explicit override.
 	out, err := executeWhoReceived(ctx, message, opts)
 	if err != nil {
@@ -229,7 +243,11 @@ func formatVerifiedMessage(v any) string {
 	if out.IdentityValid != nil && !*out.IdentityValid {
 		return fmt.Sprintf("%s\nHuman: invalid (%s)\n", out.ID, out.Reason)
 	}
-	return formatWho(out)
+	text := formatWho(out)
+	for _, report := range out.Evidence {
+		text += approval.FormatEvidence(report) + "\n"
+	}
+	return text
 }
 
 func exportMailEnvelope(messages []awid.InboxMessage, messageID string) (messageExport, error) {
