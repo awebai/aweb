@@ -2293,6 +2293,22 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	material := workspaceTeamIdentityMaterial{SigningKey: signingKey, PublicKey: pub, DIDKey: didKey, StableID: stableID, IdentityScope: scope}
+	// Older refused attempts lack a submission fact. A new token can release
+	// one only when its frozen chain still proves a different human from its
+	// frozen condition: that selection cannot pass the pre-submission check.
+	if prior != nil && prior.AcceptAttempted == nil && prior.ResponseJSON == "" && prior.ForHuman != nil && prior.MembershipChain != nil && prior.TokenHash != strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-") {
+		subjectID := prior.StableID
+		if subjectID == "" {
+			subjectID = prior.DIDKey
+		}
+		_, refusal := verifyInviteMembership(ctx, prior.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: prior.DIDKey}, prior.ForHuman, opts.Registry, opts.TXTResolver)
+		if awid.IDCertificateErrorCode(refusal) == "human_mismatch" {
+			if err := discardHostedInviteAttempt(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root)); err != nil {
+				return nil, errors.Join(refusal, err)
+			}
+			prior = nil
+		}
+	}
 	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material)
 	if err != nil {
 		return nil, err

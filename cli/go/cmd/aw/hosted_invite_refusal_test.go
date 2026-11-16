@@ -136,6 +136,25 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 					t.Fatal(err)
 				}
 			}
+			if scenario == "legacy local condition mismatch" {
+				accepted, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_second", opts)
+				if err != nil || accepted == nil {
+					t.Fatalf("retained refused home cannot try correct invite directly: %+v %v", accepted, err)
+				}
+				for name, before := range original {
+					after, err := os.ReadFile(filepath.Join(home, name))
+					if err != nil || string(before) != string(after) {
+						t.Fatalf("released legacy attempt changed %s: %v", name, err)
+					}
+				}
+				if _, err := os.Stat(filepath.Join(home, hostedInviteRecoveryFile)); !os.IsNotExist(err) {
+					t.Fatalf("success retained old recovery: %v", err)
+				}
+				if accepts != 1 {
+					t.Fatalf("old refused invitation was submitted: %d", accepts)
+				}
+				return
+			}
 			_, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_first", opts)
 			if err == nil {
 				t.Fatal("first attempt must refuse or be interrupted")

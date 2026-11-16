@@ -304,11 +304,18 @@ func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) 
 	if !definitive {
 		return refusal
 	}
-	if err := removeHostedAcceptPendingMarker(markerPath); err != nil {
-		return errors.Join(refusal, fmt.Errorf("release refused invite marker: %w", err))
-	}
-	if err := os.Remove(recoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return errors.Join(refusal, fmt.Errorf("release refused invite recovery: %w", err))
+	if err := discardHostedInviteAttempt(recoveryPath, markerPath); err != nil {
+		return errors.Join(refusal, err)
 	}
 	return refusal
+}
+
+func discardHostedInviteAttempt(recoveryPath, markerPath string) error {
+	if err := removeHostedAcceptPendingMarker(markerPath); err != nil {
+		return fmt.Errorf("release refused invite marker: %w", err)
+	}
+	if err := os.Remove(recoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("release refused invite recovery: %w", err)
+	}
+	return nil
 }
