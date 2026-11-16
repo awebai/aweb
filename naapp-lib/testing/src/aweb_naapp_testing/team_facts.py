@@ -1,9 +1,8 @@
-"""Explicit upgraded legacy registry facts for routing/authentication unit worlds.
+"""Ordinary registry facts for routing/authentication unit worlds.
 
-These are test doubles, never a fallback for production or protection tests.
-Native protection admission and outage tests use actual AWID. Cache-only worlds
-may mix LegacyTeamFacts into a real SDK client to hold the independent protection
-observation fixed while exercising key/revocation/registration cache behavior.
+These are test doubles, never a fallback for production. Native admission and
+outage tests use actual AWID. Cache-only worlds may mix LegacyTeamFacts into a
+real SDK client while exercising key, revocation and registration caches.
 """
 
 import hashlib
@@ -24,7 +23,7 @@ def legacy_team(domain: str, name: str, *, team_did_key: str | None = None) -> T
     return Team(
         team_id=f"{name}:{domain}", domain=domain, name=name, display_name=name,
         team_did_key=team_did_key or _legacy_controller_did_key(), visibility="public",
-        created_at="2026-11-13T00:00:00Z", protection={"mode": "legacy"},
+        created_at="2026-11-13T00:00:00Z",
     )
 
 
@@ -33,7 +32,7 @@ def legacy_team_response(domain: str, name: str, *, team_did_key: str) -> dict:
 
 
 class LegacyTeamFacts:
-    """Explicitly unmarked team projection shared by unit registry doubles."""
+    """Ordinary team projection shared by unit registry doubles."""
 
     async def get_team_fresh(self, domain, name):
         key_reader = getattr(self, "get_team_public_key", None)
@@ -56,7 +55,7 @@ _UNSET = object()
 def legacy_registry(registry=_UNSET):
     """Complete an explicitly legacy AsyncMock world, retaining configured reads.
 
-    Never overwrite a deliberate missing/malformed/outage/protected observation,
+    Never overwrite a deliberate missing, malformed or unavailable response,
     or wrap a real SDK registry. Those tests own their authoritative response.
     """
     if registry is _UNSET:
@@ -74,12 +73,7 @@ def legacy_registry(registry=_UNSET):
 
 
 def legacy_certificate_status(team_id, certificate_id, *, team_did_key, revoked_at=None):
-    """Complete negotiated legacy facts for a test's own certificate catalog.
-
-    A primitive certificate vector has no registry artifact commitment. Legacy
-    status therefore supplies no protected digest; protected tests must use
-    their own full authoritative evidence rather than this fixture.
-    """
+    """Ordinary status for a test's own certificate catalog."""
     return {"team_id": team_id, "certificate_id": certificate_id,
         "team_did_key": team_did_key, "status": "active" if revoked_at is None else "revoked",
-        "revoked_at": revoked_at, "protection": {"mode": "legacy"}, "certificate_sha256": None}
+        "revoked_at": revoked_at}

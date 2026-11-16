@@ -286,8 +286,8 @@ async def test_a_signing_after_the_authorized_read_still_spends_the_link(mailing
     assert refused.value.code == "scope_refused"
 
 
-async def test_owner_act_is_issued_after_hours_and_delivered_without_a_waiting_client(mailing):
-    """Real B2/B3/SQL, explicit transport double; no genuine consumer claim."""
+async def test_owner_act_is_issued_after_hours_and_recovers_the_exact_signature(mailing):
+    """Real B2/B3/SQL preserves issuance and signature recovery after a wait."""
     world, contacts = mailing
     prepared, token = await mailed(world, contacts)
     before = await world.passkeys.db.fetch_one(
@@ -297,7 +297,7 @@ async def test_owner_act_is_issued_after_hours_and_delivered_without_a_waiting_c
     world.clock.advance(timedelta(hours=2))
     options = await world.signer.link_options(prepared.handoff_id, token, "approve")
     result = await world.signer.link_decide(prepared.handoff_id, token, "approve", world.device.get(dict(options)))
-    assert result.state == "committed" and result.result["delivery"]["state"] == "applied"
+    assert result.state == "committed" and set(result.result) == {"signing", "signature"}
     after = await world.passkeys.db.fetch_one(
         "SELECT * FROM {{tables.protected_signer_operations}} WHERE operation_id=$1", prepared.operation_id)
     issued = json.loads(after["issued_artifact"])
@@ -305,8 +305,6 @@ async def test_owner_act_is_issued_after_hours_and_delivered_without_a_waiting_c
     assert stamp(issued["expires_at"]) == world.clock() + timedelta(minutes=10)
     assert after["request"] == before["request"] and after["digest"] == before["digest"]
     assert after["expires_at"] == before["expires_at"]
-    assert world.signer.custody.applied == {prepared.operation_id}
     world.clock.advance(timedelta(hours=25))
     assert await world.signer.receipt(prepared.operation_id, reader=world.reader) == result
     assert (await world.audit.kinds()).count("protected_operation_signed") == 1
-    assert world.signer.custody.applied == {prepared.operation_id}
