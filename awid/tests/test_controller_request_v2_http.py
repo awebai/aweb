@@ -2,77 +2,22 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
-import os
-from datetime import datetime, timezone
-from types import SimpleNamespace
+from datetime import datetime
 from uuid import uuid4
 
 import httpx
 import pytest
-import pytest_asyncio
-from redis.asyncio import Redis
 
-from awid.did import did_from_public_key, generate_keypair
 from awid.signing import canonical_json_bytes, sign_message
-from awid_service.main import create_app
 from test_certificates import _register_identity, _signed_certificate_blob
 
-ORIGIN = 'http://registry.test'
-TYPE = 'aweb.awid-controller-request'
-
-
-def keypair():
-    key, public = generate_keypair()
-    return key, did_from_public_key(public)
-
-
-def headers(key, did, claims, method, path, body=b'', *, covering=True, overrides=None, parent=False):
-    timestamp = datetime.now(timezone.utc).isoformat()
-    payload = {**claims, 'timestamp': timestamp}
-    if covering:
-        payload.update(v=2, type=TYPE, aud=ORIGIN, method=method, path=path, body_sha256=hashlib.sha256(body).hexdigest())
-    payload.update(overrides or {})
-    canonical = canonical_json_bytes(payload)
-    prefix = 'X-AWEB-Parent-' if parent else 'X-AWEB-'
-    result = {
-        'X-AWEB-Parent-Authorization' if parent else 'Authorization': f'DIDKey {did} {sign_message(key, canonical)}',
-        prefix + 'Timestamp': timestamp,
-    }
-    if covering:
-        result[prefix + 'Signed-Payload'] = base64.urlsafe_b64encode(canonical).rstrip(b'=').decode()
-    return result
-
-
-async def send(env, method, path, claims, body=None, *, signer=None, covering=True, overrides=None):
-    content = json.dumps(body, separators=(',', ':'), ensure_ascii=False).encode() if body is not None else b''
-    key, did = signer or env.controller
-    signed = headers(key, did, claims, method, path, content, covering=covering, overrides=overrides)
-    return await env.client.request(method, path, content=content, headers={**signed, 'Content-Type': 'application/json'})
-
-
-@pytest_asyncio.fixture
-async def controller_app(awid_db_infra):
-    # Real limiter and isolated client-IP bucket; remove only this fixture's keys.
-    ip = '127.' + '.'.join(str(n) for n in os.urandom(3))
-    async with Redis.from_url(os.environ.get('REDIS_URL', 'redis://localhost:6379/0'), decode_responses=True) as redis:
-        await redis.ping()
-        app = create_app(db_infra=awid_db_infra, redis=redis)
-        app.state.awid_public_origins = (ORIGIN,)
-        async with app.router.lifespan_context(app):
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=(ip, 12345)), base_url=ORIGIN) as client:
-                env = SimpleNamespace(app=app, client=client, db=awid_db_infra.get_manager(), controller=keypair(), team=keypair())
-                response = await send(env, 'POST', '/v1/namespaces', {'domain': 'local', 'operation': 'register'}, {'domain': 'local'}, covering=False)
-                assert response.status_code == 200, response.text
-                response = await send(env, 'POST', '/v1/namespaces/local/teams', {'domain': 'local', 'operation': 'create_team', 'name': 'base'}, {'name': 'base', 'team_did_key': env.team[1], 'visibility': 'public'}, covering=False)
-                assert response.status_code == 200, response.text
-                try:
-                    yield env
-                finally:
-                    owned = [key async for key in redis.scan_iter(match=f'aweb:rl:*:{ip}:*')]
-                    if owned:
-                        await redis.delete(*owned)
+from conftest import (
+    CONTROLLER_ORIGIN as ORIGIN,
+    controller_keypair as keypair,
+    controller_request_headers as headers,
+    send_controller_request as send,
+)
 
 
 def certificate_body(env, *, alias='member', member=None, did_aw=None, address=None):
