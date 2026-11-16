@@ -102,6 +102,12 @@ def _snapshot(value):
         raise ControllerSigningError("request_invalid") from exc
 
 
+def _legacy_controller_payload(domain, operation, timestamp, claims=None):
+    """One existing canonical construction for raw-key and typed callers."""
+    return canonical_json_bytes({"domain": domain, "operation": operation,
+                                 "timestamp": timestamp, **(claims or {})})
+
+
 @dataclass(frozen=True)
 class ControllerDescriptor:
     scope: Literal["namespace", "team"]
@@ -208,7 +214,7 @@ def _validate(operation, domain, parameters, definitions):
         parse_utc_seconds(r["issued_at"])
     if operation == "team_certificate_issue":
         c = parameters["certificate"]
-        required = {"version", "certificate_id", "team_id", "member_did_key", "alias"}
+        required = {"version", "certificate_id", "team_id", "team_did_key", "member_did_key", "alias", "issued_at"}
         _require(type(c) is dict and required <= c.keys()
                  and c.keys() <= required | {"member_did_aw", "member_address", "team_did_key", "lifetime", "identity_scope", "issued_at"}
                  and type(c["version"]) is int and c["version"] == 1
@@ -466,8 +472,8 @@ def build_controller_payload(request, *, controller, role="controller", timestam
                           "controller_did" if register else "new_controller_did": p["controller_did" if register else "new_controller_did"],
                           "operation": "authorize_subdomain_registration" if register else "authorize_subdomain_rotation",
                           "timestamp": timestamp})
-    return _snapshot({"domain": request.domain, "operation": plan.wire_operation,
-                      "timestamp": timestamp, **json.loads(plan.claims)})
+    return _legacy_controller_payload(request.domain, plan.wire_operation, timestamp,
+                                      json.loads(plan.claims))
 
 
 @dataclass(frozen=True)

@@ -235,3 +235,59 @@ async def test_lost_mutation_answer_is_ambiguous_and_never_retried():
     finally:
         await client.aclose()
     assert len(sent) == 1
+
+
+@pytest.mark.parametrize("operation,fields,claims", [
+    ("namespace_register", {"controller_did": KEY}, {"operation": "register"}),
+    ("namespace_update", {"default_delivery_origin": None}, {"operation": "update_namespace", "default_delivery_origin": ""}),
+    ("namespace_delete", {"reason": "retired"}, {"operation": "delete_namespace"}),
+    ("namespace_reset", {"new_controller_did": KEY}, {"operation": "rotate_controller", "new_controller_did": KEY}),
+    ("team_rotate", {"name": "team", "new_team_did_key": NEW_KEY}, {"operation": "rotate_team_key", "name": "team", "new_team_did_key": NEW_KEY}),
+    ("team_delete", {"name": "team"}, {"operation": "delete_team", "team_name": "team"}),
+    ("address_register", {"name": "person", "did_aw": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87", "current_did_key": NEW_KEY}, {"operation": "register_address", "name": "person"}),
+    ("address_update", {"name": "person"}, {"operation": "update_address", "name": "person"}),
+    ("address_delete", {"name": "person"}, {"operation": "delete_address", "name": "person"}),
+    ("address_reassign", {"name": "person", "did_aw": "did:aw:2Uq51iFVLnqmgbVY3vLZtMD5PR87", "current_did_key": NEW_KEY}, {"operation": "reassign_address", "name": "person"}),
+])
+def test_registry_operations_keep_existing_legacy_claims(operation, fields, claims):
+    assert payload(request(operation, **fields)) == canonical_json_bytes({"domain": "example.com", "timestamp": TS, **claims})
+
+
+def test_parent_role_keeps_its_distinct_proof_and_domain():
+    child = ControllerDescriptor("namespace", "child.example.com", NEW_KEY, "child", 0)
+    req = parse_controller_request({"operation": "namespace_register", "domain": child.domain,
+                                    "controller_did": NEW_KEY, "parent_domain": "example.com"})
+    assert json.loads(payload(req, CONTROLLER, "parent")) == {
+        "domain": child.domain, "child_domain": child.domain, "controller_did": NEW_KEY,
+        "operation": "authorize_subdomain_registration", "timestamp": TS}
+    with pytest.raises(ControllerSigningError, match="controller_scope"):
+        payload(req, child, "parent")
+
+
+@pytest.mark.asyncio
+async def test_atomic_claim_checks_subject_proof_before_controller_signature():
+    from awid.atomic_claim import AtomicAddressClaimFields, atomic_address_claim_identity_canonical, atomic_address_claim_identity_proof_hash, atomic_address_claim_namespace_canonical
+    from awid.did import stable_id_from_did_key
+    from awid.signing import sign_message
+
+    f = AtomicAddressClaimFields("claim_identity_address", "example.com", "person",
+        stable_id_from_did_key(NEW_KEY), NEW_KEY, ORIGIN, TS, False, "self", "self")
+    proof = sign_message(NEW_SEED, atomic_address_claim_identity_canonical(f))
+    fields = {"operation": "address_claim_proof", "domain": "example.com", "address_name": "person",
+              "did_aw": f.did_aw, "current_did_key": NEW_KEY, "timestamp": TS, "dry_run": False,
+              "identity_custody": "self", "namespace_custody": "self", "identity_signature": proof}
+    seen = []
+
+    def signer(context):
+        seen.append(context)
+        expected = atomic_address_claim_namespace_canonical(f, atomic_address_claim_identity_proof_hash(atomic_address_claim_identity_canonical(f), proof))
+        assert context.signing_bytes() == expected
+        return KEY, SigningKey(SEED).sign(expected).signature
+
+    await sign_controller_object(parse_controller_object(fields), controller=CONTROLLER,
+                                 signer=signer, registry_origin=ORIGIN)
+    assert len(seen) == 1
+    with pytest.raises(ValueError):
+        await sign_controller_object(parse_controller_object({**fields, "dry_run": True}),
+                                     controller=CONTROLLER, signer=signer, registry_origin=ORIGIN)
+    assert len(seen) == 1

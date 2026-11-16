@@ -1745,14 +1745,8 @@ class RegistryClient:
         extra_payload: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         timestamp = _utc_timestamp()
-        payload_dict: dict[str, Any] = {
-            "domain": domain,
-            "operation": operation,
-            "timestamp": timestamp,
-        }
-        if extra_payload:
-            payload_dict.update(extra_payload)
-        payload = canonical_json_bytes(payload_dict)
+        from awid.controller_signing import _legacy_controller_payload
+        payload = _legacy_controller_payload(domain, operation, timestamp, extra_payload)
         return {
             "Authorization": f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
             "X-AWEB-Timestamp": timestamp,
@@ -1766,19 +1760,10 @@ class RegistryClient:
         operation: str,
         signing_key: bytes,
     ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = canonical_json_bytes(
-            {
-                "domain": domain,
-                "name": name,
-                "operation": operation,
-                "timestamp": timestamp,
-            }
+        return self._signed_namespace_headers(
+            domain=domain, operation=operation, signing_key=signing_key,
+            extra_payload={"name": name},
         )
-        return {
-            "Authorization": f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
-            "X-AWEB-Timestamp": timestamp,
-        }
 
     def _signed_team_headers(
         self,
@@ -1788,19 +1773,10 @@ class RegistryClient:
         operation: str,
         signing_key: bytes,
     ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = canonical_json_bytes(
-            {
-                "domain": domain,
-                "name": name,
-                "operation": operation,
-                "timestamp": timestamp,
-            }
+        return self._signed_namespace_headers(
+            domain=domain, operation=operation, signing_key=signing_key,
+            extra_payload={"name": name},
         )
-        return {
-            "Authorization": f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
-            "X-AWEB-Timestamp": timestamp,
-        }
 
     def _signed_parent_namespace_headers(
         self,
