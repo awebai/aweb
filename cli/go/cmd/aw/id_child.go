@@ -629,6 +629,9 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 			return nil, err
 		}
 		r := signed["request"].(map[string]any)
+		if out.Operation == "resign" && r["domain"] != issuer.domain {
+			return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", r["domain"], issuer.domain)
+		}
 		if evidence, err = issuer.evidence(ctx, r["id"].(string), r["subject_key"].(string)); err != nil {
 			return nil, err
 		}

@@ -1094,8 +1094,9 @@ The refresh is explicit, level by level; it does not happen automatically.
 A deployment may instead respawn its agents under the adopted parent.
 
 For that one-time organization-only adoption, `parent request` accepts an
-installed chain only when it is exactly namespace → this agent, in the same
-domain, and the requested parent is a registered identity. Import verifies that
+installed chain only when it is exactly namespace → this agent in the
+installed certificate's own domain, and the requested parent is a registered
+identity. A local agent may request its first person in another domain. Import verifies that
 the new parent is a human, verifies the exact requested binding and refuses a
 second adoption, including an older outstanding request. A registered agent
 retains its working chain until the registry accepts replacement of its exact
@@ -1103,7 +1104,8 @@ old head. `--no-register` retains the signed adoption response with registration
 pending; it leaves that working chain installed. A retry reuses the same
 response, invitation ID and expected head.
 
-Local children spawned before adoption retain the old ancestry until refreshed.
+Local children spawned before a same-domain adoption retain the old ancestry
+until refreshed.
 Use `aw id parent request --resign`, transfer to the actual parent for
 `aw id child receive` and `approve`, then `aw id parent import` on the child.
 This exchange also works when the parent's key did not rotate: it carries the
@@ -1115,6 +1117,15 @@ registered ancestry while preserving the local certificates beneath it. A
 registered agent uses that same command to refresh its whole chain without
 re-signing its own certificate.
 Branches with only local ancestors require the parent exchange above.
+
+After a local cross-domain adoption, existing children's old-domain certificates
+cannot be refreshed: re-signing keeps their domain and a chain cannot cross
+domains. Their old chains remain valid and report `no_human`; the parent's
+re-sign approval refuses with guidance to respawn under the adopted parent,
+without signing or installing a mixed-domain chain. The child cannot discover a
+local parent's changed domain from its carried copy alone, so request export
+may succeed; the parent detects it on approval. Children spawned after adoption
+use the person's domain and show that person.
 
 ### Self-custodial child requests and re-sign transport
 

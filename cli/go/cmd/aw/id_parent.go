@@ -256,7 +256,7 @@ func executeIDParentRequest(opts idParentOptions, invitationID, parentID string,
 		if strings.HasPrefix(r.id, "did:aw:") && oldDomain != r.domain {
 			return idParentRequestOutput{}, nil, usageError("this agent is registered under %s; a person whose home domain is %s cannot adopt it yet", oldDomain, r.domain)
 		}
-		if !organizationOnlyAgent(installed.Bundle, r.id, r.domain) || parent == nil || !strings.HasPrefix(parentID, "did:aw:") {
+		if !organizationOnlyAgent(installed.Bundle, r.id, oldDomain) || parent == nil || !strings.HasPrefix(parentID, "did:aw:") {
 			return idParentRequestOutput{}, nil, usageError("%s already has an installed ID chain; only an organization-only agent may request its first person parent", r.id)
 		}
 		replaces, err = awid.IDCertificateID(certificates[0].(map[string]any)["certificate"].(map[string]any))
@@ -414,6 +414,17 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	if outgoing == nil {
 		return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 	}
+	if outgoing.ReplacesCertificateID != "" {
+		signed, err := awid.ParseIDCertificateRequest([]byte(outgoing.Request))
+		if err != nil {
+			return idParentImportOutput{}, err
+		}
+		domain := signed["request"].(map[string]any)["domain"].(string)
+		if opts.Domain != "" && opts.Domain != domain {
+			return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
+		}
+		r.domain = domain
+	}
 	call, cancel := commandAPIContext(nil, ctx)
 	authority, err := awid.DiscoverAuthoritativeRegistry(call, opts.TXTResolver, r.domain)
 	cancel()
@@ -522,16 +533,21 @@ func validateParentReplacement(r *requester, outgoing *awconfig.IDOutgoingReques
 		return mismatch
 	}
 	parent := certificates[len(certificates)-2].(map[string]any)["certificate"].(map[string]any)
-	if parent["kind"] != "human" || parent["domain"] != r.domain {
+	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+	if parent["kind"] != "human" || parent["domain"] != leaf["domain"] || leaf["domain"] != r.domain {
 		return mismatch
 	}
 	if installed == nil {
 		return mismatch
 	}
-	if !organizationOnlyAgent(installed.Bundle, r.id, r.domain) {
+	oldCerts := installed.Bundle["certificates"].([]any)
+	old := oldCerts[len(oldCerts)-1].(map[string]any)["certificate"].(map[string]any)
+	if !organizationOnlyAgent(installed.Bundle, r.id, old["domain"].(string)) {
 		return mismatch
 	}
-	old := installed.Bundle["certificates"].([]any)[0].(map[string]any)["certificate"].(map[string]any)
+	if strings.HasPrefix(r.id, "did:aw:") && old["domain"] != r.domain {
+		return mismatch
+	}
 	id, err := awid.IDCertificateID(old)
 	if err != nil {
 		return err

@@ -55,8 +55,11 @@ func adoptionChain(certificates ...any) map[string]any {
 	return map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": certificates}
 }
 func adoptionSigned(t *testing.T, id string, parent map[string]any, key ed25519.PrivateKey) map[string]any {
+	return adoptionSignedInDomain(t, id, parent, key, "example.com")
+}
+func adoptionSignedInDomain(t *testing.T, id string, parent map[string]any, key ed25519.PrivateKey, domain string) map[string]any {
 	t.Helper()
-	c := map[string]any{"v": 1, "type": "aweb.id-certificate", "id": id, "domain": "example.com", "parent": parent, "kind": "agent", "issuer_key": awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), "issued_at": "2026-10-26T00:20:00Z"}
+	c := map[string]any{"v": 1, "type": "aweb.id-certificate", "id": id, "domain": domain, "parent": parent, "kind": "agent", "issuer_key": awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), "issued_at": "2026-10-26T00:20:00Z"}
 	payload, err := awid.IDCertificateSigningBytes(c)
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +123,7 @@ func TestParentRequestAllowsOnlyOrganizationOnlyAdoption(t *testing.T) {
 				}
 				home := adoptionHome(t, v, global, chain)
 				_, raw, err := executeIDParentRequest(idParentOptions{IdentityHome: home, WorkingDir: filepath.Dir(home), Domain: domain}, "11111111-1111-4111-8111-111111111111", parent, root)
-				if scenario == "organization" {
+				if scenario == "organization" || (!global && scenario == "other-domain") {
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -536,4 +539,127 @@ func TestParentRefreshUpdatesRegisteredAncestorWithoutChangingLocalChild(t *test
 			}
 		})
 	}
+}
+
+func TestLocalCrossDomainAdoptionAndChildrenBeforeAndAfter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AW_CONFIG_PATH", "")
+	v := adoptionVectors(t)
+	oldDomain := "legacy.example.com"
+	newDomain := "example.com"
+	oldStatus := map[string]any{"v": 1, "domain": oldDomain, "observed_at": v.Statuses["normal"]["observed_at"], "namespace": v.Statuses["normal"]["namespace"], "identities": []any{}, "missing": []any{}}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		status := v.Statuses["normal"]
+		if request["domain"] == oldDomain {
+			status = oldStatus
+		}
+		json.NewEncoder(w).Encode(status)
+	}))
+	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+	resolver := staticTXTResolver{"_awid." + oldDomain: {idCreateDNSRecordValue(v.Keys["root"].DIDKey, "")}, "_awid." + newDomain: {idCreateDNSRecordValue(v.Keys["root"].DIDKey, "")}}
+	registry := awid.NewAWIDRegistryClient(server.Client(), resolver)
+	registry.DefaultRegistryURL = server.URL
+	parentID := v.Keys["root_agent"].DIDKey
+	childID := v.Keys["coordinator"].DIDKey
+	oldRoot := adoptionSignedInDomain(t, parentID, map[string]any{"kind": "namespace", "id": oldDomain}, v.key(t, "root"), oldDomain)
+	oldChain := adoptionChain(oldRoot)
+	parentHome := adoptionHome(t, v, false, oldChain)
+	issuance := awconfig.IDIssuanceFileStore{Dir: awconfig.IdentityIssuanceDir(parentHome)}
+	who := func(chain map[string]any, id, domain, want string) {
+		t.Helper()
+		subject := awid.IDChainSubject{ID: id, DIDKey: id}
+		evidence := idStatusAt(registry, resolver, server.URL).IDChainEvidence(t.Context(), chain, subject, domain)
+		result := awid.VerifyIDChain(chain, subject, evidence, domain)
+		if result.Outcome != want || result.IdentityValid == nil || !*result.IdentityValid {
+			t.Fatalf("who in %s: %+v", domain, result)
+		}
+		if want == "nearest_human" && (result.HumanID == nil || *result.HumanID != v.Keys["alice"].DIDAW) {
+			t.Fatal("wrong nearest human")
+		}
+
+	}
+	spawn := func(chain map[string]any, id, domain string) map[string]any {
+		t.Helper()
+		subject := awid.IDChainSubject{ID: parentID, DIDKey: parentID}
+		evidence := idStatusAt(registry, resolver, server.URL).IDChainEvidence(t.Context(), chain, subject, domain)
+		out, err := awid.IssueIDChild(issuance, awid.IDChild{ID: id, Domain: domain, Parent: map[string]any{"kind": "identity", "id": parentID}, Kind: "agent"}, chain["certificates"].([]any), evidence, awid.KeySigner(v.key(t, "root_agent")), time.Date(2026, 10, 26, 0, 21, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	childChain := spawn(oldChain, childID, oldDomain)
+	who(childChain, childID, oldDomain, "no_human")
+	childHome := filepath.Join(t.TempDir(), ".aw")
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(childHome, "identity.yaml"), &awconfig.WorktreeIdentity{DID: childID, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(childHome, "signing.key"), v.key(t, "coordinator")); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveInstalledIDChain(childHome, childChain); err != nil {
+		t.Fatal(err)
+	}
+	opts := idParentOptions{IdentityHome: parentHome, WorkingDir: filepath.Dir(parentHome), Domain: newDomain, RegistryURL: server.URL, HTTPClient: server.Client(), TXTResolver: resolver}
+	request, _, err := executeIDParentRequest(opts, "11111111-1111-4111-8111-111111111111", v.Keys["alice"].DIDAW, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adopted := adoptionSigned(t, parentID, map[string]any{"kind": "identity", "id": v.Keys["alice"].DIDAW}, v.key(t, "alice"))
+	newChain := adoptionChain(v.Certificates["alice"].Signed, adopted)
+	response, err := awid.EncodeIDCertificateResponse(request.RequestID, newChain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	importOpts := opts
+	importOpts.Domain = ""
+	if _, err := executeIDParentImport(t.Context(), importOpts, response); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := awconfig.LoadInstalledIDChain(parentHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	who(installed.Bundle, parentID, newDomain, "nearest_human")
+	if _, _, err := executeIDParentRequest(opts, "22222222-2222-4222-8222-222222222222", v.Keys["bob"].DIDAW, false); err == nil {
+		t.Fatal("second adoption allowed")
+	}
+	// The child's carried old-domain chain remains independently valid.
+	who(childChain, childID, oldDomain, "no_human")
+	childOpts := idParentOptions{IdentityHome: childHome, WorkingDir: filepath.Dir(childHome), RegistryURL: server.URL, HTTPClient: server.Client(), TXTResolver: resolver}
+	refresh, raw, err := executeIDParentResign(childOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuerOpts := idChildOptions{IdentityHome: parentHome, WorkingDir: filepath.Dir(parentHome), RegistryURL: server.URL, HTTPClient: server.Client(), TXTResolver: resolver, Now: time.Now}
+	if _, err := executeIDChildReceive(t.Context(), issuerOpts, raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := executeIDChildApprove(t.Context(), issuerOpts, refresh.RequestID); err == nil || !strings.Contains(err.Error(), "respawn under the adopted parent") {
+		t.Fatalf("cross-domain child refresh: %v", err)
+	}
+	if _, err := awid.ApproveIDResignRequest(issuance, refresh.RequestID, parentID, newChain["certificates"].([]any), nil, newDomain, func([]byte) (string, []byte, error) {
+		t.Fatal("cross-domain re-sign reached signer")
+		return "", nil, nil
+	}, time.Now()); err == nil || !strings.Contains(err.Error(), "respawn under the adopted parent") {
+		t.Fatalf("SDK cross-domain refresh: %v", err)
+	}
+	still, err := awconfig.LoadInstalledIDChain(childHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := awid.CanonicalJSONValue(still.Bundle)
+	b, _ := awid.CanonicalJSONValue(childChain)
+	if a != b {
+		t.Fatal("refused refresh changed child chain")
+	}
+	who(still.Bundle, childID, oldDomain, "no_human")
+	afterID := v.Keys["seat"].DIDKey
+	after := spawn(newChain, afterID, newDomain)
+	who(after, afterID, newDomain, "nearest_human")
 }

@@ -76,6 +76,9 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 		return nil, err
 	}
 	r := signed["request"].(map[string]any)
+	if r["domain"] != domain {
+		return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", r["domain"], domain)
+	}
 	if len(parentChain) == 0 {
 		return nil, fmt.Errorf("the parent's own chain is required")
 	}
