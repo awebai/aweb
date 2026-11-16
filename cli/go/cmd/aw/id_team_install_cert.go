@@ -33,10 +33,10 @@ var (
 var teamInstallCertCmd = &cobra.Command{
 	Use:   "install-cert",
 	Short: "Install an issued team certificate file into an identity home",
-	Long: "Install a team membership certificate file, such as the one `aw id team admit`\n" +
-		"wrote with --certificate-out, into the explicit --identity-home whose identity it\n" +
-		"names. The certificate is checked against the registry before anything is\n" +
-		"written; then `aw service init` connects the home's workspace.\n\n" +
+	Long: "Install an issued team membership certificate file into the explicit\n" +
+		"--identity-home whose identity it names. The certificate is checked against\n" +
+		"the registry before anything is written; then `aw service init` connects\n" +
+		"the home's workspace.\n\n" +
 		"Running it again with the same certificate reports already_installed and\n" +
 		"completes an install that was interrupted. Refusals, with their --json codes:\n" +
 		"  certificate_invalid        the file is not a team certificate, or the registry reports\n" +

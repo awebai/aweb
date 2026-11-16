@@ -290,10 +290,10 @@ var teamLogKeySignCmd = &cobra.Command{
 	Use:   "sign",
 	Short: "Sign a log key record, or attach a signature made elsewhere",
 	Long: "Complete a log key record through exactly one route:\n" +
-		"  --team-key-did and --signature attach a signature produced elsewhere, such as by the\n" +
-		"  deployment's protected signer, after verifying it over the record's signing bytes;\n" +
-		"  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/ on\n" +
-		"  this machine, which is outside the route of a deployment whose signer holds that key.\n" +
+		"  --team-key-did and --signature attach a signature produced elsewhere, after\n" +
+		"  verifying it over the record's signing bytes;\n" +
+		"  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/\n" +
+		"  on this machine.\n" +
 		"With no route, or both, it refuses. The signed record is written to --out (or stdout).",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {

@@ -1297,10 +1297,10 @@ Flags:
 
 ### `id team install-cert`
 
-Install a team membership certificate file, such as the one `aw id team admit`
-wrote with --certificate-out, into the explicit --identity-home whose identity it
-names. The certificate is checked against the registry before anything is
-written; then `aw service init` connects the home's workspace.
+Install an issued team membership certificate file into the explicit
+--identity-home whose identity it names. The certificate is checked against
+the registry before anything is written; then `aw service init` connects
+the home's workspace.
 
 Running it again with the same certificate reports already_installed and
 completes an install that was interrupted. Refusals, with their --json codes:
@@ -2012,10 +2012,10 @@ Flags:
 ### `team admin log-key sign`
 
 Complete a log key record through exactly one route:
-  --team-key-did and --signature attach a signature produced elsewhere, such as by the
-  deployment's protected signer, after verifying it over the record's signing bytes;
-  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/ on
-  this machine, which is outside the route of a deployment whose signer holds that key.
+  --team-key-did and --signature attach a signature produced elsewhere, after
+  verifying it over the record's signing bytes;
+  --offline-controller-key signs with the team controller key in ~/.awid/team-keys/
+  on this machine.
 With no route, or both, it refuses. The signed record is written to --out (or stdout).
 
 Flags:

@@ -22,12 +22,10 @@ def _unavailable(error: HTTPException) -> HTMLResponse:
     # A refusal is final; a rate limit is not, so it says only when to retry.
     throttled = error.status_code == 429
     lead = "" if throttled else '<p role="status">This request cannot be completed.</p>'
-    # The page cannot tell yet whether a terminal or a mailed link opened it.
     guidance = (
         "Too many attempts from this browser. Wait a minute, then open the page again."
         if throttled
-        else "If it came by email, the link is no longer valid; if a terminal started it, "
-        "start a new request there."
+        else "Return to your terminal and start a new request."
     )
     # Exactly one status per page: the refusal's lead, or a rate limit's guidance.
     announce = ' role="status"' if throttled else ""

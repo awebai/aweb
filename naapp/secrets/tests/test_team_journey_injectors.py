@@ -27,7 +27,6 @@ from team_journey_support import (
 SITES = {
     "aweb.lf.test": "aweb:8000",
     "console.secrets.lf.test": "secrets:8770",
-    "api.logs.lf.test": "logs:8765",
 }
 WITHOUT_RECEIVER = "{\n  auto_https off\n}\n" + "".join(
     f"{host}:443 {{\n  tls /tls/c.pem /tls/k.pem\n  reverse_proxy {target}\n}}\n" for host, target in SITES.items())

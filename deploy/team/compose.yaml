@@ -67,7 +67,7 @@ services:
         required: false
 
 networks:
-  # aweb, the apps, the signer and PostgreSQL.
+  # aweb, the apps and PostgreSQL.
   services:
     ipam:
       config:
@@ -87,7 +87,7 @@ networks:
           # which Docker leaves unreported for an isolated bridge it allocates.
           gateway: ${AGENTS_GATEWAY:-172.30.0.1}
 
-  # aweb and Redis: no app, signer or agent reaches Redis.
+  # aweb and Redis: no app or agent reaches Redis.
   backend:
     internal: true
 

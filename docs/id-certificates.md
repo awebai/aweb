@@ -553,18 +553,18 @@ of an old root key. No pre-upgrade namespace history is guessed. A local
 
 ### Human key lifecycle and two machines
 
-The encrypted keychain export/import method below describes legacy custody.
-New protected deployments keep these keys server-side; importing existing
-material is an explicitly approved operator migration outside worker access,
-not a worker-accessible export or multi-machine signer feature. The continuity,
-replacement and revocation rules in this section still apply.
+The encrypted keychain export/import method below is the current owner-held
+custody path. The target key holder is described in the
+[human approval architecture](human-approval-architecture.md).
+The continuity, replacement and revocation rules in this section still apply.
 
 Routine rotation retains the did:aw through the existing old-key-signed
 continuity log. Registered children retain their historic issuer-key witness;
 unregistered children request re-sign on contact. Rotation is NOT a compromise
 remedy: registered children admitted under a leaked key survive rotation.
 Compromise needs root-backdated revocation or explicit per-child revocation;
-S7 must show that choice. Rotating a member's own key still requires ordinary member-certificate reissue, as today.
+the rotation command must show that choice. Rotating a member's own key still
+requires ordinary member-certificate reissue, as today.
 
 The ONE v1 multi-machine method is an explicit password-encrypted export/import
 of the SAME human Ed25519 key between OS keychains, using the established
