@@ -113,7 +113,7 @@ class FollowerIdentity(unittest.TestCase):
     def test_a_follower_that_exited_after_a_fresh_line_is_refused(self):
         status, stdout, stderr, receipt, _ = self.check_capture(dead=True)
         self.assertEqual(status, 1, stdout + stderr)
-        self.assertIn("the follower exited after its first line", stderr)
+        self.assertIn("egress capture: the follower exited", stderr)
         self.assertIsNone(receipt)
 
     def test_valid_follower_does_not_authorize_another_projects_container(self):

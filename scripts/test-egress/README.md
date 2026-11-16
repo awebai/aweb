@@ -173,3 +173,16 @@ Native qualification still needs all collected tests, the normal xfail policy,
 actual seven-worker/service readbacks, CPU/PSI and memory/OOM evidence, and
 separate source/Docker/provider cleanup. No parallel measurement result is
 inferred from the source and local controls.
+
+The first seven-worker measurement at `827931cda7` collected the same 4764
+server cases as the serial baseline, but six teamctl capture assertions failed
+at the follower identity check. The local Linux control reproduces a live
+follower being refused: procps clips `ps -o command` under narrow `COLUMNS`;
+xdist workers in the locked local control exported `COLUMNS=80`. The capture now
+binds the PID it spawns and its start time before any witness/probe, rechecks that
+identity before the agent starts, and keeps a full-width command only as receipt
+diagnostics. An identity mismatch never authorizes killing a reused PID.
+`scripts/test_team_follower_identity.py` exercises the real capture helpers with
+long paths/narrow columns, plus exited-child, wrong-start and wrong-container
+negatives. Fixed Docker/interpreter transports make it a process-identity
+control, not a whole deployment or parallel-suite qualification.
