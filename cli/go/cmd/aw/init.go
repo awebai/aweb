@@ -483,6 +483,13 @@ func ensureInitInviteTarget(workingDir string) error {
 	if !initGlobal {
 		return ensureConnectTargetClean(workingDir)
 	}
+	if err := validateGlobalInitTarget(workingDir); err != nil {
+		return err
+	}
+	return ensureAwebRuntimeGitIgnored(workingDir)
+}
+
+func validateGlobalInitTarget(workingDir string) error {
 	if _, _, err := resolveGlobalIdentityForTeamAccept(workingDir, ""); err != nil {
 		return err
 	}
@@ -492,7 +499,7 @@ func ensureInitInviteTarget(workingDir string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	return ensureAwebRuntimeGitIgnored(workingDir)
+	return nil
 }
 
 func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferredAwebURL string, parentHome ...string) error {

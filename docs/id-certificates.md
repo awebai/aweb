@@ -1012,8 +1012,10 @@ join membership-only with their own chain; a conditioned chainless join refuses
 choices survive retries. An identity with a chain keeps that chain even with
 `--join-from`; explicit `--parent` continues to refuse an already chained home.
 An existing registered chainless joiner selecting a local `did:key` source
-refuses `unregistered_parent` before submission: it needs direct person adoption
-or a registered source.
+refuses `unregistered_parent` before invite creation or identity-home writes:
+it needs direct person adoption or a registered source. A retained creation
+from a released client that predates these provenance fields finishes its
+original issuer-creation exchange, including when its chain is already on disk.
 
 Hosted invite creation accepts optional `for_human` (a `did:aw` person ID).
 Omission selects the issuer's verified nearest human or no condition; explicit

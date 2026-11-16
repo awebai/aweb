@@ -87,7 +87,8 @@ func TestHostedExistingGlobalPinnedInviteDoesNotCreateParentage(t *testing.T) {
 						t.Fatal(err)
 					}
 					attempted := true
-					state := &hostedInviteCreation{Tree: tree, IssuerCreationStarted: true, AcceptAttempted: &attempted, TokenHash: strings.TrimPrefix(hostedTeamInviteRecordID("aw_inv_existing"), "hosted-"), AwebURL: service.URL, Alias: "child", Scope: "global", NoAddress: true, DIDKey: did, StableID: stable, InviteID: "11111111-1111-4111-8111-111111111111", TeamID: "backend:example.com"}
+					notMinted := false
+					state := &hostedInviteCreation{MintedKey: &notMinted, Tree: tree, IssuerCreationStarted: true, AcceptAttempted: &attempted, TokenHash: strings.TrimPrefix(hostedTeamInviteRecordID("aw_inv_existing"), "hosted-"), AwebURL: service.URL, Alias: "child", Scope: "global", NoAddress: true, DIDKey: did, StableID: stable, InviteID: "11111111-1111-4111-8111-111111111111", TeamID: "backend:example.com"}
 					if err := state.save(filepath.Join(root, hostedInviteRecoveryFile)); err != nil {
 						t.Fatal(err)
 					}

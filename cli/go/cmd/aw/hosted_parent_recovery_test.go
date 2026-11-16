@@ -38,7 +38,7 @@ func TestHostedExplicitParentSurvivesPreviewOutage(t *testing.T) {
 			t.Fatal("unavailable preview or unavailable explicit parent did not refuse")
 		}
 		state, err := loadHostedInviteCreation(filepath.Join(wd, ".aw", hostedInviteRecoveryFile))
-		if err != nil || state == nil || state.ParentHome != want || !state.MintedKey {
+		if err != nil || state == nil || state.ParentHome != want || (state.MintedKey == nil || !*state.MintedKey) {
 			t.Fatalf("lost selected parent or key provenance: %+v %v", state, err)
 		}
 		opts.ParentHome = "" // A retry uses the retained selection.

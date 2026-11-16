@@ -61,6 +61,29 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 		return err
 	}
 	path := filepath.Join(home.Root, initInviteRecoveryFile)
+	scope := initInviteIdentityScope()
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) && scope == awid.IdentityModeGlobal {
+		// A source is an explicit parent choice only for a chainless joiner.
+		// Refuse an impossible choice before even creating the recovery lock.
+		if err := validateGlobalInitTarget(wd); err != nil {
+			return err
+		}
+		installed, err := awconfig.LoadInstalledIDChain(home.Root)
+		if err != nil {
+			return err
+		}
+		if installed == nil {
+			issuer, err := resolveIDExchangeIdentity(source, sourceHome)
+			if err != nil {
+				return err
+			}
+			if strings.HasPrefix(identityID(issuer), "did:key:") {
+				return unregisteredInviteParentError()
+			}
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	_, homeErr := os.Stat(home.Root)
 	lock, err := awconfig.TryLockExclusive(path + ".lock")
 	if err != nil {
@@ -81,7 +104,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 	if err != nil {
 		return err
 	}
-	alias, scope := resolveAliasValue(resolveInitLocalName()), initInviteIdentityScope()
+	alias := resolveAliasValue(resolveInitLocalName())
 	if prior != nil {
 		if prior.Source != source || prior.SourceHome != sourceHome || prior.TeamID != team || prior.Alias != alias || prior.Scope != scope {
 			return errors.New("init retry changed the original source, team, name or scope")

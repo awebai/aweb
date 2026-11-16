@@ -1078,7 +1078,10 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, RegistryURL: registryURL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceKey})
+	if _, err := registry.RegisterIdentity(ctx, registryURL, awid.ComputeDIDKey(sourcePub), awid.ComputeStableID(sourcePub), sourceKey); err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, RegistryURL: registryURL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), StableID: awid.ComputeStableID(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, SigningKey: sourceKey})
 	sourceBefore := snapshotJoinFiles(t, source)
 	for _, outcome := range []string{"join-from", "admission", "invite"} {
 		t.Run(outcome, func(t *testing.T) {

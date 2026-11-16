@@ -99,8 +99,8 @@ func (e *hostedInviteSignaturePendingError) Error() string { return e.err.Error(
 func (e *hostedInviteSignaturePendingError) Unwrap() error { return e.err }
 
 type hostedInviteCreation struct {
-	MintedKey             bool                  `json:"minted_key"`
-	ParentFromSource      bool                  `json:"parent_from_source"`
+	MintedKey             *bool                 `json:"minted_key,omitempty"`
+	ParentFromSource      *bool                 `json:"parent_from_source,omitempty"`
 	MembershipOnly        bool                  `json:"membership_only"`
 	ParentHome            string                `json:"parent_home,omitempty"`
 	ParentSelected        bool                  `json:"parent_selected,omitempty"`
@@ -140,6 +140,11 @@ func loadHostedInviteCreation(path string) (*hostedInviteCreation, error) {
 	if state.Tree == nil || !hostedIdentityTeamUUID.MatchString(state.Tree.RequestID) || state.TokenHash == "" || state.DIDKey == "" {
 		return nil, errors.New("invalid hosted invite recovery")
 	}
+	// Stable 1.36.58 retained an issuer-creation selection before these facts
+	// existed. An upgrade must replay it, including a native chain on disk.
+	if state.MintedKey == nil && state.Tree.Domain != "" {
+		state.IssuerCreationStarted = true
+	}
 	return &state, nil
 }
 
@@ -153,9 +158,9 @@ func (state *hostedInviteCreation) save(path string) error {
 
 func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial, mintedKey, parentFromSource bool, parentHome, recoveryPath string) (*hostedInviteCreation, error) {
 	digest := sha256.Sum256([]byte(token))
-	state := &hostedInviteCreation{MintedKey: mintedKey, ParentFromSource: parentFromSource, AcceptAttempted: new(bool), TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
+	state := &hostedInviteCreation{MintedKey: &mintedKey, ParentFromSource: &parentFromSource, AcceptAttempted: new(bool), TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
 	if prior != nil {
-		if parentFromSource && !prior.ParentFromSource {
+		if parentFromSource && prior.MintedKey != nil && (prior.ParentFromSource == nil || !*prior.ParentFromSource) {
 			return nil, errors.New("hosted invite retry changed the explicit parent source")
 		}
 		if state.TokenHash != prior.TokenHash || state.AwebURL != prior.AwebURL || state.Alias != prior.Alias || state.Address != prior.Address || state.Scope != prior.Scope || state.NoAddress != prior.NoAddress || state.DIDKey != prior.DIDKey || state.StableID != prior.StableID {
@@ -242,7 +247,7 @@ func (state *hostedInviteCreation) prepareRequest(root string, material workspac
 		return nil, missingInviteHumanChain(state.ForHuman)
 	}
 	if material.IdentityScope == awid.IdentityModeGlobal && strings.HasPrefix(fmt.Sprint(state.Tree.Parent["id"]), "did:key:") {
-		return nil, fmt.Errorf("%w: a registered child needs a registered parent; be adopted by the person directly with aw id parent request --human, or join from a registered source", &awid.IDCertificateError{Code: "unregistered_parent"})
+		return nil, unregisteredInviteParentError()
 	}
 	state.IssuerCreationStarted = true
 	if state.Tree.Domain == "" {
@@ -300,7 +305,11 @@ Finally retry your original invite command with the SAME token, name, scope and 
 }
 
 func (state *hostedInviteCreation) parentageSelected() bool {
-	return state.MintedKey || state.ParentHome != "" || state.ParentFromSource
+	return state.MintedKey == nil || *state.MintedKey || state.ParentHome != "" || (state.ParentFromSource != nil && *state.ParentFromSource)
+}
+
+func unregisteredInviteParentError() error {
+	return fmt.Errorf("%w: a registered child needs a registered parent; be adopted by the person directly with aw id parent request --human, or join from a registered source", &awid.IDCertificateError{Code: "unregistered_parent"})
 }
 
 // A pending local invite already has its final child key, but no membership or

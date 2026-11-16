@@ -79,7 +79,7 @@ func TestHostedInviteResumesStable58CreationSelection(t *testing.T) {
 				root := filepath.Join(wd, ".aw")
 				if err := awid.SaveSigningKey(filepath.Join(root, "signing.key"), key); err != nil {
 					t.Fatal(err)
-					}
+				}
 				if installed {
 					if err := awconfig.SaveInstalledIDChain(root, bundle); err != nil {
 						t.Fatal(err)
@@ -95,6 +95,11 @@ func TestHostedInviteResumesStable58CreationSelection(t *testing.T) {
 				if savedResponse {
 					raw, _ := json.Marshal(response)
 					legacy["response_json"] = string(raw)
+					retained := &hostedIDTreeRecovery{}
+					if err := retained.retainResponse(awid.IDTreeCreationResponse{FieldsPresent: true, IDChain: awid.ReceivedIDChain(bundle)}); err != nil {
+						t.Fatal(err)
+					}
+					tree["response_fields_present"], tree["response_json"] = true, retained.ResponseJSON
 				}
 				raw, _ := json.Marshal(legacy)
 				if err := os.WriteFile(filepath.Join(root, hostedInviteRecoveryFile), raw, 0600); err != nil {

@@ -242,7 +242,7 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 					t.Fatal("preview outage submitted membership")
 				}
 				pending, loadErr := loadHostedInviteCreation(filepath.Join(dir, ".aw", hostedInviteRecoveryFile))
-				if loadErr != nil || pending == nil || !pending.MintedKey {
+				if loadErr != nil || pending == nil || (pending.MintedKey == nil || !*pending.MintedKey) {
 					t.Fatalf("preview retry lost fresh-key provenance: %+v %v", pending, loadErr)
 				}
 				accepted, err = acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_local", opts)
