@@ -149,18 +149,6 @@ def _snapshot(value):
         raise ControllerSigningError("request_invalid") from exc
 
 
-def _legacy_controller_payload(domain, operation, timestamp, claims=None):
-    """One existing canonical construction for raw-key and typed callers."""
-    return canonical_json_bytes(
-        {
-            "domain": domain,
-            "operation": operation,
-            "timestamp": timestamp,
-            **(claims or {}),
-        }
-    )
-
-
 @dataclass(frozen=True)
 class ControllerDescriptor:
     scope: Literal["namespace", "team"]

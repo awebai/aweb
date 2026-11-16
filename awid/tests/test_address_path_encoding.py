@@ -9,7 +9,8 @@ import pytest
 
 from awid.did import generate_keypair, did_from_public_key
 from awid.registry import RegistryClient, RegistryError
-from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.id_tree_requests import covering_payload
+from awid.signing import verify_did_key_signature
 
 pytestmark = pytest.mark.asyncio
 
@@ -81,16 +82,19 @@ async def test_raw_key_address_path_keeps_the_exact_name(
         ]
     )
     if operation != "resolve":
-        claims = canonical_json_bytes(
-            {
-                "domain": "local",
-                "name": name,
-                "operation": operation + "_address",
-                "timestamp": outgoing.headers["X-AWEB-Timestamp"],
-            }
+        # The signature covers the encoded path exactly as sent.
+        signed = covering_payload(
+            aud=str(env.client.base_url).rstrip("/"),
+            method=outgoing.method,
+            path=outgoing.url.raw_path.decode(),
+            domain="local",
+            operation=operation + "_address",
+            body=outgoing.content,
+            timestamp=outgoing.headers["X-AWEB-Timestamp"],
+            claims={"name": name},
         )
         _scheme, did, signature = outgoing.headers["Authorization"].split()
-        verify_did_key_signature(did_key=did, payload=claims, signature_b64=signature)
+        verify_did_key_signature(did_key=did, payload=signed, signature_b64=signature)
 
 
 async def test_ordinary_address_round_trips_through_real_registry(controller_app):

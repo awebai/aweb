@@ -50,22 +50,7 @@ CASES = [
 ]
 
 
-# The raw methods still sign these operations in the legacy form, which the
-# typed client no longer sends.
-RAW_SIGNS_LEGACY = {
-    "namespace_register", "namespace_register-origin", "namespace_register-parent",
-    "namespace_update", "namespace_update-null", "namespace_reset", "namespace_reset-parent",
-    "team_register", "team_visibility", "team_delete",
-    "address_register", "address_update", "address_delete", "address_reassign",
-    "certificate_register", "certificate_revoke",
-}
-
-
-@pytest.mark.parametrize("case", [
-    pytest.param(case, marks=pytest.mark.xfail(strict=True, reason="raw method signs the legacy form"))
-    if case in RAW_SIGNS_LEGACY else case
-    for case in CASES
-])
+@pytest.mark.parametrize("case", CASES)
 async def test_typed_and_raw_clients_produce_the_same_wire(
     case, controller_app, monkeypatch
 ):

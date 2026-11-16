@@ -41,7 +41,6 @@ async def _release(kind: str, database_url: str):
             yield registry
     else:
         async with running_registry(database_url) as registry:
-            registry.app.state.awid_public_origins = (REGISTRY_URL,)
             yield registry
 
 
@@ -325,3 +324,119 @@ async def _check(test_db_factory, release: str, operation: Operation, *, changed
 async def test_typed_controller_write_covers_its_bytes(test_db_factory, release, operation, changed):
     await _check(test_db_factory, release, TYPED[operation], changed=changed)
 
+
+# --- the RegistryClient methods (Cloud signs through these) -----------------
+
+
+async def _method_namespace_register(world, client):
+    return await client.register_namespace(world.domain, _did(world.namespace_key), bytes(world.namespace_key))
+
+
+async def _method_namespace_register_under_parent(world, client):
+    await world.namespace()
+    child_key = SigningKey.generate()
+    return await client.register_namespace(
+        f"sub.{world.domain}", _did(child_key), bytes(child_key), parent_signing_key=bytes(world.namespace_key),
+    )
+
+
+async def _method_namespace_update(world, client):
+    await world.namespace()
+    return await client.update_namespace_delivery_origin(
+        world.domain, bytes(world.namespace_key), "https://delivery.example.test",
+    )
+
+
+async def _method_namespace_reset(world, client):
+    await world.namespace()
+    new_key = SigningKey.generate()
+    world.dns[world.domain] = _did(new_key)
+    return await client.rotate_namespace_controller(world.domain, _did(new_key), bytes(new_key))
+
+
+async def _method_namespace_reset_under_parent(world, client):
+    await world.namespace()
+    child, child_key, new_key = f"sub.{world.domain}", SigningKey.generate(), SigningKey.generate()
+    await world.client().register_namespace(
+        child, _did(child_key), bytes(child_key), parent_signing_key=bytes(world.namespace_key),
+    )
+    return await client.rotate_namespace_controller(
+        child, _did(new_key), bytes(new_key), parent_signing_key=bytes(world.namespace_key),
+    )
+
+
+async def _method_team_register(world, client):
+    await world.namespace()
+    return await client.register_team(
+        domain=world.domain, name=world.team, display_name="Team", team_did_key=_did(world.team_key),
+        visibility="public", namespace_controller_signing_key=bytes(world.namespace_key),
+    )
+
+
+async def _method_team_visibility(world, client):
+    await world.with_team()
+    return await client.set_team_visibility(world.domain, world.team, "private", bytes(world.team_key))
+
+
+async def _method_team_delete(world, client):
+    await world.with_team()
+    return await client.delete_team(world.domain, world.team, bytes(world.namespace_key))
+
+
+async def _method_certificate_register(world, client):
+    await world.with_team()
+    return await world._register_certificate(client, str(uuid4()))
+
+
+async def _method_certificate_revoke(world, client):
+    certificate_id = await world.with_certificate()
+    return await client.revoke_team_certificate(
+        world.domain, world.team, team_controller_signing_key=bytes(world.team_key), certificate_id=certificate_id,
+    )
+
+
+async def _method_address_register(world, client):
+    await world.namespace()
+    did_aw, current = await world.identity()
+    return await client.register_address(world.domain, "alice", did_aw, bytes(world.namespace_key), current)
+
+
+async def _method_address_update(world, client):
+    name = await world.with_address()
+    return await client.update_address(world.domain, name, bytes(world.namespace_key))
+
+
+async def _method_address_delete(world, client):
+    name = await world.with_address()
+    return await client.delete_address(world.domain, name, bytes(world.namespace_key))
+
+
+async def _method_address_reassign(world, client):
+    name = await world.with_address()
+    did_aw, _ = await world.identity()
+    return await client.reassign_address(world.domain, name, did_aw, bytes(world.namespace_key))
+
+
+METHODS: dict[str, Operation] = {
+    "register_namespace": _method_namespace_register,
+    "register_namespace_under_parent": _method_namespace_register_under_parent,
+    "update_namespace_delivery_origin": _method_namespace_update,
+    "rotate_namespace_controller": _method_namespace_reset,
+    "rotate_namespace_controller_under_parent": _method_namespace_reset_under_parent,
+    "register_team": _method_team_register,
+    "set_team_visibility": _method_team_visibility,
+    "delete_team": _method_team_delete,
+    "register_team_certificate": _method_certificate_register,
+    "revoke_team_certificate": _method_certificate_revoke,
+    "register_address": _method_address_register,
+    "update_address": _method_address_update,
+    "delete_address": _method_address_delete,
+    "reassign_address": _method_address_reassign,
+}
+
+
+@pytest.mark.parametrize("release", RELEASES)
+@pytest.mark.parametrize("operation", sorted(METHODS))
+@pytest.mark.parametrize("changed", [False, True], ids=["as_signed", "changed_after_signing"])
+async def test_registry_client_controller_write_covers_its_bytes(test_db_factory, release, operation, changed):
+    await _check(test_db_factory, release, METHODS[operation], changed=changed)
