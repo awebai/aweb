@@ -1031,6 +1031,10 @@ async def driver():
                 assert confirmation["approver"] == subject.identity
             # The first invocation is deliberately plain: no --registry, --json,
             # identity, inherited config or credential. JSON is a second projection.
+            # This fixture's registry resolves to a private Docker address. Name
+            # that operator-selected origin explicitly through the normal private
+            # registry setting; DNS still selects/checks its authority. Production
+            # public DNS registries need no such transport allowance.
             script = (
                 "export HOME=/tmp/outsider SSL_CERT_FILE=/public/ca.crt; "
                 "mkdir /tmp/empty; cd /tmp/empty; "
@@ -1054,6 +1058,8 @@ async def driver():
                 "--dns",
                 DNS,
                 "--read-only",
+                "--env",
+                "AWID_REGISTRY_URL=" + REGISTRY,
                 "--tmpfs",
                 "/tmp",
                 "--mount",
