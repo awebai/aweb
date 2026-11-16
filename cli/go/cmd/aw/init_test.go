@@ -1051,7 +1051,7 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			if req.Token != "aw_inv_global" || req.Name != "alice" || req.Alias != "" || req.IdentityScope != awid.IdentityModeGlobal || req.StableID != stableID || req.DID != memberDID {
+			if (req.Token != "aw_inv_global" && req.Token != hostedJoinTokenForTest(t, "aw_inv_global", serverURL)) || req.Name != "alice" || req.Alias != "" || req.IdentityScope != awid.IdentityModeGlobal || req.StableID != stableID || req.DID != memberDID {
 				t.Fatalf("global accept req=%+v", req)
 			}
 			sawGlobalAccept = true

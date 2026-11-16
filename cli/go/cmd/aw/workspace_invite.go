@@ -70,11 +70,11 @@ func addWorktreeViaPrimaryInvite(
 }
 
 func createWorkspaceTeamInviteAt(workingDir, identityHome string) (workspaceTeamInvite, error) {
-	return createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, "")
+	return createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, "", awid.IdentityModeLocal)
 }
 
-func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID string, scopes ...string) (workspaceTeamInvite, error) {
-	localMember := len(scopes) == 0 || scopes[0] == awid.IdentityModeLocal
+func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID, scope string) (workspaceTeamInvite, error) {
+	localMember := scope == awid.IdentityModeLocal
 	workspace, teamState, rootDir, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome)
 	if err != nil {
 		return workspaceTeamInvite{}, err
