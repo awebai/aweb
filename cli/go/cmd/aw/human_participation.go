@@ -27,7 +27,7 @@ type humanParticipation struct {
 // Kept separate from resolveLocalSigningIdentity: arbitrary signing, blueprint
 // publishing and worker custody must never inherit human authority.
 func humanParticipationAllowed(cmd *cobra.Command) bool {
-	return cmd == initCmd || cmd == teamFetchCertCmd || cmd == mailSendCmd || cmd == mailInboxCmd || cmd == mailShowCmd || cmd == mailReplyCmd || (cmd == idRequestCmd && idRequestTeamAuth) ||
+	return cmd.Annotations[humanCommandAnnotation] != "" || cmd == initCmd || cmd == teamFetchCertCmd || cmd == mailSendCmd || cmd == mailInboxCmd || cmd == mailShowCmd || cmd == mailReplyCmd || (cmd == idRequestCmd && idRequestTeamAuth) ||
 		cmd == appCredentialRegisterCmd || cmd == appRoleDesignateCmd || cmd == appCredentialReplaceCmd
 }
 func humanSelectionRequested() bool { return humanFlag != "" || humanDomainFlag != "" }
@@ -35,7 +35,7 @@ func prepareHumanParticipation(cmd *cobra.Command) error {
 	if !humanParticipationAllowed(cmd) {
 		return usageError("--human is not supported for %s; use human mail or ordinary team-auth requests", cmd.CommandPath())
 	}
-	h, err := loadHumanParticipation(humanFlag, humanDomainFlag, awconfig.HumanKeychain{}, awid.TerminalPassphrasePrompt(), humanAtTerminal)
+	h, err := loadHumanParticipationState(humanFlag, humanDomainFlag, awconfig.HumanKeychain{}, awid.TerminalPassphrasePrompt(), humanAtTerminal, cmd.Annotations[humanCommandAnnotation] == "prepared")
 	if err != nil {
 		return err
 	}
@@ -43,6 +43,12 @@ func prepareHumanParticipation(cmd *cobra.Command) error {
 	return nil
 }
 func loadHumanParticipation(id, domain string, store awid.HumanKeyStore, prompt awid.PassphrasePrompt, terminal func() error) (*humanParticipation, error) {
+	return loadHumanParticipationState(id, domain, store, prompt, terminal, false)
+}
+
+// Only enrollment and certificate registration may select a prepared human.
+// The same terminal and encrypted-key signer are used before and after issuance.
+func loadHumanParticipationState(id, domain string, store awid.HumanKeyStore, prompt awid.PassphrasePrompt, terminal func() error, allowPrepared bool) (*humanParticipation, error) {
 	if strings.TrimSpace(id) == "" || strings.TrimSpace(domain) == "" {
 		return nil, usageError("--human and --human-domain are both required")
 	}
@@ -56,7 +62,7 @@ func loadHumanParticipation(id, domain string, store awid.HumanKeyStore, prompt 
 	if err != nil {
 		return nil, err
 	}
-	if rec == nil || rec.State != awconfig.HumanRegistered {
+	if rec == nil || (rec.State != awconfig.HumanRegistered && (!allowPrepared || (rec.State != awconfig.HumanPrepared && rec.State != awconfig.HumanDIDRegistered))) {
 		return nil, usageError("human %s is not registered on this device in %s", id, domain)
 	}
 	dir, err := awconfig.HumanRecordDir(domain, id)
@@ -67,20 +73,24 @@ func loadHumanParticipation(id, domain string, store awid.HumanKeyStore, prompt 
 	if err != nil {
 		return nil, err
 	}
-	if installed == nil {
+	if installed == nil && rec.State == awconfig.HumanRegistered {
 		return nil, usageError("selected human has no installed ID chain")
 	}
-	subject, err := installed.Subject(rec.DIDKey)
-	if err != nil || subject.ID != rec.StableID {
-		return nil, usageError("installed ID chain does not belong to selected human")
-	}
-	certificates := installed.Bundle["certificates"].([]any)
-	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-	if leaf["kind"] != "human" {
-		return nil, usageError("selected ID chain is not a human identity")
+	var chain map[string]any
+	if installed != nil {
+		subject, err := installed.Subject(rec.DIDKey)
+		if err != nil || subject.ID != rec.StableID {
+			return nil, usageError("installed ID chain does not belong to selected human")
+		}
+		certificates := installed.Bundle["certificates"].([]any)
+		leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+		if leaf["kind"] != "human" {
+			return nil, usageError("selected ID chain is not a human identity")
+		}
+		chain = installed.Bundle
 	}
 	n := 0
-	h := &humanParticipation{record: rec, dir: dir, chain: installed.Bundle}
+	h := &humanParticipation{record: rec, dir: dir, chain: chain}
 	sign := func(payload []byte, description string) (string, []byte, error) {
 		n++
 		return awid.HumanSigner(store, id, fmt.Sprintf("signature %d: %s", n, h.operation+"; "+description), prompt)(payload)

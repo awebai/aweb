@@ -160,10 +160,14 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 		return domainRegistryURL(authority, override)
 	}
 	if strings.HasPrefix(subject.ID, "did:aw:") {
-		// Its signed address selects the key registry independently of the
-		// presented chain; only the coherent key response names enrollment.
+		// An addressless proof supplies its domain through the certificate.
+		// DNS selects the registry; only its coherent key response names enrollment.
 		registryURL := strings.TrimSpace(opts.RegistryURL)
-		if domain, _, ok := strings.Cut(address, "/"); ok {
+		domain, err := exportedMessageKeyDomain(address, export.IDChain, subject)
+		if err != nil {
+			return messageVerificationFailure(subject.ID, "malformed_envelope", true)
+		}
+		if domain != "" {
 			var err error
 			registryURL, err = status.Route(ctx, domain)
 			if err != nil {
@@ -204,6 +208,25 @@ func verifyExportedMessage(ctx context.Context, raw []byte, opts whoOptions) (ou
 		return messageVerificationFailure(subject.ID, "evidence_unavailable", false)
 	}
 	return out
+}
+
+// Preserve signed-address discovery for messages. Addressless proof exports
+// discover through the presented certificate's domain, which the shared chain
+// checks require to be the same on every link. This is a DNS lookup hint, never
+// a registry URL or a trust anchor supplied by the export.
+func exportedMessageKeyDomain(address string, chain awid.ReceivedIDChain, subject awid.IDChainSubject) (string, error) {
+	if domain, _, ok := strings.Cut(address, "/"); ok && domain != "" {
+		return domain, nil
+	}
+	if chain == nil {
+		return "", nil
+	}
+	plan, err := awid.IDStatusRequest(chain, subject, "")
+	if err != nil {
+		return "", err
+	}
+	domain, _ := plan["domain"].(string)
+	return domain, nil
 }
 
 // Check original outer names before trusting encoding/json's last-wins result.
