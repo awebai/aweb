@@ -3,7 +3,6 @@ package awid
 import (
 	"context"
 	"crypto/ed25519"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
