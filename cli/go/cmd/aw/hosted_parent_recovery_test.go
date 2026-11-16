@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -10,6 +11,39 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestHostedExplicitParentSurvivesPreviewOutage(t *testing.T) {
+	wd, parent := t.TempDir(), t.TempDir()
+	previews := 0
+	service := newLocalHTTPServerHandlerWithURL(t, func(origin string, w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/spawn/invite-preview" {
+			t.Error("parent choice disappeared before submission")
+			http.Error(w, "unexpected submission", 500)
+			return
+		}
+		previews++
+		if previews == 1 {
+			http.Error(w, "preview unavailable", 503)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:example.com", "identity_scope": "unknown", "server_url": origin, "status": "active", "id_tree": nil})
+	})
+	opts := teamAcceptInviteOptions{Name: "child", Scope: "local", AwebURL: service.URL, ParentHome: parent}
+	want, err := normalizeInviteParentHome(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_explicit_retry", opts); err == nil {
+			t.Fatal("unavailable preview or unavailable explicit parent did not refuse")
+		}
+		state, err := loadHostedInviteCreation(filepath.Join(wd, ".aw", hostedInviteRecoveryFile))
+		if err != nil || state == nil || state.ParentHome != want || !state.MintedKey {
+			t.Fatalf("lost selected parent or key provenance: %+v %v", state, err)
+		}
+		opts.ParentHome = "" // A retry uses the retained selection.
+	}
+}
 
 func TestHostedParentSelectionIsFrozenBeforeSubmission(t *testing.T) {
 	for _, attempted := range []bool{false, true} {
