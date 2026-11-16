@@ -1160,7 +1160,7 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 	if err != nil {
 		return err
 	}
-	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeTeamInviteIDChild(rawToken, home.Root) {
+	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeTeamInviteIDChild(rawToken, home.Root) && !canResumeHostedInvite(rawToken, home.Root) {
 		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
 			return err
 		}
@@ -2115,7 +2115,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", invite.InviteID, err)
 	}
 
-	consumedInviteParent(token, opts.ParentHome)
+	consumedInviteParent(token, home.Root)
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			Status:   "accepted",
@@ -2313,6 +2313,10 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	if err != nil {
 		return nil, err
 	}
+	opts.ParentHome, err = creation.selectParent(opts.ParentHome)
+	if err != nil {
+		return nil, err
+	}
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
 	}
@@ -2322,6 +2326,9 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		// Never discard a retained answer or an earlier uncertain submission.
 		// Older records have no submission fact; their frozen proof can still
 		// be definitively refused locally, but a server answer is ambiguous.
+		if status, ok := awid.HTTPStatusCode(resultErr); submittedBefore && ok && status >= 400 && status < 500 && creation.ResponseJSON == "" {
+			resultErr = uncertainHostedInviteError(home.Root, creation.TeamID, resultErr)
+		}
 		localMismatch := awid.IDCertificateErrorCode(resultErr) == "human_mismatch"
 		if creation.ResponseJSON == "" && !submittedBefore && (knownUnsubmitted || localMismatch) {
 			resultErr = releaseRefusedHostedInvite(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root), resultErr)
@@ -2544,7 +2551,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", localLink.InviteID, err)
 		}
 	}
-	consumedInviteParent(token, opts.ParentHome)
+	consumedInviteParent(token, home.Root)
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			IDRegistration: registration,

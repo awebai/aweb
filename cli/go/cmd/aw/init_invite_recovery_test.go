@@ -59,8 +59,13 @@ func TestInitJoinFromExpiredRecovery(t *testing.T) {
 						t.Fatalf("no reconciliation exit %q: %v", text, err)
 					}
 				}
-			} else if !os.IsNotExist(statErr) {
-				t.Fatalf("expired unsubmitted record retained: %v", statErr)
+			} else {
+				if !os.IsNotExist(statErr) {
+					t.Fatalf("expired unsubmitted record retained: %v", statErr)
+				}
+				if !releasedInitTarget(wd, home) {
+					t.Fatal("released init cannot try a correct invite with its retained key")
+				}
 			}
 			after, _ := awid.LoadSigningKey(filepath.Join(home, "signing.key"))
 			if !bytes.Equal(after, key) {

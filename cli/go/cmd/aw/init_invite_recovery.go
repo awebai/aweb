@@ -62,7 +62,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 	_, homeErr := os.Stat(home.Root)
 	lock, err := awconfig.TryLockExclusive(path + ".lock")
 	if err != nil {
-		return errors.New("init join already in progress")
+		return fmt.Errorf("init join could not acquire its recovery lock: %w", err)
 	}
 	defer func() {
 		lock.Close()
@@ -92,8 +92,10 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 		}
 	} else {
 		// The lock/record alone grant no right to reuse another identity.
-		if err := ensureConnectTargetClean(wd); err != nil {
-			return err
+		if !releasedInitTarget(wd, home.Root) {
+			if err := ensureConnectTargetClean(wd); err != nil {
+				return err
+			}
 		}
 		invite, err := createWorkspaceTeamInviteForTeamAt(source, sourceHome, team)
 		if err != nil {
@@ -132,7 +134,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 			if err := discardHostedInviteAttempt(recoveryPath, hostedAcceptPendingMarkerPath(wd, home.Root)); err != nil {
 				return err
 			}
-			if err := removeInitInviteRecovery(path); err != nil {
+			if err := releaseInitInviteRecovery(path, wd, home.Root); err != nil {
 				return err
 			}
 			return errors.New("invite expired; pending selection released, retry init for a new invite")
@@ -150,7 +152,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 		return removeInitInviteRecovery(path)
 	}
 	if !uncertain && hostedInviteDefinitiveRefusal(err) {
-		return errors.Join(err, removeInitInviteRecovery(path))
+		return errors.Join(err, releaseInitInviteRecovery(path, wd, home.Root))
 	}
 	return err
 }
@@ -181,4 +183,34 @@ func hostedInviteDefinitiveRefusal(err error) bool {
 		return true
 	}
 	return false
+}
+
+// A definitively abandoned init retains only its generated identity, not its
+// operation selection. The existing private key marker permits a correct invite.
+func releaseInitInviteRecovery(path, wd, home string) error {
+	if _, err := os.Stat(filepath.Join(home, "signing.key")); err == nil {
+		if err := writeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(wd, home)); err != nil {
+			return err
+		}
+	}
+	return removeInitInviteRecovery(path)
+}
+
+func releasedInitTarget(wd, home string) bool {
+	if _, err := os.Stat(filepath.Join(home, hostedInviteRecoveryFile)); !errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(home, "signing.key")); err != nil {
+		return false
+	}
+	if statHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(wd, home), filepath.Join(home, "signing.key")) != nil {
+		return false
+	}
+	for _, name := range []string{"grant.yaml", "teams.yaml", "workspace.yaml"} {
+		if _, err := os.Stat(filepath.Join(home, name)); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	_, _, err := hostedAcceptSigningKeyAt(wd, home)
+	return err == nil
 }

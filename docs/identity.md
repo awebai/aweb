@@ -238,11 +238,35 @@ A definitive hosted human-condition refusal releases the pending join when no
 earlier submission is uncertain. The identity, key and chain remain available
 for a correct invite. An interrupted attempt or unavailable evidence keeps the
 original invite and selection for resumption.
-If a first submission timed out and its retry then returned 409, first confirm
-with the hosting service that the first attempt did not apply, then, with no
-join running, remove only `<identity-home>/hosted-invite-creation.json` (normally
-`.aw/hosted-invite-creation.json`) to abandon that pending attempt and use a
-correct invite.
+If a first submission timed out and its retry then returned 409, or an invite
+expired after a possibly applied submission, the earlier attempt may have
+succeeded. State stays in `<identity-home>/hosted-invite-creation.json`, with
+`init-invite.json` alongside it for `init --join-from`. Check with the hosting
+service whether this agent is a member. If it is, obtain its certificate ID and
+run `aw --identity-home <identity-home> id team fetch-cert --namespace <domain>
+--team <team> --cert-id <certificate-id>`, then retry init. If it is not, with no
+join running remove `hosted-invite-creation.json` and, if present,
+`init-invite.json` from that home before using a correct invite. Keep the key
+and chain.
+
+`init --join-from` retains its issued invite privately (0600) in
+`<identity-home>/init-invite.json`. Repeat the same command after interruption:
+it reuses that invite and child key and resumes connection if membership is
+already installed. A changed source, team, name or scope refuses. Successful
+completion removes the record; an expired unsubmitted invite releases it so
+init can issue a new invite using the retained identity.
+
+An explicit `--parent` is retained in the child home with its exchange. A retry
+may omit it; choosing a different creator refuses. It may be added only before
+any submission could have reached the service. Each child of a multi-use invite
+has its own exchange, and import retries reuse the parent's recorded issuance.
+
+`aw team admin add --global` uses a registered creator's existing parent exchange
+and registers the new child's ID certificate before membership. A local creator
+with an installed chain cannot parent a registered child and refuses before
+creating identity or address state; the controller can instead use the
+unconditional `aw id team add-member` path. Chainless creators keep the existing
+behaviour.
 
 For teams whose key is on the host, this changes `--member-global` invites:
 when their issuer has a verified human, they previously carried no human
