@@ -37,6 +37,9 @@ var rootCmd = &cobra.Command{
 		if _, independent := offlineCommands[cmd]; independent {
 			return nil // Export verification never selects or unlocks an acting human.
 		}
+		if cmd.Annotations[humanCommandAnnotation] != "" && !humanSelectionRequested() {
+			return usageError("select your human key with --human ID --human-domain DOMAIN; prepare it with aw id human init")
+		}
 		if humanSelectionRequested() {
 			return prepareHumanParticipation(cmd)
 		}
