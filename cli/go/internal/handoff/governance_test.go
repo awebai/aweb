@@ -147,7 +147,7 @@ func (s *signerStub) answer() string {
 	case "policy-extra":
 		policy["extra"] = true
 	}
-	request["artifact"] = artifact
+	request["artifact"] = freezeTestArtifactIntent(artifact, s.prepared["audience"], "/.well-known/aweb-owner-act", []string{"/issued_at"}, "/expires_at")
 	switch s.tamper {
 	case "intent":
 		request["subject"] = map[string]any{"app_id": "other"}
@@ -229,7 +229,7 @@ var (
 
 func revokeIntent() map[string]any {
 	return map[string]any{
-		"operation": "human-role.revoke", "variant": "default",
+		"operation": "human-role.revoke", "variant": "default", "approval_format": "intent_v1",
 		"scope": map[string]any{"v": 1, "kind": "protected_key", "service_id": "svc",
 			"authority": map[string]any{"kind": "team_controller", "id": "h:example.com", "domain": "example.com"}},
 		"audience": "https://console.example",
@@ -375,7 +375,7 @@ func TestResumeSendsTheSavedBytesUnchanged(t *testing.T) {
 	intent["operation_id"] = "14141414-1414-4414-8414-141414141414"
 	intent["redirect_uri"] = "http://127.0.0.1:1/callback"
 	// Key order and spacing no Go encoder writes: only the saved bytes match.
-	saved := []byte(" {\"subject\": " + mustJSON(intent["subject"]) + ",\"operation\":\"human-role.revoke\",\"variant\":\"default\"," +
+	saved := []byte(" {\"subject\": " + mustJSON(intent["subject"]) + ",\"operation\":\"human-role.revoke\",\"variant\":\"default\",\"approval_format\":\"intent_v1\"," +
 		"\"scope\":" + mustJSON(intent["scope"]) + ",\"audience\":\"https://console.example\"," +
 		"\"operation_id\":\"14141414-1414-4414-8414-141414141414\",\"redirect_uri\":\"http://127.0.0.1:1/callback\"}")
 	if _, err := Resume(context.Background(), stub.options(&opened), saved); err != nil {
@@ -599,5 +599,135 @@ func TestAnUnknownOutcomeIsReportedWithItsOperationID(t *testing.T) {
 func TestTheFingerprintIsTheDigestsFirstSixteenHexInFours(t *testing.T) {
 	if got := Fingerprint(testDigest); got != "0123 4567 89ab cdef" {
 		t.Fatalf("fingerprint %q", got)
+	}
+}
+
+// The prepare response distinguishes an unavailable operation from an origin
+// without a protected route. It never invents this code for a detail-less 404.
+func TestAnUnservedPrepareKeepsItsCodeAndExplainsTheServiceUpgrade(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		code    string
+		upgrade bool
+	}{
+		{"operation", 400, `{"detail":"operation_not_served"}`, "operation_not_served", true},
+		{"wrong-origin", 404, "not found", "handoff_http_404", false},
+		{"scope-denial", 403, `{"detail":"scope_refused"}`, "scope_refused", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				if r.Method != http.MethodPost || r.URL.Path != "/protected-operations" {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			saved := 0
+			opts := GovernanceOptions{Request: server.URL, Human: "https://human.example", NoWait: true, Notify: io.Discard,
+				Sign: func(ctx context.Context, method string, target *url.URL, body []byte) (*http.Response, error) {
+					req, err := http.NewRequestWithContext(ctx, method, target.String(), bytes.NewReader(body))
+					if err != nil {
+						return nil, err
+					}
+					return http.DefaultClient.Do(req)
+				},
+				Open:   func(string) error { t.Error("unserved operation opened an approval page"); return nil },
+				Save:   func(string, []byte) error { saved++; return nil },
+				Forget: func(string) error { t.Error("unserved operation forgot its saved request"); return nil },
+			}
+			receipt, err := Approve(context.Background(), opts, "44444444-4444-4444-8444-444444444444", revokeIntent())
+			if receipt != nil || ErrorCode(err) != tc.code || calls.Load() != 1 || saved != 1 {
+				t.Fatalf("receipt=%#v error=%v requests=%d saved=%d", receipt, err, calls.Load(), saved)
+			}
+			if strings.Contains(err.Error(), "upgrade the service") != tc.upgrade {
+				t.Fatalf("wrong user guidance: %v", err)
+			}
+		})
+	}
+}
+
+func TestAnUndefinedOperationCannotBorrowTheOwnerActPreparedShape(t *testing.T) {
+	stub := newSignerStub(t, `{"state":"committed","result":{"signing":"x","signature":"y"}}`)
+	intent := revokeIntent()
+	intent["operation"] = "operation.without.a.pinned.definition"
+	var opened string
+	_, err := Approve(context.Background(), stub.options(&opened), "11111111-1111-4111-8111-111111111111", intent)
+	if ErrorCode(err) != "operation_mismatch" || opened != "" {
+		t.Fatalf("undefined prepared operation accepted: opened=%q err=%v", opened, err)
+	}
+}
+
+// The terminal leads with what happens, keeps the fingerprint in sight and the
+// full digest in --json (Juan 2026-11-13, via coordinator). It never claims a
+// notice was mailed: the prepare answer carries no evidence of that, and a
+// service that does not mail still needs the approver to have a page to open.
+// The page is the public handoff locator, not the approver's personal link.
+func TestAnApprovalNamesThePageAndOnlyTheFingerprint(t *testing.T) {
+	stub := newSignerStub(t, pendingReceipt, committedReceipt)
+	var opened string
+	var notified bytes.Buffer
+	opts := stub.options(&opened)
+	opts.Notify = &notified
+	var presented *Prepared
+	opts.OnPresented = func(prepared *Prepared, _ string) { presented = prepared }
+	if _, err := Approve(context.Background(), opts, "11111111-1111-4111-8111-111111111111", revokeIntent()); err != nil {
+		t.Fatal(err)
+	}
+	text := notified.String()
+	for _, want := range []string{"expires at", "details: operation 11111111-1111-4111-8111-111111111111",
+		"fingerprint " + Fingerprint(presented.Digest), stub.server.URL + "/human/handoff/h1"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%q lacks %q", text, want)
+		}
+	}
+	for _, unwanted := range []string{presented.Digest, "emailed"} {
+		if strings.Contains(text, unwanted) {
+			t.Errorf("%q shows %q", text, unwanted)
+		}
+	}
+}
+
+// expiredApproval reruns a saved approval whose operation has already
+// expired, recording what it forgets and opens.
+func expiredApproval(t *testing.T, receipt string) (*Receipt, error, string, []string, *signerStub) {
+	t.Helper()
+	stub := newSignerStub(t, receipt)
+	stub.expiresIn = -time.Minute
+	var opened string
+	var forgotten []string
+	opts := stub.options(&opened)
+	opts.Forget = func(id string) error { forgotten = append(forgotten, id); return nil }
+	got, err := Approve(context.Background(), opts, "11111111-1111-4111-8111-111111111111", revokeIntent())
+	return got, err, opened, forgotten, stub
+}
+
+func TestAnExpiredApprovalWhoseResultCommittedIsTakenWithoutAPage(t *testing.T) {
+	receipt, err, opened, forgotten, stub := expiredApproval(t, committedReceipt)
+	if err != nil || receipt.State != "committed" || opened != "" || stub.reads != 1 {
+		t.Fatalf("%+v %v, opened %q, %d reads", receipt, err, opened, stub.reads)
+	}
+	if len(forgotten) != 1 {
+		t.Fatalf("forgotten %v", forgotten)
+	}
+}
+
+func TestAnExpiredUndecidedApprovalIsSettledAndForgotten(t *testing.T) {
+	receipt, err, opened, forgotten, _ := expiredApproval(t, `{"state":"refused","code":"operation_expired"}`)
+	if ErrorCode(err) != "operation_expired" || receipt == nil || receipt.State != "refused" || opened != "" || len(forgotten) != 1 {
+		t.Fatalf("%+v %v, opened %q, forgotten %v", receipt, err, opened, forgotten)
+	}
+}
+
+// The service's own receipt, not this machine's clock, says the operation is
+// still open: it is not settled, and its id is kept for the next run.
+func TestAnApprovalTheServiceStillHoldsPendingIsKept(t *testing.T) {
+	_, err, _, forgotten, _ := expiredApproval(t, pendingReceipt)
+	if err == nil || len(forgotten) != 0 {
+		t.Fatalf("%v, forgotten %v", err, forgotten)
 	}
 }

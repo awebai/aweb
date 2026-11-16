@@ -13,6 +13,7 @@ from uuid import UUID
 
 import asyncpg.exceptions
 from fastapi import HTTPException
+from aweb.identity_address import require_address_evidence
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.agent_wake import agent_wake_scope
@@ -623,6 +624,7 @@ def _actor_did(auth: MessagingAuth) -> str:
 
 
 def _actor_alias(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str:
+    require_address_evidence(auth)
     return (
         (auth.alias or "").strip()
         or (auth.address or "").strip()

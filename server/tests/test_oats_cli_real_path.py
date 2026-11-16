@@ -15,7 +15,7 @@ Native bodies require the coordinator's VM placement. No local DB fallback.
 import asyncio
 import json
 import os
-import re
+import shlex
 import socket
 import sys
 from contextlib import asynccontextmanager
@@ -93,8 +93,13 @@ def _root_home(tmp_path, w):
     _pem(home / "signing.key", "ED25519 PRIVATE KEY", bytes(w.root))
     (home / "identity.yaml").write_text(json.dumps({"did": did(w.root), "stable_id": w.root_id, "custody": "self",
         "identity_scope": "global"}))
+    # aw's only PATH: a browser opener (open on macOS, xdg-open elsewhere)
+    # that records the page aw asks it to show, and nothing else.
     no_opener = tmp_path / "no-browser-opener"
     no_opener.mkdir()
+    for opener in ("open", "xdg-open"):
+        (no_opener / opener).write_text(f"#!/bin/sh\nprintf '%s\\n' \"$1\" >> {shlex.quote(str(_opened_pages(root)))}\n")
+        (no_opener / opener).chmod(0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith(("AW", "XDG_"))}
     env.update(HOME=str(root), PWD=str(root), XDG_CONFIG_HOME=str(root / ".config"), XDG_STATE_HOME=str(root / ".state"),
         AW_NO_UPDATE_CHECK="1", PATH=str(no_opener), AWID_REGISTRY_URL=w.registry_origin)
@@ -128,18 +133,34 @@ async def _aw(home, *args, timeout=120, grace=5.0):
     return proc.returncode, json.loads(out or b"{}"), err.decode()
 
 
+def _opened_pages(root):
+    """The file the root home's browser opener records each page in."""
+    return Path(root).parent / "opened-pages"
+
+
 async def _endorse(a, profile, home, operation_id, *, page_timeout=60, timeout=120):
-    """Run aw id endorse, approving its exact operation once aw shows its page."""
+    """Run aw id endorse, approving its exact operation once aw has shown its
+    page, which is when it hands the page to the browser opener. An aw that
+    ends first is reported with its progress."""
     args = ("id", "endorse", "--protected-profile", str(profile), "--human", a.human.context.authority_id if a else "",
         "--team", TEAM, "--deployment-label", "oats-root", "--operation-id", operation_id)
+    pages = _opened_pages(home[0])
+    pages.unlink(missing_ok=True)
     async with _running(home, *args) as proc:
         progress = []
-        while True:
-            line = (await asyncio.wait_for(proc.stderr.readline(), page_timeout)).decode()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + page_timeout
+        while not (pages.exists() and pages.read_text().strip()):
+            if loop.time() >= deadline:
+                raise TimeoutError
+            try:
+                line = (await asyncio.wait_for(proc.stderr.readline(), min(0.2, deadline - loop.time()))).decode()
+            except TimeoutError:
+                continue
             assert line, "".join(progress)
             progress.append(line)
-            if re.search(r"Approve it on this page: \S+/handoff/\S+", line):
-                break
+        opened = pages.read_text().split()
+        assert len(opened) == 1 and opened[0].startswith(f"{a.w.human_origin}/handoff/"), opened
         options = await a.human.signer.approval_options(operation_id, human=a.actor)
         approved = await a.human.signer.execute(operation_id, a.device.get(dict(options)), human=a.actor)
         assert approved.state == "committed"
@@ -405,3 +426,69 @@ async def test_the_endorsed_root_removes_the_agent_it_admitted_once_under_its_ow
         assert await w.db.fetch_value(
             "SELECT count(*) FROM {{tables.protected_local_audit}} WHERE kind='protected_operation_signed' AND subject=$1",
             removal) == 1
+
+
+async def _operation_row(w, operation_id):
+    """The service's whole stored record of an operation, as one value."""
+    return await w.db.fetch_value(
+        "SELECT to_jsonb(o)::text FROM {{tables.protected_signer_operations}} o WHERE operation_id=$1", operation_id)
+
+
+def _saved_requests(home):
+    """Every request aw keeps in the user's own aw state (HOME/.config/aw/governance), by file, with its bytes."""
+    return {path.name: path.read_bytes() for path in (home[0] / ".config" / "aw" / "governance").glob("*.json")}
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+async def test_an_operation_status_reads_the_receipt_without_performing_or_settling_anything(test_db_factory, tmp_path):
+    async with oats_world(test_db_factory, tmp_path) as (a, profile, home):
+        w = a.w
+        operation = str(uuid4())
+        status, pending, progress = await _aw(home, "id", "endorse", "--protected-profile", str(profile), "--human",
+            a.human.context.authority_id, "--team", TEAM, "--deployment-label", "oats-root", "--operation-id", operation,
+            "--no-wait", "--no-browser")
+        assert status == 0 and pending["state"] == "pending", progress
+        saved, row = _saved_requests(home), await _operation_row(w, operation)
+        audit = await w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}}")
+        assert saved and row
+
+        # Waiting for its human: the read reports that, and changes nothing.
+        read = ("id", "operation", "status", "--protected-profile", str(profile), "--operation-id", operation)
+        status, answer, progress = await _aw(home, *read)
+        assert status == 0, progress
+        assert answer == {"operation_id": operation, "state": "pending", "reason": "awaiting_human", "expires_at": answer["expires_at"]}
+        assert await _operation_row(w, operation) == row and _saved_requests(home) == saved
+        assert await w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}}") == audit
+
+        # Approved on the service: the read reports the committed receipt as
+        # served. It registers nothing and keeps aw's saved request, which the
+        # endorse command itself still finishes.
+        options = await a.human.signer.approval_options(operation, human=a.actor)
+        assert (await a.human.signer.execute(operation, a.device.get(dict(options)), human=a.actor)).state == "committed"
+        row, audit = await _operation_row(w, operation), await w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}}")
+        status, answer, progress = await _aw(home, *read)
+        assert status == 0, progress
+        assert answer["state"] == "committed" and answer["result_verification"] == "not_performed" and answer["result"]
+        assert await _operation_row(w, operation) == row and _saved_requests(home) == saved
+        assert await w.db.fetch_value("SELECT count(*) FROM {{tables.protected_local_audit}}") == audit
+        status, again, progress = await _aw(home, *read)
+        assert status == 0 and again == answer, progress
+        status, endorsed, progress = await _aw(home, "id", "endorse", "--protected-profile", str(profile), "--human",
+            a.human.context.authority_id, "--team", TEAM, "--deployment-label", "oats-root", "--operation-id", operation,
+            "--no-wait", "--no-browser")
+        assert status == 0 and endorsed["state"] == "committed" and endorsed["registered"] is True, progress
+
+        # An id the service never received: none under the profile's one
+        # binding. With two bindings and nothing saved, aw cannot tell which
+        # scope to read under and sends nothing.
+        unseen = str(uuid4())
+        status, refused, progress = await _aw(home, "id", "operation", "status", "--protected-profile", str(profile), "--operation-id", unseen)
+        assert status != 0 and refused["error"]["code"] == "profile_scope_ambiguous", progress
+        fields = json.loads(profile.read_text())
+        for binding in fields["bindings"]:
+            single = tmp_path / "single-binding-profile.json"
+            single.write_text(json.dumps({**fields, "bindings": [binding]}))
+            status, answer, progress = await _aw(home, "id", "operation", "status", "--protected-profile", str(single), "--operation-id", unseen)
+            assert status == 0 and answer == {"operation_id": unseen, "state": "none"}, progress
+        assert await _operation_row(w, unseen) is None

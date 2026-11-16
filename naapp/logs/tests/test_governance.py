@@ -127,7 +127,6 @@ async def test_a_shortened_retention_is_recorded_and_its_purges_name_that_record
     assert await apply_retention(world.db, world.purges, now=NOW, logs_origin=LOGS) == 1
     assert await purged(world) == {1: f"logs.retention.set:{event_id}", 2: None}
 
-
 async def test_keeping_events_longer_is_a_widening_act_that_needs_a_target(world: World):
     await set_retention(world, "all", 30)
     world.registered[0] = False

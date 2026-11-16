@@ -71,6 +71,20 @@ is the `x-env` of that input in the schema, so the mapping is written once.
   registry) at the addresses they resolve to when the deployment starts, and
   denies PostgreSQL. Agents are not admitted until the TLS ingress is shown
   to refuse the signer's request SNI carrying its human Host.
+  `team.registryRoute` says where the registry runs. With `external`, the
+  default, it is the registry's operator's, such as the public registry:
+  its route gets a positive control only, and a registry service or one of
+  the deployment's own addresses serving it is refused. With `local`, it is
+  a `registry` service of this deployment, reached only at one of
+  `egress.privateIngressAddresses`, with its own log as witness. A
+  deployment that runs its own registry sets:
+
+  ```yaml
+  team:
+    id: team:example.com
+    registryUrl: https://registry.example.com
+    registryRoute: local
+  ```
 - **One PostgreSQL server, one database and one role per component.**
   `postgres.bundled: true` runs one and creates them at first start; with an
   operator's own server the operator creates them. The bundled server

@@ -16,8 +16,9 @@ import (
 // it is decoded.
 const MaxTeamCertificateHeaderBytes = 8192
 
-// TeamCertificateReasons are why CheckTeamCertificate refuses a certificate.
-// Each is a fault of the certificate presented.
+// TeamCertificateReasons is the shared certificate-verification refusal catalog,
+// including exact registered-artifact binding checked by protected consumers.
+// CheckTeamCertificate checks the primitive facts its caller supplies.
 var TeamCertificateReasons = []string{
 	"malformed",
 	"unsupported_version",
@@ -26,6 +27,7 @@ var TeamCertificateReasons = []string{
 	"bad_signature",
 	"revoked",
 	"unregistered",
+	"certificate_binding_mismatch",
 }
 
 // teamCertificateSignature is a signature as every issuer writes it: standard

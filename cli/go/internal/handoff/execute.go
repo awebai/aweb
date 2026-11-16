@@ -39,6 +39,10 @@ func Execute(ctx context.Context, opts GovernanceOptions, raw []byte) (*Receipt,
 	if err != nil {
 		return nil, nil, err
 	}
+	// A rerun after expiry settles by the receipt; nothing is executed.
+	if receipt, err, handled := reconcileExpired(ctx, opts, prepared); handled {
+		return receipt, prepared, err
+	}
 	// Nothing about this operation is sent after it expires.
 	if prepared.ExpiresAt.Before(until) {
 		until = prepared.ExpiresAt

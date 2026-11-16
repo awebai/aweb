@@ -102,6 +102,7 @@ async def test_health_answers_503_and_hides_backend_exception_details(
     assert response.status_code == 503
     payload = response.json()
     assert payload["status"] == "unhealthy"
+    assert "capabilities" not in payload
     assert payload["checks"]["redis"] == ("error" if redis_fails else "ok")
     assert payload["checks"]["database"] == ("error" if database_fails else "ok")
     assert "secret-host" not in response.text

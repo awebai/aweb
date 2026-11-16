@@ -1,6 +1,7 @@
 # Owned protected-host service body. The deployment layer adds the image,
 # read-only secret/public-config mounts, networks, published ports and startup
-# dependencies. Build the existing server image with AWEB_EXTRA=protected.
+# dependencies. Its image is the release's ghcr.io/awebai/aweb-protected, the
+# server image built with AWEB_EXTRA=protected.
 # Secret paths follow deploy/team/descriptors/signer.md; the controller is a
 # real uid1001-owned private-volume file, never a projected Secret symlink.
 services:

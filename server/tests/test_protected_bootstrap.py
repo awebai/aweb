@@ -148,3 +148,24 @@ def test_operator_error_never_echoes_private_exception(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert "SYNTH_PASSWORD" not in captured.out + captured.err
     assert "protected_operator_failed" in captured.out
+
+
+def test_operator_setup_flags_name_every_input_with_the_documented_defaults(tmp_path):
+    from aweb.protected_signing.operator import parser, setup_inputs
+
+    args = parser().parse_args([
+        "setup", "--config-dir", str(tmp_path / "signer"), "--team", "engineering:customer.example",
+        "--human", "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "--requester", "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8x",
+        "--contact", "operator@customer.example", "--human-origin", "https://human.customer.example",
+        "--request-origin", "https://signer.customer.example", "--registry-origin", "https://registry.customer.example",
+        "--controller-pem", str(tmp_path / "team.pem"), "--member-pem", str(tmp_path / "member.pem"),
+        "--max-active", "5", "--max-per-window", "10",
+    ])
+    inputs = setup_inputs(args)
+    assert inputs.service_id == "human.customer.example"
+    assert inputs.human_domain == "customer.example"
+    assert inputs.rate_window_seconds == 3600
+    assert inputs.subject_kinds == ("local_agent", "registered_agent")
+    assert inputs.confirm_pins is None
+    assert inputs.config_dir == tmp_path / "signer"
+    assert "setup" in parser().format_help()

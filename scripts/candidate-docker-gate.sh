@@ -254,8 +254,14 @@ if [[ -n "${USER_PATHS_LATEST_METADATA:-}" ]]; then
     || refuse "released aw metadata changed after the ledger lookup"
 fi
 checkout="$work/aweb"
-git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
-git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
+# Tracked source is also mounted into services running as other UIDs (notably
+# Library's PostgreSQL initdb). Materialize its Git modes independently of the
+# operator's private umask; keep the work parent and later runtime files private.
+(
+  umask 0022
+  git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
+  git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
+)
 git -C "$checkout" remote set-url origin "$checkout"
 [[ "$(git -C "$checkout" rev-parse HEAD)" == "$SOURCE_SHA" ]] || refuse "clone selected the wrong SHA"
 git -C "$checkout" diff --quiet && git -C "$checkout" diff --cached --quiet \

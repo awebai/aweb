@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from uuid import uuid4
 import base64
 import hashlib
 import json
@@ -300,7 +301,7 @@ async def test_answer_already_expired_on_arrival_is_unavailable(installed):
         await source.status_for(TEAM)
 
 
-async def test_b1_maps_missing_to_403_and_unavailable_to_503(installed):
+async def test_b1_maps_missing_to_403_and_unavailable_to_503(installed, team_controller):
     stack, source, clock, _ = installed
 
     async def receive():
@@ -317,14 +318,26 @@ async def test_b1_maps_missing_to_403_and_unavailable_to_503(installed):
         },
         receive=receive,
     )
+    # This is an authenticated member context, so its certificate ID must
+    # resolve through the directory's negotiated public status observation.
+    from test_team_auth_deps import _make_certificate, _encode_certificate
+    member = SigningKey.generate()
+    member_did = did_from_public_key(bytes(member.verify_key))
+    controller_did = did_from_public_key(bytes(team_controller.verify_key))
+    certificate = _make_certificate(
+        bytes(team_controller), controller_did, member_did,
+        team_id=TEAM, alias="member", certificate_id=str(uuid4()),
+    )
+    await stack.awid_db.execute(
+        "INSERT INTO {{tables.team_certificates}} "
+        "(team_uuid,certificate_id,member_did_key,alias,identity_scope,certificate) "
+        "SELECT team_uuid,$1,$2,'member','global',$3 FROM {{tables.teams}} "
+        "WHERE domain='grants.example' AND name='backend'",
+        certificate["certificate_id"], member_did, _encode_certificate(certificate),
+    )
     principal = Principal(
-        team_id=TEAM,
-        did_key="unused",
-        did_aw=None,
-        address=None,
-        alias="member",
-        certificate_id="unused",
-        team_did_key="unused",
+        team_id=TEAM, did_key=member_did, did_aw=None, address=None, alias="member",
+        certificate_id=certificate["certificate_id"], team_did_key=controller_did,
     )
     manifest = load_manifest(
         json.dumps({

@@ -331,6 +331,9 @@ async def test_get_messaging_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch
 
 @pytest.mark.asyncio
 async def test_get_messaging_auth_enriches_identity_auth_from_agent_row(aweb_cloud_db, monkeypatch):
+    from unittest.mock import AsyncMock
+    from team_facts_fixtures import legacy_team
+
     db = aweb_cloud_db.aweb_db
     agent_id = uuid.uuid4()
 
@@ -355,8 +358,10 @@ async def test_get_messaging_auth_enriches_identity_auth_from_agent_row(aweb_clo
 
     monkeypatch.setattr(_identity_auth_mod, "resolve_identity_auth", _fake_resolve_identity_auth)
 
+    request = _request_with_headers({"Authorization": "DIDKey did:key:z6MkGsk signature"})
+    request.app.state.awid_registry_client = SimpleNamespace(get_team_fresh=AsyncMock(side_effect=legacy_team))
     auth = await get_messaging_auth(
-        _request_with_headers({"Authorization": "DIDKey did:key:z6MkGsk signature"}),
+        request,
         db,
     )
 

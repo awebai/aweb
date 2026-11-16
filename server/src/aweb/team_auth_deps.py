@@ -8,7 +8,7 @@ a TeamIdentity from the request's certificate headers.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
@@ -38,6 +38,7 @@ from aweb.identity_binding import (
     verify_identity_binding,
 )
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
+from aweb.identity_address import AddressResolution
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_key_pins import pinned_team_key_for_request
 from aweb.team_auth_envelope import team_auth_signature_payload
@@ -72,6 +73,7 @@ class TeamIdentity:
     identity_scope: str
     certificate_id: str
     grant: GrantContext | None = None
+    address_resolution: AddressResolution = field(default_factory=AddressResolution)
 
     @property
     def lifetime(self) -> str:

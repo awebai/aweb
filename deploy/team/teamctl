@@ -285,27 +285,155 @@ start_egress() {
   fi
 }
 
+# The time now, UTC, to the microsecond (date's %N is not portable).
+utc_now() {
+  python_in_server -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))'
+}
+
+# Stops and reaps a follower this function started; nothing else.
+stop_follower() {
+  kill "$1" 2>/dev/null || true
+  wait "$1" 2>/dev/null || true
+}
+
+# Whether the follower is still this capture: running (not exited or a
+# zombie) and still the command that was started.
+follower_live() {
+  local pid="$1" id="$2" state command
+  state="$(ps -o stat= -p "$pid" 2>/dev/null)" || return 1
+  command="$(ps -o command= -p "$pid" 2>/dev/null)" || return 1
+  [[ -n "$state" && "$state" != Z* && "$command" == *"logs --timestamps --follow $id"* ]]
+}
+
+# With TEAM_DEPLOYMENT_EGRESS_LOG (an absolute path not yet there), egress's
+# own log (both streams, Docker timestamps, kept verbatim) is followed into
+# that file from once egress is healthy, before any probe or the agent, so no
+# lookup or connection of the agent can precede the capture. The follower is
+# left running for the caller, which owns it by the PID in the receipt and
+# stops it when it collects. Agents are held unless a line timestamped after
+# the follower attached arrives within TEAM_DEPLOYMENT_CAPTURE_SECONDS (egress's
+# own health checks log every 5 s): replayed history alone does not show the
+# follower streaming. The follower must still be running after that line, and
+# its receipt (this deployment's egress by image, project and service, and the
+# follower's own identity) must be written, and it is checked again, by that
+# identity, immediately before the agent starts; otherwise it is stopped and
+# the agents are held.
+capture_egress() {
+  local log="$TEAM_DEPLOYMENT_EGRESS_LOG" id attached follower deadline witness inspected started command path
+  [[ "$log" == /* ]] || refuse "TEAM_DEPLOYMENT_EGRESS_LOG must be an absolute path"
+  # Any existing entry is refused, a dangling symlink included, and the log
+  # is created without replacing anything: no write lands elsewhere.
+  for path in "$log" "$log.receipt.json"; do
+    [[ ! -e "$path" && ! -L "$path" ]] || refuse "the egress capture $path already exists; each capture has its own file"
+  done
+  (set -o noclobber && : >"$log") 2>/dev/null || refuse "could not create the egress capture $log"
+  id="$(dc ps -q egress)" || refuse "could not find the egress container"
+  [[ "$(grep -c . <<<"$id")" -eq 1 ]] || refuse "egress is not exactly one container"
+  attached="$(utc_now)" || refuse "could not read the time"
+  nohup docker logs --timestamps --follow "$id" >>"$log" 2>&1 </dev/null &
+  follower=$!
+  deadline=$((SECONDS + ${TEAM_DEPLOYMENT_CAPTURE_SECONDS:-30}))
+  until python_in_server - "$log" "$attached" <<'PY'
+import sys
+
+log, attached = sys.argv[1:]
+# Docker's RFC3339Nano stamps sort as text once their fractions have the same
+# width; both sides are cut to whole microseconds.
+def stamp(text):
+    head, _, frac = text.rstrip("Z").partition(".")
+    return head + "." + (frac + "000000")[:6]
+after = stamp(attached)
+lines = open(log, encoding="utf-8", errors="replace").read().splitlines()
+sys.exit(0 if any(stamp(line.split(" ", 1)[0]) > after for line in lines if line[:1].isdigit()) else 1)
+PY
+  do
+    if ((SECONDS >= deadline)); then
+      stop_follower "$follower"
+      echo "teamctl: egress capture: no line after the follower attached at $attached" >&2
+      return 1
+    fi
+    sleep 0.5
+  done
+  # A fresh line is not enough: the follower must still be streaming. Its
+  # identity (start time and command line, as ps reports them) lets the owner
+  # that stops it by PID check it still is this process.
+  if ! follower_live "$follower" "$id"; then
+    stop_follower "$follower"
+    echo "teamctl: egress capture: the follower exited after its first line" >&2
+    return 1
+  fi
+  if ! witness="$(utc_now)" || ! started="$(ps -o lstart= -p "$follower")" || ! command="$(ps -o command= -p "$follower")" \
+    || ! inspected="$(docker inspect --format '{{.Image}}|{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.service"}}|{{.HostConfig.LogConfig.Type}}|{{.State.StartedAt}}' "$id")" \
+    || ! python_in_server - "$log.receipt.json" "$project" "$id" "$follower" "$attached" "$witness" "$started" "$command" \
+      "$inspected" <<'PY'
+import json
+import os
+import re
+import sys
+
+out, project, container, pid, attached, witness, started_ps, command_ps, inspected = sys.argv[1:]
+fields = inspected.strip().split("|")
+if len(fields) != 5:
+    sys.exit("egress's inspection is not five fields")
+image, owner, service, driver, started = fields
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", image) or owner != project or service != "egress" or not driver or not started:
+    sys.exit("egress's image, project or service is not this deployment's egress")
+if not started_ps.strip() or not command_ps.strip():
+    sys.exit("the follower's identity is empty")
+receipt = {"container": container, "image": image, "project": owner, "service": service, "logDriver": driver,
+           "startedAt": started, "follower_pid": int(pid), "follower_started": started_ps.strip(),
+           "follower_command": command_ps.strip(), "attached_at": attached, "witness_at": witness}
+# Created without replacing anything, a symlink included.
+fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+with os.fdopen(fd, "w", encoding="utf-8") as handle:
+    json.dump(receipt, handle, indent=2)
+PY
+  then
+    stop_follower "$follower"
+    echo "teamctl: egress capture: no receipt; the follower is stopped" >&2
+    return 1
+  fi
+  CAPTURE_PID="$follower" CAPTURE_ID="$id" CAPTURE_STARTED="$started"
+  echo "egress capture: streaming into $log (follower $follower, attached $attached)"
+}
+
+# Immediately before the agent starts: the capture's own follower is still
+# live, with the start time recorded in its receipt. A follower that passed
+# capture_egress may have exited during the probes.
+capture_still_live() {
+  if follower_live "$CAPTURE_PID" "$CAPTURE_ID" \
+    && [[ "$(ps -o lstart= -p "$CAPTURE_PID" 2>/dev/null)" == "$CAPTURE_STARTED" ]]; then
+    echo "egress capture: still streaming before the agent starts (follower $CAPTURE_PID)"
+    return 0
+  fi
+  stop_follower "$CAPTURE_PID"
+  echo "teamctl: egress capture: the follower is no longer streaming" >&2
+  return 1
+}
+
 # The signer's human origin has one existing GET route that answers 200: its
 # page stylesheet. The ingress probe's human controls use it.
 SIGNER_HUMAN_PATH=/handoff-assets/handoff.css
 
 # The OATS ingress probe (egress image, probe-ingress.mjs, full mode), from the
 # services side against the actual TLS ingress, for every route egress allows:
-# the policy's five origins at their pinned addresses, each with matched H1/H2
-# controls that must reach its own backend, and the human origin's Host or
-# :authority carried under any of them, which must reach no backend. Each
-# backend's own access log is followed from before the first probe request.
-# The registry's log is one of them: a deployment whose registry is not one of
-# its services cannot be probed here. TEAM_DEPLOYMENT_INGRESS_CA names the
-# ingress's trust anchors when a private authority signed it.
-INGRESS_ROUTES="aweb:aweb:/ready secrets:secrets:/ready logs:logs:/ready signer:signer:/readyz registry:registry:/health"
+# the policy's five origins at their pinned addresses. Each local route has
+# matched H1/H2 controls that must reach its own backend, and the human
+# origin's Host or :authority carried under any of them, which must reach no
+# backend; each such backend's own access log is followed from before the
+# first probe request. A registry the operator declares external
+# (team.registryRoute) is the registry's operator's: its route has a positive
+# control and no log witness (egress_policy.ingress_routes). The signer's route
+# is always local, so the human origin's refusal under the signer's SNI is
+# always proved. TEAM_DEPLOYMENT_INGRESS_CA names the ingress's trust anchors
+# when a private authority signed it.
 # The one path every backend logs, Secrets included (it logs /ready and /live
 # alone): the probe sends its extra coverage controls and every forbidden
 # request there, so a misrouted request cannot go unseen.
 INGRESS_AUDIT_PATH=/ready
 
 ingress_probe() {
-  local origins listed logs followers=() route role service path ca_mount=() ca_flag=() out status services
+  local origins listed logs followers=() role local_roles ca_mount=() ca_flag=() out status services
   listed="$(python_in_server - "$run_dir/egress-policy.json" <<'PY'
 import json
 import sys
@@ -319,33 +447,39 @@ PY
   rm -rf "$logs"
   mkdir -p "$logs"
   # Read once: grep -q on a live pipe would end it early, and pipefail fails it.
-  services="$(dc config --services)"
-  for route in $INGRESS_ROUTES; do
-    IFS=: read -r role service path <<<"$route"
-    if ! grep -qx "$service" <<<"$services"; then
-      echo "teamctl: the ingress probe needs $role's backend log, and $service is not a service of this deployment" >&2
-      return 1
-    fi
+  services="$(dc config --services)" || refuse "could not list the deployment's services"
+  local_roles="$(python_in_server - "$deployment" "$TEAM_DIR" "$run_dir/egress-policy.json" "$logs/route-logs.json" \
+    "$services" <<'PY'
+import importlib.util
+import json
+import sys
+from pathlib import Path
+
+import yaml
+
+path, team_dir, policy, out, services = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("egress_policy", Path(team_dir) / "egress_policy.py")
+egress_policy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(egress_policy)
+config = yaml.safe_load(open(path, encoding="utf-8"))
+try:
+    routes = egress_policy.ingress_routes(config, json.loads(Path(policy).read_text(encoding="utf-8")),
+                                          services.split())
+except egress_policy.Refused as refused:
+    sys.exit(f"teamctl: no ingress probe: {refused}")
+Path(out).write_text(json.dumps(routes, indent=2) + "\n", encoding="utf-8")
+print(" ".join(role for role, route in routes.items() if "log" in route))
+PY
+)" || return 1
+  for role in $local_roles; do
     : >"$logs/$role.log"
-    dc logs --follow --no-color --no-log-prefix "$service" >>"$logs/$role.log" 2>&1 &
+    dc logs --follow --no-color --no-log-prefix "$role" >>"$logs/$role.log" 2>&1 &
     followers+=($!)
   done
   # Each follower is attached once it has written its log so far.
-  for route in $INGRESS_ROUTES; do
-    IFS=: read -r role service path <<<"$route"
+  for role in $local_roles; do
     for _ in $(seq 1 50); do [[ -s "$logs/$role.log" ]] && break; sleep 0.2; done
   done
-  python_in_server - "$logs/route-logs.json" $INGRESS_ROUTES <<'PY'
-import json
-import sys
-
-out, *routes = sys.argv[1:]
-table = {}
-for route in routes:
-    role, _service, path = route.split(":")
-    table[role] = {"path": path, "log": f"/logs/{role}.log"}
-open(out, "w", encoding="utf-8").write(json.dumps(table, indent=2) + "\n")
-PY
   if [[ -n "${TEAM_DEPLOYMENT_INGRESS_CA:-}" ]]; then
     ca_mount=(-v "$TEAM_DEPLOYMENT_INGRESS_CA:/input/world-ca.pem:ro")
     ca_flag=(--ca-file /input/world-ca.pem)
@@ -674,6 +808,10 @@ sys.exit(status != 200)
   fi
   if [[ "$with_agents" -eq 1 ]]; then
     start_egress
+    if [[ -n "${TEAM_DEPLOYMENT_EGRESS_LOG:-}" ]] && ! capture_egress; then
+      echo "teamctl: agents held: egress's log is not being captured" >&2
+      exit 1
+    fi
     dc ps --format '{{.Service}} {{.Status}}'
     # The signer's request origin is one of egress's five routes. Until the
     # ingress is shown to refuse that origin's SNI carrying the human origin's
@@ -684,6 +822,10 @@ sys.exit(status != 200)
     fi
     if ! boundary_probe; then
       echo "teamctl: agents held: the boundary probe did not pass" >&2
+      exit 1
+    fi
+    if [[ -n "${TEAM_DEPLOYMENT_EGRESS_LOG:-}" ]] && ! capture_still_live; then
+      echo "teamctl: agents held: egress's log is not being captured" >&2
       exit 1
     fi
     if ! start_agent; then

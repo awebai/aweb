@@ -1,7 +1,8 @@
 [hidden] { display: none !important; }
 body { margin: 0; }
 .handoff { max-width: 44rem; margin: 0 auto; padding: clamp(1.25rem, 5vw, 3rem); }
-.handoff h1 { font-size: var(--step-3); line-height: 1.15; margin: 0 0 var(--s3); }
+.handoff h1 { font-size: var(--step-3); line-height: 1.15; margin: 0 0 var(--s3); overflow-wrap: anywhere; }
+#handoff-consequences { padding-left: 1.25rem; overflow-wrap: anywhere; }
 .handoff p { margin: var(--s2) 0; }
 .handoff-eyebrow { color: var(--muted); font-size: var(--step--1); }
 .handoff-origin { overflow-wrap: anywhere; color: var(--muted); }
@@ -16,3 +17,11 @@ body { margin: 0; }
 #handoff-status { min-height: 3em; }
 #handoff-allow { border-top: 1px solid var(--line); margin-top: var(--s3); padding-top: var(--s3); }
 .handoff h2 { font-size: var(--step-2); }
+.handoff-choices { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s2) 0; }
+@media (max-width: 30rem) { .handoff-choices .btn { width: 100%; justify-content: center; } }
+#handoff-status:empty { min-height: 0; margin: 0; }
+/* Headings and the status line take focus from the page, not the user; they
+   are not controls and show no ring. */
+.handoff [tabindex="-1"]:focus { outline: none; }
+#handoff-names dd, #handoff-requested, #handoff-expires { font-family: inherit; font-size: inherit; }
+#handoff-names:not(:empty) { margin-bottom: var(--s2); }

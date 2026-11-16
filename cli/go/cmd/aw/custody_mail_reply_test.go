@@ -102,7 +102,9 @@ func TestCustodyStoredMailReply(t *testing.T) {
 					t.Fatal(err)
 				}
 				svc.client = &aweb.Client{Client: client}
-				svc.readStoredMailReply = svc.storedMailReplyViaClient
+				svc.readStoredMailReply = func(ctx context.Context, messageID string) (*awid.InboxMessage, error) {
+					return svc.storedMailReplyViaClient(ctx, svc.client, messageID)
+				}
 			}
 			switch scenario {
 			case "forged-target":

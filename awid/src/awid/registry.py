@@ -29,6 +29,7 @@ from redis.exceptions import RedisError
 from awid.contract import normalize_identity_scope
 from awid.did import did_key_from_signing_key
 from awid.dns_verify import DomainVerifier
+from awid.external_authority import OriginContext
 from awid.id_certificates import (
     IDCertificateError,
     IDChainEvidence,
@@ -294,6 +295,7 @@ class Team:
     created_at: str
 
 
+
 @dataclass(frozen=True)
 class TeamCertificate:
     certificate_id: str
@@ -304,6 +306,7 @@ class TeamCertificate:
     identity_scope: str
     issued_at: str
     revoked_at: str | None = None
+
 
     @property
     def lifetime(self) -> str:
@@ -369,6 +372,9 @@ class RegistryClient:
     domain_registry_resolver: DomainRegistryResolver | None = None
     service_token: str | None = field(default=None, repr=False, compare=False)
     domain_verifier: InitVar[DomainVerifier | None] = field(default=None, kw_only=True)
+    # DNS-selected routes stay public-only unless a caller explicitly supplies
+    # the federation contract's isolated-development context. Never read env.
+    registry_origin_context: OriginContext | None = field(default=None, kw_only=True)
     _domain_verifier: DomainVerifier | None = field(init=False, repr=False, compare=False)
     member_signing_keys: Mapping[str, bytes] = field(
         default=MappingProxyType({}), repr=False, compare=False
@@ -414,7 +420,7 @@ class RegistryClient:
             "_override_http_client",
             httpx.AsyncClient(
                 timeout=self.timeout_seconds,
-                transport=RegistryOverrideTransport(),
+                transport=RegistryOverrideTransport(origin_context=self.registry_origin_context),
                 follow_redirects=False,
                 trust_env=False,
             ) if self.transport is None else None,
@@ -1425,6 +1431,11 @@ class RegistryClient:
             cursor = None
         raise RegistryError(f"AWID revocations pagination exceeded {MAX_REGISTRY_PAGES} pages", status_code=502)
 
+    async def get_team_certificate_status_fresh(self, domain, name, certificate_id):
+        """Uncached public exact-certificate status, including private teams."""
+        path = f"/v1/namespaces/{quote(domain, safe='')}/teams/{quote(name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
+        return await self._request_optional_json("GET", path, registry_url=await self._registry_url_for_domain(domain))
+
     async def list_team_certificates(
         self,
         domain: str,
@@ -1789,6 +1800,7 @@ class CachedRegistryClient(RegistryClient):
         service_token: str | None = None,
         member_signing_keys: dict[str, bytes] | None = None,
         domain_verifier: DomainVerifier | None = None,
+        registry_origin_context: OriginContext | None = None,
     ) -> None:
         super().__init__(
             registry_url=registry_url,
@@ -1798,6 +1810,7 @@ class CachedRegistryClient(RegistryClient):
             domain_registry_resolver=domain_registry_resolver,
             service_token=service_token,
             domain_verifier=domain_verifier,
+            registry_origin_context=registry_origin_context,
             member_signing_keys=dict(member_signing_keys or {}),
         )
         object.__setattr__(self, "redis_client", redis_client)

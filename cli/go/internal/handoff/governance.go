@@ -104,6 +104,9 @@ func Approve(ctx context.Context, opts GovernanceOptions, operationID string, in
 		members[k] = v
 	}
 	members["operation_id"] = operationID
+	if err := requireIntentFormat(members); err != nil {
+		return nil, err
+	}
 	// A caller that does not wait has no callback to receive.
 	var wake *Loopback
 	if !opts.NoWait {
@@ -142,6 +145,9 @@ func Resume(ctx context.Context, opts GovernanceOptions, saved []byte) (*Receipt
 	if !ok || operationID == "" {
 		return nil, coded("intent_invalid", errors.New("the saved body is not a prepared operation's"))
 	}
+	if err := requireIntentFormat(body); err != nil {
+		return nil, err
+	}
 	fmt.Fprintf(opts.Notify, "Resuming operation %s\n", operationID)
 	return approve(ctx, opts, operationID, body, saved, nil)
 }
@@ -172,6 +178,12 @@ func retryWithin(opts GovernanceOptions) time.Duration {
 	}
 	return DefaultRetryWithin
 }
+
+// pollCap is the longest aw waits between two reads of a pending receipt.
+// Each ordinary wait doubles from the poll interval up to it, so a long human
+// wait does not spend the requester's whole read allowance; a wake still
+// reads at once.
+var pollCap = time.Minute
 
 func pollInterval(opts GovernanceOptions) time.Duration {
 	if opts.PollInterval > 0 {
@@ -225,7 +237,8 @@ func prepareRetrying(ctx context.Context, opts GovernanceOptions, operationID st
 	return prepared, err
 }
 
-func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, wake *Loopback) (*Receipt, error) {
+func approve(ctx context.Context, opts GovernanceOptions, operationID string, body map[string]any, raw []byte, wake *Loopback) (receipt *Receipt, err error) {
+	defer func() { err = Retell(err, func(f *Facts) { f.Operation = selectorOf(body) }) }()
 	// One retry bound for preparing and for reconciling a lost answer.
 	until := now().Add(retryWithin(opts))
 	prepared, err := prepareRetrying(ctx, opts, operationID, body, raw, until)
@@ -235,15 +248,28 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 	if err != nil {
 		return nil, err
 	}
+	if receipt, err, handled := reconcileExpired(ctx, opts, prepared); handled {
+		return receipt, err
+	}
 	if err := checkPrepared(ctx, opts, prepared); err != nil {
 		return nil, err
 	}
+	question, err := preparedDisplay(prepared, body)
+	if err != nil {
+		return nil, err
+	}
 	page := opts.Human + "/handoff/" + url.PathEscape(prepared.HandoffID)
-	fmt.Fprintf(opts.Notify, "Operation %s\n  digest:      %s\n  fingerprint: %s\nApprove it on this page: %s\n",
-		prepared.OperationID, prepared.Digest, Fingerprint(prepared.Digest), page)
+	// The prepare answer says nothing about whether the service mails the
+	// approver, so aw claims nothing about it and always names the page, the
+	// public locator where the approver signs in (never a personal link). The
+	// fingerprint stays in sight; the full digest is in --json, and aw has
+	// verified it above (human-assurance-contract.md section 5).
+	fmt.Fprintf(opts.Notify, "Asking the approver: %s\n", question.Title)
+	fmt.Fprintf(opts.Notify, "Waiting for the approver; the request expires at %s. They approve on %s\n  details: operation %s · fingerprint %s\n",
+		ReaderTime(prepared.ExpiresAt, "2006-01-02 15:04"), page, prepared.OperationID, Fingerprint(prepared.Digest))
 	if opts.Open != nil {
 		if err := opts.Open(page); err != nil {
-			fmt.Fprintf(opts.Notify, "Could not open a browser (%v); open the page above yourself.\n", err)
+			fmt.Fprintf(opts.Notify, "Could not open a browser (%v).\n", err)
 		}
 	}
 	if opts.OnPresented != nil {
@@ -266,6 +292,17 @@ func approve(ctx context.Context, opts GovernanceOptions, operationID string, bo
 	return awaitReceipt(ctx, opts, operationID, prepared.ExpiresAt, woken)
 }
 
+// preparedDisplay is the definition's display of the verified frozen request,
+// the same words the approver's page shows.
+func preparedDisplay(prepared *Prepared, body map[string]any) (RenderedDisplay, error) {
+	payload, ok := decodeObject(prepared.Payload)
+	request, _ := payload["request"].(map[string]any)
+	if !ok || request == nil {
+		return RenderedDisplay{}, errDisplay()
+	}
+	return RenderDisplay(selectorOf(body), request)
+}
+
 // readOnce reads a presented operation's receipt once: pending stays
 // pending, a final receipt settles, and an unreadable one is unknown.
 func readOnce(ctx context.Context, opts GovernanceOptions, prepared *Prepared) (*Receipt, error) {
@@ -285,6 +322,46 @@ func readOnce(ctx context.Context, opts GovernanceOptions, prepared *Prepared) (
 // ctx, ending at the operation's expiry, and stops a caller that was
 // cancelled, or an operation that expired, before or while it ran: nothing
 // about it is shown or sent after that.
+// reconcileExpired settles a prepared operation whose expiry has already
+// passed, as a rerun under its saved id finds it, by one fresh bounded read
+// of its receipt. A committed result is taken, once its frozen request passes
+// the caller's check under a fresh bound; a refusal is final and forgotten,
+// so the next run starts a new operation; an unreadable or unknown outcome
+// keeps the operation. A receipt still pending at the service (the clocks
+// differ) is not settled here (settled=false). Nothing is prepared, executed
+// or signed again.
+func reconcileExpired(ctx context.Context, opts GovernanceOptions, prepared *Prepared) (receipt *Receipt, err error, handled bool) {
+	if now().Before(prepared.ExpiresAt) {
+		return nil, nil, false
+	}
+	readCtx, cancel := context.WithTimeout(ctx, retryWithin(opts))
+	defer cancel()
+	receipt, err = ReadReceipt(readCtx, opts, prepared.OperationID)
+	if err != nil {
+		code := ErrorCode(err)
+		if code == "" {
+			code = "receipt_unavailable"
+		}
+		return unresolvedReceipt(prepared.OperationID, code), err, true
+	}
+	switch receipt.State {
+	case "pending":
+		return nil, nil, false
+	case "committed":
+		if opts.CheckPrepared != nil {
+			payload, _ := decodeObject(prepared.Payload)
+			request, _ := payload["request"].(map[string]any)
+			checkCtx, cancelCheck := context.WithTimeout(ctx, retryWithin(opts))
+			defer cancelCheck()
+			if err := opts.CheckPrepared(checkCtx, request); err != nil {
+				return nil, err, true
+			}
+		}
+	}
+	receipt, err = settled(opts, receipt)
+	return receipt, err, true
+}
+
 func checkPrepared(ctx context.Context, opts GovernanceOptions, prepared *Prepared) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -311,11 +388,14 @@ func checkPrepared(ctx context.Context, opts GovernanceOptions, prepared *Prepar
 }
 
 // awaitReceipt reads operationID's receipt until it is final or the operation
-// expires, every poll interval or sooner when woken (a nil woken never wakes).
+// expires. Each ordinary wait doubles from the poll interval up to pollCap; a
+// wake ends one ordinary wait early, once (a nil woken never wakes), and never
+// a wait the service asked for.
 // No read outlasts the operation; a pending operation at its expiry is
 // operation_expired, and an unreadable receipt leaves the outcome unknown.
 func awaitReceipt(ctx context.Context, opts GovernanceOptions, operationID string, expiresAt time.Time, woken <-chan struct{}) (*Receipt, error) {
 	interval := pollInterval(opts)
+	wait := interval
 	for {
 		// No read outlasts the operation.
 		readCtx, cancelRead := context.WithDeadline(ctx, expiresAt)
@@ -345,11 +425,14 @@ func awaitReceipt(ctx context.Context, opts GovernanceOptions, operationID strin
 		if _, hintedWait := retryHint(err); !hintedWait {
 			select {
 			case <-woken:
-			case <-time.After(interval):
+				// One wake reads once; a closed or repeated wake reads no faster.
+				woken = nil
+			case <-time.After(min(wait, expiresAt.Sub(now()))):
 			case <-ctx.Done():
 				return unresolvedReceipt(operationID, "receipt_unavailable"), ctx.Err()
 			}
 		}
+		wait = min(2*wait, max(pollCap, interval))
 		// A wait that ran past the expiry sends no further read.
 		if !now().Before(expiresAt) {
 			if err != nil {
@@ -401,7 +484,7 @@ func finalError(receipt *Receipt) error {
 	if receipt.State == "committed" {
 		return nil
 	}
-	return coded(receipt.Code, fmt.Errorf("operation %s is %s: %s", receipt.OperationID, receipt.State, receipt.Code))
+	return told(receipt.Code, fmt.Errorf("operation %s is %s: %s", receipt.OperationID, receipt.State, receipt.Code), Facts{})
 }
 
 func unresolvedReceipt(operationID, code string) *Receipt {
@@ -492,7 +575,10 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 	if err != nil || recomputed != digest {
 		return mismatch("its digest does not match its payload")
 	}
-	shape := preparedShapeOf(sent)
+	shape, defined := preparedShapeOf(sent)
+	if !defined {
+		return mismatch("its operation or variant has no pinned definition")
+	}
 	expected := append(append([]string{}, serverAddedMembers...), shape.added...)
 	for name, value := range sent {
 		if !sameJSON(request[name], value) {
@@ -515,6 +601,29 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 	if artifact == nil {
 		return mismatch("it freezes no artifact")
 	}
+	for _, path := range shape.bindings {
+		var value any = request
+		for _, name := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
+			object, ok := value.(map[string]any)
+			if !ok {
+				return mismatch("a required bound field is absent")
+			}
+			value, ok = object[name]
+			if !ok {
+				return mismatch("a required bound field is absent")
+			}
+		}
+	}
+	if shape.issuance != nil {
+		if sent["approval_format"] != "intent_v1" {
+			return coded("upgrade_aw_required", errors.New("upgrade aw to use this protected approval format"))
+		}
+		var err error
+		artifact, err = shape.issuance.preparedArtifact(request, artifact)
+		if err != nil {
+			return mismatch(err.Error())
+		}
+	}
 	if reason := shape.check(sent, request, artifact); reason != "" {
 		return mismatch(reason)
 	}
@@ -526,26 +635,19 @@ func verifyPrepared(sent map[string]any, digest string, payload map[string]any) 
 type preparedShape struct {
 	added []string
 	// check names how request or artifact differs from sent, or is "".
-	check func(sent, request, artifact map[string]any) string
+	check    func(sent, request, artifact map[string]any) string
+	bindings []string
+	issuance *artifactIssuance
 }
 
-// preparedShapeOf is sent's operation's shape; every operation not named
-// here is an owner act.
-func preparedShapeOf(sent map[string]any) preparedShape {
-	switch sent["operation"] {
-	case "team.agent.admit":
-		return preparedShape{added: []string{"request_id", "admission_policy_version"}, check: admissionArtifactDiffers}
-	case "identity.root.endorse":
-		return preparedShape{added: []string{"registry", "expected_head", "responsibility_statement", "admission_policy"}, check: endorsementDiffers}
-	case "team.agent.remove":
-		return preparedShape{added: []string{"requester_key"}, check: removalArtifactDiffers}
-	}
-	return preparedShape{check: ownerActArtifactDiffers}
+// preparedShapeOf selects only a generated, pinned definition. A response
+// cannot invent a schema or ask aw to use an owner-act fallback.
+func preparedShapeOf(sent map[string]any) (preparedShape, bool) {
+	operation, _ := sent["operation"].(string)
+	variant, _ := sent["variant"].(string)
+	shape, ok := generatedPreparedShapes[operation+"|"+variant]
+	return shape, ok
 }
-
-// RootResponsibilityStatement is the fixed text an endorsement freezes: what
-// endorsing a root means for the human, and what it does not grant.
-const RootResponsibilityStatement = "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."
 
 var certificateHead = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
@@ -599,6 +701,13 @@ func endorsementDiffers(sent, request, artifact map[string]any) string {
 // names the key that authenticated it, and its artifact is a controller and
 // the covering-v2 registry request revoking exactly the certificate aw named,
 // of its team, at the audience registry (docs/protected-team-removal.md).
+func ownerRemovalArtifactDiffers(sent, request, artifact map[string]any) string {
+	if request["target_kind"] != "agent" && request["target_kind"] != "kind not verified" {
+		return "its target classification is not supported"
+	}
+	return removalArtifactDiffers(sent, request, artifact)
+}
+
 func removalArtifactDiffers(sent, request, artifact map[string]any) string {
 	if key, _ := request["requester_key"].(string); key == "" {
 		return "it names no requester key"
@@ -700,10 +809,16 @@ func sameJSON(a, b any) bool {
 	return err == nil && bytes.Equal(left, right)
 }
 
+// ErrOperationNotFound is the service's typed answer to a receipt read that
+// it holds no operation by that id for this requester in this scope. It says
+// nothing of whether some other service, scope or earlier send holds one.
+var ErrOperationNotFound = errors.New("the protected service holds no such operation for this requester")
+
 // ReadReceipt reads the operation's receipt as its requester. A receipt that
 // cannot be read now (transport, 429, 5xx) is receipt_unavailable; any other
-// refusal keeps its own code; one that is not exactly a receipt of its state
-// is receipt_invalid.
+// refusal keeps its own code, the service's typed 404 operation_not_found
+// wrapping ErrOperationNotFound; one that is not exactly a receipt of its
+// state is receipt_invalid.
 func ReadReceipt(ctx context.Context, opts GovernanceOptions, operationID string) (*Receipt, error) {
 	target, err := url.Parse(opts.Request + "/protected-operations/" + url.PathEscape(operationID))
 	if err != nil {
@@ -723,6 +838,8 @@ func ReadReceipt(ctx context.Context, opts GovernanceOptions, operationID string
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 		return nil, hinted(unavailable(refusal(resp.StatusCode, reply)), resp)
+	case resp.StatusCode == http.StatusNotFound && RefusalCode(reply) == "operation_not_found":
+		return nil, &Error{Code: "operation_not_found", Err: ErrOperationNotFound, Facts: &Facts{}}
 	case resp.StatusCode != http.StatusOK:
 		// A refusal of the requester, its scope or the id does not pass.
 		return nil, refusal(resp.StatusCode, reply)

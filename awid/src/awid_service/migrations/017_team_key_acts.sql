@@ -1,4 +1,4 @@
--- 016_team_key_acts.sql
+-- 017_team_key_acts.sql
 -- The namespace controller's rotate_team_key acts, kept exactly as signed
 -- (the signed bytes, the signer and the signature), so a relying server can
 -- check a team key against the controller DNS names instead of the registry.

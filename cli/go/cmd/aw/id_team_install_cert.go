@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -71,12 +73,76 @@ type teamCertificateInstall struct {
 	// the team is pointed at the installed certificate before anything is
 	// sent with it.
 	WorkspacePath string
-	RegistryURL       string
-	Registry          *awid.RegistryClient
+	RegistryURL   string
+	Registry      *awid.RegistryClient
 }
 
 func installRefusal(code, format string, args ...any) error {
 	return withErrorCode(code, fmt.Errorf(format, args...))
+}
+
+// commitTeamCertificate records cert in the home as one credential update,
+// pointing the workspace binding at workspacePath, when set, at it, and then
+// ensures the identity's encryption key, which is published with cert.
+func commitTeamCertificate(workingDir, identityHome, command string, cert *awid.TeamCertificate, registryURL, workspacePath string, decide func() (string, error)) (string, error) {
+	home := identityHome
+	if strings.TrimSpace(home) == "" {
+		home = awconfig.WorktreeIdentityHome(workingDir)
+	}
+	encoded, err := awid.EncodeTeamCertificateFile(cert)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	op := awconfig.CredentialOperation{Command: command, Intent: awconfig.CredentialIntent(map[string]any{
+		"team_id": cert.Team, "certificate_id": cert.CertificateID, "certificate_sha256": hex.EncodeToString(sum[:])})}
+	var status string
+	// Lock order: the home's credential lock, then the released home install
+	// lock that older aw install-cert takes too, so both serialize.
+	if err := awconfig.UpdateCredentials(home, op, func(begin func() error) error {
+		install, err := awconfig.LockExclusive(filepath.Join(home, teamCertificateInstallLock))
+		if err != nil {
+			return err
+		}
+		defer install.Close()
+		if status, err = decide(); err != nil {
+			return err
+		}
+		return recordTeamCertificate(workingDir, identityHome, cert, registryURL, status, workspacePath, begin)
+	}); err != nil {
+		return "", credentialUpdateError(err)
+	}
+	intent := currentEncryptionKeyIdentityHome()
+	if strings.TrimSpace(identityHome) != "" {
+		intent = explicitEncryptionKeyIdentityHome(identityHome)
+	}
+	return status, ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, intent)
+}
+
+// teamCertificateInstallLock serializes installs into one identity home, with
+// released aw versions too.
+const teamCertificateInstallLock = "team-certificate-install.lock"
+
+// credentialUpdateError gives a refused credential update its code.
+func credentialUpdateError(err error) error {
+	for _, refusal := range []error{awconfig.ErrCredentialUpdateIncomplete, awconfig.ErrCredentialUpdateUnpublished} {
+		if errors.Is(err, refusal) {
+			return withErrorCode(refusal.Error(), err)
+		}
+	}
+	return err
+}
+
+// membershipRecorded reports whether the home already records cert's team
+// membership at registryURL, or at its own registry when registryURL is "".
+func membershipRecorded(workingDir, identityHome string, cert *awid.TeamCertificate, registryURL string) bool {
+	state, err := loadOptionalTeamState(workingDir, identityHome)
+	if err != nil || state == nil {
+		return false
+	}
+	membership := state.Membership(cert.Team)
+	return membership != nil && membership.CertPath == awconfig.TeamCertificateRelativePath(cert.Team) &&
+		(registryURL == "" || membership.RegistryURL == registryURL)
 }
 
 // installTeamCertificateFile installs c's certificate when it is a current,
@@ -105,24 +171,19 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 	}
 	local := identity.IdentityScope == awid.IdentityModeLocal
 	// Decided read-only first, so a refused home is left exactly as it was,
-	// then again under the home's install lock, so a concurrent install of
-	// another certificate cannot slip in between the decision and the write.
+	// then again under the home's credential lock, so a concurrent install of
+	// another certificate cannot slip in between the decision and the write,
+	// which commits the home's next credential generation.
 	if _, err := homeInstallStatus(c.Home, cert, local, c.ReplaceSuperseded); err != nil {
 		return nil, err
 	}
 	if err := checkCurrentTeamCertificate(ctx, c, cert); err != nil {
 		return nil, err
 	}
-	lock, err := awconfig.LockExclusive(filepath.Join(c.Home, teamCertificateInstallLock))
+	status, err := commitTeamCertificate(c.WorkingDir, c.Home, "install-cert", cert, c.RegistryURL, c.WorkspacePath, func() (string, error) {
+		return homeInstallStatus(c.Home, cert, local, c.ReplaceSuperseded)
+	})
 	if err != nil {
-		return nil, err
-	}
-	defer lock.Close()
-	status, err := homeInstallStatus(c.Home, cert, local, c.ReplaceSuperseded)
-	if err != nil {
-		return nil, err
-	}
-	if err := recordTeamCertificateInBinding(c.WorkingDir, c.Home, cert, c.RegistryURL, status, c.WorkspacePath); err != nil {
 		return nil, err
 	}
 	result := map[string]any{"status": status, "team_id": cert.Team, "alias": cert.Alias, "certificate_id": cert.CertificateID,
@@ -132,9 +193,6 @@ func installTeamCertificateFile(ctx context.Context, c teamCertificateInstall) (
 	}
 	return result, nil
 }
-
-// teamCertificateInstallLock serializes installs into one identity home.
-const teamCertificateInstallLock = "team-certificate-install.lock"
 
 // homeInstallStatus is how home takes cert: installed when it holds none for
 // cert's team, already_installed when it holds exactly cert, and, with
@@ -264,47 +322,50 @@ func sameTeamCertificate(a, b *awid.TeamCertificate) (bool, error) {
 }
 
 // recordTeamCertificate saves cert into identityHome unless status is
-// already_installed, records the team membership, and ensures the identity's
-// encryption key. Recording again completes an install that was interrupted.
-func recordTeamCertificate(workingDir, identityHome string, cert *awid.TeamCertificate, registryURL, status string) error {
-	return recordTeamCertificateInBinding(workingDir, identityHome, cert, registryURL, status, "")
-}
-
-// recordTeamCertificateInBinding is recordTeamCertificate that also points the
-// workspace binding at workspacePath, when set, at the saved certificate before
-// the encryption key is published with it.
-func recordTeamCertificateInBinding(workingDir, identityHome string, cert *awid.TeamCertificate, registryURL, status, workspacePath string) error {
-	if status != "already_installed" {
-		if _, err := saveAcceptedTeamCertificate(workingDir, identityHome, cert.Team, cert); err != nil {
+// already_installed and records the team membership, calling begin before its
+// first credential change. Recording again completes an install that was
+// interrupted; when the membership is already recorded it changes nothing.
+// With workspacePath set, it also points that workspace binding's membership
+// for the team at the saved certificate.
+func recordTeamCertificate(workingDir, identityHome string, cert *awid.TeamCertificate, registryURL, status, workspacePath string, begin func() error) error {
+	if status != "already_installed" || !membershipRecorded(workingDir, identityHome, cert, registryURL) {
+		if err := begin(); err != nil {
+			return err
+		}
+		if status != "already_installed" {
+			if _, err := saveAcceptedTeamCertificate(workingDir, identityHome, cert.Team, cert); err != nil {
+				return err
+			}
+		}
+		if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
+			Status:   status,
+			TeamID:   cert.Team,
+			Alias:    strings.TrimSpace(cert.Alias),
+			CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
+		}, cert, registryURL, "", false, identityHome); err != nil {
 			return err
 		}
 	}
-	if strings.TrimSpace(workspacePath) != "" {
-		workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
-		if err != nil {
-			return fmt.Errorf("read the workspace binding %s: %w", workspacePath, err)
-		}
-		installed := awconfig.TeamCertificateRelativePath(cert.Team)
-		if membership := workspace.Membership(cert.Team); membership != nil && membership.CertPath != installed {
-			membership.CertPath = installed
-			if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
-				return fmt.Errorf("certificate %s is saved, but recording it in %s failed: %w", cert.CertificateID, workspacePath, err)
-			}
-		}
+	if strings.TrimSpace(workspacePath) == "" {
+		return nil
 	}
-	if err := upsertAcceptedTeamMembershipState(workingDir, &teamAcceptInviteOutput{
-		Status:   status,
-		TeamID:   cert.Team,
-		Alias:    strings.TrimSpace(cert.Alias),
-		CertPath: awconfig.TeamCertificateRelativePath(cert.Team),
-	}, cert, registryURL, "", false, identityHome); err != nil {
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+	if err != nil {
+		return fmt.Errorf("read the workspace binding %s: %w", workspacePath, err)
+	}
+	installed := awconfig.TeamCertificateRelativePath(cert.Team)
+	membership := workspace.Membership(cert.Team)
+	if membership == nil || membership.CertPath == installed {
+		return nil
+	}
+	if err := begin(); err != nil {
 		return err
 	}
-	intent := currentEncryptionKeyIdentityHome()
-	if strings.TrimSpace(identityHome) != "" {
-		intent = explicitEncryptionKeyIdentityHome(identityHome)
+	membership.CertPath = installed
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
+		return fmt.Errorf("certificate %s is saved, but recording it in %s failed: %w", cert.CertificateID, workspacePath, err)
 	}
-	return ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, intent)
+	return nil
 }
 
 func runTeamInstallCert(cmd *cobra.Command, _ []string) error {

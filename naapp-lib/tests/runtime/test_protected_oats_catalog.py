@@ -14,6 +14,7 @@ def test_runtime_selectors_are_exactly_the_reviewed_slice_and_existing_revoke():
         ("identity.root.endorse", "default"),
         ("team.agent.admit", "default"),
         ("team.agent.remove", "default"),
+        ("team.agent.remove", "owner_approved"),
         ("human-role.revoke", "default"),
     }
     frozen = json.loads((Path(__file__).resolve().parents[3] / "docs/vectors/human-assurance-v1.json").read_bytes())
@@ -23,7 +24,7 @@ def test_runtime_selectors_are_exactly_the_reviewed_slice_and_existing_revoke():
     for row in enforced:
         selector = row["operation"], row["variant"]
         if selector not in OPERATIONS:
-            with pytest.raises(SignerRefused, match="operation_refused"):
+            with pytest.raises(SignerRefused, match="operation_not_served"):
                 operation_spec(*selector)
             continue
         spec = operation_spec(*selector)
@@ -34,13 +35,33 @@ def test_runtime_selectors_are_exactly_the_reviewed_slice_and_existing_revoke():
 
 @pytest.mark.parametrize("name", ["sign_bytes", "team.log-key.sign", "team.owner.change", "team.controller-permissions.change"])
 def test_no_unreviewed_route_or_generic_signing_operation_is_enabled(name):
-    with pytest.raises(SignerRefused, match="operation_refused"):
+    with pytest.raises(SignerRefused, match="operation_not_served"):
         operation_spec(name)
+
+
+def test_each_definition_owns_its_consumer_codec_and_page_schema():
+    """The page and byte codec select the same closed definition.
+
+    This guards the architectural boundary: a new table row must supply its
+    codec, rather than require another selector list in the shared codec.
+    """
+    from aweb_naapp.runtime.protected_signer.catalog import presentation_catalog
+
+    page = presentation_catalog()
+    for selector, definition in OPERATIONS.items():
+        assert callable(definition.codec.parse_subject)
+        assert callable(definition.codec.build_artifact)
+        assert callable(definition.codec.signing_bytes)
+        assert definition.codec.authority_field
+        assert page["|".join(selector)]["subject_schema"] == definition.codec.subject_schema
+
+    # Public presentation data must not mutate the authoritative definition.
+    page["human-role.revoke|default"]["subject_schema"]["required"].clear()
+    assert presentation_catalog()["human-role.revoke|default"]["subject_schema"]["required"]
 
 
 @pytest.mark.asyncio
 async def test_released_revoke_type_reaches_the_live_floor_execute_refusal():
-    from types import SimpleNamespace
     from uuid import uuid4
 
     from aweb_naapp.runtime.protected_signer import (
@@ -54,7 +75,6 @@ async def test_released_revoke_type_reaches_the_live_floor_execute_refusal():
     legacy = RevokeHumanRole(str(uuid4()), context, "https://app.example.org", "app", str(uuid4()), "app.owner", "did:aw:human")
     requester = RestrictedRequester("did:aw:root", context)
     service = object.__new__(ProtectedSigner)
-    service.admission = SimpleNamespace()
 
     async def authorized(operation_id, actor, purpose):
         assert operation_id == legacy.operation_id and actor is requester and purpose == "execute"
@@ -63,3 +83,31 @@ async def test_released_revoke_type_reaches_the_live_floor_execute_refusal():
     service._authorized = authorized
     with pytest.raises(SignerRefused, match="live_approval_required"):
         await service._execute_request(legacy.operation_id, requester=requester)
+
+
+def test_startup_requires_each_selected_effect_provider_before_any_io():
+    from aweb_naapp.runtime.protected_signer import ProtectedSigner
+    from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
+
+    with pytest.raises(ValueError, match="effect adapter"):
+        ProtectedSigner(None, passkeys=None, policies=None, delivery=None, audit=None,
+                        authority=None, custody=None, effect_adapters={}, definitions=tuple(OPERATIONS.values()))
+
+
+@pytest.mark.parametrize("field", ["signing_commit", "confirmation_commit", "initiation_prepare"])
+def test_startup_checks_row_selected_hooks_before_any_io(field):
+    from types import SimpleNamespace
+
+    from aweb_naapp.runtime.protected_signer import ProtectedSigner
+    from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
+
+    definition = next(row for row in OPERATIONS.values() if getattr(row.effect, field))
+    selected = getattr(definition.effect, field)
+    names = ("observe", "registered", "register", definition.effect.signing_commit,
+             definition.effect.confirmation_commit, definition.effect.initiation_prepare)
+    adapter = SimpleNamespace(**{name: (lambda: None) for name in names if name is not None})
+    setattr(adapter, selected, None)
+    with pytest.raises(ValueError, match="hook '" + selected + "'"):
+        ProtectedSigner(None, passkeys=None, policies=None, delivery=None, audit=None,
+                        authority=None, custody=None, effect_adapters={definition.effect.provider: adapter},
+                        definitions=(definition,))

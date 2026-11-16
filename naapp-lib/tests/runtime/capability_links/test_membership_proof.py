@@ -6,6 +6,7 @@ from aweb_naapp.runtime.capability_links import LinkRefused, read
 from aweb_naapp.runtime.clock import seconds_to_ns
 
 from .conftest import SCOPE, T0
+from .test_lifecycle import action_app as action_app
 from .test_lifecycle import holder
 
 

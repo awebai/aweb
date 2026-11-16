@@ -2,6 +2,97 @@
 
 ## Unreleased
 
+- This candidate removes the retired team-protection and protected-effect receipt tables and retained-effect data from earlier release-candidate installations.
+- Earlier release-candidate clients and packages must be upgraded together with this candidate.
+
+- `aw workspace delete --json` reports `error.code: "certificate_revoked"`
+  when the hosted self-remove route refuses the caller because its own
+  certificate is already revoked (the server's `detail.code`). Such a member
+  cannot finish its own retirement; the team's owner finishes it with
+  `aw team remove-agent`. Both the team-certificate and the workspace-key
+  paths report it, and a workspace-key refusal's `--json` envelope now
+  carries the server's status and code like every other refusal.
+- Failed identity address discovery now remains unknown instead of looking
+  addressless. Identity sends keep using a stored binding verified for the
+  current key, including a verified empty address; an unverified sender gets
+  retryable `503 address_evidence_unavailable` before delivery. Optional
+  identity display reports unknown without clearing stored bindings.
+
+- `aw id operation status --operation-id <UUID>` reads a protected
+  operation's receipt once, as its requester, without performing it.
+  Before this, the only way to learn the outcome of a prepared operation
+  whose answer was never seen was to resume it.
+  - It reports the receipt's state: `pending` (with its reason and deadline),
+    `committed` (its result, not verified by the read), `refused` or
+    `unknown` (with a code). It reports `none` when the service holds no such
+    operation for this requester in that scope.
+  - It prepares, executes and settles nothing, and leaves aw's saved request
+    as it was.
+  - A saved request is read under the profile's one binding for its scope.
+    Without a saved request, the profile must have exactly one binding.
+  - A refused or failed read is an error, never a state.
+
+
+- The protected signer bounds each requester's approval mail to ten notices
+  an hour. A request past the budget is still created and waits as any other,
+  but is not mailed: the signer records that and the owner page marks it
+  "not mailed". The prepare and receipt answers are unchanged. The budget
+  is never less than one full round of a request's approvers.
+
+- The protected signer refuses a new request with 403
+  `open_requests_limit_reached` while its requester already has twenty
+  unfinished requests that need a human under one authority: an agent
+  counted by its principal, an owner's page request by that owner. A
+  place frees when its request is signed, refused or expires. aw tells the
+  refusal in words.
+
+- The owner page reads bounded pages of its own scope instead of every
+  stored operation, and a tab's saved removal retires through an exact-id
+  lookup of its stored final outcome. An approval interrupted by a failed
+  registry read after the owner's passkey touch is no longer spent: a
+  reopened page (signed-in or mailed link) finishes it with no new passkey
+  check while its original gesture window lasts, and a 503 offers Try again.
+  Unexpected signer errors are logged by route, operation id, exception
+  class and stack frames (file, line and function), never with a message
+  or locals; the controller key signs a delivery envelope only inside
+  custody, from the verified signed artifact. `aw` backs off reading a
+  pending receipt (to a one-minute cap, never past the operation's expiry)
+  instead of spending its whole read allowance.
+
+- `aw custody serve` picks up a parent import, certificate install or connect
+  that changes its resident home while it runs, without a restart and
+  without a request mixing old and new credentials. Those commands now
+  commit their change as one credential generation of the home
+  (`credential-generation.json`, with `credential-update.json` marking an
+  update in progress). Custody serves each request from one published
+  snapshot, refuses requests with `credential_update_incomplete` while an
+  update is unfinished, `credential_update_busy` while one holds the home
+  past its wait, and `credential_update_unpublished` after a change
+  made without a generation (a restart re-validates and adopts it), and
+  with `identity_changed` until restart if the resident key changes. While
+  custody serves a home (it holds `credential-reader.lock`), a supported
+  command refuses to publish over such a change; in a home no custody
+  serves, it publishes over it as before.
+
+- `aweb-a2a-gw` reaches the registry its own configuration names
+  (`registry_url`, or `AWEB_A2A_GW_REGISTRY_URL` without a config file) as the
+  operator's explicit choice, so a private or internal registry no longer has
+  to be named again in `AWID_REGISTRY_URL`. A `registry_url` stored in the
+  gateway workspace's `teams.yaml` stays pinned to public `https` addresses.
+
+- The team deployment bundle's `team.registryRoute` (`local` or `external`,
+  default `external`) says where the AWID registry runs for the agents'
+  ingress probe. An external registry, such as the public one at the default
+  `team.registryUrl`, gets a positive control with no backend log, and
+  `teamctl start` no longer requires a `registry` Compose service for it. A
+  local registry keeps its log witness and must be reached at one of
+  `egress.privateIngressAddresses`. Either declaration that does not match
+  the deployment is refused.
+
+  Upgrade: a deployment with agents that runs its own `registry` service
+  must set `team.registryRoute: local`; without it, `teamctl start` refuses
+  and names that setting.
+
 - `aw id endorse` installs the endorsed root's chain (the human's supporting
   chain and the signed certificate it registered) in the root's home once
   the registry read-back confirms it, so the root can issue children with
@@ -15,6 +106,44 @@
   revocation of that certificate under the profile's pinned controller key,
   and changes nothing in the agent's home. The same `--operation-id` resumes
   the removal; changed inputs refuse `operation_conflict`.
+
+- `aw id team remove-agent --owner-approved` removes any agent membership of a
+  protected team, whoever admitted it, once the team's current owner approves
+  it live on the protected service's page (`team.agent.remove/owner_approved`).
+  The registered requester the profile grants asks for it; its key is recorded,
+  never authority. Name the membership with `--certificate F`, or with
+  `--team T --certificate-id C`, which reads the team's active listing at the
+  profile's registry, signed by this member's key (`selector_unauthorized`
+  when the key is not in the home). `--no-wait` and `--no-browser` work as for
+  `aw id endorse`. The result names the frozen team, certificate, alias and
+  target kind, with `kind not verified` printed as the service froze it.
+  Running the same command again continues an unfinished removal from its
+  saved request, without the listing, so a removal whose answer was lost is
+  recovered by its receipt after the certificate has left the listing. The
+  saved request is forgotten only after the controller's signature over
+  exactly the frozen revocation verifies, or after the service refuses it.
+
+- The protected approvals `aw id endorse`, `aw app role revoke
+  --protected-profile` and `aw id team remove-agent --owner-approved` ask in
+  the `intent_v1` approval format: the human approves the frozen intent, and
+  the certificate, owner act or registry request is issued when they approve,
+  so a mailed approval can wait up to the operation's own window instead of
+  a few minutes. aw checks every issued artifact against the approved intent
+  and its issuance window. A protected role act is now delivered to the app
+  by the protected service, which confirms it applied; aw never posts it, and
+  a signed act without that confirmation is `application_unconfirmed` and
+  keeps its request. A service still serving the older format answers
+  `upgrade_aw_required`; this aw needs a service that serves `intent_v1`.
+
+- A request saved by an older aw in the previous approval format, or under
+  another authority generation of the same binding, is never sent again and
+  never silently replaced. Before asking for the same act on the same target,
+  aw reads its receipt once: a refusal retires it, a verified applied effect
+  settles it, and anything else keeps it quarantined in aw's private state
+  with what was observed, stopping with `operation_reconciliation_required`.
+  `--replace <operation-id>` on each of the three commands names that kept
+  request to ask for a separately approved act; the kept record stays.
+  `aw app role resume` on such a request only reads its receipt.
 
 - `aw id team install-cert --identity-home H --certificate F` installs a team
   certificate file, such as the one `aw id team admit --certificate-out`

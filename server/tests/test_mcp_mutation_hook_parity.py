@@ -7,6 +7,7 @@ boundaries.
 """
 
 from identity_binding_support import seed_verified_bindings
+from team_facts_fixtures import legacy_registry
 
 import json
 from datetime import datetime
@@ -118,7 +119,7 @@ async def server(aweb_cloud_db, monkeypatch):
         mutations.append((event_type, dict(context)))
 
     redis = _RecordingRedis()
-    app = _build_test_app(db, object())
+    app = _build_test_app(db, legacy_registry())
     seed_verified_bindings(app, *((f"did:aw:{alias}", did, f"acme.com/{alias}")
                                   for alias, (_, did) in keys.items()))
     app.state.on_mutation = record_mutation

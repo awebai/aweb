@@ -5,7 +5,9 @@ from __future__ import annotations
 import httpx
 
 from awid.external_authority import (
+    OriginContext,
     canonical_registry_origin,
+    isolated_registry_test_enabled,
     validate_resolved_addresses,
 )
 from awid.external_registry import SystemHostResolver
@@ -29,18 +31,25 @@ class _ClosingStream(httpx.AsyncByteStream):
 
 
 class RegistryOverrideTransport(httpx.AsyncBaseTransport):
-    """Resolve once per request; refuse any nonpublic answer before connecting.
+    """Resolve once per request and check every answer before connecting.
 
     Explicit operator-configured registries and injected transports retain their
-    existing policy. DNS-selected origins always use production address policy.
+    existing policy. DNS-selected origins default to production address policy.
+    Only an explicit isolated-development context admits isolated test origins.
     The request owner's timeout covers lookup, connection and response reading.
     """
 
+    def __init__(self, *, origin_context: OriginContext | None = None):
+        self.origin_context = origin_context or OriginContext()
+
     async def handle_async_request(self, request):
         try:
-            canonical_registry_origin(str(request.url.copy_with(path="/", query=None)))
+            origin = canonical_registry_origin(
+                str(request.url.copy_with(path="/", query=None)), context=self.origin_context,
+            )
             addresses = validate_resolved_addresses(
-                await SystemHostResolver().resolve_all(request.url.host)
+                await SystemHostResolver().resolve_all(request.url.host),
+                allow_nonpublic_test=isolated_registry_test_enabled(origin, self.origin_context),
             )
         except FederationAuthorityError as exc:
             raise httpx.ConnectError(

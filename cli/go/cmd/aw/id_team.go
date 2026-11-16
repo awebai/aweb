@@ -2931,7 +2931,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 			status = "already_installed"
 		}
 	}
-	if err := recordTeamCertificate(workingDir, identityRoot, cert, registryURL, status); err != nil {
+	if _, err := commitTeamCertificate(workingDir, identityRoot, "fetch-cert", cert, registryURL, "", func() (string, error) { return status, nil }); err != nil {
 		return err
 	}
 

@@ -33,6 +33,15 @@ const (
 // controller key teamKey once per human in humans.
 func admitTestProfile(t *testing.T, teamKey ed25519.PrivateKey, humans ...string) *handoff.Profile {
 	t.Helper()
+	profile, err := handoff.ParseProfile(admitTestProfileJSON(teamKey, humans...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return profile
+}
+
+// admitTestProfileJSON is admitTestProfile's provisioned file.
+func admitTestProfileJSON(teamKey ed25519.PrivateKey, humans ...string) []byte {
 	var bindings []any
 	for _, human := range humans {
 		bindings = append(bindings, map[string]any{
@@ -50,25 +59,27 @@ func admitTestProfile(t *testing.T, teamKey ed25519.PrivateKey, humans ...string
 		"namespace_authorities": []any{map[string]any{"domain": "customer.example", "controller_did": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))}},
 		"bindings":              bindings,
 	})
-	profile, err := handoff.ParseProfile(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return profile
+	return raw
 }
 
 // admitService stands in for the protected service's bounded admission: it
 // freezes the unsigned certificate of what was sent and signs it with
 // signKey on execute. sign changes what it signs (see the cases).
 type admitService struct {
-	mu       sync.Mutex
-	server   *httptest.Server
-	signKey  ed25519.PrivateKey
-	tamper   string
-	sent     map[string]any
-	artifact map[string]any
-	prepares int
-	executes int
+	serviceOwned bool
+	mu           sync.Mutex
+	server       *httptest.Server
+	signKey      ed25519.PrivateKey
+	tamper       string
+	sent         map[string]any
+	artifact     map[string]any
+	prepares     int
+	executes     int
+	// expired answers prepare with an operation already past its expiry,
+	// and receipt (when set) is what a receipt read answers.
+	expired bool
+	receipt string
+	reads   int
 }
 
 func newAdmitService(t *testing.T, signKey ed25519.PrivateKey) *admitService {
@@ -84,8 +95,15 @@ func newAdmitService(t *testing.T, signKey ed25519.PrivateKey) *admitService {
 			s.sent = nil
 			_ = json.Unmarshal(body, &s.sent)
 			_, _ = w.Write(s.prepared())
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/protected-operations/") && s.receipt != "":
+			s.reads++
+			_, _ = w.Write([]byte(s.receipt))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/execute"):
 			s.executes++
+			if s.tamper == "limit" {
+				_, _ = w.Write([]byte(`{"state":"refused","code":"admission_limit_reached"}`))
+				return
+			}
 			_, _ = w.Write(s.committed())
 		default:
 			http.NotFound(w, r)
@@ -121,8 +139,15 @@ func (s *admitService) prepared() []byte {
 	payload := map[string]any{"policy": map[string]any{"ref": "aweb.human-assurance/1", "version": 1}, "request": request}
 	digest, _ := handoff.CoveredRequestDigest(decodeForDigest(payload))
 	raw, _ := json.Marshal(map[string]any{"operation_id": s.sent["operation_id"], "handoff_id": "h1", "digest": digest,
-		"payload": payload, "expires_at": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)})
+		"payload": payload, "expires_at": s.expiresAt().UTC().Format(time.RFC3339Nano)})
 	return raw
+}
+
+func (s *admitService) expiresAt() time.Time {
+	if s.expired {
+		return time.Now().Add(-time.Minute)
+	}
+	return time.Now().Add(time.Minute)
 }
 
 func decodeForDigest(value map[string]any) map[string]any {
@@ -144,10 +169,12 @@ func (s *admitService) committed() []byte {
 	if s.tamper == "key" {
 		_, key, _ = ed25519.GenerateKey(nil)
 	}
-	raw, _ := json.Marshal(map[string]any{"state": "committed", "result": map[string]any{
-		"signing":   base64.StdEncoding.EncodeToString(signing),
-		"signature": base64.StdEncoding.EncodeToString(ed25519.Sign(key, signing)),
-	}})
+	signature := ed25519.Sign(key, signing)
+	var result any = map[string]any{"signing": base64.StdEncoding.EncodeToString(signing), "signature": base64.StdEncoding.EncodeToString(signature)}
+	if s.serviceOwned {
+		result = appliedTestResult(s.sent["operation_id"].(string), signing, signature)
+	}
+	raw, _ := json.Marshal(map[string]any{"state": "committed", "result": result})
 	return raw
 }
 
@@ -506,5 +533,91 @@ func TestALinkToTheSameCertificateIsStillNotTheCertificateFile(t *testing.T) {
 	}
 	if _, err := admitMember(context.Background(), service.options(), profile, request); errorCodeOf(err) != "certificate_out_exists" {
 		t.Fatalf("err %v", err)
+	}
+}
+
+func TestAnAdmissionOverTheLimitSaysHowManyAgentsTheRootHas(t *testing.T) {
+	_, profile, service := admitTestSetup(t)
+	service.tamper = "limit"
+	request := admitTestRequest(t)
+	request.Counts = func(context.Context) (*handoff.AdmissionCounts, error) {
+		return &handoff.AdmissionCounts{Active: 5, MaxActive: 5, InWindow: 1, MaxPerWindow: 10, WindowSeconds: 3600}, nil
+	}
+	_, err := admitMember(context.Background(), service.options(), profile, request)
+	if errorCodeOf(err) != "admission_limit_reached" {
+		t.Fatalf("code %q: %v", errorCodeOf(err), err)
+	}
+	for _, want := range []string{"5 of 5", request.Team, "aw id team remove-agent", admitTestOperation} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%q lacks %q", err.Error(), want)
+		}
+	}
+}
+
+// An operation that expired before it was decided is settled by its receipt:
+// the saved request is forgotten, so running the command again starts anew.
+func TestAnExpiredSavedAdmissionIsSettledAndTheNextRunStartsANewOperation(t *testing.T) {
+	_, profile, service := admitTestSetup(t)
+	request := admitTestRequest(t)
+	binding, _ := admissionBinding(profile, request.Team)
+	if _, err := operationBytes(profile, request.OperationID, admissionBody(profile, binding, request)); err != nil {
+		t.Fatal(err)
+	}
+	service.expired, service.receipt = true, `{"state":"refused","code":"operation_expired"}`
+	_, err := admitMember(context.Background(), service.options(), profile, request)
+	if errorCodeOf(err) != "operation_expired" || service.executes != 0 || service.reads != 1 {
+		t.Fatalf("code %q, %d executes, %d reads: %v", errorCodeOf(err), service.executes, service.reads, err)
+	}
+	again := request
+	again.OperationID = ""
+	next, resumed, err := protectedOperationID("", profile, admissionBody(profile, binding, again))
+	if err != nil || resumed || next == request.OperationID {
+		t.Fatalf("the next run %q resumed=%v %v", next, resumed, err)
+	}
+}
+
+// A result that committed before expiry, whose answer was lost, is taken.
+func TestACommittedAdmissionWhoseAnswerWasLostIsRecoveredAfterExpiry(t *testing.T) {
+	teamKey, profile, service := admitTestSetup(t)
+	request := admitTestRequest(t)
+	binding, _ := admissionBinding(profile, request.Team)
+	if _, err := operationBytes(profile, request.OperationID, admissionBody(profile, binding, request)); err != nil {
+		t.Fatal(err)
+	}
+	service.expired = true
+	service.mu.Lock()
+	service.sent = admissionBody(profile, binding, request)
+	service.prepared()
+	service.mu.Unlock()
+	service.receipt = string(service.committed())
+	report, err := admitMember(context.Background(), service.options(), profile, request)
+	if err != nil || report["state"] != "committed" || service.executes != 0 {
+		t.Fatalf("%v %v after %d executes", report, err, service.executes)
+	}
+	cert, err := awid.LoadTeamCertificate(request.CertificateOut)
+	if err != nil || awid.CheckDecodedTeamCertificate(cert, awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))) != nil {
+		t.Fatalf("certificate: %v", err)
+	}
+	if saved, _ := awconfig.LoadPendingGovernanceOperation(request.OperationID); saved != nil {
+		t.Fatal("the recovered operation stayed saved")
+	}
+}
+
+// When the outcome cannot be read, the operation and its id are kept.
+func TestAnExpiredAdmissionWhoseReceiptCannotBeReadKeepsItsOperation(t *testing.T) {
+	_, profile, service := admitTestSetup(t)
+	request := admitTestRequest(t)
+	binding, _ := admissionBinding(profile, request.Team)
+	if _, err := operationBytes(profile, request.OperationID, admissionBody(profile, binding, request)); err != nil {
+		t.Fatal(err)
+	}
+	service.expired, service.receipt = true, `{"state":`
+	if _, err := admitMember(context.Background(), service.options(), profile, request); err == nil {
+		t.Fatal("an unreadable outcome reported success")
+	}
+	again := request
+	again.OperationID = ""
+	if got, resumed, _ := protectedOperationID("", profile, admissionBody(profile, binding, again)); !resumed || got != request.OperationID {
+		t.Fatalf("the uncertain operation was dropped: %q resumed=%v", got, resumed)
 	}
 }

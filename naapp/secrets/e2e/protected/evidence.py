@@ -2,7 +2,9 @@
 
 Runs inside the signer's container, as its process uid, with the host's own
 AWEB_PROTECTED_* settings. Read only: each operation's stored outcome,
-whether it holds a signed result, and its refusal code. The round trip uses it
+whether it holds a signature, whether that is committed, and its refusal code.
+A service-delivered act is signed (signed_result) before the consumer confirms
+it, and committed (result) only once it does; any other act is both at once. The round trip uses it
 as evidence that nothing it must not sign was signed. Each operation also
 names its expiry and the nonce its request froze at prepare; a signed one names
 the act it signed, by H, the SHA-256 of the exact signing bytes, and by that
@@ -53,7 +55,8 @@ async def evidence(operation_ids: list[str]) -> dict:
     await db.connect()
     try:
         rows = await db.fetch_all(
-            "SELECT operation_id, result IS NOT NULL AS signed, refusal_code, result, request, expires_at "
+            "SELECT operation_id, COALESCE(signed_result, result) AS signature, result IS NOT NULL AS committed,"
+            " refusal_code, request, expires_at "
             "FROM {{tables.protected_signer_operations}} WHERE operation_id = ANY($1::text[])",
             operation_ids,
         )
@@ -61,11 +64,12 @@ async def evidence(operation_ids: list[str]) -> dict:
         await db.disconnect()
     return {
         row["operation_id"]: {
-            "signed": row["signed"],
+            "signed": row["signature"] is not None,
+            "committed": row["committed"],
             "refusal_code": row["refusal_code"],
             "expires_at": row["expires_at"].isoformat(),
             "frozen_nonce": json.loads(bytes(row["request"]))["artifact"]["nonce"],
-            **(signed_act(row["result"]) if row["signed"] else {}),
+            **(signed_act(row["signature"]) if row["signature"] is not None else {}),
         }
         for row in rows
     }

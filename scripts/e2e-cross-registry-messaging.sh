@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source "$ROOT/scripts/journey-network.sh"
 PROJECT="${AWEB_CROSS_REGISTRY_PROJECT:-aweb-cross-reg-$RANDOM-$$}"
+CLI_IMAGE="$PROJECT-cli:journey"
 BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
 [[ "$BIND_ROOT" = /* && -d "$BIND_ROOT" ]] || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
 RUNTIME="$(mktemp -d "$BIND_ROOT/aweb-cross-reg.XXXXXX")"
@@ -22,6 +23,8 @@ AWID_B_URL="$(journey_url "$PROJECT" awid-b 8010 "http://$PUBLISHED_HOST:$AWID_B
 AWEB_A_URL="$(journey_url "$PROJECT" aweb-a 8000 "http://$PUBLISHED_HOST:$AWEB_A_PORT")"
 AWEB_B_URL="$(journey_url "$PROJECT" aweb-b 8000 "http://$PUBLISHED_HOST:$AWEB_B_PORT")"
 mkdir -p "$DNS_DIR" "$WORK_DIR/home" "$WORK_DIR/alice" "$WORK_DIR/bob"
+# CoreDNS runs as nonroot; only its public DNS mounts cross the UID boundary.
+chmod 0755 "$DNS_DIR"
 
 compose() {
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
@@ -38,6 +41,10 @@ cleanup() {
   fi
   if [[ -f "$COMPOSE_FILE" ]]; then
     compose down -v --rmi local --remove-orphans >/dev/null 2>&1 || status=1
+    # Compose's local-image cleanup leaves explicitly tagged images behind.
+    if docker image inspect "$CLI_IMAGE" >/dev/null 2>&1; then
+      docker image rm "$CLI_IMAGE" >/dev/null 2>&1 || status=1
+    fi
     for kind in container volume network image; do
       case "$kind" in
         container) leftovers="$(docker ps -aq --filter label=com.docker.compose.project="$PROJECT")" ;;
@@ -182,6 +189,7 @@ $TTL 1
 @ IN NS ns.example.net.
 ns IN A 127.0.0.1
 EOF
+chmod 0644 "$DNS_DIR/Corefile" "$DNS_DIR/example.com.zone" "$DNS_DIR/example.net.zone"
 
 cat > "$COMPOSE_FILE" <<EOF
 services:
@@ -280,6 +288,7 @@ services:
       awid-b: {condition: service_started}
       federation-dns: {condition: service_started}
   cli:
+    image: "$CLI_IMAGE"
     build:
       context: "$ROOT"
       dockerfile: scripts/federation-cli.Dockerfile
@@ -307,6 +316,10 @@ EOF
 
 compose down -v --remove-orphans >/dev/null 2>&1 || true
 compose build awid-a awid-b aweb-a aweb-b cli
+if ! CLI_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$CLI_IMAGE")" || [[ -z "$CLI_IMAGE_ID" ]]; then
+  echo "CLI build did not produce the expected image: $CLI_IMAGE" >&2
+  exit 1
+fi
 compose up -d federation-dns postgres-a postgres-b redis-a redis-b
 DNS_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(compose ps -q federation-dns)")"
 [[ -n "$DNS_IP" ]]
@@ -363,6 +376,8 @@ ns IN A 127.0.0.1
 _awid IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-b:8010;"
 _awid.beta IN TXT "awid=v1; controller=$beta_controller; registry=http://awid-b:8010;"
 EOF
+  # mv replaces the inode, so set the new public mode before publishing it.
+  chmod 0644 "$DNS_DIR/example.com.zone.tmp" "$DNS_DIR/example.net.zone.tmp"
   mv "$DNS_DIR/example.com.zone.tmp" "$DNS_DIR/example.com.zone"
   mv "$DNS_DIR/example.net.zone.tmp" "$DNS_DIR/example.net.zone"
 }
@@ -570,6 +585,71 @@ plain_inbox="$(run_cli bob mail inbox --show-all --json)"
 verify_ts_received "$plain_inbox" "" "$PLAIN_MAIL_ID"
 echo "PASS: an unenrolled received sender remains unknown with no inferred human"
 
+echo "Proving exported mail with only public bytes, real DNS and public registry reads"
+encrypted_mail="$(run_cli alice mail send --e2ee --to-address beta.example.net/bob --subject 'encrypted export' --body 'outside encrypted proof' --json)"
+ENCRYPTED_MAIL_ID="$(printf '%s' "$encrypted_mail" | json_field message_id)"
+[[ -n "$ENCRYPTED_MAIL_ID" ]]
+mkdir -p "$RUNTIME/envelopes"
+run_cli bob mail show --message-id "$MAIL_ID" --envelope > "$RUNTIME/envelopes/adopted.json"
+run_cli bob mail show --message-id "$PLAIN_MAIL_ID" --envelope > "$RUNTIME/envelopes/chainless.json"
+run_cli bob mail show --message-id "$ENCRYPTED_MAIL_ID" --envelope > "$RUNTIME/envelopes/encrypted.json"
+# Unlike the recipient container, this outsider has no identity volume at all.
+# Its only bind mount is the exported messages; its HOME and cwd are fresh.
+verify_export() {
+  [[ -n "$CLI_IMAGE_ID" ]] || { echo "Cannot launch export verifier: CLI image ID is empty" >&2; return 1; }
+  docker run --rm --network "${PROJECT}_default" --dns "$DNS_IP" \
+    -v "$RUNTIME/envelopes:/envelopes:ro" --entrypoint python3 \
+    "$CLI_IMAGE_ID" /usr/local/bin/cross-registry-offline-verifier.py "$1" "$ALICE_HUMAN"
+}
+verify_export controls
+# These artifacts use the real second registry/controller and original sender
+# key. Their signatures are valid; they differ only at the claimed tree domain.
+compose run --rm -T --no-deps -v "$RUNTIME/envelopes:/envelopes" --entrypoint id-tree-verifier cli cross-domain-fixtures
+verify_export cross-domain
+cp "$WORK_DIR/alice/.aw/id-chain.json" "$WORK_DIR/alice-chain-original.json"
+for presentation in foreign-domain mixed-domains; do
+  python3 - "$RUNTIME/envelopes/$presentation.json" "$WORK_DIR/alice/.aw/id-chain.json" <<'PYDOMAIN'
+import json, sys
+from pathlib import Path
+export = json.loads(Path(sys.argv[1]).read_text())
+Path(sys.argv[2]).write_text(json.dumps(export["id_chain"], sort_keys=True, separators=(",", ":")))
+PYDOMAIN
+  run_cli alice who --json | python3 -c '
+import json,sys
+raw=sys.stdin.read(); result=json.loads(raw[raw.find("{"):])
+assert result["identity_valid"] is False and result["reason"] == "domain_mismatch", result
+assert result["human_id"] is None and result["kind"] is None and "chain" not in result, result
+'
+done
+mv "$WORK_DIR/alice-chain-original.json" "$WORK_DIR/alice/.aw/id-chain.json"
+[[ "$(who_json alice)" == "$ALICE_WHO" ]]
+echo "PASS: who refuses foreign enrollment and mixed-domain chains, then verifies the restored neighboring chain"
+compose stop awid-a
+verify_export unavailable
+compose start awid-a
+wait_health awid-a "$AWID_A_URL" awid-a
+publish_dns "$BOB_CONTROLLER" "$BOB_CONTROLLER"
+dns_changed=0
+for _ in $(seq 1 30); do
+  if ! seen="$(run_cli alice id namespace check-txt --domain alpha.example.com --json 2>&1)" \
+    && [[ "$seen" == *"DNS controller $BOB_CONTROLLER does not match local controller $ALICE_CONTROLLER"* ]]; then
+    dns_changed=1; break
+  fi
+  sleep 1
+done
+[[ "$dns_changed" == 1 ]] || { printf '%s\n' "$seen" >&2; exit 1; }
+verify_export dns-root
+publish_dns "$ALICE_CONTROLLER" "$BOB_CONTROLLER"
+# CoreDNS reload is asynchronous; establish restoration before later controls.
+dns_restored=0
+for _ in $(seq 1 30); do
+  if run_cli alice id namespace check-txt --domain alpha.example.com --json >/dev/null 2>&1; then
+    dns_restored=1; break
+  fi
+  sleep 1
+done
+[[ "$dns_restored" == 1 ]]
+
 echo "Proving team membership removal is not ID revocation"
 removed="$(run_cli alice id team remove-member --team alpha --namespace alpha.example.com --member alpha.example.com/alice --json)"
 removed_certificate="$(printf '%s' "$removed" | json_field certificate_id)"
@@ -577,5 +657,10 @@ removed_certificate="$(printf '%s' "$removed" | json_field certificate_id)"
 [[ "$(curl -sS "$AWID_A_URL/v1/namespaces/alpha.example.com/teams/alpha/certificates/$removed_certificate/status" | json_field status)" == revoked ]]
 [[ "$(who_json alice)" == "$ALICE_WHO" ]]
 echo "PASS: removing alice from team alpha revokes her team certificate and leaves her ID chain verified"
+
+# Self-revocation is ID authority, independent of the removed team membership.
+# Run it last so the other live-sender controls keep their valid neighboring case.
+run_cli alice id revoke "$ALICE_DID_AW" --json >/dev/null
+verify_export revoked
 
 echo "PASS: real DNS, Secret Service, PTY, constructor chains, unchanged resume, outsider verification, mail and chat across disjoint registries"

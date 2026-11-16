@@ -65,13 +65,21 @@ class BindingPolicy:
             and row["policy_version"] != self.expected_version
         ):
             raise SignerRefused("policy_changed")
+        # Juan 2026-11-13, via coordinator: the approver's mailed personal link
+        # reveals the request, and a mailed approval may wait up to 24 hours,
+        # still capped by every frozen artifact deadline. Deciding still needs
+        # the approver's own fresh exact-act passkey assertion.
         return ActionPolicy(
             policy_ref,
             row["policy_version"],
             Assurance.PASSKEY,
-            timedelta(seconds=600),
+            MAILED_APPROVAL_WAIT,
             (row["b3_scope"],),
+            link_reveals_request=True,
         )
+
+
+MAILED_APPROVAL_WAIT = timedelta(hours=24)
 
 
 class IndependentProtectedSigner:
@@ -115,6 +123,13 @@ class IndependentProtectedSigner:
         # other embedding. No synthetic installation or reusable signer unlock.
         from aweb_naapp.runtime.approvals import PgApprovalStore
 
+        from .notifications import ProtectedNotifications
+
+        policies = BindingPolicy(self.authority, policy_version)
+        if isinstance(delivery, ProtectedNotifications):
+            # The notice may name a request only under this signer's own
+            # frozen B2 policy (human-assurance-contract.md, "Mailed approval links").
+            delivery = delivery.with_policies(policies)
         self.passkeys = Passkeys(
             db,
             rp=RelyingParty(human_origin, "Protected signing"),
@@ -125,19 +140,26 @@ class IndependentProtectedSigner:
             enrolment_ttl=timedelta(hours=1),
             challenge_ttl=timedelta(minutes=5),
         )
+        from aweb_naapp.runtime.protected_signer.catalog import OPERATIONS
+        from .admit import AdmitEffects
+        from .endorse import EndorseEffects
+        from .owner_removal import OwnerRemovalEffects
+        from .removal import RemovalEffects
+
+        adapters = {"admit": AdmitEffects(self), "endorsement": EndorseEffects(self),
+                    "removal": RemovalEffects(self), "owner_removal": OwnerRemovalEffects(self)}
         self.signer = ProtectedSigner(
             db,
             passkeys=self.passkeys,
-            policies=BindingPolicy(self.authority, policy_version),
+            policies=policies,
             delivery=delivery,
             audit=self.audit,
             authority=self.authority,
             custody=custody,
+            mailed_approval_wait=MAILED_APPROVAL_WAIT,
+            effect_adapters=adapters,
+            definitions=tuple(row for row in OPERATIONS.values() if row.key_role == context.authority_kind),
         )
-
-        from .admission import AdmissionEffects
-
-        self.signer.admission = AdmissionEffects(self)
 
     @classmethod
     def from_profile(cls, db, *, profile, scope, registry_client, custody, delivery, proof_context=None):
@@ -166,18 +188,9 @@ class IndependentProtectedSigner:
     async def authenticate_prepare(self, request, operation):
         if operation.context != self.context:
             raise SignerRefused("scope_refused")
-        if (
-            operation.intent()["operation"] == "team.log-key.sign"
-            and operation.audience != self.request_origin
-        ):
-            raise SignerRefused("scope_refused")
-        if operation.intent()["operation"] == "team.agent.remove":
-            if operation.intent()["subject"]["root_id_or_self"] == "self":
-                from .self_removal import self_requester
-
-                return await self_requester(self, request, operation, purpose="prepare")
-            if "X-AWID-Team-Certificate" in request.headers:
-                raise SignerRefused("requester_invalid")
+        actor = await self._own_certificate_requester(request, operation, purpose="prepare")
+        if actor is not None:
+            return actor
         return await self.requester(
             request,
             principal=request.headers.get("X-AWEB-DID-AW", ""),
@@ -189,17 +202,26 @@ class IndependentProtectedSigner:
         operation = await self.signer.lookup_operation(operation_id)
         if operation is None:
             raise SignerRefused("operation_not_found")
-        if operation.intent()["operation"] == "team.agent.remove":
-            if operation.intent()["subject"]["root_id_or_self"] == "self":
-                from .self_removal import self_requester
-
-                return await self_requester(self, request, operation, purpose=purpose)
-            if "X-AWID-Team-Certificate" in request.headers:
-                raise SignerRefused("requester_invalid")
+        actor = await self._own_certificate_requester(request, operation, purpose=purpose)
+        if actor is not None:
+            return actor
         return await self.requester(
             request, principal=request.headers.get("X-AWEB-DID-AW", ""),
             operation="protected_operation_" + purpose, context=operation.context,
         )
+
+    async def _own_certificate_requester(self, request, operation, *, purpose):
+        from aweb_naapp.runtime.protected_signer.types import owner_act_operation
+
+        operation = owner_act_operation(operation)
+        rule = operation.spec.requester
+        if operation.spec.supports_self_removal and operation.intent()["subject"]["root_id_or_self"] == "self":
+            from .self_removal import self_requester
+
+            return await self_requester(self, request, operation, purpose=purpose)
+        if rule.proof != "registered_requester" and "X-AWID-Team-Certificate" in request.headers:
+            raise SignerRefused("requester_invalid")
+        return None
 
     async def authenticate_receipt(self, request, operation_id):
         return await self._authenticate_retained(request, operation_id, purpose="receipt")
@@ -232,9 +254,21 @@ class IndependentProtectedSigner:
             limiter=limiter,
             executor=self.authenticate_execute,
             policy_reader=self.read_admission_policy,
+            owner_prepare=self.prepare_owner_selection,
+            owner_final=self.final_owner_operations,
             human_sessions=human_sessions,
             human_csrf_key=human_csrf_key,
         )
+
+    async def final_owner_operations(self, operation_ids, session):
+        from .owner import final_operations
+
+        return await final_operations(self, scope=session.scope, operation_ids=operation_ids)
+
+    async def prepare_owner_selection(self, selection, session):
+        from .owner_removal import prepare_owner_selection
+
+        return await prepare_owner_selection(self, selection, session)
 
     async def read_admission_policy(self, request, team_id):
         """Configuration only, under a named requester's current registered key.
@@ -243,6 +277,8 @@ class IndependentProtectedSigner:
         an arbitrary valid registry key is not a prospective root grant. The
         current controller/H checks remain independent of policy contents.
         """
+        from .admission import admission_counts
+
         c = self.context
         if c.authority_kind != "team_controller" or team_id != c.authority_id:
             raise SignerRefused("scope_refused")
@@ -267,11 +303,26 @@ class IndependentProtectedSigner:
                         policy = None
                 except (ValueError, TypeError):
                     raise SignerRefused("evidence_unavailable") from None
+            admissions = None
+            counted = request.query_params.get("include") == "admissions"
+            if counted and policy is not None and await tx.fetch_value(
+                "SELECT 1 FROM {{tables.protected_root_endorsements}} WHERE service_id=$1 AND root_id=$2",
+                c.service_id, principal,
+            ):
+                # The endorsed root's own bucket only, as the bounds count it:
+                # a snapshot for its refusal sentence, never a reservation.
+                admissions = await admission_counts(tx, service_id=c.service_id, team_id=team_id, root_id=principal,
+                    window_seconds=policy.fields()["bounds"]["rate_window_seconds"], now=self.signer.clock())
+                if admissions["next_at"] is not None:
+                    admissions["next_at"] = admissions["next_at"].isoformat().replace("+00:00", "Z")
             await fence.check(tx, actor)
             fence.require_fresh()
             enforce_timestamp_skew(require_timestamp(request))
-        return {"service_id": c.service_id, "team_id": team_id, "mode": "protected",
+        answer = {"service_id": c.service_id, "team_id": team_id, "mode": "protected",
                 "policy": policy.fields() if policy is not None else None}
+        if counted:
+            answer["admissions"] = admissions
+        return answer
 
     async def migrate(self):
         await AsyncMigrationManager(
@@ -288,7 +339,8 @@ class IndependentProtectedSigner:
         This binding allows prepare/receipt only, never unattended execution.
         Body size is bounded before the proof helper acquires its whole body.
         """
-        if operation not in {
+        request_label = operation
+        if request_label not in {
             "protected_operation_prepare",
             "protected_operation_receipt",
             "protected_operation_execute",
@@ -296,14 +348,14 @@ class IndependentProtectedSigner:
             raise SignerRefused("scope_refused")
         context = self.context if context is None else context
         expected, selected = self.context.fields(), context.fields()
-        if operation == "protected_operation_receipt":
+        if request_label == "protected_operation_receipt":
             expected.pop("generation")
             selected.pop("generation")
         if expected != selected:
             raise SignerRefused("scope_refused")
-        key_did = await self._request_key(request, principal=principal, operation=operation,
+        key_did = await self._request_key(request, principal=principal, operation=request_label,
                                         scope=context.fields(), domain=context.authority_domain)
-        if operation == "protected_operation_receipt":
+        if request_label == "protected_operation_receipt":
             return ReceiptReader(principal, context, key_did=key_did)
         return RestrictedRequester(principal, context, key_did=key_did)
 

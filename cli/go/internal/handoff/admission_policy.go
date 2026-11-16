@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"time"
 
 	"github.com/awebai/aw/awid"
 )
@@ -46,7 +48,75 @@ var subjectKinds = []string{"local_agent", "registered_agent"}
 // service's code; an answer that is not exactly this service's and team's
 // read is handoff_result_invalid.
 func ReadAdmissionPolicy(ctx context.Context, opts GovernanceOptions, serviceID, team string) (*AdmissionPolicyRead, error) {
-	target, err := url.Parse(opts.Request + AdmissionPolicyPath(team))
+	reply, err := readPolicyAnswer(ctx, opts, team, AdmissionPolicyPath(team))
+	if err != nil {
+		return nil, err
+	}
+	read, ok := decodeAdmissionPolicyRead(reply, serviceID, team)
+	if !ok {
+		return nil, invalidResult(fmt.Errorf("the answer is not team %s's admission policy", team))
+	}
+	return read, nil
+}
+
+// ReadAdmissionCounts reads this root's own admissions to team against its
+// policy's bounds: the same read, asking for counts with include=admissions.
+// A root the service has not endorsed has none (nil). A service that
+// predates counts refuses the query, keeping its code.
+func ReadAdmissionCounts(ctx context.Context, opts GovernanceOptions, serviceID, team string) (*AdmissionCounts, error) {
+	reply, err := readPolicyAnswer(ctx, opts, team, AdmissionPolicyPath(team)+"&include=admissions")
+	if err != nil {
+		return nil, err
+	}
+	invalid := invalidResult(fmt.Errorf("the answer is not team %s's admission counts", team))
+	answer, ok := decodeObject(reply)
+	if !ok || !exactMembers(answer, []string{"service_id", "team_id", "mode", "policy", "admissions"}) {
+		return nil, invalid
+	}
+	admissions := answer["admissions"]
+	delete(answer, "admissions")
+	plain, err := json.Marshal(answer)
+	if err != nil {
+		return nil, invalid
+	}
+	read, ok := decodeAdmissionPolicyRead(plain, serviceID, team)
+	if !ok {
+		return nil, invalid
+	}
+	if admissions == nil {
+		return nil, nil
+	}
+	fields, _ := admissions.(map[string]any)
+	if read.Policy == nil || !exactMembers(fields, []string{"active", "in_window", "next_at"}) {
+		return nil, invalid
+	}
+	active, okActive := nonNegativeInteger(fields["active"])
+	inWindow, okWindow := nonNegativeInteger(fields["in_window"])
+	if !okActive || !okWindow {
+		return nil, invalid
+	}
+	bounds := read.Policy.Fields["bounds"].(map[string]any)
+	maxActive, _ := positiveInteger(bounds["max_active"])
+	maxPerWindow, _ := positiveInteger(bounds["max_per_window"])
+	window, _ := positiveInteger(bounds["rate_window_seconds"])
+	counts := &AdmissionCounts{Active: int(active), MaxActive: int(maxActive), InWindow: int(inWindow),
+		MaxPerWindow: int(maxPerWindow), WindowSeconds: int(window)}
+	if next := fields["next_at"]; next != nil {
+		text, _ := next.(string)
+		at, err := time.Parse(time.RFC3339Nano, text)
+		if err != nil {
+			return nil, invalid
+		}
+		counts.NextAt = at.UTC()
+	}
+	return counts, nil
+}
+
+// readPolicyAnswer GETs a policy read at path. An answer that cannot be read
+// is unknown (receipt_unavailable), never an absent policy; a refusal keeps
+// the service's code.
+func readPolicyAnswer(ctx context.Context, opts GovernanceOptions, team, path string) ([]byte, error) {
+	target, err := url.Parse(opts.Request + path)
 	if err != nil {
 		return nil, err
 	}
@@ -71,11 +141,15 @@ func ReadAdmissionPolicy(ctx context.Context, opts GovernanceOptions, serviceID,
 	case resp.StatusCode != http.StatusOK:
 		return nil, refusal(resp.StatusCode, reply)
 	}
-	read, ok := decodeAdmissionPolicyRead(reply, serviceID, team)
-	if !ok {
-		return nil, invalidResult(fmt.Errorf("the answer is not team %s's admission policy", team))
+	return reply, nil
+}
+
+// nonNegativeInteger is a safe integer of at least zero.
+func nonNegativeInteger(value any) (int64, bool) {
+	if number, ok := value.(json.Number); ok && string(number) == "0" {
+		return 0, true
 	}
-	return read, nil
+	return positiveInteger(value)
 }
 
 func decodeAdmissionPolicyRead(raw []byte, serviceID, team string) (*AdmissionPolicyRead, bool) {

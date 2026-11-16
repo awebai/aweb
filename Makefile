@@ -2,7 +2,7 @@
 # the proxy; the hard runner instead preserves DNS/connection error semantics.
 TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 
-.PHONY: help clean test test-shipping test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -149,6 +149,7 @@ test-shipping:
 	python3 scripts/test_aw_npm_publication.py
 	python3 scripts/test_candidate_cleanup.py
 	python3 scripts/test_candidate_disk_floor.py
+	python3 scripts/test_candidate_input_modes.py
 	python3 scripts/test_candidate_network.py
 	python3 scripts/test_candidate_bind_ownership.py
 	python3 scripts/test_candidate_published_port.py
@@ -175,7 +176,15 @@ test-python-locks:
 # and FastAPI mounts. The unit suite includes source-addition and stale-doc
 # negative controls so this gate proves it can fail rather than only matching
 # today's tree.
-test-sot-source-inventories:
+# Signer and host runtime names live only in the executable catalog. Scan the
+# complete frozen contract vocabulary and literal selector dispatch, including
+# unknown selectors, before the ordinary source inventories.
+.PHONY: test-signer-operation-names
+test-signer-operation-names:
+	python3 scripts/check_signer_operation_names.py
+	python3 -m unittest discover -s scripts -p "test_signer_operation_names.py" -v
+
+test-sot-source-inventories: test-signer-operation-names
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
 
@@ -313,7 +322,14 @@ check-awid-site-docs: sync-awid-site-docs
 verify-site: check-awid-site-docs
 	cd awid/site && hugo --minify --cleanDestinationDir
 
-test-server:
+# The AWID release production runs, locked, for the suites that test against
+# it; synced before a suite goes offline.
+PRODUCTION_AWID_PROJECT := scripts/test-egress/production-awid
+
+production-awid-sync:
+	UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
+
+test-server: production-awid-sync
 	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
 		UV_CACHE_DIR=/tmp/uv-cache uv build --out-dir "$$build_dir"
@@ -339,7 +355,7 @@ lint-naapp:
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
-test-naapp:
+test-naapp: production-awid-sync
 	set -e; for package in $(NAAPP_PACKAGES); do \
 		echo "=== test $$package ==="; \
 		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
@@ -362,7 +378,7 @@ test-awid-pooler:
 	AWID_TEST_POOLER_URL=postgresql://postgres:postgres@localhost:$${AWID_TEST_POOLER_PORT:-56433}/postgres \
 		UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
 
-test-cli:
+test-cli: production-awid-sync
 	cd cli/go && go mod download
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.

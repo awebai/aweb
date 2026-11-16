@@ -7,6 +7,8 @@ const object = value => value !== null && typeof value === "object" && !Array.is
 const refused = () => { throw new Error("handoff_refused"); };
 
 function fieldValid(value, schema) {
+  if (value === null && schema.nullable === true) return true;
+  if (schema.object) return validSubject(value, schema.object);
   if (schema.integer) {
     return Number.isSafeInteger(value) && value >= schema.integer[0] && value <= schema.integer[1];
   }
@@ -61,39 +63,96 @@ async function validAdmissionPolicy(policy, service, teams) {
 }
 
 export async function validateProtectedPresentation(state, handoffId, table) {
+  if (state.state !== "pending") refused();
+  return validateProtectedReceiptPresentation(state, handoffId, table);
+}
+
+// Terminal receipt views keep the same immutable request/digest binding, but
+// cannot borrow the pending-only gate that enables a new approval ceremony.
+export async function validateProtectedReceiptPresentation(state, handoffId, table) {
   const {payload, digest} = state;
   const request = payload?.request;
   const subject = request?.subject;
   const artifact = request?.artifact;
   const spec = table?.[`${request?.operation}|${request?.variant}`];
-  if (state.mode !== "governance" || state.handoff_id !== handoffId || state.state !== "pending" ||
+  if (state.mode !== "governance" || state.handoff_id !== handoffId || !["pending", "committed", "refused", "unknown"].includes(state.state) ||
       !nonempty(state.operation_id) || request?.operation_id !== state.operation_id ||
       !/^[0-9a-f]{64}$/.test(digest) || !nonempty(state.expires_at) || !Number.isFinite(Date.parse(state.expires_at)) ||
       !nonempty(payload?.policy?.ref) || !Number.isSafeInteger(payload?.policy?.version) || payload.policy.version < 1 ||
       !spec || !spec.consumer_available || spec.rule !== "live_floor" ||
       request?.scope?.authority?.kind !== spec.key_role) refused();
+  if (request.approval_format !== "intent_v1" || spec.approval_format !== "intent_v1" || !object(spec.issuance) ||
+      !exact(artifact, ["v", "type", "template", "delivery", "issuance_window"]) || artifact.v !== 1 ||
+      artifact.type !== "aweb.protected-artifact-intent" || !object(artifact.template) ||
+      !exact(artifact.delivery, ["audience", "method", "path"]) || artifact.delivery.audience !== request.audience ||
+      artifact.delivery.method !== "POST" || !exact(artifact.issuance_window, ["not_before", "not_after"])) refused();
+  const stamp = value => typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0,19) === value.slice(0,19);
+  const {not_before:start, not_after:until} = artifact.issuance_window;
+  if (!stamp(start) || !stamp(until) || !(Date.parse(start) < Date.parse(until)) ||
+      Date.parse(until) - Date.parse(start) > 86400000 || Date.parse(state.expires_at) > Date.parse(until)) refused();
+  const templateRead = path => {
+    let value = artifact.template;
+    for (const part of path.split("/").slice(1)) {
+      if (!object(value) || !Object.hasOwn(value, part)) refused();
+      value = value[part];
+    }
+    return value;
+  };
+  const route = spec.issuance.fixed_route ?? templateRead(spec.issuance.route_field);
+  if (artifact.delivery.path !== route) refused();
+  for (const path of [...spec.issuance.issued_fields, ...(spec.issuance.expiry_field ? [spec.issuance.expiry_field] : [])]) {
+    const parts = path.split("/").slice(1);
+    let value = artifact.template;
+    for (const part of parts.slice(0, -1)) {
+      if (!object(value) || !object(value[part])) refused();
+      value = value[part];
+    }
+    if (Object.hasOwn(value, parts.at(-1))) refused();
+  }
   if (!validSubject(subject, spec.subject_schema)) refused();
-  if (spec.family === "owner_act") {
-    if (artifact?.v !== 1 || artifact?.type !== "aweb.owner-act" ||
-        artifact.act !== request.operation || artifact.team_id !== request.scope.authority.id ||
-        artifact.aud !== request.audience || !object(artifact.subject) ||
-        canonical(subject) !== canonical(artifact.subject)) refused();
-  } else if (spec.family === "id_certificate" && request.operation === "identity.root.endorse") {
-    const authority = request.scope.authority;
-    if (!exact(artifact,["v","type","id","domain","parent","kind","issuer_key","issued_at"]) ||
-        artifact.v !== 1 || artifact.type !== "aweb.id-certificate" || artifact.kind !== "agent" ||
-        artifact.id !== subject.root_id || artifact.domain !== subject.domain ||
-        subject.domain !== authority.domain || authority.id !== request.scope.human?.id ||
-        !exact(artifact.parent,["kind","id"]) || artifact.parent.kind !== "identity" || artifact.parent.id !== authority.id ||
-        !nonempty(artifact.issuer_key) || !Number.isFinite(Date.parse(artifact.issued_at)) ||
-        request.registry !== request.audience ||
-        !(request.expected_head === null || /^sha256:[0-9a-f]{64}$/.test(request.expected_head)) ||
-        request.responsibility_statement !== "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions." ||
-        !(await validAdmissionPolicy(request.admission_policy,request.scope.service_id,subject.teams))) refused();
-  } else {
-    // A new family must provide its actual typed codec/presentation binding;
-    // registering a name in the table alone never enables an approval button.
-    refused();
+  const guard = spec.presentation;
+  if (!object(guard)) refused();
+  const read = path => {
+    let value = request;
+    for (const part of path.split("/").slice(1)) {
+      if (!object(value) || !Object.hasOwn(value, part)) refused();
+      value = value[part];
+    }
+    return value;
+  };
+  for (const [path, names] of Object.entries(guard.exact ?? {})) {
+    if (!exact(read(path), names)) refused();
+  }
+  for (const [path, choices] of Object.entries(guard.enums ?? {})) {
+    if (!choices.includes(read(path))) refused();
+  }
+  for (const [path, template] of Object.entries(guard.templates ?? {})) {
+    const expected = template.replace(/\{(\/[^}]+)\}/g, (_, source) => read(source));
+    if (read(path) !== expected) refused();
+  }
+  for (const [path, fields] of Object.entries(guard.json_sha256 ?? {})) {
+    const value = Object.fromEntries(Object.entries(fields).map(([key, source]) => [key, read(source)]));
+    const sum = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical(value))));
+    if (read(path) !== Array.from(sum, b => b.toString(16).padStart(2, "0")).join("")) refused();
+  }
+  for (const [path, value] of Object.entries(guard.constants ?? {})) {
+    if (canonical(read(path)) !== canonical(value)) refused();
+  }
+  for (const [left, right] of guard.equals ?? []) {
+    if (canonical(read(left)) !== canonical(read(right))) refused();
+  }
+  for (const path of guard.nonempty ?? []) if (!nonempty(read(path))) refused();
+  for (const path of guard.timestamps ?? []) {
+    if (!nonempty(read(path)) || !Number.isFinite(Date.parse(read(path)))) refused();
+  }
+  for (const [path, pattern] of Object.entries(guard.nullable_patterns ?? {})) {
+    const value = read(path);
+    if (value !== null && (typeof value !== "string" || new RegExp(pattern).exec(value)?.[0] !== value)) refused();
+  }
+  if (guard.statement && read(guard.statement) !== spec.responsibility_statement) refused();
+  if (guard.admission_policy) {
+    const [policy, service, teams] = guard.admission_policy.map(read);
+    if (!(await validAdmissionPolicy(policy, service, teams))) refused();
   }
   if (await coveredRequestDigest(payload) !== digest) refused();
   return {request, subject, artifact};

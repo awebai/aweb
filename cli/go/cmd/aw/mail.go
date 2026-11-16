@@ -844,6 +844,7 @@ var (
 	mailShowConversationID string
 	mailShowMessageID      string
 	mailShowLimit          int
+	mailShowEnvelope       bool
 )
 
 func formatMailAck(v any) string {
@@ -890,7 +891,8 @@ var mailShowCmd = &cobra.Command{
 	// I miss something recent" needs it BEFORE they run it and believe the result.
 	Long: "Show mail by conversation or exact message ID.\n\n" +
 		"With --message-id, one unique message is selected. The conversation-window " +
-		"direction and 500-message ceiling below do not apply.\n\n" +
+		"direction and 500-message ceiling below do not apply. Add --envelope to export " +
+		"its original signed envelope as JSON for aw verify, without acknowledging it.\n\n" +
 		"With --conversation-id, --limit caps how many messages are returned and defaults " +
 		"to 200. The messages returned are the OLDEST ones, so on a conversation longer " +
 		"than the limit the newest messages are the ones missing - which is the opposite " +
@@ -910,6 +912,9 @@ var mailShowCmd = &cobra.Command{
 		}
 		if conversationID != "" && messageID != "" {
 			return usageError("--conversation-id and --message-id are mutually exclusive")
+		}
+		if mailShowEnvelope && messageID == "" {
+			return usageError("--envelope requires --message-id")
 		}
 
 		// A page fetch and each custody unwrap retain their individual bounds.
@@ -944,6 +949,13 @@ var mailShowCmd = &cobra.Command{
 				return mailShowConversationError(err, conversationID)
 			}
 			return networkError(err, messageID)
+		}
+		if mailShowEnvelope {
+			export, err := exportMailEnvelope(resp.Messages, messageID)
+			if err != nil {
+				return err
+			}
+			return json.NewEncoder(commandStdout).Encode(export)
 		}
 		// The text formatter carries this notice inline. JSON output must stay a
 		// clean parseable document, so it goes to stderr - where a human still sees
@@ -995,6 +1007,7 @@ func init() {
 	mailShowCmd.Flags().StringVar(&mailShowConversationID, "conversation-id", "", "Mail conversation to inspect")
 	mailShowCmd.Flags().StringVar(&mailShowMessageID, "message-id", "", "Legacy mail message to inspect")
 	mailShowCmd.Flags().IntVar(&mailShowLimit, "limit", 200, "For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed")
+	mailShowCmd.Flags().BoolVar(&mailShowEnvelope, "envelope", false, "Export an exact message's original signed envelope as JSON for aw verify")
 
 	mailThreadsCmd.Flags().IntVar(&mailThreadsLimit, "limit", 50, "Max threads per page")
 	mailThreadsCmd.Flags().StringVar(&mailThreadsCursor, "cursor", "", "Continue from next_cursor in a previous threads response")
