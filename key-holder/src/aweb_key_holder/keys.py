@@ -4,19 +4,18 @@ Deploy this directory only into the holder process. The calling application
 must receive public descriptors/results and no mount or database role here.
 """
 
-from contextlib import contextmanager
 import base64
-from importlib.resources import files
 import os
-from pathlib import Path
 import secrets
 import sqlite3
 import stat
 import time
+from contextlib import contextmanager
+from importlib.resources import files
+from pathlib import Path
 from uuid import uuid4
 
-from nacl.public import PublicKey, SealedBox
-
+from approval_service.verify import Refused as ApprovalRefused
 from awid.controller_signing import (
     ControllerDescriptor,
     ControllerObjectRequest,
@@ -25,7 +24,7 @@ from awid.controller_signing import (
 )
 from awid.did import did_from_public_key, did_key_from_signing_key, generate_keypair
 from awid.signing import sign_message
-from approval_service.verify import Refused as ApprovalRefused
+from nacl.public import PublicKey, SealedBox
 
 
 class Refused(ApprovalRefused):
@@ -122,7 +121,7 @@ class KeyStore:
     def open(cls, directory):
         store = cls(directory)
         with store._connection() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] != 2:
+            if db.execute("PRAGMA user_version").fetchone()[0] != 3:
                 raise Refused("schema_unavailable")
             if db.execute("SELECT count(*) FROM configuration").fetchone()[0] != 1:
                 raise Refused("storage_unavailable")
@@ -139,8 +138,28 @@ class KeyStore:
                     .read_text()
                     + "\nCOMMIT;"
                 )
-            elif version != 2:
+                version = 2
+            if version == 2:
+                db.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + files(__package__)
+                    .joinpath("migrations/003_issuing.sql")
+                    .read_text()
+                    + "\nCOMMIT;"
+                )
+            elif version != 3:
                 raise Refused("schema_unavailable")
+
+    def human_issuance(self):
+        with self._connection() as db:
+            return db.execute("SELECT human_issuance FROM configuration").fetchone()[0]
+
+    def set_human_issuance(self, mode):
+        """Private operator setting; never exposed through the HTTP application."""
+        if mode not in ("operator", "approved"):
+            raise Refused("issuing_setting_invalid")
+        with self._connection() as db, db:
+            db.execute("UPDATE configuration SET human_issuance=?", (mode,))
 
     @contextmanager
     def _connection(self):

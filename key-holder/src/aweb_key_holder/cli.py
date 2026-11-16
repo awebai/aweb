@@ -2,37 +2,33 @@
 
 import argparse
 import asyncio
-from dataclasses import asdict
 import json
-from pathlib import Path
 import sys
+from dataclasses import asdict
+from pathlib import Path
 
-from awid.registry import RegistryError
 from approval_service.canonical import InvalidJSON
 from approval_service.verify import Refused as ApprovalRefused
+from awid.registry import RegistryError
 from jsonschema import ValidationError
 
 from .keys import KeyStore, Refused
 
 
 async def operate(args, parser):
-    from awid.controller_signing import parse_controller_request
-    from awid.registry import RegistryClient
     from approval_service.canonical import parse
     from approval_service.grading import EnrollmentGrading
+    from awid.controller_signing import parse_controller_request
+    from awid.registry import RegistryClient
+
     from .enrollment import Holder
 
-    if not all(
-        (
-            args.registry_origin,
-            args.origin,
-            args.approval_origin,
-            args.rp_id,
-            args.grading,
-        )
-    ):
+    if not all((args.registry_origin, args.origin)):
+        parser.error("runtime commands require --registry-origin and --origin")
+    configured = any((args.approval_origin, args.rp_id, args.grading))
+    if configured and not all((args.approval_origin, args.rp_id, args.grading)):
         parser.error(
-            "runtime commands require --registry-origin, --origin, --approval-origin, --rp-id and --grading"
+            "approval configuration requires --approval-origin, --rp-id and --grading"
         )
     if args.grading == "hardware" and args.mds_cache is None:
         parser.error("hardware grading requires --mds-cache")
@@ -44,7 +40,11 @@ async def operate(args, parser):
         return args.registry_origin
 
     registry = RegistryClient(args.registry_origin, domain_registry_resolver=pinned)
-    grading = EnrollmentGrading.load(mode=args.grading, cache_dir=args.mds_cache)
+    grading = (
+        EnrollmentGrading.load(mode=args.grading, cache_dir=args.mds_cache)
+        if configured
+        else None
+    )
     holder = Holder(
         store,
         registry=registry,
@@ -60,6 +60,7 @@ async def operate(args, parser):
     try:
         if args.command == "serve":
             import uvicorn
+
             from .http import create_app
 
             config = uvicorn.Config(
@@ -74,6 +75,16 @@ async def operate(args, parser):
             )
             await uvicorn.Server(config).serve()
             return None
+        if args.command == "issue-person":
+            return await holder.issue_person(args.person, args.identity_key)
+        if args.command in {
+            "bootstrap",
+            "bind",
+            "finish",
+            "activate",
+            "authorize",
+        }:
+            holder.require_approval()
         if args.command == "bootstrap":
             return await holder.bootstrap(args.person, args.identity_key)
         if args.command == "bind":
@@ -123,6 +134,13 @@ def main():
     backup = commands.add_parser("backup")
     backup.add_argument("--offline-public-key", required=True)
     commands.add_parser("migrate")
+    configure = commands.add_parser("configure")
+    configure.add_argument(
+        "--human-issuance", choices=("operator", "approved"), required=True
+    )
+    issue = commands.add_parser("issue-person")
+    issue.add_argument("--person", required=True)
+    issue.add_argument("--identity-key", required=True)
     service = commands.add_parser("serve")
     service.add_argument("--bind", default="127.0.0.1")
     service.add_argument("--port", default=8081, type=int)
@@ -155,6 +173,10 @@ def main():
             result = asdict(
                 KeyStore.create(args.state, organisation=args.organisation).descriptor()
             )
+        elif args.command == "configure":
+            store = KeyStore.open(args.state)
+            store.set_human_issuance(args.human_issuance)
+            result = {"human_issuance": store.human_issuance()}
         elif args.command == "migrate":
             KeyStore(args.state).migrate()
             result = {"state": "migrated"}

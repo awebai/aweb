@@ -99,8 +99,14 @@ async def call(client, path, body, *, seed, key, identity, chain):
             "X-AWEB-DID-AW": identity,
             "X-AWEB-Signed-Payload": encode(packet),
             "Content-Type": "application/json",
-            "X-AWID-ID-Chain": encode_id_chain_header(
-                {"v": 1, "type": "aweb.id-chain", "certificates": chain}
+            **(
+                {
+                    "X-AWID-ID-Chain": encode_id_chain_header(
+                        {"v": 1, "type": "aweb.id-chain", "certificates": chain}
+                    )
+                }
+                if chain
+                else {}
             ),
         },
     )
@@ -126,12 +132,36 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
     first_seed, first_key, first = await register_identity(registry)
     intent = (await holder.bootstrap(first, first_key))["intent"]
     first_device, material = material_for(holder, intent)
-    confirmation = holder.bind_registration(first, material, registration_count=1)
-    activation = await holder.finish(
-        first, creation_receipt(confirmation, first_device)
-    )
-    await commit_identity(registry, activation, first_seed, first_key)
-    assert (await holder.activate(first))["state"] == "active"
+    first_pending = dict(seed=first_seed, key=first_key, identity=first, chain=[])
+    assert intent["intent"]["requester"] == {
+        "kind": "identity",
+        "id": first,
+        "key": first_key,
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(holder)), base_url=holder.origin
+    ) as client:
+        bound = await call(
+            client,
+            f"/v1/enrollments/{first}/binding",
+            {"material": material, "registration_count": 1},
+            **first_pending,
+        )
+        assert bound.status_code == 200, bound.text
+        proof = creation_receipt(bound.json(), first_device)
+        finished = await call(
+            client, f"/v1/enrollments/{first}/finish", proof, **first_pending
+        )
+        assert finished.status_code == 200, finished.text
+        activation = finished.json()
+        await commit_identity(registry, activation, first_seed, first_key)
+        response = await call(
+            client,
+            f"/v1/enrollments/{first}/activate",
+            {},
+            **{**first_pending, "chain": activation["id_chain"]},
+        )
+        assert response.status_code == 200, response.text
     first_caller = dict(
         seed=first_seed, key=first_key, identity=first, chain=activation["id_chain"]
     )
@@ -276,19 +306,27 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
         assert old_replay.status_code == 409
         second_device, second_material = material_for(holder, second_intent)
         base = "/v1/enrollments/" + second
+        second_caller = dict(
+            seed=second_seed, key=second_key, identity=second, chain=[]
+        )
         bound = await call(
             client,
             base + "/binding",
             {"material": second_material, "registration_count": 1},
-            **first_caller,
+            **second_caller,
         )
         assert bound.status_code == 200, bound.text
         creation = creation_receipt(bound.json(), second_device)
-        finished = await call(client, base + "/finish", creation, **first_caller)
+        finished = await call(client, base + "/finish", creation, **second_caller)
         assert finished.status_code == 200, finished.text
         await already_exists()
         await commit_identity(registry, finished.json(), second_seed, second_key)
-        activated = await call(client, base + "/activate", {}, **first_caller)
+        activated = await call(
+            client,
+            base + "/activate",
+            {},
+            **{**second_caller, "chain": finished.json()["id_chain"]},
+        )
         assert activated.status_code == 200 and activated.json()["state"] == "active", (
             activated.text
         )

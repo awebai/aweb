@@ -5,34 +5,36 @@ The first person is an operator-only controller bootstrap. Credential checks,
 receipt checks and trust acquisition come from the shared approval library.
 """
 
-from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
 import secrets
 import time
+from datetime import UTC, datetime
 
-from awid.controller_signing import ControllerSigningContext, parse_controller_object
-from awid.did import public_key_from_did, stable_id_from_did_key
-from awid.id_certificates import id_certificate_id
-from awid.log import require_canonical_server_origin
-from awid.registry import DIDKeyNotFoundError
 from approval_service.answers import read_answer
 from approval_service.canonical import canonical, parse
 from approval_service.definitions import check_definition, definition_ref
 from approval_service.encoding import decode, encode
+from approval_service.enrollment import PublicIssuer
 from approval_service.public import PublicReader, public_errors
+from approval_service.requester import AdmittedRequester, admit_enrollment_target
 from approval_service.seams import (
     check_activation,
     check_creation_proof,
-    check_presentation,
     check_http,
+    check_presentation,
     commitment,
     http_authorization,
     make_needs_human,
 )
 from approval_service.verify import Trust
 from approval_service.wire import SCHEMA, domain, validate, validate_site
+from awid.controller_signing import ControllerSigningContext, parse_controller_object
+from awid.did import public_key_from_did, stable_id_from_did_key
+from awid.id_certificates import id_certificate_id
+from awid.log import require_canonical_server_origin
+from awid.registry import DIDKeyNotFoundError
 
 from .keys import Refused
 
@@ -49,13 +51,64 @@ def expired_pending(row):
 
 
 class Holder:
-    def __init__(self, store, *, registry, origin, approval_origin, rp_id, grading):
+    def __init__(
+        self, store, *, registry, origin, approval_origin=None, rp_id=None, grading=None
+    ):
         require_canonical_server_origin(origin)
-        validate_site(approval_origin, rp_id)
+        if approval_origin is not None or rp_id is not None or grading is not None:
+            if not all((approval_origin, rp_id, grading)):
+                raise Refused("approval_not_configured")
+            validate_site(approval_origin, rp_id)
+        elif store.human_issuance() == "approved":
+            raise Refused("approval_not_configured")
         self.store, self.registry = store, registry
         self.origin, self.approval_origin, self.rp_id = origin, approval_origin, rp_id
         self.grading = grading
         self.public = PublicReader(registry)
+
+    def require_approval(self):
+        if not all((self.approval_origin, self.rp_id, self.grading)):
+            raise Refused("approval_not_configured")
+
+    def require_approved_issuance(self):
+        if self.store.human_issuance() != "approved":
+            raise Refused("human_issuance_operator")
+        self.require_approval()
+
+    def issue_person_certificate(self, person, identity_key):
+        """Private operator effect: certificate only, never enrollment or evidence."""
+        with self.store._connection() as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            root = self.store._descriptor(db)
+            certificate = self._certificate(root, person, identity_key, now())
+            operation = parse_controller_object(
+                {
+                    "operation": "namespace_id_issue",
+                    "domain": root.domain,
+                    "kind": "human",
+                    "certificate": certificate,
+                }
+            )
+            signature = self.store._sign(
+                db,
+                root,
+                ControllerSigningContext(operation, root).signing_bytes(),
+                operation="namespace_id_issue",
+                actor="operator",
+            )
+            return {
+                "state": "issued",
+                "person": person,
+                "identity_key": identity_key,
+                "certificate": {
+                    "certificate": certificate,
+                    "signature": encode(signature),
+                },
+            }
+
+    async def issue_person(self, person, identity_key):
+        await self._new_identity(person, identity_key)
+        return self.issue_person_certificate(person, identity_key)
 
     def _nonce_keys(self, db):
         return {
@@ -109,7 +162,7 @@ class Holder:
             "parent": {"kind": "namespace", "id": root.domain},
             "kind": "human",
             "issuer_key": root.did_key,
-            "issued_at": datetime.fromtimestamp(start, timezone.utc).strftime(
+            "issued_at": datetime.fromtimestamp(start, UTC).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
             ),
         }
@@ -166,6 +219,7 @@ class Holder:
             approval=approval_digest,
         )
         start = now()
+        requester = {"kind": "identity", "id": person, "key": identity_key}
         intent = {
             "version": 1,
             "purpose": "enroll_person",
@@ -235,11 +289,7 @@ class Holder:
         with self.store._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             root = self.store._descriptor(db)
-            requester = {
-                "kind": "namespace_controller",
-                "namespace": root.domain,
-                "key": root.did_key,
-            }
+            requester = {"kind": "identity", "id": person, "key": identity_key}
             old = db.execute(
                 "SELECT * FROM enrollments WHERE person=?", (person,)
             ).fetchone()
@@ -295,6 +345,118 @@ class Holder:
         if enrollment.enrolled:
             raise Refused("fresh_enrollment_required")
 
+    async def enroll_existing(self, caller, *, person, chain):
+        self.require_approval()
+        if caller.identity != person:
+            raise Refused("requester_mismatch")
+        root = self.store.descriptor()
+        trust = await self.public.person(
+            chain, person=person, identity_key=caller.key, organisation=root.domain
+        )
+        if trust.namespace_issuer != root.did_key:
+            raise Refused("issuer_changed")
+        caller.check_time()
+        with self.store._connection() as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            if (
+                self.store._descriptor(db) != root
+                or not 0 <= now() - trust.observed_at <= 60
+            ):
+                raise Refused("status_unavailable")
+            old = db.execute(
+                "SELECT * FROM enrollments WHERE person=?", (person,)
+            ).fetchone()
+            if old and not old["active"] and not expired_pending(old):
+                saved = json.loads(old["intent"])
+                previous_intent = saved["intent"]
+                if (
+                    previous_intent["purpose"] == "enroll_existing_person"
+                    and previous_intent["requester"] == caller.descriptor
+                    and previous_intent["identity_key"] == trust.identity_key
+                    and id_certificate_id(
+                        previous_intent["pending_certificate"]["certificate"]
+                    )
+                    == trust.certificate
+                ):
+                    return {"state": "enrollment_pending", "intent": saved}
+            previous = self._check_enrollment_available(db, person)
+            if previous:
+                db.execute("DELETE FROM consumed WHERE person=?", (person,))
+                db.execute("DELETE FROM enrollments WHERE person=?", (person,))
+            start = now()
+            body = {
+                "version": 1,
+                "purpose": "enroll_existing_person",
+                "organisation": root.domain,
+                "person": person,
+                "pending_certificate": chain[-1],
+                "identity_key": trust.identity_key,
+                "requester": caller.descriptor,
+                "origin": self.approval_origin,
+                "rp_id": self.rp_id,
+                "challenge": encode(secrets.token_bytes(32)),
+                "not_before": start,
+                "deadline": start + 86400,
+            }
+            signed = {
+                "intent": body,
+                "signature": self._protocol(
+                    db, root, "enrollment_intent", body, actor=caller.key
+                ),
+            }
+            validate("enrollment_intent", signed)
+            db.execute(
+                "INSERT INTO enrollments(person,identity_key,requester,intent,chain) VALUES (?,?,?,?,?)",
+                (
+                    person,
+                    trust.identity_key,
+                    canonical(caller.descriptor).decode(),
+                    canonical(signed).decode(),
+                    canonical(chain).decode(),
+                ),
+            )
+            caller.check_time()
+            if not 0 <= now() - trust.observed_at <= 60:
+                raise Refused("status_unavailable")
+            return {"state": "enrollment_pending", "intent": signed}
+
+    async def enrollment_admission(self, person, caller, chain, *, purpose):
+        self.require_approval()
+        signed = self.pending(person)["intent"]
+        i = signed["intent"]
+        if i["purpose"] == "enroll_existing_person":
+            if caller.descriptor != i["requester"]:
+                raise Refused("requester_mismatch")
+            trust = await self.public.person(
+                chain,
+                person=person,
+                identity_key=i["identity_key"],
+                organisation=i["organisation"],
+            )
+            if trust.namespace_issuer != self.store.descriptor().did_key:
+                raise Refused("issuer_changed")
+            caller.check_time()
+            return AdmittedRequester(
+                canonical(caller.descriptor), caller.key, trust.observed_at
+            ), trust
+        if caller.descriptor == i["requester"] and caller.identity == person:
+            observation = await self.public.key_observation(person)
+            if observation.committed is False:
+                issuer = await self.public.issuer(signed)
+                admitted = admit_enrollment_target(
+                    signed,
+                    caller.descriptor,
+                    issuer_key=issuer.key,
+                    observation=observation,
+                    origin=self.approval_origin,
+                    rp_id=self.rp_id,
+                    now=now(),
+                    purpose=purpose,
+                )
+                caller.check_time()
+                return admitted, None
+        return await self.admit(caller, chain), None
+
     def authorize_bootstrap(self, person, purpose, body, issued_at):
         """Closed controller-bootstrap proof for aw's Authorize callback."""
         schemas = {
@@ -317,6 +479,8 @@ class Holder:
             row = self._row(db, person)
             self._owner(row, None, None)
             signed = json.loads(row["intent"])
+            if signed["intent"]["requester"]["kind"] != "namespace_controller":
+                raise Refused("requester_mismatch")
             if value["intent"] != signed:
                 raise Refused("enrollment_changed")
             if purpose == "enrollment_confirm" and (
@@ -398,6 +562,7 @@ class Holder:
             raise Refused("requester_mismatch")
 
     async def prepare(self, caller, *, person, identity_key, approver, chain):
+        self.require_approved_issuance()
         admitted = await self.admit(caller, chain)
         with self.store._connection() as db:
             self._check_enrollment_available(db, person)
@@ -434,6 +599,7 @@ class Holder:
             return make_needs_human(request, origin=self.approval_origin)
 
     async def present(self, caller, value, *, chain):
+        self.require_approved_issuance()
         validate("presentation", value)
         request = parse(decode(value["request_bytes"]))
         validate("request", request)
@@ -543,7 +709,14 @@ class Holder:
             return result
 
     def bind_registration(
-        self, person, material, *, registration_count, caller=None, admitted=None
+        self,
+        person,
+        material,
+        *,
+        registration_count,
+        caller=None,
+        admitted=None,
+        current=None,
     ):
         with self.store._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -568,7 +741,7 @@ class Holder:
                     expected_challenge=decode(intent["challenge"]),
                     origin=self.approval_origin,
                     rp_id=self.rp_id,
-                    now=datetime.now(timezone.utc),
+                    now=datetime.now(UTC),
                 ).binding_entry()
                 for item in answer["registrations"]
             ]
@@ -576,10 +749,13 @@ class Holder:
                 raise Refused("credential_duplicate")
             root = self.store._descriptor(db)
             if (
-                root.did_key
+                intent["purpose"] != "enroll_existing_person"
+                and root.did_key
                 != intent["pending_certificate"]["certificate"]["issuer_key"]
             ):
                 raise Refused("issuer_changed")
+            if intent["purpose"] == "enroll_existing_person":
+                self._existing_current(intent, current, root)
             body = {
                 "version": 1,
                 "organisation": root.domain,
@@ -628,6 +804,11 @@ class Holder:
                         person,
                     ),
                 )
+            self._owner(row, caller, admitted)
+            if not intent["not_before"] <= now() < intent["deadline"]:
+                raise Refused("enrollment_expired")
+            if intent["purpose"] == "enroll_existing_person":
+                self._existing_current(intent, current, root)
             return {
                 "state": "awaiting_confirmation",
                 "intent": signed,
@@ -635,7 +816,28 @@ class Holder:
                 "request_bytes": encode(canonical(confirmation)),
             }
 
-    def finish_creation(self, person, receipt, *, issuer, caller=None, admitted=None):
+    @staticmethod
+    def _existing_current(intent, current, root):
+        if current is None or not 0 <= now() - current.observed_at <= 60:
+            raise Refused("identity_unavailable")
+        if (
+            current.person,
+            current.organisation,
+            current.identity_key,
+            current.certificate,
+            current.namespace_issuer,
+        ) != (
+            intent["person"],
+            root.domain,
+            intent["identity_key"],
+            id_certificate_id(intent["pending_certificate"]["certificate"]),
+            root.did_key,
+        ):
+            raise Refused("enrollment_identity_mismatch")
+
+    def finish_creation(
+        self, person, receipt, *, issuer, caller=None, admitted=None, current=None
+    ):
         with self.store._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = self._row(db, person)
@@ -656,14 +858,21 @@ class Holder:
                 if json.loads(row["creation_receipt"]) != receipt:
                     raise Refused("creation_changed")
                 return self._activation(row)
-            trust = Trust(
-                person,
-                root.domain,
-                row["identity_key"],
-                binding["binding"]["certificate"],
-                root.did_key,
-                public_key_from_did(root.did_key),
-                issuer.observed_at,
+            later = intent["purpose"] == "enroll_existing_person"
+            if later:
+                self._existing_current(intent, current, root)
+            trust = (
+                current
+                if later
+                else Trust(
+                    person,
+                    root.domain,
+                    row["identity_key"],
+                    binding["binding"]["certificate"],
+                    root.did_key,
+                    public_key_from_did(root.did_key),
+                    issuer.observed_at,
+                )
             )
             checked = check_creation_proof(
                 receipt,
@@ -693,18 +902,33 @@ class Holder:
                     "receipt_commitment": commitment("receipt_commitment", receipt),
                 },
             }
+            if later:
+                body["kind"] = "human_enrolled_later"
+                body.pop("creation")
+                body["enrollment"] = {
+                    "credential": checked["credential"],
+                    "grade": checked["grade"],
+                    "since": now(),
+                    "confirmation_receipt_commitment": commitment(
+                        "receipt_commitment", receipt
+                    ),
+                }
             evidence = {
                 "evidence": body,
                 "signature": self._protocol(
                     db,
                     root,
-                    "identity_evidence",
+                    "later_enrollment_evidence" if later else "identity_evidence",
                     body,
                     actor=intent["requester"]["key"],
                     approval=checked["digest"],
                 ),
             }
-            validate("creation_evidence", evidence)
+            validate(
+                "later_enrollment_evidence" if later else "creation_evidence", evidence
+            )
+            if later:
+                self._existing_current(intent, current, root)
             db.execute(
                 "UPDATE enrollments SET creation_receipt=?,evidence=?,chain=? WHERE person=?",
                 (
@@ -723,27 +947,58 @@ class Holder:
                     person,
                 ),
             )
+            self._owner(row, caller, admitted)
+            if not intent["not_before"] <= now() < intent["deadline"]:
+                raise Refused("enrollment_expired")
+            if later:
+                self._existing_current(intent, current, root)
             return self._activation(self._row(db, person))
 
     def _activation(self, row):
+        later = (
+            json.loads(row["intent"])["intent"]["purpose"] == "enroll_existing_person"
+        )
         return {
-            "version": 1,
+            "version": 2 if later else 1,
             "intent": json.loads(row["intent"]),
             "binding": json.loads(row["binding"]),
-            "creation_receipt": json.loads(row["creation_receipt"]),
+            ("confirmation_receipt" if later else "creation_receipt"): json.loads(
+                row["creation_receipt"]
+            ),
             "evidence": json.loads(row["evidence"]),
             "id_chain": json.loads(row["chain"]),
         }
 
     async def finish(self, person, receipt, *, caller=None, chain=None):
-        admitted = await self.admit(caller, chain) if caller is not None else None
-        issuer = await self.public.issuer(self.pending(person)["intent"])
+        admitted, current = (
+            await self.enrollment_admission(
+                person, caller, chain, purpose="holder_finish"
+            )
+            if caller is not None
+            else (None, None)
+        )
+        issuer = (
+            PublicIssuer(current.namespace_issuer, current.observed_at)
+            if current
+            else await self.public.issuer(self.pending(person)["intent"])
+        )
         return self.finish_creation(
-            person, receipt, issuer=issuer, caller=caller, admitted=admitted
+            person,
+            receipt,
+            issuer=issuer,
+            caller=caller,
+            admitted=admitted,
+            current=current,
         )
 
     async def activate(self, person, *, caller=None, chain=None):
-        admitted = await self.admit(caller, chain) if caller is not None else None
+        admitted, _current = (
+            await self.enrollment_admission(
+                person, caller, chain, purpose="holder_activate"
+            )
+            if caller is not None
+            else (None, None)
+        )
         with self.store._connection() as db:
             row = self._row(db, person)
             self._owner(row, caller, admitted, activation=True)
@@ -770,4 +1025,7 @@ class Holder:
                 trust=trust,
             )
             db.execute("UPDATE enrollments SET active=1 WHERE person=?", (person,))
+            self._owner(row, caller, admitted, activation=True)
+            if not 0 <= now() - trust.observed_at <= 60:
+                raise Refused("status_unavailable")
             return result
