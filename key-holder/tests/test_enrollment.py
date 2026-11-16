@@ -22,6 +22,7 @@ from pending import expire_pending
 @pytest.fixture
 def holder(tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    store.set_human_issuance("approved")
     return Holder(
         store,
         registry=None,

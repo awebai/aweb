@@ -88,6 +88,7 @@ async def native_holder(tmp_path, test_db_factory):
                     "http://registry.test", transport=httpx.ASGITransport(app=app)
                 )
                 try:
+                    store.set_human_issuance("approved")
                     holder = Holder(
                         store,
                         registry=registry,
