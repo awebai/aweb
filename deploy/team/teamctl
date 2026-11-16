@@ -15,7 +15,7 @@
 #          and waits until every service is healthy, then checks from inside
 #          aweb and each app that its internal origins resolve inside
 #          network.servicesCidr, and that every service answers its own
-#          readiness route with 200 for the Host its proxy sends. The renderer has already refused a signer
+#          readiness route with 200 for the Host its proxy sends. The renderer has already checked each app
 #          profile whose origins or registry differ from the deployment's.
 #          With agents, egress starts with its derived policy and the agent
 #          only after the ingress and boundary probes pass; it then exits 3:
@@ -36,8 +36,8 @@
 #          nothing else of the project: the databases are gone. The secrets
 #          directory and the agents' state stay. The project must be named.
 # backup   with every service but the bundled PostgreSQL stopped: a dump of
-#          each database, the secrets directory without the signer's live
-#          controller custody or the agents' harness login, the agents'
+#          each database, the secrets directory without the agents' harness
+#          login, the agents'
 #          state and every file
 #          deployment.yaml names, with a manifest of digests and versions.
 #          The directory holds credentials; it is made 0700.
@@ -172,8 +172,6 @@ print("aweb", 8000, "/ready", urlsplit(config["aweb"]["publicOrigin"]).netloc)
 for app, port in (("secrets", 8770), ("logs", 8765)):
     if app in config:
         print(app, port, "/ready", urlsplit(config[app]["publicOrigin"]).netloc)
-if "signer" in config:
-    print("signer", 8080, "/readyz", urlsplit(config["signer"]["requestOrigin"]).netloc)
 PY
 }
 
@@ -201,7 +199,7 @@ prepare_agents() {
   } >"$run_dir/oats-source.txt"
 }
 
-# Egress's policy, from what each of the five origins' hosts resolves to on
+# Egress's policy, from what each of the four origins' hosts resolves to on
 # the services network, and the two backends no agent may reach: PostgreSQL
 # and Redis, at the addresses aweb itself connects to (Redis's is on aweb's
 # backend network alone). The resolved addresses are kept with the run for
@@ -220,7 +218,6 @@ origins = {
     "aweb": config["aweb"]["publicOrigin"],
     "secrets": config["secrets"]["publicOrigin"],
     "logs": config["logs"]["publicOrigin"],
-    "signer": config["signer"]["requestOrigin"],
     "registry": config["team"].get("registryUrl", "https://api.awid.ai"),
 }
 print(json.dumps({
@@ -256,9 +253,8 @@ spec = importlib.util.spec_from_file_location("egress_policy", Path(team_dir) / 
 egress_policy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(egress_policy)
 config = yaml.safe_load(open(path, encoding="utf-8"))
-profile = json.loads(Path(config["signer"]["profileFile"]).read_text(encoding="utf-8"))
 try:
-    policy = egress_policy.derive(config, profile, resolved["origins"], list(resolved["backends"].values()))
+    policy = egress_policy.derive(config, resolved["origins"], list(resolved["backends"].values()))
 except egress_policy.Refused as refused:
     sys.exit(f"teamctl: no egress policy: {refused}")
 Path(out).write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
@@ -411,20 +407,20 @@ capture_still_live() {
   return 1
 }
 
-# The signer's human origin has one existing GET route that answers 200: its
-# page stylesheet. The ingress probe's human controls use it.
-SIGNER_HUMAN_PATH=/handoff-assets/handoff.css
+# The app's console origin answers the read-only readiness route.
+# The ingress probe's human controls use it.
+APP_HUMAN_PATH=/ready
 
 # The OATS ingress probe (egress image, probe-ingress.mjs, full mode), from the
 # services side against the actual TLS ingress, for every route egress allows:
-# the policy's five origins at their pinned addresses. Each local route has
+# the policy's four origins at their pinned addresses. Each local route has
 # matched H1/H2 controls that must reach its own backend, and the human
 # origin's Host or :authority carried under any of them, which must reach no
 # backend; each such backend's own access log is followed from before the
 # first probe request. A registry the operator declares external
 # (team.registryRoute) is the registry's operator's: its route has a positive
-# control and no log witness (egress_policy.ingress_routes). The signer's route
-# is always local, so the human origin's refusal under the signer's SNI is
+# control and no log witness (egress_policy.ingress_routes). The app's API route
+# is always local, so the human origin's refusal under the app's API SNI is
 # always proved. TEAM_DEPLOYMENT_INGRESS_CA names the ingress's trust anchors
 # when a private authority signed it.
 # The one path every backend logs, Secrets included (it logs /ready and /live
@@ -439,9 +435,9 @@ import json
 import sys
 
 policy = json.load(open(sys.argv[1], encoding="utf-8"))
-print(policy["targets"]["signer"]["addresses"][0], policy["targets"]["signer"]["origin"], policy["humanOrigin"])
+print(policy["targets"]["secrets"]["addresses"][0], policy["targets"]["secrets"]["origin"], policy["humanOrigin"])
 PY
-)" || refuse "could not read the signer's origins from the egress policy"
+)" || refuse "could not read the app's origins from the egress policy"
   read -r -a origins <<<"$listed"
   logs="$run_dir/ingress-logs"
   rm -rf "$logs"
@@ -488,7 +484,7 @@ PY
     -v "$run_dir/egress-policy.json:/input/egress-policy.json:ro" -v "$logs/route-logs.json:/input/route-logs.json:ro" \
     ${ca_mount[@]+"${ca_mount[@]}"} --entrypoint node "$(env_value EGRESS_IMAGE)" /opt/egress/probe-ingress.mjs \
     --address "${origins[0]}" --request-origin "${origins[1]}" --human-origin "${origins[2]}" \
-    --human-log /logs/signer.log --human-path "$SIGNER_HUMAN_PATH" --audit-path "$INGRESS_AUDIT_PATH" \
+    --human-log /logs/secrets.log --human-path "$APP_HUMAN_PATH" --audit-path "$INGRESS_AUDIT_PATH" \
     ${ca_flag[@]+"${ca_flag[@]}"} \
     --policy /input/egress-policy.json --route-logs /input/route-logs.json </dev/null)" && status=0 || status=$?
   for follower in "${followers[@]}"; do
@@ -813,7 +809,7 @@ sys.exit(status != 200)
       exit 1
     fi
     dc ps --format '{{.Service}} {{.Status}}'
-    # The signer's request origin is one of egress's five routes. Until the
+    # The app's API origin is one of egress's four routes. Until the
     # ingress is shown to refuse that origin's SNI carrying the human origin's
     # Host or :authority, no agent is admitted.
     if ! ingress_probe; then
@@ -851,8 +847,6 @@ origins = {"aweb": config["aweb"]["publicOrigin"]}
 for app in ("secrets", "logs"):
     if app in config:
         origins[app] = {"api": config[app]["publicOrigin"], "console": config[app]["consoleOrigin"]}
-if "signer" in config:
-    origins["signer"] = {"request": config["signer"]["requestOrigin"], "human": config["signer"]["humanOrigin"]}
 agents = config.get("agents")
 print(json.dumps({
     "project": project,
@@ -1004,19 +998,16 @@ backup() {
   psql_postgres "show server_version" >"$target/databases/server-version"
   [[ "$was_running" -eq 1 ]] || dc stop postgres
   host_paths >"$run_dir/host-paths"
-  local kind key path left_out signer_secrets agents_secrets
+  local kind key path left_out agents_secrets
   while read -r kind key path; do
     case "$kind" in
-      # The signer's live controller key stays out: its backup is the
-      # owner's separately protected offline copy (protected_signing/HOST.md).
-      # So does the agents' harness login, a person's account credential that
+      # The agents' harness login is a person's account credential that
       # is minted again rather than restored.
       archive)
         left_out=()
         if [[ "$key" == compose.secretsDir ]]; then
-          signer_secrets="$(env_value SIGNER_SECRETS)"
           agents_secrets="$(env_value AGENTS_SECRETS)"
-          left_out=("./${signer_secrets:-signer}/private-controller" "./${agents_secrets:-agents}")
+          left_out=("./${agents_secrets:-agents}")
         fi
         [[ ! -d "$path" ]] || archive "$path" "$target/archives/$key.tar" ${left_out[@]+"${left_out[@]}"}
         ;;
@@ -1066,8 +1057,7 @@ PY
 restore() {
   if [[ "$lab_rehearsal" -ne 1 ]]; then
     refuse "restore is not supported for a deployment that serves a team: Secrets must reapply its destroyed-version" \
-      "tombstones before a restored database serves (aweb-acyp), Logs its purge tombstones (aweb-acgh.16.23), and" \
-      "the signer must refuse a pending bootstrap restored over a completed enrollment (aweb-acyw); none does yet." \
+      "tombstones before a restored database serves (aweb-acyp), Logs its purge tombstones (aweb-acgh.16.23)." \
       "Controller rotation is aweb-acxy.4. --lab-rehearsal restores a backup of disposable lab data, never a team's."
   fi
   [[ -d "$target" && ! -L "$target" && -f "$target/manifest.json" ]] || refuse "$target is not a teamctl backup"

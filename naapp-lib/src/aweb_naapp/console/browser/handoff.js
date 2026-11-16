@@ -1,9 +1,5 @@
 "use strict";
 
-import { validateProtectedPresentation, validateProtectedReceiptPresentation } from "/handoff-assets/protected-presentation.mjs";
-import { operationTable } from "/handoff-assets/operations.mjs";
-import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display.mjs";
-
 (() => {
   const {handoffId, purpose} = document.body.dataset;
   const prefix = `/handoff/${handoffId}/${purpose}`;
@@ -11,26 +7,7 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
   const confirm = document.getElementById("handoff-confirm");
   const allow = document.getElementById("handoff-allow");
   const status = document.getElementById("handoff-status");
-  const governance = purpose === "governance";
-  const loginScope = document.body.dataset.loginScope;
-  const csrfKey = document.body.dataset.consoleCsrfKey;
-  const deny = document.getElementById("handoff-deny");
-  const note = document.getElementById("handoff-choice-note");
-  // A mailed personal link carries its approver's token in the fragment,
-  // which the browser never sends. Take it, then drop it from the address bar
-  // and history; it is only ever sent in a POST body.
-  const linkToken = governance ? new URLSearchParams(window.location.hash.slice(1)).get("k") : null;
-  if (linkToken !== null) history.replaceState(null, "", window.location.pathname);
-  const linked = typeof linkToken === "string" && linkToken.length > 0;
-  let loggedIn = false;
-  let operationId;
-  let submitted = false;
-  // Set once the signer has answered 503 after a decision was sent: the act
-  // may already have been applied, with only its answer lost.
-  let retrying = false;
-  let frozenRedirect;
   let csrf;
-  let display;
 
   document.getElementById("handoff-origin").textContent = window.location.origin;
 
@@ -56,29 +33,13 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
   }
 
   function failed() {
-    // Completion may have committed even if its response was lost. Never
-    // replay a completion or an Allow, and never collect the result here.
-    if (governance && submitted) {
-      // The same outcome as the mailed link's: what was asked stays in view,
-      // with no control that could act and the way back to History.
-      outcome(...unconfirmed);
-      document.body.dataset.handoffState = "unconfirmed";
-      return;
-    }
+    // An answer may be lost after completion. Never replay completion or Allow.
     action.disabled = true;
     confirm.disabled = true;
     allow.hidden = true;
-    deny.hidden = true;
-    note.hidden = true;
-    if (governance) {
-      document.getElementById("handoff-governance").hidden = true;
-      document.getElementById("handoff-scope").hidden = true;
-    }
     csrf = undefined;
-    document.body.dataset.handoffState = governance && submitted ? "unconfirmed" : "refused";
-    status.textContent = governance
-      ? "This page could not confirm what happened. Your owner page shows the outcome under History."
-      : "This request could not be completed. Return to your terminal and start again.";
+    document.body.dataset.handoffState = "refused";
+    status.textContent = "This request could not be completed. Return to your terminal and start again.";
   }
 
   function complete(result) {
@@ -91,422 +52,9 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     window.location.assign(result.redirect_uri);
   }
 
-  function nonempty(value) {
-    return typeof value === "string" && value.length > 0;
-  }
-
-  async function governanceState(state) {
-    const {payload, digest} = state;
-    const validate = state.state === "pending" ? validateProtectedPresentation : validateProtectedReceiptPresentation;
-    const {request} = await validate(state, handoffId, operationTable);
-    display = operationTable[`${request.operation}|${request.variant}`].display;
-    const words = renderDisplay(display, request);
-    operationId = state.operation_id;
-    frozenRedirect = request.redirect_uri;
-    if (frozenRedirect !== undefined) {
-      if (!nonempty(frozenRedirect)) throw new Error("handoff_refused");
-      const redirect = new URL(frozenRedirect);
-      if (redirect.protocol !== "http:" || redirect.search || redirect.hash ||
-          redirect.username || redirect.password) throw new Error("handoff_refused");
-    }
-    setTitle(words.title);
-    document.getElementById("handoff-consequences").replaceChildren(...words.consequences.map(line => {
-      const item = document.createElement("li");
-      item.textContent = line;
-      return item;
-    }));
-    rows("handoff-names", words.names);
-    rows("handoff-technical", words.technical);
-    document.getElementById("handoff-act").textContent = request.operation;
-    document.getElementById("handoff-digest").textContent = digest;
-    document.getElementById("handoff-fingerprint").textContent = digest.slice(0, 16).match(/.{4}/g).join(" ");
-    document.getElementById("handoff-payload").textContent = JSON.stringify(payload, null, 2);
-    // When it was asked: a frozen artifact's issue time, or for an intent the
-    // start of its issuance window, which is the moment it was prepared.
-    const asked = request.artifact?.issued_at ?? request.artifact?.issuance_window?.not_before;
-    // The signed-in owner who started this request is "you"; the server says
-    // so from the session, never from anything in the request.
-    const requester = state.requested_by_you === true ? "you" : (words.requester ?? request.requester);
-    document.getElementById("handoff-requested").textContent =
-      requester + (nonempty(asked) ? `, asked ${when(asked)}` : "");
-    document.getElementById("handoff-expires").textContent = when(state.expires_at);
-    document.getElementById("handoff-governance").hidden = false;
-    document.getElementById("handoff-explanation").hidden = true;
-    if (state.state !== "pending") {
-      stopChoices();
-      if (state.state === "committed" && !await committedResult(state.result)) {
-        document.body.dataset.handoffState = "complete";
-        outcome(...unconfirmed);
-      } else {
-        linkOutcome(state);
-      }
-      return;
-    }
-    action.textContent = "Approve";
-    deny.hidden = false;
-    deny.disabled = false;
-    note.hidden = false;
-    status.textContent = "Check the request before you decide.";
-    document.body.dataset.handoffState = "ready";
-    action.disabled = false;
-    document.getElementById("handoff-title").focus();
-  }
-
-  // Label/value rows of a description list, as text only.
-  function rows(id, pairs) {
-    document.getElementById(id).replaceChildren(...pairs.flatMap(([label, value]) => {
-      const term = document.createElement("dt");
-      const detail = document.createElement("dd");
-      term.textContent = label;
-      detail.textContent = value;
-      return [term, detail];
-    }));
-  }
-
-  // A stored time in the reader's own zone, with the zone named.
-  function when(stamp) {
-    return new Date(stamp).toLocaleString(undefined, {
-      year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
-      timeZoneName: "short",
-    });
-  }
-
-  // The page's heading is its state: the request, then what became of it.
-  function setTitle(text) {
-    document.getElementById("handoff-title").textContent = text;
-    document.title = text;
-  }
-
-  function stopChoices() {
-    action.hidden = true;
-    deny.hidden = true;
-    note.hidden = true;
-    document.getElementById("handoff-explanation").hidden = true;
-  }
-
-  function isObject(value) {
-    return value !== null && typeof value === "object" && !Array.isArray(value);
-  }
-
-  // A committed result: a signed act, or a service-delivered act that its
-  // consumer confirmed applied for this exact operation.
-  async function committedResult(result) {
-    if (!isObject(result)) return false;
-    if (result.v === undefined) return nonempty(result.signing) && nonempty(result.signature);
-    const exact = (value, keys) => isObject(value) && Object.keys(value).sort().join(",") === keys.sort().join(",");
-    const delivery = result.delivery;
-    if (!exact(result, ["v", "type", "artifact", "delivery"]) || result.v !== 2 || result.type !== "aweb.protected-delivery" ||
-        !exact(result.artifact, ["signing", "signature"]) || !exact(delivery, ["mode", "state", "reference"]) ||
-        delivery.mode !== "service_owned" || delivery.state !== "applied" ||
-        !exact(delivery.reference, ["operation_id", "artifact_sha256"]) || delivery.reference.operation_id !== operationId ||
-        !/^[0-9a-f]{64}$/.test(delivery.reference.artifact_sha256)) return false;
-    try {
-      const decode = value => {
-        if (!nonempty(value)) throw new Error("handoff_refused");
-        const raw = atob(value);
-        if (btoa(raw) !== value) throw new Error("handoff_refused");
-        return Uint8Array.from(raw, byte => byte.charCodeAt(0));
-      };
-      const signing = decode(result.artifact.signing);
-      const signature = decode(result.artifact.signature);
-      if (signing.length === 0 || signature.length !== 64) return false;
-      // Existing protected-artifact digest: domain, uint64-BE byte length,
-      // exact signing bytes and decoded Ed25519 signature.
-      const prefix = new TextEncoder().encode("aweb.protected-artifact/1\n");
-      const bytes = new Uint8Array(prefix.length + 8 + signing.length + signature.length);
-      bytes.set(prefix);
-      new DataView(bytes.buffer).setBigUint64(prefix.length, BigInt(signing.length), false);
-      bytes.set(signing, prefix.length + 8);
-      bytes.set(signature, prefix.length + 8 + signing.length);
-      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-      return Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("") === delivery.reference.artifact_sha256;
-    } catch {
-      return false;
-    }
-  }
-
-  async function governanceComplete(result) {
-    if (result.state === "pending") {
-      if (result.redirect_uri !== undefined || !nonempty(result.expires_at) ||
-          !Number.isFinite(Date.parse(result.expires_at))) throw new Error("handoff_refused");
-      document.body.dataset.handoffState = "pending";
-      outcome("Approved", "It is still being carried out. Your owner page shows the outcome under History.");
-      return;
-    }
-    if (result.state !== "committed" || !await committedResult(result.result)) {
-      throw new Error("handoff_refused");
-    }
-    if (frozenRedirect === undefined) {
-      if (result.redirect_uri !== undefined) throw new Error("handoff_refused");
-      csrf = undefined;
-      document.body.dataset.handoffState = "complete";
-      outcome("Approved", "Done. There is nothing else to do here.");
-      return;
-    }
-    if (!nonempty(result.redirect_uri)) throw new Error("handoff_refused");
-    const redirect = new URL(result.redirect_uri);
-    const expected = new URL(frozenRedirect);
-    expected.searchParams.set("handoff_id", handoffId);
-    if (redirect.href !== expected.href) {
-      throw new Error("handoff_refused");
-    }
-    // Only the committed route supplies the frozen loopback; the callback is
-    // a code-less hint. aw independently authenticates its receipt read.
-    complete(result);
-  }
-
-  // The mailed link's own narrow routes: no cookie, no CSRF token, no
-  // session. The token authenticates only its approver's view and ceremony.
-  async function linkPost(suffix, body) {
-    const response = await fetch(`/handoff/${handoffId}/link${suffix}`, {
-      method: "POST", credentials: "omit", cache: "no-store", redirect: "error",
-      referrerPolicy: "no-referrer", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      const error = new Error("handoff_refused");
-      error.status = response.status;
-      if (response.status === 410) error.expiresAt = (await response.json().catch(() => ({}))).expires_at;
-      throw error;
-    }
-    return response.json();
-  }
-
-  function ownerPageSentence(before) {
-    const owner = document.createElement("a");
-    owner.href = "/";
-    owner.textContent = "owner page";
-    status.replaceChildren(before, owner, ".");
-  }
-
-  function linkUnavailable() {
-    stopChoices();
-    document.getElementById("handoff-governance").hidden = true;
-    document.body.dataset.handoffState = "refused";
-    setTitle("This link no longer works");
-    ownerPageSentence("This link is not valid any more. Requests still waiting for you are on your ");
-    document.getElementById("handoff-title").focus();
-  }
-
-  let decided = false;
-  let inFlight = false;
-  let expiresAt;
-
-  function linkExpired(at) {
-    if (decided) return;
-    decided = true;
-    stopChoices();
-    document.getElementById("handoff-governance").hidden = true;
-    document.body.dataset.handoffState = "expired";
-    setTitle("Request expired");
-    status.textContent = (at ? `This request expired at ${when(at)} without a decision.` :
-      "This request expired without a decision.") + " Nothing was signed.";
-    document.getElementById("handoff-title").focus();
-  }
-
-  function checkAt(delay) {
-    setTimeout(checkExpiry, Math.max(0, Math.min(delay, 2 ** 31 - 1)));
-  }
-
-  // A local clock never establishes an outcome. A decision on its way keeps
-  // the page until its own answer; otherwise the signer says what is true.
-  async function checkExpiry() {
-    if (decided || inFlight) return;
-    try {
-      await linkPost("", {token: linkToken});
-      checkAt(30000);  // Still pending at the signer: the clocks differ.
-    } catch (error) {
-      if (decided || inFlight) return;
-      if (retrying) unconfirmedOutcome();
-      else if (error.status === 410) linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
-      else linkUnavailable();
-    }
-  }
-
-  // A decision was sent before this answer, and its own answer was lost or
-  // was a 503: a spent link or an expiry is not evidence that nothing was
-  // decided or applied, so the page cannot say how it ended.
-  function unconfirmedOutcome() {
-    document.body.dataset.handoffState = "unconfirmed";
-    outcome(...unconfirmed);
-  }
-
-  async function linkLoad() {
-    try {
-      const state = await linkPost("", {token: linkToken});
-      if (state.mode !== "governance-link") throw new Error("handoff_refused");
-      await governanceState({...state, mode: "governance"});
-      document.getElementById("handoff-explanation").hidden = true;
-      // At its expiry the page asks the signer again: only the signer's own
-      // answer can say the request expired undecided.
-      expiresAt = state.expires_at;
-      checkAt(Date.parse(state.expires_at) - Date.now());
-    } catch (error) {
-      if (error.status === 410) linkExpired(nonempty(error.expiresAt) ? error.expiresAt : undefined);
-      else linkUnavailable();
-    }
-  }
-
-  // What a refused decision means for the approver, in words.
-  const refusals = {
-    human_refused: ["Denied", "The request is refused. Nothing was signed."],
-    approval_expired: ["Not completed", "Your approval came too late to be used. Nothing was signed."],
-    operation_expired: ["Expired", "This request expired before it was decided. Nothing was signed."],
-    proof_invalid: ["Not completed", "Your passkey answer could not be checked, so nothing was decided."],
-    approval_spent: ["Not completed", "Your passkeys or access changed, so this approval cannot be used."],
-    stale_binding: ["Not completed", "Your passkeys or access changed while this was waiting."],
-    policy_changed: ["Not completed", "The team's policy changed after this was requested, so this approval cannot apply."],
-    authority_changed: ["Not completed", "The team's approval settings changed after this was requested."],
-  };
-
-  const unconfirmed = ["Not confirmed",
-    "This page could not confirm what happened. Your owner page shows the outcome under History."];
-
-  // The signer answered that it could not finish now (503): the act is not
-  // known to be done, and the same act can be tried again. Pressing Approve
-  // again asks for options, which say whether another passkey check is needed.
-  function notYet() {
-    status.textContent = "Not completed yet: the signer could not finish this right now. Try again.";
-    action.disabled = false;
-    deny.disabled = true;
-    document.body.dataset.handoffState = "retry";
-    retrying = true;
-    inFlight = false;
-    submitted = false;
-    action.focus();
-  }
-
-  async function reread() {
-    try {
-      await governanceState(await request(""));
-    } catch {
-      submitted = true;
-      failed();
-    }
-  }
-
-  function outcome(title, text) {
-    decided = true;
-    // Once decided, the card describes what was asked, not what it does.
-    document.getElementById("handoff-governance-title").textContent = "What was asked";
-    stopChoices();
-    status.textContent = "";
-    setTitle(title);
-    const sentence = document.getElementById("handoff-outcome-text");
-    // "owner page" is the way to History: a link, as text everywhere else.
-    const [before, after] = text.split("owner page");
-    if (after === undefined) {
-      sentence.textContent = text;
-    } else {
-      const link = document.createElement("a");
-      link.href = "/";
-      link.textContent = "owner page";
-      sentence.replaceChildren(before, link, after);
-    }
-    sentence.hidden = false;
-    document.getElementById("handoff-title").focus();
-  }
-
-  function linkOutcome(result) {
-    document.body.dataset.handoffState = "complete";
-    if (result.state === "committed") {
-      outcome("Approved", "Done. There is nothing else to do here.");
-    } else if (result.state === "pending") {
-      outcome("Approved", "It is still being carried out. Your owner page shows the outcome under History.");
-    } else if (result.state === "refused" && refusals[result.code]) {
-      outcome(...refusals[result.code]);
-    } else if (result.state === "refused" && display && displayRefusal(display, result.code)) {
-      // The operation's own sentence for why it cannot go ahead.
-      outcome("Not completed", `${displayRefusal(display, result.code)} Nothing was signed.`);
-    } else {
-      // A code this page does not know: it cannot say what happened.
-      outcome(...unconfirmed);
-    }
-  }
-
-  async function decide(decision) {
-    const pressed = decision === "reject" ? deny : action;
-    inFlight = true;
-    action.disabled = true;
-    deny.disabled = true;
-    document.body.dataset.handoffState = "verifying";
-    status.textContent = "Waiting for your passkey…";
-    status.focus();
-    let sent = false;
-    try {
-      const options = await linkPost("/options", {token: linkToken, decision});
-      if (decision === "approve" && options.state === "approved") {
-        // You already approved this exact act and nothing is signed yet:
-        // finishing it needs no new passkey check.
-        sent = true;
-        linkOutcome(await linkPost("/decide", {token: linkToken, decision, assertion: {}}));
-        return;
-      }
-      if (options.userVerification !== "required") throw new Error("handoff_refused");
-      const credential = await navigator.credentials.get({
-        publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
-      });
-      if (!credential) throw new Error("handoff_refused");
-      sent = true;
-      linkOutcome(await linkPost("/decide", {token: linkToken, decision, assertion: credential.toJSON()}));
-    } catch (error) {
-      if (!sent && error.name === "NotAllowedError") {
-        // Nothing was sent: a new choice gets fresh options.
-        // WebAuthn reports a cancel and a missing passkey alike.
-        status.textContent = "Nothing was decided. If your passkey is on another device, open this link there.";
-        action.disabled = false;
-        deny.disabled = false;
-        document.body.dataset.handoffState = "ready";
-        inFlight = false;
-        pressed.focus();
-      } else if (sent && error.status === 503 && decision === "approve") {
-        // Only an approval has a retry lane; a failed rejection stays
-        // unconfirmed below, never offered back as an approval.
-        notYet();
-      } else if (sent || retrying) {
-        unconfirmedOutcome();
-      } else if (error.status === 410) {
-        // The signer itself answered that the request expired undecided.
-        linkExpired(nonempty(error.expiresAt) ? error.expiresAt : expiresAt);
-      } else {
-        linkUnavailable();
-      }
-    }
-  }
-
   async function load() {
-    if (linked) {
-      await linkLoad();
-      return;
-    }
     try {
-      if (governance && !loggedIn && nonempty(csrfKey) && nonempty(sessionStorage.getItem(csrfKey))) {
-        // This tab already signed in (for example from the owner page): its
-        // own token and the session cookie are checked by the server again.
-        csrf = sessionStorage.getItem(csrfKey);
-        try {
-          await governanceState(await request(""));
-          loggedIn = true;
-          return;
-        } catch {
-          csrf = undefined;
-        }
-      }
-      if (governance && !loggedIn) {
-        if (!nonempty(loginScope) || !nonempty(csrfKey)) throw new Error("handoff_refused");
-        // A new tab shares cookies but not the console token. Always use the
-        // existing LOGIN in place; never guess a token or navigate to root.
-        // The explanation already says to sign in; the status stays quiet.
-        status.textContent = "";
-        document.body.dataset.handoffState = "login-required";
-        action.disabled = false;
-        return;
-      }
       const state = await request("");
-      if (governance) {
-        await governanceState(state);
-        return;
-      }
       if (typeof state.csrf_token !== "string" || !state.csrf_token) throw new Error("handoff_refused");
       for (const [field, id] of [
         ["principal", "handoff-principal"], ["role", "handoff-role"],
@@ -540,100 +88,12 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     }
   }
 
-  deny.addEventListener("click", () => (linked ? decide("reject") : sessionDeny()));
-
-  // The session ended before anything was sent: nothing was decided, and
-  // the next step is to sign in again in place.
-  function signedOut() {
-    loggedIn = false;
-    csrf = undefined;
-    sessionStorage.removeItem(csrfKey);
-    deny.hidden = true;
-    note.hidden = true;
-    action.hidden = false;
-    action.textContent = "Sign in with passkey";
-    action.disabled = false;
-    document.body.dataset.handoffState = "login-required";
-    status.textContent = "You were signed out. Sign in again to decide.";
-    action.focus();
-  }
-
-  // A signed-in approver's Deny: the same single exact-act passkey touch.
-  async function sessionDeny() {
-    action.disabled = true;
-    deny.disabled = true;
-    document.body.dataset.handoffState = "verifying";
-    status.textContent = "Waiting for your passkey…";
-    status.focus();
-    let sent = false;
-    try {
-      const options = await request("/options", {decision: "reject"});
-      if (options.userVerification !== "required") throw new Error("handoff_refused");
-      const credential = await navigator.credentials.get({
-        publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
-      });
-      if (!credential) throw new Error("handoff_refused");
-      sent = true;
-      linkOutcome(await request("/execute", {assertion: credential.toJSON(), decision: "reject"}));
-    } catch (error) {
-      if (!sent && error.name === "NotAllowedError") {
-        status.textContent = "Nothing was decided. Choose again.";
-        action.disabled = false;
-        deny.disabled = false;
-        document.body.dataset.handoffState = "ready";
-        deny.focus();
-      } else if (!sent && error.status === 401) {
-        signedOut();
-      } else {
-        submitted = sent;
-        failed();
-      }
-    }
-  }
-
   action.addEventListener("click", async () => {
-    if (linked) {
-      await decide("approve");
-      return;
-    }
     action.disabled = true;
-    deny.disabled = true;
     document.body.dataset.handoffState = "verifying";
     status.textContent = "Follow your browser’s passkey prompt.";
     try {
-      if (governance && !loggedIn) {
-        const options = await fetchJSON("/login/options", {scope: loginScope});
-        if (options.userVerification !== "required") throw new Error("handoff_refused");
-        const credential = await navigator.credentials.get({
-          publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
-        });
-        if (!credential) throw new Error("handoff_refused");
-        const result = await fetchJSON("/login", {scope: loginScope, assertion: credential.toJSON()});
-        if (!nonempty(result.csrf_token)) throw new Error("handoff_refused");
-        // This is S4's own tab token, not a governance cookie or a result.
-        sessionStorage.setItem(csrfKey, result.csrf_token);
-        csrf = result.csrf_token;
-        loggedIn = true;
-        await load();
-        return;
-      }
       const options = await request("/options", {});
-      if (governance && operationId && options.state === "approved") {
-        // You already approved this exact act and nothing is signed yet.
-        submitted = true;
-        await governanceComplete(await request("/execute", {assertion: {}}));
-        return;
-      }
-      if (governance) {
-        if (!operationId || options.userVerification !== "required") throw new Error("handoff_refused");
-        const credential = await navigator.credentials.get({
-          publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options),
-        });
-        if (!credential) throw new Error("handoff_refused");
-        submitted = true;
-        await governanceComplete(await request("/execute", {assertion: credential.toJSON()}));
-        return;
-      }
       if (purpose === "credential") {
         const credential = await navigator.credentials.create({
           publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(options),
@@ -656,21 +116,10 @@ import { renderDisplay, displayRefusal } from "/handoff-assets/protected-display
     } catch (error) {
       if (error.name === "NotAllowedError") {
         // No completion was sent: an explicit retry obtains fresh options.
-        status.textContent = governance && loggedIn
-          ? "Nothing was decided. Choose again."
-          : "The passkey prompt was cancelled. You can try again.";
+        status.textContent = "The passkey prompt was cancelled. You can try again.";
         action.disabled = false;
-        deny.disabled = false;
-        document.body.dataset.handoffState = governance && !loggedIn ? "login-required" : "ready";
+        document.body.dataset.handoffState = "ready";
         action.focus();
-      } else if (governance && loggedIn && !submitted && error.status === 401) {
-        signedOut();
-      } else if (governance && submitted && error.status === 503) {
-        notYet();
-      } else if (governance && retrying && !submitted) {
-        // A retry refused before sending: the earlier attempt may have
-        // applied the act. The request itself says how it ended.
-        await reread();
       } else {
         failed();
       }

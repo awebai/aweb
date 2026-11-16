@@ -2,10 +2,10 @@
 
 The egress component (OATS container/agent/egress, README "Derived policy")
 reads this file read-only at /etc/egress/policy.json. It is derived, never
-written by an operator: the five origins agents use come from deployment.yaml,
+written by an operator: the four origins agents use come from deployment.yaml,
 their addresses are what each origin's host resolves to on the services
 network when the deployment starts, the denied addresses are the protected
-backends', and the authority records are the signer profile's namespace
+backends', and the authority records are the deployment's namespace
 authorities, in AWID's own TXT encoding.
 """
 
@@ -13,7 +13,7 @@ import ipaddress
 
 from awid.dns_verify import _parse_awid_record, awid_txt_name, awid_txt_value
 
-ROLES = ("aweb", "secrets", "logs", "signer", "registry")
+ROLES = ("aweb", "secrets", "logs", "registry")
 # The roles agents may reach on the internet, each at one fixed origin: the
 # operator turns a role on and never names a host.
 EXTERNAL_ROLES = {"source": "https://github.com", "model": "https://api.anthropic.com"}
@@ -28,7 +28,6 @@ def _origins(config: dict) -> dict[str, str]:
         "aweb": config["aweb"]["publicOrigin"],
         "secrets": config["secrets"]["publicOrigin"],
         "logs": config["logs"]["publicOrigin"],
-        "signer": config["signer"]["requestOrigin"],
         "registry": config["team"].get("registryUrl", "https://api.awid.ai"),
     }
 
@@ -75,18 +74,17 @@ def _external(config: dict, own: set[str]) -> dict:
     }
 
 
-def derive(config: dict, profile: dict, addresses: dict[str, list[str]], denied: list[str]) -> dict:
-    """The policy for this deployment, its signer's profile, the addresses
-    each role's origin resolves to and the protected backends' addresses."""
+def derive(config: dict, addresses: dict[str, list[str]], denied: list[str]) -> dict:
+    """The policy from the deployment's public pins and resolved service addresses."""
     origins = _origins(config)
-    if profile["request_origin"] != origins["signer"]:
-        raise Refused("request_origin: the signer profile names another signer")
-    if profile["registry_origin"] != origins["registry"]:
-        raise Refused("registry_origin: the signer profile names another registry")
     records = []
-    for authority in profile["namespace_authorities"]:
+    names = set()
+    for authority in config["team"]["namespaceAuthorities"]:
         name = awid_txt_name(authority["domain"])
-        text = awid_txt_value(authority["controller_did"], profile["registry_origin"])
+        if name in names:
+            raise Refused("team.namespaceAuthorities: duplicate namespace authority")
+        names.add(name)
+        text = awid_txt_value(authority["controllerDidKey"], origins["registry"])
         # The record agents will be answered is one AWID itself accepts.
         _parse_awid_record(text, dns_name=name)
         records.append({"name": name, "text": text})
@@ -94,7 +92,7 @@ def derive(config: dict, profile: dict, addresses: dict[str, list[str]], denied:
         "frontAddress": config["agents"]["resolverIp"],
         "privateIngressAddresses": list(config["egress"].get("privateIngressAddresses", [])),
         "deniedAddresses": [_pinned("denied", [address])[0] for address in denied],
-        "humanOrigin": config["signer"]["humanOrigin"],
+        "humanOrigin": config["secrets"]["consoleOrigin"],
         "authorityRecords": records,
         "targets": {role: {"origin": origins[role], "addresses": _pinned(role, addresses[role])} for role in ROLES},
     }
@@ -117,7 +115,7 @@ PROBE_MOUNTS = (
 AGENT_CA = "/etc/agent-trust/ca.pem"
 MIRRORS = "/mirrors"
 # One existing GET route per role that answers 200 and changes nothing.
-ALLOWED_PATHS = {"aweb": "/ready", "secrets": "/ready", "logs": "/ready", "signer": "/readyz", "registry": "/health"}
+ALLOWED_PATHS = {"aweb": "/ready", "secrets": "/ready", "logs": "/ready", "registry": "/health"}
 
 
 def ingress_routes(config: dict, policy: dict, services: list[str]) -> dict[str, dict]:

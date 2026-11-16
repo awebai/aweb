@@ -5,11 +5,10 @@
 | `aweb.publicOrigin` | derived policy `targets.aweb.origin` | exact HTTPS DNS origin on 443 | none | Agent access to aweb. |
 | `secrets.publicOrigin` | derived policy `targets.secrets.origin` | exact HTTPS DNS origin on 443 | none | Agent access to the Secrets broker API, without mounting its keys. |
 | `logs.publicOrigin` | derived policy `targets.logs.origin` | exact HTTPS DNS origin on 443 | none | Agent access to Logs. |
-| `signer.requestOrigin` | derived policy `targets.signer.origin` | exact HTTPS DNS origin on 443; equals validated profile `request_origin` | none | Signed prepare and receipt access, conditional on runtime Host/SNI refusal proof. |
-| `signer.humanOrigin` | derived policy `humanOrigin` | exact HTTPS DNS origin; excluded from agent routes | none | Prevent the browser approval surface becoming an agent destination. |
+| `secrets.consoleOrigin` | derived policy `humanOrigin` | exact HTTPS DNS origin; excluded from agent routes | none | Prove that API SNI cannot route to the human console. |
 | `team.registryUrl` | derived policy `targets.registry.origin` | exact HTTPS DNS origin on 443; equals validated profile `registry_origin` | none | Sender verification in the broker's Node channel-core child and Go aw. |
 | `team.registryRoute` | ingress probe route input `registry` (`egress_policy.ingress_routes`) | `local` or `external` | `external` | `local`: a `registry` service of this deployment, reached only at one of `egress.privateIngressAddresses`, probed through its ingress with its log as witness. `external`: the registry's operator's; refused if `registry` is a service or one of the deployment's own addresses serves it, and probed with a positive control only, with no refusal or non-delivery claimed for it. Every other route is local. |
-| `signer.profileFile` | wrapper reads public `namespace_authorities` and `registry_origin` | validated existing ProtectedServiceProfile; agents require signer | none | Derive only its provisioned `_awid` TXT records using the existing AWID encoder/parser; no second namespace/controller input. |
+| `team.namespaceAuthorities` | public `{domain, controllerDidKey}` pins | nonempty, validated by the AWID TXT encoder/parser | none | Derive the operator-pinned namespace authority records without any signer profile. |
 | `egress.privateIngressAddresses` | derived policy `privateIngressAddresses` | explicit approved IPv4 ingress addresses; no CIDR or wildcard | empty | Permit private TLS ingress only where declared. Reserved/metadata/loopback and protected-backend denials still take precedence. |
 | `egress.external.source` | derived policy `externalTargets.source = {origin: "https://github.com"}` | boolean; the origin is fixed | false | Git fetches of the OATS workspace and its sources. |
 | `egress.external.model` | derived policy `externalTargets.model = {origin: "https://api.anthropic.com"}` | boolean; the origin is fixed | false | The harness's model requests. |
@@ -20,7 +19,7 @@
 
 | Secret file under `/run/secrets/egress/` | Owner/mode | Who provisions it |
 | --- | --- | --- |
-| none | No secret mount or serving TLS key. | TLS terminates at the operator ingress. Profile authorities and CA certificates are public trust material. |
+| none | No secret mount or serving TLS key. | TLS terminates at the operator ingress. Namespace pins and CA certificates are public trust material. |
 
 | Key | Platform | Why no shared form |
 | --- | --- | --- |
@@ -32,4 +31,4 @@ Image: `container/agent/egress/Dockerfile`, one built digest; fixed uid/gid 1000
 Port: UDP/TCP 53 and TCP 443, component DNS/service name `egress`.
 Health: `node /opt/egress/health.mjs`; exact approved DNS answer, unknown-name NXDOMAIN and live TLS listener; readiness only, not boundary proof.
 External roles: egress forwards them by exact SNI to a checked public address. It cannot see or filter the HTTP host, path, method or repository inside the TLS stream, and no external service gives us its logs: the evidence is SNI and public-destination enforcement with DNS/TLS mutants and real `git` and `claude` clients, not non-delivery at the external backend.
-Depends on: validated shared deployment config and signer profile; pinned ingress inventory; an enforcing network boundary and TLS ingress rejecting SNI/Host/:authority disagreement before routing; no PostgreSQL, Redis or custody mount.
+Depends on: validated shared deployment configuration; pinned ingress inventory; an enforcing network boundary and TLS ingress rejecting SNI/Host/:authority disagreement before routing; no PostgreSQL, Redis or custody mount.

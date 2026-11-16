@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       first_publication:
-        description: "An image repository this run creates (e.g. ghcr.io/awebai/aweb-protected); empty for none"
+        description: "An image repository this run creates (e.g. ghcr.io/awebai/aweb-server); empty for none"
         required: false
         default: ""
         type: string

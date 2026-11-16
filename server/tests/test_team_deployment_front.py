@@ -75,34 +75,6 @@ def test_the_front_serves_each_public_origin_with_the_operators_certificate_and_
     assert caddyfile.count(":443 {") == len(sites)
 
 
-def test_the_front_serves_the_signers_request_and_human_origins_apart(tmp_path):
-    config = with_front()
-    profile = tmp_path / "profile.json"
-    profile.write_text(
-        '{"request_origin": "https://signer.example.com", "human_origin": "https://human.example.com",'
-        ' "registry_origin": "https://api.awid.ai"}'
-    )
-    scope = tmp_path / "scope.json"
-    scope.write_text("{}")
-    config["signer"] = {
-        "image": "ghcr.io/awebai/aweb-protected@sha256:" + "5" * 64,
-        "requestOrigin": "https://signer.example.com",
-        "humanOrigin": "https://human.example.com",
-        "profileFile": str(profile),
-        "scopeFile": str(scope),
-        "workerUids": [20001],
-        "emailFrom": "signer@example.com",
-        "emailSmtpHost": "smtp.example.com",
-        "emailSmtpPort": 587,
-        "emailUsername": "signer",
-    }
-    caddyfile = render_env.render_front(config)
-    for host in ("signer.example.com", "human.example.com"):
-        assert f"{host}:443 {{\n" in caddyfile
-        assert f"@misdirected not header_regexp Host ^{host.replace('.', '[.]')}(:443)?$\n" in caddyfile
-    assert caddyfile.count("reverse_proxy signer:8080\n") == 2
-
-
 def test_an_origin_on_another_port_is_refused():
     config = with_front()
     config["aweb"]["publicOrigin"] = "https://aweb.example.com:8443"

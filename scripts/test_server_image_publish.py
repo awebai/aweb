@@ -166,12 +166,12 @@ class ImageRecoveryDispatchTests(unittest.TestCase):
 
     def test_only_a_dispatch_carries_an_explicit_first_publication(self):
         result, published = self.run_step("workflow_dispatch", "refs/heads/main", "server-v1.2.3",
-                                          first_publication="ghcr.io/awebai/aweb-protected")
+                                          first_publication="ghcr.io/awebai/aweb-server")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(published, ["scripts/publish_release.py --only oci --recovery "
-                                     "--first-publication ghcr.io/awebai/aweb-protected server-v1.2.3"])
+                                     "--first-publication ghcr.io/awebai/aweb-server server-v1.2.3"])
         result, published = self.run_step("push", "refs/tags/server-v1.2.3", "server-v1.2.3",
-                                          first_publication="ghcr.io/awebai/aweb-protected")
+                                          first_publication="ghcr.io/awebai/aweb-server")
         self.assertEqual(published, ["scripts/publish_release.py --only oci server-v1.2.3"])
 
     def test_workflow_offers_the_first_publication_input(self):
@@ -204,9 +204,8 @@ class ImageRecoveryDispatchTests(unittest.TestCase):
                 self.assertEqual(published, [])
 
 
-# A server tag's images, in publication order: the coordination server, then the
-# protected signer a team deployment runs as signer.image.
-SERVER_TAG_REPOSITORIES = ("ghcr.io/awebai/aweb-server", "ghcr.io/awebai/aweb-protected")
+# The coordination server image published by a server tag.
+SERVER_TAG_REPOSITORIES = ("ghcr.io/awebai/aweb-server",)
 
 
 def release_indexes(output):
@@ -260,7 +259,7 @@ class ServerOciTests(unittest.TestCase):
                 self.assertEqual(copies, [f"docker://{repository}:{tag}" for repository in SERVER_TAG_REPOSITORIES
                                           for tag in expected])
                 self.assertEqual(calls[-1][:3], ("bash", "scripts/oci-exact-publish.sh", "verify-published"))
-                self.assertEqual([index["digest"] for index in release_indexes(output)], [digest, digest])
+                self.assertEqual([index["digest"] for index in release_indexes(output)], [digest])
 
     def test_name_unknown_without_the_explicit_first_publication_refuses(self):
         # "name unknown" is never taken to mean absent on its own (Antares, aweb-adbc 2).
@@ -269,21 +268,18 @@ class ServerOciTests(unittest.TestCase):
             self.exercise(listing=(1, "", self.ABSENT_REPOSITORY))
 
     def test_only_the_named_repository_may_be_new(self):
-        server, signer = SERVER_TAG_REPOSITORIES
-        listings = {server: (0, json.dumps({"Tags": ["1.2.2", "latest"]}), ""),
-                    signer: (1, "", self.ABSENT_REPOSITORY)}
-        calls, _, _ = self.exercise(version="1.2.3rc1", listing=listings, first_publication=(signer,))
+        repository = SERVER_TAG_REPOSITORIES[0]
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "publishes no"):
+            self.exercise(version="1.2.3rc1", listing=(1, "", self.ABSENT_REPOSITORY),
+                          first_publication=("ghcr.io/awebai/unrelated",))
+        calls, _, _ = self.exercise(version="1.2.3rc1", listing=(1, "", self.ABSENT_REPOSITORY),
+                                    first_publication=(repository,))
         copies = [args[-1] for args in calls if args[:2] == ("skopeo", "copy")]
-        self.assertEqual(copies, [f"docker://{server}:1.2.3rc1", f"docker://{signer}:1.2.3rc1"])
-        # Naming the existing one as new refuses on it; naming none refuses on the absent one.
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, f"not a first publication: {server}"):
-            self.exercise(version="1.2.3rc1", listing=listings, first_publication=(server,))
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, f"{signer}: name unknown"):
-            self.exercise(version="1.2.3rc1", listing=listings)
+        self.assertEqual(copies, [f"docker://{repository}:1.2.3rc1"])
 
     def test_a_named_repository_that_lists_tags_is_not_a_first_publication(self):
-        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "not a first publication: ghcr.io/awebai/aweb-protected"):
-            self.exercise(existing=True, first_publication=("ghcr.io/awebai/aweb-protected",))
+        with self.assertRaisesRegex(PUBLISH.PublishRefusal, "not a first publication: ghcr.io/awebai/aweb-server"):
+            self.exercise(existing=True, first_publication=("ghcr.io/awebai/aweb-server",))
 
     def test_a_first_publication_outside_the_tags_images_refuses_before_any_build(self):
         calls = []
@@ -331,41 +327,20 @@ class ServerOciTests(unittest.TestCase):
         self.assertEqual(release_indexes(output)[0], {"repository": "ghcr.io/awebai/aweb-server", "digest": digest,
                                                        "source_sha": "a" * 40, "version": "1.2.3"})
 
-    def test_server_tag_publishes_the_protected_signer_from_the_same_tree(self):
-        calls, output, digest = self.exercise()
-        builds = [args for args in calls if args[:3] == ("docker", "buildx", "build")]
-        self.assertEqual(len(builds), 2)
-        signer = builds[1]
-        self.assertEqual(signer[signer.index("--file") + 1], "server/Dockerfile")
-        self.assertEqual(signer[signer.index("--build-arg") + 1], "AWEB_EXTRA=protected")
-        self.assertEqual(signer[signer.index("--platform") + 1], "linux/amd64,linux/arm64")
-        self.assertEqual(signer[-1], ".")
-        for flag in ("--provenance=false", "--sbom=false", "org.opencontainers.image.title=aweb protected signer",
-                     "org.opencontainers.image.version=1.2.3", "org.opencontainers.image.revision=" + "a" * 40):
-            self.assertIn(flag, signer)
-        # Same exact-publication path as the server: immutable version, latest, readback.
-        copies = [args[-1] for args in calls if args[:2] == ("skopeo", "copy")]
-        self.assertEqual(copies, ["docker://ghcr.io/awebai/aweb-server:1.2.3", "docker://ghcr.io/awebai/aweb-server:latest",
-                                  "docker://ghcr.io/awebai/aweb-protected:1.2.3", "docker://ghcr.io/awebai/aweb-protected:latest"])
-        verifies = [args for args in calls if args[:3] == ("bash", "scripts/oci-exact-publish.sh", "verify-published")]
-        self.assertEqual([args[-1] for args in verifies], list(SERVER_TAG_REPOSITORIES))
-        self.assertEqual(release_indexes(output), [
-            {"repository": repository, "digest": digest, "source_sha": "a" * 40, "version": "1.2.3"}
-            for repository in SERVER_TAG_REPOSITORIES])
 
-    def test_both_images_are_staged_before_any_registry_access(self):
+    def test_the_image_is_staged_before_any_registry_access(self):
         calls, _, _ = self.exercise()
         staged = [i for i, args in enumerate(calls) if "inspect-staged" in args]
         registry = [i for i, args in enumerate(calls) if args[:1] == ("skopeo",)]
-        self.assertEqual(len(staged), 2)
+        self.assertEqual(len(staged), 1)
         self.assertLess(max(staged), min(registry))
 
-    def test_a_failed_signer_build_publishes_nothing(self):
+    def test_a_failed_server_build_publishes_nothing(self):
         calls = []
 
         def run(root, *args, **kwargs):
             calls.append(args)
-            if args[:3] == ("docker", "buildx", "build") and "AWEB_EXTRA=protected" in args:
+            if args[:3] == ("docker", "buildx", "build"):
                 raise PUBLISH.PublishRefusal("build failed")
             if "inspect-staged" in args:
                 Path(args[args.index("--out") + 1]).write_text(json.dumps({"index": "sha256:" + "c" * 64}))
@@ -378,24 +353,17 @@ class ServerOciTests(unittest.TestCase):
         with patch.dict(os.environ, GHCR_USERNAME="fixture", GHCR_TOKEN="fixture-token"), patch.object(PUBLISH.shutil, "which", return_value="skopeo"), patch.object(PUBLISH, "run", run), patch.object(PUBLISH.subprocess, "run", direct), redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(PUBLISH.PublishRefusal, "build failed"):
                 PUBLISH.publish_oci(ROOT, "server-v", "1.2.3", "a" * 40)
-        self.assertEqual(len([args for args in calls if args[:3] == ("docker", "buildx", "build")]), 2)
+        self.assertEqual(len([args for args in calls if args[:3] == ("docker", "buildx", "build")]), 1)
         self.assertFalse([args for args in calls if args[:1] == ("skopeo",)], "no login, listing or copy after a failed build")
 
-    def test_other_image_tags_still_publish_one_image(self):
-        self.assertEqual(PUBLISH.oci_images("awid-v"), (("ghcr.io/awebai/awid", ""),))
-        self.assertEqual(PUBLISH.oci_images("server-v"), (("ghcr.io/awebai/aweb-server", ""),
-                                                          ("ghcr.io/awebai/aweb-protected", "protected")))
-        # An extra that the tag does not publish is refused before any build.
-        with patch.object(PUBLISH, "run") as run, tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(PUBLISH.PublishRefusal, "awid-v publishes no image with extra protected"):
-                PUBLISH.build_oci_archive(ROOT, "awid-v", "1.2.3", "a" * 40, Path(directory) / "a.tar", "protected")
-            run.assert_not_called()
+    def test_each_image_tag_names_its_image(self):
+        self.assertEqual(PUBLISH.oci_images("awid-v"), ("ghcr.io/awebai/awid",))
+        self.assertEqual(PUBLISH.oci_images("server-v"), ("ghcr.io/awebai/aweb-server",))
 
     def test_rc_publishes_and_reads_back_only_its_immutable_version(self):
         calls, _, _ = self.exercise(version="1.2.3rc1")
         copies = [args for args in calls if args[:2] == ("skopeo", "copy")]
-        self.assertEqual([args[-1] for args in copies], ["docker://ghcr.io/awebai/aweb-server:1.2.3rc1",
-                                                          "docker://ghcr.io/awebai/aweb-protected:1.2.3rc1"])
+        self.assertEqual([args[-1] for args in copies], ["docker://ghcr.io/awebai/aweb-server:1.2.3rc1"])
         self.assertIn("--version-only", calls[-1])
         verifies = [args for args in calls if args[:3] == ("bash", "scripts/oci-exact-publish.sh", "verify-published")]
         self.assertTrue(all("--version-only" in args for args in verifies))
@@ -421,7 +389,7 @@ class ServerOciTests(unittest.TestCase):
                 copies = [args[-1] for args in calls if args[:2] == ("skopeo", "copy")]
                 self.assertEqual(copies, [f"docker://{repository}:{version}" for repository in SERVER_TAG_REPOSITORIES])
                 verifies = [args for args in calls if args[:3] == ("bash", "scripts/oci-exact-publish.sh", "verify-published")]
-                self.assertEqual(len(verifies), 2)
+                self.assertEqual(len(verifies), 1)
                 self.assertTrue(all("--version-only" in args for args in verifies))
                 self.assertEqual(output.count("latest unchanged (recovery)"), 1)
 
@@ -458,8 +426,7 @@ class NativeArchiveHandoffTests(unittest.TestCase):
         sha = "a" * 40
         version = tomllib.loads((ROOT / "server/pyproject.toml").read_text())["project"]["version"]
 
-        def build(root, prefix, version, source, archive, extra):
-            self.assertEqual(extra, "")  # this handoff qualifies the server image
+        def build(root, prefix, version, source, archive):
             calls.append(("build",))
             archive.write_bytes(b"unchanged archive bytes")
 
@@ -520,12 +487,10 @@ class NativeArchiveHandoffTests(unittest.TestCase):
 @unittest.skipUnless(os.environ.get("AWEB_TEST_SERVER_IMAGE_BUILD") == "1", "requires Docker, skopeo and native platform runtime")
 class ServerPlatformBuildTests(unittest.TestCase):
     def test_release_archive_and_native_server_cli(self):
-        self.qualify("", "AWEB_SERVER_IMAGE_ARCHIVE", "server image")
+        self.qualify("AWEB_SERVER_IMAGE_ARCHIVE", "server image")
 
-    def test_release_protected_signer_archive_and_native_runtime(self):
-        self.qualify("protected", "AWEB_SIGNER_IMAGE_ARCHIVE", "protected signer image")
 
-    def qualify(self, extra, archive_variable, name):
+    def qualify(self, archive_variable, name):
         version = tomllib.loads((ROOT / "server/pyproject.toml").read_text())["project"]["version"]
         sha = command(ROOT, "git", "rev-parse", "HEAD")
         daemon = json.loads(PUBLISH.run(ROOT, "docker", "info", "--format", "{{json .}}"))
@@ -546,7 +511,7 @@ class ServerPlatformBuildTests(unittest.TestCase):
             else:
                 self.assertFalse(archive.exists(), "output archive already exists; do not overwrite release bytes")
                 # The publication path uses this exact builder, not a second recipe.
-                PUBLISH.build_oci_archive(ROOT, "server-v", version, sha, archive, extra)
+                PUBLISH.build_oci_archive(ROOT, "server-v", version, sha, archive)
             PUBLISH.run(ROOT, "bash", "scripts/oci-exact-publish.sh", "inspect-staged",
                         "--archive", str(archive), "--version", version,
                         "--source-sha", sha, "--out", str(identities))
@@ -580,23 +545,6 @@ class ServerPlatformBuildTests(unittest.TestCase):
                     help_text = PUBLISH.run(ROOT, "docker", "run", "--rm", "--name", container,
                                            "--platform", "linux/" + architecture, image, "aweb", "serve", "--help", timeout=120)
                     self.assertIn("Usage", help_text)
-                    if extra:
-                        # The installed runtime is the tagged tree's, at the versions published from it.
-                        expected = {package: tomllib.loads((ROOT / path).read_text())["project"]["version"]
-                                    for package, path in (("aweb", "server/pyproject.toml"),
-                                                          ("aweb-naapp", "naapp-lib/pyproject.toml"),
-                                                          ("awid-service", "awid/pyproject.toml"))}
-                        runtime = ("import importlib.metadata as m, json; "
-                                   "import aweb.protected_signing.host, aweb_naapp.runtime.protected_signer; "
-                                   "print(json.dumps({p: m.version(p) for p in ('aweb', 'aweb-naapp', 'awid-service')}))")
-                        installed = json.loads(PUBLISH.run(ROOT, "docker", "run", "--rm", "--name", container,
-                                                          "--platform", "linux/" + architecture, image,
-                                                          "python", "-c", runtime, timeout=120))
-                        self.assertEqual(installed, expected)
-                        signer_help = PUBLISH.run(ROOT, "docker", "run", "--rm", "--name", container,
-                                                  "--platform", "linux/" + architecture, image, "uvicorn", "--help", timeout=120)
-                        self.assertIn("Usage", signer_help)
-                        result["installed"] = installed
                     print(f"{name} linux/{architecture} PASS: {result}", flush=True)
                 finally:
                     # Remove only this probe's resources, including a timed-out container.
@@ -620,9 +568,9 @@ class RecoveryArgumentTests(unittest.TestCase):
 class FirstPublicationArgumentTests(unittest.TestCase):
     def test_cli_first_publication_reaches_the_image_publisher(self):
         with patch.object(PUBLISH, "publish") as publish:
-            self.assertEqual(PUBLISH.main(["--only", "oci", "--first-publication", "ghcr.io/awebai/aweb-protected",
+            self.assertEqual(PUBLISH.main(["--only", "oci", "--first-publication", "ghcr.io/awebai/aweb-server",
                                            "server-v1.2.3"]), 0)
-            self.assertEqual(publish.call_args.kwargs["first_publication"], ["ghcr.io/awebai/aweb-protected"])
+            self.assertEqual(publish.call_args.kwargs["first_publication"], ["ghcr.io/awebai/aweb-server"])
             self.assertEqual(PUBLISH.main(["--only", "oci", "server-v1.2.3"]), 0)
             self.assertEqual(publish.call_args.kwargs["first_publication"], [])
 

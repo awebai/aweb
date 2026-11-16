@@ -37,14 +37,9 @@ observed facts.
 
 ## Your owner authority
 
-After the cutover, the supported online path for the owner and the agents has
-no controller key file and goes through the protected signer. The signer
-exposes one operation, `human-role.revoke`, approved by a person in the browser,
-so admitting or removing a member through that protected path is not yet
-implemented (`OPERATIONS.md`, "Removing an agent, a service or an owner"). The
-owner's separately protected offline backup of the key, and the operator's
-ability to read the signer's custody file, remain: whoever uses the raw key
-bypasses the signer's browser approval.
+The current bundle has no signer host. The owner holds the controller key and
+uses ordinary team certificate commands. Application owner acts retain their
+own authorization; awsign gates are not yet integrated.
 
 ## The registry and the model provider
 

@@ -6,7 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-import protected_round_trip
+import team_journey_support
 
 REPO = Path(__file__).resolve().parents[3]
 BUILDER = REPO / "scripts" / "e2e" / "team-deployment-images.sh"
@@ -34,7 +34,7 @@ def test_the_loader_keeps_only_image_references(tmp_path):
 
 
 def test_a_complete_current_manifest_needs_no_historical_control_image(tmp_path):
-    names = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "chromium"}
+    names = {"aweb", "secrets", "logs", "awid", "cli", "chromium"}
     images = tmp_path / "images.txt"
     images.write_text("".join(f"{name} localhost:5000/{name}@sha256:{'a' * 64}\n" for name in names))
     assert set(journey().load_images(images)) == names == journey().REQUIRED_IMAGES
@@ -55,7 +55,7 @@ def test_the_owner_names_the_approvers_lab_mailbox_as_the_holdings_notice_contac
     # secrets.owner declares a notice contact, so aw refuses a designate
     # without one; the approver's mailbox at the lab's SMTP receives the
     # holding's later notices.
-    command = protected_round_trip.designate_command("lfteam-secrets", "secrets.owner", "did:aw:approver",
+    command = team_journey_support.designate_command("lfteam-secrets", "secrets.owner", "did:aw:approver",
                                           "/world/holder-app.json", "approver@lf.test")
     assert command == ["aw", "app", "role", "designate", "lfteam-secrets", "--role", "secrets.owner",
                        "--principal", "did:aw:approver", "--credential", "/world/holder-app.json",
@@ -76,7 +76,7 @@ SECRETS = [binding("secrets", "production", "post-governance-hook", "secrets-gov
 
 
 def test_the_deployment_activates_the_audit_critical_hook_pairs_and_logs_own_production():
-    assert set(protected_round_trip.REQUIRED_HOOK_BINDINGS) == {
+    assert set(team_journey_support.REQUIRED_HOOK_BINDINGS) == {
         ("secrets", "production", "post-governance-hook"),
         ("secrets", "production", "post-secret-use-hook"),
         ("logs", "registration", "post-governance-hook"),
@@ -86,7 +86,7 @@ def test_the_deployment_activates_the_audit_critical_hook_pairs_and_logs_own_pro
 
 
 def test_each_required_binding_is_named_by_its_app_kind_and_hook():
-    selected = protected_round_trip.select_hook_bindings({"logs": LOGS, "secrets": SECRETS})
+    selected = team_journey_support.select_hook_bindings({"logs": LOGS, "secrets": SECRETS})
     assert {key: row["binding_id"] for key, row in selected.items()} == {
         ("secrets", "production", "post-governance-hook"): "secrets-governance",
         ("secrets", "production", "post-secret-use-hook"): "secrets-secret-use",
@@ -102,16 +102,16 @@ def test_an_apps_bindings_from_more_than_one_installation_generation_or_manifest
     mixed = SECRETS[:1] + [binding("secrets", "production", "post-secret-use-hook", "secrets-secret-use",
                                    generation=2)]
     with pytest.raises(SystemExit, match="secrets"):
-        protected_round_trip.select_hook_bindings({"logs": LOGS, "secrets": mixed})
+        team_journey_support.select_hook_bindings({"logs": LOGS, "secrets": mixed})
 
 
 def test_a_required_binding_missing_or_listed_twice_is_refused():
     import pytest
 
     with pytest.raises(SystemExit, match="post-secret-use-hook"):
-        protected_round_trip.select_hook_bindings({"logs": LOGS, "secrets": SECRETS[:1]})
+        team_journey_support.select_hook_bindings({"logs": LOGS, "secrets": SECRETS[:1]})
     with pytest.raises(SystemExit, match="post-governance-hook"):
-        protected_round_trip.select_hook_bindings({"logs": LOGS, "secrets": SECRETS + SECRETS[:1]})
+        team_journey_support.select_hook_bindings({"logs": LOGS, "secrets": SECRETS + SECRETS[:1]})
 
 
 def test_the_bindings_are_ready_once_the_latest_active_from_has_passed_with_a_margin():
@@ -122,7 +122,7 @@ def test_the_bindings_are_ready_once_the_latest_active_from_has_passed_with_a_ma
     listed = [binding("logs", "registration", "post-governance-hook", "a", "active", "2026-11-13T10:00:00.5Z"),
               binding("secrets", "production", "post-governance-hook", "b", "active", "2026-11-13T10:00:03Z"),
               binding("logs", "registration", "post-command-hook", "c", "pending")]
-    ready = protected_round_trip.hooks_ready_at(listed, selected, margin=datetime.timedelta(seconds=10))
+    ready = team_journey_support.hooks_ready_at(listed, selected, margin=datetime.timedelta(seconds=10))
     assert ready == datetime.datetime(2026, 11, 13, 10, 0, 13, tzinfo=datetime.UTC)
 
 
@@ -133,7 +133,7 @@ def test_an_active_binding_is_ready_only_as_the_installation_generation_and_mani
     moved = [binding("secrets", "production", "post-governance-hook", "b", "active", "2026-11-13T10:00:03Z",
                      generation=2)]
     with pytest.raises(SystemExit, match="b"):
-        protected_round_trip.hooks_ready_at(moved, selected)
+        team_journey_support.hooks_ready_at(moved, selected)
 
 
 def test_a_selected_binding_not_active_or_without_active_from_is_not_ready():
@@ -144,10 +144,10 @@ def test_a_selected_binding_not_active_or_without_active_from_is_not_ready():
     margin = datetime.timedelta(seconds=10)
     selected = [binding("secrets", "production", "post-governance-hook", "b")]
     with pytest.raises(SystemExit, match="b"):
-        protected_round_trip.hooks_ready_at([binding("secrets", "production", "post-governance-hook", "b", "pending")],
+        team_journey_support.hooks_ready_at([binding("secrets", "production", "post-governance-hook", "b", "pending")],
                                  selected, margin=margin)
     with pytest.raises(SystemExit, match="b"):
-        protected_round_trip.hooks_ready_at([binding("secrets", "production", "post-governance-hook", "b", "active")],
+        team_journey_support.hooks_ready_at([binding("secrets", "production", "post-governance-hook", "b", "active")],
                                  selected, margin=margin)
 
 

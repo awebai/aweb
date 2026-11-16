@@ -21,7 +21,7 @@ Installed apps find the team's aweb through the team's server record at the
 registry (`aweb.team-server/1`), signed by the team's key. Secrets refuses an
 installation whose team has none (`team_server_unpublished`). The team owner
 publishes it before installing the apps, while its machine still holds the
-team's key, that is, before the signer takes custody:
+team's controller key:
 
 ```sh
 aw id team set-server --team <team> --namespace <domain> --url <aweb.publicOrigin>
@@ -35,8 +35,7 @@ holds for an `aw` command in an agent seat: the agent image does not accept
 `AWID_REGISTRY_URL` as container environment, so the command names it itself.
 
 A record signed by another key is refused, so a new controller key needs the
-record published again. Once the signer holds the key, that has no supported
-path (`aweb-acxy.4`, `team.controller.rotate`, OPEN).
+record published again under the new key.
 
 ## The apps' hook bindings
 
@@ -45,8 +44,7 @@ the apps are installed. While none owes Secrets' events to an audit target,
 Secrets refuses every owner act that widens its governance (a designation, a
 credential replacement) and every authorizing secret-use step with
 `503 release_context_unavailable`. The team owner activates these five, named
-by app, kind and hook, while its machine still holds the team's key, that is,
-before the signer takes custody:
+by app, kind and hook, with the team's controller key:
 
 | App | Kind | Hook |
 | --- | --- | --- |
@@ -77,9 +75,8 @@ producer in this bundle and stay pending. An active `post-command-hook` would
 let Logs accept events that any member certificate signs.
 
 Reinstalling or updating an app gives it a new generation of bindings, all
-pending again, and each needs the owner's activation. Once the signer holds the
-key, that has no supported path: reinstalling an app then leaves its owner acts
-and secret use refused.
+pending again, and each needs the owner's activation before widening owner acts
+and secret use can resume.
 
 ## What each command keeps and deletes
 
@@ -103,11 +100,10 @@ project, the test world's included, and the deployment's data with them.
 | Secrets' database | `postgres_data`, database `secrets` | Every retained secret value, sealed under the custody key (references for values kept in 1Password); grants, receipts | Yes |
 | Logs' database | `postgres_data`, database `logs` | Every retained event's content and its chain | Yes |
 | Logs' purge ledger | `postgres_data`, database `logsledger` | The tombstone of every purged event, which Logs reapplies to its content at each start | Yes, for the loss of the ledger itself only: never restore it with Logs' content, or to any earlier state |
-| The signer's database | `postgres_data`, database `signer` | Bootstrap consumption, credential and public-key records, bindings, receipts | Yes |
 | Redis | `redis_data` volume | Rebuildable runtime state: presence and its indexes, active chat waits, current activity and listening hints, wake counters and pub/sub, registry-read caches, short-lived rate and cooldown state | **No.** Start with a fresh Redis and its restored credentials: clients reconnect and heartbeat, caches refill, and the previous transient hints and current rate and cooldown windows are lost. No durable aweb record needs this volume (federation state, work, leases and the lifecycle outbox are in PostgreSQL), and a cold registry cache reads fresh evidence upstream. aweb needs Redis reachable to start. This does not qualify the unsupported team restore. |
-| The secrets directory | `compose.secretsDir` | Each component's credentials: database URLs, aweb's Redis URL, member keys, Secrets' **custody key** and service keys, Logs' app keys, the signer's controller custody, SMTP passwords, Redis's ACL, the agents' harness login | Yes, as an archive with numeric owners and modes, **without** the signer's live controller custody (`signer/private-controller`) or the agents' harness login (`agents/`), which is minted again rather than restored |
+| The secrets directory | `compose.secretsDir` | Each component's credentials: database URLs, aweb's Redis URL, member keys, Secrets' **custody key** and service keys, Logs' app keys, SMTP passwords, Redis's ACL, the agents' harness login | Yes, as an archive with numeric owners and modes, **without** the agents' harness login (`agents/`), which is minted again rather than restored |
 | The agents' state and work | `agents.compose.stateDir`, `agents.compose.workDir` | Each seat's `.aw` (its member key), the harness's sessions and transcripts, checkouts | Yes, as archives |
-| Files `deployment.yaml` names | `signer.profileFile`, `signer.scopeFile`, the CA files | Public configuration and trust anchors | Yes, with their modes |
+| Files `deployment.yaml` names | The CA files | Public configuration and trust anchors | Yes, with their modes |
 | The operator's Git mirrors and the OATS source | `agents.mirrorsDir`, `agents.compose.oatsSource` | Operator-provided inputs | No: recorded in the manifest only |
 
 **Permanently losing every usable copy of the local custody key, or the ability
@@ -119,14 +115,6 @@ least as protected as the live key (`naapp/secrets/deploy/OPERATIONS.md`). A
 running Secrets reads its key once: a missing or replaced file takes effect when
 it restarts. Whoever holds both the key and the database reads every value it
 seals.
-
-**The signer's controller key has its own backup: the team owner's separately
-protected offline copy.** `teamctl backup` leaves the live custody volume
-(`signer/private-controller`) out, as the signer's custody instructions require
-(`server/src/aweb/protected_signing/HOST.md`, "Controller key installation,
-backup and cutover"). The signer's database is in the backup set; never restore
-an older one whose bootstrap is still pending over a completed enrollment. That
-is a procedure, not an enforced fence (`aweb-acyw`).
 
 ## Backup
 
@@ -141,15 +129,14 @@ stopped, and stops it again afterwards. The set holds:
 
 - `databases/<name>.dump`: `pg_dump -Fc` of every database, and
   `databases/server-version`;
-- `archives/<key>.tar`: the secrets directory, without the signer's live
-  controller custody or the agents' harness login, and the agents' state and work, regular files and
+- `archives/<key>.tar`: the secrets directory, without the agents' harness login, and the agents' state and work, regular files and
   directories only, owners and modes kept;
 - `files/<key>`: every file `deployment.yaml` names;
 - `manifest.json`: the source revision, every image digest, the PostgreSQL
   version, and the SHA-256 and recorded path of every part. It holds no value.
 
 The directory is created `0700` and must not exist before. **It holds every
-credential of the deployment but the signer's controller key, Secrets' custody
+credential of the deployment, including Secrets' custody
 key included.** Keep it where only
 the operator reaches it: never under a directory an agent mounts, never in a
 repository or a published artifact. While it is present, the boundary probe
@@ -168,8 +155,6 @@ each component can restore without bringing back what was destroyed:
 | --- | --- | --- | --- |
 | Secrets | Reapply the externally retained destroyed-version tombstones before serving; never resurrect a destroyed value. Custody-key rotation. | aweb-expert-secrets-root, `aweb-acyp` (after `aweb-acwd.24`) | OPEN |
 | Logs | Restore `logs` alone and keep the live `logsledger`: Logs reapplies the ledger's tombstones before serving. A restore path that never rolls the ledger back. | aweb-expert-logs, `aweb-acgh.16.23` (L5) | OPEN |
-| Signer | An offline controller-key and database backup recipe; refuse a pending-bootstrap database restored over a completed enrollment. | aweb-protocol-expert-signer-embedding, `aweb-acyw` | OPEN |
-| Signer | `team.controller.rotate` | `aweb-acxy.4` | OPEN |
 
 Logs' purge ledger is a database of its own, `logsledger`, with its own role
 and its whole DSN in `logs/purge-ledger-database-url`. Logs refuses to start
@@ -262,8 +247,8 @@ team's deployment (above).
 | Credential | Supported path | What it ends | What stays |
 | --- | --- | --- | --- |
 | Secrets custody key | None. Replacing the key file is not a rotation: after a restart with the new key, values sealed under the old one cannot be read. | | `aweb-acyp`, OPEN |
-| Team controller key (held by the signer) | None. `aw id team rotate-key` exists, but once the signer holds the team key, rotation is the protected `team.controller.rotate`; no raw-key command may bypass it (`HOST.md`). | | `aweb-acxy.4`, OPEN |
-| A member's key (a service or a seat) | While the owner still holds the team key: remove the member (below), then admit it again with a new key (`aw id team add-member --local`). Once the signer holds the team key, none: see removal below. | The old certificate, once revoked | Anything the old key signed |
+| Team controller key | The owner uses `aw id team rotate-key`; members need certificates under the new key. | Old-key membership and credentials cease to authorize under the current-key checks. | Public identity and unrelated teams. |
+| A member's key (a service or a seat) | Remove the member, then admit it with the new key using `aw id team add-member --local`. | The revoked certificate. | Anything the old key signed. |
 | Database passwords, Redis's password | Not exercised for this bundle: the role's password, the component's URL file and `postgres/roles/<name>` (or Redis's `users.acl` and aweb's `redis-url`) change together, then the services restart. | | Not qualified |
 | The agents' harness login | The OATS container's; see its documentation. | | |
 
@@ -274,26 +259,17 @@ The agents' local logs are plaintext today
 holds is on `aw`'s main branch and not released: nothing here applies until the
 pinned `aw` includes `aw team admin log-key`. Making the key needs no controller
 key; the record that turns sealing on must be signed by the team controller
-key, which the signer holds once a deployment is set up. The supported signing
-route is a protected signer act (`team.log-key.sign`), which does not exist
-yet. Until it does, the record is signed with the owner's offline controller
-copy:
+key held by the owner. The candidate-only signer route has been removed.
 
 1. On the machine where the owner will read the logs, run
    `aw team admin log-key create --team <team_id> --out unsigned.json`. The log
    private key stays in that machine's keychain, under a passphrase, and never
    enters the container. The record is public.
-2. Sign it where the controller key is present: at first setup, before the
-   controller key is installed in the signer, on the owner's machine that
-   still holds it in `~/.awid/team-keys/`; afterwards, wherever the owner
-   restores the offline controller copy (the controller's backup, above),
-   removing it again at once. Run
+2. On the owner's controller-key machine, run
    `aw team admin log-key sign --record unsigned.json --offline-controller-key --out log-key.json`.
-   `sign` with no route refuses; it never loads a controller key on its own.
-   Restoring the copy exposes the controller key outside the signer by hand,
-   and nothing enforces its removal: it is the reason the signer act is
-   wanted. `aw team admin log-key signing-bytes --record unsigned.json --team-key-did <did>`
-   prints the exact bytes signed, for a cross-check.
+   The explicit route is required; `sign` never loads a controller key on its own.
+   `aw team admin log-key signing-bytes --record unsigned.json --team-key-did <did>`
+   prints the exact bytes for a cross-check.
 3. In the agent container, as the agents' user and from a directory bound to
    the team, run `aw team admin log-key install log-key.json`. One install
    covers every agent of the container, because they share `/state/home`.
@@ -317,38 +293,16 @@ reads the logs by copying the files out of the container and running
 
 ## Removing an agent, a service or an owner
 
-A member is removed by revoking its certificate, which the team key signs.
-While the team owner holds that key, `aw id team remove-member` does it. After
-the cutover, the supported online path has no controller key file and goes
-through the protected signer (`server/src/aweb/protected_signing/README.md`).
-`team.agent.admit/default` admits eligible agents under a provisioned policy
-and the root's live endorsement. `team.agent.remove/default` lets that root
-remove its own retained admissions, or lets an eligible agent leave its own
-membership. A global target must have verified agent kind; a legacy global
-mapping with unknown kind is not sufficient. Local memberships keep their
-separate local-subject checks.
+The team owner removes a member by revoking its certificate with
+`aw id team remove-member`. That ends its team access; a service removed this
+way stops working for the team. Deleting a local key file does not revoke it.
+The member's local files, messages and application records are separate state.
 
-`team.agent.remove/owner_approved` lets the current owner remove an exact
-agent/service certificate outside a root bucket, including pre-cutover seats
-and a replaced root's members, with fresh exact-act passkey approval. A verified
-service agent displays `agent`; authoritative unknown kind displays
-"kind not verified". Unavailable evidence refuses. The frozen classification
-and membership are rechecked before release; verified humans require the
-separate human membership operation. Requester-key provenance confers no owner
-authority. Native/client qualification belongs to the slice's exact receipts.
-The owner's separately protected offline backup and the host operator's ability
-to read the custody file remain; whoever uses the raw key bypasses the signer's
-browser approval, outside the supported workflow. The remaining owner-approved
-and human-removal paths belong to `aweb-acxy.14`, OPEN. The shared operation
-definition and generated client description are documented in
-`docs/protected-operation-definitions.md`.
-
-| Remove | Supported path | Effective authority afterwards | Stored state that remains |
-| --- | --- | --- | --- |
-| An agent seat | Before cutover: the owner's `aw id team remove-member`. After: protected `team.agent.remove/default`, by its admitting root or the eligible member itself. The current owner can instead approve the exact `owner_approved` operation. | The certificate is revoked at the registry, and aweb refuses it (`AWEB_REQUIRE_REGISTERED_CERTIFICATES`). Admission capacity is released only after fresh confirmation; admission history remains for the rate bound. Deleting a key file does not revoke it. | The seat's `.aw` and key in the agents' state, until the operator deletes them; its messages in aweb; its events in Logs; Secrets grants naming it, until an owner revokes them |
-| A service member (aweb, Secrets, Logs) | Protected `team.agent.remove/owner_approved`, with the current owner’s live passkey approval. The root path retains its own narrower bucket. | Revocation ends its team access and the service then stops working for the team. | Its key and certificate files in the secrets directory; its database |
-| An app role a human holds | `human-role.revoke`, the signer's protected act, approved in the browser. | The signer signs the owner act; delivering it to the app, which ends the designation, is not yet in this bundle. | The receipt in the signer's database |
-| An owner | No supported recipe in this bundle. | | Open: to be named |
+An application's owner-act route remains available through `aw app role revoke`
+with the team's controller key. The app enforces its own role and credential
+retirement. The candidate-only signer host and browser-approved removal path
+have been removed. Root approval and unattended key-holder admission are not
+built; the replacement application gates belong to awsign integration.
 
 ## Mail and chat with other servers
 

@@ -200,3 +200,25 @@ The expiry wait is part of the reaper proof, not permission to shorten a live
 run's completion bound. Report provider IDs, overlap, exit-7 propagation,
 absence and total cost from acceptance.json. No full-gate PASS is inferred from
 these focused infrastructure controls.
+
+## CPU and contention evidence
+
+Each native command captures `host-metrics-before.json`; collection captures
+`host-metrics-after.json` even when the command did not return a completed exit
+receipt. Each observation is best-effort: a 3-second remote timeout (1-second KILL
+grace) and at most 5 seconds of transport time within the existing phase
+deadline. Collector exit/stdout/stderr or transport errors are retained in
+local `host-metrics-*-observation.json` sidecars when writable. Failed telemetry
+does not stop execution or required archive collection; those checks remain
+strict. These are guest-visible CPU model/family/stepping, raw `/proc/stat` and
+aggregate ticks (including steal/iowait), with SC_CLK_TCK, and CPU/IO PSI text. They are archived
+with the existing cgroup/memory samples. Missing/empty reads are explicit errors
+with `status=partial`, never invented zeros. Check measurement telemetry quality
+separately from the product and provider cleanup outcomes.
+
+The [kernel proc documentation](https://docs.kernel.org/filesystems/proc.html)
+notes that iowait is not a reliable universal utilization measure and may
+decrease. Raw counters are preserved without guessed percentages. The
+[PSI interface](https://docs.kernel.org/accounting/psi.html) supplies trend
+averages and cumulative stall time; before/after data supports diagnosis but
+does not on its own identify a physical host or prove noisy-neighbor causation.
