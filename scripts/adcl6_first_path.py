@@ -28,8 +28,8 @@ import time
 import tomllib
 from urllib.parse import quote
 
-AW = "6aae6de246ab1517c250d9adaf2712394485991f"
-HOLDER = "6aae6de246ab1517c250d9adaf2712394485991f"
+AW = "35b93d6c8979af7a1dde2e44d3ee4e285bba8c27"
+HOLDER = "35b93d6c8979af7a1dde2e44d3ee4e285bba8c27"
 APPROVAL = "aa736fbd4164f9378cd0bba67264d8a69a263594"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
