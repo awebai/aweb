@@ -16,8 +16,9 @@ build-backend = "hatchling.build"
 packages = ["src/aweb_key_holder"]
 
 [tool.uv.sources]
-awid-service = { path = "../awid", editable = true }
-aweb-approval-service = { git = "https://github.com/awebai/approval-service.git", rev = "aa736fbd4164f9378cd0bba67264d8a69a263594" }
+# Temporary development source; use the released SDK version at server release.
+awid-service = { git = "https://github.com/awebai/aweb.git", rev = "9bbdd365d85ad6d476663a1484fe3060bb2b9679", subdirectory = "awid" }
+aweb-approval-service = { git = "https://github.com/awebai/approval-service.git", rev = "4062bc4d71dff2173d360d11fde58fd4f1076185" }
 
 [dependency-groups]
 dev = ["pytest>=9.0.0", "pytest-asyncio>=1.2.0"]

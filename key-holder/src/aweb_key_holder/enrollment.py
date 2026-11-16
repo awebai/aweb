@@ -22,14 +22,12 @@ from approval_service.requester import AdmittedRequester, admit_enrollment_targe
 from approval_service.seams import (
     check_activation,
     check_creation_proof,
-    check_http,
     check_presentation,
     commitment,
-    http_authorization,
     make_needs_human,
 )
 from approval_service.verify import Trust
-from approval_service.wire import SCHEMA, domain, validate, validate_site
+from approval_service.wire import domain, validate, validate_site
 from awid.controller_signing import ControllerSigningContext, parse_controller_object
 from awid.did import public_key_from_did, stable_id_from_did_key
 from awid.id_certificates import id_certificate_id
@@ -457,74 +455,6 @@ class Holder:
                 return admitted, None
         return await self.admit(caller, chain), None
 
-    def authorize_bootstrap(self, person, purpose, body, issued_at):
-        """Closed controller-bootstrap proof for aw's Authorize callback."""
-        schemas = {
-            "enrollment_start": "enrollment_start",
-            "enrollment_material": "enrollment_material_request",
-            "enrollment_confirm": "enrollment_confirm_request",
-            "enrollment_activate": "enrollment_activation",
-        }
-        if purpose not in schemas:
-            raise Refused("operation_not_served")
-        if (
-            type(issued_at) is not int
-            or not 0 <= now() - issued_at <= SCHEMA["x-http"]["freshness_seconds"]
-        ):
-            raise Refused("http_expired")
-        value = parse(body)
-        validate(schemas[purpose], value)
-        with self.store._connection() as db, db:
-            db.execute("BEGIN IMMEDIATE")
-            row = self._row(db, person)
-            self._owner(row, None, None)
-            signed = json.loads(row["intent"])
-            if signed["intent"]["requester"]["kind"] != "namespace_controller":
-                raise Refused("requester_mismatch")
-            if value["intent"] != signed:
-                raise Refused("enrollment_changed")
-            if purpose == "enrollment_confirm" and (
-                not row["binding"]
-                or value["binding"] != json.loads(row["binding"])
-                or value["request_bytes"]
-                != encode(canonical(json.loads(row["confirmation"])))
-            ):
-                raise Refused("creation_mismatch")
-            if purpose == "enrollment_activate" and value != self._activation(row):
-                raise Refused("enrollment_changed")
-            root = self.store._descriptor(db)
-            seed = db.execute(
-                "SELECT seed FROM keys WHERE reference=?", (root.key_reference,)
-            ).fetchone()[0]
-            header = http_authorization(
-                canonical(value),
-                seed=seed,
-                requester=signed["intent"]["requester"],
-                origin=self.approval_origin,
-                purpose=purpose,
-                issued_at=issued_at,
-            )
-            checked = check_http(
-                header,
-                canonical(value),
-                requester=signed["intent"]["requester"],
-                origin=self.approval_origin,
-                method="POST",
-                path=SCHEMA["x-http"]["routes"][purpose],
-                purpose=purpose,
-                now=now(),
-            )
-            packet = parse(decode(header[7:]))
-            self.store._audit(
-                db,
-                root,
-                checked["preimage"],
-                decode(packet["signature"]),
-                operation="approval_" + purpose,
-                actor=root.did_key,
-            )
-            return header
-
     async def admit(self, caller, chain):
         root = self.store.descriptor()
         admitted = await self.public.requester(
@@ -537,14 +467,6 @@ class Holder:
 
     def _owner(self, row, caller, admitted, *, activation=False):
         original = json.loads(row["requester"])
-        if caller is None:
-            # Only the private operator command can speak as this controller.
-            if (
-                original["kind"] != "namespace_controller"
-                or original["key"] != self.store.descriptor().did_key
-            ):
-                raise Refused("requester_mismatch")
-            return
         caller.check_time()
         if admitted is None or not 0 <= now() - admitted.observed_at <= 60:
             raise Refused("status_unavailable")
@@ -714,8 +636,8 @@ class Holder:
         material,
         *,
         registration_count,
-        caller=None,
-        admitted=None,
+        caller,
+        admitted,
         current=None,
     ):
         with self.store._connection() as db, db:
@@ -836,7 +758,7 @@ class Holder:
             raise Refused("enrollment_identity_mismatch")
 
     def finish_creation(
-        self, person, receipt, *, issuer, caller=None, admitted=None, current=None
+        self, person, receipt, *, issuer, caller, admitted, current=None
     ):
         with self.store._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -969,13 +891,9 @@ class Holder:
             "id_chain": json.loads(row["chain"]),
         }
 
-    async def finish(self, person, receipt, *, caller=None, chain=None):
-        admitted, current = (
-            await self.enrollment_admission(
-                person, caller, chain, purpose="holder_finish"
-            )
-            if caller is not None
-            else (None, None)
+    async def finish(self, person, receipt, *, caller, chain):
+        admitted, current = await self.enrollment_admission(
+            person, caller, chain, purpose="holder_finish"
         )
         issuer = (
             PublicIssuer(current.namespace_issuer, current.observed_at)
@@ -991,13 +909,9 @@ class Holder:
             current=current,
         )
 
-    async def activate(self, person, *, caller=None, chain=None):
-        admitted, _current = (
-            await self.enrollment_admission(
-                person, caller, chain, purpose="holder_activate"
-            )
-            if caller is not None
-            else (None, None)
+    async def activate(self, person, *, caller, chain):
+        admitted, _current = await self.enrollment_admission(
+            person, caller, chain, purpose="holder_activate"
         )
         with self.store._connection() as db:
             row = self._row(db, person)

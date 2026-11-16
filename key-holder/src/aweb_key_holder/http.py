@@ -2,8 +2,10 @@
 
 import logging
 import sqlite3
+from contextlib import asynccontextmanager
 
 from approval_service.canonical import InvalidJSON, parse
+from approval_service.grading import watch_metadata
 from approval_service.verify import Refused as ApprovalRefused
 from awid.id_certificates import IDCertificateError, decode_id_chain_header
 from awid.request_body_limit import RequestBodyLimitMiddleware
@@ -18,7 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 def create_app(holder):
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(_app):
+        async with watch_metadata(holder.grading):
+            yield
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=4 * 1024 * 1024)
 
     @app.middleware("http")

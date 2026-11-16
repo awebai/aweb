@@ -5,7 +5,9 @@ ID issuance, approval-key enrollment and act approval are separate operations.
 The approval bytes and checks come from the pinned approval-service library.
 
 Install the locked source environment with `uv sync --frozen --project key-holder`.
-The pinned approval library is fetched from its public HTTPS repository; no GitHub credentials are required.
+The approval library and matching post-deletion AWID SDK are pinned to immutable
+public Git sources; no GitHub credentials are required. At server release,
+replace the temporary SDK source with the released `awid-service` version.
 
 Create a **new** state directory inside a private parent directory:
 
@@ -55,8 +57,14 @@ The operator's `issue-person` command remains available in approved mode for
 the first person and recovery, and uses the same signature audit.
 
 Production operators can instead select `--grading hardware --mds-cache <path>`.
-That loads the shared pinned metadata policy and refuses unavailable input;
-it cannot fall back to passkey-only grading. The first gate's fixed minimum is
+Set `--mds-manifest FILE` to the operator-installed reviewed pin and
+`--mds-cache DIR` to its private artifact cache. The shared watcher checks the
+file each minute and installs only a fully verified, non-rollback replacement.
+It logs the seven-day expiry warning and failed reloads. A bad pin retains the
+previous snapshot only until its original expiry; it cannot select passkey-only
+grading. The initial bundled pin expires on 2026-12-01, or an input CRL's earlier
+deadline. Operators install the maintainer-reviewed renewal before that date;
+the running holder observes the new file without restarting. The first gate's fixed minimum is
 passkey UV. There is no runtime rule-lowering command.
 
 The enrollment and approval interfaces are:
@@ -89,9 +97,7 @@ The enrollment and approval interfaces are:
   ID was created: "can approve since T (issuer's statement), grade G".
   Any activated, currently valid person in the organisation, enrolled at creation
   or later, may approve `human.add` when the issuing setting is `approved`.
-- The old private `authorize`/`bind`/`finish` controller workflow is retained for
-  outstanding controller-carried intents only. New enrollment does not call
-  the operator authorization callback.
+
 
 The enforcer never contacts awsign. A signed pending certificate or creation
 sidecar alone does not activate a person. Each returned signature has a durable
