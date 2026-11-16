@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -296,12 +295,7 @@ func pendingHostedInviteRequester(opts idParentOptions) (*requester, error) {
 // A condition refusal grants no membership. It releases the operation selection,
 // never the identity, signed ancestry, or a retained successful Cloud answer.
 func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) error {
-	definitive := awid.IDCertificateErrorCode(refusal) == "human_mismatch"
-	status, hasStatus := awid.HTTPStatusCode(refusal)
-	if hasStatus && status == http.StatusConflict && awid.RefusalCode(refusal) == "human_condition_mismatch" {
-		definitive = true
-	}
-	if !definitive {
+	if !hostedInviteDefinitiveRefusal(refusal) {
 		return refusal
 	}
 	if err := discardHostedInviteAttempt(recoveryPath, markerPath); err != nil {

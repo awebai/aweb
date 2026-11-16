@@ -12,8 +12,9 @@ import (
 )
 
 type workspaceTeamInvite struct {
-	Token   string
-	AwebURL string
+	ExpiresAt string
+	Token     string
+	AwebURL   string
 }
 
 func addWorktreeViaPrimaryInvite(
@@ -100,19 +101,23 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	var token string
+	var token, expiry string
 	if hasTeamKey {
 		registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
 		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, true, "", workingDir, identityHome)
 	} else if strings.TrimSpace(awebURL) != "" {
-		_, token, err = createHostedTeamInviteTokenAt(workingDir, identityHome, teamID, true)
+		var created *awid.SpawnCreateInviteResponse
+		created, err = createHostedTeamInvite(workingDir, identityHome, teamID, true)
+		if err == nil {
+			token, expiry = created.Token, created.ExpiresAt
+		}
 	} else {
 		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, true, "", workingDir, identityHome)
 	}
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	return workspaceTeamInvite{Token: token, AwebURL: awebURL}, nil
+	return workspaceTeamInvite{Token: token, AwebURL: awebURL, ExpiresAt: expiry}, nil
 }
 
 func acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, homeDir, token, preferredAwebURL, alias string) (*acceptedTeamInvite, error) {

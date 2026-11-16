@@ -406,19 +406,15 @@ func runInitIndependentInvite(cmd *cobra.Command) error {
 }
 
 func runInitJoinFrom(cmd *cobra.Command) error {
-	wd, _ := os.Getwd()
-	if err := ensureConnectTargetClean(wd); err != nil {
+	wd, err := os.Getwd()
+	if err != nil {
 		return err
 	}
 	sourceWorkingDir, sourceIdentityHome, teamID, err := resolveInitJoinSource(strings.TrimSpace(initJoinFrom), strings.TrimSpace(initJoinTeam))
 	if err != nil {
 		return err
 	}
-	invite, err := createWorkspaceTeamInviteForTeamAt(sourceWorkingDir, sourceIdentityHome, teamID)
-	if err != nil {
-		return fmt.Errorf("%w; alternatively use --admission-team-id %s with host authorization", err, teamID)
-	}
-	return acceptInitInviteAndConnect(cmd, wd, invite.Token, invite.AwebURL)
+	return runRecoverableJoinFrom(cmd, wd, sourceWorkingDir, sourceIdentityHome, teamID)
 }
 
 func runInitAdmissionTeamID(cmd *cobra.Command) error {
@@ -499,6 +495,10 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferred
 	if awebURL == "" {
 		return usageError("accepted invite did not include an aweb URL; rerun aw init with --aweb-url")
 	}
+	return connectInitAcceptedInvite(cmd, workingDir, awebURL)
+}
+
+func connectInitAcceptedInvite(cmd *cobra.Command, workingDir, awebURL string) error {
 	result, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
 		Role:      resolveRequestedRole(strings.TrimSpace(initRole)),
 		HumanName: resolveHumanNameValue(initHumanName, resolveAgentType()),

@@ -2675,7 +2675,7 @@ func ensureHostedAcceptTargetClean(workingDir, identityHome string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() != hostedInviteRecoveryFile+".lock" {
+		if entry.Name() != hostedInviteRecoveryFile+".lock" && entry.Name() != initInviteRecoveryFile && entry.Name() != initInviteRecoveryFile+".lock" {
 			return usageError("refusing to overwrite non-empty identity home %s", root)
 		}
 	}
