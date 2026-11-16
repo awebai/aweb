@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +16,47 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestInitGlobalExpiredInvitePreservesExistingHome(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	home := t.TempDir()
+	bin := filepath.Join(home, awBinaryNameForTest())
+	buildAwBinary(t, ctx, bin)
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did, stable := awid.ComputeDIDKey(pub), awid.ComputeStableID(pub)
+	const team = "shared:aweb.ai"
+	source, target := t.TempDir(), t.TempDir()
+	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: "https://unused.invalid", TeamID: team, Alias: "source", DID: did, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: key})
+	writeIdentityForTest(t, target, awconfig.WorktreeIdentity{DID: did, StableID: stable, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryStatus: "registered"})
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(target), key); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(target, ".aw")
+	if err := os.WriteFile(filepath.Join(root, initInviteRecoveryFile+".lock"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotJoinFiles(t, root)
+	state := map[string]any{"source": source, "source_home": "", "team_id": team, "alias": "child", "scope": "global", "token": "aw_inv_expired", "origin": "https://unused.invalid", "expires_at": time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), "did_key": did, "minted_key": false}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, initInviteRecoveryFile), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(ctx, bin, "init", "--join-from", source, "--global", "--name", "child", "--json")
+	command.Dir, command.Env = target, append(testCommandEnv(home), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AW_NO_UPDATE_CHECK=1")
+	if out, err := command.CombinedOutput(); err == nil || !strings.Contains(string(out), "invite expired") {
+		t.Fatalf("expired global init: %v\n%s", err, out)
+	}
+	if after := snapshotJoinFiles(t, root); !reflect.DeepEqual(before, after) {
+		t.Fatalf("refused global init changed the existing identity home:\nbefore=%v\nafter=%v", before, after)
+	}
+}
 
 func TestInitGlobalInviteTargetRefusalsBeforeIssuance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
