@@ -698,6 +698,91 @@ class RegistryClient:
     async def health(self) -> dict[str, Any]:
         return await self._request_json("GET", "/health")
 
+    async def controller_request(self, request, *, controllers, signer) -> dict[str, Any]:
+        """Execute one typed controller operation inside the custody owner.
+
+        Destination is this client's configured registry, without discovery.
+        Returns the registry's public JSON result, never reusable credentials.
+        A failed transport after submission raises ControllerRequestUncertain;
+        the holder reconciles it through current reads and its durable journal.
+        """
+        from awid.controller_signing import (
+            ControllerRequest, ControllerRequestUncertain, ControllerSigningContext,
+            ControllerSigningError, checked_controller_signature, controller_http_plan,
+            signature_roles,
+            atomic_claim_body,
+        )
+        if type(request) is not ControllerRequest:
+            raise ControllerSigningError("operation_invalid")
+        roles = signature_roles(request)
+        if not isinstance(controllers, Mapping) or set(controllers) != set(roles):
+            raise ControllerSigningError("controller_role")
+        # Snapshot the role map before any await. Neither a network callback nor
+        # the original caller can swap the second role during the first one.
+        selected = dict(controllers)
+        pin = canonical_server_origin(self.registry_url)
+        timestamp = _utc_timestamp()
+        plan = controller_http_plan(request)
+        contexts = [ControllerSigningContext(request, selected[role], role, timestamp, pin)
+                    for role in roles]
+        for context in contexts:
+            context.signing_bytes()  # validate every role before any signing
+        headers = {"Content-Type": "application/json", "X-AWEB-Timestamp": timestamp}
+        body = plan.body
+        for context in contexts:
+            signature = await checked_controller_signature(context, signer)
+            encoded = base64.b64encode(signature).rstrip(b"=").decode()
+            if plan.format == "object":
+                body = (atomic_claim_body(request, pin, encoded) if request.operation == "address_claim"
+                        else canonical_json_bytes({"record": request.parameters["record"], "signature": encoded}))
+            else:
+                header = {"controller": "Authorization", "parent": "X-AWEB-Parent-Authorization",
+                          "new_controller": "X-AWEB-New-Key-Authorization"}[context.role]
+                headers[header] = f"DIDKey {context.controller.did_key} {encoded}"
+                if context.role == "parent":
+                    headers["X-AWEB-Parent-Timestamp"] = timestamp
+                if plan.format == "covering":
+                    headers["X-AWEB-Signed-Payload"] = base64.urlsafe_b64encode(context.signing_bytes()).rstrip(b"=").decode()
+        mutation = plan.method != "GET"
+        if mutation:
+            await self._invalidate_controller_request(request, pin)
+        try:
+            return await self._request_json(plan.method, plan.path, headers=headers,
+                                            content=body, registry_url=pin)
+        except RegistryError as exc:
+            if mutation and isinstance(exc.__cause__, (httpx.TransportError, TimeoutError)):
+                raise ControllerRequestUncertain(request) from exc
+            raise
+        finally:
+            if mutation:
+                await self._invalidate_controller_request(request, pin)
+
+    async def _invalidate_controller_request(self, request, registry_origin: str) -> None:
+        """No cache in this client; the cached adapter invalidates affected rows."""
+        return None
+
+    async def delete_namespace(self, domain: str, controller_signing_key: bytes,
+                               *, reason: str | None = None) -> dict[str, Any]:
+        """Delete explicitly; this is never a failed-rotation recovery path."""
+        from awid.controller_signing import ControllerDescriptor, parse_controller_request
+        descriptor = ControllerDescriptor("namespace", domain, did_key_from_signing_key(controller_signing_key), "local", 0)
+        request = parse_controller_request({"operation": "namespace_delete", "domain": domain, "reason": reason})
+        def local(context):
+            return descriptor.did_key, SigningKey(controller_signing_key).sign(context.signing_bytes()).signature
+        return await self.controller_request(request, controllers={"controller": descriptor}, signer=local)
+
+    async def rotate_team_key(self, domain: str, name: str, *, new_team_did_key: str,
+                              namespace_controller_signing_key: bytes,
+                              resigned_records: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Submit the registry's existing atomic team-key/re-signed-record act."""
+        from awid.controller_signing import ControllerDescriptor, parse_controller_request
+        descriptor = ControllerDescriptor("namespace", domain, did_key_from_signing_key(namespace_controller_signing_key), "local", 0)
+        request = parse_controller_request({"operation": "team_rotate", "domain": domain, "name": name,
+                                           "new_team_did_key": new_team_did_key, "resigned_records": resigned_records})
+        def local(context):
+            return descriptor.did_key, SigningKey(namespace_controller_signing_key).sign(context.signing_bytes()).signature
+        return await self.controller_request(request, controllers={"controller": descriptor}, signer=local)
+
     async def _request_optional_json(
         self,
         method: str,
@@ -1777,6 +1862,30 @@ class CachedRegistryClient(RegistryClient):
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
     _team_key_signature_refreshes: dict[str, asyncio.Task[str | None]]
     _team_certificate_miss_refreshes: dict[str, asyncio.Task[list[TeamCertificate]]]
+
+    async def _invalidate_controller_request(self, request, registry_origin: str) -> None:
+        op, domain, parameters = request.operation, request.domain, request.parameters
+        if op.startswith("namespace_"):
+            await self._invalidate_keys(self._namespace_cache_key(domain, registry_url=registry_origin))
+            await self._invalidate_id_status_cache(domain)
+        elif op == "id_revoke":
+            await self._invalidate_id_status_cache(domain)
+        elif op.startswith("address_"):
+            name = parameters.get("name", parameters.get("address_name"))
+            keys = await self._matching_cache_keys(
+                self._address_cache_key_prefix(domain, name, registry_url=registry_origin) + ":*")
+            keys += await self._matching_cache_keys(
+                self._domain_addresses_cache_key_prefix(domain, registry_url=registry_origin) + ":*")
+            dids = {parameters.get("did_aw")}
+            for key in keys:
+                if key.startswith(self._address_cache_key_prefix(domain, name, registry_url=registry_origin)):
+                    cached = await self._peek_cached_address(key)
+                    if cached:
+                        dids.add(cached.did_aw)
+            keys += [self._did_addresses_cache_key(did) for did in dids if did]
+            await self._invalidate_keys(*keys)
+        else:
+            await self._invalidate_team_cache(domain, parameters["name"])
 
     def __init__(
         self,

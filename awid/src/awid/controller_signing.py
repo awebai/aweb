@@ -18,12 +18,18 @@ from typing import Awaitable, Callable, Literal
 from urllib.parse import quote, urlencode
 
 from awid.did import public_key_from_did
+from awid.atomic_claim import (
+    ATOMIC_ADDRESS_CLAIM_OPERATION, AtomicAddressClaimFields,
+    atomic_address_claim_identity_canonical, atomic_address_claim_identity_proof_hash,
+    atomic_address_claim_namespace_canonical, normalize_atomic_address_claim_fields,
+)
 from awid.id_certificates import (
     id_certificate_signing_bytes, validate_id_certificate, verify_ed25519,
 )
 from awid.id_tree_requests import covering_payload, revoke_body, rotate_body, rotate_claims
-from awid.log import canonical_server_origin
-from awid.signing import canonical_json_bytes
+from awid.log import canonical_server_origin, identity_state_hash, log_entry_payload
+from awid.registry_types import RegistryError
+from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_certificate import check_team_certificate
 from awid.team_ids import build_team_id
 from awid.team_server_record import RECORD_FIELDS, canonical_team_server_url, record_signing_bytes
@@ -36,6 +42,16 @@ class ControllerSigningError(ValueError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+class ControllerRequestUncertain(RegistryError):
+    """A submitted mutation may have applied. Reconcile; do not retry blindly."""
+
+    def __init__(self, request):
+        super().__init__("Controller request outcome is unknown", status_code=503,
+                         code="controller_outcome_unknown")
+        self.operation = request.operation
+        self.request_digest = request.digest
 
 
 def _require(condition, code="request_invalid"):
@@ -128,12 +144,14 @@ _REQUESTS = {
     "member_read": ("name alias", "", "team"),
     "revocations_read": ("name", "cursor limit since", "team"),
     "server_publish": ("name record", "", "team"),
+    "address_claim": ("address_name did_aw current_did_key timestamp dry_run identity_custody namespace_custody identity_signature", "did_log_proof", "namespace"),
 }
 _OBJECTS = {
     "team_certificate_issue": ("name certificate", "", "team"),
     "namespace_id_issue": ("kind certificate", "", "namespace"),
     "team_server_sign": ("name record", "", "team"),
     "address_replacement": ("address controller_did old_did new_did timestamp", "", "namespace"),
+    "address_claim_proof": ("address_name did_aw current_did_key timestamp dry_run identity_custody namespace_custody identity_signature", "did_log_proof", "namespace"),
 }
 
 
@@ -144,7 +162,7 @@ def _validate(operation, domain, parameters, definitions):
     _require(type(parameters) is dict and set(required.split()) <= parameters.keys()
              and parameters.keys() <= set((required + " " + optional).split()))
     for name, value in parameters.items():
-        if name in ("name", "alias"):
+        if name in ("name", "alias", "address_name"):
             _require(_segment(value))
         elif name in ("controller_did", "new_controller_did", "previous_did_key", "new_did_key",
                       "team_did_key", "new_team_did_key", "current_did_key", "old_did", "new_did"):
@@ -158,14 +176,14 @@ def _validate(operation, domain, parameters, definitions):
             _require(type(value) is int and value >= 0)
         elif name == "limit":
             _require(type(value) is int and 1 <= value <= 200)
-        elif name == "active_only":
+        elif name in ("active_only", "dry_run"):
             _require(type(value) is bool)
         elif name == "default_delivery_origin" and value is not None:
             _require(canonical_server_origin(value) == value)
         elif name in ("timestamp", "since", "effective_from") and value is not None:
             parse_utc_seconds(value)
         elif name in ("id", "did_aw"):
-            from awid.identity import validate_stable_id
+            from awid.did import validate_stable_id
             _require(validate_stable_id(value) == value)
         elif name in ("cursor", "certificate_id", "display_name", "address"):
             _require(type(value) is str and 0 < len(value) <= 8192)
@@ -190,14 +208,31 @@ def _validate(operation, domain, parameters, definitions):
         parse_utc_seconds(r["issued_at"])
     if operation == "team_certificate_issue":
         c = parameters["certificate"]
-        required = {"version", "certificate_id", "team_id", "member_did_key", "alias", "identity_scope"}
+        required = {"version", "certificate_id", "team_id", "member_did_key", "alias"}
         _require(type(c) is dict and required <= c.keys()
-                 and c.keys() <= required | {"member_did_aw", "member_address"}
+                 and c.keys() <= required | {"member_did_aw", "member_address", "team_did_key", "lifetime", "identity_scope", "issued_at"}
                  and type(c["version"]) is int and c["version"] == 1
                  and c["team_id"] == build_team_id(domain, parameters["name"])
-                 and c["identity_scope"] in ("local", "global")
+                 and c.get("identity_scope", c.get("lifetime")) in ("local", "global")
                  and _segment(c["alias"]) and type(c["certificate_id"]) is str, "object_invalid")
         _key(c["member_did_key"])
+        if "issued_at" in c:
+            parse_utc_seconds(c["issued_at"])
+    if operation == "certificate_register":
+        from awid.team_certificate import decode_team_certificate
+        c = decode_team_certificate(parameters["certificate"])
+        _require(c["team_id"] == build_team_id(domain, parameters["name"]), "object_invalid")
+    if operation == "team_rotate" and parameters.get("resigned_records") is not None:
+        records = parameters["resigned_records"]
+        _require(type(records) is dict and records.keys() <= {"team_server", "team_custodians", "member_custody", "member_person"})
+        for name, entries in records.items():
+            entries = [entries] if name == "team_server" else entries
+            _require(type(entries) is list)
+            for entry in entries:
+                if entry is None and name == "team_server":
+                    continue
+                _require(type(entry) is dict and set(entry) == {"record", "signature"}
+                         and type(entry["record"]) is dict and type(entry["signature"]) is str)
     if operation == "address_replacement":
         _require(parameters["address"].startswith(domain + "/"), "object_invalid")
 
@@ -289,6 +324,15 @@ def _check_controller(request, controller, role):
     elif request.operation == "address_replacement":
         expected = p["controller_did"]
     _require(expected is None or controller.did_key == expected, "controller_mismatch")
+    if request.operation in ("team_certificate_issue", "certificate_register"):
+        if request.operation == "certificate_register":
+            from awid.team_certificate import decode_team_certificate
+            c = decode_team_certificate(p["certificate"])
+            check_team_certificate(p["certificate"], subject_did_key=c["member_did_key"],
+                                   team_did_key=controller.did_key, revoked_certificate_ids=(), registered_certificate_ids=None)
+        else:
+            c = p["certificate"]
+        _require(c.get("team_did_key", controller.did_key) == controller.did_key, "controller_mismatch")
 
 
 @dataclass(frozen=True)
@@ -346,12 +390,16 @@ def controller_http_plan(request: ControllerRequest) -> ControllerHTTPPlan:
         from awid.team_certificate import decode_team_certificate
         c = decode_team_certificate(certificate)
         body = {k: c.get(k) for k in ("certificate_id", "member_did_key", "member_did_aw", "member_address", "alias", "identity_scope")}
+        body["identity_scope"] = c.get("identity_scope", c.get("lifetime", "global"))
         body["certificate"] = certificate
         claims = {"team_name": p["name"], "certificate_id": c["certificate_id"]}
     elif op == "certificate_revoke":
         method, path, wire = "POST", team + "/certificates/revoke", "revoke_certificate"
         body = {"certificate_id": p["certificate_id"]}
         claims = {"team_name": p["name"], **body}
+    elif op == "address_claim":
+        return ControllerHTTPPlan("POST", base + "/addresses/claims", None,
+                                  ATOMIC_ADDRESS_CLAIM_OPERATION, b"{}", "object")
     elif op.startswith("address_"):
         claims = {"name": p["name"]}
         if op == "address_register":
@@ -387,6 +435,11 @@ def build_controller_payload(request, *, controller, role="controller", timestam
     _require(type(request) in (ControllerRequest, ControllerObjectRequest), "operation_invalid")
     _check_controller(request, controller, role)
     p, op = request.parameters, request.operation
+    if op in ("address_claim", "address_claim_proof"):
+        return atomic_address_claim_namespace_canonical(
+            _claim_fields(request, registry_origin),
+            atomic_address_claim_identity_proof_hash(
+                atomic_address_claim_identity_canonical(_claim_fields(request, registry_origin)), p["identity_signature"]))
     if type(request) is ControllerObjectRequest:
         if op == "namespace_id_issue":
             return id_certificate_signing_bytes(p["certificate"])
@@ -447,13 +500,15 @@ async def checked_controller_signature(context: ControllerSigningContext, signer
     return answer[1]
 
 
-async def sign_controller_object(request: ControllerObjectRequest, *, controller, signer):
+async def sign_controller_object(request: ControllerObjectRequest, *, controller, signer, registry_origin=None):
     _require(type(request) is ControllerObjectRequest, "operation_invalid")
-    signature = await checked_controller_signature(ControllerSigningContext(request, controller), signer)
+    signature = await checked_controller_signature(ControllerSigningContext(request, controller, registry_origin=registry_origin), signer)
     p = request.parameters
     if request.operation == "namespace_id_issue":
         return {"certificate": p["certificate"], "signature": base64.urlsafe_b64encode(signature).rstrip(b"=").decode()}
     encoded = base64.b64encode(signature).rstrip(b"=").decode()
+    if request.operation == "address_claim_proof":
+        return {"namespace_signature": encoded}
     if request.operation == "team_certificate_issue":
         certificate = {**p["certificate"], "signature": encoded}
         header = base64.b64encode(_snapshot(certificate)).decode()
@@ -462,3 +517,45 @@ async def sign_controller_object(request: ControllerObjectRequest, *, controller
         return {"certificate": certificate, "encoded_certificate": header}
     return {"record" if request.operation == "team_server_sign" else "announcement":
             p["record"] if request.operation == "team_server_sign" else p, "signature": encoded}
+
+
+def _claim_fields(request, registry_origin):
+    """Verify the independent subject proofs before the controller is asked."""
+    p = request.parameters
+    fields = normalize_atomic_address_claim_fields(AtomicAddressClaimFields(
+        ATOMIC_ADDRESS_CLAIM_OPERATION, request.domain, p["address_name"], p["did_aw"],
+        p["current_did_key"], canonical_server_origin(registry_origin), p["timestamp"],
+        p["dry_run"], p["identity_custody"], p["namespace_custody"]))
+    verify_did_key_signature(did_key=fields.current_did_key,
+                            payload=atomic_address_claim_identity_canonical(fields),
+                            signature_b64=p["identity_signature"])
+    proof = p.get("did_log_proof")
+    if proof is not None:
+        names = {"did_aw", "seq", "operation", "previous_did_key", "new_did_key", "prev_entry_hash", "state_hash", "authorized_by", "timestamp", "signature"}
+        _require(type(proof) is dict and set(proof) == names)
+        _require(proof["did_aw"] == fields.did_aw and proof["new_did_key"] == fields.current_did_key
+                 and type(proof["seq"]) is int and proof["seq"] >= 1)
+        first = proof["seq"] == 1
+        _require(proof["operation"] == ("register_did" if first else "rotate_key")
+                 and proof["authorized_by"] == (fields.current_did_key if first else proof["previous_did_key"]))
+        if first:
+            from awid.did import stable_id_from_did_key
+            _require(proof["previous_did_key"] is None and proof["prev_entry_hash"] is None
+                     and stable_id_from_did_key(fields.current_did_key) == fields.did_aw)
+        else:
+            _key(proof["previous_did_key"])
+            _require(type(proof["prev_entry_hash"]) is str
+                     and re.fullmatch(r"[0-9a-f]{64}", proof["prev_entry_hash"]) is not None)
+        _require(proof["state_hash"] == identity_state_hash(did_aw=fields.did_aw, current_did_key=fields.current_did_key))
+        parse_utc_seconds(proof["timestamp"])
+        verify_did_key_signature(did_key=proof["authorized_by"],
+                                payload=log_entry_payload(**{k: v for k, v in proof.items() if k != "signature"}),
+                                signature_b64=proof["signature"])
+    return fields
+
+
+def atomic_claim_body(request, registry_origin, namespace_signature):
+    _claim_fields(request, registry_origin)
+    return _snapshot({"operation": ATOMIC_ADDRESS_CLAIM_OPERATION,
+                      "registry_url": canonical_server_origin(registry_origin),
+                      **request.parameters, "namespace_signature": namespace_signature})

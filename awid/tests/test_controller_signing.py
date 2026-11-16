@@ -6,6 +6,7 @@ import json
 
 import pytest
 from nacl.signing import SigningKey
+import httpx
 
 from awid.controller_signing import (
     ControllerDescriptor,
@@ -19,6 +20,7 @@ from awid.did import did_key_from_signing_key
 from awid.id_certificates import id_certificate_signing_bytes, verify_id_certificate
 from awid.id_tree_requests import covering_payload, rotate_body, rotate_claims
 from awid.signing import canonical_json_bytes
+from awid.registry import RegistryClient
 
 SEED = bytes(range(32))
 KEY = did_key_from_signing_key(SEED)
@@ -162,3 +164,74 @@ async def test_input_mutation_across_await_cannot_change_signed_object():
 
     result = await sign_controller_object(req, controller=CONTROLLER, signer=signer)
     assert result["certificate"] == before["certificate"]
+
+
+class Captured(Exception):
+    pass
+
+
+@pytest.mark.asyncio
+async def test_owned_transport_pins_destination_and_checks_exact_wire_before_send():
+    sent = []
+
+    async def transport(outgoing):
+        sent.append(outgoing)
+        raise Captured()
+
+    async def forbidden_discovery(domain):
+        pytest.fail("controller transport must not discover its destination")
+
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(transport),
+                            domain_registry_resolver=forbidden_discovery)
+
+    def signer(context):
+        assert context.registry_origin == ORIGIN
+        return KEY, SigningKey(SEED).sign(context.signing_bytes()).signature
+
+    try:
+        with pytest.raises(Captured):
+            await client.controller_request(request(), controllers={"controller": CONTROLLER}, signer=signer)
+    finally:
+        await client.aclose()
+    assert len(sent) == 1
+    assert str(sent[0].url) == ORIGIN + "/v1/namespaces/example.com/teams"
+    assert json.loads(sent[0].content) == request().parameters
+    assert "x-aweb-signed-payload" not in sent[0].headers
+
+
+@pytest.mark.asyncio
+async def test_bad_signature_and_missing_role_refuse_before_transport():
+    async def transport(outgoing):
+        pytest.fail("a local refusal must send nothing")
+
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(transport))
+    try:
+        for controllers in ({}, {"controller": CONTROLLER}):
+            with pytest.raises(ControllerSigningError):
+                await client.controller_request(request(), controllers=controllers,
+                    signer=lambda ctx: (KEY, bytes(64)))
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_lost_mutation_answer_is_ambiguous_and_never_retried():
+    from awid.controller_signing import ControllerRequestUncertain
+
+    sent = []
+
+    async def transport(outgoing):
+        sent.append(outgoing)
+        raise httpx.ReadError("lost answer")
+
+    client = RegistryClient(ORIGIN, transport=httpx.MockTransport(transport))
+    req = request()
+    try:
+        with pytest.raises(ControllerRequestUncertain) as failure:
+            await client.controller_request(req, controllers={"controller": CONTROLLER},
+                signer=lambda ctx: (KEY, SigningKey(SEED).sign(ctx.signing_bytes()).signature))
+        assert failure.value.request_digest == req.digest
+        assert failure.value.operation == req.operation
+    finally:
+        await client.aclose()
+    assert len(sent) == 1
