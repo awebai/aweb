@@ -134,7 +134,7 @@ async def test_owner_prepare_refuses_wrong_session_scope_origin_or_selector_with
 @pytest.mark.asyncio
 @pytest.mark.parametrize("lost_answer", [False, True])
 @pytest.mark.parametrize("target", ["legacy", "root", "tracked"])
-async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_without_a_root_grant(
+async def test_owner_console_uv_reaches_revocation_and_exact_recovery_without_a_root_grant(
     admissions, tmp_path, monkeypatch, lost_answer, target
 ):
     import base64
@@ -177,15 +177,15 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
         before = await a.w.db.fetch_one(query, body["operation_id"])
         assert before["issued_artifact"] is None and before["signed_result"] is None
         posts = []
-        deliver = custody.deliver_retained
+        deliver = custody.remove_member
 
-        async def release(operation, retained):
-            posts.append(retained.fields())
-            await deliver(operation, retained)
+        async def release(registry, operation, artifact, result):
+            posts.append(artifact)
+            await deliver(registry, operation, artifact, result)
             if lost_answer:
                 raise SignerRefused("receipt_unavailable")  # Lose only the applied answer.
 
-        monkeypatch.setattr(custody, "deliver_retained", release)
+        monkeypatch.setattr(custody, "remove_member", release)
         options = await client.post(path + "/options", json={}, headers=headers)
         assert options.status_code == 200, options.text
         proof = a.w.device.get(options.json())
@@ -206,7 +206,7 @@ async def test_owner_console_uv_reaches_protected_revocation_and_exact_recovery_
             assert f'data-remove-certificate="{body["certificate_id"]}"' not in page.text
             assert f'data-final-operation="{body["operation_id"]}"' not in page.text
             path = locator + "/governance"
-        # Authenticated receipt recovery confirms the exact retained effect,
+        # Authenticated receipt recovery confirms the exact signed revocation,
         # independently of the member listing and without another delivery.
         recovered = await client.get(path)
         assert recovered.status_code == 200 and recovered.json()["state"] == "committed", recovered.text

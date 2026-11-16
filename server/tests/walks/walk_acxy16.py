@@ -103,15 +103,15 @@ async def test_walk(admissions, tmp_path, monkeypatch):
         from aweb_naapp.runtime.protected_signer import SignerRefused
 
         custody = a.w.app.authority.custody
-        deliver = custody.deliver_retained
+        deliver = custody.remove_member
 
-        async def release(operation, retained):
+        async def release(registry, operation, artifact, result):
             # Only the root's removal loses its answer, after it was applied.
-            await deliver(operation, retained)
+            await deliver(registry, operation, artifact, result)
             if operation.intent()["subject"]["certificate_id"] == root.certificate_id:
                 raise SignerRefused("receipt_unavailable")
 
-        monkeypatch.setattr(custody, "deliver_retained", release)
+        monkeypatch.setattr(custody, "remove_member", release)
         context, page = await open_with_passkey(SimpleNamespace(device=a.w.device), browser, viewport["width"])
         async with context:
             await page.goto(origin + "/login?scope=" + quote(a.w.human.b3_scope, safe=""))

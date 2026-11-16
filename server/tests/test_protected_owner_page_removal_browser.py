@@ -95,15 +95,15 @@ async def test_the_owner_removes_a_member_from_the_owner_page_with_one_exact_pas
         from aweb_naapp.runtime.protected_signer import SignerRefused
 
         custody = a.w.app.authority.custody
-        deliver, deliveries = custody.deliver_retained, []
+        deliver, deliveries = custody.remove_member, []
 
-        async def release(operation, retained):
-            deliveries.append(retained.fields())
-            await deliver(operation, retained)
+        async def release(registry, operation, artifact, result):
+            deliveries.append(artifact)
+            await deliver(registry, operation, artifact, result)
             if lost_answer:
                 raise SignerRefused("receipt_unavailable")  # Lose only the already applied answer.
 
-        monkeypatch.setattr(custody, "deliver_retained", release)
+        monkeypatch.setattr(custody, "remove_member", release)
         # No root or requester grant: the owner's own session starts it.
         await a.w.db.execute("UPDATE {{tables.protected_requester_bindings}} SET active=false")
         # The team owner's enrolled passkey.
