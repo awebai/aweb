@@ -6,16 +6,16 @@ capacity occupied and never repeats its mutation.
 """
 
 from dataclasses import asdict
+from time import monotonic
 
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind
 from aweb_naapp.runtime.protected_signer import SignerRefused
-from aweb_naapp.runtime.protected_signer.removal import validate_removal_subject
 from aweb_naapp.runtime.protected_signer.types import _checked_self_removal
 from awid.contract import normalize_identity_scope
 from awid.identity_observation import IdentityObservationRefused, observe_identity_binding, observe_identity_kind
 from awid.registry_types import RegistryThrottled
 
-from .admission import _lock_quota, _registry
+from .admission import _lock_quota, _registry, hold_endorsed_root, read_policy, root_head
 
 
 def membership_fields(record):
@@ -25,7 +25,7 @@ def membership_fields(record):
 
 
 async def current_member(c, operation):
-    subject = validate_removal_subject(operation.intent()["subject"])
+    subject = operation.spec.codec.parse_subject(operation.intent()["subject"])
     name, domain = subject["team_id"].split(":", 1)
     client = getattr(c.registry, "client", c.registry)
     records = await _registry(client.list_team_certificates_fresh(domain, name, active_only=False))
@@ -39,7 +39,7 @@ async def current_member(c, operation):
     return matches[0]
 
 
-async def agent_target(c, record, *, self_key=None):
+async def removable_kind(c, record, *, self_key=None, allow_unknown=False):
     """Use current identity kind; a certificate grants no human-removal right."""
     human = await _registry(c.registry.resolve_key_fresh(c.context.human_id), missing="authority_changed")
     protected = set(getattr(c, "protected_authority_keys", (c.authority.custody.team_key_did,)))
@@ -50,7 +50,7 @@ async def agent_target(c, record, *, self_key=None):
     if record.identity_scope == "local":
         if record.member_did_aw is not None:
             raise SignerRefused("subject_ineligible")
-        return
+        return "agent"
     if not record.member_did_aw:
         raise SignerRefused("subject_ineligible")
     resolved = await _registry(c.registry.resolve_key_fresh(record.member_did_aw), missing="subject_ineligible")
@@ -65,8 +65,12 @@ async def agent_target(c, record, *, self_key=None):
         kind = (await observe_identity_kind(c.registry, binding)).result
         if kind["outcome"] == "unavailable":
             raise SignerRefused("evidence_unavailable")
+        if (allow_unknown and binding.id_tree is not None and not binding.id_tree.enrolled
+            and kind["outcome"] == "unknown" and kind["kind"] is None):
+            return "kind not verified"
         if kind["identity_valid"] is not True or kind["kind"] != "agent":
             raise SignerRefused("subject_ineligible")
+        return "agent"
     except IdentityObservationRefused as error:
         if error.code == "identity_binding_mismatch":
             raise SignerRefused("subject_ineligible") from None
@@ -74,6 +78,10 @@ async def agent_target(c, record, *, self_key=None):
         raise SignerRefused("evidence_unavailable", retry_after_seconds=(
             cause.retry_after_seconds if isinstance(cause, RegistryThrottled) else None
         )) from None
+
+
+async def agent_target(c, record, *, self_key=None):
+    await removable_kind(c, record, self_key=self_key)
 
 
 async def observe_removal(adapter, operation, actor, *, purpose):
@@ -87,12 +95,12 @@ async def observe_removal(adapter, operation, actor, *, purpose):
         if cap is None:
             raise SignerRefused("scope_refused")
     else:
-        if cap is not None or actor.principal != subject["root_id_or_self"] or not actor.key_did:
+        if cap is not None or not actor.key_did:
             raise SignerRefused("scope_refused")
-        policy = await adapter.policy()
+        policy = await read_policy(c)
         if subject["team_id"] not in policy.fields()["teams"]:
             raise SignerRefused("scope_refused")
-        head = await adapter.root_head(actor.principal, actor.key_did, require_enrolled=True)
+        head = await root_head(c, actor.principal, actor.key_did, require_enrolled=True)
     record = await current_member(c, operation)
     if record is None:
         raise SignerRefused("subject_ineligible")
@@ -131,10 +139,10 @@ class RemovalObservation:
         if not self.actor.key_did or request["requester_key"] != self.actor.key_did:
             raise SignerRefused("operation_mismatch")
         if self.policy is not None:
-            current = await self.adapter.policy(tx)
+            current = await read_policy(self.adapter.c, tx)
             if current.fields() != self.policy.fields():
                 raise SignerRefused("policy_changed")
-            await self.adapter.hold_endorsed_root(tx, self.actor.principal, self.head)
+            await hold_endorsed_root(self.adapter.c, tx, self.actor.principal, self.head)
         await self.local_row(tx)
         self.require_fresh()
 
@@ -151,24 +159,42 @@ async def removal_confirmed(c, operation):
     return record is not None and record.revoked_at is not None
 
 
-async def confirm_removal(c, tx, operation):
+async def confirm_removal(c, tx, operation, *, require_bucket=True):
     subject, context = operation.intent()["subject"], operation.context
     row = await tx.fetch_one(
         "SELECT * FROM {{tables.protected_root_admissions}} WHERE service_id=$1 AND team_id=$2 AND certificate_id=$3",
         context.service_id, context.authority_id, subject["certificate_id"],
     )
     if row is not None:
-        if subject["root_id_or_self"] != "self" and row["root_id"] != subject["root_id_or_self"]:
+        if require_bucket and subject["root_id_or_self"] != "self" and row["root_id"] != subject["root_id_or_self"]:
             raise SignerRefused("scope_refused")
         expected = subject["expected_membership"]
         if row["child_id"] != expected["member_did_aw"] or row["child_key"] != expected["member_did_key"]:
             raise SignerRefused("operation_mismatch")
         await _lock_quota(tx, context.service_id, context.authority_id, row["root_id"])
         await tx.execute("UPDATE {{tables.protected_root_admissions}} SET state='removed' WHERE operation_id=$1", row["operation_id"])
-    elif subject["root_id_or_self"] != "self":
+    elif require_bucket and subject["root_id_or_self"] != "self":
         raise SignerRefused("scope_refused")
     await c.audit.emit(AuditEvent(kind=AuditKind.PROTECTED_MEMBER_REMOVED,
-        actor=subject["member_id"] if subject["root_id_or_self"] == "self" else subject["root_id_or_self"],
+        actor=(context.human_id if not require_bucket else
+            subject["member_id"] if subject["root_id_or_self"] == "self" else subject["root_id_or_self"]),
         subject=operation.operation_id, occurred_at=c.signer.clock(),
         details={"operation_id": operation.operation_id, "team_id": context.authority_id,
             "certificate_id": subject["certificate_id"], "member_id": subject["member_id"]}), tx)
+
+
+class RemovalEffects:
+    def __init__(self, composition, *, timer=monotonic):
+        self.c, self.timer = composition, timer
+
+    async def observe(self, operation, actor, *, purpose):
+        return await observe_removal(self, operation, actor, purpose=purpose)
+
+    async def registered(self, operation, artifact, signed):
+        return await removal_confirmed(self.c, operation)
+
+    async def register(self, operation, artifact, signed):
+        return await _registry(self.c.authority.custody.remove_member(self.c.registry, operation, artifact, signed))
+
+    async def confirm(self, tx, operation):
+        await confirm_removal(self.c, tx, operation)

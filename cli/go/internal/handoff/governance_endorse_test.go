@@ -21,13 +21,13 @@ import (
 const (
 	endorseOperationID = "33333333-3333-4333-8333-333333333333"
 	endorseHuman       = "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w"
-	endorseStatement   = "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."
+	endorseStatement   = "Agents it adds count as yours. It gets no other access."
 )
 
 // endorseIntent is a root endorsement aw prepares.
 func endorseIntent() map[string]any {
 	return map[string]any{
-		"operation": "identity.root.endorse", "variant": "default",
+		"operation": "identity.root.endorse", "variant": "default", "approval_format": "intent_v1",
 		"scope": map[string]any{"v": 1, "kind": "protected_key", "service_id": "customer-signer",
 			"authority": map[string]any{"kind": "human_identity", "id": endorseHuman, "domain": "customer.example"},
 			"human":     map[string]any{"id": endorseHuman, "domain": "customer.example"}, "generation": 1},
@@ -109,7 +109,7 @@ func (s *endorseStub) answer() string {
 	case "registry":
 		request["registry"] = "https://other.example"
 	case "statement":
-		request["responsibility_statement"] = "You are responsible."
+		request["responsibility_statement"] = "Everything this root spawns counts as yours for human responsibility; this grants no resource permissions."
 	case "policy without the team":
 		request["admission_policy"] = endorsePolicy(func(p map[string]any) { p["teams"] = []any{"zeta:customer.example"} })
 	case "policy digest":
@@ -132,10 +132,11 @@ func (s *endorseStub) answer() string {
 		artifact["type"] = "aweb.owner-act"
 	case "artifact extra":
 		artifact["root_key"] = "did:key:zroot"
-	case "artifact no issued_at":
-		delete(artifact, "issued_at")
 	}
-	request["artifact"] = artifact
+	request["artifact"] = freezeTestArtifactIntent(artifact, s.sent["audience"], "/v1/id-certificates/register", []string{"/issued_at"}, "")
+	if s.tamper == "artifact supplied issued_at" {
+		request["artifact"].(map[string]any)["template"].(map[string]any)["issued_at"] = "2026-11-13T10:00:00Z"
+	}
 	payload := map[string]any{"policy": map[string]any{"ref": "aweb.human-assurance/1", "version": 1}, "request": request}
 	raw, _ := json.Marshal(map[string]any{"operation_id": s.sent["operation_id"], "handoff_id": "h1",
 		"digest": coveredDigestOf(payload), "payload": payload, "expires_at": time.Now().Add(time.Minute).UTC().Format(time.RFC3339Nano)})
@@ -170,7 +171,7 @@ func TestAnEndorsementFrozenAsAwAskedShowsItsPage(t *testing.T) {
 func TestAnEndorsementThatIsNotWhatAwSentShowsNoPage(t *testing.T) {
 	for _, tamper := range []string{"bad head", "registry", "statement", "policy without the team", "policy digest", "extra member",
 		"artifact id", "artifact domain", "artifact parent", "artifact namespace parent", "artifact human", "artifact type",
-		"artifact extra", "artifact no issued_at"} {
+		"artifact extra", "artifact supplied issued_at"} {
 		stub := newEndorseStub(t)
 		stub.tamper = tamper
 		var opened string

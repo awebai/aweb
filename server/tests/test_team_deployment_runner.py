@@ -18,6 +18,7 @@ EXAMPLE = yaml.safe_load((REPO_ROOT / "deploy" / "team" / "deployment.example.ya
 def run(
     tmp_path: Path, *args: str, project: str | None = "teamrun", extra_files: str | None = None, docker_ok: bool = False,
     command: Path = RUNNER, answers: dict[str, str] | None = None, fails: dict[str, int] | None = None,
+    holds: dict[str, int] | None = None,
 ) -> subprocess.CompletedProcess:
     # A docker that records being called. By default it fails: these commands
     # must not start anything. With docker_ok it succeeds and, like the real
@@ -31,6 +32,10 @@ def run(
                       for pattern, text in (answers or {}).items())
     printed += "".join(f'case "$*" in *"{pattern}"*) exit {status};; esac\n'
                        for pattern, status in (fails or {}).items())
+    # holds keeps a matching call running that long after it printed, as a
+    # follower does.
+    printed += "".join(f'case "$*" in *"{pattern}"*) sleep {seconds};; esac\n'
+                       for pattern, seconds in (holds or {}).items())
     succeed = printed + 'case "$*" in *" exec "*) cat >/dev/null;; esac\nexit 0' if docker_ok else "exit 1"
     # One line per call, whatever newlines its arguments hold.
     log = f'printf "%s " "$@" | tr "\\n" " " >> {tmp_path / "docker-calls"}; echo >> {tmp_path / "docker-calls"}'

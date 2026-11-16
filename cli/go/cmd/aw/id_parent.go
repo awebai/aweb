@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -409,7 +411,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 		if err != nil {
 			return idParentImportOutput{}, err
 		}
-		if err := awconfig.SaveInstalledIDChain(r.dir, imported.Chain); err != nil {
+		if err := installImportedChain(r.dir, outgoing.RequestID, raw, imported.Chain); err != nil {
 			return idParentImportOutput{}, err
 		}
 		outgoing.State, outgoing.Response = awconfig.IDRequestImported, string(raw)
@@ -468,4 +470,19 @@ func formatIDParentImport(v any) string {
 		return fmt.Sprintf("Installed the certificate of %s.\nAWID registration is pending; run import again to register it.\n", out.ID)
 	}
 	return fmt.Sprintf("Installed the certificate of %s.\n", out.ID)
+}
+
+// installImportedChain installs chain, imported from response to requestID, in
+// home as one credential update, so a custody service serving home rebuilds
+// from it. Registration at AWID is not part of the update.
+func installImportedChain(home, requestID string, response []byte, chain map[string]any) error {
+	sum := sha256.Sum256(response)
+	op := awconfig.CredentialOperation{Command: "parent-import", Intent: awconfig.CredentialIntent(map[string]any{
+		"request_id": requestID, "response_sha256": hex.EncodeToString(sum[:])})}
+	return credentialUpdateError(awconfig.UpdateCredentials(home, op, func(begin func() error) error {
+		if err := begin(); err != nil {
+			return err
+		}
+		return awconfig.SaveInstalledIDChain(home, chain)
+	}))
 }

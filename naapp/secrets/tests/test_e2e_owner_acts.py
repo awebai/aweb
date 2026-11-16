@@ -120,7 +120,14 @@ def write_tls(runtime: Path, hosts: list[str]) -> tuple[str, str]:
     shutil.copyfile(tls.key_file, runtime / "tls" / "smtp-key.pem")
     for path in (runtime / "tls").iterdir():
         path.chmod(0o644)
+    (runtime / "tls").chmod(0o755)
     return tls.cert_file.name, tls.key_file.name
+
+
+def write_secrets_env(lane) -> None:
+    """The app's settings file. Compose checks every service's env_file when
+    any service starts, so it is written before the lane's first service."""
+    (lane.runtime / "secrets.env").write_text("".join(f"{k}={v}\n" for k, v in secrets_env().items()))
 
 
 def secrets_env() -> dict[str, str]:
@@ -203,6 +210,7 @@ class Lane:
         accounts = self.runtime / "accounts"
         if not accounts.exists():
             accounts.mkdir(mode=0o755)
+            accounts.chmod(0o755)  # mkdir's mode is masked by the launching umask
             (accounts / "passwd").write_text(f"root:x:0:0:root:/root:/bin/sh\nlane:x:{uid}:{gid}:lane:/runtime:/bin/sh\n")
             (accounts / "group").write_text(f"root:x:0:\nlane:x:{gid}:\n")
             for path in accounts.iterdir():
@@ -216,6 +224,27 @@ class Lane:
         return container
 
 
+def write_front(runtime: Path, caddyfile: str) -> None:
+    """The lane's front configuration: public, whatever the launching umask."""
+    (runtime / "front").mkdir()
+    (runtime / "front").chmod(0o755)
+    (runtime / "front" / "Caddyfile").write_text(caddyfile)
+    (runtime / "front" / "Caddyfile").chmod(0o644)
+
+
+def write_dns(runtime: Path) -> None:
+    """The lane's DNS server configuration: public, read by the DNS image's
+    non-root user whatever the launching shell's umask."""
+    (runtime / "dns").mkdir()
+    (runtime / "dns").chmod(0o755)
+    corefile = runtime / "dns" / "Corefile"
+    corefile.write_text(
+        f"{DOMAIN}:53 {{\n  errors\n  file /zones/{DOMAIN}.zone {DOMAIN} {{ reload 1s }}\n}}\n"
+        ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
+    )
+    corefile.chmod(0o644)
+
+
 def publish_awid_txt(lane: Lane, controller_did: str) -> None:
     zone = lane.runtime / "dns" / f"{DOMAIN}.zone"
     serial = int(time.time())
@@ -225,6 +254,7 @@ def publish_awid_txt(lane: Lane, controller_did: str) -> None:
         f"@ IN NS ns.{DOMAIN}.\nns IN A 127.0.0.1\n"
         f'_awid IN TXT "awid=v1; controller={controller_did}; registry={REGISTRY};"\n'
     )
+    zone.with_suffix(".tmp").chmod(0o644)
     zone.with_suffix(".tmp").replace(zone)
 
 
@@ -264,15 +294,11 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
     lane = Lane(project, runtime, {**os.environ, "SECRETS_E2E_RUNTIME": str(runtime), "SECRETS_E2E_SOURCE_COMMIT": commit,
                                        "SECRETS_E2E_AWID_SERVICE_TOKEN": secrets.token_hex(32), **LOGS_COMPOSE_ENV})
 
-    (runtime / "dns").mkdir()
-    (runtime / "dns" / "Corefile").write_text(
-        f"{DOMAIN}:53 {{\n  errors\n  file /zones/{DOMAIN}.zone {DOMAIN} {{ reload 1s }}\n}}\n"
-        ".:53 {\n  errors\n  forward . 127.0.0.11\n}\n"
-    )
+    write_dns(runtime)
     publish_awid_txt(lane, "did:key:z6MkpendingpendingpendingpendingpendingpendingpendingP")
     cert, key = write_tls(runtime, [*UPSTREAMS, "mail.svc.test"])
-    (runtime / "front").mkdir()
-    (runtime / "front" / "Caddyfile").write_text(front_caddyfile(UPSTREAMS, cert, key))
+    write_front(runtime, front_caddyfile(UPSTREAMS, cert, key))
+    write_secrets_env(lane)
     try:
         lane.up("dns")
         dns = lane.compose("ps", "-q", "dns").stdout.strip()
@@ -330,6 +356,7 @@ def write_service_member(lane: Lane, controller: str) -> None:
     """The app's own team member credential (no AWID service token), and its config."""
     keys = lane.runtime / "keys"
     keys.mkdir(mode=0o755)
+    keys.chmod(0o755)  # mkdir's mode is masked by the launching umask
     pem, certificate = admit_app_member(lane, controller, "secrets-service", keys / "service-home")
     (keys / "member.pem").write_text(pem)
     shutil.copyfile(certificate, keys / "member-cert.json")
@@ -340,7 +367,7 @@ def write_service_member(lane: Lane, controller: str) -> None:
     shutil.copyfile(lane.runtime / "tls" / "ca.pem", keys / "hook-ca.pem")
     for path in keys.iterdir():
         path.chmod(0o644)
-    (lane.runtime / "secrets.env").write_text("".join(f"{k}={v}\n" for k, v in secrets_env().items()))
+    write_secrets_env(lane)
 
 
 def write_logs_files(lane: Lane, controller: str) -> None:
@@ -349,6 +376,7 @@ def write_logs_files(lane: Lane, controller: str) -> None:
     content and purge-ledger databases, each its own database."""
     files = lane.runtime / "logs"
     files.mkdir(mode=0o755)
+    files.chmod(0o755)  # mkdir's mode is masked by the launching umask
     pem, certificate = admit_app_member(lane, controller, "logs-service", lane.runtime / "logs-member")
     (files / "awid-member-key").write_text(pem)
     shutil.copyfile(certificate, files / "awid-member-certificate")
@@ -427,7 +455,10 @@ def test_the_owner_designates_a_human_holder_registered_on_another_machine(lane:
                "--domain", DOMAIN, "--root-parent", "--registry", REGISTRY)
     # Then the owner's membership, and the holder's.
     invite = aw(controller, "id", "team", "invite", "--team", TEAM, "--namespace", DOMAIN, "--member-global")
-    aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global")
+    # The owner's machine holds no namespace authority, so the membership
+    # names the address the namespace root already issued to this identity.
+    aw(controller, "id", "team", "accept-invite", invite["token"], "--name", "owner", "--global",
+       "--address", owner["address"])
     aw(controller, "init", "--url", AWEB, "--name", "owner", "--do-not-touch-agents-md")
     added = aw(controller, "id", "team", "add-member", "--team", TEAM, "--namespace", DOMAIN,
                "--did", human["did_key"], "--did-aw", principal, "--name", "holder", "--global")

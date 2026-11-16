@@ -181,6 +181,7 @@ async def reader_service(
     async def governance_view(team_id: str) -> RegistrationView | None:
         return await registrations.view(team_id, GOVERNANCE_HOOK)
 
+
     async def team_key(team_id: str) -> str:
         return (await runtime.team_cache().get(team_id)).team_did_key
 

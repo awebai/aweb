@@ -31,7 +31,7 @@ var teamAdmissionPolicyCmd = &cobra.Command{
 
 func init() {
 	teamAdmissionPolicyCmd.Flags().StringVar(&teamAdmissionPolicyTeamFlag, "team", "", "The team (name:domain) whose policy to read; the profile must bind its controller")
-	teamAdmissionPolicyCmd.Flags().StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile to read the policy from")
+	teamAdmissionPolicyCmd.Flags().StringVar(&appProtectedProfileFlag, "protected-profile", "", "The operator-provisioned protected-service profile to read the policy from (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)")
 	teamCmd.AddCommand(teamAdmissionPolicyCmd)
 }
 

@@ -57,3 +57,12 @@ def test_every_section_refuses_keys_it_does_not_define():
                 yield from objects(child)
 
     assert all(node.get("additionalProperties") is False for node in objects(SCHEMA))
+
+
+def test_the_registry_route_is_local_or_external_and_external_by_default():
+    # The default registry is the public one, which the deployment does not run.
+    assert SCHEMA["properties"]["team"]["properties"]["registryRoute"]["default"] == "external"
+    for route in ("local", "external"):
+        assert not refused(changed(("team", "registryRoute"), route))
+    for route in ("public", "", True):
+        assert refused(changed(("team", "registryRoute"), route))

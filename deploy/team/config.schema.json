@@ -65,6 +65,14 @@
           "$ref": "#/$defs/origin",
           "default": "https://api.awid.ai",
           "x-env": "AWID_REGISTRY_URL"
+        },
+        "registryRoute": {
+          "description": "Where the registry runs, for the agents' ingress probe. local: a registry service of this deployment, reached only at one of egress.privateIngressAddresses and probed through its ingress with its own log as witness. external: the registry's operator's (the public registry by default), which no service of this deployment may be and no address of the deployment's own may serve; its route gets a positive control and no log witness.",
+          "enum": [
+            "local",
+            "external"
+          ],
+          "default": "external"
         }
       }
     },

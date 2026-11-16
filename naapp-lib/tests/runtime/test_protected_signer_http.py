@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -27,9 +28,7 @@ from aweb_naapp.console import (
 )
 from aweb_naapp.runtime.protected_signer import SignerRefused
 from aweb_naapp.runtime.protected_signer.http import ProtectedOperationsHTTP
-from tests.runtime.test_protected_signer import ORIGIN, SCOPE, did_key
-
-pytest_plugins = ("tests.runtime.test_protected_signer",)
+from tests.runtime.protected_signer_support import ORIGIN, SCOPE, did_key
 
 
 @pytest_asyncio.fixture
@@ -175,7 +174,7 @@ async def test_prepare_payload_is_the_exact_existing_b2_digest_wrapper_and_recei
     [
         ({"extra": "ignored"}, "request_invalid"),
         ({"redirect_uri": "https://attacker.example/callback"}, "redirect_uri_refused"),
-        ({"operation": "raw.sign"}, "operation_refused"),
+        ({"operation": "raw.sign"}, "operation_not_served"),
     ],
 )
 async def test_invalid_or_unsupported_prepare_cannot_mint(http_world, mutation, code):
@@ -308,7 +307,7 @@ async def test_retained_context_is_exact_routing_metadata_not_receipt_authority(
     )
     other = replace(w.operation, operation_id=str(uuid.uuid4()), context=other_context)
     request = {**prepared.payload, **other.intent()}
-    request["artifact"] = {**request["artifact"], "team_id": other_context.authority_id}
+    request["artifact"]["template"]["team_id"] = other_context.authority_id
     covered = {
         "policy": {"ref": request["policy_ref"], "version": request["policy_version"]},
         "request": request,
@@ -320,8 +319,9 @@ async def test_retained_context_is_exact_routing_metadata_not_receipt_authority(
     # no B2 approval and never purports to be a signed or executable effect.
     await w.passkeys.db.execute(
         "INSERT INTO {{tables.protected_signer_operations}} "
-        "(operation_id,handoff_id,requester,intent,request,digest,approval_id,candidate_links,expires_at) "
-        "SELECT $1,$2,'other-requester',$3,$4,$7,$5,'{}'::jsonb,expires_at "
+        "(operation_id,handoff_id,requester,intent,request,digest,approval_id,candidate_links,expires_at,scope) "
+        "SELECT $1,$2,'other-requester',$3,$4,$7,$5,'{}'::jsonb,expires_at,"
+        "(convert_from($4::bytea,'UTF8')::jsonb)->'scope' "
         "FROM {{tables.protected_signer_operations}} WHERE operation_id=$6",
         other.operation_id,
         str(uuid.uuid4()),
@@ -350,3 +350,44 @@ async def test_valid_json_above_64_kib_is_refused_before_mint(http_world):
         )
         == 0
     )
+
+
+UNEXPECTED_CANARY = "canary-7f3e9b"
+FRAME = re.compile(r"[\w.-]+/[\w.-]+\.py:\d+ [\w<>.]+")
+
+
+@pytest.mark.parametrize("method", ["POST", "GET"])
+async def test_an_unexpected_failure_is_logged_by_route_and_class_only(http_world, caplog, method):
+    """The wire keeps its bounded 503; the operator gets the route template,
+    the operation id when the route names one, and the failure's class.
+    No message, request bytes or credential reaches the record."""
+    import logging
+
+    w, client, key = http_world
+    intent = {**w.operation.intent(), "redirect_uri": f"http://127.0.0.1:41234/{UNEXPECTED_CANARY}"}
+    path, operation_id = "/protected-operations", None
+    if method == "GET":
+        operation_id = (await post(w, client, key, intent)).json()["operation_id"]
+        path += "/" + operation_id
+    await w.passkeys.db.execute("DROP TABLE {{tables.http_requesters}}")
+    caplog.set_level(logging.DEBUG)
+    if method == "POST":
+        raw = canonical_json_bytes(intent)
+        sent = headers(w, key, "POST", path, raw)
+        response = await client.post(path, content=raw, headers=sent)
+    else:
+        sent = headers(w, key, "GET", path)
+        response = await client.get(path, headers=sent)
+    assert response.status_code == 503 and response.json() == {"detail": "receipt_unavailable"}
+    [record] = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    template = "/protected-operations" if method == "POST" else "/protected-operations/{operation_id}"
+    assert (record.route, record.operation_id, record.failure) == (template, operation_id, "QueryError")
+    # Where it failed, as file, line and function only: enough to find the bug.
+    assert record.frames and all(FRAME.fullmatch(frame) for frame in record.frames), record.frames
+    assert any(frame.startswith("protected_signer/") for frame in record.frames), record.frames
+    assert record.frames[-1] in record.getMessage()
+    logged = caplog.text + "".join(str(r.__dict__) for r in caplog.records)
+    for secret in (UNEXPECTED_CANARY, "http_requesters", sent["Authorization"].split()[-1],
+                   sent["X-AWEB-Signed-Payload"]):
+        assert secret not in logged
+    assert record.exc_info is None

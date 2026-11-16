@@ -6,15 +6,49 @@ its existing wire codec/effect adapter, not another approval implementation.
 The cross-contract test pins every row to the public frozen catalog.
 """
 
+from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from types import MappingProxyType
 from typing import Literal
 
+from .operation_codecs import (
+    ADMISSION_CODEC,
+    OWNER_REMOVAL_CODEC,
+    REMOVAL_CODEC,
+    REVOKE_CODEC,
+    ROOT_CODEC,
+    OperationCodec,
+)
+from .operation_display import OperationDisplay
+from .operation_effects import (
+    ENDORSEMENT,
+    LOCAL_SIGNATURE,
+    OWNER_REVOKED_MEMBERSHIP,
+    REGISTERED_MEMBERSHIP,
+    REVOKED_MEMBERSHIP,
+    OperationEffect,
+)
 from .types import SignerRefused
 
 
 @dataclass(frozen=True)
-class OperationSpec:
+class RequesterRule:
+    """Closed authentication and subject-binding data, shared by every row."""
+
+    proof: Literal["registered_requester", "registered_requester_or_own_certificate", "registered_requester_or_owner_session"]
+    principal_bound_to: Literal["nothing", "subject_root"]
+    bound_in: Literal["prepare_only", "every_phase"]
+
+    def __post_init__(self):
+        if (self.proof not in {"registered_requester", "registered_requester_or_own_certificate", "registered_requester_or_owner_session"}
+            or self.principal_bound_to not in {"nothing", "subject_root"}
+            or self.bound_in not in {"prepare_only", "every_phase"}):
+            raise ValueError("invalid requester rule")
+
+
+@dataclass(frozen=True)
+class OperationDefinition:
     operation: str
     variant: str
     key_role: Literal["team_controller", "namespace_controller", "human_identity", "protected_key"]
@@ -23,15 +57,128 @@ class OperationSpec:
     payload_binding: tuple[str, ...]
     bounds: tuple[str, ...]
 
+    codec: OperationCodec
+    effect: OperationEffect
+    display: OperationDisplay
+    requester: RequesterRule
+    binding_paths: tuple[tuple[str, str], ...] = ()
     consumer_available: bool = True
+    # A whole frozen request is revealable only after its definition's fields
+    # have been reviewed as public. A deployment policy cannot widen this.
+    link_revealable: bool = False
+    prepared_fields: frozenset[str] = frozenset()
+    signing_port: str = "sign_operation"
+    finalize_execution_refusal: bool = False
+    receipt_uv_expiry: bool = False
+    request_window: tuple[tuple[str, ...], int] | None = None
+
+    @property
+    def owner_initiable(self) -> bool:
+        return self.requester.proof == "registered_requester_or_owner_session"
+
+    @property
+    def supports_self_removal(self) -> bool:
+        return self.requester.proof == "registered_requester_or_own_certificate"
+
+    def effect_deadline(self, artifact, deadline):
+        if self.needs_human and self.codec.issuance is not None and artifact.get("type") == "aweb.protected-artifact-intent":
+            return min(deadline, datetime.fromisoformat(artifact["issuance_window"]["not_after"].replace("Z", "+00:00")))
+        if "expires_at" in artifact:
+            deadline = min(deadline, datetime.fromisoformat(artifact["expires_at"].replace("Z", "+00:00")))
+        if self.request_window is not None:
+            path, seconds = self.request_window
+            stamp = artifact
+            for field in path:
+                stamp = stamp[field]
+            deadline = min(deadline, datetime.fromisoformat(stamp.replace("Z", "+00:00")) + timedelta(seconds=seconds))
+        return deadline
+
+    def presentation(self):
+        """Project the existing closed codec guard onto its unsigned intent template."""
+        guard = deepcopy(self.codec.presentation)
+        issuance = self.codec.issuance if self.needs_human else None
+        if issuance is None or guard is None:
+            return guard
+        omitted = (*issuance.issued_fields, *((issuance.expiry_field,) if issuance.expiry_field else ()))
+        for path in omitted:
+            parent = "/artifact" + ("/" + "/".join(path[:-1]) if len(path) > 1 else "")
+            names = guard.get("exact", {}).get(parent)
+            if names is not None and path[-1] in names:
+                names.remove(path[-1])
+        absent = {"/artifact/" + "/".join(path) for path in omitted}
+        guard["timestamps"] = [path for path in guard.get("timestamps", []) if path not in absent]
+
+        def project(value):
+            if isinstance(value, str):
+                return value.replace("/artifact", "/artifact/template")
+            if isinstance(value, list):
+                return [project(item) for item in value]
+            if isinstance(value, dict):
+                return {project(key): project(item) for key, item in value.items()}
+            return value
+
+        return project(guard)
+
+    def issuance_fields(self):
+        if not self.needs_human or self.codec.issuance is None:
+            return {}
+        return {"approval_format": "intent_v1", "issuance": self.codec.issuance.fields()}
+
+    def bindings(self):
+        overrides = dict(self.binding_paths)
+        paths = {name: overrides.get(name, "/subject/" + name) for name in self.payload_binding}
+        if self.needs_human and self.codec.issuance is not None:
+            paths = {name: path.replace("/artifact", "/artifact/template", 1) if path.startswith("/artifact") else path
+                for name, path in paths.items()}
+        return paths
+
+    def bound_values(self, request):
+        """Make the frozen catalog bindings actual required request projections."""
+        result = {}
+        try:
+            for name, path in self.bindings().items():
+                value = request
+                for field in path.split("/")[1:]:
+                    value = value[field]
+                result[name] = deepcopy(value)
+        except (KeyError, TypeError):
+            raise SignerRefused("operation_mismatch") from None
+        return result
 
     @property
     def needs_human(self) -> bool:
         return self.rule == "live_floor"
 
 
+# Source-compatible metadata type; the object also owns its consumer codec.
+OperationSpec = OperationDefinition
+
+
+REVOKE_OPERATION = "human-role.revoke"
+
+
 _ROWS = (
-    OperationSpec(
+    OperationDefinition(
+        "team.agent.remove", "owner_approved", "team_controller", "live_floor", "member_revocation",
+        ("team_id", "member_id", "certificate_id", "expected_membership", "target_kind"),
+        ("Current owner's exact live UV; no root admission bucket prerequisite",
+         "Verified agent or authoritative unknown only; never verified human or unavailable evidence",
+         "Exact membership and frozen classification rechecked before release"),
+        codec=OWNER_REMOVAL_CODEC, effect=OWNER_REVOKED_MEMBERSHIP,
+        requester=RequesterRule("registered_requester_or_owner_session", "nothing", "every_phase"),
+        binding_paths=(("target_kind", "/target_kind"),),
+        display=OperationDisplay("Remove {/subject/expected_membership/alias} from {/subject/team_id|team}?",
+            ("{/subject/expected_membership/alias} leaves {/subject/team_id|team}.", "Its aweb identity is not deleted."),
+            (("member", "/subject/expected_membership/alias"), ("team", "/subject/team_id|team"), ("kind", "/target_kind|kind")),
+            (("member", "/subject/member_id"), ("certificate", "/subject/certificate_id"), ("team", "/subject/team_id"),
+             ("kind", "/target_kind"), ("requester", "/requester")),
+            (("subject_ineligible", "This member is a person, or could not be checked, so it cannot be removed here."),
+             ("issuer_kind_forbidden", "Only an owner's passkey can approve this."))),
+        prepared_fields=frozenset({"requester_key", "target_kind"}),
+        finalize_execution_refusal=True, receipt_uv_expiry=True, link_revealable=True,
+        request_window=(("request", "timestamp"), 300),
+    ),
+    OperationDefinition(
         "team.agent.remove",
         "default",
         "team_controller",
@@ -49,8 +196,21 @@ _ROWS = (
             "Root same permitted team/scope; self only own membership",
             "Membership removal distinct from ID revocation",
         ),
+        codec=REMOVAL_CODEC,
+        requester=RequesterRule("registered_requester_or_own_certificate", "subject_root", "every_phase"),
+        effect=REVOKED_MEMBERSHIP,
+        display=OperationDisplay("Remove {/subject/expected_membership/alias} from {/subject/team_id|team}?",
+            ("{/subject/expected_membership/alias} leaves {/subject/team_id|team}.", "Its aweb identity is not deleted."),
+            (("member", "/subject/expected_membership/alias"), ("team", "/subject/team_id|team")),
+            (("member", "/subject/member_id"), ("certificate", "/subject/certificate_id"), ("team", "/subject/team_id"),
+             ("requester", "/requester")),
+            (("subject_ineligible", "This member cannot be removed this way."),
+             ("issuer_kind_forbidden", "This team cannot remove that kind of member."))),
+        prepared_fields=frozenset({"requester_key"}),
+        finalize_execution_refusal=True,
+        request_window=(("request", "timestamp"), 300),
     ),
-    OperationSpec(
+    OperationDefinition(
         "identity.root.endorse",
         "default",
         "human_identity",
@@ -72,7 +232,7 @@ _ROWS = (
         ),
         (
             "Child possession and eligible existing identity; no silent remint",
-            "Everything it spawns counts as yours describes ancestry, not permissions",
+            "Agents it adds count as yours describes ancestry, not permissions",
             "Current registered agent mapping and subject proof; local root refuses",
             "Existing chainless registered agent eligible; conflicting/revoked head refuses",
             "No team membership or Cloud login prerequisite",
@@ -82,8 +242,32 @@ _ROWS = (
             "Client checks frozen policy against authorized read before displaying link",
             "Execute refuses policy_changed on changed current policy; retry never rebinds",
         ),
+        codec=ROOT_CODEC,
+        requester=RequesterRule("registered_requester", "subject_root", "prepare_only"),
+        effect=ENDORSEMENT,
+        binding_paths=(("parent", "/artifact/parent"), ("certificate", "/artifact"),
+            ("registry", "/registry"), ("responsibility_statement", "/responsibility_statement"),
+            ("expected_head", "/expected_head"), ("service_id", "/scope/service_id"),
+            ("default_admission_policy_digest", "/admission_policy/digest"),
+            ("default_admission_policy_version", "/admission_policy/version")),
+        display=OperationDisplay("Make {/subject/deployment_label} your root agent for {/subject/teams|team}?",
+            ("It can add agents only to {/subject/teams|team}: at most {/admission_policy/bounds/max_active} at a "
+             "time, and at most {/admission_policy/bounds/max_per_window} per "
+             "{/admission_policy/bounds/rate_window_seconds|period}.",),
+            (("root_agent", "/subject/deployment_label"), ("teams", "/subject/teams|team")),
+            (("root", "/subject/root_id"), ("root_key", "/subject/root_key"), ("teams", "/subject/teams"),
+             ("human", "/scope/human/id"), ("policy", "/admission_policy"), ("requester", "/requester")),
+            (("subject_ineligible", "This agent cannot become your root agent."),
+             ("issuer_kind_forbidden", "Your identity cannot approve a root agent.")),
+            responsibility_statement="Agents it adds count as yours. It gets no other access.",
+            # The root asks for its own endorsement; its name is frozen.
+            requester_name=("/subject/root_id", "/subject/deployment_label")),
+        prepared_fields=frozenset({"registry", "expected_head", "responsibility_statement", "admission_policy"}),
+        finalize_execution_refusal=True,
+        receipt_uv_expiry=True,
+        link_revealable=True,
     ),
-    OperationSpec(
+    OperationDefinition(
         "team.agent.admit",
         "default",
         "team_controller",
@@ -117,9 +301,24 @@ _ROWS = (
             "Select exact authenticated requesting root, not global unique root",
             "Counters per policy/team/root ID; key rotation retains bucket; aggregate ceiling only if explicit",
         ),
+        codec=ADMISSION_CODEC,
+        requester=RequesterRule("registered_requester", "subject_root", "every_phase"),
+        effect=REGISTERED_MEMBERSHIP,
+        binding_paths=(("certificate_fields", "/artifact"), ("admission_policy_version", "/admission_policy_version"),
+            ("request_id", "/request_id"), ("service_id", "/scope/service_id")),
+        display=OperationDisplay("Add {/subject/member_alias} to {/subject/team_id|team}?",
+            ("{/subject/member_alias} joins as an ordinary member, within the root agent's limits.",
+             "It gets no owner role and no other access."),
+            (("member", "/subject/member_alias"), ("team", "/subject/team_id|team")),
+            (("root", "/subject/root_id"), ("member_key", "/subject/child_key"),
+             ("policy_digest", "/subject/admission_policy_digest"), ("requester", "/requester")),
+            (("subject_ineligible", "This agent cannot be added to this team."),
+             ("issuer_kind_forbidden", "This team cannot add that kind of member."))),
+        prepared_fields=frozenset({"request_id", "admission_policy_version"}),
+        finalize_execution_refusal=True,
     ),
-    OperationSpec(
-        "human-role.revoke",
+    OperationDefinition(
+        REVOKE_OPERATION,
         "default",
         "team_controller",
         "live_floor",
@@ -131,6 +330,20 @@ _ROWS = (
             "Revoke: stored holding, no H2 admission check",
             "Last-owner safeguards",
         ),
+        codec=REVOKE_CODEC,
+        requester=RequesterRule("registered_requester", "nothing", "every_phase"),
+        effect=LOCAL_SIGNATURE,
+        display=OperationDisplay("Remove {/subject/principal} as {/subject/role} of {/subject/app_id}?",
+            ("{/subject/principal} will no longer be {/subject/role} of {/subject/app_id}.",),
+            (("application", "/subject/app_id"), ("role", "/subject/role")),
+            (("principal", "/subject/principal"), ("installation", "/subject/installation_id"),
+             ("team", "/scope/authority/id"), ("requester", "/requester")),
+            # The signer's own checks behind these codes are of the approving
+            # identity (authority.py _own_human), not of the role holder.
+            (("subject_ineligible", "You cannot approve this: your identity is not a confirmed person for this team."),
+             ("issuer_kind_forbidden", "Only a person can approve this."))),
+        signing_port="sign_owner_act",
+        link_revealable=True,
     ),
 )
 
@@ -138,10 +351,15 @@ OPERATIONS = MappingProxyType({(spec.operation, spec.variant): spec for spec in 
 
 
 def operation_spec(operation: str, variant: str = "default") -> OperationSpec:
+    if type(operation) is not str or not operation or type(variant) is not str or not variant:
+        raise SignerRefused("request_invalid")
     try:
-        return OPERATIONS[(operation, variant)]
-    except (KeyError, TypeError):
-        raise SignerRefused("operation_refused") from None
+        definition = OPERATIONS[(operation, variant)]
+    except KeyError:
+        raise SignerRefused("operation_not_served") from None
+    if not definition.consumer_available:
+        raise SignerRefused("operation_not_served")
+    return definition
 
 
 def presentation_catalog() -> dict[str, dict]:
@@ -150,15 +368,31 @@ def presentation_catalog() -> dict[str, dict]:
     Wire field grammars come from their existing shared codecs, so neither a
     browser allowlist nor a second per-operation schema needs maintaining.
     """
-    from .codecs import presentation_schema
-
     return {
         f"{spec.operation}|{spec.variant}": {
             "family": spec.family,
             "key_role": spec.key_role,
             "rule": spec.rule,
             "consumer_available": spec.consumer_available,
-            "subject_schema": presentation_schema(spec.operation, spec.variant),
+            "subject_schema": deepcopy(spec.codec.subject_schema),
+            "presentation": spec.presentation(),
+            **spec.issuance_fields(),
+            **({"owner_initiable": True} if spec.owner_initiable else {}),
+            "display": spec.display.fields(),
+            "responsibility_statement": spec.display.responsibility_statement,
         }
         for spec in OPERATIONS.values()
     }
+
+
+def operation_description():
+    """Published versioned description; Go pins generated data, never an HTTP response."""
+    return {"v": 1, "type": "aweb.protected-operations", "operations": [
+        {"operation": spec.operation, "variant": spec.variant, "family": spec.family,
+         "key_role": spec.key_role, "rule": spec.rule,
+         "subject_schema": deepcopy(spec.codec.subject_schema),
+         "prepared_fields": sorted(spec.prepared_fields), "bindings": spec.bindings(),
+         "display": spec.display.fields(), "responsibility_statement": spec.display.responsibility_statement,
+         "presentation": spec.presentation(), **spec.issuance_fields(),
+         **({"owner_initiable": True} if spec.owner_initiable else {})}
+        for _, spec in sorted(OPERATIONS.items())]}

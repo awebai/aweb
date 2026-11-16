@@ -94,7 +94,7 @@ class PreparedOwnerAct:
         if now - self._prepared_at > KEY_FRESHNESS:
             raise Refused("owner_required", "prepared too long ago for its team key to be current")
         if now >= self._checked.expires_at:
-            raise Refused("expired", "the owner act expired")
+            raise Refused("expired", f"expired at {self._checked.fields['expires_at']}")
 
 
 class OwnerActVerifier:

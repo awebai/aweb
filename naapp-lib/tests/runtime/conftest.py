@@ -18,6 +18,7 @@ from aweb_naapp.runtime.team_auth import (
     Principal,
     authenticate_request,
 )
+from tests.runtime.protected_signer_support import world as world
 
 
 @asynccontextmanager

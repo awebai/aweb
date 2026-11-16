@@ -10,7 +10,12 @@ from aweb_naapp.runtime.protected_signer import SignerRefused
 
 from aweb.protected_signing.host import HostSettings, create_app
 from tests.test_independent_protected_http import headers, profile_for
-from tests.test_independent_protected_signer import HUMAN_ORIGIN, ORIGIN
+from tests.test_independent_protected_signer import (
+    HUMAN_ORIGIN,
+    ORIGIN,
+    owner_removal_operation,
+    revoked,
+)
 from tests.test_protected_signer_host import CapturedMail
 
 pytest_plugins = ("tests.test_independent_protected_signer",)
@@ -53,16 +58,14 @@ def host_for(w, tmp_path):
     settings = host_settings_for(w, tmp_path)
     # Capture only notification transport. Custody, registry, SQL bindings,
     # original B2/B3, LOGIN and exact-act assertions are the real adapters.
-    return create_app(
-        settings, mailer=CapturedMail(), registry_transport=w.host.transport
-    )
+    return create_app(settings, mailer=CapturedMail(), registry_transport=w.host.transport)
 
 
 @pytest.mark.asyncio
-async def test_factory_real_custody_shared_page_login_act_uv_and_exact_receipt(
-    world, tmp_path
-):
+async def test_factory_real_custody_shared_page_login_act_uv_and_exact_receipt(world, tmp_path):
     w = world
+    # A served live-floor controller act with its own B3 approval.
+    operation = await owner_removal_operation(w)
     host = host_for(w, tmp_path)
     async with host.api_app.router.lifespan_context(host.api_app):
         c = host.api_app.state.composition
@@ -73,7 +76,7 @@ async def test_factory_real_custody_shared_page_login_act_uv_and_exact_receipt(
             ready = await client.get(ORIGIN + "/readyz")
             assert ready.status_code == 200
             assert ready.json() == {"ready": True}
-            body = json.dumps(w.operation.intent(), separators=(",", ":")).encode()
+            body = json.dumps(operation.intent(), separators=(",", ":")).encode()
             prepared = await client.post(
                 ORIGIN + "/protected-operations",
                 content=body,
@@ -115,6 +118,7 @@ async def test_factory_real_custody_shared_page_login_act_uv_and_exact_receipt(
             assert receipt.status_code == 200, receipt.text
             assert receipt.json() == executed.json()
             assert receipt.json()["state"] == "committed"
+            assert await revoked(w, operation)
             assert "set-cookie" not in receipt.headers
     assert not hasattr(host.api_app.state, "composition")
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=host)) as client:

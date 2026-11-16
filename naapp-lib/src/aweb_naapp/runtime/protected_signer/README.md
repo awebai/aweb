@@ -10,10 +10,13 @@ from aweb_naapp.runtime.protected_signer import (
     AuthorityProvider, CurrentAuthority, ControllerCustody,
 )
 
+# Select the definitions this embedding serves and provide their exact ports.
+# Construction refuses a missing provider or a non-callable selected hook.
 signer = ProtectedSigner(
     db, passkeys=passkeys, policies=policies, delivery=delivery,
     audit=local_transactional_audit, authority=current_authority,
     custody=protected_local_controller,
+    definitions=served_definitions, effect_adapters=effect_adapters,
 )
 await signer.migrate()
 prepared = await signer.prepare(operation, requester=requester)

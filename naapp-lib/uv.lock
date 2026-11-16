@@ -226,6 +226,7 @@ provides-extras = ["protected"]
 dev = [
     { name = "aweb-naapp", editable = "." },
     { name = "aweb-naapp-testing", editable = "testing" },
+    { name = "playwright", specifier = "==1.63.0" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
 ]

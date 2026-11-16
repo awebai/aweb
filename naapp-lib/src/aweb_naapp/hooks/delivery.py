@@ -83,7 +83,8 @@ class ReceiveOptions:
     controller key, its revoked certificate ids and its registered ones.
     ``audience`` and ``binding_id`` are required. A target that takes client
     deliveries gives all three registry facts; without the key or the
-    registered ids a client delivery is refused as ``verifier_misconfigured``."""
+    registered ids a client delivery is refused as ``verifier_misconfigured``.
+    """
 
     audience: str
     binding_id: str

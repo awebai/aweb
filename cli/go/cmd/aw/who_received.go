@@ -182,14 +182,6 @@ func executeWhoReceived(ctx context.Context, message awid.InboxMessage, opts who
 			return whoOutput{ID: subject.ID, IDChainResult: awid.VerifyIDChain(bundle, subject, nil, "")}, nil
 		}
 		domain, _ = plan["domain"].(string)
-	} else if strings.HasPrefix(subject.ID, "did:aw:") && opts.ReceivedEnrollment != nil {
-		enrollment := opts.ReceivedEnrollment(ctx, subject.ID, subject.DIDKey)
-		if enrollment.State == "not_enrolled" {
-			return whoOutput{ID: subject.ID, IDChainResult: awid.IDChainResult{Outcome: "unknown", Reason: "unregistered_identity"}}, nil
-		}
-		if enrollment.State == "enrolled" && enrollment.Domain != nil {
-			domain = *enrollment.Domain
-		}
 	}
 	return verifyWhoPresentation(ctx, subject, bundle, domain, opts)
 }

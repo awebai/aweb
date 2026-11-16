@@ -1,4 +1,6 @@
 """Real source/receiver routes: unknown source kind, authoritative receiver."""
+from team_facts_fixtures import legacy_registry
+
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -74,7 +76,7 @@ async def test_remote_human_refusal_keeps_typed_body_through_source(two_receiver
         app.state.db = infra
         app.state.redis = None
         app.state.rate_limiter = None
-        app.state.awid_registry_client = registry
+        app.state.awid_registry_client = legacy_registry(registry)
         app.state.public_origin = origin
         app.state.federation_authority = TestFederationAuthority(db, registry)
         app.state.on_mutation = None

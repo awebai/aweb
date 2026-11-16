@@ -25,6 +25,7 @@ from aweb.protected_signing.profile import ProtectedServiceProfile
 from tests.test_independent_protected_signer import (
     ORIGIN,
     did,
+    owner_removal_operation,
     proof_request,
 )
 from tests.test_protected_service_profile import FIXTURE
@@ -92,6 +93,8 @@ def headers(w, *, body=b"", method="POST", path="/protected-operations", context
 @pytest_asyncio.fixture
 async def http_world(world):
     w = world
+    # A served live-floor controller act with its own B3 approval.
+    operation = await owner_removal_operation(w)
     await apply_console_migrations(w.db)
     profile = profile_for(w)
     composition, app = mount(w, profile)
@@ -99,12 +102,12 @@ async def http_world(world):
         transport=httpx.ASGITransport(app=app), base_url=ORIGIN
     ) as client:
         yield SimpleNamespace(
-            w=w, composition=composition, profile=profile, client=client
+            w=w, composition=composition, profile=profile, client=client, operation=operation
         )
 
 
 async def post(h, operation=None):
-    body = canonical_json_bytes((operation or h.w.operation).intent())
+    body = canonical_json_bytes((operation or h.operation).intent())
     return await h.client.post(
         "/protected-operations", content=body, headers=headers(h.w, body=body)
     )
@@ -139,7 +142,7 @@ async def test_invalid_stable_requester_header_refuses_before_remote_work(
     http_world, principal
 ):
     h, w = http_world, http_world.w
-    body = canonical_json_bytes(w.operation.intent())
+    body = canonical_json_bytes(h.operation.intent())
     proof = headers(w, body=body)
     proof["X-AWEB-DID-AW"] = principal
     before = len(w.host.transport.calls)
@@ -151,7 +154,7 @@ async def test_invalid_stable_requester_header_refuses_before_remote_work(
 @pytest.mark.asyncio
 async def test_worker_proof_cannot_select_human_as_requester(http_world):
     h, w = http_world, http_world.w
-    body = canonical_json_bytes(w.operation.intent())
+    body = canonical_json_bytes(h.operation.intent())
     proof = headers(w, body=body)
     proof["X-AWEB-DID-AW"] = w.context.human_id
     response = await h.client.post("/protected-operations", content=body, headers=proof)
@@ -161,7 +164,7 @@ async def test_worker_proof_cannot_select_human_as_requester(http_world):
 @pytest.mark.asyncio
 async def test_prepare_cannot_substitute_profile_scope(http_world):
     h, w = http_world, http_world.w
-    operation = replace(w.operation, context=replace(w.context, generation=2))
+    operation = replace(h.operation, context=replace(w.context, generation=2))
     response = await post(h, operation)
     assert response.status_code == 403, response.text
     assert (
@@ -252,7 +255,7 @@ async def test_real_human_login_and_separate_uv_reach_exact_agent_receipt(http_w
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url=ORIGIN
     ) as cli:
-        body = canonical_json_bytes(w.operation.intent())
+        body = canonical_json_bytes(h.operation.intent())
         response = await cli.post(
             "/protected-operations", content=body, headers=headers(w, body=body)
         )

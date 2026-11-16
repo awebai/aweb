@@ -1,13 +1,8 @@
-# Human assurance and protected signing
+# Approval implementation transition notes
 
-Status: **frozen implementation contract for aweb-acxy.1**. Juan approved
-the architecture on 2026-11-11 at 19:06 UTC; the coordinator directed this
-freeze after the settled review decisions. This document and the typed catalog
-[`vectors/human-assurance-v1.json`](vectors/human-assurance-v1.json) define the
-shared policy boundary for hosted and independent implementations. This is not
-a release claim: implementations must pass their positive, refusal and race
-cases. Unclassified operations and missing required evidence refuse; they do
-not block implementation of the settled groups.
+The [human approval architecture](human-approval-architecture.md) governs.
+Sections 3–6 and surviving operation details describe the current implementation
+until the approval-service protocol replaces them; this file is then removed.
 
 ## 1. Independent facts and authorities
 
@@ -25,29 +20,25 @@ verified nearest human, account association, team owner, role holder and
 credential holder are distinct facts and must not substitute for one another.
 For a human leaf, the responsible human is the leaf itself.
 
-One OSS library, embedded in an existing trusted server process, controls
-human, namespace-controller and team-controller signing in supported
-deployments. Cloud imports the same published package with account/custody
-adapters; an independent operator uses its own server and registry. No Cloud
-account, Cloud credential or public-registry fallback is required. Worker
-agents retain their own **agent** keys and may sign permitted agent operations.
+The frozen root-endorsement responsibility statement is exactly **"Agents it
+adds count as yours. It gets no other access."** (coordinator `752284d2`,
+2026-11-13). It states human responsibility for the agents added under this
+root and grants no membership or resource permissions. The definition, page
+verifier and generated client pin this same sentence. This wording replaces
+the earlier longer statement without changing that authority model, and ships
+with the coordinated `intent_v1` client/server release (`94664f19`).
 
-The signer accepts named, typed operations, constructs the artifact itself,
-and refuses unknown operations, arbitrary-byte signing and key export. The
-fixed minimum below is code, not a configurable exemption. Deployments may
-add approvals, tighten scope or shorten time limits. Relaxing such additional
-policy requires its current authorized human's live approval; it cannot relax
-the minimum. A self-hosting administrator modifying the software is outside
-this enforcement claim.
+The target key holder is a separate process, as specified in the
+[architecture](human-approval-architecture.md#the-key-holder). The current
+approval implementation below is transitional, not that isolation boundary.
 
 ### What a remote verifier can establish
 
 The v1 ID certificate and team certificate formats do not acquire an assurance
 field. Their signatures establish issuer authority under their existing
 verification rules, not whether the issuer used this signer or a passkey.
-Remote consumers trust the issuer's signing policy. A previously token-issued
-root cannot be relabelled as gesture-confirmed: its transition requires an
-explicit, reviewed revoke/re-endorsement plan. Existing cryptographic
+Approval bindings and evidence travel beside the chain as specified in the
+architecture; an absent statement establishes no assurance. Existing cryptographic
 verification, current-head rules, expiry and revocation remain mandatory.
 
 The browser and confirmation display are trusted. A separate trusted device
@@ -81,7 +72,7 @@ an ordinary unattended governance variant.
 
 The exact request binds service/origin, operation and variant, selected key
 authority and current key version, subject/key, target, domain/team/holding,
-rights, every artifact field, expected current state/head, deployment policy
+rights, every frozen template field and permitted issuance rule, expected current state/head, deployment policy
 reference/version and the operation's idempotency identifier. A display is
 derived from that frozen request, never a second request rebuilt from labels.
 Omitted, unknown or duplicate fields, ambiguous targets and unknown authority
@@ -135,14 +126,9 @@ Unregistered local leaves have no portable per-ID revocation; membership
 removal is separate. The existing 60-second ID-status bound remains; do not
 promise instantaneous worldwide revocation.
 
-Team-controller rotation remains distinct from certificate revocation. It does
-not silently revoke existing member certificates. An operator handling a
-compromise must explicitly inventory/revoke affected certificates and renew
-the intended memberships; rotation alone is not containment of certificates
-issued by the old key. Every verifier still applies its existing key/history
-and revocation rules; new owner acts require the current controller. This
-preserves [the registry's explicit certificate lifecycle](awid-sot.md#certificates)
-rather than changing membership as a side effect of key maintenance.
+The target rotation rule is in [Membership and key changes](human-approval-architecture.md#membership-and-key-changes).
+The compatible member-check/client change is separate implementation work;
+removing the registry lock does not itself change released rotation behavior.
 
 The AWID rule in acxc.69 permits `AWID_SKIP_DNS_VERIFY=1` for first namespace
 registration only. PUT replacement requires proof of the new controller key
@@ -181,23 +167,8 @@ profile, never a human-endorsed root. Its protected namespace authority requires
 a live approval for new issuance; no token exception, manufactured H or agent
 parent is allowed. It cannot satisfy the endorsed-root acceptance journey.
 
-Protected provisioning authorizes **one exact default admission policy** under
-operator authority. It lists the teams and fixes the root selector to "the
-requesting root, verified as endorsed under this service_id by a current
-authorizer", agent kind only,
-member role only, and an immutable policy version and digest. Endorsing that
-root is **one live approval of one act**: its screen discloses the resulting
-bounded admission. Endorsement satisfies the existing policy; it neither
-creates nor widens it. Later changes require their own
-`team.admission-policy.change` approval. A deployment without that provisioned
-policy must not silently create one during endorsement.
-One policy may list teams across namespaces only when provisioning holds real
-authority for every listed controller. A shared account, ancestry or stored key
-reference is not that authority. The endorsement discloses the pre-existing
-list and never acquires another controller's consent. An unlisted team needs
-the separate policy floor act. Hosted .6 supplies the adapter and fresh
-protected-test-team fixture; .8 owns existing-team migration/cutover. This
-contract authorizes no customer or production provisioning.
+The existing signer has a bounded admission policy, distinct from the retired
+registry lock. The following describes that transitional operation interface.
 
 A protected admission policy names each canonical team and the authorized root
 selector. Admission authenticates the exact root ID named by the request and
@@ -225,14 +196,6 @@ explicitly authorized root, not any agent whose chain happens to contain it. The
 variant uses its separate live controller-human authority under the same
 protected policy. Grandchild issuance stays with its actual eligible parent; root-side admission supplies membership separately.
 Hosted and independent profiles use this same boundary and command semantics.
-Every agent admission **and renewal** on a protected team passes the bounded
-policy, including cache/reconciliation and hosted routes. Ordinary member
-invites cannot bypass it: legacy invite admission returns HTTP 403
-`protected_admission_required`. Clients explain the configured service/root
-admission path rather than retrying the invite or reminting an identity.
-Legacy teams retain their existing behavior until an explicit operator-approved
-migration under section 7; installing a client does not protect a team.
-
 An endorsement target is an ordinary registered agent: a current stable ID/key
 mapping in the selected registry, possession of that key, and no conflicting
 or revoked ancestry/head. An existing chainless agent is eligible for its first
@@ -266,15 +229,26 @@ Juan 2026-11-13, via coordinator: `team.agent.remove/owner_approved` is a
 `team_controller` / `live_floor` signer operation. It is an additive row;
 the frozen base inventory is unchanged. Its policy scenarios are in
 [`human-assurance-owner-removal-v1.json`](vectors/human-assurance-owner-removal-v1.json).
-This specifies the next implementation; it does not claim the runtime serves
-the variant yet.
+The operation definition serves this additive variant; native qualification
+remains a separate implementation receipt.
 
 The current team owner's fresh exact-act passkey approval may remove any
-eligible agent or service membership of that team, including one admitted
+agent/service membership or membership whose kind is not verified, including one admitted
 before cutover, one outside the requesting root's admission bucket, or one
 whose admitting root has been replaced or revoked. A working root, membership
 certificate or operator credential alone does not authorize this variant.
 The default root/self variant keeps its existing narrower authority.
+
+Terminal prepare requires an authenticated registered requester with a
+current grant for this protected team scope. The owner-initiated path specified
+below instead admits the current B3 session; it does not require an agent to
+request the act. In either path `requester` and `requester_key` are provenance
+only and cannot satisfy the owner's B3/current-credential/exact-act UV checks.
+Neither path reads a controller key into a worker or terminal.
+The frozen server-derived `target_kind` is exactly `"agent"` or
+`"kind not verified"`. A verified service-agent membership and a local service
+certificate use `"agent"`; a legacy service membership with authoritative
+unknown kind uses `"kind not verified"`. Service is not another identity kind.
 
 The closed subject is `{team_id, member_id, certificate_id,
 expected_membership}`. `member_id` is the certificate's `member_did_aw`, or
@@ -286,12 +260,31 @@ action policy into B2. Approval displays the target and consequence. A changed
 target or snapshot under the same operation UUID conflicts, never silently
 selects another certificate.
 
-This is agent/service membership removal, not human membership or human-role
-removal. A global target requires positive verified agent kind; unknown kind
-or an unenrolled legacy human label establishes no agent eligibility. Local
-subjects retain their separate local-member and protected-key exclusions.
+Every team certificate has exactly one owner-approved removal operation,
+selected by current verified kind. A verified human belongs exclusively to
+`team.human.remove/default`, which refuses unknown kind. A verified agent or
+an unknown kind belongs to `team.agent.remove/owner_approved`. For unknown
+kind, including a registered but unenrolled legacy member, the frozen approval
+display includes a **Kind** row in the main view before approval: **"agent"**
+for `target_kind="agent"`, or **"agent or person not confirmed"** for
+`target_kind="kind not verified"`. Technical details retain the exact frozen
+value. The shared `|kind` formatter accepts only those two strings; every other
+value refuses. This wording supersedes the earlier literal main-view text
+"kind not verified" (coordinator `32499ce5`, 2026-11-13). The server derives this
+classification from current authoritative facts, never a requester-supplied
+kind label. The same classification is required at release: an unknown target
+that becomes a verified human must refuse, without switching operations or
+reusing the earlier display/UV. Unavailable evidence never becomes unknown.
+The owner's live exact-act approval authorizes removal in either
+operation; the unknown case does not assert verified agent kind.
+
+This exception is exclusive to the owner-approved variant. Root/self unattended
+removal and unattended admission still require positive verified agent kind
+for global subjects and retain their local-member and protected-key checks.
 Current human/controller/namespace authority and last-owner protections
-remain independent checks. An unavailable current fact refuses release.
+remain independent checks. Unavailable current evidence still refuses release;
+it is not converted into an unknown-kind approval. Human-role removal remains
+a separate operation.
 
 The existing certificate-revocation encoding and exact registry confirmation
 remain the effect boundary. Retain one signed effect and its release claim;
@@ -301,6 +294,63 @@ only with fresh confirmation and the atomic receipt/audit transition, keeping
 rate history. A pre-cutover or service certificate without an admission record
 can still be revoked; removal must not fabricate a quota record or charge.
 Original operation, authority-observation and UV deadlines never restart.
+
+#### Owner-initiated prepare (implementation qualification pending)
+
+Juan 2026-11-13, via coordinator `4d1c282e`: an owner must be able to start
+this removal from the owner page when no terminal or trustworthy root is
+available. The route follows the separately ACKed security text; source, visible-page
+composition and native qualification remain separate receipts. Until the
+owner-page action is composed and qualified, it lists all current memberships
+with kind and recorded admission provenance, and offers no removal action.
+A missing signer admission record means "not recorded by this signer", not an
+assertion that the certificate came from a particular pre-cutover process.
+
+The new write is `POST /governance/operations` on the pinned human origin.
+Its closed owner-removal selection is
+`{operation_id, operation, variant, team_id, certificate_id}`, with
+`operation="team.agent.remove"` and `variant="owner_approved"`. A current B3
+console session and its CSRF protection are required. The session's exact
+subject/scope must map to a current designated owner, usable current credential
+and loaded binding for that team; a contact, alias, first approver in a list,
+operator credential or requester proof cannot supply that authority. Check the
+pinned Host and exact Origin, JSON/body limits and CSRF before preparing. A
+foreign team, stale session, unknown selector or unserved initiation port
+refuses without pending state, signature, grant or external mutation.
+
+The server freshly resolves the selected certificate UUID at its pinned
+registry, freezes the exact four-member subject and current classification,
+and presents that complete intent to the owner. The list entry and submitted
+UUID are selectors, not evidence of kind or authority. The route cannot take a
+caller-supplied audience, controller, snapshot, target-kind label, requester or
+host identity. An exact same-UUID retry first reconciles the owned saved
+selection and returns its original intent; changed selection conflicts. The
+server never retargets the saved operation from a refreshed list.
+
+The configured signer-host requester identity is recorded as provenance only;
+it is not a synthetic agent grant or approver. The original B3 initiating
+subject is retained for audit, with no session token or reusable credential in
+the approved payload. A trusted typed owner-initiation port binds the exact
+session subject/scope, selection and operation UUID; public JSON and the
+restricted requester API cannot construct it. This creates no standing
+requester binding, enrollment, reusable unlock or permission to initiate other
+operations. Definition-owned initiation defaults off for every other row.
+
+Prepare only creates the same pending B2 request. Approval still requires one
+fresh exact-act UV by the policy's current owner, after the frozen display is
+shown; the login gesture is not that approval. Deny has its own exact-act UV.
+Current owner/credential/binding, target classification, snapshot, B2/B3 and all
+original deadlines are rechecked by the existing engine. A fresh login may
+resume the same owned pending request, but cannot refresh its expiry or alter
+its intent. An expired/retired initiator cannot borrow the host provenance to
+write. Receipt recovery remains read-only with respect to external delivery.
+
+The owner page and this route never call a controller or registry signing
+shortcut. The existing shared executor, retained proof/request, single release
+claim, exact consumer confirmation and atomic quota/receipt/audit remain the
+only effect path. The initial route enables only owner-approved agent removal;
+verified human membership removal remains its separately defined operation.
+Policy scenarios: `vectors/human-assurance-owner-initiation-v1.json`.
 
 Hook retargeting uses the existing owner-act vocabulary: revoke the old
 binding and activate the new binding as separate exact acts, with separate
@@ -589,11 +639,13 @@ No adapter implements its own ceremony, request parser or receipt store.
 | Request | GET `/protected-operations/{operation_id}` | Authorized exact-scope receipt; never re-signs. |
 | Request | POST `/protected-operations/{operation_id}/execute` | Bounded unattended operation only, rechecking its catalog authority; live-floor operations refuse here. |
 | Request | POST `/protected-handoff-starts` | Restricted preparation of the exact credential-start body; section 4 LOGIN before H signs. |
-| Request | GET `/protected-admission-policies?team_id=T` | Nonsecret setup/status read for an authorized requester. |
 | Human | GET `/handoff/{handoff_id}` | Existing shared page in its stored governance or LOGIN mode. |
 | Human | GET `/handoff/{handoff_id}/governance` | Current authorized human reads the frozen operation/state. |
-| Human | POST `/handoff/{handoff_id}/governance/options` | B3 options for this exact act/current human. |
+| Human | POST `/handoff/{handoff_id}/governance/options` | B3 options for this exact act/current human; `{"state":"approved"}` when that human's own retained approval of it awaits only execute (below). |
 | Human | POST `/handoff/{handoff_id}/governance/execute` | Existing browser/CSRF protections, bound UV and current authority; execute once. |
+| Human | POST `/handoff/{handoff_id}/link` | Personal mailed link: reveals the frozen operation's display to that approver; decides nothing. |
+| Human | POST `/handoff/{handoff_id}/link/options` | B3 options for that approver, this exact act and one decision (approve or reject); for approve, `{"state":"approved"}` as on the governance route. |
+| Human | POST `/handoff/{handoff_id}/link/decide` | That approver's one fresh exact-act UV decides; approve then executes once. |
 
 The request origin accepts one of these mutually exclusive requester proofs:
 
@@ -636,8 +688,7 @@ checks the same human/holding or key authority that could prepare the act;
 a cookie authenticates that inspection only with the current association,
 never a signing approval.
 
-The policy read returns `service_id`, `team_id`, `mode` (`protected` or
-`legacy`), and `policy` (the immutable version, digest, listed teams, root
+The transitional signer policy read returns `service_id`, `team_id`, and `policy` (the immutable version, digest, listed teams, root
 selector and bounds, or null when this service has no policy for the team).
 A prospective root is eligible for this read only if its registered identity
 is explicitly named by the provisioned profile, or it has an authorized pending
@@ -679,23 +730,279 @@ aw constructs `/handoff/{handoff_id}` on its pinned human origin; any echoed
 origin mismatch refuses. The server binds the identifier to its original
 requester and exact authority scope. Changed body, key, target, human, policy or
 callback under that identifier refuses `operation_conflict`. Pending lifetime
-uses the existing shared handoff's bounded expiry (at most 600 seconds), capped
-by every frozen artifact/policy deadline. It is never extended by polling or
-retry. A new explicit attempt after expiry has a new operation ID; it cannot
+uses the existing shared handoff's bounded expiry: at most 600 seconds, or at
+most 24 hours for a `live_floor` approval whose notice the signer mails to its
+approvers (Juan 2026-11-13, via coordinator: people do not read mail within ten
+minutes). The frozen-intent format below separates that pending window from
+an artifact that will be issued at execution. Policy TTL and the original
+pending expiry still cap the wait; a prepare-time registry timestamp or
+owner-act expiry must not silently reduce it to five or ten minutes.
+Only the wait for the human grows: the 300-second UV-at-effect bound, the
+owner-act lifetime and execution deadlines are unchanged. It is never extended
+by polling or retry. A new explicit attempt after expiry has a new operation ID; it cannot
 silently recover by re-signing the old one.
 
 Use B2's existing covered-request digest, not a second digest engine:
 SHA-256 of `aweb.approval-request/1` plus LF plus canonical UTF-8 JSON of
 `{"policy":{"ref":POLICY_REF,"version":POLICY_VERSION},"request":REQUEST}`.
 REQUEST freezes the typed operation/variant, service/origins, requester, scope,
-key authority/generation, every artifact field, expected state/head, operation
+key authority/generation, every frozen template field and permitted issuance rule, expected state/head, operation
 ID, protocol nonce/issued/expiry and validated completion binding. Canonical
 JSON is the existing B2 safe-integer/no-float form; unknown and duplicate fields
-refuse. The `digest` is 64 lowercase hex characters. Both page and CLI display
-the full digest and its comparison fingerprint: the first 16 hex characters in
-four groups of four separated by a single space. The page displays the selected
-identity/key and scope alongside that value; a short fingerprint is a human
-comparison aid, never the authentication check. Clients verify the full digest.
+refuse. The `digest` is 64 lowercase hex characters. Its comparison
+fingerprint is the first 16 hex characters in four groups of four separated by
+a single space. Page and CLI lead with the act in names and consequences, from
+the operation's own display definition, and keep the fingerprint visible. The
+full digest is one step away: in the page's Technical details, with the
+selected identity/key and scope, and in the CLI's `--json` output or details
+line (Juan 2026-11-13, via coordinator). A short fingerprint is a human
+comparison aid, never the authentication check. Clients verify the full digest
+themselves.
+
+### Mailed approval links (superseded implementation)
+
+The target notice rule is **no link and no act detail**. Nothing new may rely
+on the old implementation described below; the approval service replaces it.
+
+The signer mails each eligible approver their own approval notice after the
+prepare transaction commits, up to the requester's notice budget; the requester
+never receives or relays a link. The budget is ten notices per requester per
+hour, one per approver mailed, across operation kinds and for one signer
+authority, and never less than one full round: a request to more approvers than
+the budget is mailed whole when the window holds no other notice. Each prepare reserves its notices once, in its own transaction, so a
+repeated prepare or concurrent prepares cannot spend more. Past the budget the
+request is still created and waits for its approver exactly as a mailed one
+does, but no notice is mailed for it, then or later. Its authorized owners see
+it on the owner page marked not mailed (over the notice budget), and the signer
+records the suppression durably: an audit event and the reservation row. The
+prepare answer, its receipt, frozen payload, digest, operation id, expiry and
+resume are unchanged, so the requester's aw does not yet report it; an agent
+requester cannot necessarily read the owner page, and gains no permission to.
+Reporting it to the requester is a later, negotiated aw change. A request past
+the budget is never refused, re-approved or shortened for it.
+Opening that personal link reveals the request, and one fresh user-verified
+passkey assertion bound to the exact act approves or rejects it: one gesture,
+with no separate LOGIN (Juan 2026-11-13, via coordinator). The notice says
+that Deny also asks for the passkey. This is the only way possession of a
+mailed link reveals a request. Its requirements:
+
+* The link carries B2's personal candidate token in the URL fragment. The page
+  strips it from history and sends it only in POST bodies. It is bound to that
+  candidate, that approval and the pinned human origin, and expires with the
+  operation. The page and the reveal, options and decide responses are
+  `no-store` with a no-referrer policy, and none is exposed cross-origin. The
+  token is redacted from access, application and error logs and from any
+  tracing or body capture. The page loads no third-party asset.
+* GET and passive prefetch/preview requests return no frozen payload, consume
+  no token or approval, and make no decision. Reveal, options and decide use
+  POST only, under the pinned Host/Origin and the WebAuthn RP/origin checks of
+  these narrow routes, without a standing LOGIN session. Any holder of the
+  personal token, including an active mail scanner that executes the page and
+  sends its reveal POST, can read the request; token possession alone cannot
+  approve or reject. Reveal is read-only, so such a reader cannot spend the
+  token or prevent the person's later ceremony. Origin, RP and CSRF checks are
+  necessary but never replace the exact-act UV.
+* Reveal returns the complete frozen request the covered digest is computed
+  over, technical fields included, never a projection of it. The operation's
+  definition must classify that whole request as revealable: names and values
+  shown to the person are frozen into it at prepare, and it holds no secret,
+  credential, token or private key reference. A request not classified
+  revealable refuses reveal; fields are never redacted or substituted, so the
+  digest the person can check is the digest of what they saw.
+* Options and decide resolve the token to its candidate, map that candidate to
+  the current authorized human and enrolled credential, and keep every fence:
+  current authority and generation, policy version, B2 eligibility and
+  retirement, the B3 UV and counter checks, the 300-second UV-at-effect bound
+  and one consumption. A reject is the same exact-act ceremony with the reject
+  purpose and records `refused(human_refused)`.
+* No standing session is created. The link never authenticates a console
+  session, an owner page, another operation or another candidate.
+* An approval is not spent by a failure after it is recorded. When this
+  approver's own passkey approval of this exact act is decided and retained,
+  nothing is signed, and its original UV-at-effect window (the earliest of the
+  challenge's issue plus 300 seconds, the challenge's expiry and the
+  operation's) is still open, approve options answer `{"state":"approved"}`
+  instead of a challenge, and that approver's reveal still shows the act, so a
+  reopened page can finish it. The page then runs execute (or decide) once
+  more when the person presses Approve; it reuses the retained UV and does not
+  extend its window. The answer is advisory and grants nothing: execute
+  rechecks the session, credential, B2/B3, policy, authority and deadlines under
+  its locks. A reject never takes this path, another candidate never gets it,
+  and past the window, or once the credential is revoked, nothing finishes. A
+  `503` from execute or decide is "not completed yet", which the page offers to
+  try again. The 503 may also be the lost answer of an act already applied:
+  its options are then refused, nothing runs again, and the signed-in page
+  reads the request to show how it ended, while the mailed link, which cannot
+  read a decided request, says it cannot confirm and points to History. Once a
+  decision was sent, the mailed link's own expiry check reads a spent link or
+  an expiry the same way: never as undecided, never as a dead link.
+
+Inbox access therefore discloses the complete classified request to whoever
+holds the inbox or runs the page with its link; it never supplies the
+approval. The notice and the page show the operation's actual retained
+`expires_at`, never a nominal 24 hours. This is the narrow link-bound route,
+not a general anonymous human API.
+
+For an operation whose complete frozen request is classified revealable and
+whose frozen B2 policy permits link-based request reveal, the notice body may
+include the operation definition's rendered title from that frozen request.
+The subject remains generic. Otherwise the notice remains locator-only. The
+title may be exposed by mail-body previews and notifications; a generic
+subject does not prevent those previews. A later policy never widens an older
+notice. The title is rendered from the same frozen request and definition as
+the page, as plain text and HTML-escaped in the HTML body, never in a header;
+it supplies no approval and replaces neither the page's complete request,
+its fingerprint nor the exact-act UV.
+
+### Frozen intent, execution-time issuance (client composition and qualification pending)
+
+Juan 2026-11-13, via coordinator `d03f6a96` and `465f00d3`: a human approves
+the exact frozen intent, and the short-lived artifact is issued at execution
+under that approval. Every protected `live_floor` row with execution timestamps
+uses the **single** `approval_format="intent_v1"` prepare form. This includes
+`identity.root.endorse/default`, `human-role.revoke/default` and
+`team.agent.remove/owner_approved`, and the timestamped live-floor rows added
+later. Bounded-unattended rows keep their existing format and windows; local
+BYOT signing outside the protected approval protocol keeps its artifact wire.
+
+The input carries `approval_format` before it is saved, canonicalized or signed.
+The frozen request's `artifact` is a closed descriptor:
+`{v:1, type:"aweb.protected-artifact-intent", template, delivery,
+issuance_window}`. `template` is the exact unsigned consumer artifact with
+only its definition-declared execution-issued time fields absent. It retains
+all other fields, including any nonce, controller/issuer key, subject, current
+state/head and policy. `delivery` is exactly `{audience, method, path}`, at the
+already pinned consumer; it contains no private headers or capability.
+`issuance_window` is exactly `{not_before, not_after}`, fixed at prepare and
+capped by the original pending/B2 policy window. The published, pinned operation
+definition owns these grammars and the only omitted fields; the caller cannot
+choose a template, time field, serializer, route, lifetime or signing key.
+
+Whole-request mailed-link classification for these three rows covers the
+operation/variant/version/UUID, public scope and authority identifiers,
+requester provenance, closed subject/snapshot/kind, applicable frozen policy
+and expected head, descriptor/template/delivery/issuance window, and an optional
+validated loopback redirect. The new owner-removal row may be added to the
+revealable pin only after that complete classification has security text ACK.
+No session or link token, credential evidence, private key, retained attestation,
+Authorization header or private delivery bundle is part of that view. Adding
+another field requires its classification before revealability can expand.
+
+For membership removal the template retains the exact covering-v2 revoke
+request's team, certificate UUID, registry audience, method, route, domain,
+operation and canonical body hash, plus the controller key; only
+`/request/timestamp` is absent. The closed membership snapshot and target-kind
+display remain in the frozen request. For an owner act the nonce, act, exact
+subject, team/key and audience are frozen; only `/issued_at` and `/expires_at`
+are execution-issued. An ID-certificate intent freezes the root/key, parent,
+kind, domain, policy and expected head; only `/issued_at` is issued later, and
+the existing root subject-proof registration path remains separate.
+
+The ID certificate's `issued_at` is informational rather than an admission-time
+witness (`id-certificates.md`, section 2). Registration imposes no age limit on
+that field: the client checks it against the frozen issuance window, and may
+register that same retained certificate later using a fresh subject-signed
+covering request. Current root/issuer keys, head, ancestry and registration
+witness checks still apply. The fresh request-authentication timestamp does not
+reissue or alter the certificate or its parent signature.
+
+B2's digest and the exact-act passkey challenge bind this complete intent,
+version, original issuance window and displayed consequences. The signer
+rechecks current eligibility, snapshot, kind partition, authority, action policy,
+credential and UV without deriving another target. A changed eligible kind
+also needs a new display/approval. Inside the original signature transaction,
+the definition materializes the concrete artifact from that same template,
+using the execution time only for its declared fields. The existing consumer
+serializer validates the complete result before signing. The engine records
+one issued artifact with the verified signature before release. The private
+issued artifact has its own ordered migration; the
+approved request and its digest are never rewritten.
+
+The signing/release deadline is the minimum of the original pending/issuance
+window, the original exact-act UV/challenge bound and existing consumer
+freshness/expiry bounds. A request timestamp keeps its existing freshness
+window; an owner act keeps its maximum 600-second consumer lifetime. Those
+bounds begin when the artifact is issued, never when a retry or receipt read
+occurs. Recheck original deadlines after final awaits and cache invalidation,
+and before release. The one issued artifact and signature are reused after
+uncertain answers; no recovery path reissues a timestamp, nonce, signature,
+target or deadline. Historical exact
+confirmation may settle an already-applied effect after expiry but never sends.
+
+The client verifies the pinned descriptor and every static field, then verifies
+the returned retained artifact's existing canonical encoding and controller
+signature. Only the definition-declared time fields may differ from the
+static template, and their times/lifetimes must satisfy the frozen issuance
+window and the existing consumer rules. A historical applied receipt
+never causes a second local POST. Artifact/signature substitution, a changed
+route/body/certificate or a receipt/reference mismatch refuses.
+
+For a historical **applied** receipt, issuance-window/lifetime checks are
+historical checks, not a demand that the artifact remain fresh at read time.
+In particular, aw does not apply the revoke request's 300-second freshness
+window against its current clock while reading an already-confirmed removal.
+The signer and consumer enforce that window at release/application. The client
+still verifies the exact retained signature, frozen template and applied
+operation/artifact reference. A pending, unknown or sign-only receipt grants
+no permission to send an expired effect, renew it, or manufacture an applied
+status. Fresh effect paths retain their current-time checks.
+
+There is no parallel frozen-artifact prepare/execute compatibility path for
+these rows. A missing or unsupported `approval_format` fails before pending
+state, page display, challenge or signature with HTTP 426
+`detail="upgrade_aw_required"` and the explanation **"upgrade aw to use this
+protected approval format"**. Updated aw prints that sentence; an older binary
+may print the stable upgrade code verbatim, but must not proceed or substitute
+an unrecognized artifact. A previously prepared old-format operation cannot
+be converted in place or acquire a fresh approval/deadline. Preserve historical
+committed receipts and exact read-only reconciliation of already-retained
+effects; these do not authorize old-format execution or another release.
+
+An upgraded aw detects a saved unfinished body without
+`approval_format="intent_v1"` before sending it. It never resends that body
+through Prepare/Execute. It makes one bounded, authenticated, non-executing
+receipt read with release disabled. Existing exact historical confirmation may
+settle the local receipt atomically, but the migration read never signs or
+sends an external effect. Verify a committed historical result under its
+original artifact rules only when retained trusted verification inputs suffice;
+a sign-only historical owner act is not proof of application and is not posted
+by this migration. Report signing/application separately when needed.
+
+A definite owned refusal, or affirmative evidence that nothing was signed and
+old-format execution is prevented, can retire the saved active entry and ask
+the human to start a new UUID. A missing record is not that evidence. Unknown,
+unavailable, signed-unconfirmed, prepare-unconfirmed or unverifiable results
+retain or quarantine the original ID/body for reconciliation; they cannot be
+silently forgotten or automatically replaced by a new operation. Tell an
+already upgraded user that the old operation needs reconciliation or a new act
+after a definite no-effect outcome, rather than repeatedly saying “upgrade aw”.
+For a signed legacy owner act past its retained `expires_at`, move the save
+out of the active resumable set into a quarantine record, keeping the original
+ID, body, signed bytes and known receipt facts. Report **"signed; application
+unconfirmed; the act has expired and will not be sent"**. Expiry prevents a new
+admissible submission; it does not prove that an earlier delivery failed to
+apply. Quarantine is a terminal state for automatic resume, not data erasure
+or permission to remint. The human uses the application's existing authorized
+role-state view and explicitly requests a new act if needed; this guard adds
+no generic app-state read endpoint. The new act needs its own current-state
+checks and exact-act UV.
+
+Before allocating a new UUID or matching canonical intent, aw detects an old
+unfinished save for the same operation/variant, stable target scope, audience
+and exact subject. Adding `approval_format` cannot make that save disappear
+from matching and bypass the single non-executing receipt read. Different
+team/resource scopes are not conflated. A quarantined uncertain operation
+requires an explicit human decision before any new act for that target.
+This migration guard is not an alternative old-format approval/execution path.
+
+Coordinator `cef58d92` owns rollout: the server and all three aw clients (app
+role revoke, ID endorse, owner-approved remove-agent) land together, and ship
+as one aw release plus the corresponding server/signer release. No deployment
+serves `intent_v1` before that aw is published; OATS pins that client. If a
+known deployed flow would be stranded, report it before adding any exception.
+These are explicit rulings for this format change, not a general permission to
+narrow other released routes. Policy scenarios:
+`vectors/human-assurance-execution-intent-v1.json`.
 
 Governance prepare accepts an optional `redirect_uri` under the existing
 literal-loopback parser. Invalid input is HTTP 400 `redirect_uri_refused`.
@@ -715,9 +1022,27 @@ The closed receipt shape is `pending(reason, expires_at)`,
 
 `operation_refused` retains the typed downstream diagnostic for operators;
 clients do not parse prose or infer an alternate operation from it. Parsing
-failures before prepare use HTTP 400 `request_invalid`/`redirect_uri_refused`;
-invalid authentication is 401 `requester_invalid`, scope denial 403
-`scope_refused`, binding conflict 409 `operation_conflict`. Authenticated
+failures before prepare use HTTP 400 `request_invalid`/`redirect_uri_refused`.
+An unknown or unserved operation/variant uses HTTP 400 `operation_not_served`,
+including a defined operation whose required consumer or signing adapter is
+not installed in this composition. This creates no pending operation or approval
+link. Malformed selectors remain `request_invalid`; a served operation denied
+by current policy/authority keeps its specific refusal code. aw preserves
+`operation_not_served` and explains that the service needs a version supporting
+the operation. A detail-less HTTP failure is not evidence of an unserved
+operation and keeps its generic status code. The
+[`protected-operation-availability-v1.json`](vectors/protected-operation-availability-v1.json)
+controls distinguish these cases from an incorrect request origin.
+
+Invalid authentication is 401 `requester_invalid`, scope denial 403
+`scope_refused`, binding conflict 409 `operation_conflict`. A requester that
+already has twenty unfinished requests needing a human under one signer
+authority is refused at prepare with 403 `open_requests_limit_reached`, before
+any approval or operation is created. An agent is counted by its own principal
+and an owner's page request by that owner, never pooled under the signer host's
+key. A place frees when its request is signed, refused or expires; an approval
+alone does not free it, since an approved act whose signing failed can still be
+finished. Resending a prepare already made still answers. Authenticated
 lookup with no authorized matching record returns 404 `operation_not_found`,
 not proof that a previously sent request never committed. Availability failure
 is 503 `receipt_unavailable`. Receipt states themselves use HTTP 200.
@@ -749,6 +1074,30 @@ or a separately authenticated current human for that holding/key authority.
 An operation ID is never a capability. A retired credential cannot inspect
 through its retired session; an independently authorized reader can still
 recover the committed result.
+
+`aw id operation status --operation-id <UUID> [--protected-profile <path>]`
+is the requester's receipt read, made on its own. It reads the existing
+operation once. The service may record an already-confirmed outcome and its
+existing atomic bookkeeping. The read never creates an operation or a release
+claim, never signs a new protected artifact, never sends an effect and never
+extends a deadline. aw prepares, executes, approves and resumes nothing for
+it, and leaves its saved request, UUID and quarantine facts as they were.
+
+- **Scope.** A saved request is read only at the origins it was sent to, under
+  the profile's one binding whose scope matches it in every field but
+  `generation`. Without a saved request, the profile must have exactly one
+  binding.
+- **State.** The answer is the receipt's own state:
+  - `pending`, with its reason and `expires_at`;
+  - `committed`, with its `result` and `result_verification: not_performed`;
+  - `refused` or `unknown`, with its code;
+  - `none`, only for the typed 404 `operation_not_found`.
+
+  `none` carries the same limit as that 404: it is not proof that an earlier
+  send never committed.
+- **Errors.** Any other refusal or failure is an error, not a state. That
+  includes a retired requester's 401, which neither proves an outcome nor
+  justifies discarding saved evidence.
 
 An internal typed custody adapter resolves an existing protected key reference;
 missing references refuse, never generate or rotate a replacement. A
@@ -913,179 +1262,3 @@ resolver or delivery subsystem is created to bypass this rule.
 A usable stolen passkey plus its UV factor can add a credential. Notices
 provide detection, not prevention of that case. The receipt exposes committed
 credential changes independently of notification success.
-
-## 7. Custody migration and compatibility
-
-Worker OS users, containers, processes, mounts, backups and keychain access must
-not reach protected human/namespace/team-controller private keys or unlock
-material. Merely hiding a filename, asking for a passphrase, or checking an
-agent-runtime environment marker does not establish isolation. Existing keys
-enter protected custody through a separately approved operator-side import,
-not through worker request bodies or a key-export endpoint. Preserve the exact
-public key, ID, registry/origin bindings and issuance history. No automatic
-rotation, remint, global-registry move or production write follows from build
-authorization.
-
-Inventory the existing human keychain entries and encrypted backups,
-namespace controller stores, team-key stores, hosted DB custody, custody
-sockets and worker-visible grants. Include OATS legacy minting roots under `.aweb-roots/<label>/.aw` and configured
-`settings.oats.aweb.root`/`roots`, including their referenced team-key stores.
-An endorsed root's AGENT key held by the worker is intentional bounded
-operational custody, not a human/controller-key isolation finding. Inventory
-its admission scope/limits separately; do not confuse it with the old minting
-root's controller keys.
-A path-only scanner can report known findings but cannot certify isolation:
-OS-keychain accessibility, inherited mounts, sockets and backups matter too.
-A co-resident protected signer is possible only with an actual separate
-protection boundary (for example a different OS security principal without
-worker access); a separate process under the worker user is insufficient.
-A key for another team is not safe merely because a worker selects a different active team. The isolation finding is
-about accessibility and authority, not a directory basename. Package .8 owns
-per-installation migration approval, backup/removal and rollback limits.
-
-Released local BYOT owner-act signing continues to produce artifacts that
-remote verifiers accept under the unchanged wire rules. It is unsupported in
-the protected profile, not cryptographically distinguishable or universally
-rejected. Package .8 must name every affected BYOT team/client and its explicit
-transition before activation; a documentation change does not perform cutover.
-Protecting an existing team is an operator-approved .8 migration, announced to
-all affected deployment owners before it takes effect. Inventory even clients
-that never opted in but currently use that team's member invites. Their exact
-fix is the configured protected-service/root admission path; coordinate their
-upgrade/cutover before enforcing the narrowing. No silent automatic opt-in,
-identity remint or local invite fallback is permitted. .7 reports findings to
-the coordinator/.8 as deployment/team/service identifiers, custody category,
-public key/ID references, affected consumer/version, readiness finding and
-proposed operator action. Reports contain no private keys or unlock material;
-an unavailable inventory result is unknown, not clean.
-Legacy artifacts remain verifiable under their original formats. The new
-signer removes unsupported human/controller signing entry points rather than
-calling them as a fallback. Existing client requests must either use the
-compatible restricted operation or return an explicit upgrade/approval-required
-refusal. Inventory every affected consumer before activation; do not silently
-weaken the signer to preserve a bearer-only governance route.
-
-Agent identity creation remains in the released parent/child exchange. A local
-agent can parent a local child; registered children require an eligible
-registered issuer under the existing ID contract. A deployment root can issue
-a registered descendant when it is that actual issuer; the chain must show the
-real parent, never an invented local intermediary. This includes first
-certification of an eligible existing chainless registered agent, after subject
-possession/current registry checks; a session grant seat retains its resident's
-ancestry and does not acquire a new parent of its own. Membership admission is a
-separate controller effect and does not mint or endorse an identity itself.
-
-
-Protected-issuer `identity.ancestry.resign/unchanged_protected_issuer` requires
-retained evidence that the original was issued by this signer after live
-approval or an explicitly approved re-endorsement. Legacy token-issued artifacts
-imported during custody migration refuse; a routine re-sign cannot upgrade
-that provenance. Require the unchanged current child ID, key, domain, kind and
-parent, its subject-possession proof, current non-revoked head and the same
-verified issuer identity/authority. Only the current issuer key (after valid
-continuity), issued timestamp and corresponding signature/certificate digest
-may change. No child-key change, parent change, rights change, expiry extension
-or refresh of a revoked/replaced endorsement qualifies. ID v1 has no new
-assurance or expiry field added by this rule. A genuinely new endorsement uses
-its own live act.
-
-## 8. Existing entry points and task mapping
-
-The following inventory is source evidence, not evidence that adapters have
-already closed these paths. Cloud contributes its hosted route-level trace;
-application contributors supply the app rows. A supported composition must
-route every key use through its classified operation or refuse it.
-
-| Existing family | Source | Required disposition |
-| --- | --- | --- |
-| Human creation, keychain signing and backup | `cli/go/cmd/aw/id_human.go`, `cli/go/awid/human_signer.go`, `cli/go/awconfig/human_keychain.go` | Protected enrollment/issuance and operator migration; no worker passphrase fallback. |
-| Human/root/agent child exchange and registration | `cli/go/cmd/aw/id_child.go`, `id_parent.go`, `id_create_parent.go` | Human/namespace uses are typed live operations; eligible agent issue/re-sign remains unattended. |
-| ID rotation, recovery and revoke | `cli/go/cmd/aw/id_rotate_key.go`, `id_rotate_key_recover.go`, `id_revoke.go` | Classify key type, continuity and target; no human/root replacement under the agent exception. |
-| Namespace address, controller, team creation and deletion | `cli/go/cmd/aw/id_namespace_*.go`, `id_team.go`, `id_team_rotate_key.go`, `id_team_server.go` | Enumerate exact controller effects; authority expansion/ownership changes require live policy, unknown operations refuse. |
-| Team invite/admission, certificate renewal, member replacement/removal | `cli/go/cmd/aw/id_team.go`, `team_spawn_authority.go`, `team_replace_key.go`, `team_human.go` | Root agent-only bounded admission; human admission separate live act; unchanged agent continuity renewal only. |
-| Human reads/connect/team-auth/mail | `cli/go/cmd/aw/human_participation.go`, `id_request.go`, `id_registry_read.go` | Section 4 typed restricted server authentication; no arbitrary installed tool/path signer. |
-| Resident custody app/message signing | `cli/go/cmd/aw/custody.go`, `custody_app.go` | Agent resident work remains scoped; never load a protected human/controller key into worker custody. |
-| Controller owner/hook acts | `cli/go/cmd/aw/hooks.go`; [owner act](owner-act.md) | Shared signer live approval and existing downstream verification/nonce consumption. |
-| Anonymous owner-act delivery | [Owner-act delivery](owner-act-delivery.md) | Allow only the valid controller act; designation checks the human's own kind/current membership, not nearest-human ancestry. |
-| Team-auth on the human origin | [Human confirmation](design/human-confirmation-from-aw.md) | Refuse; neither a valid signature nor a typed payload crosses this origin boundary. |
-| App-origin handoff starts | Section 4 and [human confirmation](design/human-confirmation-from-aw.md) | Session: current direct-child member may prepare, with H's own app LOGIN and Allow; credential: same-signer H through protected LOGIN. Neither is governance authority. |
-| Secrets narrowing through team-auth | [Secrets](design/secrets.md) | Allow only authorized narrowing/containment, with last-owner protection; no holding removal or re-enable. |
-| Logs `reader-slot` / `remove-reader` tools and old reader designation route | [Human-role holders](design/human-role-holders.md) | Refuse/remove together in package .9; use protected `human-role.*` owner acts. |
-| Token/session-only or browser-only grant completion | [Human confirmation](design/human-confirmation-from-aw.md) | Refuse; exact frozen-request passkey approval and the existing aw confirmation binding remain required. |
-| Runner register/claim/result and Logs ingest | [Secrets](design/secrets.md), catalog `runner.execute` / `logs.ingest` | Existing typed operational authority only; not owner designation or governance signing. |
-
-Hosted adapter inventories must cover every browser-session, CLI-token,
-installed-tool and linked-channel signer, including cached-member projections,
-certificate reconciliation, immediate-connect recovery and namespace/human
-re-establishment. Classify each path before minting; a cache or recovery path
-is not an exemption. The early hosted `aw id create --org --human-parent`
-branch is not made safe by a later local terminal check: its token-only human
-issuance authority must be removed. Exact hosted route traces remain with
-that implementation's owner; no private application schema governs this OSS
-contract.
-
-Existing tasks remain tracked; the build does not discard their delivery scope:
-
-| Prior work | New scope |
-| --- | --- |
-| acxt deployment-root journey | Attribution/continuity baseline only; not proof of protected controller custody. Preserve the accepted test and add .4/.7 isolation/admission controls. |
-| acxv naming cleanup | Preserve its independent landing; no replacement design name restores removed authority. |
-| acxu browser file consent | Superseded implementation by .5 shared ceremony and .6 Cloud adapter; retain the frozen historical note, no new file-transport implementation. |
-| acwd / C3 / 4.6 and existing human-role handoff | Preserve their shared app API; adapt the signer and typed scope additively in .2/.3/.5. |
-| Secrets 16.41, 16.43a+b, 16.44.3 and full provider/runner acceptance | Continue in .9 with catalog compatibility; no restart or dropped scope. |
-| Existing deployment roots and team/controller stores | .8 inventory and explicitly approved migration; .7 reports findings, never auto-remints. |
-
-## 9. Acceptance boundary
-
-The vectors pin the policy distinctions, including same/different/unknown
-nearest human, old-key continuity versus new-child lost-key recovery, issuer
-kind, first enrollment, approver sets versus credential sets and recovery.
-Each scenario varies the named inputs with all other row preconditions valid;
-its decision reason is distinct from the HTTP receipt code (an unmapped typed
-reason remains diagnostic under `operation_refused`). They are policy
-scenarios, not new cryptographic test vectors or a duplicate
-signer engine. Packages .2–.6 must exercise them against their actual shared
-implementation; static catalog validation alone is not runtime acceptance.
-
-The independent profile must use customer registry/service origins with no
-Cloud credentials, exercise private member-key reads and wrong-registry
-refusal, and prove ordinary request authentication and agent admission while
-worker-held human/controller shortcuts fail. Hosted tests must trace all
-issuance routes, including cached/recovery certificate paths and channel mail.
-Each release names exact package/client/server/registry versions; no version
-is claimed by this contract. Fresh setup and supported existing-state
-upgrade are separate acceptance journeys.
-
-## 10. Review boundary and evidence
-
-All catalog operation groups, requester/receipt ports and policy cases are
-frozen for implementation, including the final loopback-only direct-child
-start, retained-certificate source and H-signed credential-start refresh,
-laptop admission, and server-frozen endorsement policy. There is no remaining
-policy decision blocking these groups. A runtime adapter with no implemented
-trusted evidence producer, custody binding or classified route must refuse
-that operation until its implementation is available; it must not invent a
-fallback or hold the other groups.
-
-Concrete adapter route tables remain .2/.4/.5/.6 deliverables: every
-direct/cached/recovery key use maps to a catalog row or explicitly refuses.
-Implementation handbacks give an exact SHA and focused positive, refusal and
-race evidence, with one independent implementation review and security review
-where a boundary changes. No repeated unchanged consumer FIT round is needed.
-New credential-change recorder kinds must compose with the installed app's
-transactional recorder; a plain local-sink test is not proof of that integration.
-No bootstrap depends on remote Logs. Release and install acceptance remain
-separate from this contract freeze.
-
-Source contracts are [ID certificates](id-certificates.md),
-[AWID](awid-sot.md), [owner acts](owner-act.md),
-[owner-act delivery](owner-act-delivery.md),
-[human-role holders](design/human-role-holders.md) and
-[human confirmation](design/human-confirmation-from-aw.md). The application
-catalog/first-role/entry-point cases were contributed by the app-contract lane;
-its separate Secrets bootstrap correction is included with original authorship.
-The B2/B3 port and lock-order contribution was source-read at
-`27fbd08192a1997874da58abff8d151c0e7779ce`, based on the holder stack rather
-than older main B3. These sources establish reusable boundaries, not completed
-protected-signer integration. The independent reviewer must not ACK their own
-contributed portions; security review covers the assembled contract.

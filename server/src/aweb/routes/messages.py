@@ -537,6 +537,8 @@ async def get_inbox(
                m.content_mode, m.message_version, m.encrypted_envelope,
                sender.agent_id AS sender_agent_id, sender.team_id AS sender_team_id,
                CASE WHEN sender.did_aw_verified_key = sender.did_key THEN sender.did_aw END AS sender_did_aw,
+               sender.did_key AS sender_did_key, sender.alias AS sender_alias,
+               sender.identity_scope AS sender_identity_scope, sender.address AS sender_address,
                sender.status AS sender_status, sender.deleted_at AS sender_deleted_at,
                sender.certificate_id AS sender_certificate_id
         FROM {{{{tables.messages}}}} m
@@ -549,7 +551,7 @@ async def get_inbox(
         query_limit,
     )
     # The senders' agent rows, read with the page for their membership state.
-    sender_columns = ("agent_id", "team_id", "did_aw", "status", "deleted_at", "certificate_id")
+    sender_columns = ("agent_id", "team_id", "did_aw", "did_key", "alias", "identity_scope", "address", "status", "deleted_at", "certificate_id")
     sender_member_rows = list({
         str(row["sender_agent_id"]): {column: row[f"sender_{column}"] for column in sender_columns}
         for row in rows

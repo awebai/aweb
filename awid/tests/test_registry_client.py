@@ -15,6 +15,7 @@ from redis.exceptions import RedisError
 import awid.registry as registry_module
 from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER
 from awid.did import generate_keypair
+from awid.external_authority import OriginContext
 from awid.registry import (
     MAX_REGISTRY_ERROR_BYTES,
     MAX_REGISTRY_RESPONSE_BYTES,
@@ -920,6 +921,7 @@ DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS = {
     "transport": MockTransport(lambda _request: Response(500)),
     "base_url": "http://named-base.test",
     "domain_registry_resolver": _unused_domain_registry_resolver,
+    "registry_origin_context": OriginContext("development", True, "http://named-listener.test"),
     "service_token": "distinguishable-service-token-of-sufficient-length",
     "member_signing_keys": {"engineering:example.com": bytes(range(32))},
 }

@@ -75,6 +75,7 @@ def _signed_timestamp(dt: datetime) -> str:
 
 
 def _signed_from(auth) -> str:
+    _sender_address(auth)
     return (
         (auth.alias or "").strip()
         or (auth.address or "").strip()
@@ -335,7 +336,10 @@ async def chat_send(
     sender = mcp_messaging_auth(auth)
     actor_dids = participant_dids(sender)
     actor_did = actor_dids[0] if actor_dids else ""
-    sender_address = _sender_address(auth)
+    try:
+        sender_address = _sender_address(auth)
+    except HTTPException as exc:
+        return send_refusal(exc)
     aweb_db = db_infra.get_manager("aweb")
     hosted_handle_address = to_alias.strip().startswith("@")
     normalized_alias = normalize_hosted_handle_reference(to_alias, require_agent=True)

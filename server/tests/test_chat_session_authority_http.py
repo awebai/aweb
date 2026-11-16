@@ -22,6 +22,11 @@ async def _foreign_actors(env):
         "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
         "VALUES ($1, 'example.test', $2, $3)", team, team.split(':')[0], controller,
     )
+    # These foreign actors have a real registry team as well as local rows.
+    await env.registry_db.execute(
+        "INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) "
+        "VALUES ('example.test',$1,$2,'public')", team.split(':')[0], controller,
+    )
     for alias in ('mallory', 'eve'):
         sk, _, did = _make_keypair()
         agent_id = uuid4()

@@ -3,13 +3,26 @@ name: Publish service image
 on:
   push:
     tags: ["server-v*", "awid-v*", "secrets-v*", "logs-v*"]
+  # Publishes an existing tag's image again with main's publisher, for a tag
+  # whose own run could not publish it. The image is built from the tag's commit.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag (server-v*, awid-v*, secrets-v*, logs-v*)"
+        required: true
+        type: string
+      first_publication:
+        description: "An image repository this run creates (e.g. ghcr.io/awebai/aweb-protected); empty for none"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: image-${{ github.ref }}
+  group: image-${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -34,4 +47,22 @@ jobs:
         env:
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/publish_release.py --only oci "${GITHUB_REF_NAME}"
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          FIRST_PUBLICATION: ${{ github.event_name == 'workflow_dispatch' && inputs.first_publication || '' }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF" != refs/heads/main ]]; then
+            echo "image recovery runs main's publisher; dispatched from $GITHUB_REF" >&2
+            exit 1
+          fi
+          if ! git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
+            echo "no release tag $RELEASE_TAG" >&2
+            exit 1
+          fi
+          # A dispatch is a recovery of an existing tag's image: it never moves latest.
+          recovery=()
+          [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ]] || recovery=(--recovery)
+          # A new repository is created only by an explicit dispatch input, never inferred.
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && -n "${FIRST_PUBLICATION:-}" ]]; then
+            recovery+=(--first-publication "$FIRST_PUBLICATION")
+          fi
+          python3 scripts/publish_release.py --only oci "${recovery[@]}" "$RELEASE_TAG"

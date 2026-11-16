@@ -27,6 +27,7 @@ const removeTestOperation = "88888888-8888-4888-8888-88888888abcd"
 // signs its canonical bytes with signKey. tamper changes what it freezes or
 // signs (see the cases).
 type removeService struct {
+	serviceOwned bool
 	mu           sync.Mutex
 	server       *httptest.Server
 	signKey      ed25519.PrivateKey
@@ -63,11 +64,15 @@ func newRemoveService(t *testing.T, signKey ed25519.PrivateKey, requesterKey str
 }
 
 func (s *removeService) revokeRequest(t *testing.T, team, certificateID, aud string) map[string]any {
+	return s.revokeRequestAt(t, team, certificateID, aud, "2026-11-13T10:00:00Z")
+}
+
+func (s *removeService) revokeRequestAt(t *testing.T, team, certificateID, aud, timestamp string) map[string]any {
 	t.Helper()
 	name, domain, _ := strings.Cut(team, ":")
 	body, _ := json.Marshal(map[string]any{"certificate_id": certificateID})
 	raw, err := awid.ControllerRequestPayload(aud, "POST", "/v1/namespaces/"+domain+"/teams/"+name+"/certificates/revoke", body,
-		"2026-11-13T10:00:00Z", domain, "revoke_certificate", map[string]any{"team_name": name, "certificate_id": certificateID})
+		timestamp, domain, "revoke_certificate", map[string]any{"team_name": name, "certificate_id": certificateID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,10 +129,12 @@ func (s *removeService) committed(t *testing.T) []byte {
 	if s.tamper == "signed-by-another-key" {
 		_, key, _ = ed25519.GenerateKey(nil)
 	}
-	raw, _ := json.Marshal(map[string]any{"state": "committed", "result": map[string]any{
-		"signing":   base64.StdEncoding.EncodeToString(signing),
-		"signature": base64.StdEncoding.EncodeToString(ed25519.Sign(key, signing)),
-	}})
+	signature := ed25519.Sign(key, signing)
+	var result any = map[string]any{"signing": base64.StdEncoding.EncodeToString(signing), "signature": base64.StdEncoding.EncodeToString(signature)}
+	if s.serviceOwned {
+		result = appliedTestResult(s.sent["operation_id"].(string), signing, signature)
+	}
+	raw, _ := json.Marshal(map[string]any{"state": "committed", "result": result})
 	return raw
 }
 

@@ -411,10 +411,10 @@ async def test_server_startup_applies_the_kit_owner_act_migrations(shared_test_p
     assert await db.fetch_value("SELECT to_regclass('aweb.owner_act_nonces') IS NOT NULL")
     assert await db.fetch_value(
         "SELECT COUNT(*) FROM aweb.schema_migrations WHERE module_name = $1", MIGRATIONS_MODULE
-    ) == 1
+    ) == 2
 
     restarted = DatabaseInfra()
     await restarted.initialize(shared_pool=shared_test_pool)
     assert await db.fetch_value(
         "SELECT COUNT(*) FROM aweb.schema_migrations WHERE module_name = $1", MIGRATIONS_MODULE
-    ) == 1
+    ) == 2

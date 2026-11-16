@@ -217,6 +217,7 @@ MANAGED_GATEWAY_PRIVATE_TOKENS = (
 
 HOOK_SOURCES = (
     "server/src/aweb/routes/messages.py",
+    "server/src/aweb/messaging/mail_ack.py",
     "server/src/aweb/messaging/mail_send.py",
     "server/src/aweb/messaging/chat_send.py",
     "server/src/aweb/routes/federation.py",

@@ -15,7 +15,6 @@ from pgdbm.errors import QueryError
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-_TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 from awid_service.deps import get_db
 from awid.contract import normalize_identity_scope
@@ -34,6 +33,8 @@ from awid.team_server_record import TeamServerRecordError, verify_team_server_re
 from awid_service.delivery_origin import validate_delivery_origin
 from awid.controller_request import ControllerAuthRoute, verified_controller_proof, verify_controller_json_request
 from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
+
+_TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
 

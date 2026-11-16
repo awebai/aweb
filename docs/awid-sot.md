@@ -1427,7 +1427,7 @@ Current ordered effects are:
     namespace controller epochs ([identity certificates](id-certificates.md)).
 11. `011_namespace_delegation.sql` adds a namespace's parent domain and parent
     controller key for ancestor delegation.
-16. `016_team_key_acts.sql` adds the namespace controller's `rotate_team_key`
+17. `017_team_key_acts.sql` adds the namespace controller's `rotate_team_key`
     acts, kept exactly as signed.
 
 The following inventory is exhaustive for current **AWID application tables

@@ -16,7 +16,7 @@ to refresh it.
 | Family | Commands |
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
-| Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `whoami` |
+| Identity | `auth`, `custody`, `id`, `mcp-config`, `org`, `team`, `verify`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `room`, `wake` |
 | Coordination & Runtime | `activity`, `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
 | Utility | `app`, `audit`, `completion`, `doctor`, `help`, `hooks`, `plugin`, `upgrade`, `version` |
@@ -415,6 +415,7 @@ Subcommands:
 - `human` Human identities in a namespace's identity tree
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
+- `operation` Inspect protected operations this identity requested
 - `parent` Request and import your own certificate from a parent
 - `register` Register the current global identity at the configured registry
 - `request` Make a DIDKey-signed HTTP request with the local identity key
@@ -672,8 +673,9 @@ exact act on the service's page; nothing is signed here. Before the page is show
 aw checks the admission policy the service froze against its own read of every
 team's policy. Endorsement grants no resource permissions and creates no policy.
 
---operation-id is the caller's UUID, kept before anything is sent. Running again
-with the same id and inputs resumes that operation; changed inputs refuse
+Without --operation-id, aw keeps a new UUID before anything is sent, and running
+the same command again continues that request. With --operation-id, running
+again with the same id and inputs resumes that operation; changed inputs refuse
 operation_conflict. Once the endorsement commits, aw registers the root's new
 certificate at the pinned registry and reads it back.
 
@@ -682,9 +684,10 @@ Flags:
 - `-h, --help help for endorse`
 - `--human string The did:aw of the human who endorses this root`
 - `--no-browser Do not open a browser; the page is only reported`
-- `--no-wait Show the approval page and exit without waiting for the human; rerun with the same --operation-id to finish`
-- `--operation-id string The caller's UUID for this endorsement; the same id resumes it`
-- `--protected-profile string The operator-provisioned protected-service profile`
+- `--no-wait Exit without waiting for the approver; run the same command again to finish`
+- `--operation-id string The UUID for this endorsement; by default aw continues the same unfinished request or starts a new one`
+- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
+- `--replace string The id of an earlier unfinished endorsement of this root, which stays kept, to ask for a separately approved one`
 - `--team stringArray A team (name:domain) the root will admit agents to; repeat for each`
 
 ## `id grant`
@@ -953,6 +956,42 @@ Flags:
 - `--namespace string Namespace domain (e.g. acme.com)`
 - `--origin string Canonical aweb server origin (e.g. https://aweb.acme.com)`
 
+## `id operation`
+
+### `id operation`
+
+Inspect protected operations this identity requested
+
+Subcommands:
+- `status` Read a protected operation's receipt without performing it
+
+Flags:
+- `-h, --help help for operation`
+
+## `id operation status`
+
+### `id operation status`
+
+Read, once, the receipt of a protected operation this identity requested at the
+service named by --protected-profile. Nothing is prepared, executed, approved or
+resumed, and aw's own saved request is left as it is. The service may record an
+outcome that is already confirmed; it never starts or extends anything for a read.
+
+The state is the service's receipt: pending (with its reason and deadline),
+committed (its result, which this read does not verify), refused or unknown
+(with a code), or none when the service holds no such operation for this
+requester in that scope. none does not prove an earlier request never took
+effect elsewhere. A read that is refused or cannot be made is an error, not a
+state.
+
+A request aw saved is read under the profile's one binding for its scope; without
+one, the profile must have exactly one binding.
+
+Flags:
+- `-h, --help help for status`
+- `--operation-id string The UUID of the operation to read`
+- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
+
 ## `id parent`
 
 ### `id parent`
@@ -1139,7 +1178,7 @@ Subcommands:
 - `members` List a team's members from AWID certificates
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
-- `remove-agent` Remove an admitted agent from a protected team through its protected service, as the endorsed root
+- `remove-agent` Remove an agent from a protected team through its protected service, as the endorsed root or with the owner's approval
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
 - `rotate-key` Rotate the team controller key, re-signing the team's AWID records with it
@@ -1228,7 +1267,7 @@ receipt_unavailable and never means the team has no policy.
 
 Flags:
 - `-h, --help help for admission-policy`
-- `--protected-profile string The operator-provisioned protected-service profile to read the policy from`
+- `--protected-profile string The operator-provisioned protected-service profile to read the policy from (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
 - `--team string The team (name:domain) whose policy to read; the profile must bind its controller`
 
 ## `id team admit`
@@ -1241,8 +1280,9 @@ deployment's endorsed root. No human approves it: the service admits only within
 the team's admission policy, whose version and digest the caller names as read
 from aw id team admission-policy.
 
---operation-id is the caller's UUID, kept before anything is sent. Running again
-with the same id and the same inputs resumes that operation and returns its
+Without --operation-id, aw keeps a new UUID before anything is sent, and running
+the same command again continues that request. With --operation-id, running
+again with the same id and the same inputs resumes that operation and returns its
 original certificate; changed inputs under the id refuse operation_conflict. The
 verified membership certificate is written to --certificate-out.
 
@@ -1252,10 +1292,10 @@ Flags:
 - `-h, --help help for admit`
 - `--member-id string The agent's did:aw, when it is a registered identity; omit for a local agent`
 - `--member-key string The agent's did:key`
-- `--operation-id string The caller's UUID for this admission; the same id resumes it`
+- `--operation-id string The UUID for this admission; by default aw continues the same unfinished request or starts a new one`
 - `--policy-digest string The admission policy digest the caller read (sha256:<hex>)`
 - `--policy-version int The admission policy version the caller read`
-- `--protected-profile string The operator-provisioned protected-service profile`
+- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
 - `--team string The protected team (name:domain)`
 
 ## `id team cleanup-cloud`
@@ -1526,15 +1566,31 @@ endorsed root that admitted it. The membership is the one --certificate names:
 the certificate file aw id team admit wrote, or the agent home's installed copy.
 No human approves it, and nothing in the agent's home is changed.
 
---operation-id is the caller's UUID, kept before anything is sent. Running again
-with the same id and the same inputs resumes that operation and returns its
+Without --operation-id, aw keeps a new UUID before anything is sent, and running
+the same command again continues that request. With --operation-id, running
+again with the same id and the same inputs resumes that operation and returns its
 receipt; changed inputs under the id refuse operation_conflict.
+
+With --owner-approved, the team's current owner approves the removal live, on
+the protected service's page, and any agent membership of the team can be
+removed, whoever admitted it. This identity asks as the registered requester the
+profile grants; it authorizes nothing itself. Name the membership with
+--certificate, or with --team and --certificate-id, which reads the team's
+active listing at the profile's registry as this member. Running the same
+command again continues a removal not yet finished, even once its certificate
+has left the listing.
 
 Flags:
 - `--certificate string The agent's team certificate file`
+- `--certificate-id string With --owner-approved and --team: the certificate id, selected from the team's active listing`
 - `-h, --help help for remove-agent`
-- `--operation-id string The caller's UUID for this removal; the same id resumes it`
-- `--protected-profile string The operator-provisioned protected-service profile`
+- `--no-browser With --owner-approved: do not open a browser; the page is printed`
+- `--no-wait With --owner-approved: show the approval page and return; run the same command again to continue`
+- `--operation-id string The UUID for this removal; by default aw continues the same unfinished request or starts a new one`
+- `--owner-approved Remove with the team owner's live approval instead of as the endorsed root`
+- `--protected-profile string The operator-provisioned protected-service profile (default: AWEB_PROTECTED_PROFILE, else protected-profile.json in the identity home)`
+- `--replace string With --owner-approved: the id of an earlier unfinished removal of this membership, which stays kept, to ask for a separately approved one`
+- `--team string With --owner-approved and --certificate-id: the team (name:domain) whose membership is removed`
 
 ## `id team remove-member`
 
@@ -2225,6 +2281,27 @@ Flags:
 - `--old-did-key string Expected current local member did:key (required)`
 - `--registry string AWID registry URL override`
 - `--team-id string Canonical team id (<name>:<namespace>; defaults to active team)`
+
+## `verify`
+
+### `verify`
+
+Verify an exported signed message using only its original signed content,
+DNS and public registry reads. No identity, team, token or initialization is needed.
+FILE defaults to stdin; - also reads stdin. Export with:
+  aw mail show --message-id ID --envelope > message.json
+
+Print the same responsibility result as aw who, with invalid proof shown explicitly
+as invalid. --json retains the shared outcome and identity_valid fields: invalid
+proof has outcome unknown and identity_valid false. Lookup failures are unavailable,
+never valid. A verified signature alone does not establish a responsible human.
+Encrypted exports can be verified without decrypting their content.
+Exit 0 for valid or normal unknown results, 1 for invalid proof, 2 for unavailable
+evidence or unreadable input.
+
+Flags:
+- `-h, --help help for verify`
+- `--registry string Registry origin, when the domain's _awid record names none (same restriction as aw who)`
 
 ## `whoami`
 
@@ -3268,7 +3345,7 @@ Flags:
 
 Show mail by conversation or exact message ID.
 
-With --message-id, one unique message is selected. The conversation-window direction and 500-message ceiling below do not apply.
+With --message-id, one unique message is selected. The conversation-window direction and 500-message ceiling below do not apply. Add --envelope to export its original signed envelope as JSON for aw verify, without acknowledging it.
 
 With --conversation-id, --limit caps how many messages are returned and defaults to 200. The messages returned are the OLDEST ones, so on a conversation longer than the limit the newest messages are the ones missing - which is the opposite of what someone checking for recent mail expects.
 
@@ -3278,6 +3355,7 @@ To read a whole conversation, pass --limit above its length and check the return
 
 Flags:
 - `--conversation-id string Mail conversation to inspect`
+- `--envelope Export an exact message's original signed envelope as JSON for aw verify`
 - `-h, --help help for show`
 - `--limit int For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed (default 200)`
 - `--message-id string Legacy mail message to inspect`
@@ -4345,6 +4423,7 @@ Flags:
 - `-h, --help help for revoke`
 - `--principal string The holder's did:aw`
 - `--protected-profile string Prepare the act at the protected service this operator-provisioned profile names; the controlling human approves it there`
+- `--replace string With --protected-profile, the id of an earlier unfinished request for this same act, which stays kept, to ask for a separately approved act`
 - `--role string The app role, as its manifest names it`
 - `--yes Sign what is shown without asking`
 

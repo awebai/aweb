@@ -92,6 +92,33 @@ async def test_selected_role_uses_its_own_fresh_authority(monkeypatch, role, mat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("evidence", ["missing", "outage"])
+async def test_team_authority_refuses_missing_or_unavailable_current_key(monkeypatch, evidence):
+    from awid.registry_types import RegistryError
+
+    context = ProtectedServiceProfile.from_json(FIXTURE.read_bytes()).bindings[0].context()
+    _, public = generate_keypair()
+    controller = did_from_public_key(public)
+
+    async def current_human(*args):
+        return controller
+
+    monkeypatch.setattr(IndependentAuthority, "_own_human", current_human)
+
+    class Registry:
+        async def get_team_public_key_fresh(self, domain, name):
+            if evidence == "outage":
+                raise RegistryError("registry unavailable", status_code=503)
+            return None
+
+    authority = IndependentAuthority(object(), context=context, registry=Registry(),
+        custody=SimpleNamespace(service_id=context.service_id, team_id=context.authority_id,
+            authority_kind=context.authority_kind, team_key_did=controller))
+    with pytest.raises(SignerRefused, match="evidence_unavailable" if evidence == "outage" else "authority_changed"):
+        await authority.observe(context, purpose="prepare")
+
+
+@pytest.mark.asyncio
 async def test_namespace_authority_read_stays_on_profile_registry_and_pin():
     import httpx
 

@@ -18,7 +18,7 @@ import (
 )
 
 func TestIdentityHomeNeutralExemptionsAreExact(t *testing.T) {
-	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd, teamAdmissionInviteCmd, orgCreateCmd, orgListCmd, orgAvailabilityCmd, auditVerifyCmd}
+	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd, teamAdmissionInviteCmd, orgCreateCmd, orgListCmd, orgAvailabilityCmd, auditVerifyCmd, verifyCmd}
 	if len(identityHomeNeutralCommandExemptions) != len(want) {
 		t.Fatalf("identity-neutral exemption count=%d want %d", len(identityHomeNeutralCommandExemptions), len(want))
 	}
@@ -30,11 +30,14 @@ func TestIdentityHomeNeutralExemptionsAreExact(t *testing.T) {
 }
 
 func TestOfflineCommandsAreExactAndIdentityHomeNeutral(t *testing.T) {
-	if len(offlineCommands) != 1 {
-		t.Fatalf("offline command count=%d want 1", len(offlineCommands))
+	if len(offlineCommands) != 2 {
+		t.Fatalf("offline command count=%d want 2", len(offlineCommands))
 	}
 	if _, ok := offlineCommands[auditVerifyCmd]; !ok {
 		t.Fatal("aw audit verify is not an offline command")
+	}
+	if _, ok := offlineCommands[verifyCmd]; !ok {
+		t.Fatal("aw verify is not independent of identity state")
 	}
 	for cmd := range offlineCommands {
 		if !isIdentityHomeNeutralCommand(cmd) {

@@ -142,20 +142,14 @@ func executeWho(ctx context.Context, opts whoOptions) (whoOutput, error) {
 		// The shared verifier checks this claim against current DNS/status.
 		certificates := bundle["certificates"].([]any)
 		domain, _ = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
-	} else if strings.HasPrefix(id, "did:aw:") {
-		// A chainless did:aw is judged where its key route says it is
-		// enrolled, never in its address's domain.
-		enrollment := awid.IDTreeEnrollmentResult{State: "unknown"}
-		if resolution, err := identityKeyRoute(ctx, identity, ""); err == nil {
-			enrollment = resolution.IDTreeEnrollmentOf(id, identity.DID, time.Now())
-		}
-		switch {
-		case enrollment.State == "not_enrolled":
-			return whoOutput{ID: id, IDChainResult: awid.IDChainResult{Outcome: "unknown", Reason: "unregistered_identity"}}, nil
-		case enrollment.State == "enrolled" && enrollment.Domain != nil:
-			domain = *enrollment.Domain
-		default:
-			return whoOutput{ID: id, IDChainResult: awid.IDChainResult{Outcome: "unavailable", Reason: "evidence_unavailable"}}, nil
+	}
+	if strings.HasPrefix(id, "did:aw:") && opts.ReceivedEnrollment == nil {
+		// The identity's own key route is independent of a presented chain.
+		opts.ReceivedEnrollment = func(ctx context.Context, id, key string) awid.IDTreeEnrollmentResult {
+			if resolution, err := identityKeyRoute(ctx, identity, ""); err == nil {
+				return resolution.IDTreeEnrollmentOf(id, key, time.Now())
+			}
+			return awid.IDTreeEnrollmentResult{State: "unknown"}
 		}
 	}
 	return verifyWhoPresentation(ctx, awid.IDChainSubject{ID: id, DIDKey: identity.DID}, bundle, domain, opts)
@@ -168,6 +162,29 @@ func verifyWhoPresentation(ctx context.Context, subject awid.IDChainSubject, bun
 	if preflight.Reason != "evidence_unavailable" {
 		out.IDChainResult = preflight
 		return out, nil
+	}
+	if strings.HasPrefix(subject.ID, "did:aw:") {
+		enrollment := awid.IDTreeEnrollmentResult{State: "unknown"}
+		if opts.ReceivedEnrollment != nil {
+			enrollment = opts.ReceivedEnrollment(ctx, subject.ID, subject.DIDKey)
+		}
+		switch {
+		case enrollment.State == "not_enrolled":
+			return whoOutput{ID: subject.ID, IDChainResult: awid.IDChainResult{Outcome: "unknown", Reason: "unregistered_identity"}}, nil
+		case enrollment.State == "enrolled" && enrollment.Domain != nil:
+			domain = *enrollment.Domain
+			out.Domain = domain
+		default:
+			return whoOutput{ID: subject.ID, IDChainResult: awid.IDChainResult{Outcome: "unavailable", Reason: "evidence_unavailable"}}, nil
+		}
+		// The shared primitive already enforces presentation-domain agreement.
+		// Supply the independently obtained enrollment domain on every global
+		// presentation, not just when the sender omitted its chain.
+		preflight = awid.VerifyIDChain(bundle, subject, nil, domain)
+		if preflight.Reason != "evidence_unavailable" {
+			out.IDChainResult = preflight
+			return out, nil
+		}
 	}
 	registry := newAWIDRegistryClient(nil, opts.TXTResolver)
 	status := awid.NewIDStatusClient(registry, opts.TXTResolver)

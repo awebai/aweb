@@ -216,16 +216,17 @@ async def test_unendorsed_root_cannot_use_unattended_admission_or_execute_a_live
     a = admissions
     response = await prepare(a, admit_operation(a))
     assert response.status_code == 403 and response.json()["detail"] == "subject_ineligible"
-    for operation in (root_operation(a), a.w.operation):
-        assert (await prepare(a, operation)).status_code == 200
-        response = await execute(a, operation)
-        assert response.status_code == 403 and response.json() == {"detail": "live_approval_required"}
-        row = await a.w.db.fetch_one(
-            "SELECT result,signed_result,refusal_code,approval_id FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
-            operation.operation_id,
-        )
-        assert row["result"] is None and row["signed_result"] is None and row["refusal_code"] is None
-        assert row["approval_id"] is not None
+    operation = root_operation(a)
+    prepared = await prepare(a, operation)
+    assert prepared.status_code == 200, prepared.text
+    response = await execute(a, operation)
+    assert response.status_code == 403 and response.json() == {"detail": "live_approval_required"}
+    row = await a.w.db.fetch_one(
+        "SELECT result,signed_result,refusal_code,approval_id FROM {{tables.protected_signer_operations}} WHERE operation_id=$1",
+        operation.operation_id,
+    )
+    assert row["result"] is None and row["signed_result"] is None and row["refusal_code"] is None
+    assert row["approval_id"] is not None
 
 
 @pytest.mark.asyncio
@@ -351,7 +352,7 @@ async def test_last_audit_wait_cannot_extend_the_roots_original_registry_observa
 
     a = admissions
     await endorse(a)
-    adapter = a.w.app.signer.admission
+    adapter = a.w.app.signer._effect_provider(admit_operation(a))
     clock = [monotonic()]
     adapter.timer = lambda: clock[0]
     op = admit_operation(a)
@@ -389,7 +390,8 @@ async def test_runnable_host_serves_both_private_authorities_and_the_same_three_
     manifest = tmp_path / "controller-keys.json"
     manifest.write_text(json.dumps({did(a.w.controller): str(settings.controller_key_file), did(a.w.human_key): str(human_key)}))
     settings.controller_keys_file = manifest
-    host = create_app(settings, mailer=CapturedMail(), registry_transport=a.w.host.transport)
+    mailer = CapturedMail()
+    host = create_app(settings, mailer=mailer, registry_transport=a.w.host.transport)
     async with host.api_app.router.lifespan_context(host.api_app):
         group = host.api_app.state.composition
         assert len(group.components) == 2
@@ -401,6 +403,12 @@ async def test_runnable_host_serves_both_private_authorities_and_the_same_three_
             response = await client.get(path, headers=headers(a, path=path, method="GET", label="protected_admission_policy_read"))
             assert response.status_code == 200 and response.json()["policy"] == a.policy
             await endorse(a)
+            # The composed host's approval notice for the revealable root
+            # endorsement, under its revealing frozen policy, names the
+            # definition's question in the body; the subject stays generic.
+            [notice] = [m for m in mailer.messages if "#k=" in m.text]
+            assert notice.subject == "A request is waiting for your approval"
+            assert "It asks: Make " in notice.text and " your root agent for " in notice.text
             operation = admit_operation(a)
             assert (await prepare(a, operation)).status_code == 200
             response = await execute(a, operation)
@@ -560,13 +568,13 @@ async def test_b2_policy_change_cannot_release_a_retained_unsent_admission(admis
 
         monkeypatch.setattr(a.w.app.authority, "observe", observe)
     registrations = []
-    original_register = signer.admission.register
+    original_register = signer._effect_provider(operation).register
 
     async def register(*args, **kwargs):
         registrations.append(args)
         return await original_register(*args, **kwargs)
 
-    monkeypatch.setattr(signer.admission, "register", register)
+    monkeypatch.setattr(signer._effect_provider(operation), "register", register)
     result = await execute(a, operation)
     assert result.status_code == 200 and result.json()["state"] == "pending", result.text
     assert registrations == []
@@ -575,3 +583,81 @@ async def test_b2_policy_change_cannot_release_a_retained_unsent_admission(admis
         operation.operation_id,
     )
     assert row["signed_result"] == retained["signed_result"] and row["result"] is None and row["delivery_claim"] is None
+
+
+async def read_policy(a, query):
+    path = "/protected-admission-policies?" + query
+    return await a.client.get(path, headers=headers(a, path=path, method="GET", label="protected_admission_policy_read"))
+
+
+@pytest.mark.asyncio
+async def test_the_policy_read_answers_exactly_as_released_clients_expect_unless_counts_are_asked(admissions):
+    a = admissions
+    await endorse(a)
+    for _ in range(2):
+        op = admit_operation(a)
+        assert (await prepare(a, op)).status_code == 200
+        assert (await execute(a, op)).json()["state"] == "committed"
+    team = "team_id=" + TEAM.replace(":", "%3A")
+    plain = await read_policy(a, team)
+    assert plain.status_code == 200, plain.text
+    assert set(plain.json()) == {"service_id", "team_id", "mode", "policy"}
+
+    counted = await read_policy(a, team + "&include=admissions")
+    assert counted.status_code == 200, counted.text
+    body = counted.json()
+    assert {k: v for k, v in body.items() if k != "admissions"} == plain.json()
+    first = await a.w.db.fetch_value(
+        "SELECT min(admitted_at) FROM {{tables.protected_root_admissions}} WHERE root_id=$1", a.w.root_id)
+    assert body["admissions"] == {"active": 2, "in_window": 2,
+        "next_at": (first + __import__("datetime").timedelta(seconds=3600)).isoformat().replace("+00:00", "Z")}
+
+
+@pytest.mark.asyncio
+async def test_a_root_not_yet_endorsed_reads_configuration_only(admissions):
+    a = admissions
+    team = "team_id=" + TEAM.replace(":", "%3A")
+    response = await read_policy(a, team + "&include=admissions")
+    assert response.status_code == 200, response.text
+    assert response.json()["admissions"] is None
+    assert response.json()["policy"] == a.policy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", ["&include=everything", "&include=admissions&include=admissions", "&other=1"])
+async def test_the_policy_read_refuses_any_other_query(admissions, query):
+    a = admissions
+    response = await read_policy(a, "team_id=" + TEAM.replace(":", "%3A") + query)
+    assert response.status_code == 400 and response.json()["detail"] == "request_invalid"
+
+
+@pytest.mark.asyncio
+async def test_a_proof_signed_without_include_cannot_read_the_counts(admissions):
+    a = admissions
+    await endorse(a)
+    team = "team_id=" + TEAM.replace(":", "%3A")
+    signed = "/protected-admission-policies?" + team
+    response = await a.client.get(signed + "&include=admissions",
+        headers=headers(a, path=signed, method="GET", label="protected_admission_policy_read"))
+    assert response.status_code == 401 and response.json()["detail"] == "requester_invalid"
+
+
+
+@pytest.mark.asyncio
+async def test_a_mailed_endorsement_waits_a_day_and_one_touch_from_the_link_endorses(admissions):
+    from datetime import UTC, datetime, timedelta
+
+    a = admissions
+    operation = root_operation(a)
+    response = await prepare(a, operation)
+    assert response.status_code == 200, response.text
+    frozen = response.json()
+    expires = datetime.fromisoformat(frozen["expires_at"].replace("Z", "+00:00"))
+    now = datetime.now(UTC)
+    assert now + timedelta(hours=23) < expires <= now + timedelta(hours=24, seconds=5)
+    token = a.w.delivery.approval_links[-1]
+    view = await a.human.signer.link_view(frozen["handoff_id"], token)
+    assert view.digest == frozen["digest"] and view.payload == frozen["payload"]["request"]
+    options = await a.human.signer.link_options(frozen["handoff_id"], token, "approve")
+    result = await a.human.signer.link_decide(frozen["handoff_id"], token, "approve", a.device.get(dict(options)))
+    assert result.state == "committed"

@@ -12,6 +12,7 @@ from dataclasses import asdict, replace
 from unittest.mock import AsyncMock
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from team_facts_fixtures import legacy_team
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -161,6 +162,7 @@ def _build_app(aweb_db) -> FastAPI:
     # revocations (aweb-abfn); default to none revoked.
     registry = AsyncMock()
     registry.get_team_revocations = AsyncMock(return_value=set())
+    registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     app.state.awid_registry_client = registry
     _verified_subject_fixture(app)
 
@@ -781,6 +783,7 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.state.rate_limiter = None
     registry = AsyncMock()
     registry.get_team_revocations = AsyncMock(return_value=set())
+    registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     app.state.awid_registry_client = registry
     _verified_subject_fixture(app)
 
@@ -1369,6 +1372,7 @@ async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_d
     stream_app.state.redis = None
     stream_registry = AsyncMock()
     stream_registry.get_team_revocations = AsyncMock(return_value=set())
+    stream_registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     stream_app.state.awid_registry_client = stream_registry
     _verified_subject_fixture(stream_app)
 
@@ -1777,6 +1781,7 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     deny_app.state.public_origin = "http://test"
     deny_registry = AsyncMock()
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
+    deny_registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     deny_app.state.awid_registry_client = deny_registry
     _verified_subject_fixture(deny_app)
 
@@ -1984,6 +1989,7 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     deny_app.state.redis = None
     deny_registry = AsyncMock()
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
+    deny_registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     deny_app.state.awid_registry_client = deny_registry
     _verified_subject_fixture(deny_app)
 

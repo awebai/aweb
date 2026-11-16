@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -150,6 +151,16 @@ func TestAnAdmittedLocalCertificateIsInstalledIntoAKeyOnlyHome(t *testing.T) {
 	if err != nil || state.Membership(installTeamID) == nil {
 		t.Fatalf("membership %+v, %v", state, err)
 	}
+	assertCredentialGeneration(t, home, 1)
+}
+
+// assertCredentialGeneration requires home's committed credential generation
+// to be want, with no update incomplete.
+func assertCredentialGeneration(t *testing.T, home string, want int64) {
+	t.Helper()
+	if state, err := awconfig.ReadCredentialState(home); err != nil || state.Generation != want || state.Marker != nil {
+		t.Fatalf("credential state %+v err %v, want generation %d", state, err, want)
+	}
 }
 
 func TestReinstallingTheSameCertificateReportsItAndChangesNothing(t *testing.T) {
@@ -191,6 +202,7 @@ func TestAnInstallKilledBeforeItsMembershipIsCompletedByTheRerun(t *testing.T) {
 	if err != nil || state.Membership(installTeamID) == nil {
 		t.Fatalf("membership %+v, %v", state, err)
 	}
+	assertCredentialGeneration(t, home, 1)
 }
 
 func TestACertificateThatIsNotThisHomesCurrentMembershipIsRefusedAndNothingInstalled(t *testing.T) {
@@ -479,7 +491,7 @@ func TestRecordingAnInstalledCertificateWithNoRegistryKeepsTheMembershipsRegistr
 	if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert))); err != nil {
 		t.Fatal(err)
 	}
-	if err := recordTeamCertificate(t.TempDir(), home, cert, "", "already_installed"); err != nil {
+	if _, err := commitTeamCertificate(t.TempDir(), home, "fetch-cert", cert, "", func() (string, error) { return "already_installed", nil }); err != nil {
 		t.Fatal(err)
 	}
 	state, err := awconfig.LoadTeamStateFromIdentityHome(home)
@@ -566,5 +578,88 @@ func TestConcurrentInstallsOfTwoTeamsIntoOneLocalHomeInstallOnlyOne(t *testing.T
 	}
 	if installed != 1 || refused != 1 || stored != 1 {
 		t.Fatalf("installed %d, refused %d, stored %d; want one of each", installed, refused, stored)
+	}
+}
+
+// An older aw takes only the released home install lock. A new install that
+// waits on that lock while the older one installs another team rechecks under
+// both locks and refuses: a local identity still ends in one team.
+func TestANewInstallWaitingOnAnOlderInstallOfAnotherTeamRefuses(t *testing.T) {
+	_, teamKey, _ := awid.GenerateKeypair()
+	registry := newCertificateRegistry(t, teamKey)
+	home, didKey := keyOnlyHome(t)
+	cert := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+	registry.register(cert, false)
+	older, err := awconfig.LockExclusive(filepath.Join(home, teamCertificateInstallLock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert)))
+		done <- err
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		lock, err := awconfig.LockCredentialsShared(home)
+		if errors.Is(err, awconfig.ErrLockUnavailable) {
+			break
+		}
+		if err == nil {
+			_ = lock.Close()
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the new install never took the credential lock")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	const otherTeam = "frontend:example.com"
+	saveOtherTeamCertificate(t, teamKey, home, didKey, otherTeam)
+	saveOtherTeamMembership(t, registry, home, otherTeam)
+	_ = older.Close()
+	if err := <-done; errorCodeOf(err) != "certificate_conflict" {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(home, installTeamID); !os.IsNotExist(err) {
+		t.Fatalf("the waiting install wrote its certificate: %v", err)
+	}
+}
+
+// While custody serves the home, a home changed without publishing a
+// generation is not installed into: the change would otherwise be published
+// with the install. With no reader, the install publishes over it, as
+// ordinary setup (accept, then connect or install) needs.
+func TestAnInstallIntoAHomeChangedWithoutPublishingRefusesOnlyWhileServed(t *testing.T) {
+	for name, served := range map[string]bool{"served by custody": true, "with no reader": false} {
+		_, teamKey, _ := awid.GenerateKeypair()
+		registry := newCertificateRegistry(t, teamKey)
+		home, didKey := keyOnlyHome(t)
+		first := signedMemberCertificate(t, teamKey, didKey, "", awid.IdentityModeLocal)
+		registry.register(first, false)
+		if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, first))); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, "id-chain.json"), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if served {
+			reader, err := awconfig.LockCredentialReader(home)
+			if err != nil {
+				t.Fatal(err)
+			}
+			contents := homeContents(t, home)
+			_, err = installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, first)))
+			_ = reader.Close()
+			if errorCodeOf(err) != "credential_update_unpublished" {
+				t.Errorf("%s: err %v", name, err)
+			}
+			if !maps.Equal(contents, homeContents(t, home)) {
+				t.Errorf("%s: the refused install changed the home", name)
+			}
+			continue
+		}
+		if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, first))); err != nil {
+			t.Errorf("%s: err %v", name, err)
+		}
 	}
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import verify_did_key_signature
@@ -18,6 +18,7 @@ from aweb.identity_binding import (
     verified_projection,
     verify_identity_binding,
 )
+from aweb.identity_address import AddressResolution
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.team_auth_deps import (
     TeamIdentity,
@@ -39,6 +40,7 @@ class IdentityAuth:
     did_key: str
     did_aw: str | None
     address: str | None
+    address_resolution: AddressResolution = field(default_factory=AddressResolution)
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,7 @@ class MessagingAuth:
     verified_team_id: str | None = None
     grant: GrantContext | None = None
     id_chain: dict | None = None
+    address_resolution: AddressResolution = field(default_factory=AddressResolution)
 
 
 def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
@@ -124,23 +127,30 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     address = None
     try:
         addresses = await registry_client.list_did_addresses(did_aw)
-    except Exception:
-        addresses = []
-    if addresses:
-        first = addresses[0]
-        address = f"{first.domain}/{first.name}"
-        binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw, address=address)
+    except Exception as exc:
+        # Retain the typed cause in request-local evidence; log no URL, name,
+        # exception message or credentials. Failed discovery grants no fact.
+        outcome = AddressResolution("unknown", cause=exc)
+        logger.warning("Identity address evidence unavailable: %s", type(exc).__name__)
+    else:
+        outcome = AddressResolution("empty")
+        if addresses:
+            first = addresses[0]
+            address = f"{first.domain}/{first.name}"
+            binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw, address=address)
+            outcome = AddressResolution("verified")
+    request.state.identity_address_resolution = outcome
 
     await authenticate_id_chain(request, binding)
     binding_db = db if db is not None else getattr(request.app.state, "db", None)
-    if binding_db is not None:
+    if binding_db is not None and outcome.state != "unknown":
         await refresh_projection_binding(
             _aweb_db(binding_db), agent_id=None, did_key=did_key,
             binding=key_binding if key_binding.fresh_observation else binding,
         )
     if envelope.version == 1:
         count_legacy_request_auth(request, "identity")
-    return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address)
+    return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address, address_resolution=outcome)
 
 
 async def lookup_identity_agent_context(
@@ -165,7 +175,15 @@ async def lookup_identity_agent_context(
     )
     if not rows:
         return None
-    if request is not None:
+    outcome = getattr(request.state, "identity_address_resolution", None) if request is not None else None
+    if outcome is not None and outcome.state == "unknown":
+        # Key possession/current DID binding was authenticated above. During an
+        # address outage, retain previously verified projections, including
+        # verified-empty; never mint a marker from a key-only observation.
+        request.state.identity_address_resolution = outcome.with_stored_bindings(
+            rows, did_key=did_key, did_aw=did_aw_value,
+        )
+    elif request is not None:
         for row in rows:
             binding = await verify_identity_binding(
                 request, did_key=did_key, did_aw=row.get("did_aw") or "",
@@ -267,6 +285,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
             certificate_id=team_identity.certificate_id,
             verified_team_id=team_identity.team_id,
             id_chain=getattr(request.state, "id_chain", None),
+            address_resolution=team_identity.address_resolution,
         )
 
     identity = await resolve_identity_auth(request)
@@ -280,13 +299,16 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         request=request,
     )
     row = await _enforce_current_membership(request, row)
+    outcome = getattr(request.state, "identity_address_resolution", identity.address_resolution)
     return MessagingAuth(
         did_key=identity.did_key,
         did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
-        address=identity.address or ((row or {}).get("address") or None),
+        address=(outcome.stored_address if outcome.state == "unknown"
+                 else identity.address or ((row or {}).get("address") or None)),
         team_id=(row or {}).get("team_id") or None,
         alias=(row or {}).get("alias") or None,
         agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
         identity_scope=(row or {}).get("identity_scope") or None,
         id_chain=getattr(request.state, "id_chain", None),
+        address_resolution=outcome,
     )

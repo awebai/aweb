@@ -34,6 +34,9 @@ var rootCmd = &cobra.Command{
 	Short: "aweb CLI",
 	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if _, independent := offlineCommands[cmd]; independent {
+			return nil // Export verification never selects or unlocks an acting human.
+		}
 		if humanSelectionRequested() {
 			return prepareHumanParticipation(cmd)
 		}

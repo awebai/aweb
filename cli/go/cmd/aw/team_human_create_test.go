@@ -2243,7 +2243,7 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/local/teams/eng":
-			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "domain": "local", "name": "eng", "team_did_key": teamDID})
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "domain": "local", "name": "eng", "team_did_key": teamDID, "protection": map[string]any{"mode": "legacy"}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/local/teams/eng/certificates":
 			certCalls++
 			var body map[string]any

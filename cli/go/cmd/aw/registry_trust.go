@@ -22,7 +22,7 @@ func commandLineRegistryOrigins() []string {
 		teamCreateRegistryURL, teamDeleteRegistryURL, teamFetchCertRegistry, teamHumanCreateRegistryURL,
 		teamHumanRemoveRegistryURL, teamHumanReplaceKeyRegistryURL, teamMembersRegistryURL,
 		teamRegisterRegistryURL, teamReissueCertRegistryURL, teamRemoveRegistryURL, teamRotateKeyRegistryURL,
-		teamSetServerRegistryURL, teamShowServerRegistry, whoRegistry,
+		teamSetServerRegistryURL, teamShowServerRegistry, whoRegistry, verifyRegistry,
 	}
 	origins := make([]string, 0, len(values))
 	for _, value := range values {

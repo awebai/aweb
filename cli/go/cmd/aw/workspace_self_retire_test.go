@@ -598,3 +598,111 @@ func addWorkspaceAPIKeyForTest(t *testing.T, dir, apiKey string) {
 		t.Fatalf("write workspace fixture: %v", err)
 	}
 }
+
+// runSelfRetireDeleteJSONForTest runs `aw workspace delete --json` for the
+// fixture member and returns stdout alone: the --json error envelope is the
+// one document there, and the human sentence goes to stderr.
+func runSelfRetireDeleteJSONForTest(t *testing.T, serverURL, alias, apiKey string) (cliErrorEnvelope, string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeSelfRetireCertificateFixture(t, tmp, serverURL+"/api", alias)
+	if apiKey != "" {
+		addWorkspaceAPIKeyForTest(t, tmp, apiKey)
+	}
+
+	run := exec.CommandContext(ctx, bin, "workspace", "delete", selfRetireFixtureWorkspaceID, "--json")
+	run.Env = testCommandEnv(tmp)
+	run.Dir = tmp
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	err := run.Run()
+	var envelope cliErrorEnvelope
+	if decodeErr := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &envelope); decodeErr != nil {
+		t.Fatalf("stdout is not one JSON document: %v\nstdout:\n%s\nstderr:\n%s", decodeErr, stdout.String(), stderr.String())
+	}
+	return envelope, stdout.String() + stderr.String(), err
+}
+
+func revokedCallerRefusal(code string) func(w http.ResponseWriter) {
+	return func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"detail": map[string]any{"code": code, "message": "the caller's certificate is revoked"},
+		})
+	}
+}
+
+func TestAwWorkspaceDeleteJSONCarriesCertificateRevokedForARevokedCaller(t *testing.T) {
+	t.Parallel()
+
+	var sawSelfRemove atomic.Bool
+	server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, revokedCallerRefusal("certificate_revoked")))
+
+	envelope, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
+	if err == nil {
+		t.Fatalf("a refused retirement must fail the command:\n%s", out)
+	}
+	if !sawSelfRemove.Load() {
+		t.Fatalf("self-remove was never called:\n%s", out)
+	}
+	if envelope.Error.Code != "certificate_revoked" || envelope.Error.HTTPStatus != http.StatusUnauthorized {
+		t.Fatalf("error = %+v, want code certificate_revoked with status 401\n%s", envelope.Error, out)
+	}
+}
+
+func TestAwWorkspaceDeleteJSONCarriesCertificateRevokedOnTheWorkspaceKeyPath(t *testing.T) {
+	t.Parallel()
+
+	var sawBearer atomic.Bool
+	refuse := revokedCallerRefusal("certificate_revoked")
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/v1/teams/"+selfRetireFixtureTeamID+"/agents/self-remove" && r.Method == http.MethodPost:
+			if got := strings.TrimSpace(r.Header.Get("Authorization")); got != "Bearer aw_sk_selfretire" {
+				t.Fatalf("authorization = %q, want the workspace-bound key", got)
+			}
+			sawBearer.Store(true)
+			refuse(w)
+		case r.URL.Path == "/api/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	envelope, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "aw_sk_selfretire")
+	if err == nil {
+		t.Fatalf("a refused retirement must fail the command:\n%s", out)
+	}
+	if !sawBearer.Load() {
+		t.Fatalf("self-remove was not called with the workspace-bound key:\n%s", out)
+	}
+	if envelope.Error.Code != "certificate_revoked" || envelope.Error.HTTPStatus != http.StatusUnauthorized {
+		t.Fatalf("error = %+v, want code certificate_revoked with status 401\n%s", envelope.Error, out)
+	}
+}
+
+func TestAwWorkspaceDeleteJSONKeepsOtherRefusalCodesOffCertificateRevoked(t *testing.T) {
+	t.Parallel()
+
+	var sawSelfRemove atomic.Bool
+	server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, revokedCallerRefusal("certificate_invalid")))
+
+	envelope, out, err := runSelfRetireDeleteJSONForTest(t, server.URL, "worker", "")
+	if err == nil {
+		t.Fatalf("a refused retirement must fail the command:\n%s", out)
+	}
+	if !sawSelfRemove.Load() {
+		t.Fatalf("self-remove was never called:\n%s", out)
+	}
+	if envelope.Error.Code == "certificate_revoked" {
+		t.Fatalf("a 401 coded %q must not read as certificate_revoked:\n%s", envelope.Error.Reason, out)
+	}
+}

@@ -50,7 +50,9 @@ from cryptography.hazmat.primitives.serialization import (
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
-TERMINAL = ("complete", "refused", "unconfirmed", "pending")
+# Where the page waits for the human or has finished. "retry" is an approval
+# the signer answered 503 after the touch: it offers the same act again.
+TERMINAL = ("complete", "refused", "unconfirmed", "pending", "retry")
 
 
 def trust(ca: str) -> None:
