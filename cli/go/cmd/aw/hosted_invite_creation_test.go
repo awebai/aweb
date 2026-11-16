@@ -23,7 +23,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestHostedInviteGlobalReuseStillRefusesALocalPinnedParent(t *testing.T) {
+func TestHostedInviteGlobalExplicitSourceStillRefusesALocalPinnedParent(t *testing.T) {
 	v := loadWhoVectors(t)
 	var origin string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +34,7 @@ func TestHostedInviteGlobalReuseStillRefusesALocalPinnedParent(t *testing.T) {
 	}))
 	origin = server.URL
 	material := workspaceTeamIdentityMaterial{IdentityScope: awid.IdentityModeGlobal, DIDKey: v.Keys["root_agent"].DIDKey, StableID: v.Keys["root_agent"].DIDAW}
-	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_global_neighbor", origin, "child", "", false, material)
+	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_global_neighbor", origin, "child", "", false, material, false, true)
 	if err == nil {
 		_, err = state.prepareRequest(t.TempDir(), material)
 	}
@@ -440,7 +440,7 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 			}))
 			defer server.Close()
 			origin = server.URL
-			opts := teamAcceptInviteOptions{Name: "child", Scope: "global", NoAddress: true, AwebURL: origin, Registry: registry, TXTResolver: resolver}
+			opts := teamAcceptInviteOptions{ParentFromSource: true, Name: "child", Scope: "global", NoAddress: true, AwebURL: origin, Registry: registry, TXTResolver: resolver}
 			firstAccepted, err := acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_global", opts)
 			if reuse {
 				if err != nil || firstAccepted.Output.IDRegistration != "registered" || accepts != 1 || previews != 1 || writes.Load() != 0 {

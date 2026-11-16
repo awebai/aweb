@@ -235,15 +235,16 @@ type acceptedTeamInvite struct {
 }
 
 type teamAcceptInviteOptions struct {
-	ParentHome   string
-	Registry     *awid.RegistryClient
-	TXTResolver  awid.TXTResolver
-	IdentityHome string
-	Name         string
-	Address      string
-	Scope        string
-	NoAddress    bool
-	AwebURL      string
+	ParentFromSource bool
+	ParentHome       string
+	Registry         *awid.RegistryClient
+	TXTResolver      awid.TXTResolver
+	IdentityHome     string
+	Name             string
+	Address          string
+	Scope            string
+	NoAddress        bool
+	AwebURL          string
 }
 
 type teamMemberEnrollmentResolveOptions struct {
@@ -2255,6 +2256,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 
+	mintedKey := false
 	if scope == awid.IdentityModeLocal {
 		// Persist the generated signing key to the home BEFORE calling AC, so a retry
 		// after AC has committed presents the SAME key and hits AC's idempotent
@@ -2269,6 +2271,11 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 				pub = signingKey.Public().(ed25519.PublicKey)
 			}
 		} else {
+			_, keyErr := os.Stat(filepath.Join(home.Root, "signing.key"))
+			if keyErr != nil && !errors.Is(keyErr, os.ErrNotExist) {
+				return nil, keyErr
+			}
+			mintedKey = errors.Is(keyErr, os.ErrNotExist)
 			pub, signingKey, err = hostedAcceptSigningKeyAt(workingDir, opts.IdentityHome)
 		}
 		if err != nil {
@@ -2306,7 +2313,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			prior = nil
 		}
 	}
-	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material)
+	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material, mintedKey, opts.ParentFromSource)
 	if err != nil {
 		return nil, err
 	}
@@ -2368,7 +2375,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		}
 	}
 	var membershipResult *awid.IDChainResult
-	if creation.MembershipChain != nil {
+	if creation.MembershipOnly || creation.MembershipChain != nil {
 		subjectID := didKey
 		if scope == awid.IdentityModeGlobal {
 			subjectID = stableID
@@ -2502,7 +2509,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		}
 	}
 	responsibility := membershipResult
-	if creation.MembershipChain != nil {
+	if creation.MembershipOnly || creation.MembershipChain != nil {
 		if resp.RegistrationRequest != nil {
 			return nil, errors.New("membership-only acceptance requested identity registration")
 		}

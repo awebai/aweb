@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -55,6 +57,60 @@ func TestInitGlobalExpiredInvitePreservesExistingHome(t *testing.T) {
 	}
 	if after := snapshotJoinFiles(t, root); !reflect.DeepEqual(before, after) {
 		t.Fatalf("refused global init changed the existing identity home:\nbefore=%v\nafter=%v", before, after)
+	}
+}
+
+func TestInitGlobalJoinFromLocalParentRefusesBeforeSubmissionAndResumes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	home := t.TempDir()
+	bin := filepath.Join(home, awBinaryNameForTest())
+	buildAwBinary(t, ctx, bin)
+	v := loadWhoVectors(t)
+	seed, _ := hex.DecodeString(v.Keys["coordinator"].SeedHex)
+	parentKey := ed25519.NewKeyFromSeed(seed)
+	parent := v.Keys["coordinator"].DIDKey
+	pub, key, _ := awid.GenerateKeypair()
+	did, stable := awid.ComputeDIDKey(pub), awid.ComputeStableID(pub)
+	const team = "shared:example.com"
+	var previews, accepts atomic.Int32
+	service := newLocalHTTPServerHandlerWithURL(t, func(origin string, w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/spawn/invite-preview" {
+			accepts.Add(1)
+			http.Error(w, "must refuse before submission", 500)
+			return
+		}
+		previews.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": team, "identity_scope": "unknown", "server_url": origin, "status": "active", "id_tree": map[string]any{"v": 1, "issuer_id": parent, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
+	})
+	source, target := t.TempDir(), t.TempDir()
+	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: service.URL, TeamID: team, Alias: "parent", DID: parent, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: parentKey})
+	if err := awconfig.SaveInstalledIDChain(filepath.Join(source, ".aw"), map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["alice"].Signed, v.Certificates["coordinator"].Signed}}); err != nil {
+		t.Fatal(err)
+	}
+	writeIdentityForTest(t, target, awconfig.WorktreeIdentity{DID: did, StableID: stable, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryStatus: "registered"})
+	root := filepath.Join(target, ".aw")
+	if err := awid.SaveSigningKey(filepath.Join(root, "signing.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	state := &initInviteRecovery{Source: source, TeamID: team, Alias: "child", Scope: "global", Token: "aw_inv_explicit_source", Origin: service.URL, DIDKey: did}
+	if err := state.save(filepath.Join(root, initInviteRecoveryFile)); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		command := exec.CommandContext(ctx, bin, "init", "--join-from", source, "--global", "--name", "child", "--json")
+		command.Dir, command.Env = target, append(testCommandEnv(home), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AW_NO_UPDATE_CHECK=1")
+		out, err := command.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "unregistered_parent") || !strings.Contains(string(out), "aw id parent request --human") || !strings.Contains(string(out), "registered source") {
+			t.Fatalf("explicit local parent: %v\n%s", err, out)
+		}
+		retained, err := loadHostedInviteCreation(filepath.Join(root, hostedInviteRecoveryFile))
+		if err != nil || retained == nil || !retained.ParentFromSource || retained.MintedKey {
+			t.Fatalf("lost explicit source on resume: %v", err)
+		}
+	}
+	if accepts.Load() != 0 || previews.Load() != 1 {
+		t.Fatalf("explicit-parent retry made preview=%d submit=%d calls", previews.Load(), accepts.Load())
 	}
 }
 

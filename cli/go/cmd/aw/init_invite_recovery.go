@@ -19,16 +19,17 @@ const initInviteRecoveryFile = "init-invite.json"
 
 // Private: Token is a bearer credential and must never appear in diagnostics.
 type initInviteRecovery struct {
-	MintedKey  bool   `json:"minted_key"`
-	Source     string `json:"source"`
-	SourceHome string `json:"source_home"`
-	TeamID     string `json:"team_id"`
-	Alias      string `json:"alias"`
-	Scope      string `json:"scope"`
-	Token      string `json:"token"`
-	Origin     string `json:"origin"`
-	ExpiresAt  string `json:"expires_at,omitempty"`
-	DIDKey     string `json:"did_key,omitempty"`
+	ParentFromSource bool   `json:"parent_from_source"`
+	MintedKey        bool   `json:"minted_key"`
+	Source           string `json:"source"`
+	SourceHome       string `json:"source_home"`
+	TeamID           string `json:"team_id"`
+	Alias            string `json:"alias"`
+	Scope            string `json:"scope"`
+	Token            string `json:"token"`
+	Origin           string `json:"origin"`
+	ExpiresAt        string `json:"expires_at,omitempty"`
+	DIDKey           string `json:"did_key,omitempty"`
 }
 
 func (s *initInviteRecovery) save(path string) error {
@@ -111,6 +112,13 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 			return err
 		}
 	}
+	// The retained source is an explicit parent choice, even on older records.
+	if !prior.ParentFromSource {
+		prior.ParentFromSource = true
+		if err := prior.save(path); err != nil {
+			return err
+		}
+	}
 	// Membership may already have been persisted before connect failed.
 	if cert, err := loadTeamCertificateAt(wd, home.Root, team); err == nil && cert != nil {
 		bindKey := prior.DIDKey == ""
@@ -158,7 +166,7 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 			return errors.New("invite expired; pending selection released, retry init for a new invite")
 		}
 	}
-	err = acceptInitInviteAndConnect(cmd, wd, prior.Token, prior.Origin)
+	err = acceptInitInviteAndConnectWithSource(cmd, wd, prior.Token, prior.Origin, "", prior.ParentFromSource)
 	// Save the generated child binding even when preview or acceptance failed.
 	if key, keyErr := awid.LoadSigningKey(filepath.Join(home.Root, "signing.key")); keyErr == nil {
 		prior.DIDKey = awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))

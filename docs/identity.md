@@ -302,6 +302,11 @@ before retrying the same invite.
 A global acceptor with its own current valid chain joins by membership only,
 including when the invite issuer is local. A global identity without a chain
 cannot obtain its parent certificate from a local `did:key` issuer.
+`--join-from` explicitly selects its source as parent for a chainless joiner;
+an existing registered joiner therefore needs a registered source, or direct
+person adoption with `aw id parent request --human`. A bare invite or admission
+does not select a parent for an existing identity. It preserves parentage and
+refuses a conditioned chainless join with `human_required` and creator guidance.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
 <token>`. Hosted invite issuance accepts `--member-global` as well as

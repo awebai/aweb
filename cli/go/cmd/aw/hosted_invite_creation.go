@@ -99,6 +99,9 @@ func (e *hostedInviteSignaturePendingError) Error() string { return e.err.Error(
 func (e *hostedInviteSignaturePendingError) Unwrap() error { return e.err }
 
 type hostedInviteCreation struct {
+	MintedKey             bool                  `json:"minted_key"`
+	ParentFromSource      bool                  `json:"parent_from_source"`
+	MembershipOnly        bool                  `json:"membership_only"`
 	ParentHome            string                `json:"parent_home,omitempty"`
 	ParentSelected        bool                  `json:"parent_selected,omitempty"`
 	AcceptAttempted       *bool                 `json:"accept_attempted,omitempty"`
@@ -148,10 +151,13 @@ func (state *hostedInviteCreation) save(path string) error {
 	return awid.AtomicWriteFile(path, raw)
 }
 
-func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial) (*hostedInviteCreation, error) {
+func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial, mintedKey, parentFromSource bool) (*hostedInviteCreation, error) {
 	digest := sha256.Sum256([]byte(token))
-	state := &hostedInviteCreation{AcceptAttempted: new(bool), TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
+	state := &hostedInviteCreation{MintedKey: mintedKey, ParentFromSource: parentFromSource, AcceptAttempted: new(bool), TokenHash: hex.EncodeToString(digest[:]), AwebURL: origin, Alias: alias, Address: address, NoAddress: noAddress, Scope: material.IdentityScope, DIDKey: material.DIDKey, StableID: material.StableID}
 	if prior != nil {
+		if parentFromSource && !prior.ParentFromSource {
+			return nil, errors.New("hosted invite retry changed the explicit parent source")
+		}
 		if state.TokenHash != prior.TokenHash || state.AwebURL != prior.AwebURL || state.Alias != prior.Alias || state.Address != prior.Address || state.Scope != prior.Scope || state.NoAddress != prior.NoAddress || state.DIDKey != prior.DIDKey || state.StableID != prior.StableID {
 			return nil, errors.New("hosted invite retry changed the original token, child key, scope or creation selection")
 		}
@@ -211,14 +217,16 @@ func (state *hostedInviteCreation) prepareRequest(root string, material workspac
 		}
 		if installed != nil {
 			state.MembershipChain = installed.Bundle
+			state.MembershipOnly = true
 			return nil, nil
 		}
 	}
-	if state.Tree.Domain == "" && state.ForHuman != nil {
-		return nil, &hostedInviteSignaturePendingError{err: fmt.Errorf("this invite admits agents of %s; obtain a chain from your own creator first using aw id child invite, aw id parent request, and aw id parent import, then retry this join in the same home; on this machine use --parent HOME", *state.ForHuman)}
+	if !state.IssuerCreationStarted && (!state.MintedKey && state.ParentHome == "" && !state.ParentFromSource || state.Tree.Domain == "") {
+		state.MembershipOnly = true
+		return nil, missingInviteHumanChain(state.ForHuman)
 	}
 	if material.IdentityScope == awid.IdentityModeGlobal && strings.HasPrefix(fmt.Sprint(state.Tree.Parent["id"]), "did:key:") {
-		return nil, &awid.IDCertificateError{Code: "unregistered_parent"}
+		return nil, fmt.Errorf("%w: a registered child needs a registered parent; be adopted by the person directly with aw id parent request --human, or join from a registered source", &awid.IDCertificateError{Code: "unregistered_parent"})
 	}
 	state.IssuerCreationStarted = true
 	if state.Tree.Domain == "" {

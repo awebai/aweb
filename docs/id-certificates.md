@@ -1004,6 +1004,17 @@ accepts a parent source independent of the invite. `aw init --join-from`
 remains the shorthand for taking both from the same source; OATS spawn is
 unchanged. Existing identities are not re-parented by joining a team.
 
+Hosted acceptance records whether it minted the joiner's key. The invite issuer
+certifies only that key, or a chainless identity whose parent was explicitly
+selected with `--parent HOME` or `--join-from SOURCE`. Other existing identities
+join membership-only with their own chain; a conditioned chainless join refuses
+`human_required` and names the exchange with the joiner's own creator. These
+choices survive retries. An identity with a chain keeps that chain even with
+`--join-from`; explicit `--parent` continues to refuse an already chained home.
+An existing registered chainless joiner selecting a local `did:key` source
+refuses `unregistered_parent` before submission: it needs direct person adoption
+or a registered source.
+
 Hosted invite creation accepts optional `for_human` (a `did:aw` person ID).
 Omission selects the issuer's verified nearest human or no condition; explicit
 null or an empty string is refused. The resolved value is stored with the invite

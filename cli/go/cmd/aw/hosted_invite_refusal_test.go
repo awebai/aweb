@@ -124,7 +124,7 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 			opts := teamAcceptInviteOptions{IdentityHome: home, Name: "child", Scope: "global", NoAddress: true}
 			if strings.HasPrefix(scenario, "legacy ") {
 				material := workspaceTeamIdentityMaterial{SigningKey: key, DIDKey: actor.DIDKey, StableID: actor.DIDAW, IdentityScope: "global"}
-				state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_first", origin, "child", "", true, material)
+				state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_first", origin, "child", "", true, material, false, false)
 				if err != nil {
 					t.Fatal(err)
 				}

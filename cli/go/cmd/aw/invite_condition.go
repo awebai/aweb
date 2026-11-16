@@ -20,10 +20,7 @@ import (
 // it is joining. All signature, ancestry and current-status rules are SDK rules.
 func verifyInviteMembership(ctx context.Context, bundle map[string]any, subject awid.IDChainSubject, required *string, registry *awid.RegistryClient, resolver awid.TXTResolver) (*awid.IDChainResult, error) {
 	if bundle == nil {
-		if required != nil {
-			return nil, fmt.Errorf("%w: this invite requires a chain to %s; obtain it from your own creator using aw id child invite, aw id parent request --domain <creator-domain>, and aw id parent import --domain <creator-domain>, then retry this join; on this machine use --parent HOME", &awid.IDCertificateError{Code: "human_required"}, *required)
-		}
-		return nil, nil
+		return nil, missingInviteHumanChain(required)
 	}
 	plan, err := awid.IDStatusRequest(bundle, subject, "")
 	if err != nil {
@@ -52,6 +49,13 @@ func verifyInviteMembership(ctx context.Context, bundle map[string]any, subject 
 		return nil, err
 	}
 	return &verdict, nil
+}
+
+func missingInviteHumanChain(required *string) error {
+	if required == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: this invite requires a chain to %s; obtain it from your own creator using aw id child invite, aw id parent request --domain <creator-domain>, and aw id parent import --domain <creator-domain>, then retry this join; on this machine use --parent HOME", &awid.IDCertificateError{Code: "human_required"}, *required)
 }
 
 func checkInviteHuman(verdict *awid.IDChainResult, required *string) error {
@@ -248,6 +252,7 @@ func (s *hostedInviteCreation) selectParent(parent string) (string, error) {
 		}
 		// No request went to Cloud. The explicit creator now supplies parentage.
 		s.IssuerCreationStarted = false
+		s.MembershipOnly = false
 		s.RequestReady = false
 	}
 	s.ParentHome, s.ParentSelected = selected, true

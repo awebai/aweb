@@ -500,12 +500,17 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferred
 	if len(parentHome) > 0 {
 		parent = parentHome[0]
 	}
+	return acceptInitInviteAndConnectWithSource(cmd, workingDir, token, preferredAwebURL, parent, false)
+}
+
+func acceptInitInviteAndConnectWithSource(cmd *cobra.Command, workingDir, token, preferredAwebURL, parent string, parentFromSource bool) error {
 	alias := resolveAliasValue(resolveInitLocalName())
 	accepted, err := acceptAndStoreTeamInvite(workingDir, token, teamAcceptInviteOptions{
-		ParentHome: parent,
-		Name:       alias,
-		Scope:      initInviteIdentityScope(),
-		AwebURL:    strings.TrimSpace(preferredAwebURL),
+		ParentHome:       parent,
+		ParentFromSource: parentFromSource,
+		Name:             alias,
+		Scope:            initInviteIdentityScope(),
+		AwebURL:          strings.TrimSpace(preferredAwebURL),
 	}, teamInviteStoreOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true})
 	if err != nil {
 		return err
