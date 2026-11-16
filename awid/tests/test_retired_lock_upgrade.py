@@ -109,7 +109,7 @@ async def assert_cleanup_and_preserved_authority(db, module: str) -> None:
 async def test_old_applied_files_can_be_absent_while_cleanup_preserves_live_data(
     test_db_factory, tmp_path, module
 ):
-    db = await test_db_factory.create_db(suffix="retired_" + module)
+    db = await test_db_factory.create_db(suffix="retired_" + module, schema=module)
     _, module_name, _ = MODULES[module]
     old = stage(module, tmp_path / "rc", old=True)
     old_runner = AsyncMigrationManager(db, migrations_path=str(old), module_name=module_name)
@@ -134,7 +134,7 @@ async def test_old_applied_files_can_be_absent_while_cleanup_preserves_live_data
 @pytest.mark.asyncio
 @pytest.mark.parametrize("module", MODULES)
 async def test_cleanup_is_also_safe_for_a_fresh_database(test_db_factory, tmp_path, module):
-    db = await test_db_factory.create_db(suffix="fresh_" + module)
+    db = await test_db_factory.create_db(suffix="fresh_" + module, schema=module)
     _, module_name, _ = MODULES[module]
     current = stage(module, tmp_path / "current", old=False)
     runner = AsyncMigrationManager(db, migrations_path=str(current), module_name=module_name)
