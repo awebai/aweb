@@ -351,7 +351,7 @@ func TestActivityHookCodex(t *testing.T) {
 						// LastSentMs is stored at millisecond precision. Server
 						// receipt cannot precede sender completion except for
 						// that one millisecond of rounding.
-						if gap := at[i].Sub(at[i-1]); gap < activityCoalesceWindow-time.Millisecond {
+						if gap := at[i].Sub(at[i-1]); gap < 500*time.Millisecond-time.Millisecond {
 							t.Fatalf("state escaped coalescing window after %s: %s", gap, phases(events))
 						}
 					}
