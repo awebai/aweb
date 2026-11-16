@@ -1,8 +1,7 @@
 # Knowledge log
 
-## 2026-11-14
-* **Harvest**: OKF proposal from seat aweb-protocol-expert-signer-membership with one backing note, task aweb-adbm; the coordinator rulings are source-reported, and the design is accepted, not implemented.
-* **Creation**: decision [signer consent leaves effect eligibility with the consumer](/aweb-protocol-expert/decisions/signer-consent-leaves-effect-eligibility-with-the-consumer.md). It applies [owner binding needs independent authorities](/aweb-protocol-expert/decisions/owner-binding-needs-independent-authorities.md) to signer-issued acts and does not supersede it.
+## 2026-11-15
+* **Amendment**: the source seat updated its unmerged proposal for [human approval and effect eligibility](/aweb-protocol-expert/decisions/signer-consent-leaves-effect-eligibility-with-the-consumer.md) under the coordinator's adcl cleanup ruling. Consent and application-local eligibility remain separate; the old combined-signer delivery, fixed-owner, auxiliary-binding and approval-page prescriptions are replaced by the agreed enforcer-bound approval protocol. Acceptance is source-reported; no implementation or release is claimed.
 
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
