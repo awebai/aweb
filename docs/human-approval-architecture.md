@@ -36,6 +36,18 @@ Nothing in the registry or on a server records whether an organisation uses a
 key holder. The registry cannot know where a key lives. A key holder is an
 organisation's own protection, not a public claim.
 
+## Creation, enrolment and approval
+
+Creating a person's ID, enrolling an approval key and approving an act are
+separate, optional operations. ID creation needs no approval service. The same
+enrolment operation serves a new or an existing person; approving an act uses
+the receipt flow below when the enforcer's rule requires it.
+
+An agent's creator signs its parent certificate. Team membership is separate;
+an invite admits agents answering to its specified human, without changing
+parentage. [Invitations and adoption](id-certificates.md#6-invitations-adoption-and-migration)
+defines creation and the first adoption under a person.
+
 ## Approving an act
 
 1. Each server and application declares the operations it can require a person
@@ -103,13 +115,12 @@ people may approve, and which grade of key is needed.
 
 ### Creation
 
-A person's ID is created together with the enrolment of a key. Both are one
-act, bound to the same pending certificate, subject and key, and authorised by
-the organisation. An organisation may require an existing person's approval
-for each later person.
-
-An ID created without enrolling a key carries no evidence. It is not refused. A
-verifier reports it as without evidence.
+Enrolment accompanying ID creation is bound to the same pending certificate,
+subject and key, and can establish creation evidence. An ID created without
+enrolment is valid and reports "no evidence". Later enrolment enables approval
+and reports "can approve since T, grade G"; it never adds a creation claim.
+For an existing person, the person's current identity key authorises enrolment
+and the issuer checks the registration before signing the binding.
 
 ### Grades
 
@@ -145,17 +156,18 @@ certificate names. An enrolled key is a key the person approves with.
   and receipts tied to the earlier person's key stop being current, so a lost
   enrolled key cannot go on approving.
 - Enrolling a key later never changes how an ID was created.
-- Each agent a person issues or adopts carries a receipt on that link. Agents
-  issued by agents carry none; they are attributed to the person through the
-  chain. A verifier reports the evidence for each link of the chain. A link
-  without a receipt is reported as such and is not refused.
+- Where an approval service is used, the link from a person to an agent they
+  issue or adopt can carry a receipt; without one the link is reported as
+  without a receipt and is not refused. Agents issued by agents carry none;
+  they are attributed to the person through the chain. A verifier reports the
+  evidence for each link of the chain.
 - Evidence is seen only where a sender presents it. A bare ID cannot be looked
   up for its grade. An absent statement proves nothing.
 
 ### Lost keys
 
-A person enrols at least one key, and is advised to enrol a second. A lost
-enrolled key is replaced with another
+A person who approves has at least one enrolled key and is advised to enrol a
+second. A lost enrolled key is replaced with another
 person's approval, and the verifier reports the evidence from then on as
 continued on that person's approval, not as an unbroken chain. A person who is
 alone in an organisation and loses every key is
@@ -168,6 +180,12 @@ The key holder is a separate process. Keys are created inside it and leave it
 only as a backup encrypted to a key the operator keeps offline. The key of a
 parent domain is kept in a key holder as well. It offers a closed list of operations. Each is either routine, signed
 without a person under a fixed rule, or requires a receipt.
+
+Issuing a person without an approval service is supported and yields an ID
+without evidence. The issuing setting is `operator` by default: a private
+operator command issues the ID. With awsign configured, an organisation may
+select `approved`, requiring an enrolled person's approval. Agents cannot issue
+people unattended in either mode.
 
 The process that asks it to sign cannot read its memory or storage, cannot
 sign directly, and cannot change its rules. Its database permissions and

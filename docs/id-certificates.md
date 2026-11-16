@@ -222,8 +222,9 @@ admission verdict:
 An unregistered local key has one parent and kind for that key. Re-parenting
 requires a new local key plus member certificate, or registered enrollment that
 replaces the old local membership. Initial certification of a previously
-chainless local key is not re-parenting. Explicit registered enrollment may
-keep its private key and acquire a stable ID, without guessing its past. Local
+chainless local key is not re-parenting. Neither is the first certificate under
+a person for an agent whose only parent so far is its namespace (§6). Explicit
+registered enrollment may keep its private key and acquire a stable ID, without guessing its past. Local
 descendants do not silently change their parent ID when that conversion occurs.
 
 ### Team-row human classification
@@ -977,9 +978,40 @@ authority. This does not convert existing member_person booleans into IDs.
 
 ## 6. Invitations, adoption and migration
 
-An org-member invite is issued by the inviting human. Fix its intended
-recipient, domain, parent and kind at issue, privately; after the child key
-exists that human's signer signs the exact certificate. No portable signed
+### Creator and membership
+
+The creator signs the child's parent certificate; a team certificate establishes
+membership independently. An agent creator signs with its own key, without a
+person or registry write for a local child. When a person creates an agent,
+the person's own key signs for that named agent under their checked session or
+explicit local command.
+Without a claimed human, creation follows the organisation-parented path.
+A setup key only redeems the invitation fixed in that session; it does not
+authorise signing as the person.
+
+A team invite carries a `for-human` admission condition, defaulting to its
+issuer's verified nearest human; without one, the default is no condition.
+`--for-human <did:aw>` selects another person: the joiner supplies its own valid
+chain with that nearest human; the issuer signs no parentage. The membership
+grantor (Cloud or the host holding the team key) verifies the condition at
+acceptance. Joining never changes parentage.
+
+A fresh identity accepted from an invite without a separate parent is created
+by that invite's issuer, whose key signs the child certificate; the resulting
+chain must satisfy the invite's condition. Creation also
+accepts a parent source independent of the invite. `aw init --join-from`
+remains the shorthand for taking both from the same source; OATS spawn is
+unchanged. Existing identities are not re-parented by joining a team.
+
+Creating a person's ID needs no approval service. Enrolling an approval key
+and approving an act are separate, optional operations, as defined in the
+[approval architecture](human-approval-architecture.md#creation-enrolment-and-approval).
+
+### Human issuance and pending registration
+
+For human ID issuance, fix its intended recipient, domain, parent and kind
+privately at issue, separately from team membership; after the child key exists
+the authorised issuer signs the exact certificate. No portable signed
 delegation. A custodial server can perform bounded deferred signing for that
 exact pending invitation, rechecking session/invitation authorization and the
 parent after lock waits. For host-managed invitations, deferred kind=human
@@ -1002,8 +1034,8 @@ When a same-machine constructor (`aw team admin create --agent` or certificate-o
 existing child request/receive/approve/import exchange before accepting the
 hosted invite. The retained preview pins the parent and domain; the child keeps
 its original key and request UUID. If issuance refuses, the pending child home
-and request remain available rather than being rolled back. Ordinary invite
-accept across machines still requires the explicit parent exchange.
+and request remain available rather than being rolled back. Creation across
+machines uses the explicit parent exchange.
 For a local-team invitation, the inviter's own saved registry remains its
 identity registry. When that pin is absent, the already-resolved team registry
 (including service discovery) is a routing fallback only for an inviter in that
@@ -1013,8 +1045,7 @@ The existing private invitation link retains the selected issuer registry for
 later rechecks and import; the current identity pin and namespace checks still
 apply. Routing metadata grants no parent-signing authority: the current key,
 enrollment and chain checks are unchanged.
-Agents can issue agent spawns, never human invites. An untyped new invite from
-an attributed agent is a spawn/inherits or refuses, not an unattributed escape.
+Agents can issue agent spawns, never human ID invitations.
 Do not guess a parent from pre-upgrade bearer tokens or local instance names.
 
 Org membership may complete while identity registration is **pending**.
@@ -1033,6 +1064,23 @@ Pending human registration cannot authorize child signing. A constructor may
 retain its exact authenticated intended-parent operation and resume issuance
 after registration with current checks and no extra login; it must not guess
 or retroactively attach unrelated legacy agents.
+
+### First adoption under a person
+
+An agent immediately under its organisation's namespace may be adopted once
+by a person of that organisation, keeping its ID and key. Recorded-creator or
+owner/admin authority is required. The person explicitly
+signs for that named agent and key under their checked session or local command.
+A chain already containing a person refuses adoption. An agent immediately
+under another agent is not adopted independently; only its namespace-parented
+root qualifies. Registered agents use the
+existing atomic re-parent. Local agents install the person-parented chain in
+place of the organisation chain. The old local certificate remains
+cryptographically valid and reports `no_human`. Existing descendants report
+`no_human` until their carried ancestry is refreshed. The refresh for an
+ancestor's new certificate is part of this work and must be shown by a run.
+An awsign root receipt is optional evidence on this
+same adoption, not a second parent-signing operation.
 
 ### Self-custodial child requests and re-sign transport
 
