@@ -16,7 +16,6 @@ import time
 from uuid import uuid4
 
 from nacl.public import PublicKey, SealedBox
-from nacl.signing import SigningKey
 
 from awid.controller_signing import (
     ControllerDescriptor,
@@ -24,8 +23,8 @@ from awid.controller_signing import (
     ControllerRequest,
     ControllerSigningContext,
 )
-from awid.did import did_from_public_key
-from awid.signing import canonical_json_bytes
+from awid.did import did_from_public_key, did_key_from_signing_key, generate_keypair
+from awid.signing import canonical_json_bytes, sign_message
 
 
 class Refused(ValueError):
@@ -79,11 +78,11 @@ class KeyStore:
 
     @classmethod
     def create(cls, directory, *, organisation):
-        key = SigningKey.generate()
+        seed, public_key = generate_keypair()
         descriptor = ControllerDescriptor(
             "namespace",
             organisation,
-            did_from_public_key(bytes(key.verify_key)),
+            did_from_public_key(public_key),
             uuid4().hex,
             0,
         )
@@ -112,7 +111,7 @@ class KeyStore:
                     "",
                     0,
                     descriptor.did_key,
-                    bytes(key),
+                    seed,
                 ),
             )
         return store
@@ -168,11 +167,11 @@ class KeyStore:
     def create_team_key(self, name):
         # The descriptor validates the actual registry team-name profile.
         root = self.descriptor()
-        key = SigningKey.generate()
+        seed, public_key = generate_keypair()
         descriptor = ControllerDescriptor(
             "team",
             root.domain,
-            did_from_public_key(bytes(key.verify_key)),
+            did_from_public_key(public_key),
             uuid4().hex,
             0,
             team=name,
@@ -191,7 +190,7 @@ class KeyStore:
                     name,
                     0,
                     descriptor.did_key,
-                    bytes(key),
+                    seed,
                 ),
             )
         return descriptor
@@ -225,11 +224,12 @@ class KeyStore:
             row = db.execute(
                 "SELECT seed FROM keys WHERE reference=?", (expected.key_reference,)
             ).fetchone()
-            signing_key = SigningKey(row["seed"])
-            if did_from_public_key(bytes(signing_key.verify_key)) != expected.did_key:
+            if did_key_from_signing_key(row["seed"]) != expected.did_key:
                 raise Refused("key_unavailable")
             payload = context.signing_bytes()
-            signature = signing_key.sign(payload).signature
+            signature = base64.b64decode(
+                sign_message(row["seed"], payload) + "==", validate=True
+            )
             db.execute(
                 "INSERT INTO signatures(operation,actor,approval,key,generation,payload,signature,at) VALUES (?,?,?,?,?,?,?,?)",
                 (
