@@ -217,7 +217,7 @@ func loadHumanParticipationState(id, domain string, store awid.HumanKeyStore, pr
 		if h.closed {
 			return "", nil, fmt.Errorf("human command has ended")
 		}
-		return rec.DIDKey, ed25519.Sign(h.unlockedKey, payload), nil
+		return awid.KeySigner(h.unlockedKey)(payload)
 	}
 	h.sign = sign
 	return h, nil
