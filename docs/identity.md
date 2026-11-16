@@ -219,6 +219,8 @@ request/approve/import exchange when a hosted invite names the selected
 self-custodial source as its ID parent. The source may be a workspace directory
 or an explicit identity home; its verified ancestry is installed in the child
 before connection. A chainless source retains the ordinary unknown ancestry.
+Hosted invite acceptance on another machine uses the printed parent exchange
+before retrying the same invite.
 With a hosted invite pinned to a local `did:key` parent, `--global` is refused
 with `unregistered_parent`.
 

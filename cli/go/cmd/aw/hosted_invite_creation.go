@@ -73,8 +73,8 @@ func pendingHostedExchangeTarget(cmd *cobra.Command, home awconfig.IdentityHome)
 	return err == nil, err
 }
 
-// A provisioning caller may complete the existing local parent exchange. Other
-// callers retain the ordinary explicit request/import diagnostic and state.
+// A local issuer link completes the exchange; a caller without that record
+// retains the explicit request/import diagnostic and pending state.
 type hostedInviteSignaturePendingError struct{ err error }
 
 func (e *hostedInviteSignaturePendingError) Error() string { return e.err.Error() }

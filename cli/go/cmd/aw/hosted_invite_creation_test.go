@@ -485,11 +485,15 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 	const team = "default:hosted.aweb.ai"
 	for _, wrongIssuer := range []bool{false, true} {
 		t.Run(fmt.Sprintf("wrong-issuer=%t", wrongIssuer), func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("APP_ENV", "development")
 			principal, decoy := t.TempDir(), t.TempDir()
 			calls := 0
 			var origin string
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
+				case "/v1/id-certificates/status":
+					json.NewEncoder(w).Encode(v.Statuses["normal"])
 				case "/api/v1/discovery":
 					json.NewEncoder(w).Encode(map[string]string{"aweb_url": origin, "registry_url": origin})
 				case "/api/v1/spawn/create-invite":
@@ -522,7 +526,10 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 			}))
 			defer server.Close()
 			origin = server.URL
-			writeSelectionFixtureForTest(t, principal, testSelectionFixture{AwebURL: origin, RegistryURL: origin, TeamID: team, Alias: "issuer", DID: v.Keys["root_agent"].DIDKey, Custody: "self", IdentityScope: "local", SigningKey: key})
+			registryURL := strings.Replace(origin, "127.0.0.1", "registry.example", 1)
+			t.Setenv("AWID_REGISTRY_URL", registryURL)
+			serveRosterTXT(t, idCreateDNSRecordValue(v.Keys["root"].DIDKey, registryURL))
+			writeSelectionFixtureForTest(t, principal, testSelectionFixture{AwebURL: origin, RegistryURL: registryURL, TeamID: team, Alias: "issuer", DID: v.Keys["root_agent"].DIDKey, Custody: "self", IdentityScope: "local", SigningKey: key})
 			chain := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["root-agent"].Signed}}
 			if err := awconfig.SaveInstalledIDChain(filepath.Join(principal, ".aw"), chain); err != nil {
 				t.Fatal(err)
