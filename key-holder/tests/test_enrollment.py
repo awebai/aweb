@@ -16,6 +16,7 @@ import pytest
 from aweb_key_holder.enrollment import Holder
 from aweb_key_holder.keys import KeyStore, Refused
 from authenticator import Passkey
+from pending import expire_pending
 
 
 @pytest.fixture
@@ -91,8 +92,8 @@ def test_unknown_or_substituted_enrollment_material_is_not_signed(holder):
     assert len(holder.store.audit()) == 2
 
 
-def creation(holder):
-    target, key = person()
+def creation(holder, identity=None):
+    target, key = identity or person()
     intent = holder.bootstrap_pending(target, key)["intent"]
     device = Passkey(holder.approval_origin, holder.rp_id)
     material = {
@@ -196,3 +197,70 @@ def test_controller_http_proof_is_only_for_its_frozen_bootstrap_body(holder):
         holder.authorize_bootstrap(
             target, "enrollment_material", canonical(other), issued
         )
+
+
+def test_expired_bootstrap_can_enroll_again_with_new_bounds_and_old_audit_retained(
+    holder,
+):
+    target, key = person()
+    holder.bootstrap_pending(target, key)
+    expired = expire_pending(holder, target)
+    before = holder.store.audit()
+    renewed = holder.bootstrap_pending(target, key)["intent"]
+    assert renewed != expired
+    assert renewed["intent"]["challenge"] != expired["intent"]["challenge"]
+    assert (
+        renewed["intent"]["deadline"] - renewed["intent"]["not_before"] == 24 * 60 * 60
+    )
+    assert holder.store.audit()[: len(before)] == before
+    _, receipt = creation(holder, identity=(target, key))
+    issuer = PublicIssuer(holder.store.descriptor().did_key, int(time.time()))
+    assert holder.finish_creation(target, receipt, issuer=issuer)["evidence"]
+
+
+@pytest.mark.parametrize("has_evidence", [False, True])
+def test_live_pending_or_any_evidence_cannot_be_replaced(holder, has_evidence):
+    target, receipt = creation(holder)
+    if has_evidence:
+        holder.finish_creation(
+            target,
+            receipt,
+            issuer=PublicIssuer(holder.store.descriptor().did_key, int(time.time())),
+        )
+        expire_pending(holder, target)
+    before = holder.store.audit()
+    with holder.store._connection() as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        row = holder._row(db, target)
+        original = parse(row["intent"].encode())["intent"]
+        with pytest.raises(Refused, match="person_already_exists"):
+            holder._pending(
+                db,
+                person=target,
+                identity_key=row["identity_key"],
+                requester=original["requester"],
+                certificate=original["pending_certificate"]["certificate"],
+            )
+    assert holder.store.audit() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code,status",
+    [
+        ("request_invalid", 400),
+        ("identity_key_mismatch", 400),
+        ("registration_count_mismatch", 400),
+        ("certificate_mismatch", 400),
+        ("enrollment_expired", 409),
+        ("signature_invalid", 401),
+        ("nonce_invalid", 401),
+    ],
+)
+async def test_error_status_distinguishes_input_state_and_authentication(
+    holder, code, status
+):
+    from aweb_key_holder.http import create_app
+
+    response = await create_app(holder).exception_handlers[Refused](None, Refused(code))
+    assert response.status_code == status

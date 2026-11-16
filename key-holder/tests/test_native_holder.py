@@ -25,6 +25,7 @@ from approval_service.seams import commitment
 
 from aweb_key_holder.http import create_app
 from authenticator import Passkey
+from pending import expire_pending
 
 
 def signature(seed, payload):
@@ -224,7 +225,41 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
         assert duplicate.json() == approved.json()
         assert holder.store.audit() == after
 
-        second_intent = approved.json()["intent"]
+        expired = expire_pending(holder, second)
+        old_audit = holder.store.audit()
+        retried = await call(
+            client,
+            "/v1/humans",
+            {"person": second, "identity_key": second_key, "approver": first},
+            **first_caller,
+        )
+        assert retried.status_code == 428, retried.text
+        new_raw = retried.json()["request_bytes"]
+        new_request = parse(decode(new_raw))
+        new_receipt = {
+            "version": 1,
+            "request_bytes": new_raw,
+            "binding": activation["binding"],
+            "id_chain": activation["id_chain"],
+            "assertion": first_device.assert_request(new_request),
+        }
+        renewed = await call(
+            client,
+            "/v1/humans",
+            {"version": 1, "request_bytes": new_raw, "receipt": new_receipt},
+            **first_caller,
+        )
+        assert renewed.status_code == 200, renewed.text
+        second_intent = renewed.json()["intent"]
+        assert second_intent != expired
+        assert (
+            second_intent["intent"]["deadline"] - second_intent["intent"]["not_before"]
+            == 24 * 60 * 60
+        )
+        assert holder.store.audit()[: len(old_audit)] == old_audit
+        # A previously consumed request must not disclose the replacement intent.
+        old_replay = await call(client, "/v1/humans", presentation, **first_caller)
+        assert old_replay.status_code == 409
         second_device, second_material = material_for(holder, second_intent)
         base = "/v1/enrollments/" + second
         bound = await call(
@@ -243,3 +278,17 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
             activated.text
         )
         assert holder.active_person(second)["identity_key"] == second_key
+
+        # Physical SQLite order is not bootstrap authority. Keep the logical
+        # first-person row unchanged while placing it after the second person.
+        with holder.store._connection() as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            saved = dict(holder._row(db, first))
+            db.execute("DELETE FROM enrollments WHERE person=?", (first,))
+            columns = ",".join(saved)
+            placeholders = ",".join("?" for _ in saved)
+            db.execute(
+                f"INSERT INTO enrollments({columns}) VALUES ({placeholders})",
+                tuple(saved.values()),
+            )
+        assert (await holder.bootstrap(first, first_key))["intent"] == intent

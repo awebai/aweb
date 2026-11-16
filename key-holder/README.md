@@ -43,8 +43,9 @@ The first path uses these interfaces:
    to the pinned registry and returns its result. `--team <name>` selects an
    owned team descriptor. Authorization headers remain inside this exchange.
 2. Operator-only `bootstrap --person <id> --identity-key <did:key>` prepares the
-   first person's signed intent. Identical retries retain its original bounds;
-   it cannot bootstrap a second person. The target must be a fresh ID-tree
+   first person's signed intent. Live retries retain its original bounds;
+   an expired pending intent without evidence can be reissued for that person.
+   It cannot bootstrap a second person. The target must be a fresh ID-tree
    enrollment, not an existing ID relabeled with creation evidence.
 3. The requester carries the intent to awsign. For controller bootstrap,
    `authorize --person <id> --purpose <enrollment-purpose> --issued-at <unix>`
@@ -78,6 +79,22 @@ sidecar alone does not activate a person. Each returned signature has a durable
 audit record; creation evidence, its nonce and audit commit together. Caller
 admission does not substitute for approval. The holder has no pages, passkeys,
 mail routes, arbitrary signing endpoint or registry custody marker.
+
+Enrollment intents and their confirmation requests have a 24-hour window.
+The ordinary `human.add` request keeps its 10-minute window. If an enrollment
+expires before evidence is committed, a new approved `human.add` can replace
+that pending row; an old consumed receipt cannot retrieve the replacement
+intent. Old signed intents stay in the append-only audit. Rows with evidence
+are never replaced; activation uses current public Trust without reapplying
+the completed ceremony's deadline.
+
+**Enroll two people before relying on this slice.** Holder-side
+replace/recreate is not implemented: losing the sole activated person's keys
+leaves nobody able to approve, and bootstrap remains closed. This slice also
+has no local deactivation command. An approver ceases to qualify when current
+registry evidence rejects them, within the shared 60-second freshness bound.
+The private approval-library dependency still awaits Juan's public-package
+decision; no vendored substitute is provided.
 
 For the one-container runtime, build a complete wheelhouse containing the
 reviewed SDK, holder and pinned approval-library wheels and their locked

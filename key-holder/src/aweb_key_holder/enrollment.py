@@ -41,6 +41,13 @@ def now():
     return int(time.time())
 
 
+def expired_pending(row):
+    return (
+        row["evidence"] is None
+        and json.loads(row["intent"])["intent"]["deadline"] <= now()
+    )
+
+
 class Holder:
     def __init__(self, store, *, registry, origin, approval_origin, rp_id, grading):
         require_canonical_server_origin(origin)
@@ -123,8 +130,18 @@ class Holder:
         self, db, *, person, identity_key, requester, certificate, approval=None
     ):
         root = self.store._descriptor(db)
-        if db.execute("SELECT 1 FROM enrollments WHERE person=?", (person,)).fetchone():
-            raise Refused("person_already_exists")
+        previous = db.execute(
+            "SELECT * FROM enrollments WHERE person=?", (person,)
+        ).fetchone()
+        if previous:
+            if not expired_pending(previous):
+                raise Refused("person_already_exists")
+            # Retire the expired operation's idempotent lookup, so an old
+            # receipt cannot return this new intent. Old R is expired/stale;
+            # the revision and MAC checks still precede any new effect.
+            # Signature records remain append-only and retain the old intent.
+            db.execute("DELETE FROM consumed WHERE person=?", (person,))
+            db.execute("DELETE FROM enrollments WHERE person=?", (person,))
         operation = parse_controller_object(
             {
                 "operation": "namespace_id_issue",
@@ -160,7 +177,7 @@ class Holder:
             "rp_id": self.rp_id,
             "challenge": encode(secrets.token_bytes(32)),
             "not_before": start,
-            "deadline": start + 600,
+            "deadline": start + 24 * 60 * 60,
         }
         signed = {
             "intent": intent,
@@ -219,7 +236,9 @@ class Holder:
                 "namespace": root.domain,
                 "key": root.did_key,
             }
-            old = db.execute("SELECT * FROM enrollments LIMIT 1").fetchone()
+            old = db.execute(
+                "SELECT * FROM enrollments WHERE person=?", (person,)
+            ).fetchone()
             if old:
                 if (
                     old["person"] != person
@@ -227,10 +246,13 @@ class Holder:
                     or json.loads(old["requester"]) != requester
                 ):
                     raise Refused("bootstrap_closed")
-                return {
-                    "state": "enrollment_pending",
-                    "intent": json.loads(old["intent"]),
-                }
+                if not expired_pending(old):
+                    return {
+                        "state": "enrollment_pending",
+                        "intent": json.loads(old["intent"]),
+                    }
+            elif db.execute("SELECT 1 FROM enrollments LIMIT 1").fetchone():
+                raise Refused("bootstrap_closed")
             certificate = self._certificate(root, person, identity_key, now())
             return self._pending(
                 db,

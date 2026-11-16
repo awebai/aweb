@@ -32,7 +32,18 @@ def create_app(holder):
     @app.exception_handler(ApprovalRefused)
     async def refused(_request, error):
         code = error.code
-        if code in {"status_unavailable", "issuer_unavailable", "identity_unavailable"}:
+        if code in {
+            "request_invalid",
+            "identity_key_mismatch",
+            "registration_count_mismatch",
+            "certificate_mismatch",
+        }:
+            status = 400
+        elif code in {
+            "status_unavailable",
+            "issuer_unavailable",
+            "identity_unavailable",
+        }:
             status = 503
         elif code in {
             "state_changed",
@@ -42,6 +53,7 @@ def create_app(holder):
             "registration_changed",
             "creation_changed",
             "fresh_enrollment_required",
+            "enrollment_expired",
         }:
             status = 409
         elif code == "enrollment_unknown":
