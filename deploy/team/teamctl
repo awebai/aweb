@@ -286,10 +286,18 @@ utc_now() {
   python_in_server -c 'import datetime; print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))'
 }
 
-# Stops and reaps a follower this function started; nothing else.
+# Every capture cleanup rechecks the identity at the signal boundary. Missing
+# evidence or a reused PID never authorizes signalling somebody else's process.
 stop_follower() {
-  kill "$1" 2>/dev/null || true
-  wait "$1" 2>/dev/null || true
+  local pid="$1" expected_start="${2:-}" observed_start
+  if [[ -z "$expected_start" ]] \
+    || ! observed_start="$(ps -o lstart= -p "$pid" 2>/dev/null)" \
+    || [[ "$observed_start" != "$expected_start" ]]; then
+    echo "teamctl: egress capture: follower identity unavailable or changed; PID $pid not signalled" >&2
+    return 1
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
 }
 
 # The child PID and its start time bind this capture. ps's command display
@@ -330,7 +338,7 @@ capture_egress() {
   follower=$!
   # Bind the process we just spawned, before waiting for any witness/probe.
   if ! started="$(ps -o lstart= -p "$follower")" || [[ -z "$started" ]]; then
-    stop_follower "$follower"
+    stop_follower "$follower" "${started:-}" || true
     echo "teamctl: egress capture: the follower exited before its identity was read" >&2
     return 1
   fi
@@ -350,7 +358,7 @@ sys.exit(0 if any(stamp(line.split(" ", 1)[0]) > after for line in lines if line
 PY
   do
     if ((SECONDS >= deadline)); then
-      stop_follower "$follower"
+      stop_follower "$follower" "${started:-}" || true
       echo "teamctl: egress capture: no line after the follower attached at $attached" >&2
       return 1
     fi
@@ -360,7 +368,7 @@ PY
   # identity (start time and command line, as ps reports them) lets the owner
   # that stops it by PID check it still is this process.
   if ! follower_live "$follower" "$started"; then
-    stop_follower "$follower"
+    stop_follower "$follower" "${started:-}" || true
     echo "teamctl: egress capture: the follower exited after its first line" >&2
     return 1
   fi
@@ -391,7 +399,7 @@ with os.fdopen(fd, "w", encoding="utf-8") as handle:
     json.dump(receipt, handle, indent=2)
 PY
   then
-    stop_follower "$follower"
+    stop_follower "$follower" "${started:-}" || true
     echo "teamctl: egress capture: no receipt; the follower is stopped" >&2
     return 1
   fi
@@ -407,10 +415,7 @@ capture_still_live() {
     echo "egress capture: still streaming before the agent starts (follower $CAPTURE_PID)"
     return 0
   fi
-  # A reused PID with a different start time belongs to someone else.
-  if [[ "$(ps -o lstart= -p "$CAPTURE_PID" 2>/dev/null)" == "$CAPTURE_STARTED" ]]; then
-    stop_follower "$CAPTURE_PID"
-  fi
+  stop_follower "$CAPTURE_PID" "$CAPTURE_STARTED" || true
   echo "teamctl: egress capture: the follower is no longer streaming" >&2
   return 1
 }

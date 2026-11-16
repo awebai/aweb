@@ -181,7 +181,8 @@ follower being refused: procps clips `ps -o command` under narrow `COLUMNS`;
 xdist workers in the locked local control exported `COLUMNS=80`. The capture now
 binds the PID it spawns and its start time before any witness/probe, rechecks that
 identity before the agent starts, and keeps a full-width command only as receipt
-diagnostics. An identity mismatch never authorizes killing a reused PID.
+diagnostics. Every capture cleanup rechecks that start time at the signal boundary; missing
+or different identity never authorizes killing a reused PID.
 `scripts/test_team_follower_identity.py` exercises the real capture helpers with
 long paths/narrow columns, plus exited-child, wrong-start and wrong-container
 negatives. Fixed Docker/interpreter transports make it a process-identity
