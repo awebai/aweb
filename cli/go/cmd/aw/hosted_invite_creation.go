@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -81,19 +82,22 @@ func (e *hostedInviteSignaturePendingError) Error() string { return e.err.Error(
 func (e *hostedInviteSignaturePendingError) Unwrap() error { return e.err }
 
 type hostedInviteCreation struct {
-	TokenHash    string                `json:"token_hash"`
-	AwebURL      string                `json:"aweb_url"`
-	Alias        string                `json:"alias"`
-	Address      string                `json:"address"`
-	Scope        string                `json:"scope"`
-	NoAddress    bool                  `json:"no_address"`
-	DIDKey       string                `json:"did_key"`
-	StableID     string                `json:"stable_id"`
-	InviteID     string                `json:"invite_id"`
-	TeamID       string                `json:"team_id"`
-	Tree         *hostedIDTreeRecovery `json:"id_tree"`
-	RequestReady bool                  `json:"request_ready"`
-	ResponseJSON string                `json:"response_json,omitempty"`
+	ForHuman              *string               `json:"for_human,omitempty"`
+	MembershipChain       map[string]any        `json:"membership_chain,omitempty"`
+	IssuerCreationStarted bool                  `json:"issuer_creation_started,omitempty"`
+	TokenHash             string                `json:"token_hash"`
+	AwebURL               string                `json:"aweb_url"`
+	Alias                 string                `json:"alias"`
+	Address               string                `json:"address"`
+	Scope                 string                `json:"scope"`
+	NoAddress             bool                  `json:"no_address"`
+	DIDKey                string                `json:"did_key"`
+	StableID              string                `json:"stable_id"`
+	InviteID              string                `json:"invite_id"`
+	TeamID                string                `json:"team_id"`
+	Tree                  *hostedIDTreeRecovery `json:"id_tree"`
+	RequestReady          bool                  `json:"request_ready"`
+	ResponseJSON          string                `json:"response_json,omitempty"`
 }
 
 func loadHostedInviteCreation(path string) (*hostedInviteCreation, error) {
@@ -105,7 +109,9 @@ func loadHostedInviteCreation(path string) (*hostedInviteCreation, error) {
 		return nil, err
 	}
 	var state hostedInviteCreation
-	if err := json.Unmarshal(raw, &state); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&state); err != nil {
 		return nil, err
 	}
 	if state.Tree == nil || !hostedIdentityTeamUUID.MatchString(state.Tree.RequestID) || state.TokenHash == "" || state.DIDKey == "" {
@@ -140,7 +146,7 @@ func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreatio
 	if !wire.IDTreePresent || !hostedIdentityTeamUUID.MatchString(wire.InviteID) {
 		return nil, errors.New("hosted invite preview omitted its invitation ID or explicit ID-tree metadata")
 	}
-	state.InviteID, state.TeamID = wire.InviteID, wire.CanonicalTeamID
+	state.InviteID, state.TeamID, state.ForHuman = wire.InviteID, wire.CanonicalTeamID, wire.ForHuman
 	tree, err := newHostedIDTreeRecovery(hostedIdentityContext{})
 	state.Tree = tree
 	if err != nil {
@@ -156,9 +162,7 @@ func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreatio
 	if _, err := awid.ExtractPublicKey(pinned.IssuerID); err != nil && !(strings.HasPrefix(pinned.IssuerID, "did:aw:") && len(pinned.IssuerID) > len("did:aw:") && strings.TrimSpace(pinned.IssuerID) == pinned.IssuerID) {
 		return nil, errors.New("invalid hosted invite agent issuer ID")
 	}
-	if material.IdentityScope == awid.IdentityModeGlobal && strings.HasPrefix(pinned.IssuerID, "did:key:") {
-		return nil, &awid.IDCertificateError{Code: "unregistered_parent"}
-	}
+
 	state.Tree.Domain = pinned.Domain
 	state.Tree.Parent = map[string]any{"kind": "identity", "id": pinned.IssuerID}
 	state.Tree.Mode = pinned.Mode
@@ -166,6 +170,26 @@ func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreatio
 }
 
 func (state *hostedInviteCreation) prepareRequest(root string, material workspaceTeamIdentityMaterial) (*awid.IDTreeCreationRequest, error) {
+	if state.MembershipChain != nil {
+		return nil, nil
+	}
+	if !state.IssuerCreationStarted {
+		installed, err := awconfig.LoadInstalledIDChain(root)
+		if err != nil {
+			return nil, err
+		}
+		if installed != nil {
+			state.MembershipChain = installed.Bundle
+			return nil, nil
+		}
+	}
+	if state.Tree.Domain == "" && state.ForHuman != nil {
+		return nil, &hostedInviteSignaturePendingError{err: fmt.Errorf("this invite admits agents of %s; obtain a chain from your own creator first using aw id child invite, aw id parent request, and aw id parent import, then retry this join in the same home; on this machine use --parent HOME", *state.ForHuman)}
+	}
+	if material.IdentityScope == awid.IdentityModeGlobal && strings.HasPrefix(fmt.Sprint(state.Tree.Parent["id"]), "did:key:") {
+		return nil, &awid.IDCertificateError{Code: "unregistered_parent"}
+	}
+	state.IssuerCreationStarted = true
 	if state.Tree.Domain == "" {
 		return nil, nil
 	}
@@ -235,10 +259,22 @@ func pendingHostedInviteRequester(opts idParentOptions) (*requester, error) {
 	if err != nil {
 		return nil, err
 	}
-	if state == nil || state.Scope != "local" || state.StableID != "" || state.Tree.Mode != "self_custodial" || state.Tree.Domain == "" || state.Tree.Parent["kind"] != "identity" {
+	if state == nil || state.Scope != "local" || state.StableID != "" {
 		return nil, os.ErrNotExist
 	}
-	if opts.Domain != "" && opts.Domain != state.Tree.Domain {
+	independent := state.ForHuman != nil && state.Tree.Domain == ""
+	domain := state.Tree.Domain
+	expectedParent := state.Tree.Parent
+	if independent {
+		domain = opts.Domain
+		expectedParent = nil
+		if domain == "" {
+			return nil, usageError("name your creator's --domain for this parent request or import")
+		}
+	} else if state.Tree.Mode != "self_custodial" || domain == "" || expectedParent["kind"] != "identity" {
+		return nil, os.ErrNotExist
+	}
+	if !independent && opts.Domain != "" && opts.Domain != state.Tree.Domain {
 		return nil, errors.New("parent request domain differs from the pending hosted invitation")
 	}
 	keyPath, err := awconfig.IdentityHomePath(home, "signing.key")
@@ -252,5 +288,5 @@ func pendingHostedInviteRequester(opts idParentOptions) (*requester, error) {
 	if awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) != state.DIDKey {
 		return nil, errors.New("pending hosted invite child key changed")
 	}
-	return &requester{id: state.DIDKey, didKey: state.DIDKey, domain: state.Tree.Domain, kind: "agent", dir: home.Root, expectedParent: state.Tree.Parent, signer: func(string) awid.IDCertificateSigner { return awid.KeySigner(key) }}, nil
+	return &requester{id: state.DIDKey, didKey: state.DIDKey, domain: domain, kind: "agent", dir: home.Root, expectedParent: expectedParent, signer: func(string) awid.IDCertificateSigner { return awid.KeySigner(key) }}, nil
 }

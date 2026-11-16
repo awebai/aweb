@@ -33,7 +33,11 @@ func TestHostedInviteGlobalReuseStillRefusesALocalPinnedParent(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:example.com", "identity_scope": "unknown", "server_url": origin, "status": "active", "id_tree": map[string]any{"v": 1, "issuer_id": v.Keys["coordinator"].DIDKey, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
 	}))
 	origin = server.URL
-	_, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_global_neighbor", origin, "child", "", false, workspaceTeamIdentityMaterial{IdentityScope: awid.IdentityModeGlobal, DIDKey: v.Keys["root_agent"].DIDKey, StableID: v.Keys["root_agent"].DIDAW})
+	material := workspaceTeamIdentityMaterial{IdentityScope: awid.IdentityModeGlobal, DIDKey: v.Keys["root_agent"].DIDKey, StableID: v.Keys["root_agent"].DIDAW}
+	state, err := prepareHostedInviteCreation(context.Background(), nil, "aw_inv_global_neighbor", origin, "child", "", false, material)
+	if err == nil {
+		_, err = state.prepareRequest(t.TempDir(), material)
+	}
 	var refusal *awid.IDCertificateError
 	if !errors.As(err, &refusal) || refusal.Code != "unregistered_parent" {
 		t.Fatalf("global neighbor changed: %v", err)
@@ -402,19 +406,31 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 				case "/api/v1/spawn/accept-invite":
 					accepts++
 					var req awid.SpawnAcceptInviteRequest
-					json.NewDecoder(r.Body).Decode(&req)
-					if req.IDTree == nil {
-						t.Fatal("missing pinned request")
+					decoder := json.NewDecoder(r.Body)
+					decoder.UseNumber()
+					decoder.Decode(&req)
+					if !reuse {
+						if req.IDTree == nil {
+							t.Error("missing pinned request")
+							http.Error(w, "missing request", 422)
+							return
+						}
+						requestID = req.IDTree.RequestID
+					} else if req.IDTree != nil || req.IDChain == nil {
+						t.Error("existing global membership must be chain-only")
+						http.Error(w, "wrong membership request", 422)
+						return
 					}
-					requestID = req.IDTree.RequestID
 					_, teamKey, _ := awid.GenerateKeypair()
 					cert, _ := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:example.com", MemberDIDKey: req.DID, MemberDIDAW: req.StableID, Alias: "child", IdentityScope: "global"})
 					encoded, _ := awid.EncodeTeamCertificateHeader(cert)
 					var registration any = map[string]any{"expected_head": nil, "invitation_id": childInvitation}
 					if reuse {
 						registration = nil
-						if req.IDTree.IDChain == nil {
-							t.Fatal("same-parent global membership did not present its existing chain")
+						if _, err := awid.EncodeIDChainHeader(req.IDChain); err != nil {
+							t.Error("existing global membership lost its signed chain")
+							http.Error(w, "invalid chain", 422)
+							return
 						}
 					}
 					json.NewEncoder(w).Encode(map[string]any{"team_id": "cloud-team", "team_slug": "backend", "namespace": "example.com", "identity_id": "cloud-child", "alias": "child", "server_url": origin, "did": req.DID, "stable_id": req.StableID, "identity_scope": "global", "custody": "self", "created": true, "team_cert": encoded, "id_chain": bundle, "registration_request": registration})

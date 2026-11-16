@@ -35,11 +35,12 @@ type teamCreateOutput struct {
 }
 
 type teamInviteOutput struct {
-	Status        string `json:"status"`
-	InviteID      string `json:"invite_id"`
-	Token         string `json:"token"`
-	ExpiresAt     string `json:"expires_at,omitempty"`
-	PorcelainJoin bool   `json:"-"`
+	ForHuman      *string `json:"for_human"`
+	Status        string  `json:"status"`
+	InviteID      string  `json:"invite_id"`
+	Token         string  `json:"token"`
+	ExpiresAt     string  `json:"expires_at,omitempty"`
+	PorcelainJoin bool    `json:"-"`
 }
 
 type teamAcceptInviteOutput struct {
@@ -234,6 +235,7 @@ type acceptedTeamInvite struct {
 }
 
 type teamAcceptInviteOptions struct {
+	ParentHome   string
 	Registry     *awid.RegistryClient
 	TXTResolver  awid.TXTResolver
 	IdentityHome string
@@ -561,6 +563,7 @@ func init() {
 	teamCreateCmd.Flags().BoolVar(&teamCreateShowToken, "show-token", false, "Print the hosted invite token in text output (JSON includes it)")
 	teamCmd.AddCommand(teamCreateCmd)
 
+	teamInviteCmd.Flags().String("for-human", "", "Admit agents whose verified nearest human is this did:aw person")
 	teamInviteCmd.Flags().StringVar(&teamInviteTeam, "team", "", "Team name")
 	teamInviteCmd.Flags().StringVar(&teamInviteNamespace, "namespace", "", "Namespace domain")
 	teamInviteCmd.Flags().BoolVar(&teamInviteMemberLocal, "member-local", false, "Create local workspace member invite (default)")
@@ -576,6 +579,7 @@ func init() {
 	teamCmd.AddCommand(teamInviteCmd)
 
 	teamAcceptInviteCmd.Flags().String("token-file", "", "Read the invite token from this file instead of an argument")
+	teamAcceptInviteCmd.Flags().String("parent", "", "Same-machine creator home for a fresh child, independent of the invite")
 	teamAcceptInviteCmd.Flags().Bool("token-stdin", false, "Read one invite token from stdin through EOF (max 65536 bytes)")
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Deprecated alias for --name")
@@ -773,6 +777,14 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 		return err
 	}
 
+	var humanOption []string
+	if cmd.Flags().Changed("for-human") {
+		value, _ := cmd.Flags().GetString("for-human")
+		if err := validateInviteHuman(value); err != nil {
+			return err
+		}
+		humanOption = []string{value}
+	}
 	localInvite := !global
 	hasTeamKey := false
 	if !awconfig.IsGrantHome(home.Root) {
@@ -782,27 +794,37 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 		}
 	}
 	var inviteID, token, expiresAt string
+	var resolvedHuman *string
 	if hasTeamKey {
-		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
+		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite, humanOption...)
 		if err != nil {
 			return err
 		}
 	} else if strings.TrimSpace(awebURL) != "" {
-		created, err := createHostedTeamInvite(workingDir, "", awid.BuildTeamID(domain, team), localInvite)
+		created, err := createHostedTeamInvite(workingDir, "", awid.BuildTeamID(domain, team), localInvite, humanOption...)
 		if err != nil {
 			return err
 		}
+		resolvedHuman = created.ForHuman
 		inviteID, token, expiresAt = strings.TrimSpace(created.InviteID), strings.TrimSpace(created.Token), strings.TrimSpace(created.ExpiresAt)
 	} else {
-		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite)
+		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite, humanOption...)
 		if err != nil {
 			return err
 		}
+	}
+	if hasTeamKey || strings.TrimSpace(awebURL) == "" {
+		saved, err := awconfig.LoadTeamInvite(inviteID)
+		if err != nil {
+			return err
+		}
+		resolvedHuman = saved.ForHuman
 	}
 	if !jsonFlag {
 		fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(expiresAt))
 	}
 	printOutput(teamInviteOutput{
+		ForHuman:      resolvedHuman,
 		Status:        "created",
 		InviteID:      inviteID,
 		Token:         token,
@@ -1150,6 +1172,7 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 		Scope:        acceptScope,
 		NoAddress:    teamAcceptNoAddress,
 		AwebURL:      inviteAwebURL,
+		ParentHome:   inviteParentFlag(cmd),
 	}, teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), SetActive: true})
 	if err != nil {
 		return err
@@ -1290,6 +1313,12 @@ func acceptAndStoreTeamInvite(workingDir, token string, opts teamAcceptInviteOpt
 }
 
 func ensureExternalLocalAcceptHomeAvailable(identityHome string) error {
+	if key, err := unjoinedChainSigningKey(identityHome); err != nil {
+		return err
+	} else if key != nil {
+		return nil
+	}
+
 	home := awconfig.IdentityHome{Root: strings.TrimSpace(identityHome)}
 	for _, rel := range []string{"grant.yaml", "identity.yaml", "workspace.yaml", "teams.yaml"} {
 		path, err := awconfig.IdentityHomePath(home, rel)
@@ -1699,11 +1728,11 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func createTeamInviteToken(domain, team, registryURL, awebURL string, local bool) (string, string, error) {
-	return createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL, local, "")
+func createTeamInviteToken(domain, team, registryURL, awebURL string, local bool, forHuman ...string) (string, string, error) {
+	return createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL, local, "", forHuman...)
 }
 
-func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL string, local bool, operationID string) (string, string, error) {
+func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL string, local bool, operationID string, forHuman ...string) (string, string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", "", err
@@ -1712,10 +1741,10 @@ func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL strin
 	if err != nil {
 		return "", "", err
 	}
-	return createTeamInviteTokenAt(domain, team, registryURL, awebURL, local, operationID, wd, home.Root)
+	return createTeamInviteTokenAt(domain, team, registryURL, awebURL, local, operationID, wd, home.Root, forHuman...)
 }
 
-func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bool, operationID, workingDir, identityHome string) (string, string, error) {
+func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bool, operationID, workingDir, identityHome string, forHuman ...string) (string, string, error) {
 	domain = awconfig.NormalizeDomain(domain)
 	team = strings.ToLower(strings.TrimSpace(team))
 	registryURL = strings.TrimSpace(registryURL)
@@ -1734,6 +1763,18 @@ func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bo
 		return "", "", usageError("no team key for %s/%s; run `aw id team create` first", domain, team)
 	}
 
+	requested, err := requestedInviteHuman(forHuman)
+	if err != nil {
+		return "", "", err
+	}
+	link, issuerHuman, err := prepareTeamInviteAuthority(context.Background(), idChildOptions{WorkingDir: workingDir, IdentityHome: identityHome, TeamRegistryURL: registryURL, TeamRegistryDomain: domain, Now: time.Now}, local, requested)
+	if err != nil {
+		return "", "", err
+	}
+	required := issuerHuman
+	if requested != nil {
+		required = requested
+	}
 	inviteID, err := awid.GenerateUUID4()
 	if err != nil {
 		return "", "", err
@@ -1747,6 +1788,7 @@ func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bo
 		identityScope = awid.IdentityModeLocal
 	}
 	invite := &awconfig.TeamInvite{
+		ForHuman:      required,
 		InviteID:      inviteID,
 		Domain:        domain,
 		TeamName:      team,
@@ -1757,13 +1799,7 @@ func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bo
 		OperationID:   operationID,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
 	}
-	if local {
-		link, err := prepareTeamInviteIDChild(context.Background(), idChildOptions{WorkingDir: workingDir, IdentityHome: identityHome, TeamRegistryURL: registryURL, TeamRegistryDomain: domain, Now: time.Now})
-		if err != nil {
-			return "", "", err
-		}
-		invite.IDChild = link
-	}
+	invite.IDChild = link
 	if err := awconfig.SaveTeamInvite(invite); err != nil {
 		return "", "", err
 	}
@@ -1788,7 +1824,7 @@ func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, loca
 
 // createHostedTeamInvite creates a single-use hosted invite and returns the
 // service's response, which carries its expiry.
-func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember bool) (*awid.SpawnCreateInviteResponse, error) {
+func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember bool, forHuman ...string) (*awid.SpawnCreateInviteResponse, error) {
 	if !localMember {
 		return nil, usageError("--member-global is not supported for hosted team invites")
 	}
@@ -1827,15 +1863,23 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 			return nil, errors.New("hosted invites require the selected agent's own chain")
 		}
 	}
+	requested, err := requestedInviteHuman(forHuman)
+	if err != nil {
+		return nil, err
+	}
 	created, err := client.CreateSpawnInvite(ctx, &awid.SpawnCreateInviteRequest{
 		IDChain:    bundle,
+		ForHuman:   requested,
 		AccessMode: "open",
 		MaxUses:    1,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create hosted team invite: %w", err)
 	}
-	if chain != nil {
+	if requested != nil && (created.ForHuman == nil || *created.ForHuman != *requested) {
+		return nil, errors.New("hosted service did not retain --for-human; upgrade the service before issuing this invite")
+	}
+	if chain != nil && (created.IDTree != nil || requested == nil) {
 		certificates := bundle["certificates"].([]any)
 		leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
 		if created.IDTree == nil || created.IDTree.V != 1 || created.IDTree.IssuerID != leaf["id"] || created.IDTree.Domain != leaf["domain"] || created.IDTree.ChildKind != "agent" || (created.IDTree.Mode != "host_managed" && created.IDTree.Mode != "self_custodial") {
@@ -1845,7 +1889,7 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 	if strings.TrimSpace(created.Token) == "" {
 		return nil, fmt.Errorf("hosted team invite response is missing token")
 	}
-	if chain != nil && created.IDTree.Mode == "self_custodial" {
+	if chain != nil && created.IDTree != nil && created.IDTree.Mode == "self_custodial" {
 		link, err := prepareTeamInviteIDChild(ctx, idChildOptions{WorkingDir: workingDir, IdentityHome: selected.IdentityHome, Now: time.Now})
 		if err != nil {
 			return nil, err
@@ -1904,7 +1948,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if err != nil {
 		return nil, fmt.Errorf("invite not found (token may be invalid or expired): %w", err)
 	}
-	if invite.IDChild != nil {
+	if invite.IDChild != nil || invite.ForHuman != nil || opts.ParentHome != "" {
 		dir, err := awconfig.DefaultTeamInvitesDir()
 		if err != nil {
 			return nil, err
@@ -1942,7 +1986,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	defer cancel()
 
 	issueID := false
-	if scope == awid.IdentityModeLocal && invite.IDChild != nil {
+	if scope == awid.IdentityModeLocal && invite.IDChild != nil && opts.ParentHome == "" {
 		home := opts.IdentityHome
 		if home == "" {
 			home = awconfig.WorktreeIdentityHome(workingDir)
@@ -1976,6 +2020,42 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		if err := awconfig.SaveTeamInvite(invite); err != nil {
 			return nil, err
 		}
+	}
+	home, err := identityHomeForTarget(workingDir, opts.IdentityHome)
+	if err != nil {
+		return nil, err
+	}
+	if opts.ParentHome != "" {
+		if err := completeExplicitInviteParent(ctx, workingDir, home.Root, token, opts.ParentHome); err != nil {
+			return nil, err
+		}
+		issueID = false
+	} else if issueID {
+		if err := prepareInviteChildIdentity(home.Root); err != nil {
+			return nil, err
+		}
+		if err := completeTeamInviteIDChild(ctx, invite, workingDir, home.Root); err != nil {
+			return nil, err
+		}
+	}
+	installed, err := awconfig.LoadInstalledIDChain(home.Root)
+	if err != nil {
+		return nil, err
+	}
+	var bundle map[string]any
+	if installed != nil {
+		bundle = installed.Bundle
+	} else if invite.ForHuman != nil {
+		if err := prepareInviteChildIdentity(home.Root); err != nil {
+			return nil, err
+		}
+	}
+	subjectID := plan.MemberDIDKey
+	if plan.MemberDIDAW != "" {
+		subjectID = plan.MemberDIDAW
+	}
+	if _, err := verifyInviteMembership(ctx, bundle, awid.IDChainSubject{ID: subjectID, DIDKey: plan.MemberDIDKey}, invite.ForHuman, registry, opts.TXTResolver); err != nil {
+		return nil, err
 	}
 	var appliedDefaultClaim *awid.AtomicAddressClaimResult
 	if plan.DefaultClaim != nil {
@@ -2030,14 +2110,12 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		if err := writeExternalLocalIdentityStateIfNeeded(home, cert); err != nil {
 			return nil, err
 		}
-		if err := completeTeamInviteIDChild(ctx, invite, workingDir, home); err != nil {
-			return nil, fmt.Errorf("team membership certificate saved; ID issuance pending (retry this invite in the same identity home): %w", err)
-		}
 	}
 	if err := awconfig.DeleteTeamInvite(invite.InviteID); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", invite.InviteID, err)
 	}
 
+	consumedInviteParent(token, opts.ParentHome)
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			Status:   "accepted",
@@ -2222,6 +2300,11 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
 	}
+	if opts.ParentHome != "" {
+		if err := completeExplicitInviteParent(ctx, workingDir, home.Root, token, opts.ParentHome); err != nil {
+			return nil, err
+		}
+	}
 	var localLink *awconfig.TeamInvite
 	if scope == awid.IdentityModeLocal && creation.Tree.Mode == "self_custodial" {
 		localLink, err = localHostedInviteLink(token, creation)
@@ -2232,6 +2315,9 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	var treeRequest *awid.IDTreeCreationRequest
 	if creation.ResponseJSON == "" {
 		treeRequest, err = creation.prepareRequest(home.Root, material)
+		if saveErr := creation.save(recoveryPath); saveErr != nil {
+			return nil, saveErr
+		}
 		var pending *hostedInviteSignaturePendingError
 		if errors.As(err, &pending) && localLink != nil {
 			if exchangeErr := completeLocalHostedInvite(ctx, localLink, creation, workingDir, home.Root); exchangeErr != nil {
@@ -2246,6 +2332,17 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			return nil, err
 		}
 	}
+	var membershipResult *awid.IDChainResult
+	if creation.MembershipChain != nil {
+		subjectID := didKey
+		if scope == awid.IdentityModeGlobal {
+			subjectID = stableID
+		}
+		membershipResult, err = verifyInviteMembership(ctx, creation.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: didKey}, creation.ForHuman, opts.Registry, opts.TXTResolver)
+		if err != nil {
+			return nil, err
+		}
+	}
 	registry := opts.Registry
 	if treeRequest != nil && treeRequest.IDChain != nil {
 		if registry == nil {
@@ -2254,8 +2351,12 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 				return nil, err
 			}
 		}
-		if _, err := finishHostedIDTree(ctx, creation.Tree, awid.IDTreeCreationResponse{FieldsPresent: true, IDChain: awid.ReceivedIDChain(treeRequest.IDChain)}, material, home.Root, registry, opts.TXTResolver); err != nil {
+		verdict, err := finishHostedIDTree(ctx, creation.Tree, awid.IDTreeCreationResponse{FieldsPresent: true, IDChain: awid.ReceivedIDChain(treeRequest.IDChain)}, material, home.Root, registry, opts.TXTResolver)
+		if err != nil {
 			return nil, fmt.Errorf("native invite child chain is not currently valid: %w", err)
+		}
+		if err := checkInviteHuman(verdict, creation.ForHuman); err != nil {
+			return nil, err
 		}
 	}
 	registryURL := ""
@@ -2302,6 +2403,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	}
 
 	req := &awid.SpawnAcceptInviteRequest{
+		IDChain:       creation.MembershipChain,
 		IDTree:        treeRequest,
 		Token:         strings.TrimSpace(token),
 		DID:           didKey,
@@ -2359,9 +2461,26 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			return nil, err
 		}
 	}
-	responsibility, err := finishHostedIDTree(ctx, creation.Tree, resp.IDTreeCreationResponse, material, home.Root, registry, opts.TXTResolver)
-	if err != nil {
-		return nil, fmt.Errorf("hosted membership accepted; identity attribution incomplete, retry the same invite: %w", err)
+	responsibility := membershipResult
+	if creation.MembershipChain != nil {
+		if resp.RegistrationRequest != nil {
+			return nil, errors.New("membership-only acceptance requested identity registration")
+		}
+		if resp.IDChain != nil {
+			expected, _ := awid.EncodeIDChainHeader(creation.MembershipChain)
+			actual, err := awid.EncodeIDChainHeader(map[string]any(resp.IDChain))
+			if err != nil || expected != actual {
+				return nil, errors.New("membership-only acceptance changed the original chain")
+			}
+		}
+	} else {
+		responsibility, err = finishHostedIDTree(ctx, creation.Tree, resp.IDTreeCreationResponse, material, home.Root, registry, opts.TXTResolver)
+		if err != nil {
+			return nil, fmt.Errorf("hosted membership accepted; identity attribution incomplete, retry the same invite: %w", err)
+		}
+		if err := checkInviteHuman(responsibility, creation.ForHuman); err != nil {
+			return nil, err
+		}
 	}
 	registration := "unknown"
 	if responsibility != nil {
@@ -2393,6 +2512,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", localLink.InviteID, err)
 		}
 	}
+	consumedInviteParent(token, opts.ParentHome)
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			IDRegistration: registration,
@@ -2418,6 +2538,15 @@ func hostedAcceptSigningKey(workingDir string) (ed25519.PublicKey, ed25519.Priva
 }
 
 func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKey, ed25519.PrivateKey, error) {
+	homeForChain, err := identityHomeForTarget(workingDir, identityHome)
+	if err != nil {
+		return nil, nil, err
+	}
+	if key, err := unjoinedChainSigningKey(homeForChain.Root); err != nil {
+		return nil, nil, err
+	} else if key != nil {
+		return key.Public().(ed25519.PublicKey), key, nil
+	}
 	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
 		return nil, nil, err
 	}
@@ -2442,6 +2571,13 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 		completedPaths := []string{identityPath, workspacePath}
 		for _, path := range completedPaths {
 			if _, err := os.Stat(path); err == nil {
+				if path == identityPath && statHostedAcceptPendingMarker(markerPath, keyPath) == nil {
+					metadata, loadErr := awconfig.LoadWorktreeIdentityFrom(identityPath)
+					key, keyErr := awid.LoadSigningKey(keyPath)
+					if loadErr == nil && keyErr == nil && metadata.IdentityScope == awid.IdentityModeLocal && metadata.Custody == awid.CustodySelf && metadata.DID == awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
+						continue
+					}
+				}
 				return nil, nil, usageError("refusing to overwrite existing %s", path)
 			} else if !os.IsNotExist(err) {
 				return nil, nil, err

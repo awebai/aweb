@@ -2,6 +2,7 @@ package awid
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -28,7 +29,11 @@ func TestSpawnInviteConditionAndMembershipChainWire(t *testing.T) {
 			var want, got map[string]json.RawMessage
 			json.Unmarshal([]byte(tc.input), &want)
 			json.Unmarshal(raw, &got)
-			if string(got[tc.field]) != string(want[tc.field]) {
+			var gotValue, wantValue any
+			json.Unmarshal(got[tc.field], &gotValue)
+			json.Unmarshal(want[tc.field], &wantValue)
+			_, present := got[tc.field]
+			if !present || !reflect.DeepEqual(gotValue, wantValue) {
 				t.Fatalf("lost %s: %s", tc.field, raw)
 			}
 		})

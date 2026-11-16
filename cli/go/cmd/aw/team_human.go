@@ -296,6 +296,7 @@ func init() {
 	registerTeamMemberAddFlags(teamHumanExtendCmd, false)
 	registerTeamAdminCommand(teamHumanExtendCmd, teamAdminGroupLocal)
 
+	teamHumanInviteCmd.Flags().String("for-human", "", "Admit agents whose verified nearest human is this did:aw person")
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
 	teamHumanInviteCmd.Flags().BoolVar(&teamInviteMemberLocal, "member-local", false, "Create local workspace member invite (default)")
 	teamHumanInviteCmd.Flags().BoolVar(&teamInviteMemberGlobal, "member-global", false, "Create global member invite")
@@ -306,6 +307,7 @@ func init() {
 	teamHumanInviteCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamHumanInviteCmd)
 
+	teamHumanJoinCmd.Flags().String("parent", "", "Same-machine creator home for a fresh child, independent of the invite")
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Deprecated alias for --name")
 	markDeprecatedHiddenFlag(teamHumanJoinCmd, "alias", "name")

@@ -1003,6 +1003,26 @@ accepts a parent source independent of the invite. `aw init --join-from`
 remains the shorthand for taking both from the same source; OATS spawn is
 unchanged. Existing identities are not re-parented by joining a team.
 
+Hosted invite creation accepts optional `for_human` (a `did:aw` person ID).
+Omission selects the issuer's verified nearest human or no condition; explicit
+null or an empty string is refused. The resolved value is stored with the invite
+and returned as `for_human: string | null` in creation and preview. A client
+requesting an explicit condition refuses if the service does not echo it.
+The bearer token cannot replace this stored condition. Hosted acceptance may
+carry top-level `id_chain`, bound to its authenticated joining key: this is
+membership only. The existing `id_tree` remains the fresh-child exchange;
+both paths must satisfy the same condition before membership is granted.
+Current registry evidence is required for a conditioned acceptance, including
+on the local controller path. Revoked or replaced person ancestry refuses;
+unavailable status gives `evidence_unavailable`, without admission fallback.
+
+`--parent <home>` is same-machine creation only. For a different-human invite
+without a chain on another machine, the refusal names the joiner's own parent
+request/import exchange, never the issuer as parent. The caller obtains that
+chain first, then joins from its key-and-chain home without prior membership.
+A fresh identity created by the invite issuer must also match the condition;
+a stable client cannot turn an invite for another person into its issuer's child.
+
 Creating a person's ID needs no approval service. Enrolling an approval key
 and approving an act are separate, optional operations, as defined in the
 [approval architecture](human-approval-architecture.md#creation-enrolment-and-approval).
