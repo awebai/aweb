@@ -363,3 +363,15 @@ def test_team_server_object_signature_is_not_a_generic_json_or_controller_reques
     with pytest.raises(TeamServerRecordError):
         verify_team_server_record(record, sign_message(SEED, canonical_json_bytes(record)),
                                   team_id=f"{TEAM}:{DOMAIN}", current_team_did_key=DID, now=now)
+
+@pytest.mark.asyncio
+async def test_a_registry_without_public_origins_names_the_setting_it_needs():
+    case = next(case for case in CASES if case.call == "register_team")
+    sent = await capture_call(case.call, **case.kwargs)
+    with pytest.raises(HTTPException) as unavailable:
+        await verify_controller_json_request(
+            http_request(dict(sent.headers), body=sent.content, path=sent.url.raw_path.decode(), origins=()),
+            payload_dict={"domain": DOMAIN, **case.claims},
+        )
+    assert unavailable.value.status_code == 503
+    assert "AWID_PUBLIC_ORIGINS" in unavailable.value.detail

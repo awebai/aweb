@@ -48,6 +48,7 @@ services:
       AWID_RATE_LIMIT_BACKEND: redis
       AWID_RATE_LIMIT_DISABLED: "true"
       AWID_SKIP_DNS_VERIFY: "1"
+      AWID_PUBLIC_ORIGINS: http://awid:8010,http://${NAAPP_E2E_PROJECT:-folio-e2e}-awid.test:8010,http://127.0.0.1:${NAAPP_E2E_AWID_PORT:-18010}
       APP_ENV: test
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
       AWID_SERVICE_TOKEN: ${FOLIO_E2E_AWID_SERVICE_TOKEN:-folio-e2e-awid-service-token-0123456789abcdef}

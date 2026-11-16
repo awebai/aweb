@@ -108,7 +108,11 @@ async def verify_controller_json_request(
     origins = getattr(request.app.state, 'awid_public_origins', ())
     allowed = {canonical_server_origin(value) for value in origins}
     if not allowed:
-        raise HTTPException(status_code=503, detail='AWID controller public origins are not configured')
+        raise HTTPException(
+            status_code=503,
+            detail='AWID controller public origins are not configured: set AWID_PUBLIC_ORIGINS to the '
+            'comma-separated public origins clients write to',
+        )
     if audience not in allowed:
         raise HTTPException(status_code=401, detail='AWID controller audience is not allowed')
     body = await request.body()
