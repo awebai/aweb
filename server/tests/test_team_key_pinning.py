@@ -211,6 +211,42 @@ async def test_before_enforcement_a_mismatch_is_logged_and_moves_the_pin(pinning
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("enforce", ["true", "false"])
+async def test_a_served_key_the_act_does_not_name_keeps_the_pin_with_one_act_read(pinning, monkeypatch, enforce):
+    env = pinning
+    monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", enforce)
+    await register_namespace_controller(env, env.namespace_did)
+    current_sk, _, current_did = _make_keypair()
+    await rotate_team_key(env, env.namespace_sk, env.namespace_did, current_did)
+    member = _member(current_sk, current_did, "steady")
+    assert (await _connect(env, member)).status_code == 200
+    # The registry serves another key beside its genuine latest act, whose
+    # signed bytes name the pinned key.
+    substituted = _make_keypair()[2]
+    await _substitute_registry_team_key(env, substituted)
+    await env.registry_db.execute(
+        "UPDATE {{tables.team_key_acts}} SET team_did_key = $1 WHERE team_did_key = $2", substituted, current_did,
+    )
+    client_type = type(env.app.state.awid_registry_client)
+    reads = []
+    read_act = client_type.get_team_key_act
+
+    async def counted(self, domain, name):
+        reads.append((domain, name))
+        return await read_act(self, domain, name)
+
+    monkeypatch.setattr(client_type, "get_team_key_act", counted)
+
+    first = await _roster(env, member)
+    assert first.status_code == 200, first.text
+    statuses = [(await _roster(env, member)).status_code for _ in range(5)]
+
+    assert statuses == [200] * 5
+    assert len(reads) == 1
+    assert (await _pin(env))["team_did_key"] == current_did
+
+
+@pytest.mark.asyncio
 async def test_an_embedding_app_without_a_resolver_still_authenticates(pinning):
     # An embedding host may mount aweb's team auth in an app create_app did not build.
     env = pinning
