@@ -139,7 +139,7 @@ func humanIssuerHTTP(ctx context.Context, human *humanParticipation, origin, pat
 		return nil, err
 	}
 	timestamp := time.Now().UTC().Format(time.RFC3339)
-	signature, payload, err := awid.SignRequestCredentialWithSigner(human.record.DIDKey, human.sign, http.MethodPost, target, "did_aw", human.record.StableID, timestamp, raw, nil, "enrollment at "+target.String())
+	signature, payload, err := awid.SignRequestCredentialWithSigner(human.record.DIDKey, human.sign, http.MethodPost, target, "did_aw", human.record.StableID, timestamp, raw, nil, "POST "+target.String())
 	if err != nil {
 		return nil, err
 	}

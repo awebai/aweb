@@ -59,7 +59,7 @@ func checkHumanAddRequest(request map[string]any, human *awconfig.HumanRecord, p
 
 func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 	h := activeHuman
-	h.operation = "ask your issuer to add a human"
+	h.operation = "ask your issuer to add human " + humanAddPerson
 	if !strings.HasPrefix(humanAddPerson, "did:aw:") {
 		return usageError("--person must be the new person's prepared did:aw")
 	}
