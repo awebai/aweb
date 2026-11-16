@@ -1,7 +1,7 @@
 ---
 type: Decision
 title: Public identity evidence approves its own public act
-description: An identity evidence sidecar proving creation, adoption or key transition carries approval of its own complete public identity act; it never reuses, redacts or publishes a receipt for a private application act. Accepted design boundary (source-reported); wire format pending, no implementation.
+description: An identity evidence sidecar proving creation, adoption or key transition carries approval of its own complete public identity act; it never reuses, redacts or publishes a receipt for a private application act. Accepted adcl design (source-reported); remaining wire choices are checked in code review.
 tags: [decision, identity, approval, privacy, evidence, contracts]
 timestamp: 2026-11-15
 ---
@@ -10,9 +10,10 @@ timestamp: 2026-11-15
 relayed design acceptance of the verifier plan on 2026-11-15, explicitly
 confirming this disposition. The harvester could not read that record.
 
-**Status:** an accepted claim boundary, not a frozen wire schema. The exact
-commitments and result types await the protocol revision; implementation is
-held. No code or run backs it.
+**Status:** an accepted adcl design boundary, not a frozen wire schema. Build
+against the approved architecture and approval protocol revision 3; remaining
+wire choices are checked in code review, not a separate format gate. This
+decision makes no implementation or runtime claim.
 
 # Decision
 
