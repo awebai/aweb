@@ -194,8 +194,8 @@ func TestHostedInviteRefusalReleasesAttemptButInterruptionRetainsIt(t *testing.T
 			}
 			if scenario == "accept unavailable" {
 				refuseRetry = true
-				if _, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_first", opts); err == nil {
-					t.Fatal("expected explicit refusal after ambiguous acceptance")
+				if _, err := acceptHostedTeamInviteWithDetails(wd, "aw_inv_first", opts); err == nil || !strings.Contains(err.Error(), "earlier attempt may have succeeded") || !strings.Contains(err.Error(), "fetch-cert") || !strings.Contains(err.Error(), recoveryPath) {
+					t.Fatalf("ambiguous refusal lost its recovery exit: %v", err)
 				}
 				if state, err := loadHostedInviteCreation(recoveryPath); err != nil || state == nil {
 					t.Fatalf("later refusal erased an earlier uncertain outcome: %v", err)

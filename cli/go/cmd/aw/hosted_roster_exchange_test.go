@@ -26,7 +26,7 @@ import (
 // The hosted boundary is HTTP; the child's proof, parent approval, import and
 // chain verification run the production exchange, with no substituted signer.
 func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
-	for _, scenario := range []string{"global provision chained actor", "three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "join-from retry preview", "join-from retry accept", "join-from retry connect", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team cleanup warning", "further-team own chain", "further-team parent source", "further-team parent source retry", "further-team add parent retry", "further-team parent signed retry", "further-team other human fresh", "further-team independent init", "further-team own chain retry", "further-team explicit condition echo", "further-team explicit condition missing echo"} {
+	for _, scenario := range []string{"global provision chained actor", "three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "join-from retry preview", "join-from retry accept", "join-from retry connect", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team cleanup warning", "further-team own chain", "further-team parent source", "further-team parent source retry", "further-team add parent retry", "further-team parent signed retry", "further-team parent two children", "further-team parent host managed", "further-team other human fresh", "further-team independent init", "further-team own chain retry", "further-team explicit condition echo", "further-team explicit condition missing echo"} {
 		t.Run(scenario, func(t *testing.T) {
 			resetTeamHumanCreateGlobals(t)
 			v := loadWhoVectors(t)
@@ -144,9 +144,17 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					if scenario == "further-team explicit condition echo" {
 						requiredHuman = v.Keys["alice"].DIDAW
 					}
-					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": team, "identity_scope": "unknown", "server_url": origin, "status": "active", "for_human": requiredHuman, "id_tree": map[string]any{"v": 1, "issuer_id": pinned, "domain": "example.com", "child_kind": "agent", "mode": "self_custodial"}})
+					mode := "self_custodial"
+					if scenario == "further-team parent host managed" {
+						mode = "host_managed"
+					}
+					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": team, "identity_scope": "unknown", "server_url": origin, "status": "active", "for_human": requiredHuman, "id_tree": map[string]any{"v": 1, "issuer_id": pinned, "domain": "example.com", "child_kind": "agent", "mode": mode}})
 				case "/api/v1/spawn/accept-invite":
 					accepts++
+					if scenario == "further-team parent two children" && accepts <= 2 {
+						http.Error(w, "pending", 503)
+						return
+					}
 					if (scenario == "further-team retry" || scenario == "further-team own chain retry" || scenario == "join-from retry accept" || scenario == "further-team parent source retry") && accepts == 1 {
 						http.Error(w, "retryable service failure", http.StatusServiceUnavailable)
 						return
@@ -309,7 +317,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					withTestWorkingDir(t, childDir, func() {
 						cmd := authTestCmd(&bytes.Buffer{})
 						cmd.Flags().Bool("token-stdin", true, "")
-						if scenario == "further-team parent source" || (scenario == "further-team parent source retry" && acceptCalls == 1) || scenario == "further-team parent signed retry" || (scenario == "further-team add parent retry" && acceptCalls > 1) {
+						if scenario == "further-team parent source" || (scenario == "further-team parent source retry" && acceptCalls == 1) || scenario == "further-team parent signed retry" || scenario == "further-team parent two children" || scenario == "further-team parent host managed" || (scenario == "further-team add parent retry" && acceptCalls > 1) {
 							cmd.Flags().String("parent", root, "")
 						}
 						cmd.SetIn(strings.NewReader(token + "\n"))
@@ -322,10 +330,33 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					return result
 				}
 				firstErr := accept()
+				if scenario == "further-team parent two children" {
+					if firstErr == nil {
+						t.Fatal("first child interruption missing")
+					}
+					firstHome := recipientHome
+					recipientHome = t.TempDir()
+					activeIdentityHome.Root = recipientHome
+					if err := accept(); err == nil {
+						t.Fatal("second child interruption missing")
+					}
+					first, _ := loadHostedInviteCreation(filepath.Join(firstHome, hostedInviteRecoveryFile))
+					second, _ := loadHostedInviteCreation(filepath.Join(recipientHome, hostedInviteRecoveryFile))
+					if first == nil || second == nil || first.DIDKey == second.DIDKey {
+						t.Fatal("multi-use invitation conflated child homes")
+					}
+					if err := accept(); err != nil {
+						t.Fatalf("second child resume: %v", err)
+					}
+					recipientHome = firstHome
+					activeIdentityHome.Root = firstHome
+					firstErr = accept()
+				}
 				if scenario == "further-team parent source retry" || scenario == "further-team add parent retry" || scenario == "further-team parent signed retry" {
 					if firstErr == nil {
 						t.Fatal("interruption missing")
 					}
+					t.Logf("initial interruption: %v", firstErr)
 					firstErr = accept()
 					entries, err := filepath.Glob(filepath.Join(awconfig.IdentityIssuanceDir(filepath.Join(root, ".aw")), "*.json"))
 					if err != nil || len(entries) != 1 {
