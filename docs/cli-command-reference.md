@@ -1000,6 +1000,8 @@ Request and import your own certificate from a parent
 
 Subcommands:
 - `import` Import the parent's response to your request and register it
+- `install` Install an already-issued chain for this home's own local key
+- `refresh` Refresh current registered ancestry without re-signing your certificate
 - `request` Export a certificate request against a parent's invitation
 
 Flags:
@@ -1021,6 +1023,30 @@ Flags:
 - `--no-register Install the certificate but leave its AWID registration pending`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
 
+## `id parent install`
+
+### `id parent install`
+
+Verify and install an already-issued public ID chain for this home's own did:key.
+The home must have no chain or the identical chain. This does not adopt or re-parent.
+
+Flags:
+- `--domain string Identity namespace (defaults to the chain)`
+- `-h, --help help for install`
+- `--registry string Registry origin when DNS names none`
+
+## `id parent refresh`
+
+### `id parent refresh`
+
+Fetch and verify current registered ancestry, preserving local certificates below it.
+For a branch with only local ancestors, use parent request --resign with the parent.
+
+Flags:
+- `--domain string Identity namespace (defaults to the installed chain)`
+- `-h, --help help for refresh`
+- `--registry string Registry origin when DNS names none`
+
 ## `id parent request`
 
 ### `id parent request`
@@ -1033,7 +1059,7 @@ the fingerprint shown here through a different trusted channel.
 
 With --resign, a local agent (whose ID is its did:key) instead asks the parent
 of the certificate it carries to re-sign it with the parent's current key,
-after the parent rotated its key.
+after its key or ancestry changed.
 
 Flags:
 - `--domain string Namespace domain of the invitation`

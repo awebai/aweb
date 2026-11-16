@@ -222,7 +222,11 @@ admission verdict:
 An unregistered local key has one parent and kind for that key. Re-parenting
 requires a new local key plus member certificate, or registered enrollment that
 replaces the old local membership. Initial certification of a previously
-chainless local key is not re-parenting. Explicit registered enrollment may
+chainless local key is not re-parenting. Neither is the first certificate under
+a person for an agent whose only parent so far is its own namespace. This
+one-time adoption keeps the ID and key; it cannot replace a person parent or
+an agent parent. The old local namespace certificate remains cryptographically
+valid and reports no_human if presented. Explicit registered enrollment may
 keep its private key and acquire a stable ID, without guessing its past. Local
 descendants do not silently change their parent ID when that conversion occurs.
 
@@ -1045,6 +1049,20 @@ and verified-account checks; presenting it on this file path refuses
 `invitation_mode_mismatch`. AWID is the registration/time witness, not the
 pending-request mailbox. Membership remains a separate operation.
 
+Hosted creation may advertise an additive public `creation_invitation` beside
+its existing team or invitation preview metadata:
+`{id,parent:{kind:"identity",id},domain,name,identity_scope}`. The checked creator
+session fixes this person parent, home domain and named child's local/global
+scope before the setup key or invite is redeemed. Its domain may differ from
+the membership team's namespace. A new client copies these exact fields into
+its existing `id_tree` request, adding `invitation_id` equal to the preview's
+`id`; the independent `request_id` identifies retries. It retains that selection
+and its child key before creation, verifies the returned chain against the
+selected parent and domain, and refuses changes on retry. An advertised null or
+malformed invitation refuses. Absence preserves the existing creation behavior.
+Released clients that still ask for namespace parentage continue to receive it;
+a setup credential's account association alone never selects a person signer.
+
 The child exports canonical UTF-8 JSON with exactly this wrapper:
 
 ```json
@@ -1211,6 +1229,36 @@ human signing prompt retain their existing rules. For a human prepared on a
 different machine, the issuer fixes the invitation and parent BEFORE CSR
 export; key/DID preparation may precede that, but `--domain` alone cannot
 produce an issue CSR without its required invitation ID and parent.
+
+For that one-time organization-only adoption, `parent request` accepts an
+installed chain only when it is exactly namespace → this agent, in the same
+domain, and the requested parent is a registered identity. Import verifies that
+the new parent is a human, verifies the exact requested binding and refuses a
+second adoption, including an older outstanding request. A registered agent
+retains its working chain until the registry accepts replacement of its exact
+old head. `--no-register` retains the signed adoption response with registration
+pending; it leaves that working chain installed. A retry reuses the same
+response, invitation ID and expected head.
+
+Local children spawned before adoption retain the old ancestry until refreshed.
+Use `aw id parent request --resign`, transfer to the actual parent for
+`aw id child receive` and `approve`, then `aw id parent import` on the child.
+This exchange also works when the parent's key did not rotate: it carries the
+parent's newly verified ancestry and keeps the child's ID, key and immediate
+parent. An unregistered parent proves its authority through its carried chain
+and exact signing key; it has no registry identity row. Repeat down the tree
+for local descendants. Use `aw id parent refresh` to fetch and verify current
+registered ancestry while preserving the local certificates beneath it. A registered agent uses that same
+command to refresh its whole chain without re-signing its own certificate.
+Branches with only local ancestors require the parent exchange above.
+
+`aw id parent install <chain-file|->` installs an already-issued public chain
+in another home holding the same local key. It requires the leaf ID to equal
+that home's own did:key, verifies the whole chain against current authority,
+and accepts only an empty home or the identical installed chain. It has no
+outgoing-request requirement and cannot replace a different chain. This lets
+several homes sharing a local key carry the same verified certificate; it
+creates no new key, signature, registration or ancestry.
 
 The CLI surfaces are `aw id parent request` (issue or --resign),
 `aw id parent import <response>`, and `aw id child invite`, `receive <request>`,
