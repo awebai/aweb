@@ -12,6 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class NaappE2ETest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # The real e2e preflight requires this checkout's aw. Prepare the
+        # same binary for direct discovery and the named make target.
+        subprocess.run(["make", "-C", str(ROOT / "cli/go"), "build"], check=True)
+
     def test_each_package_receives_its_own_allocation(self):
         with tempfile.TemporaryDirectory() as temporary:
             packages = [Path(temporary) / name for name in ("first", "second")]
