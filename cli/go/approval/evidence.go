@@ -18,6 +18,8 @@ type Link struct {
 	ID          string `json:"id"`
 	Certificate string `json:"certificate"`
 	Key         string `json:"key,omitempty"`
+	// FirstKey is independently acquired from this ID's verified public log.
+	FirstKey string `json:"-"`
 }
 type Check struct {
 	Status string `json:"status"`
@@ -98,6 +100,9 @@ func CheckCreationEvidence(link Link, statement, receipt map[string]any, trust, 
 	if version != 1 || stringValue(body, "kind") != "human" {
 		return fail("unsupported", "unsupported_version")
 	}
+	if _, transition := body["transition"]; transition {
+		return fail("unsupported", "unsupported_profile")
+	}
 	subject, creation := objectValue(body, "subject"), objectValue(body, "creation")
 	if !closed(statement, "evidence", "signature") || !closed(body, "version", "kind", "organisation", "subject", "issuer", "binding_commitment", "creation") || !closed(subject, "id", "certificate", "key") || !closed(creation, "credential", "grade", "receipt_commitment") {
 		return fail("invalid", "malformed")
@@ -131,6 +136,12 @@ func CheckCreationEvidence(link Link, statement, receipt map[string]any, trust, 
 	verified, e := awid.VerifySignedPayload("aweb.human-id-evidence/1\n"+string(canonical), base64.RawStdEncoding.EncodeToString(sig), trust.Issuer, trust.Issuer)
 	if e != nil || verified != awid.Verified {
 		return fail("invalid", "signature_invalid")
+	}
+	if link.FirstKey == "" {
+		return fail("unavailable", "identity_log_unavailable")
+	}
+	if link.Key != link.FirstKey {
+		return fail("invalid", "creation_key_inconsistent")
 	}
 	r.Statement = Check{"valid", "checked"}
 	r.IssuerAuthenticatedGrade = &grade
@@ -222,6 +233,9 @@ func FormatEvidence(r EvidenceReport) string {
 	case "not_evaluated":
 		return line + "no evidence"
 	case "unsupported":
+		if r.Statement.Reason == "unsupported_profile" {
+			return line + "evidence profile unsupported"
+		}
 		return line + "evidence version unsupported"
 	case "invalid":
 		return line + "evidence invalid: " + r.Statement.Reason

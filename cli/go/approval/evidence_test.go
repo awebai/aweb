@@ -16,7 +16,7 @@ func creationFixture(t *testing.T) (map[string]any, *proof.Trust) {
 }
 func TestCreationEvidenceReportsIssuerProofAndCurrentnessSeparately(t *testing.T) {
 	a, trust := creationFixture(t)
-	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: trust.IdentityKey}
 	statement := a["evidence"].(map[string]any)
 	receipt := a["creation_receipt"].(map[string]any)
 	checked := CheckCreationEvidence(link, statement, receipt, trust, trust, 1100)
@@ -42,7 +42,7 @@ func TestCreationEvidenceReportsIssuerProofAndCurrentnessSeparately(t *testing.T
 
 func TestCreationEvidenceContinuityFollowsCurrentSubject(t *testing.T) {
 	a, trust := creationFixture(t)
-	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: trust.IdentityKey}
 	statement := a["evidence"].(map[string]any)
 	receipt := a["creation_receipt"].(map[string]any)
 	checked := CheckCreationEvidence(link, statement, receipt, trust, trust, 1100)
@@ -68,7 +68,7 @@ func TestCreationEvidenceHardwareTextAttributesGradeToIssuer(t *testing.T) {
 
 func TestCreationEvidenceCurrentSubjectWithoutCheckedProofHasUnknownContinuity(t *testing.T) {
 	a, trust := creationFixture(t)
-	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: trust.IdentityKey}
 	statement := a["evidence"].(map[string]any)
 	raw, err := proof.Canonical(a["creation_receipt"])
 	if err != nil {
@@ -94,6 +94,49 @@ func TestCreationEvidenceCurrentSubjectWithoutCheckedProofHasUnknownContinuity(t
 			}
 			if report.Continuity != "unknown" || !strings.Contains(FormatEvidence(report), "continuity unknown") {
 				t.Fatalf("unchecked creation claimed continuity: %+v", report)
+			}
+		})
+	}
+}
+
+func TestCreationEvidenceTransitionProfileIsUnsupportedNotInvalid(t *testing.T) {
+	for _, mode := range []string{"unbroken", "assisted", "recreated"} {
+		t.Run(mode, func(t *testing.T) {
+			a, trust := creationFixture(t)
+			link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: trust.IdentityKey}
+			statement := a["evidence"].(map[string]any)
+			statement["evidence"].(map[string]any)["transition"] = map[string]any{"mode": mode}
+			report := CheckCreationEvidence(link, statement, a["creation_receipt"].(map[string]any), trust, trust, 1100)
+			if report.Statement.Status != "unsupported" || report.Statement.Reason != "unsupported_profile" || report.Continuity != "unknown" || report.IssuerAuthenticatedGrade != nil {
+				t.Fatalf("transition misreported: %+v", report)
+			}
+			if text := FormatEvidence(report); !strings.Contains(text, "profile unsupported") || strings.Contains(text, "invalid") {
+				t.Fatal(text)
+			}
+		})
+	}
+}
+func TestCreationEvidenceRequiresOwnLogFirstKey(t *testing.T) {
+	for _, tc := range []struct{ name, firstKey, status, reason string }{
+		{"first key", "same", "valid", "checked"},
+		{"later key", "different", "invalid", "creation_key_inconsistent"},
+		{"log unavailable", "", "unavailable", "identity_log_unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, trust := creationFixture(t)
+			first := tc.firstKey
+			if first == "same" {
+				first = trust.IdentityKey
+			} else if first == "different" {
+				first = trust.Issuer
+			}
+			link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey, FirstKey: first}
+			report := CheckCreationEvidence(link, a["evidence"].(map[string]any), a["creation_receipt"].(map[string]any), trust, trust, 1100)
+			if report.Statement.Status != tc.status || report.Statement.Reason != tc.reason {
+				t.Fatalf("first-key result: %+v", report)
+			}
+			if tc.name != "first key" && report.Continuity == "unbroken" {
+				t.Fatal("inconsistent creation gained continuity")
 			}
 		})
 	}

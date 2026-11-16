@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,7 +62,9 @@ func TestVerifyProjectsSharedCreationEvidencePerCheckedLink(t *testing.T) {
 	kind := "human"
 	out := whoOutput{ID: trust.Person, Domain: trust.Organisation, IDChainResult: awid.IDChainResult{Outcome: "nearest_human", IdentityValid: &yes, HumanID: &trust.Person, Kind: &kind, Reason: "verified"}, Chain: []whoLink{{ID: trust.Person, Kind: kind}}}
 	bundle := awid.ReceivedIDChain{"certificates": activation["id_chain"]}
-	source := func(context.Context, []any, string, string, string) (*proof.Trust, error) { return &trust, nil }
+	source := func(context.Context, []any, string, string, string) (*proof.Trust, string, error) {
+		return &trust, trust.IdentityKey, nil
+	}
 	out.Evidence = exportEvidenceReports(t.Context(), collection, bundle, out, source)
 	if len(out.Evidence) != 1 || out.Evidence[0].Proof.Status != "valid" || out.Evidence[0].IssuerAuthenticatedGrade == nil || *out.Evidence[0].IssuerAuthenticatedGrade != "passkey_uv" {
 		t.Fatalf("per-link creation not projected: %+v", out.Evidence)
@@ -70,5 +74,49 @@ func TestVerifyProjectsSharedCreationEvidencePerCheckedLink(t *testing.T) {
 	}
 	if out.Outcome != "nearest_human" || out.IdentityValid == nil || !*out.IdentityValid {
 		t.Fatal("evidence changed chain result")
+	}
+}
+
+// Real SDK status transport, frozen signed public logs, and the shared trust
+// verifier; no receipt-supplied first-key value participates.
+func TestVerifyEvidenceTrustReadsFirstKeyFromCheckedOwnLog(t *testing.T) {
+	v := loadWhoVectors(t)
+	for _, tc := range []struct {
+		name, status, key string
+		ok                bool
+	}{
+		{"initial", "normal", "alice", true},
+		{"rotated", "alice-rotated", "alice_rotated", true},
+		{"broken log", "broken-key-history-signature", "alice", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("APP_ENV", "development")
+			peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "POST" || r.URL.Path != "/v1/id-certificates/status" {
+					t.Errorf("unexpected public read: %s %s", r.Method, r.URL.Path)
+					http.NotFound(w, r)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(v.Statuses[tc.status])
+			}))
+			defer peer.Close()
+			t.Setenv("AWID_REGISTRY_URL", peer.URL)
+			client := awid.NewIDStatusClient(awid.NewAWIDRegistryClient(peer.Client(), nil), nil)
+			client.Route = func(context.Context, string) (string, error) { return peer.URL, nil }
+			client.Authority = func(context.Context, string) (awid.DomainAuthority, error) {
+				return awid.DomainAuthority{DNSName: "_awid.example.com", ControllerDID: v.Keys["root"].DIDKey}, nil
+			}
+			source := publicEvidenceTrust(client)
+			trust, first, err := source(t.Context(), []any{v.Certificates["alice"].Signed}, v.Keys["alice"].DIDAW, v.Keys[tc.key].DIDKey, "example.com")
+			if !tc.ok {
+				if err == nil || trust != nil || first != "" {
+					t.Fatalf("unchecked log supplied trust: %+v %s %v", trust, first, err)
+				}
+				return
+			}
+			if err != nil || trust == nil || first != v.Keys["alice"].DIDKey || trust.IdentityKey != v.Keys[tc.key].DIDKey {
+				t.Fatalf("own log result: %+v %s %v", trust, first, err)
+			}
+		})
 	}
 }
