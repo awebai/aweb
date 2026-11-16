@@ -13,8 +13,47 @@ import (
 	"testing"
 	"time"
 
+	proof "github.com/awebai/approval-service/verify"
 	"github.com/awebai/aw/awconfig"
 )
+
+func TestHumanEnrollmentConfirmationReachesTheSharedReader(t *testing.T) {
+	root, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/awebai/approval-service").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(root)), "vectors", "issuer-service-enrollment-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	corpus, err := proof.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range corpus["cases"].([]any) {
+		c := value.(map[string]any)
+		if c["id"] != "enrollment_confirm-request" {
+			continue
+		}
+		body := enrollmentObject(c["body"])
+		session := &humanEnrollmentSession{Intent: enrollmentObject(body["intent"]), Binding: enrollmentObject(body["binding"]), RequestBytes: enrollmentText(body["request_bytes"])}
+		confirmation := humanEnrollmentConfirmation(session, enrollmentObject(body["admission"]))
+		now, err := c["now"].(json.Number).Int64()
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := proof.EnrollmentInput{IssuerKey: enrollmentText(c["issuer_key"]), Requester: enrollmentObject(c["requester"]), Origin: enrollmentText(c["origin"]), RPID: enrollmentText(c["rp_id"]), Now: now}
+		if _, err := proof.ReadEnrollmentRequest("enrollment_confirm", confirmation, session.Intent, input); err != nil {
+			t.Fatalf("aw's confirmation must reach the shared reader: %v", err)
+		}
+		confirmation["request_bytes"] = "not-the-confirmation"
+		if _, err := proof.ReadEnrollmentRequest("enrollment_confirm", confirmation, session.Intent, input); err == nil {
+			t.Fatal("accepted changed confirmation bytes")
+		}
+		return
+	}
+	t.Fatal("shared confirmation fixture missing")
+}
 
 func TestHumanEnrollmentClientUsesFrozenAuthorizations(t *testing.T) {
 	root, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/awebai/approval-service").Output()
