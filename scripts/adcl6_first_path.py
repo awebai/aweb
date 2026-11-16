@@ -673,15 +673,22 @@ async def driver():
                 (AUDIENCE + "/", 404),
             ):
                 deadline = time.monotonic() + 120
+                last_error = "not checked"
                 while True:
                     try:
                         response = await client.get(url)
                         if response.status_code == expected:
                             break
-                    except httpx.TransportError:
-                        pass
+                        last_error = f"HTTP {response.status_code}, expected {expected}"
+                    except httpx.TransportError as error:
+                        detail = f"{type(error).__name__}: {error}"
+                        if detail != last_error:
+                            print(f"readiness {url}: {detail}", flush=True)
+                        last_error = detail
                     if time.monotonic() >= deadline:
-                        raise RuntimeError("service readiness deadline")
+                        raise RuntimeError(
+                            f"service readiness deadline for {url}: {last_error}"
+                        )
                     await asyncio.sleep(1)
         async with phase("controller custody and authoritative DNS"):
             descriptor = json.loads(

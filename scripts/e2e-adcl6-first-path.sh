@@ -68,15 +68,18 @@ trap 'exit 143' TERM
 trap 'exit 130' INT
 python3 "$ROOT/scripts/adcl6_first_path.py" prepare --runtime "$RUNTIME" --project "$PROJECT" --approval-archive "$APPROVAL_ARCHIVE" --holder-archive "$HOLDER_ARCHIVE" --architecture "$ARCHITECTURE"
 mkdir "$RUNTIME/tls"
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=adcl6-fixture-CA -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign -keyout "$RUNTIME/tls/ca.key" -out "$RUNTIME/public/ca.crt" >"$OUTPUT/tls-build.log" 2>&1
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=adcl6-fixture-CA -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign -addext subjectKeyIdentifier=hash -keyout "$RUNTIME/tls/ca.key" -out "$RUNTIME/public/ca.crt" >"$OUTPUT/tls-build.log" 2>&1
 openssl req -newkey rsa:2048 -nodes -subj /CN=approval.adcl6.test -keyout "$RUNTIME/tls/server.key" -out "$RUNTIME/tls/server.csr" >>"$OUTPUT/tls-build.log" 2>&1
 cat >"$RUNTIME/tls/extensions" <<'EOF'
 subjectAltName=DNS:awid.adcl6.test,DNS:approval.adcl6.test,DNS:holder.adcl6.test
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer
 EOF
 openssl x509 -req -days 1 -in "$RUNTIME/tls/server.csr" -CA "$RUNTIME/public/ca.crt" -CAkey "$RUNTIME/tls/ca.key" -CAcreateserial -extfile "$RUNTIME/tls/extensions" -out "$RUNTIME/tls/server.crt" >>"$OUTPUT/tls-build.log" 2>&1
+openssl verify -x509_strict -purpose sslserver -verify_hostname awid.adcl6.test -CAfile "$RUNTIME/public/ca.crt" "$RUNTIME/tls/server.crt" >>"$OUTPUT/tls-build.log" 2>&1
 chmod 0644 "$RUNTIME/public/ca.crt" "$RUNTIME/tls/server.crt"
 cp "$RUNTIME/public/ca.crt" "$RUNTIME/build/fixture-ca.crt"
 docker build --platform "linux/$ARCHITECTURE" --label com.docker.compose.project="$PROJECT" -t "$IMAGE" "$RUNTIME/build" >"$OUTPUT/image-build.log" 2>&1
