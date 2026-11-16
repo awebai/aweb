@@ -154,6 +154,17 @@ func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreatio
 	if err != nil {
 		return nil, err
 	}
+	if inv := wire.CreationInvitation; inv != nil {
+		name := alias
+		if err := inv.Validate(); err != nil {
+			return nil, err
+		}
+		if name != inv.Name || material.IdentityScope != inv.IdentityScope || wire.IDTree != nil {
+			return nil, errors.New("creation invitation differs from requested child or conflicts with ID-tree issuer")
+		}
+		tree.Domain, tree.Parent, tree.InvitationID, tree.Mode = inv.Domain, inv.Parent, inv.ID, "host_managed"
+		return state, nil
+	}
 	if wire.IDTree == nil {
 		return state, nil
 	}

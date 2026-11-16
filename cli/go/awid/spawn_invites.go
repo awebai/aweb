@@ -48,15 +48,16 @@ type SpawnInviteIDTree struct {
 // SpawnInvitePreviewResponse carries public selection metadata, not a signature
 // or authorization to issue a child certificate.
 type SpawnInvitePreviewResponse struct {
-	ForHuman        *string            `json:"for_human"`
-	IDTreePresent   bool               `json:"-"`
-	InviteID        string             `json:"invite_id"`
-	IDTree          *SpawnInviteIDTree `json:"id_tree"`
-	CanonicalTeamID string             `json:"canonical_team_id"`
-	IdentityScope   string             `json:"identity_scope"`
-	ServerURL       string             `json:"server_url"`
-	ExpiresAt       *string            `json:"expires_at"`
-	Status          string             `json:"status"`
+	ForHuman           *string               `json:"for_human"`
+	CreationInvitation *IDCreationInvitation `json:"creation_invitation,omitempty"`
+	IDTreePresent      bool                  `json:"-"`
+	InviteID           string                `json:"invite_id"`
+	IDTree             *SpawnInviteIDTree    `json:"id_tree"`
+	CanonicalTeamID    string                `json:"canonical_team_id"`
+	IdentityScope      string                `json:"identity_scope"`
+	ServerURL          string                `json:"server_url"`
+	ExpiresAt          *string               `json:"expires_at"`
+	Status             string                `json:"status"`
 }
 
 type SpawnAcceptInviteRequest struct {
@@ -200,5 +201,7 @@ func (response *SpawnInvitePreviewResponse) UnmarshalJSON(raw []byte) error {
 		return err
 	}
 	_, response.IDTreePresent = fields["id_tree"]
-	return nil
+	inv, err := DecodeIDCreationInvitation(raw)
+	response.CreationInvitation = inv
+	return err
 }

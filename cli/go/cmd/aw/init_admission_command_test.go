@@ -37,6 +37,13 @@ func TestInitAdmissionGlobalRefusalCommand(t *testing.T) {
 					case "GET /api/v1/cli-auth/status":
 						json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "scope": cliAuthScopeTeamAdmission, "resource": origin + "/cli", "account": map[string]string{"id": "acct-test"}})
 					case "POST /api/v1/teams/shared:example.test/admission-invite":
+						var request teamAdmissionInviteRequest
+						if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+							t.Error(err)
+						}
+						if request.Creation == nil || request.Creation.Name != "fixture" || request.Creation.IdentityScope != "global" {
+							t.Errorf("global intent lost: %+v", request)
+						}
 						json.NewEncoder(w).Encode(teamAdmissionInviteResponse{InviteID: "invite-test", Token: "aw_inv_test", TeamID: "shared:example.test", ServerURL: origin, MaxUses: 1})
 					default:
 						t.Errorf("refused global join made unexpected request: %s %s", r.Method, r.URL.Path)

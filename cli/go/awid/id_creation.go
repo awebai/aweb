@@ -3,17 +3,19 @@ package awid
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // IDTreeCreationRequest is the optional ID-tree part of an existing signed
 // hosted creation request. Native parents supply their already registered chain.
 type IDTreeCreationRequest struct {
-	Mode      string         `json:"mode,omitempty"`
-	V         int            `json:"v"`
-	RequestID string         `json:"request_id"`
-	Domain    string         `json:"domain"`
-	Parent    map[string]any `json:"parent"`
-	IDChain   map[string]any `json:"id_chain,omitempty"`
+	InvitationID string         `json:"invitation_id,omitempty"`
+	Mode         string         `json:"mode,omitempty"`
+	V            int            `json:"v"`
+	RequestID    string         `json:"request_id"`
+	Domain       string         `json:"domain"`
+	Parent       map[string]any `json:"parent"`
+	IDChain      map[string]any `json:"id_chain,omitempty"`
 }
 
 // IDTreeCreationResponse is adjacent to the constructor's existing identity and
@@ -61,4 +63,54 @@ func DecodeIDTreeCreationResponse(raw []byte) (IDTreeCreationResponse, error) {
 	_, registrationPresent := fields["registration_request"]
 	response.FieldsPresent = chainPresent || registrationPresent
 	return response, nil
+}
+
+// IDCreationIntent fixes the child's name and scope when its creator asks a
+// hosted operator to prepare an invitation. It contains no parent authority.
+type IDCreationIntent struct {
+	Name          string `json:"name"`
+	IdentityScope string `json:"identity_scope"`
+}
+
+// IDCreationInvitation is public intent fixed by a checked person session
+// before a setup key or invite can be redeemed. It selects authority; it is
+// not a signature and cannot replace response-chain verification.
+type IDCreationInvitation struct {
+	ID            string         `json:"id"`
+	Parent        map[string]any `json:"parent"`
+	Domain        string         `json:"domain"`
+	Name          string         `json:"name"`
+	IdentityScope string         `json:"identity_scope"`
+}
+
+// DecodeIDCreationInvitation reads the optional creation_invitation sibling.
+// Absence is legacy. An explicitly advertised but unusable invitation refuses.
+func DecodeIDCreationInvitation(raw []byte) (*IDCreationInvitation, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	value, present := fields["creation_invitation"]
+	if !present {
+		return nil, nil
+	}
+	var inv IDCreationInvitation
+	if err := json.Unmarshal(value, &inv); err != nil {
+		return nil, err
+	}
+	if err := inv.Validate(); err != nil {
+		return nil, err
+	}
+	return &inv, nil
+}
+
+func (inv *IDCreationInvitation) Validate() error {
+	if inv == nil || !idCertificateIsUUID(inv.ID) || !idCertificateDomain(inv.Domain) || inv.Name == "" || (inv.IdentityScope != "local" && inv.IdentityScope != "global") || len(inv.Parent) != 2 || inv.Parent["kind"] != "identity" || !idCertificateIDValid(inv.Parent["id"], false) {
+		return fmt.Errorf("invalid creation invitation")
+	}
+	id, _ := inv.Parent["id"].(string)
+	if !strings.HasPrefix(id, "did:aw:") {
+		return fmt.Errorf("creation invitation requires a registered person parent")
+	}
+	return nil
 }
