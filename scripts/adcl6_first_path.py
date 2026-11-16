@@ -88,6 +88,15 @@ def retain(args) -> None:
     paths.append(work / "retention.json")
     for path in paths:
         os.chown(path, args.uid, args.gid, follow_symlinks=False)
+    # Private identity/browser directories also belong to the root driver.
+    # Erase them here, so a nonroot Linux host can remove the remaining work.
+    for path in work.iterdir():
+        if path.name in (*names, "public", "retention.json"):
+            continue
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
 
 
 def extract(archive: Path, expected: str, destination: Path, prefixes=()) -> None:
