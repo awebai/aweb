@@ -69,6 +69,8 @@ var (
 	initGlobal             bool
 	initInboundMode        string
 	initJoinFrom           string
+	initInvite             string
+	initParent             string
 	initJoinTeam           string
 	initAdmissionTeamID    string
 	initWorkspaceTeam      bool
@@ -141,6 +143,8 @@ func init() {
 	initCmd.Flags().BoolVar(&initGlobal, "persistent", false, "Deprecated alias for --global")
 	markDeprecatedHiddenFlag(initCmd, "persistent", "global")
 	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|team-and-contacts|contacts-only). Only valid with --global.")
+	initCmd.Flags().StringVar(&initInvite, "invite", "", "Join this invite with an independently selected creator")
+	initCmd.Flags().StringVar(&initParent, "parent", "", "Same-machine creator home for a fresh child")
 	initCmd.Flags().StringVar(&initJoinFrom, "join-from", "", "Add an agent to a team by minting one invite from this existing workspace or identity home")
 	initCmd.Flags().StringVar(&initJoinTeam, "join-team", "", "Team ID to use with --join-from when the source has more than one membership")
 	initCmd.Flags().StringVar(&initAdmissionTeamID, "admission-team-id", "", "Add an agent through host human admission for this explicit team ID")
@@ -161,6 +165,9 @@ func addWorkspaceRoleFlags(cmd *cobra.Command, target *string, description strin
 }
 
 func validateInitOutcomeFlags() error {
+	if initParent != "" && initInvite == "" {
+		return usageError("--parent requires --invite; --join-from already selects its creator")
+	}
 	outcomes := initOutcomeFlagNames()
 	if len(outcomes) > 1 {
 		return usageError("init outcome flags are mutually exclusive: %s", strings.Join(outcomes, ", "))
@@ -179,6 +186,9 @@ func validateInitOutcomeFlags() error {
 
 func initOutcomeFlagNames() []string {
 	var outcomes []string
+	if strings.TrimSpace(initInvite) != "" {
+		outcomes = append(outcomes, "--invite")
+	}
 	if strings.TrimSpace(initJoinFrom) != "" {
 		outcomes = append(outcomes, "--join-from")
 	}
@@ -346,6 +356,9 @@ func printInitWorkspaceDiscoveryChoices(out io.Writer) {
 }
 
 func runPromptedExplicitInitOutcome(cmd *cobra.Command) (bool, error) {
+	if strings.TrimSpace(initInvite) != "" {
+		return true, runInitIndependentInvite(cmd)
+	}
 	if initWorkspaceTeam {
 		return true, runInitWorkspaceTeam(cmd)
 	}
@@ -375,6 +388,21 @@ func runInitWorkspaceTeam(cmd *cobra.Command) error {
 		teamEnsureExpectedAccountID = previousExpected
 	}()
 	return runTeamEnsure(cmd.Context(), cmd)
+}
+
+func runInitIndependentInvite(cmd *cobra.Command) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if err := ensureConnectTargetClean(wd); err != nil {
+		return err
+	}
+	raw, origin, err := decodeJoinToken(initInvite)
+	if err != nil {
+		return err
+	}
+	return acceptInitInviteAndConnect(cmd, wd, raw, origin, initParent)
 }
 
 func runInitJoinFrom(cmd *cobra.Command) error {
@@ -412,7 +440,8 @@ func runInitAdmissionTeamID(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	resp, err := issueTeamAdmissionInvite(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), requestID, resolveAliasValue(resolveInitLocalName()))
+	alias := resolveAliasValue(resolveInitLocalName())
+	resp, err := issueTeamAdmissionInviteForCreation(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), requestID, alias, &awid.IDCreationIntent{Name: alias, IdentityScope: initInviteIdentityScope()})
 	if err != nil {
 		return err
 	}
@@ -452,12 +481,17 @@ func initInviteIdentityScope() string {
 	return teamAcceptScopeFromGlobal(initGlobal)
 }
 
-func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferredAwebURL string) error {
+func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferredAwebURL string, parentHome ...string) error {
+	parent := ""
+	if len(parentHome) > 0 {
+		parent = parentHome[0]
+	}
 	alias := resolveAliasValue(resolveInitLocalName())
 	accepted, err := acceptAndStoreTeamInvite(workingDir, token, teamAcceptInviteOptions{
-		Name:    alias,
-		Scope:   initInviteIdentityScope(),
-		AwebURL: strings.TrimSpace(preferredAwebURL),
+		ParentHome: parent,
+		Name:       alias,
+		Scope:      initInviteIdentityScope(),
+		AwebURL:    strings.TrimSpace(preferredAwebURL),
 	}, teamInviteStoreOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true})
 	if err != nil {
 		return err
@@ -559,6 +593,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	if initWorkspaceTeam {
 		return runInitWorkspaceTeam(cmd)
+	}
+	if strings.TrimSpace(initInvite) != "" {
+		return runInitIndependentInvite(cmd)
 	}
 	if strings.TrimSpace(initJoinFrom) != "" {
 		return runInitJoinFrom(cmd)

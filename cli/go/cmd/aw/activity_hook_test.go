@@ -284,70 +284,126 @@ func TestActivityHookCodex(t *testing.T) {
 	})
 
 	t.Run("turns, ordering and coalescing", func(t *testing.T) {
-		home, capture, key, stable := setup(t)
-		enable(t, home)
+		for _, delayedDelivery := range []bool{false, true} {
+			t.Run(fmt.Sprintf("delayed-delivery-%t", delayedDelivery), func(t *testing.T) {
+				home, capture, key, stable := setup(t)
+				enable(t, home)
 
-		hook(t, home, event("UserPromptSubmit", "turn-1", map[string]any{"prompt": "run the tests"}))
-		time.Sleep(600 * time.Millisecond)
-		hook(t, home, event("PreToolUse", "turn-1", bash("pytest -x")))
-		// A state within 500 ms of the last send waits; the turn's end replaces it.
-		after := start(t, home, event("PostToolUse", "turn-1", map[string]any{"tool_name": "Bash", "tool_use_id": "call_1", "tool_input": map[string]any{"command": "pytest -x"}, "tool_response": "ok"}))
-		time.Sleep(150 * time.Millisecond)
-		hook(t, home, event("Stop", "turn-1", map[string]any{"stop_hook_active": false, "last_assistant_message": "done"}))
-		wait(t, after)
-		// An event of a turn that has ended is dropped.
-		hook(t, home, event("PreToolUse", "turn-1", bash("ls")))
-		// A turn opened by its first tool call announces itself.
-		time.Sleep(600 * time.Millisecond)
-		hook(t, home, event("PreToolUse", "turn-2", map[string]any{"tool_name": "Read", "tool_use_id": "call_2", "tool_input": map[string]any{"path": "/work/repo/README.md"}}))
-		// A new prompt closes a turn whose stop never arrived.
-		hook(t, home, event("UserPromptSubmit", "turn-3", map[string]any{"prompt": "next"}))
-		// A repeated submit of an open turn and an invalid turn id are ignored.
-		hook(t, home, event("UserPromptSubmit", "turn-3", map[string]any{"prompt": "next"}))
-		hook(t, home, event("PreToolUse", "turn 4", bash("ls")))
-		// Within one window the latest state wins.
-		first := start(t, home, event("PreToolUse", "turn-3", map[string]any{"tool_name": "apply_patch", "tool_use_id": "call_3", "tool_input": map[string]any{"command": "*** Begin Patch\n*** Update File: src/a.py\n*** End Patch"}}))
-		time.Sleep(150 * time.Millisecond)
-		second := start(t, home, event("PermissionRequest", "turn-3", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "rm -rf build", "description": nil}}))
-		wait(t, first)
-		wait(t, second)
-		// A subagent's event belongs to the open turn, whatever its own turn id.
-		time.Sleep(600 * time.Millisecond)
-		hook(t, home, event("PreToolUse", "sub-turn-9", map[string]any{"agent_id": "agent-7", "agent_type": "explorer", "tool_name": "mcp__docs__search", "tool_use_id": "call_4", "tool_input": map[string]any{"q": "x"}}))
-		hook(t, home, event("Interrupt", "turn-3", nil))
+				hook(t, home, event("UserPromptSubmit", "turn-1", map[string]any{"prompt": "run the tests"}))
+				time.Sleep(600 * time.Millisecond)
+				hook(t, home, event("PreToolUse", "turn-1", bash("pytest -x")))
+				// A state within 500 ms of the last send waits; the turn's end replaces it.
+				after := start(t, home, event("PostToolUse", "turn-1", map[string]any{"tool_name": "Bash", "tool_use_id": "call_1", "tool_input": map[string]any{"command": "pytest -x"}, "tool_response": "ok"}))
+				// A slow next hook can arrive after the pending state was sent.
+				// Observe that progress instead of assuming process startup fits
+				// inside a 150ms/500ms deadline on every host.
+				if delayedDelivery {
+					wait(t, after)
+					after = nil
+				} else {
+					time.Sleep(150 * time.Millisecond)
+				}
+				hook(t, home, event("Stop", "turn-1", map[string]any{"stop_hook_active": false, "last_assistant_message": "done"}))
+				if after != nil {
+					wait(t, after)
+				}
+				// An event of a turn that has ended is dropped.
+				hook(t, home, event("PreToolUse", "turn-1", bash("ls")))
+				// A turn opened by its first tool call announces itself.
+				time.Sleep(600 * time.Millisecond)
+				hook(t, home, event("PreToolUse", "turn-2", map[string]any{"tool_name": "Read", "tool_use_id": "call_2", "tool_input": map[string]any{"path": "/work/repo/README.md"}}))
+				// A new prompt closes a turn whose stop never arrived.
+				hook(t, home, event("UserPromptSubmit", "turn-3", map[string]any{"prompt": "next"}))
+				// A repeated submit of an open turn and an invalid turn id are ignored.
+				hook(t, home, event("UserPromptSubmit", "turn-3", map[string]any{"prompt": "next"}))
+				hook(t, home, event("PreToolUse", "turn 4", bash("ls")))
+				// Within one window the latest state wins.
+				first := start(t, home, event("PreToolUse", "turn-3", map[string]any{"tool_name": "apply_patch", "tool_use_id": "call_3", "tool_input": map[string]any{"command": "*** Begin Patch\n*** Update File: src/a.py\n*** End Patch"}}))
+				if delayedDelivery {
+					wait(t, first)
+					first = nil
+				} else {
+					time.Sleep(150 * time.Millisecond)
+				}
+				second := start(t, home, event("PermissionRequest", "turn-3", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "rm -rf build", "description": nil}}))
+				if first != nil {
+					wait(t, first)
+				}
+				wait(t, second)
+				// A subagent's event belongs to the open turn, whatever its own turn id.
+				time.Sleep(600 * time.Millisecond)
+				hook(t, home, event("PreToolUse", "sub-turn-9", map[string]any{"agent_id": "agent-7", "agent_type": "explorer", "tool_name": "mcp__docs__search", "tool_use_id": "call_4", "tool_input": map[string]any{"q": "x"}}))
+				hook(t, home, event("Interrupt", "turn-3", nil))
 
-		events, _, _ := capture.snapshot()
-		want := "turn-1:turn_started turn-1:tool:Bash:Running pytest turn-1:turn_ended " +
-			"turn-2:turn_started turn-2:tool:Read:Reading README.md turn-2:turn_ended turn-3:turn_started " +
-			"turn-3:waiting_permission:Bash turn-3:tool:mcp__docs__search turn-3:turn_ended"
-		if got := phases(events); got != want {
-			t.Fatalf("events:\n got %s\nwant %s", got, want)
-		}
-		did := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
-		lastSeq := map[string]float64{}
-		for _, e := range events {
-			if e["v"] != float64(1) || e["type"] != "agent_activity" || e["from_did"] != did || e["from_stable_id"] != stable || e["team_id"] != "default:acme.aweb.ai" || e["session_id"] != nil {
-				t.Fatalf("event binding: %#v", e)
-			}
-			if _, present := e["session_id"]; !present {
-				t.Fatalf("session_id key missing: %#v", e)
-			}
-			seq := e["seq"].(float64)
-			if seq <= lastSeq[e["turn_id"].(string)] {
-				t.Fatalf("seq not increasing within turn: %#v", e)
-			}
-			lastSeq[e["turn_id"].(string)] = seq
-			stamp, err1 := time.Parse("2006-01-02T15:04:05Z", e["timestamp"].(string))
-			expires, err2 := time.Parse("2006-01-02T15:04:05Z", e["expires_at"].(string))
-			if err1 != nil || err2 != nil || !expires.After(stamp) || expires.Sub(stamp) > 60*time.Second {
-				t.Fatalf("times: %#v", e)
-			}
-		}
-		entries, _ := os.ReadDir(home)
-		for _, entry := range entries {
-			if info, _ := entry.Info(); strings.HasPrefix(entry.Name(), ".activity") && info.Mode().Perm()&0o077 != 0 {
-				t.Fatalf("hook state %s is %o", entry.Name(), info.Mode().Perm())
-			}
+				events, at, _ := capture.snapshot()
+				want := "turn-1:turn_started turn-1:tool:Bash:Running pytest turn-1:turn_ended " +
+					"turn-2:turn_started turn-2:tool:Read:Reading README.md turn-2:turn_ended turn-3:turn_started " +
+					"turn-3:waiting_permission:Bash turn-3:tool:mcp__docs__search turn-3:turn_ended"
+				// Assert the observable contract: intermediate states wait
+				// for the window and precede their turn's end/replacement.
+				// If delivery of the next hook is slow, thinking/editing may
+				// legitimately be sent once that window expires.
+				var required []map[string]any
+				seenThinking, seenEditing := false, false
+				for i, e := range events {
+					phase := e["phase"]
+					if phase != "turn_started" && phase != "turn_ended" && i > 0 {
+						// LastSentMs is stored at millisecond precision. Server
+						// receipt cannot precede sender completion except for
+						// that one millisecond of rounding.
+						if gap := at[i].Sub(at[i-1]); gap < 500*time.Millisecond-time.Millisecond {
+							t.Fatalf("state escaped coalescing window after %s: %s", gap, phases(events))
+						}
+					}
+					label := phases([]map[string]any{e})
+					switch label {
+					case "turn-1:thinking":
+						if seenThinking || i == 0 || phases([]map[string]any{events[i-1]}) != "turn-1:tool:Bash:Running pytest" {
+							t.Fatalf("late or repeated thinking: %s", phases(events))
+						}
+						seenThinking = true
+					case "turn-3:tool:apply_patch:Editing src/a.py":
+						if seenEditing || i == 0 || phases([]map[string]any{events[i-1]}) != "turn-3:turn_started" {
+							t.Fatalf("superseded or repeated editing: %s", phases(events))
+						}
+						seenEditing = true
+					default:
+						required = append(required, e)
+					}
+				}
+				if delayedDelivery && (!seenThinking || !seenEditing) {
+					t.Fatalf("delayed hooks did not exercise elapsed windows: %s", phases(events))
+				}
+				if got := phases(required); got != want {
+					t.Fatalf("events:\n got %s\nwant %s", got, want)
+				}
+				did := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+				lastSeq := map[string]float64{}
+				for _, e := range events {
+					if e["v"] != float64(1) || e["type"] != "agent_activity" || e["from_did"] != did || e["from_stable_id"] != stable || e["team_id"] != "default:acme.aweb.ai" || e["session_id"] != nil {
+						t.Fatalf("event binding: %#v", e)
+					}
+					if _, present := e["session_id"]; !present {
+						t.Fatalf("session_id key missing: %#v", e)
+					}
+					seq := e["seq"].(float64)
+					if seq <= lastSeq[e["turn_id"].(string)] {
+						t.Fatalf("seq not increasing within turn: %#v", e)
+					}
+					lastSeq[e["turn_id"].(string)] = seq
+					stamp, err1 := time.Parse("2006-01-02T15:04:05Z", e["timestamp"].(string))
+					expires, err2 := time.Parse("2006-01-02T15:04:05Z", e["expires_at"].(string))
+					if err1 != nil || err2 != nil || !expires.After(stamp) || expires.Sub(stamp) > 60*time.Second {
+						t.Fatalf("times: %#v", e)
+					}
+				}
+				entries, _ := os.ReadDir(home)
+				for _, entry := range entries {
+					if info, _ := entry.Info(); strings.HasPrefix(entry.Name(), ".activity") && info.Mode().Perm()&0o077 != 0 {
+						t.Fatalf("hook state %s is %o", entry.Name(), info.Mode().Perm())
+					}
+				}
+			})
 		}
 	})
 
