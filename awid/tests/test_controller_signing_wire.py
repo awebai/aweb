@@ -57,7 +57,8 @@ async def test_typed_and_raw_clients_produce_the_same_wire(
 ):
     env = controller_app
     setup = RegistryClient(
-        str(env.client.base_url).rstrip("/"), transport=httpx.ASGITransport(app=env.app)
+        str(env.client.base_url).rstrip("/"),
+        transport=httpx.ASGITransport(app=env.app, client=env.client._transport.client),
     )
     try:
         subject = await setup.register_did(NEW_KEY, NEW_SEED)
@@ -259,7 +260,7 @@ async def test_typed_and_raw_clients_produce_the_same_wire(
     class Captured(Exception):
         pass
 
-    actual = httpx.ASGITransport(app=env.app)
+    actual = httpx.ASGITransport(app=env.app, client=env.client._transport.client)
     sent = []
 
     async def record(outgoing):
