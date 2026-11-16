@@ -1,0 +1,162 @@
+"""Private operator controls and public refusals use real SQLite/signatures."""
+
+import json
+import subprocess
+import sys
+import time
+
+import httpx
+import pytest
+from approval_service.enrollment import PublicIssuer
+from approval_service.grading import EnrollmentGrading
+from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.http import create_app
+from aweb_key_holder.keys import KeyStore, Refused
+from awid.id_certificates import id_certificate_id
+from test_enrollment import creation, owner, person
+
+
+def world(tmp_path, *, approved=True):
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    if approved:
+        store.set_human_issuance("approved")
+    return Holder(
+        store,
+        registry=None,
+        origin="https://holder.example",
+        approval_origin="https://approval.example",
+        rp_id="approval.example",
+        grading=EnrollmentGrading("passkey_only", None),
+    )
+
+
+def test_bootstrap_audit_names_the_operator_not_the_pending_subject(tmp_path):
+    holder = world(tmp_path)
+    holder.bootstrap_pending(*person())
+    records = [
+        r
+        for r in holder.store.audit()
+        if r["operation"] in ("namespace_id_issue", "enrollment_intent")
+    ]
+    assert len(records) == 2
+    assert all(r["actor"] == "operator" for r in records)
+
+
+def test_private_audit_reader_is_paged_and_needs_no_runtime_config(tmp_path):
+    holder = world(tmp_path)
+    holder.issue_person_certificate(*person())
+    holder.issue_person_certificate(*person())
+    entries = holder.store.audit()
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "aweb_key_holder.cli",
+            "--state",
+            str(holder.store.directory),
+            "audit",
+            "--after",
+            str(entries[0]["sequence"]),
+            "--limit",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == [entries[1]]
+
+
+def request_for(holder, target, key):
+    with holder.store._connection() as db:
+        start = int(time.time())
+        certificate = holder._certificate(holder.store.descriptor(), target, key, start)
+        return holder._request(
+            db,
+            purpose="act_approval",
+            operation="human.add",
+            requester={"kind": "identity", "id": target, "key": key},
+            approver=target,
+            target={
+                "person": target,
+                "identity_key": key,
+                "certificate": id_certificate_id(certificate),
+            },
+            start=start,
+            deadline=start + 600,
+        )
+
+
+def test_unrelated_person_does_not_invalidate_a_prepared_request(tmp_path):
+    holder = world(tmp_path)
+    target, key = person()
+    before = request_for(holder, target, key)
+    holder.bootstrap_pending(*person())
+    after = request_for(holder, target, key)
+    assert before["act"]["expected_revision"] == after["act"]["expected_revision"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("configured", [False, True])
+async def test_unsigned_requests_cannot_discover_operator_mode_or_enrollment_configuration(
+    tmp_path, configured
+):
+    if configured:
+        holder = world(tmp_path)
+    else:
+        holder = Holder(
+            KeyStore.create(tmp_path / "private", organisation="example.test"),
+            registry=None,
+            origin="https://holder.example",
+        )
+    target, _ = person()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(holder)), base_url=holder.origin
+    ) as client:
+        for path in ("/v1/humans", f"/v1/enrollments/{target}"):
+            response = await client.post(path, json={})
+            assert response.status_code == 401
+
+
+@pytest.mark.parametrize("state", ["expired", "evidence"])
+def test_retirement_exits_stuck_state_without_erasing_evidence_or_audit(
+    tmp_path, state
+):
+    holder = world(tmp_path)
+    if state == "expired":
+        from pending import expire_pending
+
+        target, key = person()
+        holder.bootstrap_pending(target, key)
+        expire_pending(holder, target)
+    else:
+        target, receipt = creation(holder)
+        holder.finish_creation(
+            target,
+            receipt,
+            issuer=PublicIssuer(holder.store.descriptor().did_key, int(time.time())),
+            **owner(holder, target),
+        )
+    with holder.store._connection() as db:
+        previous = dict(
+            db.execute("SELECT * FROM enrollments WHERE person=?", (target,)).fetchone()
+        )
+        consumed = db.execute("SELECT count(*) FROM consumed").fetchone()[0]
+    audit = holder.store.audit()
+    with pytest.raises(Refused, match="bootstrap_closed"):
+        holder.bootstrap_pending(*person())
+    result = holder.store.retire_person(target)
+    assert result["state"] == "retired"
+    with holder.store._connection() as db:
+        row = dict(
+            db.execute("SELECT * FROM enrollments WHERE person=?", (target,)).fetchone()
+        )
+        assert row["evidence"] == previous["evidence"]
+        assert row["active"] == 0
+        assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == consumed
+    assert holder.store.audit()[:-1] == audit
+    assert holder.store.audit()[-1]["actor"] == "operator"
+    with pytest.raises(Refused, match="approver_not_active"):
+        holder.active_person(target)
+    assert holder.bootstrap_pending(*person())["state"] == "enrollment_pending"
