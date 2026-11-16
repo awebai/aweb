@@ -7,14 +7,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/awebai/aw/awid"
-	"github.com/spf13/cobra"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awid"
+	"github.com/spf13/cobra"
 )
 
 type ownerActApp struct {
@@ -83,7 +84,7 @@ func directOwnerActBody(t *testing.T, origin string) map[string]any {
 		t.Fatal(err)
 	}
 	fields, err := newOwnerAct("human-role.revoke", "people:example.com", origin, key,
-		map[string]any{"installation_id": "00000000-0000-4000-8000-000000000001", "role": "example.owner", "principal": installedChainHuman}, time.Now())
+		map[string]any{"app_id": "example", "installation_id": "00000000-0000-4000-8000-000000000001", "role": "example.owner", "principal": installedChainHuman}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
