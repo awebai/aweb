@@ -170,9 +170,15 @@ def test_backup_only_leaves_encrypted_to_the_offline_operator_key(store):
     with sqlite3.connect(store.directory / "holder.sqlite") as db:
         secret = db.execute("SELECT seed FROM keys").fetchone()[0]
     assert secret not in encrypted
-    restored = json.loads(SealedBox(offline).decrypt(encrypted))
-    assert restored["organisation"] == "local"
-    assert bytes.fromhex(restored["keys"][0]["seed"]) == secret
+    with sqlite3.connect(":memory:") as restored:
+        restored.deserialize(SealedBox(offline).decrypt(encrypted))
+        assert (
+            restored.execute("SELECT organisation FROM configuration").fetchone()[0]
+            == "local"
+        )
+        assert restored.execute("SELECT seed FROM keys").fetchone()[0] == secret
+        assert restored.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert restored.execute("SELECT count(*) FROM enrollments").fetchone()[0] == 0
     with pytest.raises(CryptoError):
         SealedBox(PrivateKey.generate()).decrypt(encrypted)
 

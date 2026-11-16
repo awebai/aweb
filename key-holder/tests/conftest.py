@@ -1,0 +1,101 @@
+"""Native holder tests use isolated real AWID, DNS, PostgreSQL and Redis."""
+
+import asyncio
+import os
+from types import SimpleNamespace
+
+import dns.asyncresolver
+import dns.flags
+import dns.message
+import dns.rcode
+import dns.rrset
+import httpx
+from pgdbm import AsyncDatabaseManager
+import pytest_asyncio
+from redis.asyncio import Redis
+
+from awid.db_config import build_database_config
+from awid.registry import RegistryClient
+from awid_service.db import AwidDatabaseInfra
+from awid_service.main import create_app
+from approval_service.grading import EnrollmentGrading
+
+from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.keys import KeyStore
+
+pytest_plugins = ("pgdbm.fixtures.conftest",)
+
+
+@pytest_asyncio.fixture
+async def native_holder(tmp_path, test_db_factory):
+    store = KeyStore.create(tmp_path / "private", organisation="holder.example.test")
+    root = store.descriptor()
+
+    class Authority(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, data, address):
+            query = dns.message.from_wire(data)
+            answer = dns.message.make_response(query)
+            answer.flags |= dns.flags.AA
+            if str(query.question[0].name) == "_awid.holder.example.test.":
+                answer.answer.append(
+                    dns.rrset.from_text(
+                        "_awid.holder.example.test.",
+                        0,
+                        "IN",
+                        "TXT",
+                        '"awid=v1; controller=' + root.did_key + ';"',
+                    )
+                )
+            else:
+                answer.set_rcode(dns.rcode.NXDOMAIN)
+            self.transport.sendto(answer.to_wire(), address)
+
+    loop = asyncio.get_running_loop()
+    transport, _ = await loop.create_datagram_endpoint(
+        Authority, local_addr=("127.0.0.1", 0)
+    )
+    previous = dns.asyncresolver.default_resolver
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = ["127.0.0.1"]
+    resolver.port = transport.get_extra_info("sockname")[1]
+    dns.asyncresolver.default_resolver = resolver
+    database = await test_db_factory.create_db(suffix="holder_registry")
+    pool = await AsyncDatabaseManager.create_shared_pool(
+        build_database_config(
+            connection_string=database.config.get_dsn(),
+            min_connections=2,
+            max_connections=5,
+        )
+    )
+    infra = AwidDatabaseInfra(schema="holder_registry")
+    try:
+        await infra.initialize(shared_pool=pool, run_migrations=True)
+        async with Redis.from_url(
+            os.environ["REDIS_URL"], decode_responses=True
+        ) as redis:
+            app = create_app(db_infra=infra, redis=redis)
+            app.state.awid_public_origins = ("http://registry.test",)
+            async with app.router.lifespan_context(app):
+                registry = RegistryClient(
+                    "http://registry.test", transport=httpx.ASGITransport(app=app)
+                )
+                try:
+                    holder = Holder(
+                        store,
+                        registry=registry,
+                        origin="https://holder.example",
+                        approval_origin="https://approval.example",
+                        rp_id="approval.example",
+                        grading=EnrollmentGrading("passkey_only", None),
+                    )
+                    yield SimpleNamespace(holder=holder, registry=registry)
+                finally:
+                    await registry.aclose()
+    finally:
+        await infra.close()
+        await pool.close()
+        dns.asyncresolver.default_resolver = previous
+        transport.close()

@@ -3,7 +3,7 @@ name = "aweb-key-holder"
 version = "0.0.0"
 description = "Self-hosted organisation keys and typed controller operations"
 requires-python = ">=3.12"
-dependencies = ["awid-service>=0.5.40rc2", "pynacl>=1.6.2"]
+dependencies = ["awid-service>=0.5.40rc2", "pynacl>=1.6.2", "aweb-approval-service"]
 
 [project.scripts]
 aweb-key-holder = "aweb_key_holder.cli:main"
@@ -17,6 +17,7 @@ packages = ["src/aweb_key_holder"]
 
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }
+aweb-approval-service = { git = "ssh://git@ssh.github.com:443/awebai/approval-service.git", rev = "3cc7226fbc3c300d63daec6f81bf7fd3205fc430" }
 
 [dependency-groups]
 dev = ["pytest>=9.0.0", "pytest-asyncio>=1.2.0"]

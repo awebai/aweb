@@ -24,10 +24,11 @@ from awid.controller_signing import (
     ControllerSigningContext,
 )
 from awid.did import did_from_public_key, did_key_from_signing_key, generate_keypair
-from awid.signing import canonical_json_bytes, sign_message
+from awid.signing import sign_message
+from approval_service.verify import Refused as ApprovalRefused
 
 
-class Refused(ValueError):
+class Refused(ApprovalRefused):
     def __init__(self, code):
         self.code = code
         super().__init__(code)
@@ -114,17 +115,32 @@ class KeyStore:
                     seed,
                 ),
             )
+        store.migrate()
         return store
 
     @classmethod
     def open(cls, directory):
         store = cls(directory)
         with store._connection() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] != 1:
+            if db.execute("PRAGMA user_version").fetchone()[0] != 2:
                 raise Refused("schema_unavailable")
             if db.execute("SELECT count(*) FROM configuration").fetchone()[0] != 1:
                 raise Refused("storage_unavailable")
         return store
+
+    def migrate(self):
+        with self._connection() as db:
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version == 1:
+                db.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + files(__package__)
+                    .joinpath("migrations/002_enrollment.sql")
+                    .read_text()
+                    + "\nCOMMIT;"
+                )
+            elif version != 2:
+                raise Refused("schema_unavailable")
 
     @contextmanager
     def _connection(self):
@@ -221,29 +237,51 @@ class KeyStore:
             expected = self._descriptor(db, team=context.controller.team)
             if context.controller != expected:
                 raise Refused("controller_mismatch")
-            row = db.execute(
-                "SELECT seed FROM keys WHERE reference=?", (expected.key_reference,)
-            ).fetchone()
-            if did_key_from_signing_key(row["seed"]) != expected.did_key:
-                raise Refused("key_unavailable")
             payload = context.signing_bytes()
-            signature = base64.b64decode(
-                sign_message(row["seed"], payload) + "==", validate=True
-            )
-            db.execute(
-                "INSERT INTO signatures(operation,actor,approval,key,generation,payload,signature,at) VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    request.operation,
-                    actor,
-                    None,
-                    expected.did_key,
-                    expected.generation,
-                    base64.b64encode(payload).decode(),
-                    base64.b64encode(signature).decode(),
-                    int(time.time()),
-                ),
+            signature = self._sign(
+                db, expected, payload, operation=request.operation, actor=actor
             )
         return expected.did_key, signature
+
+    def _sign(self, db, descriptor, payload, *, operation, actor, approval=None):
+        """Internal effect helper; the caller builds and authorizes the typed act."""
+        if descriptor != self._descriptor(db, team=descriptor.team):
+            raise Refused("controller_mismatch")
+        row = db.execute(
+            "SELECT seed FROM keys WHERE reference=?", (descriptor.key_reference,)
+        ).fetchone()
+        if did_key_from_signing_key(row["seed"]) != descriptor.did_key:
+            raise Refused("key_unavailable")
+        signature = base64.b64decode(
+            sign_message(row["seed"], payload) + "==", validate=True
+        )
+        self._audit(
+            db,
+            descriptor,
+            payload,
+            signature,
+            operation=operation,
+            actor=actor,
+            approval=approval,
+        )
+        return signature
+
+    def _audit(
+        self, db, descriptor, payload, signature, *, operation, actor, approval=None
+    ):
+        db.execute(
+            "INSERT INTO signatures(operation,actor,approval,key,generation,payload,signature,at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                operation,
+                actor,
+                approval,
+                descriptor.did_key,
+                descriptor.generation,
+                base64.b64encode(payload).decode(),
+                base64.b64encode(signature).decode(),
+                int(time.time()),
+            ),
+        )
 
     def audit(self):
         with self._connection() as db:
@@ -258,18 +296,5 @@ class KeyStore:
         with self._connection() as db, db:
             # One snapshot includes the audit and all private key generations.
             db.execute("BEGIN IMMEDIATE")
-            settings = dict(db.execute("SELECT * FROM configuration").fetchone())
-            value = {
-                "version": 1,
-                "organisation": settings["organisation"],
-                "nonce_secret": settings["nonce_secret"].hex(),
-                "keys": [
-                    {**dict(row), "seed": row["seed"].hex()}
-                    for row in db.execute("SELECT * FROM keys ORDER BY reference")
-                ],
-                "signatures": [
-                    dict(row)
-                    for row in db.execute("SELECT * FROM signatures ORDER BY sequence")
-                ],
-            }
-            return SealedBox(public_key).encrypt(canonical_json_bytes(value))
+            # Serialize the whole snapshot, including every nonce and enrollment.
+            return SealedBox(public_key).encrypt(db.serialize())
