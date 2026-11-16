@@ -205,7 +205,12 @@ these focused infrastructure controls.
 
 Each native command captures `host-metrics-before.json`; collection captures
 `host-metrics-after.json` even when the command did not return a completed exit
-receipt. These are guest-visible CPU model/family/stepping, raw `/proc/stat` and
+receipt. Each observation is best-effort: a 3-second remote timeout (1-second KILL
+grace) and at most 5 seconds of transport time within the existing phase
+deadline. Collector exit/stdout/stderr or transport errors are retained in
+local `host-metrics-*-observation.json` sidecars when writable. Failed telemetry
+does not stop execution or required archive collection; those checks remain
+strict. These are guest-visible CPU model/family/stepping, raw `/proc/stat` and
 aggregate ticks (including steal/iowait), with SC_CLK_TCK, and CPU/IO PSI text. They are archived
 with the existing cgroup/memory samples. Missing/empty reads are explicit errors
 with `status=partial`, never invented zeros. Check measurement telemetry quality
