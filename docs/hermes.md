@@ -134,7 +134,7 @@ Keep your existing model configuration, or select a model and credentials with
 `hermes model`. Then start the gateway:
 
 ```bash
-hermes gateway run
+hermes gateway run -v
 ```
 
 You should see ✓ aweb connected. If it says No messaging platforms enabled,
