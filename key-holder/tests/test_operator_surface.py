@@ -61,41 +61,63 @@ def test_controller_authorizer_and_privileged_completion_defaults_are_gone():
         )
 
 
-def test_hardware_manifest_flag_reaches_the_checked_loader(tmp_path):
+def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
+    import socket
+    import time
+
+    import httpx
     from aweb_key_holder.keys import KeyStore
 
     state = tmp_path / "private"
     KeyStore.create(state, organisation="example.test")
     manifest = tmp_path / "pin.json"
     manifest.write_text("{}")
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "aweb_key_holder.cli",
-            "--state",
-            str(state),
-            "--registry-origin",
-            "https://registry.example",
-            "--origin",
-            "https://holder.example",
-            "--approval-origin",
-            "https://approval.example",
-            "--rp-id",
-            "approval.example",
-            "--grading",
-            "hardware",
-            "--mds-cache",
-            str(tmp_path / "cache"),
-            "--mds-manifest",
-            str(manifest),
-            "serve",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=10,
+    with socket.socket() as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+    command = [
+        sys.executable,
+        "-m",
+        "aweb_key_holder.cli",
+        "--state",
+        str(state),
+        "--registry-origin",
+        "https://registry.example",
+        "--origin",
+        "https://holder.example",
+        "--approval-origin",
+        "https://approval.example",
+        "--rp-id",
+        "approval.example",
+        "--grading",
+        "hardware",
+        "--mds-cache",
+        str(tmp_path / "cache"),
+        "--mds-manifest",
+        str(manifest),
+        "serve",
+        "--bind",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+    child = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
-    assert result.returncode == 1
-    assert "manifest_invalid" in result.stderr
-    assert "unrecognized arguments" not in result.stderr
+    try:
+        deadline = time.monotonic() + 5
+        with httpx.Client(timeout=0.2, trust_env=False) as client:
+            while time.monotonic() < deadline and child.poll() is None:
+                try:
+                    response = client.get(f"http://127.0.0.1:{port}/")
+                    assert response.status_code == 404
+                    break
+                except httpx.TransportError:
+                    time.sleep(0.02)
+            else:
+                raise AssertionError("holder did not start with unavailable metadata")
+    finally:
+        child.terminate()
+        _, errors = child.communicate(timeout=10)
+    assert "metadata load failed" in errors
+    assert "unrecognized arguments" not in errors
