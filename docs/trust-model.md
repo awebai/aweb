@@ -415,12 +415,10 @@ failed refresh serves the last successful key only while its original fetch
 is at most 15 minutes old, with a warning naming the team, age and error;
 otherwise it fails closed. A successful team-not-found response clears the
 old key and is never cached as authority. `invalidate_team_certificate_cache`
-also clears the key. OSS controller routes for local key replacement and
-status-host designation verify through this SDK read; the local
-`teams.team_did_key` value is a hint, not authority. Without notification or
-explicit invalidation, rotation can therefore take up to 60 seconds to take
-effect at a verifier; during an outage, the accepted grace can extend that to
-15 minutes of data age. Other metadata caches retain their existing bounds.
+also clears the key. Without notification or explicit invalidation, rotation
+can therefore take up to 60 seconds to take effect at a verifier; during an
+outage, the accepted grace can extend that to 15 minutes of data age. Other
+metadata caches retain their existing bounds.
 
 The committed exit ladder, in order:
 
@@ -456,6 +454,71 @@ genesis-anchored log evidence, and a PostgreSQL checkpoint/cohort commit.
 The receiver may reuse a complete cohort for at most 60 seconds, but an
 external authority can suppress an unseen change by continuing to serve old
 valid evidence; this protocol therefore makes no global freshness SLA.
+
+### Team-key pins (approved 2026-11-12)
+
+The registry's answer for a team's key is not authority on its own. A relying
+server (the aweb server, and every naapp through `aweb_naapp`) pins the key it
+first admits for a team: the aweb server's `teams.team_did_key`, written at
+admission, and a naapp's `team_key_pins`. Every read that takes authority from
+the team key (certificate checks, controller routes such as key replacement and
+status-host designation, owner acts and app-task authorization) uses the
+registry's key only when it equals the pin. A different key is accepted only
+with the namespace controller's `rotate_team_key` act, which AWID keeps exactly
+as signed and serves at `GET /v1/namespaces/{domain}/teams/{name}/key-act`.
+The verifier (`awid.team_key_acts`) requires that the act names exactly that
+team and key, that its signature verifies, that its signer is the controller
+**DNS** names for the domain (`_awid.<domain>` or the nearest ancestor record,
+never the registry's `controller_did`), and that it was signed after the act
+behind the current pin. The pin then moves by compare-and-swap. Anything else
+is logged as one warning line,
+`team_key_pin_mismatch team=<id> pinned=<key> served=<key> reason=<reason> enforced=<true|false>`,
+and, while enforcement is on, fails closed with 401 `team_key_unverified`.
+
+Enforcement is staged. `AWEB_ENFORCE_TEAM_KEY_PINS` (one name for the aweb
+server and every naapp, default off) turns refusal on. While it is off a
+mismatch is logged with `enforced=false`, the registry's key is served, and
+the pin moves to it, logged as
+`team_key_pin_moved_without_act team=<id> from=<key> to=<key> reason=<reason>`
+with the time of the last accepted act kept. The key certificates are verified
+under is then the team's one current key on the server in both modes, so the
+member check (a member is accepted under the current key) agrees with
+certificate verification, and admitted teams whose key differs (a rotation
+from before acts were kept) can be counted and re-attested by their namespace
+controller before enforcement. **Until it is on, the registry-substitution gap
+this section closes stays open.**
+
+Named residuals:
+
+- **First admission trusts the registry.** A key substituted before a team's
+  first contact with a server is pinned. It cannot coexist silently with the
+  genuine team: the team's real certificates fail under it. The `create_team`
+  act does not sign the key, so first admission has no act to check.
+- **Delegated child namespaces** whose controller is a distinct key authorized
+  by the parent, with no `_awid` record of their own, cannot present an act DNS
+  verifies: the inherited record names the parent's key. Under enforcement
+  their servers refuse a rotated key until the server operator re-pins it.
+  Hosted children are such namespaces: each has its own controller key, and
+  the parent's key signs only for the base domain. Before enforcement serves
+  hosted teams, an inherited authority must accept the child's controller
+  through the parent-signed delegation, or hosted team keys are rotated and
+  re-pinned first.
+- **A pin set at first sight has no act time.** An act is required to be newer
+  than the act behind the pin only when there is one, so before enforcement
+  is turned on, a genuine but older act (a historical rotation, or one for a
+  deleted team of the same name) could move such a pin. The admission time is
+  to serve as the floor.
+- **The `local` namespace** has no DNS, so a pinned local team cannot rotate
+  without the server operator re-pinning it.
+- **Hosted teams.** Pinning separates the registry from the namespace
+  controller; it does not protect against an operator that holds both.
+- **The registry can withhold acts.** That denies the new key; it grants
+  nothing.
+
+When the namespace controller has itself rotated since a team-key act, or a
+team was deleted and recreated under the same name, the current controller
+re-submits `rotate` with the team's current key; AWID records that as a fresh
+act (`key_changed: false`).
 
 ### TOFU pins and durable continuity
 

@@ -2876,20 +2876,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	}
 	existingCert, existingErr := loadTeamCertificateAt(workingDir, identityRoot, teamID)
 	if existingErr == nil && existingCert != nil {
-		if strings.TrimSpace(existingCert.CertificateID) == certificateID {
-			if _, err := commitTeamCertificate(workingDir, identityRoot, "fetch-cert", existingCert, "", func() (string, error) { return "already_installed", nil }); err != nil {
-				return err
-			}
-			printOutput(teamFetchCertOutput{
-				Status:        "already_installed",
-				TeamID:        teamID,
-				Alias:         strings.TrimSpace(existingCert.Alias),
-				CertificateID: strings.TrimSpace(existingCert.CertificateID),
-				CertPath:      awconfig.TeamCertificateRelativePath(teamID),
-			}, formatTeamFetchCert)
-			return nil
-		}
-		if !teamFetchCertForce {
+		if strings.TrimSpace(existingCert.CertificateID) != certificateID && !teamFetchCertForce {
 			return usageError("team certificate already exists at %s with certificate_id %s; use --force to overwrite", certPathAbs, existingCert.CertificateID)
 		}
 	} else if !os.IsNotExist(existingErr) {
@@ -2929,13 +2916,27 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	if strings.TrimSpace(cert.Team) != teamID {
 		return fmt.Errorf("fetched certificate team_id %q does not match requested %q", cert.Team, teamID)
 	}
-
-	if _, err := commitTeamCertificate(workingDir, identityRoot, "fetch-cert", cert, registryURL, func() (string, error) { return "installed", nil }); err != nil {
+	// Held or not, a certificate is installed only while it is registered,
+	// unrevoked and under the team's current key.
+	if err := checkCurrentTeamCertificate(ctx, teamCertificateInstall{RegistryURL: registryURL, Registry: registry}, cert); err != nil {
+		return err
+	}
+	status := "installed"
+	if existingErr == nil && existingCert != nil {
+		same, err := sameTeamCertificate(existingCert, cert)
+		if err != nil {
+			return err
+		}
+		if same {
+			status = "already_installed"
+		}
+	}
+	if _, err := commitTeamCertificate(workingDir, identityRoot, "fetch-cert", cert, registryURL, "", func() (string, error) { return status, nil }); err != nil {
 		return err
 	}
 
 	printOutput(teamFetchCertOutput{
-		Status:        "installed",
+		Status:        status,
 		TeamID:        teamID,
 		Alias:         strings.TrimSpace(cert.Alias),
 		CertificateID: strings.TrimSpace(cert.CertificateID),

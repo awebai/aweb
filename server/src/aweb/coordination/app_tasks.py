@@ -15,6 +15,7 @@ from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, Va
 from aweb.task_contracts import validate_app_task
 from awid.team_certificate import TeamCertificateError
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
+from aweb.team_key_pins import pinned_team_key_for_request
 from .tasks_service import (
     _allocate_root_task_seq_on, _allocate_task_number_on, _answer_receipt,
     _encode_alpha_component, _get_team_slug, format_task_ref,
@@ -82,6 +83,8 @@ async def verify_authorization_certificate(request, authorization):
         revoked = await registry.get_team_revocations_fresh(domain, name)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
+    if team_key:
+        team_key = await pinned_team_key_for_request(request, payload["team_id"], team_key)
     certificates = await _current_certificates(request, payload["team_id"])
     try:
         info = parse_and_verify_certificate(authorization["certificate"],

@@ -19,7 +19,7 @@ async def test_sender_address_preserves_team_context(privacy_app, scope, address
         assert await register_global_identity(env, actor, address) == stable
     await env.db.execute(
         "UPDATE {{tables.agents}} SET identity_scope=$1, did_aw=$2, address=$3, "
-        "certificate_id='privacy-alice' WHERE agent_id=$4", scope, stable, address, actor.id,
+        "certificate_id='privacy-alice', accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$4", scope, stable, address, actor.id,
     )
     expected = address or (derive_team_address(TEAM, "alice") if scope == "local" else None)
     mail = await _request(env, "alice", "POST", "/v1/messages", {

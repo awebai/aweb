@@ -144,6 +144,12 @@ def _signed_cert_request(registry: _FakeRegistry, certificate_id: str = "cert-00
     )
 
 
+@pytest.fixture
+def db_infra(aweb_cloud_db):
+    # The real aweb schema: certificate verification reads the team-key pins.
+    return SimpleNamespace(get_manager=lambda _name: aweb_cloud_db.aweb_db)
+
+
 def _identity_request(registry: _FakeRegistry):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry)))
 
@@ -154,12 +160,12 @@ def _identity_request(registry: _FakeRegistry):
 
 
 @pytest.mark.asyncio
-async def test_flag_off_unregistered_certificate_verifies_with_no_existence_read(monkeypatch):
+async def test_flag_off_unregistered_certificate_verifies_with_no_existence_read(monkeypatch, db_infra):
     monkeypatch.delenv(FLAG, raising=False)
     registry = _FakeRegistry(certificate_ids=[])  # registry has never seen the cert
     request = _signed_cert_request(registry)
 
-    cert_info = await verify_request_certificate(request, db=object())
+    cert_info = await verify_request_certificate(request, db=db_infra)
 
     assert cert_info["certificate_id"] == "cert-001"
     assert cert_info["team_id"] == TEAM_ID
@@ -168,13 +174,13 @@ async def test_flag_off_unregistered_certificate_verifies_with_no_existence_read
 
 
 @pytest.mark.asyncio
-async def test_flag_on_unregistered_certificate_fails_with_distinct_verdict(monkeypatch):
+async def test_flag_on_unregistered_certificate_fails_with_distinct_verdict(monkeypatch, db_infra):
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry(certificate_ids=["cert-other"])
     request = _signed_cert_request(registry)
 
     with pytest.raises(HTTPException) as excinfo:
-        await verify_request_certificate(request, db=object())
+        await verify_request_certificate(request, db=db_infra)
 
     # An invalid credential like any other, with a reason of its own: neither
     # a failed signature nor a revocation, and nothing of the certificate in it.
@@ -188,19 +194,19 @@ async def test_flag_on_unregistered_certificate_fails_with_distinct_verdict(monk
 
 
 @pytest.mark.asyncio
-async def test_flag_on_registered_certificate_passes(monkeypatch):
+async def test_flag_on_registered_certificate_passes(monkeypatch, db_infra):
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry(certificate_ids=["cert-001", "cert-other"])
     request = _signed_cert_request(registry)
 
-    cert_info = await verify_request_certificate(request, db=object())
+    cert_info = await verify_request_certificate(request, db=db_infra)
 
     assert cert_info["certificate_id"] == "cert-001"
     assert registry.list_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_flag_on_revoked_certificate_keeps_revocation_verdict(monkeypatch):
+async def test_flag_on_revoked_certificate_keeps_revocation_verdict(monkeypatch, db_infra):
     """Ordering preserved: revocation is checked before existence, so a
     revoked certificate keeps its revocation verdict even when it would
     also fail the existence check."""
@@ -209,7 +215,7 @@ async def test_flag_on_revoked_certificate_keeps_revocation_verdict(monkeypatch)
     request = _signed_cert_request(registry)
 
     with pytest.raises(HTTPException) as excinfo:
-        await verify_request_certificate(request, db=object())
+        await verify_request_certificate(request, db=db_infra)
 
     assert excinfo.value.status_code == 401
     assert excinfo.value.detail == "revoked"
@@ -219,7 +225,7 @@ async def test_flag_on_revoked_certificate_keeps_revocation_verdict(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_flag_on_registry_unavailable_fails_closed(monkeypatch):
+async def test_flag_on_registry_unavailable_fails_closed(monkeypatch, db_infra):
     """Same availability posture as the revocation check: when the cached
     client cannot serve (its internal freshness/grace exhausted, surfaced
     to us as the read raising), the existence check fails closed with 503 —
@@ -229,13 +235,13 @@ async def test_flag_on_registry_unavailable_fails_closed(monkeypatch):
     request = _signed_cert_request(registry)
 
     with pytest.raises(HTTPException) as excinfo:
-        await verify_request_certificate(request, db=object())
+        await verify_request_certificate(request, db=db_infra)
 
     assert excinfo.value.status_code == 503
 
 
 @pytest.mark.asyncio
-async def test_flag_on_team_unknown_to_registry_means_not_registered(monkeypatch):
+async def test_flag_on_team_unknown_to_registry_means_not_registered(monkeypatch, db_infra):
     """A definitive registry 404 for the team's certificate listing is an
     answer (nothing is registered), not an outage — mirrors the revocation
     read's 404-means-empty behavior."""
@@ -246,7 +252,7 @@ async def test_flag_on_team_unknown_to_registry_means_not_registered(monkeypatch
     request = _signed_cert_request(registry)
 
     with pytest.raises(HTTPException) as excinfo:
-        await verify_request_certificate(request, db=object())
+        await verify_request_certificate(request, db=db_infra)
 
     assert excinfo.value.status_code == 401
     assert excinfo.value.detail == "unregistered"
@@ -264,6 +270,9 @@ _ROW = {
     "address": "acme.com/alice",
     "identity_scope": "global",
     "certificate_id": "cert-9",
+    # Accepted under the team's current key, as lookup_identity_agent_context reads it.
+    "accepted_team_did_key": "did:key:zTeam",
+    "current_team_did_key": "did:key:zTeam",
 }
 
 
@@ -320,12 +329,13 @@ async def test_identity_flag_on_registry_unavailable_fails_closed(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_identity_flag_on_row_without_recorded_certificate_passes_without_reads(monkeypatch):
-    """Pre-migration-017 rows have no recorded certificate; they pass
-    unchanged (and heal at the next certificate-authenticated request),
-    with no registry reads at all."""
+    """Pre-migration-017 rows have no recorded certificate; accepted under
+    the team's current key, they pass unchanged (and heal at the next
+    certificate-authenticated request), with no registry reads at all."""
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry()
-    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": None}
+    row = {"team_id": TEAM_ID, "alias": "alice", "agent_id": "a", "certificate_id": None,
+           "accepted_team_did_key": "did:key:zTeam", "current_team_did_key": "did:key:zTeam"}
     out = await _enforce_current_membership(_identity_request(registry), row)
     assert out is row
     assert registry.list_calls == 0
@@ -337,12 +347,12 @@ async def test_identity_flag_on_row_without_recorded_certificate_passes_without_
 
 
 @pytest.mark.asyncio
-async def test_mcp_certificate_branch_flag_on_rejects_unregistered_certificate(monkeypatch):
+async def test_mcp_certificate_branch_flag_on_rejects_unregistered_certificate(monkeypatch, db_infra):
     monkeypatch.setenv(FLAG, "true")
     registry = _FakeRegistry(certificate_ids=[])
     request = _signed_cert_request(registry)
 
-    middleware = MCPAuthMiddleware(app=lambda *_a, **_k: None, db_infra=object())
+    middleware = MCPAuthMiddleware(app=lambda *_a, **_k: None, db_infra=db_infra)
     with pytest.raises(HTTPException) as excinfo:
         await middleware._resolve_auth(request)
 
