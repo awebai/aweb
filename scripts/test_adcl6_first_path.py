@@ -66,6 +66,27 @@ class ApprovalAssertionTests(unittest.TestCase):
 
 
 class OutsideAssertionTests(unittest.TestCase):
+    def test_absent_and_later_evidence_do_not_become_creation(self):
+        result = {
+            "identity_valid": True, "id": "person", "human_id": "person",
+            "kind": "human", "outcome": "nearest_human", "reason": "verified",
+            "evidence": [{"presence": "absent", "issuer_authenticated_grade": None,
+                          "proof": {"status": "not_evaluated"}}],
+        }
+        assert_outside_verdict(result, "person", "none")
+        with self.assertRaises(AssertionError):
+            assert_outside_verdict(result, "person", "later")
+        result["evidence"] = [{
+            "presence": "present", "profile": "human_enrolled_later",
+            "statement": {"status": "valid", "reason": "checked"},
+            "proof": {"status": "valid", "reason": "checked"},
+            "issuer_authenticated_grade": "passkey_uv", "proof_binds_grade": True,
+            "currentness": "current", "continuity": "unknown", "can_approve_since": 1000,
+        }]
+        assert_outside_verdict(result, "person", "later")
+        with self.assertRaisesRegex(AssertionError, "outside_continuity_unknown"):
+            assert_outside_verdict(result, "person", "creation")
+
     def test_low_grade_and_broken_continuity_cannot_pass_the_phase(self):
         evidence = {
             "statement": {"status": "valid", "reason": "checked"},
@@ -77,6 +98,7 @@ class OutsideAssertionTests(unittest.TestCase):
         }
         result = {
             "identity_valid": True,
+            "id": "person", "outcome": "nearest_human", "reason": "verified",
             "human_id": "person",
             "kind": "human",
             "evidence": [evidence],
