@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/awebai/aw/approval"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -48,6 +49,7 @@ type whoStatus interface {
 }
 
 type whoOptions struct {
+	EvidenceTrust      evidenceTrust
 	ReceivedEnrollment func(context.Context, string, string) awid.IDTreeEnrollmentResult
 	Status             whoStatus
 	WorkingDir         string
@@ -65,7 +67,8 @@ type whoOutput struct {
 	ID     string `json:"id"`
 	Domain string `json:"domain"`
 	awid.IDChainResult
-	Chain []whoLink `json:"chain,omitempty"`
+	Chain    []whoLink                 `json:"chain,omitempty"`
+	Evidence []approval.EvidenceReport `json:"evidence,omitempty"`
 }
 
 func runWho(cmd *cobra.Command, args []string) error {

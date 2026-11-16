@@ -38,14 +38,35 @@ The v1 wrapper has these fields:
 | `signing_key_id` | Its existing signing-key selector, when present. |
 | `encrypted_envelope` | The original encrypted v2 envelope, instead of the preceding three fields. |
 | `id_chain` | The optional adjacent ID-chain presentation, unchanged. |
-| `evidence` | Reserved optional versioned evidence payload, currently ignored by verification. |
+| `evidence` | Optional per-link evidence collection, reported independently of the message/ID-chain verdict. |
 
-The reserved value is opaque, including its own version selector. Unknown versions
-and malformed evidence content inside valid JSON do not change the message or
-ID-chain result; this reservation does not verify any evidence claim.
+The initial collection is `{"v":1,"links":[{"certificate":"sha256:…","statement":E,"receipt":C}]}`,
+where E is the issuer-signed human creation statement and C is its optional raw
+creation receipt from the shared approval protocol. Each entry names the exact
+checked ID certificate. The report separates issuer authentication, raw proof,
+currentness and continuity. Without C it says "issuer states"; a checked creation
+proof says "created with" for passkey UV, or "issuer attests certified hardware;
+creation proof checked" for hardware. Hardware grade authenticates the issuer's claim; it
+does not mean this verifier inspected private device attestation. Unsupported
+profiles and malformed evidence inside valid JSON do not change the message or
+ID-chain verdict or exit status. Transition/adoption profiles are not implemented
+by this initial human-creation reader. An evidence body with a `transition` member
+reports "evidence profile unsupported", with unknown continuity, rather than
+invalid evidence. Initial creation without a transition must name a subject key whose computed
+stable ID equals the person ID; mismatch is `creation_key_inconsistent`. This
+consistency check is local and requires no registry reader.
 The outer export rejects duplicate members,
 including escaped or case-insensitive names for the same field. Unrelated unknown
 outer fields and malformed JSON remain invalid.
+
+An enforcer's `428 needs_human` response can be handled by `aw id request` using
+`--approval-origin`, `--approval-requester`, `--approval-admission` and
+`--approval-record`. The descriptor and admission files contain the caller's
+public protocol data; the selected identity signs the service submission/polls
+and the receipt presentation to the original enforcer. The private record keeps
+canonical R before submission and C before presentation. `--approval-resume`
+uses that original R, caller and deadline rather than asking for another act.
+An approval receipt does not itself grant an application effect.
 
 The sender's key and stable ID come from the signed content. Display labels,
 server-projected sender IDs and earlier verification statuses are not inputs.
