@@ -1,25 +1,12 @@
-"""The protected round trip, one body for every place it runs.
+"""Shared team/app setup, provisioning and owner-act test utilities.
 
-First the refusals, while the approver's holding exists: no user
-verification and a cancelled LOGIN sign nothing, and a changed act is refused.
-Then one human-role.revoke goes through the independent protected server
-(aweb.protected_signing.host, HOST.md). Its prepare answer is lost, so aw
-keeps the pending operation and its request. Resumed, the approving human logs
-in on the console page in a fresh Chromium tab with a passkey and approves the
-exact act with a separate user verification; the server signs it once with
-the team controller key only it holds and delivers it to the app itself, under
-its own attestation key and the team's registry protection; the app applies it
-and its answer is withheld. The server confirms the effect through the app's
-receipt route without sending it again, and aw reports it applied by the
-service. Resuming the committed operation sends and signs nothing. The app's
-own records show one effect.
+The deployment journey uses these helpers to found a team, admit ordinary
+members, activate app hooks, designate a holding, and enroll the current
+signer's approver through B3. Tests also use the independent owner-act and
+fault-injection utilities. No credential, session or success row is inserted.
 
-The body runs in the secrets e2e lane (tests/test_e2e_protected_revoke.py)
-and in the team deployment journey (scripts/e2e/team_deployment_journey.py).
-Each supplies a Site: where its machines and files are and how its signer is
-configured, provisioned, started and reached. Provisioning follows HOST.md
-through B3's own enrolment APIs; nothing inserts a credential, session or
-success row.
+The retired service-owned revoke round trip is removed. Its replacement
+approval-service/enforcer acceptance belongs to adcl.6, not these setup helpers.
 """
 
 from __future__ import annotations
@@ -43,7 +30,6 @@ from awid.signing import load_signing_key_pem
 
 def docker(*args: str, timeout: int = 120, input: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["docker", *args], text=True, capture_output=True, timeout=timeout, input=input, check=False)
-
 
 
 # AWID's did_key limit (awid/ratelimit.py _BUCKET_DEFAULTS): 60 reads a minute
@@ -681,11 +667,6 @@ class Site:
     # The team owner's existing controller PEM into the signer's private
     # custody, by the package's install-controller command.
     install_controller: Callable[[Path], None]
-    # The custodian's installation of the signer's distinct service
-    # attestation key beside the controller's; returns its public did:key.
-    # The registry operator's explicit protection of the team, binding the
-    # signer's service id and that key (the registry host's administrator
-    # transition, which has no route); returns the recorded binding.
     # python -m aweb.protected_signing.operator in the signer's container, as
     # its uid with its own settings; returns its JSON.
     operator: Callable[..., dict]
@@ -701,12 +682,6 @@ class Site:
     signer_access_log: Callable[[], str]
     # The approving human's Chromium in a machine's network namespace.
     chromium: Callable[..., dict]
-    # The front withholding the signer's answers to POST /protected-operations.
-    # The front withholding the app's answers to POST /.well-known/aweb-owner-act
-    # on the app's console host.
-    # The front's record of the app's answers to POST /.well-known/aweb-owner-act
-    # on its console host, from its loopback witness listener; a drop of those
-    # answers is aimed at that listener.
     # One SELECT against the app's database, read only (read_only_psql).
     secrets_query: Callable[[str], str]
     # The front's own output so far, where its witness logs.

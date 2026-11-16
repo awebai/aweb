@@ -35,7 +35,7 @@ async def test_only_a_stored_unsigned_expiry_lets_the_page_start_a_new_removal(a
             async def no_release(operation_id, *args, **kwargs):
                 return OperationReceipt(operation_id, "unknown", code="external_effect_unresolved")
 
-            monkeypatch.setattr(signer, "_reconcile_retained", no_release)
+            monkeypatch.setattr(signer, "_reconcile_admission", no_release)
             path = "/handoff/" + response.json()["handoff_id"] + "/governance"
             options = await client.post(path + "/options", json={}, headers=headers)
             answer = await client.post(path + "/execute", json={"assertion": a.w.device.get(options.json())},

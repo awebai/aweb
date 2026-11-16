@@ -16,15 +16,11 @@ service holds only its own member key and certificate. The deployment starts
 through the Compose adapter (scripts/e2e-team-deployment.sh), and the team's
 owner installs Secrets and Logs after the operator's install-owner grant.
 
-Then the protected round trip (naapp/secrets/e2e/protected_round_trip.py, the
-same body the secrets e2e lane runs): the owner activates the apps' hook
-bindings and designates the approver's holding, the signer is configured,
-provisioned and started, the approver's passkey is enrolled with Chromium, and
-the refusals sign nothing they must not. Under the registry's real limiter the
-journey's one revoke follows: a lost prepare, resumed, approved in the browser
-and signed once; its first delivery applied with the app's answer withheld;
-and its exact replay answered applied earlier, with one effect in the app's own
-records.
+The owner activates the apps' hook bindings and optionally designates the
+approver's holding. The current signer is configured, started and enrolled
+through its real passkey page. The ordinary deployment and agents stages then
+continue. Approval-service refusal, revoke, throttle and replay acceptance is
+deferred to adcl.6; this journey establishes none of those gates.
 
 The agents wait for the egress boundary.
 
@@ -34,7 +30,6 @@ No credential is printed. Each one is a file the service that owns it mounts.
 from __future__ import annotations
 
 import argparse
-import datetime
 import hashlib
 import ipaddress
 import json
@@ -65,7 +60,6 @@ from protected_round_trip import (  # noqa: E402
     activate_hooks,
     connect_requester,
     designate_holding,
-    did_key_window,
     first_json,
     found_team,
     hook_app_ids,
@@ -106,7 +100,6 @@ FRONT_IMAGE = "caddy:2.10-alpine"
 # The role the round trip revokes, of this deployment's Secrets app.
 ROLE = "secrets.owner"
 # The time the journey allows a human to approve on the page.
-APPROVAL_MARGIN = datetime.timedelta(seconds=60)
 # The agents' uid: the signer refuses custody a worker could read.
 AGENT_UID = 20001
 # The component directories an operator-provided secrets directory holds,
@@ -538,9 +531,6 @@ class World:
                 "emailUsername": "signer",
                 "emailFrom": f"signer@{DOMAIN}",
                 "emailCaFile": str(self.world / "tls" / "ca.pem"),
-                # Service-owned delivery: the attestation key the custodian
-                # installs beside the controller's, and the Secrets console the
-                # signer delivers human-role acts to, pinned and ready.
             }
         if self.agents_configured:
             config["agents"] = {
@@ -684,39 +674,6 @@ class World:
                 f" && find /state/seats/{alias}/.aw -type d -exec chmod 0700 {{}} +"
                 f" && find /state/seats/{alias}/.aw -type f -exec chmod 0600 {{}} +")
 
-    def await_window_end(self, seed: dict) -> None:
-        """Until the filled did_key window is over, by the registry Redis's own clock."""
-        def now() -> float:
-            seconds, micros = self.compose("exec", "-T", "registry-redis", "redis-cli", "TIME").split()
-            return int(seconds) + int(micros) / 1e6
-        ends = seed["seeded_at"] + seed["remaining"] + 1
-        while (left := ends - now()) > 0:
-            time.sleep(min(left, 5))
-
-    # --- the registry's real limiter, for the throttle legs -----------------
-
-    def fill_did_key_window(self) -> dict:
-        """Fill AWID's did_key window for the front's address to its limit, in
-        this run's own registry Redis, with the limiter's own key, limit and
-        expiry: every later read from that address in the window is refused 429
-        with the limiter's own Retry-After. Waits first for a fresh window when
-        too little of this one is left. Returns what it wrote and when."""
-        def now() -> float:
-            seconds, micros = self.compose("exec", "-T", "registry-redis", "redis-cli", "TIME").split()
-            return int(seconds) + int(micros) / 1e6
-        seed = did_key_window(now(), self.registry_front_ip)
-        if seed["wait"]:
-            time.sleep(seed["wait"] + 0.5)
-            seed = did_key_window(now(), self.registry_front_ip)
-        self.compose("exec", "-T", "registry-redis", "redis-cli", "SET", seed["key"], str(seed["limit"]),
-                     "EX", str(seed["ttl"]))
-        return {**seed, "seeded_at": now()}
-
-    def since(self) -> str:
-        return datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-    def service_log(self, service: str, since: str) -> str:
-        return self.compose("logs", "--no-color", "--no-log-prefix", "--since", since, service)
 
     def signer_table(self) -> dict:
         """The signer's own record: each operation's id, whether it holds a
@@ -731,16 +688,6 @@ class World:
             table[operation] = {"signed": signed == "t", "expires_at": expires}
         return table
 
-    def control_aw(self, machine: str) -> str:
-        """The aw of the control CLI image (the caller without its throttle
-        retry), copied into the machine beside its own aw. Returns its path."""
-        created = run("docker", "create", self.images["cli-control"]).strip()
-        try:
-            run("docker", "cp", f"{created}:/usr/local/bin/aw", str(self.run_dir / "aw-control"))
-        finally:
-            run("docker", "rm", created)
-        run("docker", "cp", str(self.run_dir / "aw-control"), f"{machine}:/tmp/aw-control")
-        return "/tmp/aw-control"
 
     def requalify_agent(self, founded: Founded, seat: str) -> dict:
         """The real agent, over the operator's SSH, as a staged seat: aw's own
@@ -943,7 +890,6 @@ class World:
             self.deployment()
 
 
-
         def operator_command(*args: str, mounts: list[str] | None = None) -> dict:
             """The package's local administrator command in the signer's
             container, as its uid, with the signer's own settings and mounts."""
@@ -969,13 +915,10 @@ class World:
                       self.images["chromium"], *args, "--ca", "/world/tls/ca.pem", timeout=300).strip()
             return first_json(out) if "{" in out else {}
 
-        front = self.run_dir / "front" / "Caddyfile"
 
         def reload_front() -> None:
             self.compose("exec", "-T", "front", "caddy", "reload", "--config", "/etc/caddy/Caddyfile",
                          "--adapter", "caddyfile")
-
-
 
 
         def secrets_query(select: str) -> str:
@@ -999,27 +942,9 @@ class World:
 
 # --- critical calls under the registry's real limiter ------------------------
 
-THROTTLED = re.compile(r"RegistryThrottled: .*retry_after_seconds=([0-9.]+)")
-PREPARES = re.compile(r'"POST /protected-operations HTTP/[\d.]+" (\d{3})')
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 # Every image scripts/e2e/team-deployment-images.sh builds for the journey;
-# cli-control is the CLI the throttle legs expect not to recover (no caller retry).
-REQUIRED_IMAGES = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "cli-control", "chromium"}
+REQUIRED_IMAGES = {"aweb", "aweb-protected", "secrets", "logs", "awid", "cli", "chromium"}
 
 
 def load_images(path: Path) -> dict[str, str]:
@@ -1046,8 +971,7 @@ def main() -> int:
                              " pre-created and whose agents/ the OATS credential receiver owns; default: the run's own")
     parser.add_argument("--keep", action="store_true", help="leave the deployment running for inspection")
     parser.add_argument("--agents-only", action="store_true",
-                        help="provision the signer, then go straight to the agents stage: no holding, protected"
-                             " round trip, refusals or throttle legs")
+                        help="skip the approver's holding (designate); hooks are activated directly")
     parser.add_argument("--stop-after", choices=["holding"],
                         help="end the journey after this setup step: holding, the approver's app holding")
     args = parser.parse_args()
@@ -1123,7 +1047,7 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
             print("STOPPED: after the approver's holding, as asked")
             return 0
 
-    print("=== Step 5: the protected act")
+    print("=== Step 5: the signer")
     provision_signer(site, holder, founded)
     isolated = world.redis_isolation({"aweb", "redis", "secrets", "logs", "signer"})
     print("REDIS ISOLATED:", json.dumps(isolated, sort_keys=True))
@@ -1132,8 +1056,6 @@ def journey(world: World, stop_after: str | None = None, agents_only: bool = Fal
         print("AGENTS: not in this run (no agent or egress image)")
         return 0
     return agents_stage(world, founded)
-
-
 
 
 def agents_stage(world: World, founded: Founded) -> int:

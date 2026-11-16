@@ -93,11 +93,10 @@ def forbid_effects(a, monkeypatch):
         raise AssertionError("receipt read attempted preparation, execution, signing or delivery")
 
     for component in a.group.components:
-        for name in ("prepare", "execute", "execute_request", "_sign_artifact", "_retain_authorized_effect"):
+        for name in ("prepare", "execute", "execute_request", "_sign_artifact"):
             monkeypatch.setattr(component.signer, name, forbidden)
         custody = component.authority.custody
-        for name in ("sign_owner_act", "sign_operation", "register_admission", "remove_member",
-                     "retain_authorized_effect", "deliver_retained"):
+        for name in ("sign_owner_act", "sign_operation", "register_admission", "remove_member"):
             if hasattr(custody, name):
                 monkeypatch.setattr(custody, name, forbidden)
         for provider in component.signer.effect_adapters.values():

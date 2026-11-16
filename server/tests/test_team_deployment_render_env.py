@@ -553,3 +553,9 @@ def test_egress_external_takes_only_the_two_roles_as_switches_and_a_resolver_lis
 def test_egress_external_defaults_every_role_off():
     config = {**copy.deepcopy(EXAMPLE), "egress": {"image": EGRESS_IMAGE, "external": {}}}
     assert render_env.normalize(config)["egress"]["external"] == {"source": False, "model": False, "resolvers": []}
+
+
+@pytest.mark.parametrize("key,value", [("serviceKey", True), ("ownerActOrigins", ["https://app.example.com"]), ("effectReceiptOrigins", ["https://app.example.com"])])
+def test_retired_delivery_configuration_is_not_accepted(signer, key, value):
+    with pytest.raises(render_env.Refused, match=key):
+        render_env.render({**EXAMPLE, "signer": {**signer, key: value}})
