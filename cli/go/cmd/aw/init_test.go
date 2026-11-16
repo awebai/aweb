@@ -742,7 +742,7 @@ func TestInitJoinFromTextInjectsDocsAndListsWhatIsLeft(t *testing.T) {
 // runControllerKeyJoinFromForTest joins a target folder from a source
 // workspace whose home holds the team key, and returns the target, the
 // source and its digests, the team and init's stdout.
-func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string, map[string]struct{}, string, string) {
+func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool, interruptBeforeCertificate ...bool) (string, string, map[string]struct{}, string, string) {
 	t.Helper()
 	oldJoinFrom, oldJoinTeam, oldName, oldGlobal := initJoinFrom, initJoinTeam, initName, initGlobal
 	oldJSON, oldRegistry := jsonFlag, initAWIDRegistry
@@ -762,10 +762,23 @@ func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string,
 	if err := awconfig.SaveTeamKey("source", "backend", teamKey); err != nil {
 		t.Fatalf("save team key: %v", err)
 	}
+	target := t.TempDir()
+	registryCalls := 0
 	var sawRegistry, sawConnect bool
 	registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/source/teams/backend/certificates" {
 			sawRegistry = true
+			registryCalls++
+			if len(interruptBeforeCertificate) > 0 && interruptBeforeCertificate[0] && registryCalls == 1 {
+				if _, err := os.Stat(filepath.Join(target, ".aw", "signing.key")); err != nil {
+					t.Errorf("failure must follow child key: %v", err)
+				}
+				if _, err := awconfig.LoadTeamCertificateForTeam(target, teamID); !os.IsNotExist(err) {
+					t.Errorf("certificate already persisted: %v", err)
+				}
+				http.Error(w, "certificate registration unavailable", 503)
+				return
+			}
 			w.WriteHeader(http.StatusCreated)
 			return
 		}
@@ -801,7 +814,6 @@ func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string,
 	}
 	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: awebServer.URL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceSigning, CreatedAt: "2026-09-26T00:00:00Z"})
 	sourceBefore := fileDigestsForTest(t, filepath.Join(source, ".aw"))
-	target := t.TempDir()
 	var stdout string
 	withTestWorkingDir(t, target, func() {
 		initJoinFrom = source
@@ -811,7 +823,39 @@ func runControllerKeyJoinFromForTest(t *testing.T, asJSON bool) (string, string,
 		jsonFlag = asJSON
 		var out bytes.Buffer
 		stdout = captureStdout(t, func() {
-			if err := runInitJoinFrom(authTestCmd(&out)); err != nil {
+			err := runInitJoinFrom(authTestCmd(&out))
+			if len(interruptBeforeCertificate) > 0 && interruptBeforeCertificate[0] {
+				if err == nil || !strings.Contains(err.Error(), "503") {
+					t.Fatalf("expected pre-certificate registry failure: %v", err)
+				}
+				keyBefore, err := os.ReadFile(filepath.Join(target, ".aw", "signing.key"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				invitesDir, err := awconfig.DefaultTeamInvitesDir()
+				if err != nil {
+					t.Fatal(err)
+				}
+				invitesBefore, err := filepath.Glob(filepath.Join(invitesDir, "*.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = runInitJoinFrom(authTestCmd(&out))
+				if err != nil {
+					t.Fatalf("local invite same-directory retry: %v", err)
+				}
+				keyAfter, err := os.ReadFile(filepath.Join(target, ".aw", "signing.key"))
+				if err != nil || !bytes.Equal(keyBefore, keyAfter) {
+					t.Fatal("local retry changed child key")
+				}
+				invitesAfter, err := filepath.Glob(filepath.Join(invitesDir, "*.json"))
+				if err != nil || len(invitesBefore) != len(invitesAfter)+1 {
+					t.Fatal("local retry minted another invite")
+				}
+				if registryCalls != 2 {
+					t.Fatalf("registry calls=%d", registryCalls)
+				}
+			} else if err != nil {
 				t.Fatalf("runInitJoinFrom: %v\n%s", err, out.String())
 			}
 		})
@@ -2039,4 +2083,13 @@ func TestInitAdmissionTeamIDRequiresExpectAccountBeforeAnyHostCall(t *testing.T)
 	if called {
 		t.Fatal("server was called")
 	}
+}
+
+func TestInitJoinFromControllerKeyRetryBeforeCertificate(t *testing.T) {
+	target, source, before, team, _ := runControllerKeyJoinFromForTest(t, true, true)
+	cert, err := awconfig.LoadTeamCertificateForTeam(target, team)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertInitJoinTarget(t, target, team, "target", cert.MemberDIDKey, before, source)
 }

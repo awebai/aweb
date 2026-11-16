@@ -26,7 +26,7 @@ import (
 // The hosted boundary is HTTP; the child's proof, parent approval, import and
 // chain verification run the production exchange, with no substituted signer.
 func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
-	for _, scenario := range []string{"global provision chained actor", "three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "join-from retry preview", "join-from retry accept", "join-from retry connect", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team cleanup warning", "further-team own chain", "further-team parent source", "further-team parent source retry", "further-team add parent retry", "further-team parent signed retry", "further-team parent two children", "further-team parent host managed", "further-team other human fresh", "further-team independent init", "further-team own chain retry", "further-team explicit condition echo", "further-team explicit condition missing echo"} {
+	for _, scenario := range []string{"global provision chained actor", "three children", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "join-from retry preview", "join-from retry accept", "join-from retry connect", "join-from retry connect without saved key", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team cleanup warning", "further-team own chain", "further-team parent source", "further-team parent source retry", "further-team add parent retry", "further-team parent signed retry", "further-team parent two children", "further-team parent host managed", "further-team other human fresh", "further-team independent init", "further-team own chain retry", "further-team explicit condition echo", "further-team explicit condition missing echo"} {
 		t.Run(scenario, func(t *testing.T) {
 			resetTeamHumanCreateGlobals(t)
 			v := loadWhoVectors(t)
@@ -229,7 +229,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					json.NewEncoder(w).Encode(map[string]any{"team_id": "cloud-team", "team_slug": "backend", "namespace": "example.com", "identity_id": "cloud-" + req.Alias, "alias": req.Alias, "server_url": origin, "did": req.DID, "identity_scope": "local", "custody": "self", "created": true, "team_cert": encoded, "id_chain": chain, "registration_request": nil})
 				case "/v1/connect":
 					connects++
-					if scenario == "join-from retry connect" && connects == 1 {
+					if strings.HasPrefix(scenario, "join-from retry connect") && connects == 1 {
 						http.Error(w, "connect unavailable", 503)
 						return
 					}
@@ -525,6 +525,22 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					keyBefore, err := os.ReadFile(filepath.Join(home, "signing.key"))
 					if err != nil {
 						t.Fatal(err)
+					}
+					if scenario == "join-from retry connect without saved key" {
+						// Simulate death after membership persistence but before
+						// the final key-binding save in the outer init command.
+						path := filepath.Join(home, initInviteRecoveryFile)
+						state, err := loadInitInviteRecovery(path)
+						if err != nil || state == nil {
+							t.Fatalf("missing init selection: %v", err)
+						}
+						state.DIDKey = ""
+						if err := state.save(path); err != nil {
+							t.Fatal(err)
+						}
+						if _, err := awconfig.LoadTeamCertificateForTeam(childDir, team); err != nil {
+							t.Fatalf("missing persisted membership: %v", err)
+						}
 					}
 					withTestWorkingDir(t, childDir, func() {
 						initName = "different-child"

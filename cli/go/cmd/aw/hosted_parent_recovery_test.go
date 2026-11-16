@@ -45,6 +45,7 @@ func TestHostedRefusalReleaseRequiresKnownCodeAndUncertainStateExplainsExit(t *t
 	}{
 		{409, `{"detail":{"code":"human_condition_mismatch","message":"wrong human"}}`, true},
 		{503, `{"detail":{"code":"human_condition_mismatch","message":"outage"}}`, false},
+		{403, `{"detail":{"code":"human_condition_mismatch","message":"wrong status"}}`, false},
 		{409, `{"detail":"Invite token use limit reached"}`, false},
 		{410, `{"detail":"Invite token expired or revoked"}`, false},
 		{409, `{"reason":"accepted_identity_mismatch"}`, false},
