@@ -11,13 +11,14 @@ import base64
 import json
 import re
 from collections.abc import Mapping
-from types import MappingProxyType
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
-from awid.log import require_canonical_server_origin
 from awid.id_tree_requests import covering_payload
+from awid.log import require_canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.utc_timestamps import parse_utc_seconds
+
 
 @dataclass(frozen=True)
 class SignedDelivery:
