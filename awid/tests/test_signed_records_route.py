@@ -27,7 +27,7 @@ from test_attestation_record_routes import (
     publish_person,
     register_certificate,
 )
-from test_controller_request_v2_http import controller_app, keypair, send  # noqa: F401
+from test_controller_request_v2_http import keypair, send  # noqa: F401
 
 RECORDS = f"{BASE}/signed-records"
 

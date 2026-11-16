@@ -23,7 +23,6 @@ from awid.registry import RegistryClient
 from awid.team_server_record import build_team_server_record
 from test_controller_signing import KEY, NEW_KEY, NEW_SEED, SEED, TS
 
-pytest_plugins = ("test_controller_request_v2_http",)
 pytestmark = pytest.mark.asyncio
 CASES = [
     "namespace_register",
