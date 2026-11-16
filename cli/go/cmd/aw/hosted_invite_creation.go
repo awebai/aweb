@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -58,6 +57,23 @@ func completeLocalHostedInvite(ctx context.Context, invite *awconfig.TeamInvite,
 
 // Only the recipe's explicit, retained local-agent home can make this transition.
 func pendingHostedExchangeTarget(cmd *cobra.Command, home awconfig.IdentityHome) (bool, error) {
+	if home.Source == awconfig.IdentityHomeFlag && cmd == teamFetchCertCmd {
+		state, err := loadHostedInviteCreation(filepath.Join(home.Root, hostedInviteRecoveryFile))
+		if err != nil || state == nil {
+			return false, err
+		}
+		if awid.BuildTeamID(teamFetchCertNamespace, teamFetchCertTeam) != state.TeamID || teamFetchCertID == "" {
+			return false, nil
+		}
+		for _, name := range []string{"grant.yaml", "teams.yaml", "workspace.yaml"} {
+			if _, err := os.Stat(filepath.Join(home.Root, name)); !errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+		}
+		key, err := awid.LoadSigningKey(filepath.Join(home.Root, "signing.key"))
+		return err == nil && awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) == state.DIDKey, err
+	}
+
 	if home.Source != awconfig.IdentityHomeFlag || (cmd != idParentRequestCmd && cmd != idParentImportCmd) || idParentHuman != "" {
 		return false, nil
 	}
@@ -83,6 +99,8 @@ func (e *hostedInviteSignaturePendingError) Error() string { return e.err.Error(
 func (e *hostedInviteSignaturePendingError) Unwrap() error { return e.err }
 
 type hostedInviteCreation struct {
+	ParentHome            string                `json:"parent_home,omitempty"`
+	ParentSelected        bool                  `json:"parent_selected,omitempty"`
 	AcceptAttempted       *bool                 `json:"accept_attempted,omitempty"`
 	ForHuman              *string               `json:"for_human,omitempty"`
 	MembershipChain       map[string]any        `json:"membership_chain,omitempty"`
@@ -307,12 +325,7 @@ func pendingHostedInviteRequester(opts idParentOptions) (*requester, error) {
 // A condition refusal grants no membership. It releases the operation selection,
 // never the identity, signed ancestry, or a retained successful Cloud answer.
 func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) error {
-	definitive := awid.IDCertificateErrorCode(refusal) == "human_mismatch"
-	status, hasStatus := awid.HTTPStatusCode(refusal)
-	if hasStatus && status == http.StatusConflict && awid.RefusalCode(refusal) == "human_condition_mismatch" {
-		definitive = true
-	}
-	if !definitive {
+	if !hostedInviteDefinitiveRefusal(refusal) {
 		return refusal
 	}
 	if err := discardHostedInviteAttempt(recoveryPath, markerPath); err != nil {
@@ -322,6 +335,9 @@ func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) 
 }
 
 func discardHostedInviteAttempt(recoveryPath, markerPath string) error {
+	if err := os.Remove(filepath.Join(filepath.Dir(recoveryPath), inviteParentRecoveryFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.New("release refused creator exchange")
+	}
 	if err := removeHostedAcceptPendingMarker(markerPath); err != nil {
 		return fmt.Errorf("release refused invite marker: %w", err)
 	}
@@ -329,4 +345,21 @@ func discardHostedInviteAttempt(recoveryPath, markerPath string) error {
 		return fmt.Errorf("release refused invite recovery: %w", err)
 	}
 	return nil
+}
+
+func canResumeHostedInvite(token, home string) bool {
+	if !awid.IsHostedSpawnInviteToken(token) {
+		return false
+	}
+	for _, name := range []string{"grant.yaml", "teams.yaml", "workspace.yaml"} {
+		if _, err := os.Stat(filepath.Join(home, name)); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	state, err := loadHostedInviteCreation(filepath.Join(home, hostedInviteRecoveryFile))
+	if err != nil || state == nil || state.Scope != "local" || state.TokenHash != strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-") {
+		return false
+	}
+	key, err := awid.LoadSigningKey(filepath.Join(home, "signing.key"))
+	return err == nil && awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) == state.DIDKey
 }

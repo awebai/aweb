@@ -2329,6 +2329,36 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		}
 		return nil, err
 	}
+	actorHome, err := identityHomeForDir(anchorDir)
+	if err != nil {
+		return nil, err
+	}
+	parentHome := ""
+	if global {
+		chain, err := awconfig.LoadInstalledIDChain(actorHome.Root)
+		if err != nil {
+			return nil, err
+		}
+		if chain != nil {
+			actor, err := resolveIDExchangeIdentity(anchorDir, actorHome.Root)
+			if err != nil {
+				return nil, err
+			}
+			if actor.StableID == "" {
+				return nil, usageError("this local creator cannot parent a registered global child; use aw id team add-member for the controller's unconditional admission path")
+			}
+			ctx, cancel := commandAPIContext(nil)
+			issuer, err := currentAgentIssuer(idChildOptions{WorkingDir: anchorDir, IdentityHome: actorHome.Root, Now: time.Now})
+			if err == nil {
+				err = checkSelectedTeamInviteIssuer(ctx, issuer)
+			}
+			cancel()
+			if err != nil {
+				return nil, err
+			}
+			parentHome = actorHome.Root
+		}
+	}
 	memberAddress := ""
 	if global {
 		identityExists, err := teamCreateHasIdentityMaterial(homeDir)
@@ -2345,10 +2375,6 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		}
 	}
 	localInvite := !global
-	actorHome, err := identityHomeForDir(anchorDir)
-	if err != nil {
-		return nil, err
-	}
 	hasTeamKey := false
 	if !awconfig.IsGrantHome(actorHome.Root) {
 		hasTeamKey, err = awconfig.TeamKeyExists(domain, team)
@@ -2367,7 +2393,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	if err != nil {
 		return nil, err
 	}
-	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress}
+	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress, ParentHome: parentHome}
 	accepted, err := acceptProvisionedTeamInvite(anchorDir, actorHome.Root, homeDir, token, acceptOpts)
 	if err != nil {
 		return nil, err
