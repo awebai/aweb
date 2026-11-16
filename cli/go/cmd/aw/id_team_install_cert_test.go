@@ -491,7 +491,7 @@ func TestRecordingAnInstalledCertificateWithNoRegistryKeepsTheMembershipsRegistr
 	if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := commitTeamCertificate(t.TempDir(), home, "fetch-cert", cert, "", func() (string, error) { return "already_installed", nil }); err != nil {
+	if _, err := commitTeamCertificate(t.TempDir(), home, "fetch-cert", cert, "", "", func() (string, error) { return "already_installed", nil }); err != nil {
 		t.Fatal(err)
 	}
 	state, err := awconfig.LoadTeamStateFromIdentityHome(home)

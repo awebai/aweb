@@ -54,6 +54,14 @@ func TestFetchCertificateUsesSelectedKeyAndStoresOnlyAtSelectedRoot(t *testing.T
 			encoded, _ := awid.EncodeTeamCertificateHeader(cert)
 			var calls atomic.Int32
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/certificates/"+cert.CertificateID+"/status") {
+					// The team's current key, which fetch-cert checks the fetched certificate against.
+					json.NewEncoder(w).Encode(map[string]any{
+						"team_id": cert.Team, "team_did_key": awid.ComputeDIDKey(controller.Public().(ed25519.PublicKey)),
+						"status": "active", "revoked_at": nil,
+					})
+					return
+				}
 				if r.Method != "GET" || !strings.HasSuffix(r.URL.Path, "/certificates/"+cert.CertificateID) {
 					http.NotFound(w, r)
 					return

@@ -110,6 +110,14 @@ func TestHumanParticipationFetchConnectMailAndManifest(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		if strings.HasSuffix(r.URL.Path, "/status") {
+			// fetch-cert checks the fetched certificate against the team's current key.
+			json.NewEncoder(w).Encode(map[string]any{
+				"team_id": cert.Team, "team_did_key": awid.ComputeDIDKey(controller.Public().(ed25519.PublicKey)),
+				"status": "active", "revoked_at": nil,
+			})
+			return
+		}
 		auth := strings.Fields(r.Header.Get("Authorization"))
 		if len(auth) != 3 || auth[1] != h.record.DIDKey {
 			t.Errorf("wrong identity on %s", r.URL.Path)

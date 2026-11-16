@@ -425,6 +425,14 @@ func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, iden
 	if err := configureResolvedClient(c, sel, baseURL); err != nil {
 		return nil, nil, err
 	}
+	home := strings.TrimSpace(sel.IdentityHome)
+	if home == "" {
+		home = filepath.Dir(sel.SigningKey)
+	}
+	selected := *sel
+	c.SetTeamCertificateRefresh(func(ctx context.Context) (string, error) {
+		return refreshOwnTeamCertificate(ctx, &selected, home)
+	})
 	return c, sel, nil
 }
 

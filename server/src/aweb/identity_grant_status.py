@@ -9,6 +9,7 @@ from fastapi import Request
 
 from aweb.config import require_registered_certificates
 from aweb.grant_expiry import never_expires
+from aweb.member_team_key import grant_issuer_current
 from aweb.team_auth_deps import _get_registered_certificates, _get_revoked_certificates
 
 
@@ -28,6 +29,8 @@ async def effective_grant_status(request: Request, row, now: datetime) -> tuple[
         return status, None
     if row.get("subject_status") != "active" or row.get("subject_deleted_at") is not None:
         return "subject_inactive", "grant subject identity is not active"
+    if not grant_issuer_current(row):
+        return "issuer_revoked", "grant issuing certificate superseded"
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
         revoked_certs = await _get_revoked_certificates(request, row["team_id"])

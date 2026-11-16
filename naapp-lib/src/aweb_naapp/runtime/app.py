@@ -45,6 +45,7 @@ from uuid import UUID
 
 import httpx
 from awid.dns_verify import DomainVerifier
+from awid.external_authority import TXTOutcomeResolver
 from awid.registry import RegistryClient
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.dependencies.models import Dependant
@@ -102,6 +103,7 @@ from aweb_naapp.runtime.human_member import (
     check_human_member as observe_human_member,
 )
 from aweb_naapp.runtime.installation import InstallationFence
+from aweb_naapp.runtime.team_key_pins import DatabaseTeamKeyPins
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -150,6 +152,9 @@ class NaappRuntime:
     hook-resolve key is also loaded at construction for the shared
     :meth:`hook_resolver`. Identity discovery objects are available without
     I/O before the lifespan, so grant sources can register route guards first.
+
+    Team keys are held to pins kept in the app's database; ``awid_txt_resolver``
+    (system DNS by default) answers which namespace controller may move one.
     """
 
     def __init__(
@@ -163,6 +168,7 @@ class NaappRuntime:
         owner_acts_origin: str | None = None,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
+        awid_txt_resolver: TXTOutcomeResolver | None = None,
         awid_domain_verifier: DomainVerifier | None = None,
         team_server_transport: httpx.AsyncBaseTransport | None = None,
         stores: Sequence[Store] = (),
@@ -230,6 +236,9 @@ class NaappRuntime:
             service_token=settings.awid_service_token,
             member_credentials=self._awid_member_credentials,
             transport=awid_transport,
+            team_key_pins=DatabaseTeamKeyPins(self.db),
+            txt_resolver=awid_txt_resolver,
+            enforce_team_key_pins=settings.enforce_team_key_pins,
         )
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache, transport=awid_transport,

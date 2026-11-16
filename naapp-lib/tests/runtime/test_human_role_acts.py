@@ -20,6 +20,7 @@ import pytest
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.human_members import HumanMember, registered_human
 from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TEAM_ID
+from fastapi import FastAPI
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.console import apply_console_migrations
@@ -181,11 +182,13 @@ async def fx(world: World, tmp_path) -> AsyncIterator[Effects]:
         runtime = _runtime(
             tmp_path, registry=world.registry, database_url=world.db.config.get_dsn()
         )
-        applied: list[tuple[int, AdmittedInstallation, OwnerActEffectResult]] = []
-        acts = effects(world, human, runtime, applied)
-        state = Effects(world, human, runtime, holdings, applied, acts)
-        await bind(world, state.scope(), HOLDER_ROLE)
-        yield state
+        # Team authentication reads the app's team-key pins, so it runs in the lifespan.
+        async with runtime.lifespan(FastAPI()):
+            applied: list[tuple[int, AdmittedInstallation, OwnerActEffectResult]] = []
+            acts = effects(world, human, runtime, applied)
+            state = Effects(world, human, runtime, holdings, applied, acts)
+            await bind(world, state.scope(), HOLDER_ROLE)
+            yield state
 
 
 async def read(fx: Effects, role: str = HOLDER_ROLE):
@@ -449,16 +452,17 @@ async def test_a_membership_proof_past_its_deadline_is_refused_before_commit(fx,
     acts = effects(fx.world, fx.human, runtime, fx.applied)
     sent = delivery(fx, DESIGNATE, holder())
     act = await fx.world.owner.verifier.prepare(sent.signing, sent.signature, team_id=TEAM_ID)
-    prepared = await acts.prepare(installation=fx.world.admitted, delivery=sent)
-    await asyncio.sleep(1.1)
-    with pytest.raises(OwnerActDeliveryRefused) as refusal:
-        async with fx.world.db.transaction() as tx:
-            await fx.world.fence.check(tx, fx.world.admitted)
-            verified = await fx.world.owner.verifier.consume_in(
-                tx, act, expected_subject=prepared.expected_subject
-            )
-            await prepared.apply(tx, installation=fx.world.admitted, act=verified)
-            prepared.require_fresh()
+    async with runtime.lifespan(FastAPI()):
+        prepared = await acts.prepare(installation=fx.world.admitted, delivery=sent)
+        await asyncio.sleep(1.1)
+        with pytest.raises(OwnerActDeliveryRefused) as refusal:
+            async with fx.world.db.transaction() as tx:
+                await fx.world.fence.check(tx, fx.world.admitted)
+                verified = await fx.world.owner.verifier.consume_in(
+                    tx, act, expected_subject=prepared.expected_subject
+                )
+                await prepared.apply(tx, installation=fx.world.admitted, act=verified)
+                prepared.require_fresh()
     assert refusal.value.code == "principal_status_unavailable"
     assert await read(fx) is None
     assert not await consumed(fx, sent)

@@ -1054,30 +1054,54 @@ func chatStreamPath(sessionID string, deadline time.Time) string {
 }
 
 func (c *Client) openChatStream(ctx context.Context, path string) (*SSEStream, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	resp, err := c.openStream(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	setUserAgent(req, c.userAgent)
-	if err := c.signRequest(req, nil); err != nil {
-		return nil, err
-	}
+	return NewSSEStream(resp.Body), nil
+}
 
-	resp, err := DoNoRedirect(c.sseClient, req)
-	if err != nil {
-		return nil, err
-	}
-	if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
-		c.latestClientVersion.Store(v)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+// openStream opens the SSE stream at path with the client's auth. A stream
+// refused for a team certificate under a superseded key is opened once more
+// with the certificate now recorded for the member.
+func (c *Client) openStream(ctx context.Context, path string) (*http.Response, error) {
+	for refreshed := false; ; refreshed = true {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Cache-Control", "no-cache")
+		setUserAgent(req, c.userAgent)
+		if err := c.signRequest(req, nil); err != nil {
+			return nil, err
+		}
+
+		resp, err := DoNoRedirect(c.sseClient, req)
+		if err != nil {
+			return nil, err
+		}
+		if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
+			c.latestClientVersion.Store(v)
+		}
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			return resp, nil
+		}
+		if !refreshed {
+			retry, err := c.refreshSupersededTeamCertificate(ctx, resp)
+			if err != nil {
+				_ = resp.Body.Close()
+				return nil, err
+			}
+			if retry {
+				_ = resp.Body.Close()
+				continue
+			}
+		}
 		body := ReadErrorExcerpt(resp.Body)
 		_ = resp.Body.Close()
 		return nil, newAPIError(resp, body)
 	}
-	return NewSSEStream(resp.Body), nil
 }
 
 // ChatSendMessage sends a message in an existing chat session.

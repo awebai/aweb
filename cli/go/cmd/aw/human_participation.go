@@ -230,6 +230,9 @@ func runHumanFetchCert(cmd *cobra.Command) error {
 	if cert.Team != teamID || cert.MemberDIDAW != h.record.StableID {
 		return usageError("fetched certificate does not match selected human ID and team")
 	}
+	if err := checkCurrentTeamCertificate(ctx, teamCertificateInstall{RegistryURL: registryURL, Registry: registry}, cert); err != nil {
+		return err
+	}
 	rel, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(h.dir, teamID, cert)
 	if err != nil {
 		return err

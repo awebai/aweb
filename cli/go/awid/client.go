@@ -286,7 +286,9 @@ type Client struct {
 	interactiveMailContext  string
 	signingKey              ed25519.PrivateKey // nil for legacy/custodial
 	did                     string             // empty for legacy/custodial
-	teamCertHeader          string             // base64-encoded team certificate for X-AWID-Team-Certificate
+	teamCertMu              sync.RWMutex
+	teamCertHeader          string // base64-encoded team certificate for X-AWID-Team-Certificate; under teamCertMu
+	teamCertRefresh         TeamCertificateRefresh
 	teamID                  string             // team identifier from certificate, used in auth signature
 	grantID                 string             // identity-grant id; non-empty selects grant auth with the session signing key
 	disableMessageSigning   bool               // true for grant auth: the session key may sign requests, never root message envelopes
@@ -503,7 +505,7 @@ func (c *Client) signedPayloadFrom(identityTarget, preferAlias bool) string {
 		return from
 	}
 	if preferAlias {
-		if c.teamCertHeader != "" {
+		if c.teamCertificateHeader() != "" {
 			if alias := c.certAlias; alias != "" {
 				return alias
 			}
@@ -560,11 +562,67 @@ func (c *Client) SetResolver(r IdentityResolver) { c.resolver = r }
 // Resolver returns the configured identity resolver, if any.
 func (c *Client) Resolver() IdentityResolver { return c.resolver }
 
+// TeamKeyNotCurrent is the refusal of a team certificate under a key the
+// team no longer holds.
+const TeamKeyNotCurrent = "team_key_not_current"
+
+// TeamCertificateRefresh installs the certificate now recorded for the
+// client's member and returns its X-AWID-Team-Certificate header, or "" when
+// there is none newer than the one presented.
+type TeamCertificateRefresh func(ctx context.Context) (string, error)
+
+// SetTeamCertificateRefresh makes a request the server refuses as
+// team_key_not_current refresh the team certificate once and be sent again.
+func (c *Client) SetTeamCertificateRefresh(refresh TeamCertificateRefresh) {
+	c.teamCertRefresh = refresh
+}
+
+func (c *Client) teamCertificateHeader() string {
+	c.teamCertMu.RLock()
+	defer c.teamCertMu.RUnlock()
+	return c.teamCertHeader
+}
+
+// refreshSupersededTeamCertificate reports whether resp refuses the client's
+// team certificate as team_key_not_current and a newer certificate is now
+// installed, so the request is to be sent again with it. Otherwise resp's
+// body is left readable.
+func (c *Client) refreshSupersededTeamCertificate(ctx context.Context, resp *http.Response) (bool, error) {
+	if resp.StatusCode != http.StatusUnauthorized || c.teamCertRefresh == nil || c.teamCertificateHeader() == "" {
+		return false, nil
+	}
+	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(data))
+	if err != nil {
+		return false, err
+	}
+	var refusal struct {
+		Detail struct {
+			Code string `json:"code"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal(data, &refusal) != nil || refusal.Detail.Code != TeamKeyNotCurrent {
+		return false, nil
+	}
+	header, err := c.teamCertRefresh(ctx)
+	if err != nil {
+		return false, fmt.Errorf("the server refused the team certificate as under a superseded team key, and installing the certificate now recorded for this member failed: %w", err)
+	}
+	if header == "" {
+		return false, nil
+	}
+	c.teamCertMu.Lock()
+	c.teamCertHeader = header
+	c.teamCertMu.Unlock()
+	return true, nil
+}
+
 // HasTeamCertificateAuth reports whether this client can authenticate with a
 // team certificate — the credential TeamRosterResolver requires for
 // certificate-authenticated roster reads.
 func (c *Client) HasTeamCertificateAuth() bool {
-	return c != nil && strings.TrimSpace(c.teamCertHeader) != "" && len(c.signingKey) != 0
+	return c != nil && strings.TrimSpace(c.teamCertificateHeader()) != "" && len(c.signingKey) != 0
 }
 
 func (c *Client) custodyAudience(ctx context.Context) (string, error) {
@@ -1528,6 +1586,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 		return req, nil
 	}
 
+	certificateRefreshed := false
 	for attempt := 0; ; attempt++ {
 		req, err := buildRequest()
 		if err != nil {
@@ -1554,6 +1613,18 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 		}
 		if v := resp.Header.Get("X-Latest-Client-Version"); v != "" {
 			c.latestClientVersion.Store(v)
+		}
+		if !certificateRefreshed {
+			refreshed, err := c.refreshSupersededTeamCertificate(ctx, resp)
+			if err != nil {
+				_ = resp.Body.Close()
+				return nil, err
+			}
+			if refreshed {
+				certificateRefreshed = true
+				_ = resp.Body.Close()
+				continue
+			}
 		}
 		if retry, err := shouldRetryAPIResponse(ctx, method, path, bodyBytes, attempt, resp); err != nil {
 			_ = resp.Body.Close()
@@ -1862,8 +1933,9 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 		}
 		return nil
 	}
+	teamCertHeader := c.teamCertificateHeader()
 	claim, value := "did_aw", c.stableID
-	if c.teamCertHeader != "" {
+	if teamCertHeader != "" {
 		claim, value = "team_id", c.teamID
 	}
 	var didKey, signature, canonical string
@@ -1881,8 +1953,8 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
 	req.Header.Set("X-AWEB-Timestamp", timestamp)
 	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
-	if c.teamCertHeader != "" {
-		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+	if teamCertHeader != "" {
+		req.Header.Set("X-AWID-Team-Certificate", teamCertHeader)
 	} else if c.stableID != "" {
 		req.Header.Set("X-AWEB-DID-AW", c.stableID)
 	}
