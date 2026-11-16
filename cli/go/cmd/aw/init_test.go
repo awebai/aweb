@@ -991,6 +991,10 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	var sawGlobalAccept bool
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/cli-auth/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "scope": cliAuthScopeTeamAdmission, "resource": serverURL + "/cli", "account": map[string]string{"id": "acct-test"}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/"+teamID+"/admission-invite":
+			_ = json.NewEncoder(w).Encode(teamAdmissionInviteResponse{InviteID: "invite-global", Token: "aw_inv_global", TeamID: teamID, ServerURL: serverURL, MaxUses: 1})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
 			if cert := requireCertificateAuthForTest(t, r); cert.Team != teamID {
 				t.Errorf("invite issued under wrong team: %s", cert.Team)
@@ -1024,6 +1028,7 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
 	})
+	saveTeamAdmissionLoginForTest(t, server.URL)
 	source := t.TempDir()
 	sourcePub, sourceKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -1031,37 +1036,48 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	}
 	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, RegistryURL: registryURL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceKey})
 	sourceBefore := snapshotJoinFiles(t, source)
-	target := t.TempDir()
-	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(target), memberKey); err != nil {
-		t.Fatalf("save key: %v", err)
-	}
-	writeIdentityForTest(t, target, awconfig.WorktreeIdentity{DID: memberDID, StableID: stableID, Address: "aweb.ai/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registryURL, CreatedAt: "2026-09-26T00:00:00Z"})
-	keyBefore, err := os.ReadFile(awconfig.WorktreeSigningKeyPath(target))
-	if err != nil {
-		t.Fatal(err)
-	}
-	command := exec.CommandContext(ctx, bin, "init", "--join-from", source, "--global", "--name", "alice", "--do-not-touch-agents-md", "--json")
-	command.Dir = target
-	command.Env = append(testCommandEnv(home), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL="+registryURL, "AW_NO_UPDATE_CHECK=1")
-	if out, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("global join-from command: %v\n%s", err, out)
-	}
-	if !sawGlobalAccept {
-		t.Fatal("global accept was not sent")
-	}
-	cert, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
-	if err != nil {
-		t.Fatalf("load cert: %v", err)
-	}
-	if cert.IdentityScope != awid.IdentityModeGlobal || cert.MemberDIDAW != stableID || cert.MemberAddress != "aweb.ai/alice" {
-		t.Fatalf("cert=%+v", cert)
-	}
-	keyAfter, err := os.ReadFile(awconfig.WorktreeSigningKeyPath(target))
-	if err != nil || !bytes.Equal(keyBefore, keyAfter) {
-		t.Fatalf("global join changed the existing signing key: %v", err)
-	}
-	if !reflect.DeepEqual(sourceBefore, snapshotJoinFiles(t, source)) {
-		t.Fatal("global join mutated the source identity")
+	for _, outcome := range []string{"join-from", "admission"} {
+		t.Run(outcome, func(t *testing.T) {
+			sawGlobalAccept = false
+			target := t.TempDir()
+			if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(target), memberKey); err != nil {
+				t.Fatalf("save key: %v", err)
+			}
+			writeIdentityForTest(t, target, awconfig.WorktreeIdentity{DID: memberDID, StableID: stableID, Address: "aweb.ai/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registryURL, CreatedAt: "2026-09-26T00:00:00Z"})
+			keyBefore, err := os.ReadFile(awconfig.WorktreeSigningKeyPath(target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"init", "--global", "--name", "alice", "--do-not-touch-agents-md", "--json"}
+			if outcome == "join-from" {
+				args = append(args, "--join-from", source)
+			} else {
+				args = append(args, "--admission-team-id", teamID, "--expect-account", "acct-test", "--server-name", server.URL)
+			}
+			command := exec.CommandContext(ctx, bin, args...)
+			command.Dir = target
+			command.Env = append(testCommandEnv(home), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL="+registryURL, "AW_NO_UPDATE_CHECK=1")
+			if out, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("global %s command: %v\n%s", outcome, err, out)
+			}
+			if !sawGlobalAccept {
+				t.Fatal("global accept was not sent")
+			}
+			cert, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
+			if err != nil {
+				t.Fatalf("load cert: %v", err)
+			}
+			if cert.IdentityScope != awid.IdentityModeGlobal || cert.MemberDIDAW != stableID || cert.MemberAddress != "aweb.ai/alice" {
+				t.Fatalf("cert=%+v", cert)
+			}
+			keyAfter, err := os.ReadFile(awconfig.WorktreeSigningKeyPath(target))
+			if err != nil || !bytes.Equal(keyBefore, keyAfter) {
+				t.Fatalf("global join changed the existing signing key: %v", err)
+			}
+			if !reflect.DeepEqual(sourceBefore, snapshotJoinFiles(t, source)) {
+				t.Fatal("global join mutated the source identity")
+			}
+		})
 	}
 }
 
