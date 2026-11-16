@@ -144,7 +144,6 @@ func CheckCreationEvidence(link Link, statement, receipt map[string]any, trust, 
 			r.Currentness = "not_current"
 			if current.IdentityKey == link.Key && current.Certificate == link.Certificate && current.Issuer == trust.Issuer {
 				r.Currentness = "current"
-				r.Continuity = "unbroken"
 			}
 		}
 	}
@@ -199,6 +198,9 @@ func CheckCreationEvidence(link Link, statement, receipt map[string]any, trust, 
 		return r
 	}
 	r.Proof = Check{"valid", "checked"}
+	if r.Currentness == "current" {
+		r.Continuity = "unbroken"
+	}
 	yes := true
 	r.ProofBindsGrade = &yes
 	binding := objectValue(objectValue(receipt, "binding"), "binding")

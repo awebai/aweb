@@ -44,13 +44,14 @@ func TestCreationEvidenceContinuityFollowsCurrentSubject(t *testing.T) {
 	a, trust := creationFixture(t)
 	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
 	statement := a["evidence"].(map[string]any)
-	checked := CheckCreationEvidence(link, statement, nil, trust, trust, 1100)
+	receipt := a["creation_receipt"].(map[string]any)
+	checked := CheckCreationEvidence(link, statement, receipt, trust, trust, 1100)
 	if checked.Continuity != "unbroken" {
 		t.Fatalf("unchanged current subject: %+v", checked)
 	}
 	changed := *trust
 	changed.IdentityKey = "another key"
-	later := CheckCreationEvidence(link, statement, nil, trust, &changed, 1100)
+	later := CheckCreationEvidence(link, statement, receipt, trust, &changed, 1100)
 	if later.Continuity != "unknown" {
 		t.Fatalf("transition not followed: %+v", later)
 	}
@@ -62,5 +63,38 @@ func TestCreationEvidenceHardwareTextAttributesGradeToIssuer(t *testing.T) {
 	text := FormatEvidence(r)
 	if !strings.Contains(text, "issuer attests certified hardware; creation proof checked") || strings.Contains(text, "created with certified hardware") {
 		t.Fatal(text)
+	}
+}
+
+func TestCreationEvidenceCurrentSubjectWithoutCheckedProofHasUnknownContinuity(t *testing.T) {
+	a, trust := creationFixture(t)
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
+	statement := a["evidence"].(map[string]any)
+	raw, err := proof.Canonical(a["creation_receipt"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := proof.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid["assertion"].(map[string]any)["signature"] = "AA"
+	for _, tc := range []struct {
+		name        string
+		receipt     map[string]any
+		proofStatus string
+	}{
+		{"absent", nil, "unavailable"},
+		{"invalid", invalid, "invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			report := CheckCreationEvidence(link, statement, tc.receipt, trust, trust, 1100)
+			if report.Statement.Status != "valid" || report.Currentness != "current" || report.Proof.Status != tc.proofStatus {
+				t.Fatalf("wrong neighboring case: %+v", report)
+			}
+			if report.Continuity != "unknown" || !strings.Contains(FormatEvidence(report), "continuity unknown") {
+				t.Fatalf("unchecked creation claimed continuity: %+v", report)
+			}
+		})
 	}
 }
