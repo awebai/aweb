@@ -66,7 +66,7 @@ func init() {
 func enrollmentObject(value any) map[string]any { object, _ := value.(map[string]any); return object }
 func enrollmentText(value any) string           { text, _ := value.(string); return text }
 func humanEnrollmentConfirmation(session *humanEnrollmentSession, admission map[string]any) map[string]any {
-	return map[string]any{"version": 1, "intent": session.Intent, "binding": session.Binding, "request_bytes": session.RequestBytes, "admission": admission}
+	return map[string]any{"version": json.Number("1"), "intent": session.Intent, "binding": session.Binding, "request_bytes": session.RequestBytes, "admission": admission}
 }
 func sameEnrollmentValue(a, b any) bool {
 	x, e := proof.Canonical(a)
