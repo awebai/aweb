@@ -30,14 +30,20 @@ cleanup() {
     compose logs --no-color >"$OUTPUT/services.log" 2>&1 || cleanup_status=1
     compose down -v --remove-orphans >"$OUTPUT/docker-cleanup.log" 2>&1 || cleanup_status=1
     if docker image inspect "$IMAGE" >/dev/null 2>&1; then
-      docker run --rm --network none --read-only --user 0:0 -v "$RUNTIME/work:/work" "$IMAGE" python /journey.py retain --uid "$(id -u)" --gid "$(id -g)" >"$OUTPUT/retention.log" 2>&1 || cleanup_status=1
+      docker run --rm --label com.docker.compose.project="$PROJECT" --network none --read-only --user 0:0 -v "$RUNTIME/work:/work" "$IMAGE" python /journey.py retain --uid "$(id -u)" --gid "$(id -g)" >"$OUTPUT/retention.log" 2>&1 || cleanup_status=1
+      # An interrupted docker-run client can leave a created one-off behind.
+      # These all carry this exact project's label, including UID probes.
+      leftovers="$(docker ps -aq --filter label=com.docker.compose.project="$PROJECT")" || cleanup_status=1
+      for container in $leftovers; do
+        docker rm -f "$container" >>"$OUTPUT/docker-cleanup.log" 2>&1 || cleanup_status=1
+      done
       docker image rm "$IMAGE" >>"$OUTPUT/docker-cleanup.log" 2>&1 || cleanup_status=1
     fi
     for kind in container volume network; do
       case "$kind" in
-        container) remaining="$(docker ps -aq --filter label=com.docker.compose.project="$PROJECT")" ;;
-        volume) remaining="$(docker volume ls -q --filter label=com.docker.compose.project="$PROJECT")" ;;
-        network) remaining="$(docker network ls -q --filter label=com.docker.compose.project="$PROJECT")" ;;
+        container) remaining="$(docker ps -aq --filter label=com.docker.compose.project="$PROJECT")" || cleanup_status=1 ;;
+        volume) remaining="$(docker volume ls -q --filter label=com.docker.compose.project="$PROJECT")" || cleanup_status=1 ;;
+        network) remaining="$(docker network ls -q --filter label=com.docker.compose.project="$PROJECT")" || cleanup_status=1 ;;
       esac
       [[ -z "$remaining" ]] || cleanup_status=1
       printf '%s: %s\n' "$kind" "$remaining" >>"$OUTPUT/inventory.txt"
@@ -84,10 +90,10 @@ chmod 0644 "$RUNTIME/public/ca.crt" "$RUNTIME/tls/server.crt"
 cp "$RUNTIME/public/ca.crt" "$RUNTIME/build/fixture-ca.crt"
 docker build --platform "linux/$ARCHITECTURE" --label com.docker.compose.project="$PROJECT" -t "$IMAGE" "$RUNTIME/build" >"$OUTPUT/image-build.log" 2>&1
 docker image inspect "$IMAGE" >"$OUTPUT/image.json"
-docker run --rm "$IMAGE" cat /package-inventory.txt >"$OUTPUT/package-inventory.txt"
-docker run --rm "$IMAGE" cat /wheel-hashes.txt >"$OUTPUT/wheel-hashes.txt"
+docker run --rm --label com.docker.compose.project="$PROJECT" "$IMAGE" cat /package-inventory.txt >"$OUTPUT/package-inventory.txt"
+docker run --rm --label com.docker.compose.project="$PROJECT" "$IMAGE" cat /wheel-hashes.txt >"$OUTPUT/wheel-hashes.txt"
 for pair in 1001:awid 1002:awsign 1003:aweb-key-holder; do
-  docker run --rm --user "${pair%%:*}:${pair%%:*}" "$IMAGE" "${pair#*:}" --help >>"$OUTPUT/service-uid-entrypoints.log" 2>&1
+  docker run --rm --label com.docker.compose.project="$PROJECT" --user "${pair%%:*}:${pair%%:*}" "$IMAGE" "${pair#*:}" --help >>"$OUTPUT/service-uid-entrypoints.log" 2>&1
 done
 compose config >"$OUTPUT/compose-resolved.yml"
 compose run --rm -T --no-deps --user 0:0 holder sh -ec 'chown 1003:1003 /state; chmod 0700 /state' >"$OUTPUT/state-init.log" 2>&1
