@@ -25,7 +25,7 @@ from awid.team_key_acts import (
     verify_team_key_act,
     verify_team_key_change,
 )
-from test_controller_request_v2_http import ORIGIN, controller_app, keypair, send  # noqa: F401
+from test_controller_request_v2_http import ORIGIN, keypair, send  # noqa: F401
 
 ROTATE_PATH = '/v1/namespaces/local/teams/base/rotate'
 ACT_PATH = '/v1/namespaces/local/teams/base/key-act'
@@ -253,6 +253,24 @@ async def test_registry_client_reads_the_served_act(controller_app):
         verify_team_key_act(record, domain='local', name='base', team_did_key=new_did_key)
         await env.db.execute("DELETE FROM {{tables.team_key_acts}}")
         assert await client.get_team_key_act('local', 'base') is None
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_typed_client_rotation_keeps_a_verifiable_act(controller_app):
+    env = controller_app
+    _, new_did_key = keypair()
+    client = RegistryClient(registry_url=ORIGIN, transport=httpx.ASGITransport(app=env.app))
+    try:
+        rotated = await client.rotate_team_key(
+            'local', 'base', new_team_did_key=new_did_key, namespace_controller_signing_key=env.controller[0],
+        )
+        assert rotated['key_changed'] is True
+        record = await client.get_team_key_act('local', 'base')
+        verify_team_key_act(record, domain='local', name='base', team_did_key=new_did_key)
+        with pytest.raises(TeamKeyActError):
+            verify_team_key_act(record, domain='local', name='base', team_did_key=env.team[1])
     finally:
         await client.aclose()
 

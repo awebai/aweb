@@ -22,7 +22,7 @@ from test_attestation_record_routes import (
     _now,
 )
 from test_certificates import _signed_certificate_blob
-from test_controller_request_v2_http import controller_app, keypair, send  # noqa: F401
+from test_controller_request_v2_http import keypair, send  # noqa: F401
 
 
 async def _old_certificate(env):
