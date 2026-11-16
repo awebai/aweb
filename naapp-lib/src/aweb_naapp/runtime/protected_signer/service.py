@@ -1043,7 +1043,7 @@ class ProtectedSigner:
             self._session_fresh(human_session)
             if (row["result"] is None and row["refusal_code"] is None and row["signed_result"] is not None
                 and code in {"operation_expired", "approval_expired"}):
-                # The human wait may still be open after the retained effect's
+                # The human wait may still be open after the signed artifact's
                 # original release window has ended. It grants no new send.
                 return OperationReceipt(operation_id, "unknown", code="external_effect_unresolved")
             return self._receipt(row)

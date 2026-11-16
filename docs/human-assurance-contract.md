@@ -914,9 +914,8 @@ also needs a new display/approval. Inside the original signature transaction,
 the definition materializes the concrete artifact from that same template,
 using the execution time only for its declared fields. The existing consumer
 serializer validates the complete result before signing. The engine records
-one issued artifact with the verified signature; any service proof and complete
-private delivery request are retained in the same local transaction before
-release. This private issued artifact requires a new ordered migration; the
+one issued artifact with the verified signature before release. The private
+issued artifact has its own ordered migration; the
 approved request and its digest are never rewritten.
 
 The signing/release deadline is the minimum of the original pending/issuance
@@ -925,30 +924,18 @@ freshness/expiry bounds. A request timestamp keeps its existing freshness
 window; an owner act keeps its maximum 600-second consumer lifetime. Those
 bounds begin when the artifact is issued, never when a retry or receipt read
 occurs. Recheck original deadlines after final awaits and cache invalidation,
-and before release. The one retained artifact, signature, attestation and exact
-request are reused after uncertain answers; no recovery path reissues a
-timestamp, nonce, signature, proof, target or deadline. Historical exact
+and before release. The one issued artifact and signature are reused after
+uncertain answers; no recovery path reissues a timestamp, nonce, signature,
+target or deadline. Historical exact
 confirmation may settle an already-applied effect after expiry but never sends.
 
 The client verifies the pinned descriptor and every static field, then verifies
 the returned retained artifact's existing canonical encoding and controller
 signature. Only the definition-declared time fields may differ from the
 static template, and their times/lifetimes must satisfy the frozen issuance
-window and the existing consumer rules. A safe applied service-owned receipt
+window and the existing consumer rules. A historical applied receipt
 never causes a second local POST. Artifact/signature substitution, a changed
 route/body/certificate or a receipt/reference mismatch refuses.
-
-For `intent_v1` owner acts, delivery is service-owned, not dependent on an
-`aw` process waiting at the terminal. The signer retains and releases the
-one issued act to the pinned app route within the original effect and consumer
-bounds, and commits an applied result only with exact consumer confirmation.
-An unavailable terminal at approval time must not leave the issued act waiting
-for a later client POST after its lifetime. A composition lacking the trusted
-service-owned delivery and exact confirmation capability returns
-`operation_not_served` before pending/page/signature; it cannot silently fall
-back to a sign-only result. Consumer deployment/cutover readiness is therefore
-part of the coordinated rollout, never inferred from publishing aw alone.
-The same condition applies when additional owner-act rows are enabled.
 
 For a historical **applied** receipt, issuance-window/lifetime checks are
 historical checks, not a demand that the artifact remain fresh at read time.
