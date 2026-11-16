@@ -41,7 +41,7 @@ NETWORK = "172.29.190.0/24"
 def save(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    with temporary.open("w", opener=lambda p, f: os.open(p, f, 0o600)) as stream:
+    with open(temporary, "w", opener=lambda p, f: os.open(p, f, 0o600)) as stream:
         json.dump(value, stream, indent=2)
     temporary.chmod(0o600)
     temporary.replace(path)
