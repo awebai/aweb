@@ -14,6 +14,8 @@ github.com/awebai/approval-service v0.0.0-20261116172652-f21cb8303cf6 h1:Mh1I4eV
 github.com/awebai/approval-service v0.0.0-20261116172652-f21cb8303cf6/go.mod h1:vP15UqpJWIjCzvgW+ioO7e0oqyq2qVheI1hcCvNTBiw=
 github.com/awebai/approval-service v0.0.0-20261116173442-4835e5320683 h1:U75KrDd1ag43V50Cn0j3Dpq2XHczmBReYG8jtB0hfFY=
 github.com/awebai/approval-service v0.0.0-20261116173442-4835e5320683/go.mod h1:vP15UqpJWIjCzvgW+ioO7e0oqyq2qVheI1hcCvNTBiw=
+github.com/awebai/approval-service v0.0.0-20261116175516-aa736fbd4164 h1:l0DkeY2lKmFENnabsn21W7wb2JpxPorGWJ0KMkui0lg=
+github.com/awebai/approval-service v0.0.0-20261116175516-aa736fbd4164/go.mod h1:vP15UqpJWIjCzvgW+ioO7e0oqyq2qVheI1hcCvNTBiw=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiErDT4WkJ2k=
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/aymanbagabas/go-udiff v0.3.1 h1:LV+qyBQ2pqe0u42ZsUEtPiCaUoqgA9gYRDs3vj1nolY=

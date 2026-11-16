@@ -48,7 +48,8 @@ func runIDProof(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	envelope := &awid.MessageEnvelope{FromDID: h.record.DIDKey, FromStableID: h.record.StableID,
-		Type: "identity-proof", Body: string(body), Timestamp: time.Now().UTC().Format(time.RFC3339), MessageID: messageID}
+		To: h.record.StableID, ToStableID: h.record.StableID, ToDID: h.record.DIDKey,
+		Type: "mail", Subject: "Public identity proof", Body: string(body), Timestamp: time.Now().UTC().Format(time.RFC3339), MessageID: messageID}
 	payload := awid.CanonicalJSON(envelope)
 	sum := sha256.Sum256(body)
 	did, signature, err := h.sign([]byte(payload), fmt.Sprintf("export your message (%d bytes, sha256 %x) for anyone to verify", len(body), sum))
