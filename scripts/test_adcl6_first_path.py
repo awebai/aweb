@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
+import tarfile
 import tempfile
 import unittest
 
@@ -14,7 +16,42 @@ from adcl6_first_path import (
     assert_approval_target,
     assert_outside_verdict,
     save,
+    archive_running_tree,
 )
+
+
+class RunningTreeTests(unittest.TestCase):
+    def test_archive_follows_the_checked_out_commit_and_refuses_dirty_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            root.mkdir()
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            source = root / "cli/go/source.txt"
+            source.parent.mkdir(parents=True)
+            source.write_text("first")
+            for path in ("awid/source.txt", "key-holder/source.txt"):
+                file = root / path
+                file.parent.mkdir()
+                file.write_text(path)
+            def commit():
+                subprocess.run(["git", "add", "."], cwd=root, check=True)
+                subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture"], cwd=root, check=True)
+                return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+            first = commit()
+            archive = Path(directory) / "source.tar"
+            self.assertEqual(archive_running_tree(root, archive), first)
+            with tarfile.open(archive) as contents:
+                self.assertEqual(contents.extractfile("cli/go/source.txt").read(), b"first")
+                self.assertIsNotNone(contents.getmember("awid/source.txt"))
+                self.assertIsNotNone(contents.getmember("key-holder/source.txt"))
+            source.write_text("second")
+            with self.assertRaisesRegex(RuntimeError, "clean"):
+                archive_running_tree(root, archive)
+            second = commit()
+            self.assertNotEqual(first, second)
+            self.assertEqual(archive_running_tree(root, archive), second)
+            with tarfile.open(archive) as contents:
+                self.assertEqual(contents.extractfile("cli/go/source.txt").read(), b"second")
 
 
 class SaveTests(unittest.TestCase):
