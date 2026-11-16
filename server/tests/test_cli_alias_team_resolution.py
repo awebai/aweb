@@ -92,7 +92,10 @@ async def memberships(env, tmp_path, registry_url, *, missing):
         alpha_alias, alice.id,
     )
     await env.db.execute("UPDATE {{tables.workspaces}} SET alias=$1 WHERE workspace_id=$2", alpha_alias, alice.workspace)
-    await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1,alias='reviewer' WHERE agent_id=$2", beta, carol.id)
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET team_id=$1,alias='reviewer',accepted_team_did_key=$2 WHERE agent_id=$3",
+        beta, beta_did, carol.id,
+    )
     await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$1,alias='reviewer' WHERE workspace_id=$2", beta, carol.workspace)
     human_certificate = await register(env, TEAM, env.team_sk, alice, alpha_alias)
     peer_certificate = await register(env, beta, beta_key, carol, "reviewer")
