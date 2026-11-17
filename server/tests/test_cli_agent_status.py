@@ -6,8 +6,10 @@ from identity_binding_support import register_global_identity
 import asyncio
 import base64
 import json
+import math
 import os
 from pathlib import Path
+import time
 
 import pytest
 
@@ -21,7 +23,8 @@ from test_messages_http import _make_certificate
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("global_root", [False, True])
-async def test_cli_status_designation_publish_and_refusals(privacy_app, tmp_path, global_root):
+@pytest.mark.parametrize("publish_delay", [0, 1.1], ids=["immediate", "delayed"])
+async def test_cli_status_designation_publish_and_refusals(privacy_app, tmp_path, global_root, publish_delay):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     binary = Path(os.environ["AW_TEST_CLI_BINARY"])
@@ -79,13 +82,22 @@ async def test_cli_status_designation_publish_and_refusals(privacy_app, tmp_path
     shown = await cli("alice", "status-host", "show")
     assert shown["host_active"] is True
     document = _document(env, "alice", "bob", agent=stable_id_from_did_key(env.actors["alice"].did) if global_root else env.actors["alice"].did)
+    publish_started = time.monotonic()
     sent = await cli("bob", "status", "publish", "--alias", "alice", "--document", "-", document=document)
     assert sent["status"] == 200 and sent["seq"] == document["seq"]
     row = await env.db.fetch_one("SELECT publisher_did, signed_payload FROM {{tables.agent_status}} WHERE agent_id = $1", env.actors["alice"].id)
     assert row["publisher_did"] == env.actors["bob"].did
     assert json.loads(base64.urlsafe_b64decode(row["signed_payload"] + "=" * (-len(row["signed_payload"]) % 4))) == document
+    await asyncio.sleep(publish_delay)
     limited = await cli("bob", "status", "publish", "--alias", "alice", "--document", "-", document={**document, "seq": document["seq"] + 1}, exit_code=3)
-    assert limited["status"] == 429 and limited["code"] == "rate_limited" and limited["retry_after"] == 5
+    assert limited["status"] == 429 and limited["code"] == "rate_limited"
+    # Redis reports whole seconds remaining. Include both CLI launches and
+    # intervening work; a loaded runner can consume part of the five-second
+    # window before the limited request reaches the real limiter.
+    elapsed = time.monotonic() - publish_started
+    minimum_retry_after = max(1, 5 - math.ceil(elapsed))
+    assert type(limited["retry_after"]) is int
+    assert minimum_retry_after <= limited["retry_after"] <= 5
     await _open_rate_window(env, "alice")
     stale = await cli("bob", "status", "publish", "--alias", "alice", "--document", "-", document=document, exit_code=3)
     assert stale["status"] == 409 and stale["code"] == "stale_seq" and stale["retry_after"] is None

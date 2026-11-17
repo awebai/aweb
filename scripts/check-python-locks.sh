@@ -7,7 +7,6 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/pycache}"
 
 # Every lock that takes the in-repo awid as a source, with the path its

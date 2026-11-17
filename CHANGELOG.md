@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- The registry accepts private-team reads signed with the covering-v2
+  envelope (operation `read_team`), which binds the registry, the route and
+  its query: team list and get, member lookup, certificate list, revocations,
+  certificate-blob fetch and the signed-records list. Each route admits the
+  same keys as before, whichever form signs it. The path signature, which
+  binds neither the query nor the registry, is still accepted and is counted
+  (`awid_path_signed_read_accepted`) until measured unused. Clients keep the
+  path signature until this registry release is in production.
+- Registry accepted-authentication metrics now name the signed form and the
+  sending client family (`aw/<version>`, `python-httpx` or `other`; never the
+  raw User-Agent; at most 16 aw versions per process, later ones count as
+  `aw/other`), counted per operation and client:
+  `awid_legacy_controller_auth_accepted` (unchanged event name, now with
+  `client=` and `form=legacy`), and the new `awid_controller_auth_accepted`
+  (`form=covering`) and `awid_path_signed_read_accepted` (`form=path`). The
+  in-process counter is `app.state.controller_auth_counts`, keyed by event,
+  operation and client; `app.state.legacy_controller_auth_counts` is gone.
+
 - Remove the unused signed ID-status read and candidate-only signer proof
   contexts and audit kinds. Public ID-status reads and application passkey
   proofs are unchanged. Upgrading removes the nine retired signer tables from

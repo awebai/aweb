@@ -18,14 +18,13 @@
 # reduces the manual surface, it does not eliminate it — see the freshness
 # section of docs/contributing.md.
 #
-# It never touches state outside the repository (isolated uv cache) and needs no
-# production credentials.
+# It needs no production credentials. uv uses its persistent user cache,
+# shared with dependency preparation and offline checks.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/pycache}"
 
 status=0

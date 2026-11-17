@@ -110,15 +110,43 @@ Public identity and namespace read endpoints (`GET /v1/namespaces/{domain}`,
 `GET /v1/did/{did_aw}/key`, etc.) are rate-limited and do not require
 signatures. Team reads follow team visibility: public teams are anonymous;
 private-team metadata, enumeration, certificate history, member lookup, and
-revocations require a controller or unrevoked-member path signature, or the
-trusted same-operator service credential described below. The per-certificate
+revocations require a signed read (below) by the team key or an unrevoked
+member key, or the trusted same-operator service credential described below. The per-certificate
 `/certificates/{certificate_id}/status` read is the narrow anonymous exception,
 including for private teams; it exposes only the four facts documented below.
 The team-server record, the team-key act and the principal-attestation record
 reads (custodians, custody, person) are likewise anonymous, each by exact key
 with one identical 404, as documented below. Identity-private
-reads and certificate-blob fetch have their separately documented
-authentication requirements.
+reads have their separately documented authentication requirements.
+
+### Signed team reads
+
+A signed team read takes one of two forms. Both identify the reader's
+did:key; the route then applies its own rule, the same for both forms: a
+private team's metadata, enumeration, certificate list, member lookup and
+revocations admit the team key or an unrevoked member key; the certificate-blob
+fetch (`GET .../certificates/{certificate_id}`) admits only that certificate's
+member key; the signed-records list admits only the team key.
+
+- **Covering read.** The covering-v2 envelope of
+  [awid-controller-requests.md](awid-controller-requests.md) with operation
+  `read_team` and claims `domain` and, for a route under one team, `name`
+  (the team list, `GET /v1/namespaces/{domain}/teams`, carries `domain`
+  only). It binds this registry's origin (`aud`), `GET`, the raw path with its
+  query, and the empty body's `body_sha256`, so a captured read cannot be
+  replayed at another route, with another query, or at another registry. It is
+  sent with `X-AWEB-Signed-Payload`, `X-AWEB-Timestamp` and
+  `Authorization: DIDKey <did:key> <signature>`.
+- **Path signature.** The signature over `{timestamp}\n{method}\n{path}`, where
+  `path` excludes the query string, with `X-AWEB-Timestamp` and the same
+  `Authorization` header. It binds neither the query nor the registry. It is
+  accepted while clients move to the covering read, counted as
+  `awid_path_signed_read_accepted`, and removed once measured unused.
+
+A request carrying `X-AWEB-Signed-Payload` is verified only as a covering
+read. A supplied proof that does not verify is refused (401; 404 on the
+signed-records list, whose every refusal is the same 404), never treated as an
+anonymous read.
 
 An AWID service used by aweb must configure the same high-entropy
 `AWID_SERVICE_TOKEN` as the aweb server (standalone AWID deployments that do not
@@ -607,9 +635,9 @@ POST   /v1/namespaces/{domain}/teams
 
 GET    /v1/namespaces/{domain}/teams
        List teams in namespace.
-       Auth: none returns public teams only. A controller or unrevoked-member
-             path signature, or the trusted same-operator service credential,
-             also returns private teams visible to that authority.
+       Auth: none returns public teams only. A signed team read by a team
+             key or unrevoked member key, or the trusted same-operator service
+             credential, also returns private teams visible to that authority.
        Response: { "teams": [{ "name": "backend",
                    "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
@@ -617,9 +645,9 @@ GET    /v1/namespaces/{domain}/teams
 
 GET    /v1/namespaces/{domain}/teams/{name}
        Get team details.
-       Auth: none for a public team. A private team requires its controller or
-             unrevoked-member path signature, or the trusted same-operator
-             service credential. Services call this to get the team public key
+       Auth: none for a public team. A private team requires a signed team
+             read by its team key or an unrevoked member key, or the trusted
+             same-operator service credential. Services call this to get the team public key
              and visibility metadata for certificate verification.
        Response: { "team_id": "backend:acme.com", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
@@ -743,7 +771,8 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
 GET    /v1/namespaces/{domain}/teams/{name}/certificates
        List issued certificates (active and revoked).
        Auth: none for a public team; private-team read authority as above.
-       Query params: active_only (boolean), since (timestamp)
+       Query params: active_only (boolean), since (timestamp), limit, cursor.
+       A covering read binds them; a path signature does not.
        Response: { "certificates": [{
                    "team_id": "backend:acme.com",
                    "certificate_id": "uuid",
@@ -895,9 +924,8 @@ GET    /v1/namespaces/{domain}/teams/{name}/signed-records?limit=&cursor=
        rotation that must re-sign all of them: the aweb.team-server/1 record
        and the custodian, member-custody and member-person records, including
        those of revoked certificates.
-       Auth: whatever the team's visibility, a path signature (the
-       certificate-blob fetch scheme) by the team controller key, or the
-       trusted service token. Members are not readers: the list would show
+       Auth: whatever the team's visibility, a signed team read by the team
+       key, or the trusted service token. Members are not readers: the list would show
        them custodian records otherwise readable only by exact key. Anything
        else, an unknown or deleted team included, is the identical 404
        { "detail": "Team not found" }.
