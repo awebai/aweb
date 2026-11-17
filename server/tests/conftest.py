@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import os
+import runpy
 import subprocess
 import time
 from pathlib import Path
 
-from tests.worker_services import configure_worker_environment
-
 # xdist sets its worker identity before conftest imports. Bind services before
 # pgdbm/plugin imports and test modules can capture a parent endpoint.
-configure_worker_environment(os.environ)
+# This file is both tests.conftest and the CLI auth stack's top-level conftest.
+# Resolve our sibling by file, independent of the caller's package search path.
+runpy.run_path(str(Path(__file__).with_name("worker_services.py")))[
+    "configure_worker_environment"
+](os.environ)
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402

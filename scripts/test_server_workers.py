@@ -19,6 +19,36 @@ spec.loader.exec_module(runner)
 
 
 class ServerWorkerTests(unittest.TestCase):
+    def test_cli_auth_stack_collects_with_the_unit_stage_environment(self):
+        env = os.environ.copy()
+        env.update(
+            PYTHONPATH="tests",
+            UV_CACHE_DIR="/tmp/uv-cache",
+            UV_OFFLINE="1",
+            PYTHONPYCACHEPREFIX="/tmp/pycache",
+        )
+        for name in ("PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT"):
+            env.pop(name, None)
+        result = subprocess.run(
+            [
+                "uv",
+                "run",
+                "--offline",
+                "--no-sync",
+                "pytest",
+                "-q",
+                "../cli/tests/test_request_auth_v2_stack.py",
+                "--collect-only",
+            ],
+            cwd=ROOT / "server",
+            env=env,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("4 tests collected", result.stdout)
+
     def test_actual_launch_vectors_match_all_seven_worker_environments(self):
         pg_ports, redis_ports = set(), set()
         for services in runner.service_plan(7):
