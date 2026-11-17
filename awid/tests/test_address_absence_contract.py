@@ -128,8 +128,11 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["address", "namespace", "key", "log"])
 @pytest.mark.parametrize("body_kind", ["typed", "legacy", "generic"])
+@pytest.mark.parametrize(
+    "not_found_reason", ["sender_identity_not_found", "recipient_identity_not_found"]
+)
 async def test_strict_absence_reason_means_typed_address_absence_only(
-    response_server, endpoint, body_kind, caplog
+    response_server, endpoint, body_kind, not_found_reason, caplog
 ):
     state = response_server
     state["body"] = (
@@ -146,9 +149,9 @@ async def test_strict_absence_reason_means_typed_address_absence_only(
     client = PinnedRegistryHTTP(state["origin"], ("127.0.0.1",), 1)
     try:
         with pytest.raises(FederationAuthorityError) as refused:
-            await client.get_json(path, not_found_reason="recipient_identity_not_found")
+            await client.get_json(path, not_found_reason=not_found_reason)
         assert refused.value.reason == (
-            "recipient_identity_not_found"
+            not_found_reason
             if body_kind in ("typed", "legacy") and endpoint == "address"
             else "sender_registry_protocol_invalid"
         )
