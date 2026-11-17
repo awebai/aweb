@@ -60,6 +60,10 @@ async def record_delegation(tx, *, domain: str, parent) -> None:
 
 async def advance_delegated_children(tx, *, domain: str, previous_key: str, controller_key: str) -> None:
     """Two-key rotation carries only the retiring key's direct delegations."""
+    # Leaving an invalid witness untouched can revive it when its old key is
+    # reused as this rotation's destination. Only the previous key's grants
+    # cross this transition.
+    await withdraw_delegated_children(tx, domain=domain, retaining_key=previous_key)
     await tx.execute(
         """UPDATE {{tables.dns_namespaces}}
            SET parent_controller_key = $3
