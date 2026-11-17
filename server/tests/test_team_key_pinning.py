@@ -277,10 +277,10 @@ async def test_first_connect_persists_the_verified_creation_floor(pinning):
     env = pinning
     await register_namespace_controller(env, env.namespace_did)
     team_sk, _, team_did = _make_keypair()
-    sdk = RegistryClient(registry_url="http://registry.test", transport=httpx.ASGITransport(app=env.registry_app))
+    sdk = RegistryClient(registry_url="https://registry.test", transport=httpx.ASGITransport(app=env.registry_app))
     try:
         # The route's covering audience is explicitly configured for this owned fixture.
-        env.registry_app.state.awid_public_origins = ("http://registry.test",)
+        env.registry_app.state.awid_public_origins = ("https://registry.test",)
         await sdk.register_team(domain="example.test", name="first", display_name="Private",
             team_did_key=team_did, visibility="public", namespace_controller_signing_key=env.namespace_sk)
     finally:
