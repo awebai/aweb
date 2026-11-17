@@ -515,3 +515,22 @@ async def test_first_and_unchanged_key_admission_seed_the_verified_act_floor():
     await pins.first_sight(TEAM_ID, key)
     await pinned_team_key(TEAM_ID, key, pins=pins, fetch_act=_fetch(record), resolver=resolver, enforce=True)
     assert (await pins.pin(TEAM_ID)).act_at == expected.signed_at
+
+
+@pytest.mark.asyncio
+async def test_legacy_baseline_lookup_outage_cannot_change_an_admitted_key():
+    from awid.registry import RegistryError
+    pins = MemoryTeamKeyPins()
+    admitted = keypair()[1]
+    await pins.first_sight(TEAM_ID, admitted)
+
+    async def unavailable():
+        raise RegistryError('registry unavailable', status_code=503)
+
+    assert await pinned_team_key(TEAM_ID, admitted, pins=pins, fetch_act=unavailable,
+        resolver=TXTAnswers({}), enforce=True) == admitted
+    assert (await pins.pin(TEAM_ID)).team_did_key == admitted
+    with pytest.raises(RegistryError):
+        await pinned_team_key(TEAM_ID, keypair()[1], pins=pins, fetch_act=unavailable,
+            resolver=TXTAnswers({}), enforce=True)
+    assert (await pins.pin(TEAM_ID)).team_did_key == admitted
