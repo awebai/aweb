@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 import asyncpg
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pgdbm.errors import QueryError
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -31,7 +31,13 @@ from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_wi
 from awid.team_ids import build_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from awid_service.delivery_origin import validate_delivery_origin
-from awid.controller_request import ControllerAuthRoute, verified_controller_proof, verify_controller_json_request
+from awid.controller_request import (
+    PATH_SIGNED_READ_EVENT,
+    ControllerAuthRoute,
+    record_accepted_auth,
+    verified_controller_proof,
+    verify_controller_json_request,
+)
 from awid_service.attestation_rotation import ResignedRecords, SignedRecord, apply_resigned_records, record_member_records
 
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
@@ -277,6 +283,32 @@ def _verify_path_signature(request: Request, authorization: str | None) -> str:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+READ_TEAM_OPERATION = "read_team"
+_SIGNED_PAYLOAD_HEADER = "X-AWEB-Signed-Payload"
+
+
+async def _signed_reader(request: Request, *, domain: str, name: str | None) -> str | None:
+    """The did:key that signed this team read, or None when it is unsigned.
+
+    A covering envelope (operation read_team, claims domain and, for one team,
+    name) binds this registry, the method and the path with its query. The path
+    signature binds the path only; it is accepted and counted until measured
+    unused. A supplied proof that does not verify is refused, never read as
+    anonymous. The route decides what the verified key may read.
+    """
+    if request.headers.get(_SIGNED_PAYLOAD_HEADER) is not None:
+        claims = {"domain": domain, "operation": READ_TEAM_OPERATION}
+        if name is not None:
+            claims["name"] = name
+        return await verify_controller_json_request(request, payload_dict=claims)
+    authorization = request.headers.get("Authorization")
+    if not authorization:
+        return None
+    did_key = _verify_path_signature(request, authorization)
+    record_accepted_auth(request, PATH_SIGNED_READ_EVENT, READ_TEAM_OPERATION)
+    return did_key
+
+
 # Machine-readable code for reads blocked by team visibility. The CLI branches
 # on it to retry with a signed request; keep it stable.
 TEAM_PRIVATE_ERROR_CODE = "team_private"
@@ -316,16 +348,17 @@ async def _require_team_read_access(
     db,
     *,
     team_uuid,
+    domain: str,
+    name: str,
     team_did_key: str,
     visibility: str,
-    authorization: str | None,
 ) -> None:
     """Enforce team visibility on a read route.
 
     Public teams are readable by anyone. For a private team the caller must
     present either the trusted service token (the aweb server's
-    server-to-server revocation fetch) or a path-signature — the exact scheme
-    the certificate blob fetch uses — from the team controller key or an
+    server-to-server revocation fetch) or a signed read (_signed_reader, the
+    same verification the certificate blob fetch uses) from the team key or an
     unrevoked member key. Anything else is 403 team_private: existence is
     deliberately disclosed (the team-availability read contract depends on
     404 meaning "name free", and the CLI needs the signal to retry signed).
@@ -334,8 +367,8 @@ async def _require_team_read_access(
         return
     if _presents_trusted_service_token(request):
         return
-    if authorization:
-        caller_did = _verify_path_signature(request, authorization)
+    caller_did = await _signed_reader(request, domain=domain, name=name)
+    if caller_did is not None:
         if caller_did == team_did_key:
             return
         member = await db.fetch_one(
@@ -630,7 +663,6 @@ async def list_teams(
     domain: str,
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> TeamListResponse:
     db = db_infra.get_manager("aweb")
@@ -643,11 +675,11 @@ async def list_teams(
     params: list[object] = [domain]
 
     # Visibility: private teams are enumerable only by the trusted service, or
-    # by a path-signed caller who controls the team or holds an unrevoked
+    # by a signed caller who controls the team or holds an unrevoked
     # member certificate in it. Anonymous callers see public teams only.
     if not _presents_trusted_service_token(request):
-        if authorization:
-            viewer_did = _verify_path_signature(request, authorization)
+        viewer_did = await _signed_reader(request, domain=domain, name=None)
+        if viewer_did is not None:
             params.append(viewer_did)
             idx = len(params)
             where_clauses.append(
@@ -709,7 +741,6 @@ async def get_team(
     request: Request,
     domain: str,
     name: str,
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> TeamResponse:
     name = _validate_team_name_path(name)
@@ -731,7 +762,8 @@ async def get_team(
         team_uuid=row["team_uuid"],
         team_did_key=row["team_did_key"],
         visibility=row["visibility"],
-        authorization=authorization,
+        domain=domain,
+        name=name,
     )
     return _team_response(row)
 
@@ -1120,7 +1152,6 @@ async def list_certificates(
     since: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> CertificateListResponse:
     db = db_infra.get_manager("aweb")
@@ -1139,7 +1170,8 @@ async def list_certificates(
         team_uuid=team_row["team_uuid"],
         team_did_key=team_row["team_did_key"],
         visibility=team_row["visibility"],
-        authorization=authorization,
+        domain=domain,
+        name=name,
     )
 
     try:
@@ -1213,7 +1245,6 @@ async def get_team_member(
     domain: str,
     name: str,
     alias: str,
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> TeamMemberReferenceResponse:
     db = db_infra.get_manager("aweb")
@@ -1230,7 +1261,8 @@ async def get_team_member(
         team_uuid=team_row["team_uuid"],
         team_did_key=team_row["team_did_key"],
         visibility=team_row["visibility"],
-        authorization=authorization,
+        domain=domain,
+        name=name,
     )
 
     row = await db.fetch_one(
@@ -1465,10 +1497,11 @@ async def fetch_certificate(
     domain: str,
     name: str,
     certificate_id: str,
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> CertificateFetchResponse:
-    caller_did = _verify_path_signature(request, authorization)
+    caller_did = await _signed_reader(request, domain=domain, name=name)
+    if caller_did is None:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
     db = db_infra.get_manager("aweb")
 
     row = await db.fetch_one(
@@ -1569,7 +1602,6 @@ async def list_revocations(
     since: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> RevocationListResponse:
     db = db_infra.get_manager("aweb")
@@ -1590,7 +1622,8 @@ async def list_revocations(
         team_uuid=team_row["team_uuid"],
         team_did_key=team_row["team_did_key"],
         visibility=team_row["visibility"],
-        authorization=authorization,
+        domain=domain,
+        name=name,
     )
 
     try:

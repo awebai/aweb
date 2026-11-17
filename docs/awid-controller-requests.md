@@ -64,14 +64,34 @@ Old forms remain accepted until Juan chooses their cutoff from measured use.
 Their unsigned-field weaknesses are not repaired by merely deploying an accepting
 server; migration and the later cutoff complete that protection.
 
-Successful legacy operations increment `app.state.legacy_controller_auth_counts`
-once per request and operation, including a distinct parent operation where
-used. Structured `awid_legacy_controller_auth_accepted` metrics report each
-operation's cumulative count at one and powers of two, following AWID's existing
-service-exemption metric convention. Invalid proofs, refused operations and
-covering requests do not increment it. Only a closed operation name and count
-are emitted: no domains, caller identifiers, bodies or credentials. There is no
-public metrics endpoint or new telemetry SDK.
+Each successful request increments `app.state.controller_auth_counts` once per
+signed form and operation, including a distinct parent operation where used,
+keyed by the sending client's family. Each key's cumulative count is reported
+at one and powers of two, following AWID's existing service-exemption metric
+convention, as one structured line:
+
+```
+event=<event> metric=<event> value=<count> operation=<operation> client=<client> form=<form>
+```
+
+| event | form | counts |
+|---|---|---|
+| `awid_legacy_controller_auth_accepted` | `legacy` | controller writes signed in the legacy form |
+| `awid_controller_auth_accepted` | `covering` | controller writes and team reads signed in the covering form |
+| `awid_path_signed_read_accepted` | `path` | team reads signed with the path signature |
+
+The covering count shows that requests still arrive, so a silent legacy line
+means no legacy sender rather than no traffic. `client` is one of three
+families: `aw/<version>` when the User-Agent is exactly aw's
+`aw/<version> (<os>/<arch>)`, `python-httpx` for the Python client, and `other`.
+The raw User-Agent is never emitted. Invalid proofs and refused requests are
+not counted. Only these closed values are emitted: no domains, caller
+identifiers, bodies or credentials. The counts are per worker process. There is
+no public metrics endpoint or new telemetry SDK.
+
+Private-team reads use the same covering envelope with operation `read_team`;
+[awid-sot.md](awid-sot.md#signed-team-reads) states the claims and which key
+each read admits.
 
 The published aw 1.36.43 always sends the blob. Cloud's production registration
 wrapper also supplies a minted or validated persisted blob on every call;
