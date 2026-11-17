@@ -31,10 +31,12 @@ class ObservedRegistry(httpx.AsyncBaseTransport):
     def __init__(self, app, fault=None):
         self.inner = httpx.ASGITransport(app)
         self.calls = []
+        self.attempts = []
         self.fault = fault
         self.release = asyncio.Event()
 
     async def handle_async_request(self, request):
+        self.attempts.append(request.url.path)
         response = await self.inner.handle_async_request(request)
         await response.aread()
         if request.url.path.endswith("/key-act"):
@@ -102,6 +104,7 @@ async def test_unchanged_request_does_not_read_or_wait_for_enrichment(
                 assert response.json() == {"detail": "a different front-end refusal"}
 
         transport.calls.clear()
+        transport.attempts.clear()
         world.dns.queries = 0
         app = FastAPI()
 
@@ -130,8 +133,59 @@ async def test_unchanged_request_does_not_read_or_wait_for_enrichment(
         assert response.status_code == 200, response.text
         assert response.json() == {"key": world.team[1]}
         assert transport.calls == []
+        assert transport.attempts == []
         assert world.dns.queries == 0
         assert await pins.pin(team_id) == initial
+    finally:
+        transport.release.set()
+        await sdk.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault", [403, 404, "evidence", "stall"])
+async def test_first_admission_failure_is_optional_and_never_polled_again(world, fault):
+    transport = ObservedRegistry(world.app, fault)
+    sdk = RegistryClient(world.sdk.registry_url, transport=transport)
+    pins = MemoryTeamKeyPins()
+    team_id = "base:" + world.domain
+
+    async def evidence(domain):
+        await sdk.fetch_id_certificate_status(
+            domain,
+            {"v": 1, "domain": domain, "ids": []},
+            registry_origin=sdk.registry_url,
+        )
+        return await sdk.namespace_evidence(domain)
+
+    if fault == "evidence":
+        await world.db.execute(
+            "UPDATE {{tables.dns_namespaces}} SET parent_domain=NULL,parent_controller_key=NULL WHERE domain=$1",
+            world.domain,
+        )
+    try:
+
+        async def read():
+            return await pinned_team_key(
+                team_id,
+                world.team[1],
+                pins=pins,
+                fetch_act=lambda: sdk.get_team_key_act(world.domain, "base"),
+                resolver=world.resolver,
+                enforce=True,
+                fetch_namespace_evidence=evidence,
+                memo=TeamKeyMemo(),
+            )
+
+        # The only optional attempt is bounded even when the real handler's
+        # response is held. Later requests use new memos, like process restarts,
+        # but the admitted pin remembers the missing/failed baseline.
+        assert await asyncio.wait_for(read(), 3) == world.team[1]
+        assert transport.attempts
+        attempts = list(transport.attempts)
+        assert (await pins.pin(team_id)).act_at is None
+        for _ in range(3):
+            assert await asyncio.wait_for(read(), 2) == world.team[1]
+        assert transport.attempts == attempts
     finally:
         transport.release.set()
         await sdk.aclose()
