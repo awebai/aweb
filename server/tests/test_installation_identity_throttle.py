@@ -103,6 +103,8 @@ async def world(monkeypatch):
     value.identity = stable_id_from_did_key(value.member_did)
 
     async def registry_http(request):
+        if request.url.path == "/v1/namespaces/lf.test/teams/lfteam/key-act":
+            return httpx.Response(404, json={"detail": "No team key act"})
         assert request.url.path == f"/v1/did/{value.identity}/key"
         value.registry_reads += 1
         if value.status != 200:
