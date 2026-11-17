@@ -58,7 +58,7 @@ async def test_request_pin_checks_the_actual_delegated_namespace(
     async def key(request: Request):
         return {
             "key": await pinned_team_key_for_request(
-                request, team_id, world.team[1], db=aweb_cloud_db
+                request, team_id, world.team[1], db=db
             )
         }
 
