@@ -231,6 +231,14 @@ ROOT_CONSUMERS = {
         "agent-activity-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "agent-activity-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_controller_write_vectors.py"): _consumer(
+        "awid-controller-writes-v1.json",
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors" / "awid-controller-writes-v1.json"',
+    ),
+    PurePosixPath("cli/go/awid/controller_write_vectors_test.go"): _consumer(
+        "awid-controller-writes-v1.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "awid-controller-writes-v1.json")',
+    ),
     PurePosixPath("awid/tests/test_controller_request_v2_http.py"): _consumer(
         "awid-controller-request-v2.json",
         "Path(__file__).resolve().parents[2] / 'docs' / 'vectors' / 'awid-controller-request-v2.json'",
@@ -848,6 +856,9 @@ NON_CONSUMING_CODE_REFERENCES = {
     ),
     PurePosixPath("scripts/generate_team_certificate_vectors.py"): (
         "docs/vectors/team-certificate-verification-v1.json",
+    ),
+    PurePosixPath("scripts/generate_controller_write_vectors.py"): (
+        "docs/vectors/awid-controller-writes-v1.json",
     ),
     PurePosixPath("cli/go/awid/human_channels_contract.go"): (
         "docs/vectors/human-channels-profile-v1.json",

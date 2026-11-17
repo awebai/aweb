@@ -53,7 +53,7 @@ func TestRegisterAddressAtSignsWithControllerKey(t *testing.T) {
 		if timestamp == "" {
 			t.Fatal("missing X-AWEB-Timestamp")
 		}
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":    "acme.com",
 			"name":      "alice",
 			"operation": "register_address",
@@ -456,15 +456,12 @@ func TestUpdateNamespaceDeliveryOriginAtSignsCanonicalPayload(t *testing.T) {
 		if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != controllerDID {
 			t.Fatalf("unexpected Authorization header %q", auth)
 		}
-		payload, err := CanonicalJSONValue(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":                  "acme.com",
 			"operation":               "update_namespace",
 			"default_delivery_origin": "https://aweb.acme.com",
 			"timestamp":               timestamp,
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
 		signature, err := base64.RawStdEncoding.DecodeString(parts[2])
 		if err != nil {
 			t.Fatal(err)
@@ -555,7 +552,7 @@ func TestDeleteNamespaceAtSignsWithControllerKey(t *testing.T) {
 		}
 
 		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":    "acme.com",
 			"operation": "delete_namespace",
 			"timestamp": timestamp,
@@ -707,7 +704,7 @@ func TestDeleteAddressAtSignsWithControllerKey(t *testing.T) {
 		}
 
 		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":    "acme.com",
 			"name":      "alice",
 			"operation": "delete_address",
@@ -759,15 +756,12 @@ func TestDeleteAddressIfMatchesAtSignsRollbackPreconditions(t *testing.T) {
 		if r.Method != http.MethodDelete || r.URL.Path != "/v1/namespaces/acme.com/addresses/alice" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Fatal(err)
-		}
 		auth := strings.Fields(r.Header.Get("Authorization"))
 		if len(auth) != 3 || auth[0] != "DIDKey" || auth[1] != controllerDID {
 			t.Fatalf("authorization=%q", r.Header.Get("Authorization"))
 		}
 		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
+		payload := coveringPayloadFor(t, r, map[string]string{
 			"domain":                   "acme.com",
 			"name":                     "alice",
 			"operation":                "delete_address",
@@ -776,6 +770,9 @@ func TestDeleteAddressIfMatchesAtSignsRollbackPreconditions(t *testing.T) {
 			"expected_did_aw":          "did:aw:owner",
 			"expected_current_did_key": "did:key:owner",
 		})
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
 		signature, err := base64.RawStdEncoding.DecodeString(auth[2])
 		if err != nil || !ed25519.Verify(controllerPub, []byte(payload), signature) {
 			t.Fatalf("conditional delete signature invalid: %v", err)

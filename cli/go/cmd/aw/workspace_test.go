@@ -1244,11 +1244,11 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("registered lifetime=%v", registeredCert["identity_scope"])
 	}
-	if _, ok := registeredCert["member_did_aw"]; ok {
-		t.Fatalf("local CLI add-worktree cert should not include member_did_aw: %v", registeredCert["member_did_aw"])
+	if registeredCert["member_did_aw"] != nil {
+		t.Fatalf("local CLI add-worktree cert should carry no member_did_aw: %v", registeredCert["member_did_aw"])
 	}
-	if _, ok := registeredCert["member_address"]; ok {
-		t.Fatalf("local CLI add-worktree cert should not include member_address: %v", registeredCert["member_address"])
+	if registeredCert["member_address"] != nil {
+		t.Fatalf("local CLI add-worktree cert should carry no member_address: %v", registeredCert["member_address"])
 	}
 
 	child := filepath.Join(tmp, "repo-charlie")
@@ -1592,11 +1592,11 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	if registeredChild == nil {
 		t.Fatal("expected child certificate registration")
 	}
-	if _, ok := registeredChild["member_did_aw"]; ok {
-		t.Fatalf("local child cert registration should omit member_did_aw: %v", registeredChild["member_did_aw"])
+	if registeredChild["member_did_aw"] != nil {
+		t.Fatalf("local child cert registration should carry no member_did_aw: %v", registeredChild["member_did_aw"])
 	}
-	if _, ok := registeredChild["member_address"]; ok {
-		t.Fatalf("local child cert registration should omit member_address: %v", registeredChild["member_address"])
+	if registeredChild["member_address"] != nil {
+		t.Fatalf("local child cert registration should carry no member_address: %v", registeredChild["member_address"])
 	}
 	mu.Unlock()
 
