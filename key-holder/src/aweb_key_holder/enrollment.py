@@ -11,6 +11,7 @@ import json
 import secrets
 import time
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from approval_service.answers import read_answer
 from approval_service.canonical import canonical, parse
@@ -22,19 +23,18 @@ from approval_service.requester import AdmittedRequester, admit_enrollment_targe
 from approval_service.seams import (
     check_activation,
     check_creation_proof,
-    check_http,
     check_presentation,
     commitment,
-    http_authorization,
     make_needs_human,
 )
 from approval_service.verify import Trust
-from approval_service.wire import SCHEMA, domain, validate, validate_site
+from approval_service.wire import domain, validate, validate_site
 from awid.controller_signing import ControllerSigningContext, parse_controller_object
 from awid.did import public_key_from_did, stable_id_from_did_key
 from awid.id_certificates import id_certificate_id
 from awid.log import require_canonical_server_origin
 from awid.registry import DIDKeyNotFoundError
+from jsonschema import ValidationError
 
 from .keys import Refused
 
@@ -54,13 +54,17 @@ class Holder:
     def __init__(
         self, store, *, registry, origin, approval_origin=None, rp_id=None, grading=None
     ):
-        require_canonical_server_origin(origin)
         if approval_origin is not None or rp_id is not None or grading is not None:
             if not all((approval_origin, rp_id, grading)):
                 raise Refused("approval_not_configured")
             validate_site(approval_origin, rp_id)
+            try:
+                validate_site(origin, urlsplit(origin).hostname)
+            except (ValueError, TypeError, ValidationError) as error:
+                raise Refused("enforcer_origin_invalid") from error
         elif store.human_issuance() == "approved":
             raise Refused("approval_not_configured")
+        require_canonical_server_origin(origin)
         self.store, self.registry = store, registry
         self.origin, self.approval_origin, self.rp_id = origin, approval_origin, rp_id
         self.grading = grading
@@ -121,7 +125,7 @@ class Holder:
         self, db, *, purpose, operation, requester, approver, target, start, deadline
     ):
         root = self.store._descriptor(db)
-        revision = db.execute("SELECT value FROM revision").fetchone()[0]
+        revision = self.store.person_revision(db, target["person"])
         value = {
             "version": 1,
             "purpose": purpose,
@@ -183,13 +187,24 @@ class Holder:
         previous = db.execute(
             "SELECT * FROM enrollments WHERE person=?", (person,)
         ).fetchone()
+        if previous and (previous["active"] or previous["retired_at"] is not None):
+            raise Refused("enrollment_replacement_unavailable")
         if previous and not expired_pending(previous):
             raise Refused("person_already_exists")
         return previous
 
     def _pending(
-        self, db, *, person, identity_key, requester, certificate, approval=None
+        self,
+        db,
+        *,
+        person,
+        identity_key,
+        requester,
+        certificate,
+        approval=None,
+        actor=None,
     ):
+        actor = actor or requester["key"]
         root = self.store._descriptor(db)
         previous = self._check_enrollment_available(db, person)
         if previous:
@@ -215,7 +230,7 @@ class Holder:
             root,
             ControllerSigningContext(operation, root).signing_bytes(),
             operation="namespace_id_issue",
-            actor=requester["key"],
+            actor=actor,
             approval=approval_digest,
         )
         start = now()
@@ -244,7 +259,7 @@ class Holder:
                 root,
                 "enrollment_intent",
                 intent,
-                actor=requester["key"],
+                actor=actor,
                 approval=approval_digest,
             ),
         }
@@ -259,7 +274,7 @@ class Holder:
                 canonical(approval).decode() if approval is not None else None,
             ),
         )
-        db.execute("UPDATE revision SET value=value+1")
+        self.store.advance_person(db, person)
         return {"state": "enrollment_pending", "intent": signed}
 
     def _row(self, db, person):
@@ -268,6 +283,8 @@ class Holder:
         ).fetchone()
         if row is None:
             raise Refused("enrollment_unknown")
+        if row["retired_at"] is not None:
+            raise Refused("enrollment_replacement_unavailable")
         return row
 
     def pending(self, person):
@@ -278,7 +295,8 @@ class Holder:
     def active_person(self, person):
         with self.store._connection() as db:
             row = db.execute(
-                "SELECT * FROM enrollments WHERE person=? AND active=1", (person,)
+                "SELECT * FROM enrollments WHERE person=? AND active=1 AND retired_at IS NULL",
+                (person,),
             ).fetchone()
             if row is None:
                 raise Refused("approver_not_active")
@@ -294,6 +312,8 @@ class Holder:
                 "SELECT * FROM enrollments WHERE person=?", (person,)
             ).fetchone()
             if old:
+                if old["retired_at"] is not None:
+                    raise Refused("enrollment_replacement_unavailable")
                 if (
                     old["person"] != person
                     or old["identity_key"] != identity_key
@@ -305,7 +325,9 @@ class Holder:
                         "state": "enrollment_pending",
                         "intent": json.loads(old["intent"]),
                     }
-            elif db.execute("SELECT 1 FROM enrollments LIMIT 1").fetchone():
+            elif db.execute(
+                "SELECT 1 FROM enrollments WHERE retired_at IS NULL LIMIT 1"
+            ).fetchone():
                 raise Refused("bootstrap_closed")
             certificate = self._certificate(root, person, identity_key, now())
             return self._pending(
@@ -314,6 +336,7 @@ class Holder:
                 identity_key=identity_key,
                 requester=requester,
                 certificate=certificate,
+                actor="operator",
             )
 
     async def bootstrap(self, person, identity_key):
@@ -366,7 +389,12 @@ class Holder:
             old = db.execute(
                 "SELECT * FROM enrollments WHERE person=?", (person,)
             ).fetchone()
-            if old and not old["active"] and not expired_pending(old):
+            if (
+                old
+                and old["retired_at"] is None
+                and not old["active"]
+                and not expired_pending(old)
+            ):
                 saved = json.loads(old["intent"])
                 previous_intent = saved["intent"]
                 if (
@@ -415,12 +443,21 @@ class Holder:
                     canonical(chain).decode(),
                 ),
             )
+            self.store.advance_person(db, person)
             caller.check_time()
             if not 0 <= now() - trust.observed_at <= 60:
                 raise Refused("status_unavailable")
             return {"state": "enrollment_pending", "intent": signed}
 
     async def enrollment_admission(self, person, caller, chain, *, purpose):
+        admitted = None
+        if chain or caller.identity != person:
+            admitted = await self.admit(caller, chain)
+        else:
+            observation = await self.public.key_observation(person)
+            if observation.current_key != caller.key:
+                raise Refused("identity_key_mismatch")
+            caller.check_time()
         self.require_approval()
         signed = self.pending(person)["intent"]
         i = signed["intent"]
@@ -455,75 +492,7 @@ class Holder:
                 )
                 caller.check_time()
                 return admitted, None
-        return await self.admit(caller, chain), None
-
-    def authorize_bootstrap(self, person, purpose, body, issued_at):
-        """Closed controller-bootstrap proof for aw's Authorize callback."""
-        schemas = {
-            "enrollment_start": "enrollment_start",
-            "enrollment_material": "enrollment_material_request",
-            "enrollment_confirm": "enrollment_confirm_request",
-            "enrollment_activate": "enrollment_activation",
-        }
-        if purpose not in schemas:
-            raise Refused("operation_not_served")
-        if (
-            type(issued_at) is not int
-            or not 0 <= now() - issued_at <= SCHEMA["x-http"]["freshness_seconds"]
-        ):
-            raise Refused("http_expired")
-        value = parse(body)
-        validate(schemas[purpose], value)
-        with self.store._connection() as db, db:
-            db.execute("BEGIN IMMEDIATE")
-            row = self._row(db, person)
-            self._owner(row, None, None)
-            signed = json.loads(row["intent"])
-            if signed["intent"]["requester"]["kind"] != "namespace_controller":
-                raise Refused("requester_mismatch")
-            if value["intent"] != signed:
-                raise Refused("enrollment_changed")
-            if purpose == "enrollment_confirm" and (
-                not row["binding"]
-                or value["binding"] != json.loads(row["binding"])
-                or value["request_bytes"]
-                != encode(canonical(json.loads(row["confirmation"])))
-            ):
-                raise Refused("creation_mismatch")
-            if purpose == "enrollment_activate" and value != self._activation(row):
-                raise Refused("enrollment_changed")
-            root = self.store._descriptor(db)
-            seed = db.execute(
-                "SELECT seed FROM keys WHERE reference=?", (root.key_reference,)
-            ).fetchone()[0]
-            header = http_authorization(
-                canonical(value),
-                seed=seed,
-                requester=signed["intent"]["requester"],
-                origin=self.approval_origin,
-                purpose=purpose,
-                issued_at=issued_at,
-            )
-            checked = check_http(
-                header,
-                canonical(value),
-                requester=signed["intent"]["requester"],
-                origin=self.approval_origin,
-                method="POST",
-                path=SCHEMA["x-http"]["routes"][purpose],
-                purpose=purpose,
-                now=now(),
-            )
-            packet = parse(decode(header[7:]))
-            self.store._audit(
-                db,
-                root,
-                checked["preimage"],
-                decode(packet["signature"]),
-                operation="approval_" + purpose,
-                actor=root.did_key,
-            )
-            return header
+        return admitted or await self.admit(caller, chain), None
 
     async def admit(self, caller, chain):
         root = self.store.descriptor()
@@ -537,14 +506,6 @@ class Holder:
 
     def _owner(self, row, caller, admitted, *, activation=False):
         original = json.loads(row["requester"])
-        if caller is None:
-            # Only the private operator command can speak as this controller.
-            if (
-                original["kind"] != "namespace_controller"
-                or original["key"] != self.store.descriptor().did_key
-            ):
-                raise Refused("requester_mismatch")
-            return
         caller.check_time()
         if admitted is None or not 0 <= now() - admitted.observed_at <= 60:
             raise Refused("status_unavailable")
@@ -664,9 +625,8 @@ class Holder:
                     "state": "active" if old["active"] else "enrollment_pending",
                     "intent": json.loads(old["intent"]),
                 }
-            if (
-                request["act"]["expected_revision"]
-                != db.execute("SELECT value FROM revision").fetchone()[0]
+            if request["act"]["expected_revision"] != self.store.person_revision(
+                db, request["act"]["target"]["person"]
             ):
                 raise Refused("state_changed")
             if not self._row(db, request["approver"])["active"]:
@@ -714,8 +674,8 @@ class Holder:
         material,
         *,
         registration_count,
-        caller=None,
-        admitted=None,
+        caller,
+        admitted,
         current=None,
     ):
         with self.store._connection() as db, db:
@@ -836,7 +796,7 @@ class Holder:
             raise Refused("enrollment_identity_mismatch")
 
     def finish_creation(
-        self, person, receipt, *, issuer, caller=None, admitted=None, current=None
+        self, person, receipt, *, issuer, caller, admitted, current=None
     ):
         with self.store._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -969,13 +929,9 @@ class Holder:
             "id_chain": json.loads(row["chain"]),
         }
 
-    async def finish(self, person, receipt, *, caller=None, chain=None):
-        admitted, current = (
-            await self.enrollment_admission(
-                person, caller, chain, purpose="holder_finish"
-            )
-            if caller is not None
-            else (None, None)
+    async def finish(self, person, receipt, *, caller, chain):
+        admitted, current = await self.enrollment_admission(
+            person, caller, chain, purpose="holder_finish"
         )
         issuer = (
             PublicIssuer(current.namespace_issuer, current.observed_at)
@@ -991,13 +947,9 @@ class Holder:
             current=current,
         )
 
-    async def activate(self, person, *, caller=None, chain=None):
-        admitted, _current = (
-            await self.enrollment_admission(
-                person, caller, chain, purpose="holder_activate"
-            )
-            if caller is not None
-            else (None, None)
+    async def activate(self, person, *, caller, chain):
+        admitted, _current = await self.enrollment_admission(
+            person, caller, chain, purpose="holder_activate"
         )
         with self.store._connection() as db:
             row = self._row(db, person)

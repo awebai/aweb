@@ -256,7 +256,7 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
         assert holder.store.audit() == after
 
         # Known local enrollment conflicts must not ask the person to approve.
-        async def already_exists():
+        async def already_exists(expected="person_already_exists"):
             before = holder.store.audit()
             response = await call(
                 client,
@@ -265,7 +265,7 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
                 **first_caller,
             )
             assert response.status_code == 409, response.text
-            assert response.json()["error"]["code"] == "person_already_exists"
+            assert response.json()["error"]["code"] == expected
             assert holder.store.audit() == before
 
         await already_exists()
@@ -331,7 +331,7 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
             activated.text
         )
         assert holder.active_person(second)["identity_key"] == second_key
-        await already_exists()
+        await already_exists("enrollment_replacement_unavailable")
 
         # Physical SQLite order is not bootstrap authority. Keep the logical
         # first-person row unchanged while placing it after the second person.

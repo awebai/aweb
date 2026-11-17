@@ -166,6 +166,8 @@ certificate names. An enrolled key is a key the person approves with.
 
 ### Lost keys
 
+Replacing a lost enrolled key is not implemented; today a person who loses their only enrolled key is issued a new ID by the operator and enrols again, and the old ID is revoked. Enrol two keys.
+
 A person who approves has at least one enrolled key and is advised to enrol a
 second. A lost enrolled key is replaced with another
 person's approval, and the verifier reports the evidence from then on as

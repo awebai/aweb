@@ -5,7 +5,9 @@ ID issuance, approval-key enrollment and act approval are separate operations.
 The approval bytes and checks come from the pinned approval-service library.
 
 Install the locked source environment with `uv sync --frozen --project key-holder`.
-The pinned approval library is fetched from its public HTTPS repository; no GitHub credentials are required.
+The approval library is pinned to a public Git commit; no GitHub credentials
+are required. The holder uses the adjacent `../awid` from this same checkout.
+The service's standalone development pin does not override that source.
 
 Create a **new** state directory inside a private parent directory:
 
@@ -55,8 +57,15 @@ The operator's `issue-person` command remains available in approved mode for
 the first person and recovery, and uses the same signature audit.
 
 Production operators can instead select `--grading hardware --mds-cache <path>`.
-That loads the shared pinned metadata policy and refuses unavailable input;
-it cannot fall back to passkey-only grading. The first gate's fixed minimum is
+Set `--mds-manifest FILE` to the operator-installed reviewed pin and
+`--mds-cache DIR` to its private artifact cache. The shared watcher checks the
+file each minute and installs only a fully verified, non-rollback replacement.
+It logs the seven-day expiry warning and failed reloads. A bad pin retains the
+previous snapshot only until its original expiry. Hardware-attested registration
+then refuses with a metadata error; unattested passkeys remain available. The
+watcher continues after a bad replacement; the policy remains hardware grading. The initial bundled pin expires on 2026-12-01, or an input CRL's earlier
+deadline. Operators install the maintainer-reviewed renewal before that date;
+the running holder observes the new file without restarting. The first gate's fixed minimum is
 passkey UV. There is no runtime rule-lowering command.
 
 The enrollment and approval interfaces are:
@@ -89,9 +98,7 @@ The enrollment and approval interfaces are:
   ID was created: "can approve since T (issuer's statement), grade G".
   Any activated, currently valid person in the organisation, enrolled at creation
   or later, may approve `human.add` when the issuing setting is `approved`.
-- The old private `authorize`/`bind`/`finish` controller workflow is retained for
-  outstanding controller-carried intents only. New enrollment does not call
-  the operator authorization callback.
+
 
 The enforcer never contacts awsign. A signed pending certificate or creation
 sidecar alone does not activate a person. Each returned signature has a durable
@@ -107,11 +114,22 @@ intent. Old signed intents stay in the append-only audit. Rows with evidence
 are never replaced; activation uses current public Trust without reapplying
 the completed ceremony's deadline.
 
-**Enroll two people before relying on this slice.** Holder-side
-replace/recreate is not implemented: losing the sole activated person's keys
-requires a private operator-issued fresh person if the identity key is also lost. This slice also
-has no local deactivation command. An approver ceases to qualify when current
-registry evidence rejects them, within the shared 60-second freshness bound.
+Replacing a lost enrolled key is not implemented; today a person who loses their only enrolled key is issued a new ID by the operator and enrols again, and the old ID is revoked. Enrol two keys.
+
+Before starting an existing private volume, run `aweb-key-holder --state <path>
+migrate` to apply the ordered schema migrations.
+
+The private `audit --after <sequence> --limit <1..1000>` command pages the
+signature record without registry or approval configuration. `retire-person
+--person <did:aw>` withdraws a local enrollment without deleting its evidence,
+nonces or audit; it cannot be reactivated. This frees a stuck first-person
+bootstrap after expiry or an unactivatable evidence-bearing row. For an active
+person, revoke the old ID and use `issue-person` for the fresh ID. A target's
+`expected_revision` fences only that person's enrollment; an unrelated person
+cannot invalidate its outstanding request. Retirement preserves that history.
+Authenticated callers receive `enrollment_replacement_unavailable` with the
+fresh-ID advice for active or retired people. Mode/configuration and row
+existence are disclosed only after the caller's signature and standing checks.
 
 For the one-container runtime, build a complete wheelhouse containing the
 reviewed SDK, holder and pinned approval-library wheels and their locked

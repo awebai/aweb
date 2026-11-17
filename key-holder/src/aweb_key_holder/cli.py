@@ -41,7 +41,9 @@ async def operate(args, parser):
 
     registry = RegistryClient(args.registry_origin, domain_registry_resolver=pinned)
     grading = (
-        EnrollmentGrading.load(mode=args.grading, cache_dir=args.mds_cache)
+        EnrollmentGrading.load(
+            mode=args.grading, cache_dir=args.mds_cache, manifest_path=args.mds_manifest
+        )
         if configured
         else None
     )
@@ -77,32 +79,9 @@ async def operate(args, parser):
             return None
         if args.command == "issue-person":
             return await holder.issue_person(args.person, args.identity_key)
-        if args.command in {
-            "bootstrap",
-            "bind",
-            "finish",
-            "activate",
-            "authorize",
-        }:
-            holder.require_approval()
         if args.command == "bootstrap":
+            holder.require_approval()
             return await holder.bootstrap(args.person, args.identity_key)
-        if args.command == "bind":
-            return holder.bind_registration(
-                args.person, body(), registration_count=args.registration_count
-            )
-        if args.command == "finish":
-            return await holder.finish(args.person, body())
-        if args.command == "activate":
-            return await holder.activate(args.person)
-        if args.command == "authorize":
-            from approval_service.canonical import canonical
-
-            return {
-                "authorization": holder.authorize_bootstrap(
-                    args.person, args.purpose, canonical(body()), args.issued_at
-                )
-            }
         request = parse_controller_request(body())
         if request.domain != store.descriptor().domain:
             raise Refused("organisation_mismatch")
@@ -124,6 +103,7 @@ def main():
     parser.add_argument("--rp-id")
     parser.add_argument("--grading", choices=("passkey_only", "hardware"))
     parser.add_argument("--mds-cache", type=Path)
+    parser.add_argument("--mds-manifest", type=Path)
     commands = parser.add_subparsers(dest="command", required=True)
     initialize = commands.add_parser("init")
     initialize.add_argument("--organisation", required=True)
@@ -134,6 +114,11 @@ def main():
     backup = commands.add_parser("backup")
     backup.add_argument("--offline-public-key", required=True)
     commands.add_parser("migrate")
+    audit = commands.add_parser("audit")
+    audit.add_argument("--after", type=int, default=0)
+    audit.add_argument("--limit", type=int, default=100)
+    retire = commands.add_parser("retire-person")
+    retire.add_argument("--person", required=True)
     configure = commands.add_parser("configure")
     configure.add_argument(
         "--human-issuance", choices=("operator", "approved"), required=True
@@ -146,25 +131,9 @@ def main():
     service.add_argument("--port", default=8081, type=int)
     service.add_argument("--tls-cert")
     service.add_argument("--tls-key")
-    for name in ("bootstrap", "bind", "finish", "activate", "authorize"):
-        command = commands.add_parser(name)
-        command.add_argument("--person", required=True)
-        if name == "bootstrap":
-            command.add_argument("--identity-key", required=True)
-        elif name == "bind":
-            command.add_argument("--registration-count", type=int, required=True)
-        elif name == "authorize":
-            command.add_argument(
-                "--purpose",
-                choices=(
-                    "enrollment_start",
-                    "enrollment_material",
-                    "enrollment_confirm",
-                    "enrollment_activate",
-                ),
-                required=True,
-            )
-            command.add_argument("--issued-at", type=int, required=True)
+    bootstrap = commands.add_parser("bootstrap")
+    bootstrap.add_argument("--person", required=True)
+    bootstrap.add_argument("--identity-key", required=True)
     registry = commands.add_parser("registry")
     registry.add_argument("--team")
     args = parser.parse_args()
@@ -173,6 +142,10 @@ def main():
             result = asdict(
                 KeyStore.create(args.state, organisation=args.organisation).descriptor()
             )
+        elif args.command == "audit":
+            result = KeyStore.open(args.state).audit(after=args.after, limit=args.limit)
+        elif args.command == "retire-person":
+            result = KeyStore.open(args.state).retire_person(args.person)
         elif args.command == "configure":
             store = KeyStore.open(args.state)
             store.set_human_issuance(args.human_issuance)
@@ -196,7 +169,12 @@ def main():
         if result is not None:
             print(json.dumps(result, separators=(",", ":")))
     except (Refused, ApprovalRefused) as error:
-        print(json.dumps({"error": error.code}), file=sys.stderr)
+        result = {"error": error.code}
+        if error.code == "enrollment_replacement_unavailable":
+            result["message"] = (
+                "Ask the operator to revoke the old ID, issue a new ID and enrol again. Enrol two keys."
+            )
+        print(json.dumps(result), file=sys.stderr)
         raise SystemExit(1) from None
     except (InvalidJSON, ValidationError):
         print(json.dumps({"error": "request_invalid"}), file=sys.stderr)

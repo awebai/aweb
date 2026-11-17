@@ -943,7 +943,7 @@ class RegistryClient:
         return status
 
     async def get_mapping(self, did_aw: str, signing_key: bytes) -> DIDMapping:
-        path = f"/v1/did/{did_aw}/full"
+        path = f"/v1/did/{quote(did_aw, safe=':')}/full"
         return _did_mapping_from_json(
             await self._request_json(
                 "GET",
@@ -1014,7 +1014,7 @@ class RegistryClient:
 
     async def resolve_key(self, did_aw: str) -> KeyResolution:
         try:
-            data = await self._request_json("GET", f"/v1/did/{did_aw}/key")
+            data = await self._request_json("GET", f"/v1/did/{quote(did_aw, safe=':')}/key")
         except RegistryError as refused:
             if refused.status_code == 404:
                 # Without a JSON body there is no response to state enrollment; a
@@ -1034,7 +1034,7 @@ class RegistryClient:
     ) -> dict[str, Any]:
         return await self._request_json(
             "POST",
-            f"/v1/did/{did_aw}/encryption-key",
+            f"/v1/did/{quote(did_aw, safe=':')}/encryption-key",
             json=assertion,
         )
 
@@ -1077,7 +1077,7 @@ class RegistryClient:
         )
         await self._request_json(
             "PUT",
-            f"/v1/did/{did_aw}",
+            f"/v1/did/{quote(did_aw, safe=':')}",
             json={
                 "operation": "rotate_key",
                 "new_did_key": new_did_key,
@@ -1691,7 +1691,7 @@ class RegistryClient:
         )
 
     async def list_did_addresses(self, did_aw: str) -> list[Address]:
-        items = await self._request_all_pages(f"/v1/did/{did_aw}/addresses", "addresses")
+        items = await self._request_all_pages(f"/v1/did/{quote(did_aw, safe=':')}/addresses", "addresses")
         return [_address_from_json(item) for item in items]
 
     async def reassign_address(

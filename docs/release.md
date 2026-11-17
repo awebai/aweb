@@ -30,6 +30,13 @@ The runner and values manifests must have equal versions, and the runner must
 require exactly that values version. Neither image recipe nor these tag mappings
 alone qualifies a customer release or a target platform.
 
+## Approval service SDK check
+
+Before a server release, replace the approval service's temporary development
+AWID source pin with a released `awid-service` version that provides
+`get_team_certificate_status_fresh`, regenerate its lock and check normal
+service startup. The key holder always builds against this checkout's `awid`.
+
 ## Release candidates and the Cloud pair
 
 Python lanes also accept strict `X.Y.ZrcN` versions, with `N >= 1`:
