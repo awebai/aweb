@@ -1767,10 +1767,6 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 }
 
 // ExtendWait sends an extend-wait message requesting more time to reply.
-func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, message string, encryptE2EE ...bool) (*ExtendWaitResult, error) {
-	return ExtendWaitWithOptions(ctx, client, targetAlias, message, ExtendWaitOptions{EncryptE2EE: len(encryptE2EE) > 0 && encryptE2EE[0]})
-}
-
 // ExtendWaitOptions configures ExtendWaitWithOptions.
 type ExtendWaitOptions struct {
 	EncryptE2EE bool

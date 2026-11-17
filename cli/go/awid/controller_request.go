@@ -192,7 +192,6 @@ var controllerWriteStates = map[string]controllerWriteState{
 	"revoke_id_certificate":   {"ID certificate revocation", "aw id show"},
 	"update_namespace":        {"namespace update", "aw id namespace <domain>"},
 	"delete_namespace":        {"namespace delete", "aw id namespace <domain>"},
-	"register_address":        {"address registration", "aw id namespace addresses <domain>"},
 	"delete_address":          {"address delete", "aw id namespace addresses <domain>"},
 }
 
