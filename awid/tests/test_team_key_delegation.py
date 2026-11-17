@@ -25,7 +25,6 @@ from awid_service.main import create_app
 from conftest import controller_keypair
 
 
-DOMAIN = 'org.example.com'
 
 
 class DNS(asyncio.DatagramProtocol):
@@ -50,6 +49,7 @@ class DNS(asyncio.DatagramProtocol):
 
 @pytest_asyncio.fixture
 async def world(awid_db_infra, monkeypatch):
+    domain = f"org-{uuid4().hex}.example.com"
     registry_origin = f"https://registry-{uuid4().hex}.example.com"
     dns_server = DNS(registry_origin)
     channel, _ = await asyncio.get_running_loop().create_datagram_endpoint(
@@ -69,12 +69,12 @@ async def world(awid_db_infra, monkeypatch):
                                            transport=httpx.ASGITransport(app=app))
                 try:
                     await sdk.register_namespace('example.com', parent[1], parent[0])
-                    await sdk.register_namespace(DOMAIN, child[1], child[0], parent_signing_key=parent[0])
-                    await sdk.register_team(domain=DOMAIN, name='base', team_did_key=team[1],
+                    await sdk.register_namespace(domain, child[1], child[0], parent_signing_key=parent[0])
+                    await sdk.register_team(domain=domain, name='base', team_did_key=team[1],
                                             display_name='PRIVATE', visibility='public',
                                             namespace_controller_signing_key=child[0])
-                    await sdk.rotate_team_key(DOMAIN, 'base', new_team_did_key=team[1], namespace_controller_signing_key=child[0])
-                    yield SimpleNamespace(sdk=sdk, dns=dns_server, parent=parent, child=child,
+                    await sdk.rotate_team_key(domain, 'base', new_team_did_key=team[1], namespace_controller_signing_key=child[0])
+                    yield SimpleNamespace(domain=domain, sdk=sdk, dns=dns_server, parent=parent, child=child,
                                           team=team, resolver=SystemTXTOutcomeResolver(),
                                           db=awid_db_infra.get_manager('aweb'))
                 finally:
@@ -85,7 +85,7 @@ async def world(awid_db_infra, monkeypatch):
 
 async def verify(world, record=None):
     return await verify_team_key_change(
-        record or await world.sdk.get_team_key_act(DOMAIN, 'base'), domain=DOMAIN, name='base',
+        record or await world.sdk.get_team_key_act(world.domain, 'base'), domain=world.domain, name='base',
         team_did_key=world.team[1], pinned_at=None, resolver=world.resolver,
         fetch_namespace_evidence=world.sdk.namespace_evidence,
     )
@@ -95,7 +95,7 @@ async def verify(world, record=None):
 async def test_inherited_child_controller_act_uses_the_id_tree_evidence_path(world):
     act = await verify(world)
     assert act.signer_did_key == world.child[1]
-    evidence = await world.sdk.namespace_evidence(DOMAIN)
+    evidence = await world.sdk.namespace_evidence(world.domain)
     assert evidence.namespace_authority['controller_key'] == world.parent[1]
     assert evidence.status['namespace']['delegation']['controller_key'] == world.child[1]
     assert 0 <= evidence.age_seconds <= 60
@@ -104,14 +104,14 @@ async def test_inherited_child_controller_act_uses_the_id_tree_evidence_path(wor
 @pytest.mark.asyncio
 async def test_exact_dns_overrides_a_previously_valid_inherited_witness(world):
     await verify(world)
-    world.dns.records['_awid.' + DOMAIN] = controller_keypair()[1]
+    world.dns.records['_awid.' + world.domain] = controller_keypair()[1]
     with pytest.raises(TeamKeyActError):
         await verify(world)
 
 
 @pytest.mark.asyncio
 async def test_missing_delegation_never_authorises_the_child_act(world):
-    await world.db.execute('UPDATE {{tables.dns_namespaces}} SET parent_domain=NULL, parent_controller_key=NULL WHERE domain=$1', DOMAIN)
+    await world.db.execute('UPDATE {{tables.dns_namespaces}} SET parent_domain=NULL, parent_controller_key=NULL WHERE domain=$1', world.domain)
     with pytest.raises(TeamKeyActError):
         await verify(world)
 
@@ -124,19 +124,19 @@ async def test_owner_inventory_backfill_is_explicit_idempotent_and_preserves_tea
 
     await world.db.execute('DELETE FROM {{tables.team_key_acts}}')
     original = dict(await world.db.fetch_one('SELECT * FROM {{tables.teams}}'))
-    controller = ControllerDescriptor('namespace', DOMAIN, world.child[1], 'local', 0)
+    controller = ControllerDescriptor('namespace', world.domain, world.child[1], 'local', 0)
 
     def signer(context):
         return world.child[1], SigningKey(world.child[0]).sign(context.signing_bytes()).signature
 
-    report = await reaffirm_team_keys(world.sdk, [TeamKeyBackfillTarget(DOMAIN, 'base', world.team[1])],
-        controllers={DOMAIN: controller}, signer=signer, apply=apply, resolver=world.resolver)
+    report = await reaffirm_team_keys(world.sdk, [TeamKeyBackfillTarget(world.domain, 'base', world.team[1])],
+        controllers={world.domain: controller}, signer=signer, apply=apply, resolver=world.resolver)
     assert report['before'] == {'total': 1, 'ready': 0, 'unready': 1, 'conflicted': 0}
     assert report['after']['ready'] == int(apply)
     assert dict(await world.db.fetch_one('SELECT * FROM {{tables.teams}}')) == original
     assert await world.db.fetch_value('SELECT count(*) FROM {{tables.team_certificates}}') == 0
     if apply:
-        again = await reaffirm_team_keys(world.sdk, [TeamKeyBackfillTarget(DOMAIN, 'base', world.team[1])],
-            controllers={DOMAIN: controller}, signer=signer, apply=True, resolver=world.resolver)
+        again = await reaffirm_team_keys(world.sdk, [TeamKeyBackfillTarget(world.domain, 'base', world.team[1])],
+            controllers={world.domain: controller}, signer=signer, apply=True, resolver=world.resolver)
         assert again['before']['ready'] == 1
         assert await world.db.fetch_value('SELECT count(*) FROM {{tables.team_key_acts}}') == 1
