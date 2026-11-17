@@ -7,7 +7,6 @@ package awid
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -151,13 +150,6 @@ func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryUR
 		signed[k] = v
 	}
 	return c.requestBytes(ctx, method, aud, path, signed, raw, out)
-}
-
-// keySigner signs controller payloads with key.
-func keySigner(key ed25519.PrivateKey) IDCertificateSigner {
-	return func(payload []byte) (string, []byte, error) {
-		return ComputeDIDKey(key.Public().(ed25519.PublicKey)), ed25519.Sign(key, payload), nil
-	}
 }
 
 func idBundleLeafDomain(bundle map[string]any) (string, error) {

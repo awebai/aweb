@@ -220,7 +220,7 @@ func (c *RegistryClient) RegisterNamespaceWithDeliveryOriginAt(
 			ControllerDID:         controllerDID,
 			DefaultDeliveryOrigin: defaultDeliveryOrigin,
 		},
-		keySigner(signingKey), nil,
+		KeySigner(signingKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -269,7 +269,7 @@ func (c *RegistryClient) UpdateNamespaceDeliveryOriginAt(
 		"/v1/namespaces/"+urlPathEscape(domain),
 		domain, "update_namespace", map[string]any{"default_delivery_origin": canonicalOrigin},
 		namespaceUpdateRequest{DefaultDeliveryOrigin: canonicalOrigin},
-		keySigner(controllerSigningKey), nil,
+		KeySigner(controllerSigningKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -317,7 +317,7 @@ func (c *RegistryClient) DeleteNamespaceAt(
 		path,
 		domain, "delete_namespace", nil,
 		body,
-		keySigner(controllerSigningKey), nil,
+		KeySigner(controllerSigningKey), nil,
 		nil,
 	)
 }
@@ -405,7 +405,7 @@ func (c *RegistryClient) RegisterAddressAt(
 			DIDAW:         didAW,
 			CurrentDIDKey: currentDIDKey,
 		},
-		keySigner(controllerSigningKey), nil,
+		KeySigner(controllerSigningKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -612,7 +612,7 @@ func (c *RegistryClient) DeleteAddressAt(
 		path,
 		domain, "delete_address", map[string]any{"name": name},
 		body,
-		keySigner(controllerSigningKey), nil,
+		KeySigner(controllerSigningKey), nil,
 		nil,
 	)
 }
@@ -661,7 +661,7 @@ func (c *RegistryClient) DeleteAddressIfMatchesAt(
 			ExpectedDIDAW:         expectedDIDAW,
 			ExpectedCurrentDIDKey: expectedCurrentDIDKey,
 		},
-		keySigner(controllerSigningKey), nil,
+		KeySigner(controllerSigningKey), nil,
 		nil,
 	)
 }
