@@ -20,6 +20,8 @@ from identity_binding_support import register_global_identity
 from starlette.responses import JSONResponse
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
     _make_keypair,
     _signed_identity_headers,
     _signed_team_headers,
@@ -450,3 +452,57 @@ async def test_signed_binding_cannot_select_a_different_registered_identity(addr
     assert response.status_code == 422, response.text
     for table in ("messages", "chat_sessions"):
         assert await fixture.env.db.fetch_val("SELECT count(*) FROM {{tables." + table + "}}") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat"])
+@pytest.mark.parametrize("contact_state", ["exact", "pending", "absent"])
+async def test_signed_cross_team_local_recipient_uses_existing_admission(address_collision, surface, contact_state):
+    fixture = address_collision
+    env = fixture.env
+    alice, bob = env.actors["alice"], env.actors["bob"]
+    sender_address = "example.test/alice"
+    sender_id = await register_global_identity(env, alice, sender_address)
+    await env.db.execute(
+        """UPDATE {{tables.agents}} SET did_aw=$1,address=$2,identity_scope='global',
+           did_aw_verified_key=did_key WHERE agent_id=$3""", sender_id, sender_address, alice.id,
+    )
+    alice.certificate = _encode_certificate(_make_certificate(
+        env.team_sk, env.team_did, alice.did, team_id=TEAM, alias="alice",
+        identity_scope="global", member_did_aw=sender_id, member_address=sender_address,
+        certificate_id="privacy-alice-global",
+    ))
+    other_team = "other:example.test"
+    await env.db.execute(
+        """INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+           VALUES ($1, 'example.test', 'other', $2)""", other_team, env.team_did,
+    )
+    await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1 WHERE agent_id=$2", other_team, bob.id)
+    if contact_state != "absent":
+        from aweb.messaging.contacts import add_contact
+
+        await add_contact(
+            env.infra, owner_did=bob.did, contact_address=sender_address,
+            contact_did_aw=sender_id, binding_controller_did=env.team_did,
+            label="Sender", status="active" if contact_state == "exact" else "pending",
+        )
+    response = await fixture.request(surface, signed_recipient=bob)
+    if contact_state == "exact":
+        assert response.status_code == 200, response.text
+        result = response.json()
+        if surface == "mail":
+            row = await env.db.fetch_one(
+                "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", UUID(result["message_id"]),
+            )
+            assert row["to_did"] == bob.did
+        else:
+            rows = await env.db.fetch_all(
+                "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1", UUID(result["session_id"]),
+            )
+            assert {row["did"] for row in rows} == {sender_id, bob.did}
+    else:
+        assert response.status_code == 404, response.text
+        assert response.json()["reason"] == "local_recipient_route_missing"
+        assert response.json()["retryable"] is False
+        for table in ("messages", "chat_sessions"):
+            assert await env.db.fetch_val("SELECT count(*) FROM {{tables." + table + "}}") == 0
