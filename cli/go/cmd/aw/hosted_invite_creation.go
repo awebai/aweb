@@ -58,7 +58,7 @@ func completeLocalHostedInvite(ctx context.Context, invite *awconfig.TeamInvite,
 
 // Only the recipe's explicit, retained local-agent home can make this transition.
 func pendingHostedExchangeTarget(cmd *cobra.Command, home awconfig.IdentityHome) (bool, error) {
-	if home.Source != awconfig.IdentityHomeFlag || (cmd != idParentRequestCmd && cmd != idParentImportCmd) || idParentHuman != "" {
+	if home.Source != awconfig.IdentityHomeFlag || (cmd != idParentRequestCmd && cmd != idParentImportCmd) || humanFlag != "" {
 		return false, nil
 	}
 	for _, name := range []string{"grant.yaml", "identity.yaml", "teams.yaml", "workspace.yaml"} {

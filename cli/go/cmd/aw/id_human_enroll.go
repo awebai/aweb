@@ -23,6 +23,7 @@ import (
 )
 
 var humanEnrollIssuer, humanEnrollOrigin, humanEnrollIntent string
+var humanEnrollRestart bool
 var idHumanEnrollCmd = &cobra.Command{
 	Use: "enroll", Short: "Enroll an approval key for your new or existing human ID",
 	Long: `Run this yourself with --human ID --human-domain DOMAIN at a terminal.
@@ -37,7 +38,12 @@ when the command ends or is interrupted. Each signature is described on stderr.
 The signed intent supplies the approval service and RP ID; --approval-origin is
 an optional equality pin. You see the service before opening its enrollment page.
 Register and confirm your key in that browser, then continue at this terminal.
-Interrupted commands resume their original enrollment. Enrollment of an existing
+Interrupted commands resume their original enrollment. After expiry, use --restart
+to preserve the old attempt and start again; a new person needs a fresh intent.
+Once confirmation is saved, resume activation without --restart, even after expiry.
+Register a second approval key in the same browser enrollment before continuing.
+Lost-key replacement is not implemented: loss of your only key requires the
+operator to issue a new ID and revoke the old one. Enrollment of an existing
 person never adds or changes a creation claim.
 
 Next: use aw id proof --message-file FILE --out proof.json, then give proof.json
@@ -63,6 +69,7 @@ func init() {
 	idHumanEnrollCmd.Flags().StringVar(&humanEnrollIssuer, "issuer", "", "Your issuer's HTTPS origin; remembered after first use")
 	idHumanEnrollCmd.Flags().StringVar(&humanEnrollOrigin, "approval-origin", "", "Optional pin; must equal the service in the issuer's signed intent")
 	idHumanEnrollCmd.Flags().StringVar(&humanEnrollIntent, "intent", "", "Pending signed enrollment intent handed to a new person by the issuer")
+	idHumanEnrollCmd.Flags().BoolVar(&humanEnrollRestart, "restart", false, "Archive an expired unconfirmed attempt and start fresh; never replace saved confirmation")
 	idHumanCmd.AddCommand(idHumanEnrollCmd)
 }
 
@@ -125,6 +132,9 @@ func humanIssuerRequest(ctx context.Context, human *humanParticipation, origin, 
 		return nil, err
 	}
 	if result.Status != http.StatusOK {
+		if strings.Contains(string(result.Body), "person_already_exists") {
+			return nil, fmt.Errorf("issuer returned HTTP %d: %s; this person already has an enrollment; adding or replacing keys after activation is not implemented. If the only key is lost, ask the operator to issue a new ID and revoke the old one", result.Status, result.Body)
+		}
 		return nil, fmt.Errorf("issuer returned HTTP %d: %s", result.Status, result.Body)
 	}
 	return proof.Parse(result.Body)
@@ -236,6 +246,16 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 	if issuer == "" {
 		return usageError("first enrollment needs --issuer URL; ask your organization's operator for it")
 	}
+	if session != nil {
+		archive, err := restartHumanAttempt(sessionPath, enrollmentObject(session.Intent["intent"]), time.Now().Unix(), humanEnrollRestart, session.Receipt != nil || session.Completed)
+		if err != nil {
+			return err
+		}
+		if archive != "" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Expired enrollment preserved in %s. Starting a fresh attempt.\n", archive)
+			session = nil
+		}
+	}
 	var supplied map[string]any
 	if humanEnrollIntent != "" {
 		raw, err := readFileBounded(humanEnrollIntent, maxResponseBytes)
@@ -311,6 +331,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if session.Completed {
+		fmt.Fprint(cmd.ErrOrStderr(), enrollmentKeyAdvice(enrolledKeyCount(session.Binding)))
 		printOutput(map[string]any{"status": "already_enrolled", "person": h.record.StableID}, func(any) string {
 			return "Your enrollment is already saved. Next: aw id proof --message-file FILE --out proof.json; the recipient runs aw verify proof.json.\n"
 		})
@@ -341,15 +362,23 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 		if !yes {
 			return usageError("enrollment saved; run the same command when ready")
 		}
+		text, err := awid.TerminalTextPrompt()("How many keys did you personally register in this enrollment (1-8)? ")
+		if err != nil {
+			return err
+		}
+		expected, err := enrollmentKeyCount(text)
+		if err != nil {
+			return err
+		}
 		material, err := humanEnrollmentExchange(ctx, client, "enrollment_material", base, session.Intent, nil)
 		if err != nil {
 			return err
 		}
-		registrations, _ := material["registrations"].([]any)
-		if len(registrations) == 0 {
-			return usageError("browser registration is not complete; finish it and run the same command")
+		if err = reviewEnrollmentKeys(material, expected, cmd.ErrOrStderr(), awid.TerminalConfirmPrompt()); err != nil {
+			return err
 		}
-		answer, err := humanIssuerRequest(ctx, h, issuer, "/v1/enrollments/"+url.PathEscape(h.record.StableID)+"/binding", map[string]any{"material": material, "registration_count": len(registrations)})
+
+		answer, err := humanIssuerRequest(ctx, h, issuer, "/v1/enrollments/"+url.PathEscape(h.record.StableID)+"/binding", map[string]any{"material": material, "registration_count": expected})
 		if err != nil {
 			return err
 		}
@@ -477,6 +506,7 @@ func runIDHumanEnroll(cmd *cobra.Command, args []string) error {
 	if err = save(); err != nil {
 		return err
 	}
+	fmt.Fprint(cmd.ErrOrStderr(), enrollmentKeyAdvice(enrolledKeyCount(session.Binding)))
 	report := approval.CheckHumanEvidence(approval.Link{ID: h.record.StableID, Key: h.record.DIDKey, Certificate: trust.Certificate}, enrollmentObject(activation["evidence"]), session.Receipt, &trust, &trust, time.Now().Unix())
 	printOutput(report, func(any) string {
 		return approval.FormatEvidence(report) + "\nNext: aw id proof --message-file FILE --out proof.json; the recipient runs aw verify proof.json.\n"

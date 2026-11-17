@@ -100,6 +100,31 @@ print(value if value is not None else "")
 ' "$field"
 }
 
+# The expected condition comes from the inviter's independently checked who,
+# not from the invite itself. Missing and explicit-null fields are distinct.
+assert_invite_human() {
+  python3 -c '
+import json,sys
+raw=sys.stdin.read(); start=raw.find("{")
+assert start >= 0, "missing invite JSON"
+value=json.loads(raw[start:]); expected=sys.argv[1] or None
+assert "for_human" in value, "missing invite condition"
+assert value["for_human"] == expected, (value["for_human"], expected)
+' "$1"
+}
+
+file_snapshot() {
+  local identity="$1"
+  shift
+  python3 - "$WORK_DIR/$identity/.aw" "$@" <<'PYSNAPSHOT'
+import hashlib,json,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+print(json.dumps({name: hashlib.sha256((root/name).read_bytes()).hexdigest()
+                  if (root/name).exists() else None for name in sys.argv[2:]}, sort_keys=True))
+PYSNAPSHOT
+}
+
 run_cli() {
   local identity="$1"
   shift
@@ -508,11 +533,14 @@ compose exec -T awid-b python /tmp/cross-registry-python-verifier.py < "$WORK_DI
 # Membership and connection are not ancestry: joining a team, connecting to
 # aweb and later leaving the team keep each identity and its exact chain.
 ALICE_WHO="$(who_json alice)"
+ALICE_HUMAN="$(printf '%s' "$ALICE_WHO" | json_field human_id)"
+[[ -n "$ALICE_HUMAN" ]]
 BOB_WHO="$(who_json bob)"
 [[ "$(printf '%s' "$ALICE_WHO" | json_field outcome)" == nearest_human && "$(printf '%s' "$ALICE_WHO" | json_field id)" == "$ALICE_DID_AW" ]]
 [[ "$(printf '%s' "$BOB_WHO" | json_field outcome)" == no_human && "$(printf '%s' "$BOB_WHO" | json_field id)" == "$BOB_DID_AW" ]]
 run_cli alice id team create --name alpha --namespace alpha.example.com --registry http://awid-a:8010 --json >/dev/null
 alice_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
+printf '%s' "$alice_invite" | assert_invite_human "$ALICE_HUMAN"
 run_cli alice id team accept-invite "$(printf '%s' "$alice_invite" | json_field token)" --name alice --global --json >/dev/null
 [[ "$(who_json alice)" == "$ALICE_WHO" ]]
 run_cli alice init --url http://aweb-a:8000 --name alice --do-not-touch-agents-md >/dev/null
@@ -520,6 +548,7 @@ run_cli alice init --url http://aweb-a:8000 --name alice --do-not-touch-agents-m
 
 run_cli bob id team create --name beta --namespace beta.example.net --registry http://awid-b:8010 --json >/dev/null
 bob_invite="$(run_cli bob id team invite --team beta --namespace beta.example.net --member-global --json)"
+printf '%s' "$bob_invite" | assert_invite_human ""
 run_cli bob id team accept-invite "$(printf '%s' "$bob_invite" | json_field token)" --name bob --global --json >/dev/null
 [[ "$(who_json bob)" == "$BOB_WHO" ]]
 run_cli bob init --url http://aweb-b:8000 --name bob --do-not-touch-agents-md >/dev/null
@@ -543,7 +572,6 @@ CONVERSATION_ID="$(printf '%s' "$mail_out" | json_field conversation_id)"
 bob_inbox="$(run_cli bob mail inbox --show-all --json)"
 assert_inbox_message "$bob_inbox" "two registry mail" "alice to bob"
 MAIL_ID="$(printf '%s' "$mail_out" | json_field message_id)"
-ALICE_HUMAN="$(printf '%s' "$ALICE_WHO" | json_field human_id)"
 assert_received_who bob "$ALICE_WHO" alpha.example.com/alice
 assert_received_who bob "$ALICE_WHO" "$ALICE_DID_AW"
 assert_received_who bob "$ALICE_WHO" --message-id "$MAIL_ID"
@@ -569,9 +597,29 @@ run_cli bob chat send-and-leave --plaintext alpha.example.com/alice "two registr
 alice_chat="$(run_cli alice chat history beta.example.net/bob --json)"
 assert_chat_message "$alice_chat" "two registry chat reply"
 
-# A registered global identity with authoritative no enrollment stays unknown.
-plain_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
+# The received-sender control needs an unconditioned join: membership must not
+# create ancestry. First retain the human-conditioned refusal for this same
+# joiner, including its pre-existing journey-local membership.
+plain_identity="$(file_snapshot plain identity.yaml signing.key id-chain.json)"
+plain_membership="$(file_snapshot plain teams.yaml workspace.yaml)"
+conditioned_plain_invite="$(run_cli alice id team invite --team alpha --namespace alpha.example.com --member-global --json)"
+printf '%s' "$conditioned_plain_invite" | assert_invite_human "$ALICE_HUMAN"
+if refused="$(run_cli plain id team accept-invite "$(printf '%s' "$conditioned_plain_invite" | json_field token)" --name plain --global --json 2>&1)"; then
+  echo "human-conditioned invite admitted the chainless sender" >&2
+  exit 1
+fi
+[[ "$refused" == *human_required* ]] || { printf '%s\n' "$refused" >&2; exit 1; }
+[[ "$(file_snapshot plain identity.yaml signing.key id-chain.json)" == "$plain_identity" ]]
+[[ "$(file_snapshot plain teams.yaml workspace.yaml)" == "$plain_membership" ]]
+echo "PASS: a human-conditioned mail-team invite refuses the chainless sender without changing identity or membership"
+
+# This fixture host holds alpha's team key. The already-proven chainless
+# identity issues a real invite whose default condition is explicitly null.
+plain_invite="$(run_cli plain id team invite --team alpha --namespace alpha.example.com --member-global --json)"
+printf '%s' "$plain_invite" | assert_invite_human ""
 run_cli plain id team accept-invite "$(printf '%s' "$plain_invite" | json_field token)" --name plain --global --json >/dev/null
+[[ "$(file_snapshot plain identity.yaml signing.key id-chain.json)" == "$plain_identity" ]]
+
 run_cli plain init --url http://aweb-a:8000 --name plain --do-not-touch-agents-md >/dev/null
 plain_mail="$(run_cli plain mail send --plaintext --to-address beta.example.net/bob --subject 'chainless sender' --body 'no human inferred' --json)"
 PLAIN_MAIL_ID="$(printf '%s' "$plain_mail" | json_field message_id)"

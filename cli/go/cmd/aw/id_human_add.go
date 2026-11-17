@@ -16,6 +16,7 @@ import (
 )
 
 var humanAddIssuer, humanAddOrigin, humanAddPerson, humanAddKey, humanAddOut string
+var humanAddRestart bool
 var idHumanAddCmd = &cobra.Command{
 	Use: "add", Short: "Ask an approved-mode issuer for a new person's pending enrollment",
 	Long: `Run as an existing enrolled person with --human ID --human-domain DOMAIN.
@@ -33,7 +34,9 @@ confirm their approval key in the browser named by that signed intent.
 
 In operator mode, the organization's operator instead runs aweb-key-holder
 issue-person on the holder host. The new person runs aw id human register FILE.
-This command has no operator mode or operator network route.`,
+This command has no operator mode or operator network route.
+An expired approval can be archived with --restart to ask for a fresh approval.
+It never extends or reuses the old approval deadline.`,
 	Args: cobra.NoArgs, Annotations: map[string]string{humanCommandAnnotation: "registered"}, RunE: runIDHumanAdd,
 }
 
@@ -45,6 +48,7 @@ func init() {
 	idHumanAddCmd.Flags().StringVar(&humanAddOut, "out", "", "New pending-intent file; default is JSON on stdout")
 	_ = idHumanAddCmd.MarkFlagRequired("person")
 	_ = idHumanAddCmd.MarkFlagRequired("identity-key")
+	idHumanAddCmd.Flags().BoolVar(&humanAddRestart, "restart", false, "Archive an expired approval attempt and ask the issuer for a fresh request")
 	idHumanCmd.AddCommand(idHumanAddCmd)
 }
 
@@ -118,8 +122,10 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "Open %s/ and sign in as %s to review human.add for %s.\n", origin, h.record.StableID, humanAddPerson)
 		_ = openBrowser(origin + "/")
 	}
+	var original []byte
+	var receipt map[string]any
 	if _, statErr := os.Stat(recordPath); statErr == nil {
-		original, receipt, err := readApprovalRecord(recordPath, origin, targetURL)
+		original, receipt, err = readApprovalRecord(recordPath, origin, targetURL)
 		if err != nil {
 			return err
 		}
@@ -130,6 +136,20 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 		if err = checkHumanAddRequest(request, h.record, humanAddPerson, humanAddKey, issuer); err != nil {
 			return err
 		}
+		archive, err := restartHumanAttempt(recordPath, request, time.Now().Unix(), humanAddRestart, false)
+		if err != nil {
+			return err
+		}
+		if archive != "" {
+			fmt.Fprintf(cmd.ErrOrStderr(), "Expired approval preserved in %s. Asking for a fresh approval.\n", archive)
+			original = nil
+			receipt = nil
+			request = nil
+		}
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	if original != nil {
 		if receipt == nil {
 			showApproval()
 		}
@@ -137,8 +157,6 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-	} else if !os.IsNotExist(statErr) {
-		return statErr
 	} else {
 		result, err = humanIssuerHTTP(ctx, h, issuer, "/v1/humans", body)
 		if err != nil {

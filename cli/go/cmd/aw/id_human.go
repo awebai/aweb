@@ -186,9 +186,11 @@ func executeIDHumanInit(ctx context.Context, opts idHumanInitOptions) (idHumanIn
 			return idHumanInitOutput{}, fmt.Errorf("resume %s: %w", rec.StableID, err)
 		}
 	}
-	signer := func(description string) awid.IDCertificateSigner {
-		return awid.HumanSigner(opts.Keychain, rec.StableID, description, opts.Prompt)
-	}
+	h := newHumanSigningSession(rec, opts.Keychain, opts.Prompt)
+	h.operation = "aw id human init --as-root"
+	h.watchSignals()
+	defer h.close()
+	signer := h.certificateSigner
 
 	if rec.State == awconfig.HumanPrepared {
 		call, cancel := commandAPIContext(nil, ctx)
