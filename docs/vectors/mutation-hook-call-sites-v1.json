@@ -92,6 +92,11 @@
       "event": "message.sent"
     },
     {
+      "source": "server/src/aweb/messaging/room.py",
+      "function": "post_room_message",
+      "event": "chat.message_sent"
+    },
+    {
       "source": "server/src/aweb/routes/agent_status.py",
       "function": "publish_agent_status",
       "event": "agent.status"

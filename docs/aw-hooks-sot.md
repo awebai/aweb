@@ -124,7 +124,9 @@ the MCP `send_mail` tool both call, a chat send fires from
 `server/src/aweb/messaging/chat_send.py`, which both chat send routes and the
 MCP `send_chat` tool call, and an acknowledgement fires from
 `server/src/aweb/messaging/mail_ack.py`, which the ack route and the MCP
-`check_mail` tool both call; every other row fires from its route.
+`check_mail` tool both call. Room posts fire from
+`server/src/aweb/messaging/room.py`, shared by the route and MCP `room_post`;
+every other row fires from its route.
 
 | HTTP route | Event | When called |
 |---|---|---|
@@ -132,6 +134,7 @@ MCP `send_chat` tool call, and an acknowledgement fires from
 | `POST /v1/messages/{message_id}/ack` | `message.acknowledged` | Only when the ack changes the stored row. |
 | `POST /v1/chat/sessions` | `chat.message_sent` | After the initial chat message is stored/sent, including federated first contact. |
 | `POST /v1/chat/sessions/{session_id}/messages` | `chat.message_sent` | After a continuation message is stored/sent, including federated delivery. |
+| `POST /v1/room/messages` | `chat.message_sent` | Once after a new room post commits, with `message_kind=room`; no event on replay, refusal or rollback. |
 | `POST /v1/federation/messages` | `message.sent` or `chat.message_sent` | From the federation outbox, after an inbound federation envelope is verified, deduplicated, and stored; selected from envelope type. At-least-once, as described above. |
 | `POST /v1/tasks` | `task.created` | After task creation. |
 | `POST /v1/tasks/app-requests` | `task.created` | After first verified app-request creation; replay emits nothing. The actor is the authorized member, separate from the transporting app. |
@@ -159,6 +162,7 @@ table fires the hook.
 | `send_mail` (and `send_message_to_contact` for mail) | `message.sent` | After a successful local, stored-route, or federated send, as `POST /v1/messages`. |
 | `check_mail` | `message.acknowledged` | Once for each unread message the call marks read; already-read mail does not fire again. |
 | `send_chat` (and `send_message_to_contact` for chat) | `chat.message_sent` | After a new-session or continuation message is stored/sent, including federated delivery. |
+| `room_post` | `chat.message_sent` | As `POST /v1/room/messages`, through the same room service and host callback. |
 | `task_create` | `task.created` | As `POST /v1/tasks`. |
 | `task_update`, `task_claim`, `task_close`, `task_reopen` | `task.status_changed` or `task.updated`, and `task.assignee_changed` | As `PATCH /v1/tasks/{ref}`: `task_claim` sets `in_progress`, `task_close` sets `closed`, `task_reopen` sets `open`. |
 | `task_comment_add` | `task.comment_added` | As `POST /v1/tasks/{ref}/comments`. |
@@ -215,6 +219,22 @@ team_id, session_id, conversation_id, message_id, from_agent_id,
 from_alias, from_did, from_did_aw, to_aliases, preview,
 content_mode, federated
 ```
+
+A room post uses the same `chat.message_sent` event with this context:
+
+```text
+team_id, conversation_id, room_id, message_id, message_kind=room,
+from_agent_id, from_alias, from_did, from_did_aw,
+content_mode=legacy_plaintext_v1
+```
+
+`conversation_id` is the room ID. There is no `session_id`, individual recipient,
+body or preview. The host can count the send using `from_agent_id` and deduplicate
+by `message_id`. Built-in translation does not publish a chat-session event for
+this variant. The room's committed notices and wakes are independent of the
+replaceable mutation callback. As with other outbound send callbacks, this is
+not a durable metering outbox: callback failures are logged without rolling back
+the committed post.
 
 The inbound federation route uses the shared federation context shape and may
 supply `to_alias` rather than `to_aliases`. Experimental consumers must not

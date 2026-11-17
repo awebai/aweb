@@ -15,6 +15,7 @@ from aweb.identity_auth_deps import _enforce_current_membership
 from aweb.member_team_key import member_key_columns_sql
 from aweb.agent_wake import agent_wake_scope
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
+from aweb.mcp.mutations import current_mutation_callback
 from aweb.mcp.signing import sign_hosted_message
 from aweb.mcp.tools._common import team_identity
 from aweb.messaging.room import (
@@ -138,6 +139,7 @@ async def room_post(
         )
     with agent_wake_scope(current_agent_wake_publisher()):
         output = await post_room_message(
-            db, actor, payload, id_chain=getattr(auth.request.state, "id_chain", None)
+            db, actor, payload, id_chain=getattr(auth.request.state, "id_chain", None),
+            on_mutation=current_mutation_callback(),
         )
     return json.dumps(await present_room(db, auth.request, output))

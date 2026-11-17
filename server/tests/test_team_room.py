@@ -106,7 +106,9 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
     assert exact.json() == item
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.messages}}") == 0
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.chat_messages}}") == 0
-    assert env.dispatched == []  # Room notices use no legacy mutation fan-out.
+    assert len(env.dispatched) == 1
+    assert env.dispatched[0][0] == "chat.message_sent"
+    assert env.dispatched[0][1]["message_kind"] == "room"
 
 
 @pytest.mark.asyncio
@@ -534,6 +536,14 @@ async def test_hosted_mcp_room_signs_as_actor_and_reads_shared_history(
         assert stored_post["body"] == "MCP announcement"
         assert stored_post["confidentiality"] == "server_readable"
         assert len(calls) == 1
+        assert len(env.dispatched) == 1
+        event, context = env.dispatched[0]
+        assert event == "chat.message_sent"
+        assert context["message_kind"] == "room"
+        assert context["from_agent_id"] == str(actor.id)
+        assert context["message_id"] == stored_post["message_id"]
+        assert context["room_id"] == stored_post["room_id"]
+        assert "session_id" not in context
         room = await metadata(env)
         assert (
             await post(env, room, actor="bob", text="Another team update")

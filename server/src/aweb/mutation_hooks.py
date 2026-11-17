@@ -512,6 +512,9 @@ def _translate(event_type: str, ctx: dict):
         )
 
     if event_type == "chat.message_sent":
+        if ctx.get("message_kind") == "room":
+            # Rooms publish their own notices and wakes, not session events.
+            return None
         return ChatMessageEvent(
             workspace_id=ctx.get("from_agent_id", ""),
             session_id=ctx.get("session_id", ""),

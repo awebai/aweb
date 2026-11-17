@@ -18,6 +18,7 @@ from aweb.federation.envelope import (
     FederationEnvelopeError,
 )
 from aweb.id_chain_auth import stored_id_chain
+from aweb.hooks import MutationCallback, fire_mutation_callback
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.service_errors import (
     ConflictError,
@@ -254,7 +255,10 @@ async def exact_room_message(db, actor, message_id):
         return _post_dict(row, actor.team_id)
 
 
-async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
+async def post_room_message(
+    db, actor, post: RoomPost, *, id_chain=None,
+    on_mutation: MutationCallback | None = None,
+):
     require_address_evidence(actor)
     if post.e2ee:
         raise ValidationError("room_e2ee_unsupported")
@@ -356,4 +360,19 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
             UUID(actor.agent_id),
         )
         record_agent_wake(team_room_wake_key(actor.team_id), "room")
-        return _post_dict(row, actor.team_id)
+        result = _post_dict(row, actor.team_id)
+    # A replay returns inside the transaction above. Only a new committed post
+    # reaches the host's send hook; room notices/wakes remain independent.
+    await fire_mutation_callback(on_mutation, "chat.message_sent", {
+        "team_id": actor.team_id,
+        "from_agent_id": str(actor.agent_id),
+        "from_did": actor.did_key,
+        "from_did_aw": actor.did_aw or None,
+        "from_alias": actor.alias or "",
+        "message_id": str(message_id),
+        "conversation_id": str(post.room_id),
+        "room_id": str(post.room_id),
+        "message_kind": "room",
+        "content_mode": "legacy_plaintext_v1",
+    })
+    return result
