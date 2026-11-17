@@ -178,7 +178,7 @@ var controllerWrites = []struct {
 		w.ownTeam(t)
 		w.rotatedKey = newKey(t)
 	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
-		_, err := c.RotateTeamKey(w.ctx, w.url, w.domain, w.team, didOf(w.rotatedKey), nil, nil, w.namespaceKey)
+		_, err := c.RotateTeamKeyWithMembers(w.ctx, w.url, w.domain, w.team, didOf(w.rotatedKey), nil, nil, w.namespaceKey)
 		return err
 	}},
 	{name: "rotate_team_key_with_resigned_records", setup: func(w *controllerWriteWorld, t *testing.T) {
@@ -201,7 +201,7 @@ var controllerWrites = []struct {
 		}
 		w.resigned = &awid.ResignedRecords{TeamServer: &awid.SignedAttestationRecord{Record: resigned, Signature: resignedSignature}}
 	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
-		_, err := c.RotateTeamKey(w.ctx, w.url, w.domain, w.team, didOf(w.rotatedKey), w.resigned, nil, w.namespaceKey)
+		_, err := c.RotateTeamKeyWithMembers(w.ctx, w.url, w.domain, w.team, didOf(w.rotatedKey), w.resigned, nil, w.namespaceKey)
 		return err
 	}},
 	{name: "rotate_team_key_with_member_certificates", mainOnly: true, setup: func(w *controllerWriteWorld, t *testing.T) {
@@ -223,7 +223,7 @@ var controllerWrites = []struct {
 		}
 		w.memberChanges = []awid.MemberCertificateChange{{OldCertificateID: old.CertificateID, Certificate: encoded}}
 	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
-		_, err := c.RotateTeamKey(w.ctx, w.url, w.domain, w.team, didOf(w.rotatedKey), nil, w.memberChanges, w.namespaceKey)
+		_, err := c.RotateTeamKeyWithMembers(w.ctx, w.url, w.domain, w.team, didOf(w.rotatedKey), nil, w.memberChanges, w.namespaceKey)
 		return err
 	}},
 	{name: "register_global_certificate", setup: func(w *controllerWriteWorld, t *testing.T) {

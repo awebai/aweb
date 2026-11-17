@@ -319,3 +319,15 @@ func firstNonEmpty(values ...string) string {
 	}
 	return ""
 }
+
+// VerifyTeamCertificate checks the certificate signature against the team's
+// public key. Returns nil if valid, an error describing the failure otherwise.
+// It keeps its released signature and runs CheckDecodedTeamCertificate, the
+// one strict check (version, required fields, portable values, subject and
+// signature).
+func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) error {
+	if teamPub == nil {
+		return fmt.Errorf("nil team public key")
+	}
+	return CheckDecodedTeamCertificate(cert, ComputeDIDKey(teamPub))
+}

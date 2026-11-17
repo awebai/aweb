@@ -252,7 +252,7 @@ func (b *Broker) Reconcile() {
 
 	// Reading and normalizing every durable registration can be slow. Controls
 	// need only their own apply lock, not this whole disk snapshot.
-	registrations, faults, err := b.cfg.Store.ListRegistrations()
+	registrations, faults, err := b.cfg.Store.ListRegistrationsWithFaults()
 	if err != nil {
 		b.cfg.Log("reconcile failed err=%v", err)
 		return
@@ -715,7 +715,7 @@ func (b *Broker) Register(reg Registration) error {
 
 func (b *Broker) refuseDuplicateBinding(reg Registration) error {
 	// A file that cannot be read owns no binding the broker can serve.
-	existing, _, err := b.cfg.Store.ListRegistrations()
+	existing, _, err := b.cfg.Store.ListRegistrationsWithFaults()
 	if err != nil {
 		return err
 	}

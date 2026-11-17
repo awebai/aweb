@@ -370,7 +370,7 @@ var chatOpenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		result, err := chat.Open(ctx, c.Client, args[0], confirmedDID)
+		result, err := chat.OpenConfirmed(ctx, c.Client, args[0], confirmedDID)
 		if err != nil {
 			return err
 		}
@@ -423,7 +423,7 @@ var chatHistoryCmd = &cobra.Command{
 			if confirmedDID, err = chatSessionDID(ctx, c, sel, args[0]); err != nil {
 				return err
 			}
-			result, err = chat.HistoryWithOptions(ctx, c.Client, args[0], chatHistoryUnreadOnly, chatHistoryLimit, confirmedDID)
+			result, err = chat.HistoryConfirmed(ctx, c.Client, args[0], chatHistoryUnreadOnly, chatHistoryLimit, confirmedDID)
 		}
 		if err != nil {
 			return err
@@ -620,7 +620,7 @@ var chatListenCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		result, err := chat.Listen(ctx, c.Client, args[0], chatListenWait, chatStderrCallback, confirmedDID)
+		result, err := chat.ListenConfirmed(ctx, c.Client, args[0], chatListenWait, chatStderrCallback, confirmedDID)
 		if err != nil {
 			return err
 		}
@@ -652,7 +652,7 @@ var chatShowPendingCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		result, err := chat.ShowPending(ctx, c.Client, args[0], confirmedDID)
+		result, err := chat.ShowPendingConfirmed(ctx, c.Client, args[0], confirmedDID)
 		if err != nil {
 			return err
 		}

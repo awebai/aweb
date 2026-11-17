@@ -646,10 +646,24 @@ func (s *Store) DeleteRegistration(home string) (bool, error) {
 
 // ListRegistrations reads every registration, ordered by registration time so
 // the stream bound admits the oldest first and a restart admits the same set.
-// A file that cannot be read, does not parse or names no usable home is
-// skipped and returned as a fault, so one bad file never hides the others.
-// The error is reserved for the registry directory itself.
-func (s *Store) ListRegistrations() ([]Registration, []RegistrationFault, error) {
+// A file that cannot be read, does not parse or names no usable home is an
+// error, as released; ListRegistrationsWithFaults skips such files instead.
+func (s *Store) ListRegistrations() ([]Registration, error) {
+	out, faults, err := s.ListRegistrationsWithFaults()
+	if err != nil {
+		return nil, err
+	}
+	if len(faults) > 0 {
+		return nil, fmt.Errorf("%s: %s", faults[0].Path, faults[0].Error)
+	}
+	return out, nil
+}
+
+// ListRegistrationsWithFaults reads every registration, ordered as
+// ListRegistrations. A file that cannot be read, does not parse or names no
+// usable home is skipped and returned as a fault, so one bad file never hides
+// the others. The error is reserved for the registry directory itself.
+func (s *Store) ListRegistrationsWithFaults() ([]Registration, []RegistrationFault, error) {
 	entries, err := os.ReadDir(filepath.Join(s.dir, "registry.d"))
 	if err != nil {
 		if os.IsNotExist(err) {

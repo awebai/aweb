@@ -70,7 +70,7 @@ func TestTeamFetchCertRefusesTheHeldCertificateOnceTheTeamKeyChanged(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.RotateTeamKey(ctx, registryURL, domain, "ops", awid.ComputeDIDKey(nextPub), nil, nil, controllerKey); err != nil {
+	if _, err := registry.RotateTeamKey(ctx, registryURL, domain, "ops", awid.ComputeDIDKey(nextPub), nil, controllerKey); err != nil {
 		t.Fatalf("rotate team key: %v", err)
 	}
 
