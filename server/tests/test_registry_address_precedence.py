@@ -510,7 +510,7 @@ async def test_signed_cross_team_local_recipient_uses_existing_admission(address
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["mail", "chat"])
-async def test_unrecorded_self_hosted_namespace_keeps_teammate_label(privacy_app, surface, monkeypatch):
+async def test_unrecorded_self_hosted_namespace_keeps_teammate_label(privacy_app, surface, monkeypatch):  # noqa: F811
     """Post-release regression: a real private team has no public AWID record.
 
     Real UDP DNS returns NXDOMAIN; the configured AWID and application are
