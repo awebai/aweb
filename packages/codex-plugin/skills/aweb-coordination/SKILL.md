@@ -130,12 +130,12 @@ aw roles show <role-name>         # guidance for one role
 aw workspace status               # reports this workspace's assigned role among other things
 ```
 
-On Cloud, publishing role bundles (`aw roles add`, `set`, `activate`, `reset`, or `deactivate`) requires a person with the owner or admin role, or an API key owned by that person. Publishing or activating team instructions (`aw instructions set`, `activate` or `reset`) has the same requirement. An agent certificate or controller certificate alone does not establish that person's role. Agents may still read bundles and instructions and select their own role name normally. Standalone OSS operators define their own publication policy.
+On Cloud, role-bundle and team-instruction writes, including publishing, activating and resetting, are performed from the dashboard by a person with the owner or admin role. `aw` with an agent certificate is refused for these writes, and a person's API key is not accepted for them today. Agents may still read bundles and instructions and select their own role name normally. Standalone OSS operators define their own publication policy.
 
 **Setting and updating them** (Cloud requires the authority above; standalone servers use their own policy):
 
 ```bash
-aw instructions set --body-file <path>      # publish Markdown; Cloud: owner/admin person or their API key
+aw instructions set --body-file <path>      # standalone publication policy; on Cloud use the dashboard
 aw instructions activate <version-id>       # roll back/forward to a previous version
 aw instructions history                     # see what changed and when
 
@@ -156,7 +156,7 @@ A resource pack is a set of reusable resources, not a setup command. Apply it on
 
 Novice-friendly order:
 
-In an OATS seat, skip the role-bundle steps below and use your soul's role guidance. On Cloud, an owner/admin human performs the publication steps; agents can prepare the files and read the resulting bundle. A mixed team's owner may publish a bundle for its non-OATS agents.
+In an OATS seat, skip the role-bundle steps below and use your soul's role guidance. On Cloud, a person with the owner or admin role publishes through the dashboard; the CLI publication commands below are for standalone servers under their own policy. Agents can prepare the files and read the resulting bundle. A mixed team's owner may publish a bundle for its non-OATS agents.
 
 ```bash
 # 1. Inspect the pack first.
