@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.deps import get_db
+from aweb.hooks import mutation_callback
 from aweb.messaging.room import (
     RoomPost,
     room_metadata,
@@ -65,6 +66,7 @@ async def post(
 ):
     with agent_wake_scope(agent_wake_publisher(request.app.state)):
         output = await post_room_message(
-            db, actor, payload, id_chain=getattr(request.state, "id_chain", None)
+            db, actor, payload, id_chain=getattr(request.state, "id_chain", None),
+            on_mutation=mutation_callback(request),
         )
     return await present_room(db, request, output)
