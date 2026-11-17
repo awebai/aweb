@@ -43,18 +43,31 @@ async def response_server():
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cached", [False, True], ids=["plain", "redis"])
 @pytest.mark.parametrize(
-    "kind", ["typed", "generic", "wrong-code", "wrong-status", "success"]
+    "kind",
+    [
+        "typed",
+        "legacy",
+        "generic",
+        "legacy-extra",
+        "wrong-code",
+        "wrong-status",
+        "success",
+    ],
 )
 async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_authority(
-    response_server, cached, kind
+    response_server, cached, kind, caplog
 ):
     state = response_server
     domain = f"absence-{uuid4().hex}.example"
     state["body"] = {
         "detail": {"code": "address_not_found", "message": "Address not found"}
     }
-    if kind == "generic":
+    if kind == "legacy":
         state["body"] = {"detail": "Address not found"}
+    elif kind == "generic":
+        state["body"] = {"detail": "Not Found"}
+    elif kind == "legacy-extra":
+        state["body"] = {"detail": "Address not found", "proxy": True}
     elif kind == "wrong-code":
         state["body"]["detail"]["code"] = "namespace_not_found"
     elif kind == "wrong-status":
@@ -86,9 +99,9 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
                 legacy, value=None, ttl_seconds=60, encode=lambda value: value
             )
         for read in (client.resolve_address, client.resolve_address_fresh):
-            if kind in ("typed", "success"):
+            if kind in ("typed", "legacy", "success"):
                 result = await read(domain, "person")
-                if kind == "typed":
+                if kind in ("typed", "legacy"):
                     assert result is None
                 else:
                     assert result.address_id == "present"
@@ -99,6 +112,12 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
                 if redis is not None:
                     assert await redis.get(key) is None
         assert len(state["requests"]) == 2
+        legacy_reads = [
+            r
+            for r in caplog.records
+            if getattr(r, "event", "") == "awid_legacy_address_not_found"
+        ]
+        assert len(legacy_reads) == (2 if kind == "legacy" else 0)
     finally:
         await client.aclose()
         if redis is not None:
@@ -108,15 +127,15 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("endpoint", ["address", "namespace", "key", "log"])
-@pytest.mark.parametrize("typed", [True, False])
+@pytest.mark.parametrize("body_kind", ["typed", "legacy", "generic"])
 async def test_strict_absence_reason_means_typed_address_absence_only(
-    response_server, endpoint, typed
+    response_server, endpoint, body_kind, caplog
 ):
     state = response_server
     state["body"] = (
         {"detail": {"code": "address_not_found"}}
-        if typed
-        else {"detail": "Address not found"}
+        if body_kind == "typed"
+        else {"detail": "Address not found" if body_kind == "legacy" else "Not Found"}
     )
     path = {
         "address": "/v1/namespaces/example.com/addresses/person",
@@ -130,8 +149,16 @@ async def test_strict_absence_reason_means_typed_address_absence_only(
             await client.get_json(path, not_found_reason="recipient_identity_not_found")
         assert refused.value.reason == (
             "recipient_identity_not_found"
-            if typed and endpoint == "address"
+            if body_kind in ("typed", "legacy") and endpoint == "address"
             else "sender_registry_protocol_invalid"
+        )
+        legacy_reads = [
+            r
+            for r in caplog.records
+            if getattr(r, "event", "") == "awid_legacy_address_not_found"
+        ]
+        assert len(legacy_reads) == (
+            1 if body_kind == "legacy" and endpoint == "address" else 0
         )
     finally:
         await client.aclose()

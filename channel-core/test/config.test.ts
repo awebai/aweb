@@ -64,11 +64,22 @@ describe("resolveConfig", () => {
     expect(config.did).not.toBe(shadow.did);
   });
 
-  test.each(["did: [", "", "null", "a scalar", "[]"])("refuses corrupt identity.yaml: %j", async (content) => {
+  test.each(["did: [", "a scalar", "[]"])("refuses corrupt identity.yaml: %j", async (content) => {
     const { external, workdir } = await createShadowedPrincipalFixture();
     process.env.AWEB_IDENTITY_HOME = external.identityHome;
     writeFileSync(join(external.identityHome, "identity.yaml"), content);
     await expect(resolveConfig(workdir)).rejects.toThrow(/identity\.yaml/);
+  });
+
+  test.each(["", "# empty file\n", "null\n"])("accepts empty YAML like aw: %j", async (content) => {
+    const { external, workdir } = await createShadowedPrincipalFixture();
+    process.env.AWEB_IDENTITY_HOME = external.identityHome;
+    writeFileSync(join(external.identityHome, "identity.yaml"), content);
+    expect((await resolveConfig(workdir)).did).toBe(external.did);
+    writeFileSync(join(external.identityHome, "teams.yaml"), content);
+    await expect(resolveConfig(workdir)).rejects.toThrow("worktree workspace binding is missing");
+    writeFileSync(join(external.identityHome, "workspace.yaml"), content);
+    await expect(resolveConfig(workdir)).rejects.toThrow("worktree workspace binding is missing");
   });
 
   test("refuses an unreadable identity file but permits a missing optional identity file", async () => {
