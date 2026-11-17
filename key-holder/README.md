@@ -37,6 +37,9 @@ There is no enrolment or creation evidence. There is no operator HTTP route.
 After that, a current person can use `aw id human add --issuer URL ...` without
 an approval key when no requirement is configured. Agents, unrelated keys,
 retired people and revoked people are refused on that path.
+Local retirement applies only to enrolled people. To stop a never-enrolled
+person from adding people, the operator revokes that person's ID at the registry;
+`retire-person` has no enrollment row to retire for them.
 
 To require approval, the operator adds the organisation's one section to the
 existing deployment.yaml:
@@ -56,10 +59,15 @@ not a second policy. The source is read again at the locked effect; missing or
 invalid configured files refuse, while removing the section and rendering again
 writes approval off. Email and unknown actions or levels refuse until supported.
 Every applied change is signed into the existing append-only audit.
+If the last applied policy required approval, omitting the source path also
+refuses startup and effects. Pass the file to keep that policy; to turn approval
+off, explicitly render and apply an empty policy instead of omitting the file.
 
 The configuration's service supplies the approval origin and RP ID. The default
 enrolment grading is passkey-only; the existing hardware metadata inputs may
 select hardware grading. An explicit `--approval-origin` is an equality pin.
+A `hardware` requirement refuses startup or effects with passkey-only grading:
+start with `--grading hardware --mds-cache DIR` and the existing metadata inputs.
 The generic 428 loop and the frozen `human.add` receipt remain unchanged.
 The private `issue-person` command cannot bypass a configured requirement;
 initial creation with enrolment uses the private first-person `bootstrap` flow.

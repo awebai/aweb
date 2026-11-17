@@ -34,6 +34,19 @@ class Refused(ApprovalRefused):
         super().__init__(code)
 
 
+HUMAN_APPROVAL_MESSAGES = {
+    "human_approval_source_required": (
+        "The last applied policy required approval. Pass the rendered file "
+        "with --human-approval-config FILE or HUMAN_APPROVAL_CONFIG_FILE. "
+        "To turn approval off, explicitly render an empty human_approval section."
+    ),
+    "human_approval_hardware_grading_required": (
+        "The hardware requirement needs --grading hardware and --mds-cache DIR. "
+        "Passkey-only grading cannot satisfy it."
+    ),
+}
+
+
 # Explicit holder rules, not an automatic import of every future SDK operation.
 # Destructive key changes and human issuance have separate authority paths.
 ROUTINE = frozenset(
@@ -186,8 +199,14 @@ class KeyStore:
         if "human_issuance" in columns:
             raise Refused("legacy_human_issuance_write_human_approval")
 
-    def observe_policy(self, db, policy, *, legacy_approved=False):
-        """Audit applied configuration; this record is never a policy source."""
+    def observe_policy(
+        self, db, policy, *, legacy_approved=False, source_configured=True
+    ):
+        """Audit configuration and refuse an implicit downgrade from its absence.
+
+        The record supplies no approval policy. A previous requirement only
+        requires an explicit source, including an explicit empty policy to turn off.
+        """
         section = policy.as_section()
         previous = db.execute(
             "SELECT payload FROM signatures WHERE operation='human_approval_change' ORDER BY sequence DESC LIMIT 1"
@@ -201,6 +220,8 @@ class KeyStore:
             before = parse(raw[len(prefix) :])["to"]
         elif legacy_approved:
             before = {"legacy_human_issuance": "approved"}
+        if not source_configured and before.get("require"):
+            raise Refused("human_approval_source_required")
         if before == section:
             return
         payload = prefix + canonical({"version": 1, "from": before, "to": section})

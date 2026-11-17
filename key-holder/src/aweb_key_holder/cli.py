@@ -7,13 +7,14 @@ import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from approval_service.canonical import InvalidJSON
 from approval_service.verify import Refused as ApprovalRefused
 from awid.registry import RegistryError
 from jsonschema import ValidationError
 
-from .keys import KeyStore, Refused
+from .keys import HUMAN_APPROVAL_MESSAGES, KeyStore, Refused
 
 
 async def operate(args, parser):
@@ -26,6 +27,17 @@ async def operate(args, parser):
 
     if not all((args.registry_origin, args.origin)):
         parser.error("runtime commands require --registry-origin and --origin")
+    store = KeyStore.open(args.state)
+    if args.human_approval_config is not None:
+        from approval_service.gate import load_policy
+
+        policy = load_policy(
+            args.human_approval_config, organisation=store.descriptor().domain
+        )
+        if policy.service is not None:
+            args.approval_origin = args.approval_origin or policy.service
+            args.rp_id = args.rp_id or urlsplit(policy.service).hostname
+            args.grading = args.grading or "passkey_only"
     configured = any((args.approval_origin, args.rp_id, args.grading))
     if configured and not all((args.approval_origin, args.rp_id, args.grading)):
         parser.error(
@@ -33,7 +45,6 @@ async def operate(args, parser):
         )
     if args.grading == "hardware" and args.mds_cache is None:
         parser.error("hardware grading requires --mds-cache")
-    store = KeyStore.open(args.state)
 
     async def pinned(domain):
         if domain != store.descriptor().domain:
@@ -180,6 +191,8 @@ def main():
             print(json.dumps(result, separators=(",", ":")))
     except (Refused, ApprovalRefused) as error:
         result = {"error": error.code}
+        if error.code in HUMAN_APPROVAL_MESSAGES:
+            result["message"] = HUMAN_APPROVAL_MESSAGES[error.code]
         if error.code == "legacy_human_issuance_write_human_approval":
             result["message"] = (
                 "human_issuance is retired. For an old approved store, write the "

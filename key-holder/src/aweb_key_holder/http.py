@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from jsonschema import ValidationError
 
 from .auth import authenticate
-from .keys import Refused
+from .keys import HUMAN_APPROVAL_MESSAGES, Refused
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,8 @@ def create_app(holder):
             "identity_unavailable",
             "human_approval_unavailable",
             "human_approval_invalid",
+            "human_approval_source_required",
+            "human_approval_hardware_grading_required",
         }:
             status = 503
         elif code in {
@@ -79,6 +81,8 @@ def create_app(holder):
         else:
             status = 401
         body = {"error": {"code": code}}
+        if code in HUMAN_APPROVAL_MESSAGES:
+            body["error"]["message"] = HUMAN_APPROVAL_MESSAGES[code]
         if code == "enrollment_replacement_unavailable":
             body["error"]["message"] = (
                 "Replacing a lost enrolled key is not implemented. Ask the operator "

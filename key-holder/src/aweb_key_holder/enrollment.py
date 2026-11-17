@@ -113,8 +113,15 @@ class Holder:
             self.require_approval()
             if policy.service != self.approval_origin:
                 raise Refused("human_approval_invalid")
+            if (
+                policy.grade("organisation.human.add") == "certified_hardware"
+                and self.grading.mode != "hardware"
+            ):
+                raise Refused("human_approval_hardware_grading_required")
         if db is not None:
-            self.store.observe_policy(db, policy)
+            self.store.observe_policy(
+                db, policy, source_configured=self.human_approval_config is not None
+            )
         return Gate(
             policy, organisation=self.store.descriptor().domain, audience=self.origin
         )
