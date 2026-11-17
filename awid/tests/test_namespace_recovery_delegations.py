@@ -22,12 +22,23 @@ from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid_service.main import create_app
 from conftest import build_signed_headers
 from id_tree_support import (
-    DOMAIN, ORIGIN, Tree, at, certificate, consumes, covering_headers,
-    did_aw, did_key, seed,
+    ORIGIN, Tree, at, certificate, consumes, covering_headers,
+    did_aw, did_key, seed, sign,
 )
 from lock_waits import wait_until_blocked_on_lock
 
-PARENT = "com"
+PARENT = "example.com"
+DOMAIN = "org.example.com"
+
+
+def child_certificate(name):
+    fields = certificate(name)["certificate"]
+    fields["domain"] = DOMAIN
+    signer = "alice"
+    if fields["parent"]["kind"] == "namespace":
+        fields["parent"]["id"] = DOMAIN
+        signer = "root"
+    return sign(fields, signer)
 
 
 class NamespaceDNS(asyncio.DatagramProtocol):
@@ -136,7 +147,7 @@ async def delegation_world(awid_db_infra, manual_clock, monkeypatch):
                     ok(await tree.register_namespace("depth1", domain=PARENT))
                     ok(await register_child(world))
                     await tree.did("alice")
-                    await tree.enroll("alice", when=at("2026-10-26T00:01:00Z"))
+                    ok(await tree.register([child_certificate("alice")], when=at("2026-10-26T00:01:00Z")))
                     tree.clock.now = at("2026-10-26T00:10:00Z")
                     yield world
     finally:
@@ -156,11 +167,11 @@ async def test_recovery_withdraws_children_and_explicit_restore_keeps_data(case,
         ok(await world.tree.client.post(f"/v1/namespaces/{DOMAIN}/{route}", json=body, headers=headers))
     before = {table: await world.db.fetch_all(f"SELECT * FROM {{{{tables.{table}}}}} ORDER BY 1")
               for table in ("id_namespace_epochs", "id_identities", "id_certificates", "teams", "public_addresses")}
-    ok(await register_child(world, domain="attacker.com", child="bob"))
+    ok(await register_child(world, domain="attacker.example.com", child="bob"))
     ok(await recover(world))
     assert "delegation" not in await namespace(world)
     unavailable(await status(world))
-    unavailable(await status(world, "attacker.com"))
+    unavailable(await status(world, "attacker.example.com"))
     # Only the parent epoch changed; child epochs/certificates and ordinary rows stay exact.
     after = {table: await world.db.fetch_all(f"SELECT * FROM {{{{tables.{table}}}}} ORDER BY 1") for table in before}
     for table in before.keys() - {"id_namespace_epochs"}:
@@ -171,10 +182,10 @@ async def test_recovery_withdraws_children_and_explicit_restore_keeps_data(case,
     assert (await namespace(world))["delegation"]["parent_controller_key"] == did_key("root_rotated")
     ok(await status(world))
     assert await epochs(world) == child_before
-    unavailable(await status(world, "attacker.com"))
+    unavailable(await status(world, "attacker.example.com"))
     # The original registered human can still issue, without re-registration or replacement.
     await world.tree.did("bob")
-    ok(await world.tree.register([certificate("alice"), certificate("bob")]))
+    ok(await world.tree.register([child_certificate("alice"), child_certificate("bob")]))
     assert case["expected"]["child_epoch_preserved"] is True
 
 
@@ -247,13 +258,13 @@ async def test_same_key_pre_epoch_enrollment_keeps_valid_child_witness(case, del
 async def test_parent_authorized_child_recovery_withdraws_its_outgoing_grants(case, delegation_world):
     world = delegation_world
     world.dns.records[DOMAIN] = "root"
-    ok(await register_child(world, domain="grand.example.com", child="bob", parent="root"))
-    ok(await status(world, "grand.example.com"))
+    ok(await register_child(world, domain="grand.org.example.com", child="bob", parent="root"))
+    ok(await status(world, "grand.org.example.com"))
     ok(await recover(world, domain=DOMAIN, parent="depth1"))
     world.dns.records[DOMAIN] = "root_rotated"
     assert (await namespace(world))["delegation"]["parent_controller_key"] == did_key("depth1")
-    assert "delegation" not in await namespace(world, "grand.example.com")
-    unavailable(await status(world, "grand.example.com"))
+    assert "delegation" not in await namespace(world, "grand.org.example.com")
+    unavailable(await status(world, "grand.org.example.com"))
     assert case["expected"]["incoming_delegation_preserved"] is True
 
 
@@ -270,17 +281,17 @@ async def test_delete_and_same_key_reregistration_do_not_restore_child_grants(ca
 @consumes("namespace-two-key-rotation-preserves-only-current-delegations")
 async def test_two_key_rotation_preserves_only_delegations_bound_to_previous_key(case, delegation_world):
     world = delegation_world
-    ok(await register_child(world, domain="stale.com", child="bob"))
+    ok(await register_child(world, domain="stale.example.com", child="bob"))
     await world.db.execute(
         "UPDATE {{tables.dns_namespaces}} SET parent_controller_key=$2 WHERE domain=$1",
-        "stale.com", did_key("alice"),
+        "stale.example.com", did_key("alice"),
     )
     before = await epochs(world)
     ok(await rotate(world))
     ok(await status(world))
     assert await epochs(world) == before
     assert (await namespace(world))["delegation"]["parent_controller_key"] == did_key("root_rotated")
-    unavailable(await status(world, "stale.com"))
+    unavailable(await status(world, "stale.example.com"))
     assert case["expected"]["stale_delegation_promoted"] is False
 
 
@@ -315,12 +326,12 @@ async def test_old_parent_registration_waiting_behind_recovery_is_refused(case, 
         await holder.fetch_one("SELECT * FROM {{tables.dns_namespaces}} WHERE domain=$1 FOR UPDATE", PARENT)
         recovery = asyncio.create_task(recover(world))
         await wait_until_blocked_on_lock(world.db, recovery)
-        registration = asyncio.create_task(register_child(world, domain="racing.com", child="bob"))
+        registration = asyncio.create_task(register_child(world, domain="racing.example.com", child="bob"))
         await wait_until_blocked_on_lock(world.db, registration, waiters=2)
     ok(await recovery)
     refused = await registration
     assert refused.status_code == case["expected"]["old_parent_status"], refused.text
-    missing = await world.tree.client.get("/v1/namespaces/racing.com")
+    missing = await world.tree.client.get("/v1/namespaces/racing.example.com")
     assert missing.status_code == 404
 
 

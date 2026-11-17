@@ -12130,8 +12130,8 @@
     {
       "name": "namespace-recovery-withdraws-delegations-and-explicit-restore",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12143,8 +12143,8 @@
     {
       "name": "namespace-recovery-reused-parent-key-no-revival",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12156,8 +12156,8 @@
     {
       "name": "namespace-recovery-same-key-retry-preserves-restored-child",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12169,8 +12169,8 @@
     {
       "name": "namespace-reverify-before-recovery-withdraws-delegations",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12182,8 +12182,8 @@
     {
       "name": "namespace-pre-epoch-recovery-withdraws-delegations",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12195,8 +12195,8 @@
     {
       "name": "namespace-pre-epoch-same-key-enrollment-preserves-delegation",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12208,8 +12208,8 @@
     {
       "name": "namespace-parent-authorized-recovery-withdraws-own-children",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12221,8 +12221,8 @@
     {
       "name": "namespace-delete-reregister-withdraws-delegations",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12234,8 +12234,8 @@
     {
       "name": "namespace-two-key-rotation-preserves-only-current-delegations",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12247,8 +12247,8 @@
     {
       "name": "namespace-recovery-keeps-own-txt-child-independent",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12260,8 +12260,8 @@
     {
       "name": "namespace-observation-does-not-withdraw-delegations",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12273,8 +12273,8 @@
     {
       "name": "namespace-recovery-racing-old-parent-registration-refuses",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
@@ -12286,8 +12286,8 @@
     {
       "name": "namespace-recovery-racing-committed-child-registration-clears",
       "input": {
-        "parent_domain": "com",
-        "child_domain": "example.com",
+        "parent_domain": "example.com",
+        "child_domain": "org.example.com",
         "previous_parent_key": "depth1",
         "new_parent_key": "root_rotated",
         "child_key": "root"
