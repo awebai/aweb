@@ -7,6 +7,13 @@
   by child-and-new-parent signed registration; two-key rotation preserves valid
   delegations. Child data is retained; this does not revoke team credentials or
   every registry write made under a stolen key.
+
+- Team-key pins understand the ID tree's inherited namespace witness; new team
+  creation records a public key act without disclosing private metadata.
+  Existing teams and controller rotations use explicit same-key re-attestation;
+  the inventory backfill is built only, and pin enforcement remains opt-in.
+
+
 - Embedded aweb and AWID applications preserve their host's logging handlers
   and root level. Starting them no longer suppresses later host warnings;
   standalone services still configure their own logging.

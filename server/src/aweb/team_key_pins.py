@@ -50,9 +50,9 @@ class AdmittedTeamKeys:
 
     async def pin(self, team_id: str) -> TeamKeyPin | None:
         row = await self._db.fetch_one(
-            "SELECT team_did_key, team_key_act_at FROM {{tables.teams}} WHERE team_id = $1", team_id,
+            "SELECT team_did_key, team_key_act_at, team_key_act_key FROM {{tables.teams}} WHERE team_id = $1", team_id,
         )
-        return None if row is None else TeamKeyPin(row["team_did_key"], row["team_key_act_at"])
+        return None if row is None else TeamKeyPin(row["team_did_key"], row["team_key_act_at"], row["team_key_act_key"])
 
     async def first_sight(self, team_id: str, team_did_key: str) -> TeamKeyPin:
         # Admission (connect, service registration) writes the row.
@@ -62,12 +62,13 @@ class AdmittedTeamKeys:
         moved = await self._db.fetch_value(
             """
             UPDATE {{tables.teams}}
-            SET team_did_key = $2, team_key_act_at = $3
+            SET team_did_key = $2, team_key_act_at = $3, team_key_act_key = $6
             WHERE team_id = $1 AND team_did_key = $4
               AND team_key_act_at IS NOT DISTINCT FROM $5
+              AND team_key_act_key IS NOT DISTINCT FROM $7
             RETURNING team_id
             """,
-            team_id, new.team_did_key, new.act_at, expected.team_did_key, expected.act_at,
+            team_id, new.team_did_key, new.act_at, expected.team_did_key, expected.act_at, new.act_key, expected.act_key,
         )
         return moved is not None
 
@@ -85,6 +86,7 @@ def team_key_unverified_exception() -> HTTPException:
 
 async def pinned_team_key(
     *, db: Any, registry_client: Any, txt_resolver: Any, team_id: str, served_key: str,
+    memo: TeamKeyMemo | None = None,
 ) -> str:
     """``served_key`` when it is the admitted key or an act moves the pin to it;
     otherwise ``team_key_pin_mismatch`` is logged and, while
@@ -97,6 +99,7 @@ async def pinned_team_key(
         fetch_act=lambda: registry_client.get_team_key_act(domain, name),
         resolver=txt_resolver,
         enforce=enforce_team_key_pins(),
+        fetch_namespace_evidence=getattr(registry_client, "namespace_evidence", None), memo=memo,
     )
 
 
@@ -113,21 +116,27 @@ async def pinned_team_key_for_request(
     if memo is None:
         memo = TeamKeyMemo()
         state.team_key_pin_memo = memo
-    remembered = memo.get(team_id, served_key)
-    if remembered is not None:
-        return remembered
     try:
         key = await pinned_team_key(
             db=db if db is not None else state.db.get_manager("aweb"),
             registry_client=state.awid_registry_client,
             txt_resolver=txt_resolver_for(state),
             team_id=team_id,
-            served_key=served_key,
+            served_key=served_key, memo=memo,
         )
     except TeamKeyUnverified:
         raise team_key_unverified_exception() from None
     except AWID_DEPENDENCY_ERRORS as exc:
         logger.warning("AWID registry dependency failed for the team key act of %s", team_id, exc_info=True)
         raise awid_dependency_http_exception(exc, operation="AWID team key act read") from exc
-    memo.put(team_id, served_key, key)
+    request.state.team_key_admission = (team_id, memo.proof(team_id, served_key))
     return key
+
+
+def admission_key_act(request: Request, team_id: str, key: str) -> TeamKeyPin | None:
+    """Only internally verified proof for this exact admission, never a header."""
+    evidence = getattr(request.state, "team_key_admission", None)
+    if evidence is None or evidence[0] != team_id:
+        return None
+    pin = evidence[1]
+    return pin if isinstance(pin, TeamKeyPin) and pin.team_did_key == key and pin.act_key == key else None

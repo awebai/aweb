@@ -72,19 +72,21 @@ async def _ensure_team(
     db: AsyncDatabaseManager,
     team_id: str,
     team_did_key: str,
+    key_act=None,
 ) -> None:
     """Create the team row if it doesn't exist."""
     namespace, team_name = parse_team_id(team_id)
     await db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key, team_key_act_at, team_key_act_key)
+        VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT (team_id) DO NOTHING
         """,
         team_id,
         namespace,
         team_name,
         team_did_key,
+        key_act.act_at if key_act else None, key_act.act_key if key_act else None,
     )
 
 
@@ -378,6 +380,7 @@ async def connect_agent(
     agent_type: str,
     identity_binding: IdentityBinding | None = None,
     identity_kind: IdentityKindObservation | None = None,
+    key_act=None,
 ) -> dict[str, Any]:
     """Auto-provision team + agent + workspace from certificate info.
 
@@ -428,7 +431,7 @@ async def connect_agent(
     agent_type = "human" if human_verified_key else ("agent" if agent_type == "human" else agent_type)
 
     async with db.transaction() as tx:
-        await _ensure_team(tx, team_id, team_did_key)
+        await _ensure_team(tx, team_id, team_did_key, key_act)
 
         agent_id = await _ensure_agent(
             tx,
@@ -487,6 +490,8 @@ async def connect_endpoint(
     Uses certificate-only auth (no agent lookup) since the agent may not
     exist yet — this endpoint creates the agent row.
     """
+    from aweb.team_key_pins import admission_key_act
+
     cert_info = await verify_request_certificate(request, db, fresh=True)
 
     aweb_db = db.get_manager("aweb")
@@ -501,6 +506,7 @@ async def connect_endpoint(
             identity_binding=cert_info.get("identity_binding"),
             identity_kind=cert_info.get("identity_kind"),
             team_did_key=team_did_key,
+            key_act=admission_key_act(request, cert_info["team_id"], team_did_key),
             hostname=payload.hostname,
             workspace_path=payload.workspace_path,
             repo_origin=payload.repo_origin,

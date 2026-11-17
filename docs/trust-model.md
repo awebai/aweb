@@ -468,8 +468,8 @@ with the namespace controller's `rotate_team_key` act, which AWID keeps exactly
 as signed and serves at `GET /v1/namespaces/{domain}/teams/{name}/key-act`.
 The verifier (`awid.team_key_acts`) requires that the act names exactly that
 team and key, that its signature verifies, that its signer is the controller
-**DNS** names for the domain (`_awid.<domain>` or the nearest ancestor record,
-never the registry's `controller_did`), and that it was signed after the act
+**DNS** names for the domain, or the current child controller established
+through the ID tree's delegated namespace evidence under an inherited record, and that it was signed after the act
 behind the current pin. The pin then moves by compare-and-swap. Anything else
 is logged as one warning line,
 `team_key_pin_mismatch team=<id> pinned=<key> served=<key> reason=<reason> enforced=<true|false>`,
@@ -508,24 +508,32 @@ controller verifies against DNS.
 
 Named residuals:
 
-- **First admission trusts the registry.** A key substituted before a team's
-  first contact with a server is pinned. It cannot coexist silently with the
-  genuine team: the team's real certificates fail under it. The `create_team`
-  act does not sign the key, so first admission has no act to check.
-- **Delegated child namespaces** whose controller is a distinct key authorized
-  by the parent, with no `_awid` record of their own, cannot present an act DNS
-  verifies: the inherited record names the parent's key. Under enforcement
-  their servers refuse a rotated key until the server operator re-pins it.
-  Hosted children are such namespaces: each has its own controller key, and
-  the parent's key signs only for the base domain. Before enforcement serves
-  hosted teams, an inherited authority must accept the child's controller
-  through the parent-signed delegation, or hosted team keys are rotated and
-  re-pinned first.
-- **A pin set at first sight has no act time.** An act is required to be newer
-  than the act behind the pin only when there is one, so before enforcement
-  is turned on, a genuine but older act (a historical rotation, or one for a
-  deleted team of the same name) could move such a pin. The admission time is
-  to serve as the floor.
+- **Creation and legacy first admission.** New creation callers supply the
+  optional `X-AWEB-Team-Key-Act`: a compact controller-signed act naming the
+  domain, team and key and committing to the creation body. It is stored with
+  creation in one transaction; the private display name is not published.
+  The first verified creation/current-key act seeds the pin's signing-time
+  floor, including when the key is unchanged. Legacy creation without that
+  act stays accepted and its first admission remains TOFU; it needs explicit
+  controller re-attestation before enforcement. A wholly unseen older state
+  is still the source-suppression residual above.
+- **Inherited records.** The pin uses the ID tree's same namespace status
+  acquisition path and 60-second freshness bound. Exact DNS takes precedence;
+  an inherited record requires the selected ancestor key, the child's
+  delegation witness and its current epoch to agree. Under an inherited
+  record the registry names the child controller, so for such a namespace
+  the pin does not separate the registry from the controller; a registry
+  that lies about the delegation can move the pin. The remedy is an exact
+  record. This is a registry witness, not verification of a parent signature.
+  The ID tree already relies on that witness for these namespaces; hosted
+  organisations also have one operator holding registry and controller keys.
+  A separate stronger team-only rule would give two answers to the same
+  namespace-authority question. Portable delegation proofs are separate work.
+- **Measuring moves.** The pin retains its highest accepted act time and the
+  key that act actually named. Moving without an act does not mark the new
+  key verified. Unchanged-key reads can establish a fresh baseline; they
+  never lower the retained floor. Existing unqualified pins are re-attested,
+  not guessed from an old timestamp.
 - **The `local` namespace** has no DNS, so a pinned local team cannot rotate
   without the server operator re-pinning it.
 - **Hosted teams.** Pinning separates the registry from the namespace
@@ -533,10 +541,24 @@ Named residuals:
 - **The registry can withhold acts.** That denies the new key; it grants
   nothing.
 
-When the namespace controller has itself rotated since a team-key act, or a
-team was deleted and recreated under the same name, the current controller
-re-submits `rotate` with the team's current key; AWID records that as a fresh
-act (`key_changed: false`).
+When the namespace controller has itself rotated since a team-key act, the
+new controller re-submits `rotate` with every approved team's current key;
+AWID records a fresh act (`key_changed: false`). This is an explicit resumable
+step of rotation, not acceptance of historical controller signatures. An
+already admitted unchanged key keeps working; an old-controller act cannot
+move its pin. A recreated team likewise needs its own creation/current act.
+Recovery does not implicitly approve children: withdrawal and explicit
+restoration of the delegation follow [id-certificates.md](id-certificates.md).
+It does not itself revoke already admitted team credentials.
+
+`awid.team_key_backfill.reaffirm_team_keys` reports readiness over an
+operator-approved inventory, and defaults to reads only. An explicit apply
+uses the current controller, a same-key rotate and an atomic
+`expected_team_did_key` condition, then verifies the public act through the
+same enforcing verifier. It neither discovers approval from a registry team
+list nor rotates team keys/reissues certificates. Hosted inventory belongs to
+its operator. The backfill is built but has not been run in production;
+production execution and enabling enforcement require the owner's go.
 
 ### TOFU pins and durable continuity
 

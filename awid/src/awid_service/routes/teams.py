@@ -29,6 +29,7 @@ from awid.dns_auth import (
 from awid.did import public_key_from_did
 from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
 from awid.team_ids import build_team_id
+from awid.team_key_acts import CREATION_ACT_HEADER, TeamKeyActError, checked_creation_act, verify_team_key_act
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from awid_service.delivery_origin import validate_delivery_origin
 from awid.controller_request import (
@@ -82,6 +83,21 @@ async def _require_namespace_controller(request: Request, db, *, domain: str, op
     if caller_did != row["controller_did"]:
         raise HTTPException(status_code=403, detail="Only the namespace controller can manage teams")
     return caller_did
+
+
+async def _lock_namespace_controller(request, tx, *, domain, caller_did):
+    row = await tx.fetch_one("SELECT controller_did FROM {{tables.dns_namespaces}} "
+                             "WHERE domain=$1 AND deleted_at IS NULL FOR SHARE", domain)
+    enforce_timestamp_skew(require_timestamp(request))
+    if row is None or row["controller_did"] != caller_did:
+        raise HTTPException(status_code=403, detail="Only the current namespace controller can manage teams")
+
+
+async def _record_key_act(tx, team_uuid, proof):
+    await tx.execute("""INSERT INTO {{tables.team_key_acts}}
+        (team_uuid, team_did_key, signer_did_key, signed_payload, signature)
+        VALUES ($1,$2,$3,$4,$5)""", team_uuid, proof["team_did_key"], proof["signer_did_key"],
+        proof["signed_payload"], proof["signature"])
 
 
 async def _require_team_controller(
@@ -435,6 +451,7 @@ class TeamRotateKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     new_team_did_key: str = Field(..., min_length=1, max_length=256)
+    expected_team_did_key: str | None = Field(default=None, min_length=1, max_length=256)
     resigned_records: ResignedRecords | None = None
     member_certificates: list[MemberCertificateChange] = Field(default_factory=list)
 
@@ -628,23 +645,37 @@ async def create_team(
         request, db, domain=domain, operation="create_team", name=body.name,
     )
 
+    creation = None
+    header = request.headers.get(CREATION_ACT_HEADER)
+    if header is not None:
+        try:
+            creation = checked_creation_act(header, signer=caller_did, domain=domain,
+                name=body.name, team_did_key=body.team_did_key, body=await request.body())
+            act = verify_team_key_act(creation, domain=domain, name=body.name, team_did_key=body.team_did_key)
+            enforce_timestamp_skew(act.signed_at.isoformat())
+        except TeamKeyActError as exc:
+            raise HTTPException(status_code=401, detail="Invalid team-key creation act") from exc
     now = datetime.now(timezone.utc)
     try:
-        row = await db.fetch_one(
-            """
-            INSERT INTO {{tables.teams}}
-                (domain, name, display_name, team_did_key, visibility, created_by, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            RETURNING team_uuid, domain, name, display_name, team_did_key, visibility, created_at
-            """,
-            domain,
-            body.name,
-            body.display_name,
-            body.team_did_key,
-            body.visibility,
-            caller_did,
-            now,
-        )
+        async with db.transaction() as tx:
+            await _lock_namespace_controller(request, tx, domain=domain, caller_did=caller_did)
+            row = await tx.fetch_one(
+                """
+                INSERT INTO {{tables.teams}}
+                    (domain, name, display_name, team_did_key, visibility, created_by, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING team_uuid, domain, name, display_name, team_did_key, visibility, created_at
+                """,
+                domain,
+                body.name,
+                body.display_name,
+                body.team_did_key,
+                body.visibility,
+                caller_did,
+                now,
+            )
+            if creation is not None:
+                await _record_key_act(tx, row["team_uuid"], {**creation, "team_did_key": body.team_did_key})
     except QueryError as exc:
         if not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
             raise
@@ -975,12 +1006,13 @@ async def rotate_team_key(
 ) -> TeamRotateResponse:
     body = await _bounded_rotate_body(request)
     db = db_infra.get_manager("aweb")
-    await _require_namespace_controller(
+    caller_did = await _require_namespace_controller(
         request, db, domain=domain, operation="rotate_team_key",
         name=name, new_team_did_key=body.new_team_did_key,
     )
 
     async with db.transaction() as tx:
+        await _lock_namespace_controller(request, tx, domain=domain, caller_did=caller_did)
         old_row = await tx.fetch_one(
             """
             SELECT team_uuid, team_did_key FROM {{tables.teams}}
@@ -993,6 +1025,8 @@ async def rotate_team_key(
         if old_row is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
+        if body.expected_team_did_key is not None and old_row["team_did_key"] != body.expected_team_did_key:
+            raise HTTPException(status_code=409, detail="team_key_changed")
         key_changed = old_row["team_did_key"] != body.new_team_did_key
         await apply_resigned_records(
             tx, team_uuid=old_row["team_uuid"], team_id=build_team_id(domain, name),

@@ -39,6 +39,7 @@ async def create(env, *, changes=None, covering=True, act=True):
         *env.controller, {'domain': 'local', 'operation': 'create_team', 'name': body['name']},
         'POST', PATH, content, covering=covering,
     )
+    headers['Content-Type'] = 'application/json'
     if act:
         headers[HEADER] = creation_header(env, content, **(changes or {}))
     return body, await env.client.post(PATH, content=content, headers=headers)
@@ -93,3 +94,19 @@ async def test_python_creation_client_supplies_the_public_act(controller_app):
         assert verify_team_key_act(record, domain='local', name='sdk', team_did_key=key)
     finally:
         await sdk.aclose()
+
+
+@pytest.mark.asyncio
+async def test_same_key_backfill_precondition_cannot_restore_a_stale_inventory_key(controller_app):
+    from conftest import send_controller_request
+    env = controller_app
+    old = env.team[1]
+    new = controller_keypair()[1]
+    path = '/v1/namespaces/local/teams/base/rotate'
+    claims = {'domain': 'local', 'operation': 'rotate_team_key', 'name': 'base', 'new_team_did_key': new}
+    assert (await send_controller_request(env, 'POST', path, claims, {'new_team_did_key': new})).status_code == 200
+    response = await send_controller_request(env, 'POST', path, {**claims, 'new_team_did_key': old},
+                                             {'new_team_did_key': old, 'expected_team_did_key': old})
+    assert response.status_code == 409, response.text
+    assert await env.db.fetch_value("SELECT team_did_key FROM {{tables.teams}} WHERE name='base'") == new
+    assert await env.db.fetch_value('SELECT count(*) FROM {{tables.team_key_acts}}') == 1

@@ -16,7 +16,7 @@ from awid.signing import canonical_json_bytes, verify_did_key_signature
 from awid.team_ids import parse_team_id
 from aweb.config import get_settings
 from aweb.deps import get_db
-from aweb.team_key_pins import pinned_team_key_for_request
+from aweb.team_key_pins import admission_key_act, pinned_team_key_for_request
 
 router = APIRouter(prefix="/api/v1", tags=["service-registration"])
 
@@ -123,6 +123,7 @@ async def _ensure_service_registered_team(
     canonical_team_id: str,
     team_did_key: str,
     dry_run: bool,
+    key_act=None,
 ) -> bool:
     namespace, team_name = parse_team_id(canonical_team_id)
     existing = await db.fetch_one(
@@ -147,11 +148,12 @@ async def _ensure_service_registered_team(
             await db.execute(
                 """
                 UPDATE {{tables.teams}}
-                SET team_did_key = $2
+                SET team_did_key = $2, team_key_act_at = $3, team_key_act_key = $4
                 WHERE team_id = $1
                 """,
                 canonical_team_id,
                 team_did_key,
+                key_act.act_at if key_act else None, key_act.act_key if key_act else None,
             )
         return False
 
@@ -160,13 +162,14 @@ async def _ensure_service_registered_team(
 
     await db.execute(
         """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key, team_key_act_at, team_key_act_key)
+        VALUES ($1, $2, $3, $4, $5, $6)
         """,
         canonical_team_id,
         namespace,
         team_name,
         team_did_key,
+        key_act.act_at if key_act else None, key_act.act_key if key_act else None,
     )
     return True
 
@@ -239,6 +242,7 @@ async def register_team_with_service(
         canonical_team_id=canonical_team_id,
         team_did_key=team_controller_did,
         dry_run=body.dry_run,
+        key_act=admission_key_act(request, canonical_team_id, team_controller_did),
     )
     return TeamServiceRegisterResponse(
         dry_run=body.dry_run,

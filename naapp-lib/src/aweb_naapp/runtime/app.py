@@ -239,6 +239,7 @@ class NaappRuntime:
             team_key_pins=DatabaseTeamKeyPins(self.db),
             txt_resolver=awid_txt_resolver,
             enforce_team_key_pins=settings.enforce_team_key_pins,
+            namespace_evidence=self._namespace_evidence,
         )
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache, transport=awid_transport,
@@ -361,6 +362,12 @@ class NaappRuntime:
                 self._registry_client = None
                 if registry_client is not None:
                     await registry_client.aclose()
+
+    async def _namespace_evidence(self, domain):
+        if self._registry_client is not None:
+            return await self._registry_client.namespace_evidence(domain)
+        async with aclosing(self._new_registry_client()) as client:
+            return await client.namespace_evidence(domain)
 
     def _new_registry_client(self) -> RegistryClient:
         return RegistryClient(

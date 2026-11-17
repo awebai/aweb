@@ -188,7 +188,7 @@ _REQUESTS = {
     "namespace_rotate": ("from_seq previous_did_key new_did_key", "", "namespace"),
     "namespace_reset": ("new_controller_did", "parent_domain", "namespace"),
     "team_register": ("name display_name team_did_key visibility", "", "namespace"),
-    "team_rotate": ("name new_team_did_key", "resigned_records", "namespace"),
+    "team_rotate": ("name new_team_did_key", "resigned_records expected_team_did_key", "namespace"),
     "team_visibility": ("name visibility", "", "team"),
     "team_delete": ("name", "", "namespace"),
     "certificate_register": ("name certificate", "", "team"),
@@ -253,6 +253,7 @@ def _validate(operation, domain, parameters, definitions):
             "new_did_key",
             "team_did_key",
             "new_team_did_key",
+            "expected_team_did_key",
             "current_did_key",
             "old_did",
             "new_did",
@@ -738,8 +739,16 @@ class ControllerSigningContext:
     role: str = "controller"
     timestamp: str | None = None
     registry_origin: str | None = None
+    public_team_key_act: bool = False
 
     def signing_bytes(self):
+        if self.public_team_key_act:
+            _require(self.request.operation == "team_register" and self.role == "controller", "operation_invalid")
+            _check_controller(self.request, self.controller, self.role)
+            from awid.team_key_acts import creation_act_payload
+            p = self.request.parameters
+            return creation_act_payload(domain=self.request.domain, name=p["name"],
+                team_did_key=p["team_did_key"], body=controller_http_plan(self.request).body, timestamp=self.timestamp)
         return build_controller_payload(
             self.request,
             controller=self.controller,

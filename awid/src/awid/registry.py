@@ -455,6 +455,14 @@ class RegistryClient:
             request = None
         if request is None:
             return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
+        return await self.id_status_evidence(request)
+
+    async def namespace_evidence(self, domain: str) -> IDChainEvidence:
+        """Namespace-only status through the ID tree's acquisition/cache owner."""
+        return await self.id_status_evidence({"v": 1, "domain": domain, "ids": []})
+
+    async def id_status_evidence(self, request: dict[str, Any]) -> IDChainEvidence:
+        domain = request["domain"]
         started_ns = _monotonic_ns()
         try:
             async with asyncio.timeout(self.timeout_seconds):
@@ -748,6 +756,13 @@ class RegistryClient:
                 if plan.format == "covering":
                     signed = "X-AWEB-Parent-Signed-Payload" if context.role == "parent" else "X-AWEB-Signed-Payload"
                     headers[signed] = base64.urlsafe_b64encode(context.signing_bytes()).rstrip(b"=").decode()
+        if request.operation == "team_register":
+            from dataclasses import replace
+            from awid.team_key_acts import CREATION_ACT_HEADER, creation_act_header
+            public_context = replace(contexts[0], public_team_key_act=True)
+            public_signature = await checked_controller_signature(public_context, signer)
+            headers[CREATION_ACT_HEADER] = creation_act_header(public_context.signing_bytes(),
+                base64.b64encode(public_signature).rstrip(b"=").decode())
         mutation = plan.method != "GET"
         if mutation:
             await self._invalidate_controller_request(request, pin)
@@ -784,12 +799,14 @@ class RegistryClient:
 
     async def rotate_team_key(self, domain: str, name: str, *, new_team_did_key: str,
                               namespace_controller_signing_key: bytes,
-                              resigned_records: dict[str, Any] | None = None) -> dict[str, Any]:
+                              resigned_records: dict[str, Any] | None = None,
+                              expected_team_did_key: str | None = None) -> dict[str, Any]:
         """Submit the registry's existing atomic team-key/re-signed-record act."""
         from awid.controller_signing import ControllerDescriptor, parse_controller_request
         descriptor = ControllerDescriptor("namespace", domain, did_key_from_signing_key(namespace_controller_signing_key), "local", 0)
         request = parse_controller_request({"operation": "team_rotate", "domain": domain, "name": name,
-                                           "new_team_did_key": new_team_did_key, "resigned_records": resigned_records})
+            "new_team_did_key": new_team_did_key, "resigned_records": resigned_records,
+            **({"expected_team_did_key": expected_team_did_key} if expected_team_did_key is not None else {})})
         def local(context):
             return descriptor.did_key, SigningKey(namespace_controller_signing_key).sign(context.signing_bytes()).signature
         return await self.controller_request(request, controllers={"controller": descriptor}, signer=local)
@@ -1774,6 +1791,11 @@ class RegistryClient:
             headers.update(self._controller_headers(
                 parent_key, operation=parent_operation, claims=parent_claims, parent=True, **signed,
             ))
+        if operation == "create_team":
+            from awid.team_key_acts import CREATION_ACT_HEADER, creation_act_header, creation_act_payload
+            public = creation_act_payload(domain=domain, name=body["name"], team_did_key=body["team_did_key"],
+                                          body=content, timestamp=headers["X-AWEB-Timestamp"])
+            headers[CREATION_ACT_HEADER] = creation_act_header(public, sign_message(signing_key, public))
         if content:
             headers["Content-Type"] = "application/json"
         return await self._request_json(
@@ -1845,25 +1867,8 @@ class CachedRegistryClient(RegistryClient):
         object.__setattr__(self, "_team_key_signature_refreshes", {})
         object.__setattr__(self, "_team_certificate_miss_refreshes", {})
 
-    async def id_chain_evidence(
-        self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
-    ) -> IDChainEvidence:
-        """Trusted identity-tree evidence for verifying ``subject``'s chain in ``domain``.
-
-        A stored entry is aged on the Redis server's clock, the one clock
-        every process sharing it reads. Evidence aged 60 seconds or less is
-        served with no DNS or HTTP work. Older evidence waits for one refresh
-        shared by every caller of the same request; when that attempt fails,
-        the evidence is returned without an age, so it is unavailable. Fetch
-        failures never raise.
-        """
-        try:
-            request = status_request(bundle, subject, domain=domain)
-        except IDCertificateError:
-            request = None
-        if request is None:
-            # The verifier refuses this request before it reads any evidence.
-            return IDChainEvidence(status={}, namespace_authority={}, age_seconds=None)
+    async def id_status_evidence(self, request: dict[str, Any]) -> IDChainEvidence:
+        """The shared Redis-aged ID/namespace status path, fresh for 60 seconds."""
         cache_key = self._id_status_cache_key(request)
         redis_now_us, cached = await self._read_id_status_entry(cache_key)
         # An entry stamped ahead of the Redis clock (it stepped back) has no
@@ -3084,7 +3089,7 @@ class CachedRegistryClient(RegistryClient):
 
 
 def _utc_timestamp() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _lookup_cache_scope(caller_did_key: str | None) -> str:

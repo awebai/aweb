@@ -335,6 +335,17 @@ class IDChainEvidence:
     age_seconds: float | None
 
 
+def namespace_controller_from_evidence(evidence: IDChainEvidence, domain: str) -> str:
+    """The ID tree's same namespace checks, without asking for an identity.
+
+    Delegation is a witness of the selected registry, not a parent signature.
+    The acquisition path and 60-second bound are shared with ID verification.
+    """
+    if status_cache_mode(evidence.age_seconds) != 'fresh':
+        raise IDCertificateError('evidence_unavailable')
+    return _IDStatus(evidence, domain).epochs[-1]['did_key']
+
+
 def status_cache_mode(age_seconds: float | None) -> str:
     """Fresh through 60 seconds at acquisition; expired evidence is unavailable."""
     if type(age_seconds) not in (int, float) or age_seconds < 0:

@@ -16,7 +16,7 @@ from redis.asyncio import Redis
 
 from awid.dns_verify import awid_txt_value
 from awid.external_authority import SystemTXTOutcomeResolver
-from awid.registry import CachedRegistryClient, RegistryClient
+from awid.registry import CachedRegistryClient
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.team_key_acts import TeamKeyActError, verify_team_key_change
 from awid_service.main import create_app
@@ -66,9 +66,9 @@ async def world(awid_db_infra, monkeypatch):
                     await sdk.register_namespace('example.com', parent[1], parent[0])
                     await sdk.register_namespace(DOMAIN, child[1], child[0], parent_signing_key=parent[0])
                     await sdk.register_team(domain=DOMAIN, name='base', team_did_key=team[1],
-                                            display_name='PRIVATE', visibility='private',
+                                            display_name='PRIVATE', visibility='public',
                                             namespace_controller_signing_key=child[0])
-                    await sdk.rotate_team_key(DOMAIN, 'base', team[1], child[0])
+                    await sdk.rotate_team_key(DOMAIN, 'base', new_team_did_key=team[1], namespace_controller_signing_key=child[0])
                     yield SimpleNamespace(sdk=sdk, dns=dns_server, parent=parent, child=child,
                                           team=team, resolver=SystemTXTOutcomeResolver(),
                                           db=awid_db_infra.get_manager('aweb'))
@@ -109,3 +109,31 @@ async def test_missing_delegation_never_authorises_the_child_act(world):
     await world.db.execute('UPDATE {{tables.dns_namespaces}} SET parent_domain=NULL, parent_controller_key=NULL WHERE domain=$1', DOMAIN)
     with pytest.raises(TeamKeyActError):
         await verify(world)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('apply', [False, True])
+async def test_owner_inventory_backfill_is_explicit_idempotent_and_preserves_team_state(world, apply):
+    from awid.controller_signing import ControllerDescriptor
+    from awid.signing import sign_message
+    from awid.team_key_backfill import TeamKeyBackfillTarget, reaffirm_team_keys
+    import base64
+
+    await world.db.execute('DELETE FROM {{tables.team_key_acts}}')
+    original = dict(await world.db.fetch_one('SELECT * FROM {{tables.teams}}'))
+    controller = ControllerDescriptor('namespace', DOMAIN, world.child[1], 'local', 0)
+
+    def signer(context):
+        return world.child[1], base64.b64decode(sign_message(world.child[0], context.signing_bytes()))
+
+    report = await reaffirm_team_keys(world.sdk, [TeamKeyBackfillTarget(DOMAIN, 'base', world.team[1])],
+        controllers={DOMAIN: controller}, signer=signer, apply=apply, resolver=world.resolver)
+    assert report['before'] == {'total': 1, 'ready': 0, 'unready': 1, 'conflicted': 0}
+    assert report['after']['ready'] == int(apply)
+    assert dict(await world.db.fetch_one('SELECT * FROM {{tables.teams}}')) == original
+    assert await world.db.fetch_value('SELECT count(*) FROM {{tables.team_certificates}}') == 0
+    if apply:
+        again = await reaffirm_team_keys(world.sdk, [TeamKeyBackfillTarget(DOMAIN, 'base', world.team[1])],
+            controllers={DOMAIN: controller}, signer=signer, apply=True, resolver=world.resolver)
+        assert again['before']['ready'] == 1
+        assert await world.db.fetch_value('SELECT count(*) FROM {{tables.team_key_acts}}') == 1

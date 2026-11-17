@@ -137,7 +137,8 @@ def test_verifier_accepts_the_exact_act():
 
 
 @pytest.mark.parametrize(('claims', 'reason'), [
-    ({'operation': 'create_team'}, 'wrong_operation'),
+    ({'operation': 'create_team'}, 'malformed'),
+    ({'operation': 'delete_team'}, 'wrong_operation'),
     ({'domain': 'other.test'}, 'team_mismatch'),
     ({'name': 'other'}, 'team_mismatch'),
 ])
@@ -204,8 +205,13 @@ async def _change(record, team, *, resolver, pinned_at=None):
 async def test_change_is_accepted_from_the_controller_dns_names(dns_name):
     signer = keypair()
     _, team = keypair()
-    act = await _change(_example_act(signer, team), team, resolver=_dns(dns_name, signer[1]))
-    assert act.signer_did_key == signer[1]
+    if dns_name == '_awid.example.com':
+        with pytest.raises(TeamKeyActError) as refused:
+            await _change(_example_act(signer, team), team, resolver=_dns(dns_name, signer[1]))
+        assert refused.value.reason == 'controller_unavailable'
+    else:
+        act = await _change(_example_act(signer, team), team, resolver=_dns(dns_name, signer[1]))
+        assert act.signer_did_key == signer[1]
 
 
 @pytest.mark.asyncio

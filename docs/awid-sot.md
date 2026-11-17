@@ -636,7 +636,15 @@ POST   /v1/namespaces/{domain}/teams
                "team_did_key": "did:key:z6Mk...",
                "visibility": "private" | "public" }
        The caller generates the team keypair and provides the public
-       key. awid never sees the private key.
+       key. awid never sees the private key. New clients also send the optional
+       X-AWEB-Team-Key-Act header: JSON {signed_payload,signature}. Its signed
+       canonical payload is {v:1,type:"aweb.team-key-act",operation:"create_team",
+       domain,name,team_did_key,timestamp,body_sha256}. The controller must sign
+       it; domain/name/key must equal the request, the body hash must match its
+       exact bytes, and the timestamp must be fresh. A disagreement refuses
+       with 401 and creates nothing. Creation and its public act commit together.
+       The private body/display_name is never served as act evidence. Released
+       callers without this header remain accepted and need re-attestation.
        Response: { "team_id": "backend:acme.com", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
@@ -712,6 +720,9 @@ POST   /v1/namespaces/{domain}/teams/{name}/rotate
        AWID keeps the request's signed bytes, signer and signature as the
        team-key act, in the same transaction, also when the key is
        unchanged (a re-attestation by the current namespace controller).
+       The optional expected_team_did_key in the body is a compare-and-swap
+       precondition for same-key backfill; a changed key refuses 409
+       team_key_changed without writing. Existing bodies remain accepted.
 
 GET    /v1/namespaces/{domain}/teams/{name}/key-act
        The namespace controller's latest act naming the team's CURRENT key.
@@ -728,8 +739,10 @@ GET    /v1/namespaces/{domain}/teams/{name}/key-act
        signed_payload is the covering-v2 envelope or the legacy
        {domain, operation, name, new_team_did_key, timestamp} JSON, exactly as
        signed. One identical 404 when the team is unknown or no stored act
-       names its current key. Relying servers verify it with awid.team_key_acts against
-       the controller DNS names, never against the registry's controller_did
+       names its current key. Creation also serves the compact creation act
+       described above; a legacy creation without it has no public key act.
+       Relying servers use awid.team_key_acts: exact DNS or the ID tree's same
+       delegated child witness and freshness bound
        ([trust-model.md](trust-model.md#team-key-pins-approved-2026-11-12)).
 
 POST   /v1/namespaces/{domain}/teams/{name}/visibility

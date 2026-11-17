@@ -100,3 +100,16 @@ The published aw 1.36.43 always sends the blob. Cloud's production registration
 wrapper also supplies a minted or validated persisted blob on every call;
 its paired change refuses an empty blob before calling the registry. Historical
 test evidence is seeded as old data, rather than creating a new unsigned record.
+
+### Public team creation act
+
+New Python/Go team creation callers additionally send `X-AWEB-Team-Key-Act`.
+It carries `{signed_payload,signature}`; the unpadded-base64url payload is the
+canonical JSON `{v:1,type:"aweb.team-key-act",operation:"create_team",domain,
+name,team_did_key,timestamp,body_sha256}`. The same namespace controller signs
+it. The registry checks all three domain/team/key fields against the body,
+the exact body hash and timestamp, and stores the act atomically with creation.
+Unlike the covering request, this public proof can establish the key without
+publishing a private team's display name. Released callers remain accepted;
+a missing act is repaired by explicit same-key re-attestation. Old registries
+may ignore the additional header. The existing covering request is unchanged.

@@ -855,3 +855,50 @@ func TestListCertificatesRefusesToReturnWhatItGatheredAtThePageCap(t *testing.T)
 		t.Fatalf("made %d requests, want exactly the cap of %d", requests, certificateListPageCap)
 	}
 }
+
+func TestCreateTeamCarriesPublicKeyActWithoutPrivateDisplayName(t *testing.T) {
+	_, controller, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reached := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		var header map[string]string
+		if err := json.Unmarshal([]byte(r.Header.Get("X-AWEB-Team-Key-Act")), &header); err != nil {
+			t.Fatal(err)
+		}
+		payload, err := base64.RawURLEncoding.DecodeString(header["signed_payload"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var act map[string]any
+		if err := json.Unmarshal(payload, &act); err != nil {
+			t.Fatal(err)
+		}
+		if act["domain"] != "acme.com" || act["name"] != "base" || act["team_did_key"] != "did:key:team" || act["operation"] != "create_team" {
+			t.Fatalf("wrong creation act: %s", payload)
+		}
+		if strings.Contains(string(payload), "PRIVATE") || strings.Contains(string(payload), "display_name") {
+			t.Fatal("private metadata leaked")
+		}
+		signature, err := base64.RawStdEncoding.DecodeString(header["signature"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		did, _, _ := KeySigner(controller)(payload)
+		if err := idStrictVerify(did, signature, func() ([]byte, error) { return payload, nil }); err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "base:acme.com", "name": "base"})
+	}))
+	defer server.Close()
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
+	if _, err := client.CreateTeam(context.Background(), server.URL, "acme.com", "base", "PRIVATE", "did:key:team", controller); err != nil {
+		t.Fatal(err)
+	}
+	if !reached {
+		t.Fatal("creation was not sent")
+	}
+}

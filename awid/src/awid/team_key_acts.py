@@ -5,13 +5,16 @@ key (``rotate_team_key``, in either the covering-v2 or the legacy controller
 form) and serves them with the signer and signature. A relying server that has
 pinned a team key accepts a different key only with such an act, signed by the
 controller its own DNS lookup names, and newer than the act behind its pin.
-Nothing here trusts the registry beyond the bytes it returns.
+Exact DNS keeps controller authority independent of the registry. Inherited
+authority uses the ID tree's registry witness; that registry names the child
+controller and can move the pin by lying about delegation.
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import logging
 import time
@@ -21,6 +24,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from awid.external_authority import TXTOutcomeResolver, discover_registry_authority
+from awid.id_certificates import IDCertificateError, IDChainEvidence, namespace_controller_from_evidence
 from awid.federation_errors import FederationAuthorityError
 from awid.id_tree_requests import CONTROLLER_REQUEST_TYPE
 from awid.signing import verify_did_key_signature
@@ -30,6 +34,42 @@ logger = logging.getLogger(__name__)
 
 ROTATE_TEAM_KEY_OPERATION = "rotate_team_key"
 MAX_SIGNED_PAYLOAD_BYTES = 16384
+CREATION_ACT_HEADER = "X-AWEB-Team-Key-Act"
+CREATION_ACT_TYPE = "aweb.team-key-act"
+
+
+def creation_act_payload(*, domain: str, name: str, team_did_key: str, body: bytes, timestamp: str) -> bytes:
+    """A public commitment to creation, without the private request body."""
+    from awid.signing import canonical_json_bytes
+    return canonical_json_bytes({"v": 1, "type": CREATION_ACT_TYPE, "operation": "create_team",
+        "domain": domain, "name": name, "team_did_key": team_did_key,
+        "timestamp": timestamp, "body_sha256": hashlib.sha256(body).hexdigest()})
+
+
+def creation_act_header(payload: bytes, signature: str) -> str:
+    return json.dumps({"signed_payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
+                       "signature": signature}, separators=(",", ":"))
+
+
+def checked_creation_act(header: str, *, signer: str, domain: str, name: str, team_did_key: str, body: bytes) -> dict:
+    if len(header) > MAX_SIGNED_PAYLOAD_BYTES:
+        raise TeamKeyActError("malformed", "creation header too large")
+    try:
+        value = json.loads(header)
+        if type(value) is not dict or set(value) != {"signed_payload", "signature"}:
+            raise ValueError("creation header fields")
+        record = {**value, "signer_did_key": signer}
+        act = verify_team_key_act(record, domain=domain, name=name, team_did_key=team_did_key)
+        raw = _decode_payload(value["signed_payload"])
+        payload = json.loads(raw)
+        expected = creation_act_payload(domain=domain, name=name, team_did_key=team_did_key,
+                                        body=body, timestamp=payload["timestamp"])
+        if raw != expected or act.signer_did_key != signer:
+            raise ValueError("creation request mismatch")
+        return record
+    except (ValueError, TypeError, KeyError) as exc:
+        raise TeamKeyActError("malformed", "creation request mismatch") from exc
+
 
 
 class TeamKeyActError(Exception):
@@ -95,14 +135,21 @@ def verify_team_key_act(record: Any, *, domain: str, name: str, team_did_key: st
         raise TeamKeyActError("malformed", "signed_payload") from exc
     if not isinstance(payload, dict):
         raise TeamKeyActError("malformed", "signed_payload")
-    if "v" in payload and (payload.get("v") != 2 or payload.get("type") != CONTROLLER_REQUEST_TYPE):
+    creation = payload.get("operation") == "create_team"
+    if creation:
+        if (set(payload) != {"v", "type", "operation", "domain", "name", "team_did_key", "timestamp", "body_sha256"}
+                or type(payload.get("v")) is not int or payload.get("v") != 1 or payload.get("type") != CREATION_ACT_TYPE
+                or not isinstance(payload.get("body_sha256"), str) or len(payload["body_sha256"]) != 64
+                or any(c not in "0123456789abcdef" for c in payload["body_sha256"])):
+            raise TeamKeyActError("malformed", "creation payload")
+    elif "v" in payload and (payload.get("v") != 2 or payload.get("type") != CONTROLLER_REQUEST_TYPE):
         raise TeamKeyActError("malformed", "envelope version")
     signed_at = _parse_timestamp(payload.get("timestamp"))
-    if payload.get("operation") != ROTATE_TEAM_KEY_OPERATION:
+    if not creation and payload.get("operation") != ROTATE_TEAM_KEY_OPERATION:
         raise TeamKeyActError("wrong_operation")
     if payload.get("domain") != domain or payload.get("name") != name:
         raise TeamKeyActError("team_mismatch")
-    if payload.get("new_team_did_key") != team_did_key:
+    if payload.get("team_did_key" if creation else "new_team_did_key") != team_did_key:
         raise TeamKeyActError("key_mismatch")
     try:
         verify_did_key_signature(did_key=signer, payload=raw, signature_b64=signature)
@@ -111,7 +158,10 @@ def verify_team_key_act(record: Any, *, domain: str, name: str, team_did_key: st
     return TeamKeyAct(domain=domain, name=name, team_did_key=team_did_key, signer_did_key=signer, signed_at=signed_at)
 
 
-async def dns_namespace_controller(domain: str, resolver: TXTOutcomeResolver) -> str:
+async def dns_namespace_controller(
+    domain: str, resolver: TXTOutcomeResolver,
+    fetch_namespace_evidence: Callable[[str], Awaitable[IDChainEvidence]] | None = None,
+) -> str:
     """The namespace controller ``_awid.<domain>`` (or the nearest ancestor
     record) names. Raises ``controller_unavailable`` when DNS names none."""
     try:
@@ -120,6 +170,14 @@ async def dns_namespace_controller(domain: str, resolver: TXTOutcomeResolver) ->
         raise TeamKeyActError("controller_unavailable", f"DNS lookup for {domain} failed") from exc
     if authority.selection != "dns" or not authority.controller_did:
         raise TeamKeyActError("controller_unavailable", f"no _awid record for {domain}")
+    if authority.inherited:
+        if fetch_namespace_evidence is None:
+            raise TeamKeyActError("controller_unavailable", "delegation evidence required")
+        try:
+            evidence = await fetch_namespace_evidence(domain)
+            return namespace_controller_from_evidence(evidence, domain)
+        except IDCertificateError as exc:
+            raise TeamKeyActError("controller_unavailable", "delegation evidence unavailable") from exc
     return authority.controller_did
 
 
@@ -131,6 +189,7 @@ async def verify_team_key_change(
     team_did_key: str,
     pinned_at: datetime | None,
     resolver: TXTOutcomeResolver,
+    fetch_namespace_evidence: Callable[[str], Awaitable[IDChainEvidence]] | None = None,
 ) -> TeamKeyAct:
     """The act that moves a pinned team key to ``team_did_key``: a valid
     ``rotate_team_key`` act, newer than ``pinned_at`` (the act behind the
@@ -138,7 +197,7 @@ async def verify_team_key_change(
     act = verify_team_key_act(record, domain=domain, name=name, team_did_key=team_did_key)
     if pinned_at is not None and act.signed_at <= pinned_at:
         raise TeamKeyActError("not_newer")
-    controller = await dns_namespace_controller(domain, resolver)
+    controller = await dns_namespace_controller(domain, resolver, fetch_namespace_evidence)
     if act.signer_did_key != controller:
         raise TeamKeyActError("signer_not_controller")
     return act
@@ -151,6 +210,7 @@ class TeamKeyPin:
 
     team_did_key: str
     act_at: datetime | None
+    act_key: str | None = None
 
 
 class TeamKeyPinStore(Protocol):
@@ -196,16 +256,21 @@ class TeamKeyMemo:
     def __init__(self, seconds: float = 60, clock: Callable[[], float] = time.monotonic) -> None:
         self._seconds = seconds
         self._clock = clock
-        self._entries: dict[str, tuple[str, str, float]] = {}
+        self._entries: dict[str, tuple[str, str, float, TeamKeyPin | None]] = {}
 
     def get(self, team_id: str, served_key: str) -> str | None:
         entry = self._entries.get(team_id)
-        if entry is None or entry[0] != served_key or self._clock() - entry[2] >= self._seconds:
+        if entry is None or entry[0] != served_key or self._clock() >= entry[2]:
             return None
         return entry[1]
 
-    def put(self, team_id: str, served_key: str, answer: str) -> None:
-        self._entries[team_id] = (served_key, answer, self._clock())
+    def put(self, team_id: str, served_key: str, answer: str, *,
+            seconds: float | None = None, proof: TeamKeyPin | None = None) -> None:
+        ttl = self._seconds if seconds is None else min(self._seconds, max(0, seconds))
+        self._entries[team_id] = (served_key, answer, self._clock() + ttl, proof)
+
+    def proof(self, team_id: str, served_key: str) -> TeamKeyPin | None:
+        return self._entries[team_id][3] if self.get(team_id, served_key) is not None else None
 
 
 class TeamKeyUnverified(Exception):
@@ -218,63 +283,94 @@ class TeamKeyUnverified(Exception):
 
 
 async def pinned_team_key(
-    team_id: str,
-    served_key: str,
-    *,
-    pins: TeamKeyPinStore,
-    fetch_act: Callable[[], Awaitable[Any]],
-    resolver: TXTOutcomeResolver,
-    enforce: bool,
+    team_id: str, served_key: str, *, pins: TeamKeyPinStore,
+    fetch_act: Callable[[], Awaitable[Any]], resolver: TXTOutcomeResolver, enforce: bool,
+    fetch_namespace_evidence: Callable[[str], Awaitable[IDChainEvidence]] | None = None,
+    memo: TeamKeyMemo | None = None,
 ) -> str:
-    """``served_key`` when it is the team's pinned key, or when the namespace
-    controller's act (``fetch_act()``, None when the registry has none) moves
-    the pin to it. When the registry's act names a different key than
-    ``served_key``, the read is older than that act or substituted beside it:
-    in both modes the pin stays, ``team_key_pin_kept`` is logged and the
-    pinned key is returned. Otherwise the mismatch is logged as
-    ``team_key_pin_mismatch`` and, with ``enforce``, refused with
-    TeamKeyUnverified; without it (the staged measuring mode) the pin moves
-    to ``served_key``, logged as ``team_key_pin_moved_without_act``, and
-    ``served_key`` is returned. The returned key is therefore the pin, the key
-    certificates are verified under in both modes, and the server holds one
-    current key for the team. A team never seen is pinned to ``served_key``.
-    Registry read errors from ``fetch_act`` propagate."""
+    """Resolve a pin, sharing the ID tree's evidence path and freshness ceiling.
+
+    First admission remains TOFU for released creators without acts. A valid
+    creation/current-key act seeds its floor, including on unchanged-key reads.
+    Measuring moves retain the floor AND which key its proof actually named.
+    """
+    if memo is not None:
+        remembered = memo.get(team_id, served_key)
+        if remembered is not None:
+            return remembered
+    deadline = None
+    proof = None
+
+    async def namespace(domain):
+        nonlocal deadline
+        evidence = await fetch_namespace_evidence(domain)
+        if evidence.age_seconds is not None:
+            deadline = time.monotonic() + max(0, 60 - evidence.age_seconds)
+        return evidence
+
+    def witnessed(value):
+        nonlocal proof
+        proof = value
+
+    answer = await _resolve_pin(team_id, served_key, pins=pins, fetch_act=fetch_act,
+        resolver=resolver, enforce=enforce,
+        fetch_namespace_evidence=namespace if fetch_namespace_evidence is not None else None,
+        witnessed=witnessed)
+    if memo is not None:
+        memo.put(team_id, served_key, answer, proof=proof,
+                 seconds=None if deadline is None else max(0, deadline - time.monotonic()))
+    return answer
+
+
+async def _resolve_pin(team_id, served_key, *, pins, fetch_act, resolver, enforce,
+                       fetch_namespace_evidence, witnessed):
     pin = await pins.pin(team_id)
     if pin is None:
         pin = await pins.first_sight(team_id, served_key)
-    if pin.team_did_key == served_key:
+    baseline = pin.team_did_key == served_key
+    if baseline and pin.act_at is not None and pin.act_key == served_key:
+        witnessed(pin)
         return served_key
     domain, name = parse_team_id(team_id)
     try:
         record = await fetch_act()
         if record is None:
             raise TeamKeyActError("no_act")
-        act = await verify_team_key_change(
-            record, domain=domain, name=name, team_did_key=served_key, pinned_at=pin.act_at, resolver=resolver,
-        )
+        act = await verify_team_key_change(record, domain=domain, name=name, team_did_key=served_key,
+            pinned_at=None if baseline else pin.act_at, resolver=resolver,
+            fetch_namespace_evidence=fetch_namespace_evidence)
+        if baseline and pin.act_at is not None and act.signed_at < pin.act_at:
+            raise TeamKeyActError("not_newer")
     except TeamKeyActError as exc:
         if exc.reason == "key_mismatch":
-            # The registry's own act names another key: the served key is a
-            # read older than that act, or substituted beside it. Neither
-            # moves the pin in either mode.
-            logger.warning(
-                "team_key_pin_kept team=%s pinned=%s served=%s reason=%s",
-                team_id, pin.team_did_key, served_key, exc.reason,
-            )
+            logger.warning("team_key_pin_kept team=%s pinned=%s served=%s reason=%s",
+                           team_id, pin.team_did_key, served_key, exc.reason)
             return pin.team_did_key
+        if baseline and pin.act_at is None:
+            # Released creation did not sign a public key act. Do not change
+            # its admission contract; report it as unready for enforcement.
+            logger.warning("team_key_pin_baseline_unavailable team=%s reason=%s", team_id, exc.reason)
+            return served_key
         _mismatch(team_id, pin.team_did_key, served_key, exc.reason, enforce=enforce)
         return await _move_without_act(team_id, pins, pin, served_key, exc.reason)
-    if not await pins.move(team_id, expected=pin, new=TeamKeyPin(served_key, act.signed_at)):
+    new = TeamKeyPin(served_key, act.signed_at, served_key)
+    if not await pins.move(team_id, expected=pin, new=new):
         current = await pins.pin(team_id)
+        if current is None and baseline:
+            # The server admits its row later, after the member is verified.
+            # Carry the checked proof into that admission transaction.
+            witnessed(new)
+            return served_key
         if current is not None and current.team_did_key == served_key:
+            if current.act_key == served_key:
+                witnessed(current)
             return served_key
         pinned = current or pin
         _mismatch(team_id, pinned.team_did_key, served_key, "pin_moved", enforce=enforce)
         return await _move_without_act(team_id, pins, pinned, served_key, "pin_moved")
-    logger.warning(
-        "team key pin for %s moved from %s to %s by the namespace controller act signed %s by %s",
-        team_id, pin.team_did_key, served_key, act.signed_at.isoformat(), act.signer_did_key,
-    )
+    witnessed(new)
+    logger.warning("team key pin for %s moved from %s to %s by the namespace controller act signed %s by %s",
+                   team_id, pin.team_did_key, served_key, act.signed_at.isoformat(), act.signer_did_key)
     return served_key
 
 
@@ -292,7 +388,7 @@ async def _move_without_act(team_id: str, pins: TeamKeyPinStore, pin: TeamKeyPin
     """Before enforcement, the tolerated ``served`` key becomes the pin, so the
     key a member was verified under is the team's current key on this server.
     The time of the last accepted act is kept: no act moved it."""
-    if await pins.move(team_id, expected=pin, new=TeamKeyPin(served, pin.act_at)):
+    if await pins.move(team_id, expected=pin, new=TeamKeyPin(served, pin.act_at, pin.act_key)):
         logger.warning(
             "team_key_pin_moved_without_act team=%s from=%s to=%s reason=%s",
             team_id, pin.team_did_key, served, reason,

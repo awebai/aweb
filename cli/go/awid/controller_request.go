@@ -128,7 +128,7 @@ func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryUR
 	if target.RawQuery != "" {
 		signedPath += "?" + target.RawQuery
 	}
-	timestamp := c.now().UTC().Format("2006-01-02T15:04:05Z")
+	timestamp := c.now().UTC().Format("2006-01-02T15:04:05.999999Z")
 	payload, err := ControllerRequestPayload(aud, method, signedPath, raw, timestamp, domain, operation, claims)
 	if err != nil {
 		return err
@@ -145,6 +145,39 @@ func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryUR
 		"X-AWEB-Timestamp":      timestamp,
 		"X-AWEB-Signed-Payload": base64.RawURLEncoding.EncodeToString(payload),
 		"Authorization":         "DIDKey " + didKey + " " + base64.RawStdEncoding.EncodeToString(signature),
+	}
+	if operation == "create_team" {
+		var fields map[string]any
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return err
+		}
+		sum := sha256.Sum256(raw)
+		public, err := sortedJSONBytes(map[string]any{
+			"v": 1, "type": "aweb.team-key-act", "operation": "create_team",
+			"domain": domain, "name": fields["name"], "team_did_key": fields["team_did_key"],
+			"timestamp": timestamp, "body_sha256": hex.EncodeToString(sum[:]),
+		})
+		if err != nil {
+			return err
+		}
+		publicDID, publicSignature, err := signer(public)
+		if err != nil {
+			return err
+		}
+		if publicDID != didKey {
+			return fmt.Errorf("creation act signer changed")
+		}
+		if err := idStrictVerify(publicDID, publicSignature, func() ([]byte, error) { return public, nil }); err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(map[string]string{
+			"signed_payload": base64.RawURLEncoding.EncodeToString(public),
+			"signature":      base64.RawStdEncoding.EncodeToString(publicSignature),
+		})
+		if err != nil {
+			return err
+		}
+		signed["X-AWEB-Team-Key-Act"] = string(encoded)
 	}
 	for k, v := range headers {
 		signed[k] = v

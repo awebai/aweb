@@ -18,10 +18,10 @@ class DatabaseTeamKeyPins:
 
     async def pin(self, team_id: str) -> TeamKeyPin | None:
         row = await self._db().fetch_one(
-            "SELECT team_did_key, team_key_act_at FROM {{tables.team_key_pins}} WHERE team_id = $1",
+            "SELECT team_did_key, team_key_act_at, team_key_act_key FROM {{tables.team_key_pins}} WHERE team_id = $1",
             team_id,
         )
-        return None if row is None else TeamKeyPin(row["team_did_key"], row["team_key_act_at"])
+        return None if row is None else TeamKeyPin(row["team_did_key"], row["team_key_act_at"], row["team_key_act_key"])
 
     async def first_sight(self, team_id: str, team_did_key: str) -> TeamKeyPin:
         db = self._db()
@@ -40,9 +40,10 @@ class DatabaseTeamKeyPins:
         moved = await self._db().fetch_value(
             """
             UPDATE {{tables.team_key_pins}}
-            SET team_did_key = $2, team_key_act_at = $3, pinned_at = NOW()
+            SET team_did_key = $2, team_key_act_at = $3, team_key_act_key = $6, pinned_at = NOW()
             WHERE team_id = $1 AND team_did_key = $4
               AND team_key_act_at IS NOT DISTINCT FROM $5
+              AND team_key_act_key IS NOT DISTINCT FROM $7
             RETURNING team_id
             """,
             team_id,
@@ -50,5 +51,6 @@ class DatabaseTeamKeyPins:
             new.act_at,
             expected.team_did_key,
             expected.act_at,
+            new.act_key, expected.act_key,
         )
         return moved is not None

@@ -36,6 +36,7 @@ import httpx
 from awid.did import did_key_from_signing_key, public_key_from_did, validate_stable_id
 from awid.external_authority import SystemTXTOutcomeResolver, TXTOutcomeResolver
 from awid.log import canonical_server_origin
+from awid.registry import RegistryClient
 from awid.registry_auth import RegistryRequestAuth
 from awid.signing import (
     canonical_json_bytes,
@@ -220,6 +221,7 @@ class AWIDTeamCache:
         team_key_pins: TeamKeyPinStore | None = None,
         txt_resolver: TXTOutcomeResolver | None = None,
         enforce_team_key_pins: bool = False,
+        namespace_evidence=None,
     ) -> None:
         """Gated reads of a private team use the service token when there is
         one (a hosted deployment), else that team's member credential; any
@@ -257,6 +259,7 @@ class AWIDTeamCache:
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
+        self._namespace_evidence_reader = namespace_evidence
         self._team_key_pins = team_key_pins if team_key_pins is not None else MemoryTeamKeyPins()
         self._team_key_memo = TeamKeyMemo()
         self._txt_resolver = txt_resolver if txt_resolver is not None else SystemTXTOutcomeResolver()
@@ -267,9 +270,6 @@ class AWIDTeamCache:
         enforcing, 401 team_key_unverified when no namespace-controller act
         establishes it. A served key answered within the memo window
         (awid TeamKeyMemo) reads nothing."""
-        remembered = self._team_key_memo.get(team_id, served_key)
-        if remembered is not None:
-            return remembered
         domain, team_name = parse_team_id(team_id)
 
         async def fetch_act() -> Any:
@@ -293,11 +293,23 @@ class AWIDTeamCache:
             key = await pinned_team_key(
                 team_id, served_key, pins=self._team_key_pins, fetch_act=fetch_act, resolver=self._txt_resolver,
                 enforce=self._enforce_team_key_pins,
+                fetch_namespace_evidence=self._namespace_evidence, memo=self._team_key_memo,
             )
         except TeamKeyUnverified:
             raise HTTPException(status_code=401, detail="team_key_unverified") from None
-        self._team_key_memo.put(team_id, served_key, key)
         return key
+
+    async def _namespace_evidence(self, domain):
+        if self._namespace_evidence_reader is not None:
+            return await self._namespace_evidence_reader(domain)
+        # Standalone cache callers use the very same live ID-tree producer,
+        # with no new cache or freshness clock.
+        sdk = RegistryClient(registry_url=self.registry_url, transport=self._transport,
+                             service_token=self._request_auth.service_token)
+        try:
+            return await sdk.namespace_evidence(domain)
+        finally:
+            await sdk.aclose()
 
     def _read_headers(self, url: str) -> dict[str, str]:
         """The authentication of one AWID read."""

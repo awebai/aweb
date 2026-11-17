@@ -61,22 +61,22 @@ async def _substitute_registry_team_key(env, did_key: str) -> None:
     )
 
 
-def _member(team_sk, team_did, alias):
+def _member(team_sk, team_did, alias, *, team_id=TEAM):
     sk, _, did = _make_keypair()
     certificate = _encode_certificate(_make_certificate(
-        team_sk, team_did, did, team_id=TEAM, alias=alias,
+        team_sk, team_did, did, team_id=team_id, alias=alias,
         identity_scope="local", certificate_id=f"pinning-{alias}-{did[-8:]}",
     ))
     return sk, did, certificate
 
 
-async def _connect(env, member):
+async def _connect(env, member, *, team_id=TEAM):
     agent_sk, agent_did, certificate = member
     body = json.dumps({
         "hostname": "host", "workspace_path": f"/work/{agent_did[-8:]}", "repo_origin": "",
         "role": "developer", "human_name": "member", "agent_type": "agent",
     }).encode()
-    headers = _signed_team_headers(agent_sk, agent_did, TEAM, certificate, body)
+    headers = _signed_team_headers(agent_sk, agent_did, team_id, certificate, body)
     headers["Content-Type"] = "application/json"
     return await env.client.post("/v1/connect", content=body, headers=headers)
 
@@ -269,3 +269,26 @@ async def test_a_warm_request_under_the_pinned_key_reads_no_pin(pinning):
     roster = await _roster(env, member)
 
     assert roster.status_code == 200, roster.text
+
+
+@pytest.mark.asyncio
+async def test_first_connect_persists_the_verified_creation_floor(pinning):
+    from awid.registry import RegistryClient
+    env = pinning
+    await register_namespace_controller(env, env.namespace_did)
+    team_sk, _, team_did = _make_keypair()
+    sdk = RegistryClient(registry_url="http://registry.test", transport=httpx.ASGITransport(app=env.registry_app))
+    try:
+        # The route's covering audience is explicitly configured for this owned fixture.
+        env.registry_app.state.awid_public_origins = ("http://registry.test",)
+        await sdk.register_team(domain="example.test", name="first", display_name="Private",
+            team_did_key=team_did, visibility="public", namespace_controller_signing_key=env.namespace_sk)
+    finally:
+        await sdk.aclose()
+    team_id = "first:example.test"
+    member = _member(team_sk, team_did, "first-member", team_id=team_id)
+    response = await _connect(env, member, team_id=team_id)
+    assert response.status_code == 200, response.text
+    pin = await env.db.fetch_one("SELECT * FROM {{tables.teams}} WHERE team_id=$1", team_id)
+    assert pin["team_key_act_at"] is not None
+    assert pin["team_key_act_key"] == team_did
