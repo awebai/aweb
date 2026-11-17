@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - Namespace key-loss recovery and deletion withdraw direct child delegations
   instead of transferring them to the new key. Approved children are restored
   by child-and-new-parent signed registration; two-key rotation preserves valid
