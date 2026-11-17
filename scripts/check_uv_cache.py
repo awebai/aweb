@@ -13,7 +13,9 @@ from pathlib import Path
 # and Docker's older ENV name value form. Dynamic uv cache dir lookups stay valid.
 VALUES = (
     re.compile(r"\bUV_CACHE_DIR[\"']?\s*(?:[:?+]?=|:)\s*[\"']?([^\s\"';,)]+)"),
-    re.compile(r"(?:get|setdefault|getenv)\(\s*[\"']UV_CACHE_DIR[\"']\s*,\s*[\"']([^\"']+)[\"']"),
+    re.compile(
+        r"(?:get|setdefault|getenv)\(\s*[\"']UV_CACHE_DIR[\"']\s*,\s*[\"']([^\"']+)[\"']"
+    ),
     re.compile(r"\bENV\s+UV_CACHE_DIR\s+[\"']?([^\s\"']+)"),
 )
 
@@ -22,7 +24,10 @@ def temporary(value: str) -> bool:
     # A shell fallback is still a pin when the caller has no override.
     value = value.rsplit(":-", 1)[-1].rstrip("}")
     value = posixpath.normpath(value)
-    return any(value == root or value.startswith(root + "/") for root in ("/tmp", "/private/tmp"))
+    return any(
+        value == root or value.startswith(root + "/")
+        for root in ("/tmp", "/private/tmp")
+    )
 
 
 def violations(path: Path, text: str) -> list[str]:
@@ -35,10 +40,14 @@ def violations(path: Path, text: str) -> list[str]:
 
 
 def check_repository(root: Path) -> list[str]:
-    names = subprocess.check_output(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-        cwd=root,
-    ).decode().split("\0")
+    names = (
+        subprocess.check_output(
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+            cwd=root,
+        )
+        .decode()
+        .split("\0")
+    )
     problems = []
     for name in dict.fromkeys(names):
         path = Path(name)
@@ -56,7 +65,9 @@ def check_repository(root: Path) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument(
+        "--root", type=Path, default=Path(__file__).resolve().parents[1]
+    )
     args = parser.parse_args()
     problems = check_repository(args.root)
     if problems:

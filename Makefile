@@ -151,7 +151,7 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 # whichever Python happens to be installed on the host.
 .PHONY: test-scripts
 test-scripts:
-	UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
+	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
 
 test-shipping: test-scripts
 	$(MAKE) test-vm-gate
@@ -164,10 +164,16 @@ test-server-image-build:
 test-vm-gate:
 	PYTHONPATH=scripts/vm-gate uv run --no-project --python 3.12 --with-requirements scripts/vm-gate/requirements.txt python -m unittest discover -s scripts/vm-gate/tests -v
 
+# Run before uv-based checks so a cache-path regression cannot hide in setup.
+.PHONY: test-uv-cache
+test-uv-cache:
+	python3 scripts/check_uv_cache.py
+	python3 -m unittest discover -s scripts -p "test_uv_cache.py" -v
+
 # AWID metadata is repeated in every committed Python lock that takes the in-repo
 # awid (awid, server, naapp-lib and each naapp). Check them all without repair,
 # then prove stale and missing dependent-lock entries are rejected.
-test-python-locks:
+test-python-locks: test-uv-cache
 	bash scripts/check-python-locks.sh
 	bash scripts/check-python-locks.sh --self-test
 
@@ -214,10 +220,10 @@ test-federation-authority-mutations:
 # The direct-core historical harness inventories all 51 contract rows without
 # claiming ingress coverage and kills topology/provenance weakening mutations.
 test-federation-harness:
-	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
+	cd server && uv sync --frozen
 	python3 scripts/check_federation_harness.py
 	python3 scripts/check_federation_harness.py --self-test
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_federation_preactivation_harness.py
+	cd server && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_federation_preactivation_harness.py
 
 # The public CLI inventory comes from live Cobra help. Root completion is an
 # independent exact-set control so grouped and Additional Commands cannot vanish
@@ -232,11 +238,11 @@ regenerate-cli-reference:
 # explicit category map must cover the live tool set exactly, and the unit suite
 # proves that both newly registered and removed tools fail closed.
 test-mcp-tools-reference:
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py --check
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python -m unittest discover -s ../scripts -p "test_regenerate_mcp_reference.py" -v
+	cd server && PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py --check
+	cd server && PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python -m unittest discover -s ../scripts -p "test_regenerate_mcp_reference.py" -v
 
 regenerate-mcp-tools-reference:
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py
+	cd server && PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen python ../scripts/regenerate_mcp_reference.py
 
 # Keep private application paths out of every candidate before it can land.
 .PHONY: check-private-boundary
@@ -319,13 +325,13 @@ verify-site: check-awid-site-docs
 PRODUCTION_AWID_PROJECT := scripts/test-egress/production-awid
 
 production-awid-sync:
-	UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
+	uv sync --frozen --project $(PRODUCTION_AWID_PROJECT)
 
 test-server: production-awid-sync
-	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
+	cd server && uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
-		UV_CACHE_DIR=/tmp/uv-cache uv build --out-dir "$$build_dir"
-	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q $(SERVER_PYTEST_PARALLEL)
+		uv build --out-dir "$$build_dir"
+	cd server && UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q $(SERVER_PYTEST_PARALLEL)
 
 # The naapp packages the candidate gate covers. Each provides `make lint` and
 # `make test`: the checks stage lints them, and the isolated unit stage runs
@@ -337,28 +343,28 @@ NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library naapp/secrets naapp/logs
 # Installs each package's locked dependencies, for a runner that then goes offline.
 naapp-sync:
 	set -e; for package in $(NAAPP_PACKAGES); do \
-		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
+		uv sync --frozen --project $$package; \
 	done
 
 lint-naapp:
 	set -e; for package in $(NAAPP_PACKAGES); do \
 		echo "=== lint $$package ==="; \
-		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 $(MAKE) -C $$package lint; \
+		UV_FROZEN=1 $(MAKE) -C $$package lint; \
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
 test-naapp: production-awid-sync
 	set -e; for package in $(NAAPP_PACKAGES); do \
 		echo "=== test $$package ==="; \
-		UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen --project $$package; \
-		UV_CACHE_DIR=/tmp/uv-cache UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
+		uv sync --frozen --project $$package; \
+		UV_FROZEN=1 UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache \
 			NAAPP_REQUIRE_TEST_DATABASE=1 LIBRARY_REQUIRE_TEST_DATABASE=1 $(TEST_EGRESS_RUNNER) $(MAKE) -C $$package test; \
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
 test-awid:
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	cd awid && uv sync --frozen
+	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 # awid's database session tests through a real transaction-mode PgBouncer.
 test-awid-pooler:
@@ -366,21 +372,21 @@ test-awid-pooler:
 	trap 'docker compose -p awid-pooler -f $(CURDIR)/awid/tests/pooler/docker-compose.yml down -v --remove-orphans' EXIT; \
 	docker compose -p awid-pooler -f $(CURDIR)/awid/tests/pooler/docker-compose.yml up -d --wait; \
 	cd awid; \
-	UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen; \
+	uv sync --frozen; \
 	AWID_TEST_POOLER_URL=postgresql://postgres:postgres@localhost:$${AWID_TEST_POOLER_PORT:-56433}/postgres \
-		UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
+		PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
 
 test-cli: production-awid-sync
 	cd cli/go && go mod download
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
+	cd awid && uv sync --frozen
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.
 	cd cli/go && TMPDIR="$$(python3 -c 'import os; print(os.path.realpath("/tmp"))')" \
 		GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1
 
 # Exercise current SDK/CLI request auth against actual aweb/AWID/PG/Redis.
 test-cli-auth-v2:
-	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
-	cd server && PYTHONPATH=tests UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q ../cli/tests/test_request_auth_v2_stack.py
+	cd server && uv sync --frozen
+	cd server && PYTHONPATH=tests UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q ../cli/tests/test_request_auth_v2_stack.py
 
 # The Node suites have separate lockfiles and a local file: dependency from the
 # host adapters to channel-core. Install all three before any Node test target
@@ -589,14 +595,14 @@ check-cli-release-vcs-stamps:
 	./scripts/check-cli-release-vcs-stamps.sh
 
 check-server-locked-suite:
-	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
+	cd server && uv sync --frozen
 	cd server && uv lock --check
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	cd server && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 check-awid-locked-suite:
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
+	cd awid && uv sync --frozen
 	cd awid && uv lock --check
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 # ── awid.ai static-site deployment ─────────────────────────────────
 

@@ -33,15 +33,17 @@ class UvCacheTests(unittest.TestCase):
                 "ENV UV_CACHE_DIR {path}",
             ):
                 with self.subTest(value=value, expression=expression):
-                    self.assertTrue(violations(Path("target"), expression.format(path=value)))
+                    self.assertTrue(
+                        violations(Path("target"), expression.format(path=value))
+                    )
 
     def test_persistent_and_dynamic_caches_and_other_temporary_files_stay_valid(self):
         for source in (
-            'UV_CACHE_DIR=/opt/uv-cache PYTHONPYCACHEPREFIX=' + BAD,
+            "UV_CACHE_DIR=/opt/uv-cache PYTHONPYCACHEPREFIX=" + BAD,
             'export UV_CACHE_DIR="${UV_CACHE_DIR:-$HOME/.cache/uv}"',
             'cmd.Env = append(env, "UV_CACHE_DIR="+cacheDir)',
             'cache = exec.Command("uv", "cache", "dir")',
-            'UV_CACHE_DIR=/tmp-other/cache',
+            "UV_CACHE_DIR=/tmp-other/cache",
         ):
             with self.subTest(source=source):
                 self.assertEqual(violations(Path("target"), source), [])
@@ -53,8 +55,14 @@ class UvCacheTests(unittest.TestCase):
             root = Path(temporary_root)
             subprocess.run(["git", "init", "-q", str(root)], check=True)
             for name, source in (
-                ("Makefile", "future-target:\n\tUV_CACHE_DIR=" + BAD + " uv run pytest\n"),
-                ("scripts/vm-gate/operator.py", 'env = {"UV_CACHE_DIR": "' + BAD + '"}'),
+                (
+                    "Makefile",
+                    "future-target:\n\tUV_CACHE_DIR=" + BAD + " uv run pytest\n",
+                ),
+                (
+                    "scripts/vm-gate/operator.py",
+                    'env = {"UV_CACHE_DIR": "' + BAD + '"}',
+                ),
                 ("Dockerfile.runner", "ENV UV_CACHE_DIR=" + BAD),
             ):
                 path = root / name
@@ -71,7 +79,9 @@ class UvCacheTests(unittest.TestCase):
             env = dict(os.environ, HOME=home)
             for key in ("UV_CACHE_DIR", "XDG_CACHE_HOME"):
                 env.pop(key, None)
-            expected = subprocess.check_output(["uv", "cache", "dir"], env=env, text=True).strip()
+            expected = subprocess.check_output(
+                ["uv", "cache", "dir"], env=env, text=True
+            ).strip()
             recipe = subprocess.check_output(
                 ["make", "-n", "lint-naapp"], cwd=ROOT, env=env, text=True
             )

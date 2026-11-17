@@ -452,7 +452,6 @@ docker run --rm --init \
   -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
   -e BUILDX_CONFIG="$buildx_config" \
   -e BUILDX_BUILDER="$builder_name" \
-  -e UV_CACHE_DIR=/tmp/uv-cache \
   -e UV_LINK_MODE=copy \
   -e GOCACHE=/tmp/go-build \
   -e GOMODCACHE="$go_mod_cache" \
