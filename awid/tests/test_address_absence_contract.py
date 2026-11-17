@@ -51,6 +51,7 @@ async def response_server():
     [
         "typed",
         "legacy",
+        "namespace-legacy",
         "generic",
         "legacy-extra",
         "wrong-code",
@@ -68,6 +69,8 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
     }
     if kind == "legacy":
         state["body"] = {"detail": "Address not found"}
+    elif kind == "namespace-legacy":
+        state["body"] = {"detail": "Namespace not found"}
     elif kind == "generic":
         state["body"] = {"detail": "Not Found"}
     elif kind == "legacy-extra":
@@ -103,9 +106,9 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
                 legacy, value=None, ttl_seconds=60, encode=lambda value: value
             )
         for read in (client.resolve_address, client.resolve_address_fresh):
-            if kind in ("typed", "legacy", "success"):
+            if kind in ("typed", "legacy", "namespace-legacy", "success"):
                 result = await read(domain, "person")
-                if kind in ("typed", "legacy"):
+                if kind in ("typed", "legacy", "namespace-legacy"):
                     assert result is None
                 else:
                     assert result.address_id == "present"
@@ -121,7 +124,7 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
             for r in caplog.records
             if getattr(r, "event", "") == "awid_legacy_address_not_found"
         ]
-        assert len(legacy_reads) == (2 if kind == "legacy" else 0)
+        assert len(legacy_reads) == (2 if kind in ("legacy", "namespace-legacy") else 0)
     finally:
         await client.aclose()
         if redis is not None:
@@ -135,7 +138,7 @@ async def test_sdk_address_absence_is_coded_and_old_negative_cache_is_not_author
 @pytest.mark.parametrize(
     "not_found_reason", ["sender_identity_not_found", "recipient_identity_not_found"]
 )
-async def test_strict_absence_reason_means_typed_address_absence_only(
+async def test_strict_404_retains_callers_refusal_reason(
     response_server, endpoint, body_kind, not_found_reason, caplog
 ):
     state = response_server
@@ -154,19 +157,30 @@ async def test_strict_absence_reason_means_typed_address_absence_only(
     try:
         with pytest.raises(FederationAuthorityError) as refused:
             await client.get_json(path, not_found_reason=not_found_reason)
-        assert refused.value.reason == (
-            not_found_reason
-            if body_kind in ("typed", "legacy") and endpoint == "address"
-            else "sender_registry_protocol_invalid"
-        )
-        legacy_reads = [
-            r
+        assert refused.value.reason == not_found_reason
+        # Strict reads refuse; they do not use the SDK's absence classifier.
+        assert not any(
+            getattr(r, "event", "") == "awid_legacy_address_not_found"
             for r in caplog.records
-            if getattr(r, "event", "") == "awid_legacy_address_not_found"
-        ]
-        assert len(legacy_reads) == (
-            1 if body_kind == "legacy" and endpoint == "address" else 0
         )
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_strict_missing_namespace_preserves_sender_identity_not_found(
+    response_server,
+):
+    state = response_server
+    state["body"] = {"detail": "Namespace not found"}
+    client = PinnedRegistryHTTP(state["origin"], ("127.0.0.1",), 1)
+    try:
+        with pytest.raises(FederationAuthorityError) as refused:
+            await client.get_json(
+                "/v1/namespaces/example.com",
+                not_found_reason="sender_identity_not_found",
+            )
+        assert refused.value.reason == "sender_identity_not_found"
     finally:
         await client.aclose()
 
