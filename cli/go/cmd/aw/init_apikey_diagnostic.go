@@ -22,8 +22,8 @@ func workspaceInitHTTPDiagnostic(resp *http.Response, body []byte, apiKey string
 	}
 	var envelope struct {
 		fields
-		Error  fields `json:"error"`
-		Detail fields `json:"detail"`
+		Error  json.RawMessage `json:"error"`
+		Detail json.RawMessage `json:"detail"`
 	}
 	code, requestID := "unknown", "unknown"
 	var candidates []string
@@ -39,7 +39,16 @@ func workspaceInitHTTPDiagnostic(resp *http.Response, body []byte, apiKey string
 		candidates = append(candidates, "ambiguous")
 	}
 	if !ambiguousBody && json.Unmarshal(body, &envelope) == nil {
-		for _, value := range []fields{envelope.fields, envelope.Error, envelope.Detail} {
+		values := []fields{envelope.fields}
+		// error and detail carry fields only as objects; a string or list
+		// detail is server text, which is never shown.
+		for _, nested := range []json.RawMessage{envelope.Error, envelope.Detail} {
+			var value fields
+			if json.Unmarshal(nested, &value) == nil {
+				values = append(values, value)
+			}
+		}
+		for _, value := range values {
 			// Fixed public vocabulary only. Unknown service codes remain private.
 			if value.Code == "INTERNAL_ERROR" {
 				code = "INTERNAL_ERROR"
