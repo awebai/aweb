@@ -195,3 +195,40 @@ def test_person_history_migrates_existing_enrollment_without_reset(tmp_path):
     reopened.retire_person(target)
     with reopened._connection() as db:
         assert reopened.person_revision(db, target) == 8
+
+
+@pytest.mark.asyncio
+async def test_self_signed_outsider_cannot_distinguish_existing_from_unknown_rows(
+    tmp_path,
+):
+    from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
+    from test_native_holder import call
+
+    holder = world(tmp_path)
+    target, key = person()
+    holder.bootstrap_pending(target, key)
+    seed, public = generate_keypair()
+    outsider_key = did_from_public_key(public)
+    outsider = stable_id_from_did_key(outsider_key)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(holder)), base_url=holder.origin
+    ) as client:
+        for suffix, body in [
+            ("binding", {"material": {}, "registration_count": 1}),
+            ("finish", {}),
+            ("activate", {}),
+        ]:
+            answers = []
+            for subject in (target, person()[0]):
+                answer = await call(
+                    client,
+                    f"/v1/enrollments/{subject}/{suffix}",
+                    body,
+                    seed=seed,
+                    key=outsider_key,
+                    identity=outsider,
+                    chain=[],
+                )
+                assert answer.status_code == 401
+                answers.append(answer.json())
+            assert answers[0] == answers[1]
