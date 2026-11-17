@@ -34,6 +34,8 @@ CURRENT_KEY = {"accepted_team_did_key": "did:key:zTeam", "current_team_did_key":
 
 def _request_with_revocations(result):
     registry = AsyncMock()
+    # Explicitly model the old SDK surface; AsyncMock invents new methods.
+    registry.get_team_revocations_for_certificates = None
     registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     if isinstance(result, Exception):
         registry.get_team_revocations = AsyncMock(side_effect=result)
