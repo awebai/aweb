@@ -173,7 +173,11 @@ async def test_revocation_scan_requires_a_complete_success_not_404(response_serv
     redis = Redis.from_url(os.environ["REDIS_URL"]) if cached else None
     client = CachedRegistryClient(state["origin"], redis) if cached else RegistryClient(state["origin"])
     key = client._team_revocations_cache_key(domain, "ops") if cached else None
+    legacy = key.replace(":v2:team_revocations:", ":v1:team_revocations:") if cached else None
     try:
+        if cached:
+            # An old client could stamp an uncoded 404 as a fresh empty set.
+            await client._write_cache_entry(legacy, value=set(), ttl_seconds=60, encode=sorted)
         if stage in ("first", "later"):
             with pytest.raises(RegistryError) as refused:
                 await client.get_team_revocations(domain, "ops")
@@ -186,5 +190,5 @@ async def test_revocation_scan_requires_a_complete_success_not_404(response_serv
     finally:
         await client.aclose()
         if redis is not None:
-            await redis.delete(key)
+            await redis.delete(key, legacy)
             await redis.aclose()
