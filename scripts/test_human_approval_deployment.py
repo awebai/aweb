@@ -52,6 +52,36 @@ class DeploymentPolicyTests(unittest.TestCase):
             with self.subTest(section=section), self.assertRaises(renderer.Refused):
                 renderer.render_human_approval({**BASE, "human_approval": section})
 
+    def test_supported_requirement_levels_render(self):
+        for level in ("hardware", "passkey"):
+            section = {
+                "service": "https://awsign.example.test",
+                "require": {"organisation.human.add": level},
+            }
+            with self.subTest(level=level):
+                self.assertEqual(
+                    json.loads(
+                        renderer.render_human_approval(
+                            {**BASE, "human_approval": section}
+                        )
+                    )["human_approval"],
+                    section,
+                )
+
+    def test_unknown_actions_and_unsupported_levels_refuse_at_render_time(self):
+        for requirement in (
+            {"unknown.action": "passkey"},
+            {"organisation.human.add": "email"},
+            {"organisation.human.add": "unknown"},
+            {"organisation.human.add": "passkey", "unknown.action": "hardware"},
+        ):
+            section = {"service": "https://awsign.example.test", "require": requirement}
+            with (
+                self.subTest(requirement=requirement),
+                self.assertRaises(renderer.Refused),
+            ):
+                renderer.render_human_approval({**BASE, "human_approval": section})
+
 
 if __name__ == "__main__":
     unittest.main()
