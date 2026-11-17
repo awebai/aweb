@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- For an explicit address sent without a signed recipient binding, the registered
+  identity takes precedence over a teammate's label. An unreachable registry
+  refuses that unsigned explicit-address send. Other teams' aliases do not make
+  an address ambiguous.
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep

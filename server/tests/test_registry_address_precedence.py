@@ -342,7 +342,7 @@ async def test_absent_address_never_selects_a_global_alias(address_collision, su
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
 @pytest.mark.parametrize("identity_only", [False, True], ids=["other-team", "no-team"])
-async def test_derived_address_refusal_does_not_reveal_other_teams(address_collision, surface, identity_only):
+async def test_derived_address_preserves_outside_team_refusal(address_collision, surface, identity_only):
     fixture = address_collision
     env = fixture.env
     await _remove_registered_address(env)
@@ -357,14 +357,14 @@ async def test_derived_address_refusal_does_not_reveal_other_teams(address_colli
     occupied = await fixture.request(surface, identity_only=identity_only)
     unused = await fixture.request(surface, "example.test/unused", identity_only=identity_only)
     assert occupied.status_code == unused.status_code
-    assert occupied.json() == unused.json()
     if surface in {"mcp_mail", "hosted_mcp_mail"}:
         assert occupied.status_code == 200, occupied.text
         result = json.loads(occupied.json()["result"]["content"][0]["text"])
         assert "error" in result and "message_id" not in result, result
     else:
         assert occupied.status_code == 404, occupied.text
-        assert "recipient_identity_not_found" in occupied.text
+        assert occupied.json()["reason"] == "local_recipient_route_missing"
+        assert unused.json()["reason"] == "recipient_identity_not_found"
     for table in ("messages", "chat_sessions"):
         row = await env.db.fetch_one("SELECT count(*) AS n FROM {{tables." + table + "}}")
         assert row["n"] == 0
@@ -506,3 +506,64 @@ async def test_signed_cross_team_local_recipient_uses_existing_admission(address
         assert response.json()["retryable"] is False
         for table in ("messages", "chat_sessions"):
             assert await env.db.fetch_val("SELECT count(*) FROM {{tables." + table + "}}") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat"])
+async def test_unrecorded_self_hosted_namespace_keeps_teammate_label(privacy_app, surface, monkeypatch):
+    """Post-release regression: a real private team has no public AWID record.
+
+    Real UDP DNS returns NXDOMAIN; the configured AWID and application are
+    real. No authority/read result is replaced. The current strict-discovery
+    choice refuses this send; retain the expected released teammate delivery.
+    """
+    import asyncio
+
+    import dns.asyncresolver
+    import dns.message
+    import dns.rcode
+    from aweb.federation.activation import build_federation_authority_activation
+    from aweb.messaging.address_auth import namespace_uses_home_registry
+
+    env = privacy_app
+    registry = env.app.state.awid_registry_client
+    assert await registry.get_namespace_fresh("example.test") is None
+    assert not await namespace_uses_home_registry(env.infra, registry, "example.test")
+    queries = []
+
+    class NoPublicRecord(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, data, address):
+            request = dns.message.from_wire(data)
+            queries.append(str(request.question[0].name))
+            response = dns.message.make_response(request)
+            response.set_rcode(dns.rcode.NXDOMAIN)
+            self.transport.sendto(response.to_wire(), address)
+
+    transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+        NoPublicRecord, local_addr=("127.0.0.1", 0),
+    )
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = ["127.0.0.1"]
+    resolver.port = transport.get_extra_info("sockname")[1]
+    resolver.timeout = resolver.lifetime = 1
+    monkeypatch.setattr(dns.asyncresolver, "default_resolver", resolver)
+    activation = build_federation_authority_activation(env.infra, public_origin=env.app.state.public_origin)
+    env.app.state.federation_authority = activation
+    try:
+        payload = ({"to_address": ADDRESS, "subject": "Local teammate", "body": "hello"}
+                   if surface == "mail" else
+                   {"to_addresses": [ADDRESS], "message": "hello", "leaving": True})
+        raw = json.dumps(payload).encode()
+        alice = env.actors["alice"]
+        response = await env.client.post(
+            "/v1/messages" if surface == "mail" else "/v1/chat/sessions", content=raw,
+            headers={**_signed_team_headers(alice.sk, alice.did, TEAM, alice.certificate, raw),
+                     "Content-Type": "application/json"},
+        )
+        assert response.status_code == 200, {"response": response.text, "dns_queries": queries}
+    finally:
+        await activation.aclose()
+        transport.close()

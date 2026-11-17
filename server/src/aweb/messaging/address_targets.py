@@ -20,9 +20,7 @@ from aweb.messaging.address_auth import (
 from aweb.messaging.runtime import MessagingRuntime
 
 
-async def _visible_address_candidates(db, *, team_id: str | None, domain: str, name: str) -> list[dict]:
-    if not team_id:
-        return []
+async def _address_candidates(db, *, domain: str, name: str) -> list[dict]:
     return await db.get_manager("aweb").fetch_all(
         """
         SELECT a.agent_id, a.team_id, a.alias, a.did_key,
@@ -32,11 +30,11 @@ async def _visible_address_candidates(db, *, team_id: str | None, domain: str, n
                a.did_aw AS policy_did_aw, a.inbound_mode, a.status, a.deleted_at
         FROM {{tables.agents}} a
         JOIN {{tables.teams}} t ON t.team_id = a.team_id
-        WHERE a.team_id = $1 AND t.namespace = $2 AND a.deleted_at IS NULL
-          AND (a.alias = $3 OR a.address = $2 || '/' || $3)
+        WHERE t.namespace = $1 AND a.deleted_at IS NULL
+          AND (a.alias = $2 OR a.address = $1 || '/' || $2)
           AND ((NULLIF(a.did_aw, '') IS NULL AND NULLIF(a.address, '') IS NULL)
                OR a.did_aw_verified_key = a.did_key)
-        """, team_id, domain, name,
+        """, domain, name,
     )
 
 
@@ -59,15 +57,15 @@ async def resolve_address_target(
     db, *, runtime: MessagingRuntime, auth, address: str, source: str,
     message_type: str, signed_payload: str | None = None, signature: str | None = None,
 ) -> dict:
-    """Use a verified visible binding offline, otherwise resolve the address.
+    """Use a verified signed binding offline, otherwise resolve the address.
 
-    Only the SDK address reader's None is an absence signal: C2 classifies
-    coded and released address-absence responses there. Strict federation's
-    not-found error is a refusal, never permission for a local-label reading.
+    The SDK reader classifies address absence. The strict reader's not-found
+    keeps its existing fallback meaning; it is not proof of coded absence.
+    Signed selection may cross teams, but delivery admission still decides.
     This function does not grant delivery admission or contact authority.
     """
     domain, name = address.split("/", 1)
-    candidates = await _visible_address_candidates(db, team_id=auth.team_id, domain=domain, name=name)
+    candidates = await _address_candidates(db, domain=domain, name=name)
     signed = verified_signed_payload_json(
         signed_payload=signed_payload, signature=signature, did_key=auth.did_key,
     )
@@ -86,9 +84,14 @@ async def resolve_address_target(
         if registry is not None and (home_namespace or authority is None):
             resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
         elif authority is not None:
-            resolution = await authority.resolve_contact(address, source_ip=source)
-            if resolution is None:
-                raise FederationAuthorityError("sender_registry_protocol_invalid")
+            try:
+                resolution = await authority.resolve_contact(address, source_ip=source)
+            except FederationAuthorityError as exc:
+                # Preserve main's strict-reader not-found, without claiming
+                # it distinguishes address absence from every other HTTP 404.
+                if exc.reason != "recipient_identity_not_found":
+                    raise
+                resolution = None
         else:
             raise awid_registry_not_configured_exception(operation="AWID recipient address lookup")
     except AWID_DEPENDENCY_ERRORS as exc:
@@ -113,12 +116,18 @@ async def resolve_address_target(
         recipient["authority_controller_did"] = str(getattr(resolution, "controller_did", "") or "").strip()
         return recipient
 
-    # Candidates came only from the sender's own team. No other team's aliases
-    # can make this path ambiguous or disclose whether an out-of-team name exists.
-    for candidate in candidates:
-        if (candidate.get("identity_scope") == "local" and not candidate.get("has_global_claim")
-                and not candidate.get("address") and candidate.get("alias") == name):
+    # Unsigned label selection is team-scoped. Other teams cannot contribute
+    # an ambiguity or grant delivery; retain their documented refusal answer.
+    local_candidates = [
+        candidate for candidate in candidates
+        if candidate.get("identity_scope") == "local" and not candidate.get("has_global_claim")
+        and not candidate.get("address") and candidate.get("alias") == name
+    ]
+    for candidate in local_candidates:
+        if auth.team_id and candidate.get("team_id") == auth.team_id:
             recipient = identity_recipient(candidate, address)
             recipient["requires_local_address_authority"] = True
             return recipient
+    if local_candidates:
+        raise FederationAuthorityError("local_recipient_route_missing")
     raise FederationAuthorityError("recipient_identity_not_found")
