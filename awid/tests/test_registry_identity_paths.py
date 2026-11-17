@@ -5,8 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote
 
 import pytest
-
-from awid.did import generate_keypair, stable_id_from_did_key, did_from_public_key
+from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.registry import RegistryClient, RegistryError
 
 
@@ -39,7 +38,7 @@ async def test_identity_path_cannot_supply_path_query_or_fragment(malformed):
             with pytest.raises(RegistryError):
                 await call()
         component = quote(person, safe=":")
-        assert observed == [f"/v1/did/{component}/{suffix}" for suffix in ["key", "full", "encryption-key", "addresses"]]
+        assert observed == [f"/v1/did/{component}/{suffix}" for suffix in ["key", "full", "encryption-key", "addresses?limit=200"]]
     finally:
         await registry.aclose()
         server.shutdown()
