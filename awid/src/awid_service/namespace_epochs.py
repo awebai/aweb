@@ -58,13 +58,29 @@ async def record_delegation(tx, *, domain: str, parent) -> None:
     )
 
 
-async def advance_delegated_children(tx, *, domain: str, controller_key: str) -> None:
-    """A signed parent controller change preserves its direct delegations atomically."""
+async def advance_delegated_children(tx, *, domain: str, previous_key: str, controller_key: str) -> None:
+    """Two-key rotation carries only the retiring key's direct delegations."""
     await tx.execute(
         """UPDATE {{tables.dns_namespaces}}
-           SET parent_controller_key = $2
-           WHERE parent_domain = $1 AND deleted_at IS NULL""",
-        domain, controller_key,
+           SET parent_controller_key = $3
+           WHERE parent_domain = $1 AND parent_controller_key = $2 AND deleted_at IS NULL""",
+        domain, previous_key, controller_key,
+    )
+
+
+async def withdraw_delegated_children(tx, *, domain: str, retaining_key: str | None = None) -> None:
+    """Withdraw grants without deleting children or leaving key-reuse authority.
+
+    The parent row is locked by the caller, serializing child registrations.
+    On a same-key first epoch, keep witnesses already authorized by that key;
+    reverify may have moved a pre-epoch row past stale older witnesses.
+    """
+    await tx.execute(
+        """UPDATE {{tables.dns_namespaces}}
+           SET parent_domain = NULL, parent_controller_key = NULL
+           WHERE parent_domain = $1 AND deleted_at IS NULL
+             AND ($2::text IS NULL OR parent_controller_key <> $2)""",
+        domain, retaining_key,
     )
 
 

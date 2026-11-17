@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Namespace key-loss recovery and deletion withdraw direct child delegations
+  instead of transferring them to the new key. Approved children are restored
+  by child-and-new-parent signed registration; two-key rotation preserves valid
+  delegations. Child data is retained; this does not revoke team credentials or
+  every registry write made under a stolen key.
+
 - `aw mail send` now refuses a bare-alias send when recipient lookup fails,
   instead of sending by alias as aw 1.20.0 through 1.36.58 did. Plaintext chat
   follows the same rule. Retry the lookup or use the recipient's full address
