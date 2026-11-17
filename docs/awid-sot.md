@@ -346,9 +346,9 @@ DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 
 **Address-read absence compatibility.** A missing address answers HTTP 404
 with `{"detail":{"code":"address_not_found","message":"Address not found"}}`.
-Readers also accept the exact released body `{"detail":"Address not found"}`,
-only on the address endpoint. Generic/proxy 404s, missing namespaces and failed
-key/log reads do not prove address absence. Each legacy acceptance emits
+SDK readers also accept the exact released bodies `{"detail":"Address not found"}`
+and `{"detail":"Namespace not found"}`, only on the address endpoint. Generic/proxy
+404s and failed key/log reads do not prove SDK address absence. Each legacy acceptance emits
 `awid_legacy_address_not_found` with a cumulative per-process `count`.
 Removal requires a supported registry-version floor that guarantees the coded
 answer and measured zero legacy use across supported deployments, including

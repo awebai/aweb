@@ -1,4 +1,4 @@
-"""Only the address endpoint's typed absence permits alias fallback."""
+"""Registry-owned absence and strict refusal compatibility over real HTTP."""
 
 import asyncio
 import json

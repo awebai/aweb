@@ -13,7 +13,6 @@ from urllib.parse import quote, urlsplit
 import httpcore
 
 from awid.federation_errors import FederationAuthorityError
-from awid.registry_types import is_address_not_found
 
 
 @dataclass
@@ -166,20 +165,7 @@ class PinnedRegistryHTTP:
         if 300 <= response.status < 400:
             raise FederationAuthorityError("sender_registry_protocol_invalid")
         if response.status == 404:
-            # The same absence reason must never describe missing namespace,
-            # key or log evidence for an address that may already exist.
-            parts = path.split("?", 1)[0].split("/")
-            address_endpoint = (
-                len(parts) == 6 and parts[1:3] == ["v1", "namespaces"]
-                and parts[4] == "addresses" and bool(parts[3]) and bool(parts[5])
-            )
-            try:
-                absent = address_endpoint and is_address_not_found(response.status, json.loads(body))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                absent = False
-            if address_endpoint and absent:
-                raise FederationAuthorityError(not_found_reason)
-            raise FederationAuthorityError("sender_registry_protocol_invalid")
+            raise FederationAuthorityError(not_found_reason)
         if response.status == 429 or response.status >= 500:
             raise FederationAuthorityError("sender_registry_unavailable")
         if not 200 <= response.status < 300:

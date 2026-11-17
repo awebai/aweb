@@ -24,7 +24,7 @@ def is_address_not_found(status_code: int, body: Any) -> bool:
         and body["detail"].get("code") == ADDRESS_NOT_FOUND
     ):
         return True
-    if body == {"detail": "Address not found"}:
+    if body in ({"detail": "Address not found"}, {"detail": "Namespace not found"}):
         # Removal requires a supported registry floor and measured zero use;
         # see the address-read compatibility contract in docs/awid-sot.md.
         global _legacy_address_not_found_count
