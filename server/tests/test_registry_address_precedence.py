@@ -104,11 +104,16 @@ async def address_collision(privacy_app, monkeypatch):  # noqa: F811 -- imported
             timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
             message_id = str(uuid4())
             envelope = {
-                "type": "mail", "from": "alice", "from_did": actor.did,
+                "type": "chat" if surface == "chat" else "mail", "from": "alice", "from_did": actor.did,
                 "to": recipient, "to_did": signed_recipient.did,
-                "body": payload["body"], "subject": payload["subject"],
+                "body": payload.get("body", payload.get("message")),
                 "timestamp": timestamp, "message_id": message_id,
             }
+            if surface == "chat":
+                payload["session_id"] = str(uuid4())
+                envelope.update(conversation_id=payload["session_id"], sender_leaving=True, wait_seconds=None)
+            else:
+                envelope["subject"] = payload["subject"]
             canonical = canonical_json_bytes(envelope)
             payload.update(from_did=actor.did, timestamp=timestamp, message_id=message_id,
                            signed_payload=canonical.decode(), signature=sign_message(actor.sk, canonical))
@@ -364,7 +369,8 @@ async def test_derived_address_refusal_does_not_reveal_other_teams(address_colli
 
 
 @pytest.mark.asyncio
-async def test_signed_visible_recipient_binding_works_without_address_registry(address_collision, monkeypatch):
+@pytest.mark.parametrize("surface", ["mail", "chat"])
+async def test_signed_visible_recipient_binding_works_without_address_registry(address_collision, surface, monkeypatch):
     fixture = address_collision
     env = fixture.env
     transport = env.app.state.awid_registry_client.transport
@@ -379,8 +385,8 @@ async def test_signed_visible_recipient_binding_works_without_address_registry(a
             await registry_app(scope, receive, send)
 
     monkeypatch.setattr(transport, "app", unavailable_address)
-    result = await fixture.send("mail", signed_recipient=env.actors["bob"])
-    await _assert_local_bob(fixture, "mail", result)
+    result = await fixture.send(surface, signed_recipient=env.actors["bob"])
+    await _assert_local_bob(fixture, surface, result)
     assert lookups == [], "A verified matching visible binding needs no address lookup"
 
 
@@ -407,3 +413,40 @@ async def test_hosted_bare_alias_works_during_address_registry_outage(address_co
     if surface == "hosted_mcp_mail":
         assert len(fixture.signing_calls) == 1
         assert fixture.signing_calls[0]["payload"]["to_did"] == env.actors["bob"].did
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "hosted_mcp_mail"])
+@pytest.mark.parametrize("absence", [
+    {"detail": {"code": "address_not_found", "message": "Address not found"}},
+    {"detail": "Address not found"},
+    {"detail": "Namespace not found"},
+], ids=["coded", "released-address", "released-namespace"])
+async def test_only_c2_absence_allows_own_team_label(address_collision, surface, absence, monkeypatch):
+    fixture = address_collision
+    env = fixture.env
+    await _remove_registered_address(env)
+    transport = env.app.state.awid_registry_client.transport
+    registry_app = transport.app
+
+    async def absent_address(scope, receive, send):
+        if scope["type"] == "http" and scope["path"].endswith("/addresses/bob"):
+            await JSONResponse(absence, status_code=404)(scope, receive, send)
+        else:
+            await registry_app(scope, receive, send)
+
+    monkeypatch.setattr(transport, "app", absent_address)
+    result = await fixture.send(surface)
+    await _assert_local_bob(fixture, surface, result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat"])
+async def test_signed_binding_cannot_select_a_different_registered_identity(address_collision, surface):
+    fixture = address_collision
+    # The genuine sender signature names Alice's key for Bob's registered
+    # address. Neither a local alias nor the registry may erase that constraint.
+    response = await fixture.request(surface, signed_recipient=fixture.env.actors["alice"])
+    assert response.status_code == 422, response.text
+    for table in ("messages", "chat_sessions"):
+        assert await fixture.env.db.fetch_val("SELECT count(*) FROM {{tables." + table + "}}") == 0
