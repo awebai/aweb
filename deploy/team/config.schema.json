@@ -830,8 +830,12 @@
         },
         "require": {
           "type": "object",
-          "additionalProperties": {
-            "type": "string"
+          "additionalProperties": false,
+          "properties": {
+            "organisation.human.add": {
+              "type": "string",
+              "enum": ["hardware", "passkey"]
+            }
           }
         }
       }
