@@ -150,3 +150,60 @@ def test_issuing_rule_changes_are_audited_atomically(tmp_path):
     with pytest.raises(sqlite3.IntegrityError, match="setting_failed"):
         store.set_human_issuance("approved")
     assert store.human_issuance() == "operator" and store.audit() == rows
+
+
+@pytest.mark.parametrize(
+    "origin", ["http://holder.example", "https://holder.example/path"]
+)
+def test_approval_configured_holder_refuses_an_origin_the_service_would_refuse(
+    tmp_path, origin
+):
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    with pytest.raises(Refused, match="enforcer_origin_invalid"):
+        Holder(
+            store,
+            registry=None,
+            origin=origin,
+            approval_origin="https://approval.example",
+            rp_id="approval.example",
+            grading=EnrollmentGrading("passkey_only", None),
+        )
+    # No approval service: the existing HTTP operator/routine lane stays valid.
+    if origin.startswith("http:"):
+        Holder(store, registry=None, origin=origin)
+
+
+@pytest.mark.parametrize(
+    "origin", ["http://holder.example", "https://holder.example/path"]
+)
+def test_cli_refuses_bad_approval_audience_before_starting_a_listener(tmp_path, origin):
+    state = tmp_path / "private"
+    KeyStore.create(state, organisation="example.test")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "aweb_key_holder.cli",
+            "--state",
+            str(state),
+            "--registry-origin",
+            "https://registry.example",
+            "--origin",
+            origin,
+            "--approval-origin",
+            "https://approval.example",
+            "--rp-id",
+            "approval.example",
+            "--grading",
+            "passkey_only",
+            "serve",
+            "--port",
+            "0",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=3,
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stderr) == {"error": "enforcer_origin_invalid"}
