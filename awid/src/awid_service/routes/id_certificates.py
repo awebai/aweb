@@ -133,7 +133,7 @@ async def _dns_authority(verify_domain: DomainVerifier, domain: str) -> DomainAu
     try:
         authority = await verify_domain(domain)
     except DnsLookupError as exc:
-        logger.warning("ID-tree DNS authority lookup unavailable for %s", domain, exc_info=True)
+        logger.warning("ID-tree DNS authority lookup unavailable for %s: %s", domain, type(exc).__name__)
         raise HTTPException(
             status_code=503,
             detail={"code": "dns_unavailable", "message": "DNS lookup unavailable; retry later"},
