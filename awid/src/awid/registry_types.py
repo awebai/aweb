@@ -6,19 +6,37 @@ awid.registry re-exports these identical classes for compatibility.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any
 
 ADDRESS_NOT_FOUND = "address_not_found"
+logger = logging.getLogger(__name__)
+_legacy_address_not_found_count = 0
 
 
 def is_address_not_found(status_code: int, body: Any) -> bool:
-    """Only a typed answer from the address endpoint proves address absence."""
-    return (
-        status_code == 404
-        and isinstance(body, dict)
-        and isinstance(body.get("detail"), dict)
+    """Address-endpoint answers only; retain the exact released legacy body."""
+    if status_code != 404 or not isinstance(body, dict):
+        return False
+    if (
+        isinstance(body.get("detail"), dict)
         and body["detail"].get("code") == ADDRESS_NOT_FOUND
-    )
+    ):
+        return True
+    if body == {"detail": "Address not found"}:
+        # Removal requires a supported registry floor and measured zero use;
+        # see the address-read compatibility contract in docs/awid-sot.md.
+        global _legacy_address_not_found_count
+        _legacy_address_not_found_count += 1
+        logger.warning(
+            "AWID legacy address absence accepted",
+            extra={
+                "event": "awid_legacy_address_not_found",
+                "count": _legacy_address_not_found_count,
+            },
+        )
+        return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -62,7 +80,9 @@ class RegistryThrottled(RegistryError):
     treating throttling as absence, stale evidence or an operation conflict.
     """
 
-    def __init__(self, *, retry_after_seconds: float | None, attempts: int, reason: str):
+    def __init__(
+        self, *, retry_after_seconds: float | None, attempts: int, reason: str
+    ):
         super().__init__(
             "AWID registry rate limit exceeded", status_code=429, code="rate_limited"
         )

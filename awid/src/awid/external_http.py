@@ -174,7 +174,7 @@ class PinnedRegistryHTTP:
                 and parts[4] == "addresses" and bool(parts[3]) and bool(parts[5])
             )
             try:
-                absent = is_address_not_found(response.status, json.loads(body))
+                absent = address_endpoint and is_address_not_found(response.status, json.loads(body))
             except (UnicodeDecodeError, json.JSONDecodeError):
                 absent = False
             if address_endpoint and absent:

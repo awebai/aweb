@@ -343,6 +343,17 @@ PUT    /v1/namespaces/{domain}/addresses/{name}    Compatibility no-op for legac
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
 
+**Address-read absence compatibility.** A missing address answers HTTP 404
+with `{"detail":{"code":"address_not_found","message":"Address not found"}}`.
+Readers also accept the exact released body `{"detail":"Address not found"}`,
+only on the address endpoint. Generic/proxy 404s, missing namespaces and failed
+key/log reads do not prove address absence. Each legacy acceptance emits
+`awid_legacy_address_not_found` with a cumulative per-process `count`.
+Removal requires a supported registry-version floor that guarantees the coded
+answer and measured zero legacy use across supported deployments, including
+foreign registries; it is a separate reviewed compatibility change. No date or
+local registry upgrade alone removes support.
+
 **Creation precondition.** `POST /v1/namespaces/{domain}/addresses`
 requires that the target `did_aw` is already registered at awid
 (see [Identity operations](#identity-operations)). If

@@ -1307,7 +1307,7 @@ class RegistryClient:
         signing_key: bytes | None = None,
         did_key: str | None = None,
     ) -> Address | None:
-        """None means a typed address_not_found response, never a generic 404."""
+        """None means coded address absence or the exact released legacy body."""
         try:
             data = await self._request_json(
                 "GET",

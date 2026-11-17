@@ -385,7 +385,9 @@ async function readYAML<T>(path: string): Promise<T | null> {
   } catch (error) {
     throw new Error(`invalid YAML configuration ${path}`, { cause: error });
   }
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  // Go unmarshals empty documents and explicit null into zero-value structs.
+  if (value === undefined || value === null) return {} as T;
+  if (typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`YAML configuration must contain a mapping: ${path}`);
   }
   return value as T;
