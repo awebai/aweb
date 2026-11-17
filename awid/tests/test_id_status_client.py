@@ -470,7 +470,7 @@ async def test_real_redis_ages_an_entry_past_its_whole_second_stamp(env):
         REGISTRY, redis, transport=httpx.MockTransport(env.handler),
         domain_registry_resolver=env.route, domain_verifier=env.verify_domain,
     )
-    key = client._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]})
+    key = await client._generation_cache_key(client._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]}), client._id_status_generation_key(domain))
     try:
         seconds, microseconds = await redis.time()
         while microseconds == 0:  # the stored stamp must lie a fraction of a second behind
@@ -532,7 +532,7 @@ async def test_a_clock_stepping_back_during_a_refresh_leaves_its_evidence_unavai
 @pytest.mark.parametrize("fetched_at", [1_000_000.5, "1000000", True, None])
 async def test_a_corrupt_stored_entry_is_dropped_and_refreshed(env, fetched_at):
     await _evidence(env)
-    [key] = env.redis.values
+    [key] = [key for key in env.redis.values if not key.startswith("awid:cache_generation:")]
     entry = json.loads(env.redis.values[key])
     env.redis.values[key] = json.dumps(entry | {"fetched_at": fetched_at})
     env.clock[0] += 1
@@ -645,7 +645,7 @@ async def test_the_cached_client_reads_the_real_status_endpoint(clocked_client, 
     )
     subject = {"id": did_aw("global_agent"), "did_key": did_key("global_agent")}
     bundle = _bundle(["alice", "global-agent"])
-    key = client._id_status_cache_key({"v": 1, "domain": DOMAIN, "ids": [did_aw("alice"), did_aw("global_agent")]})
+    key = await client._generation_cache_key(client._id_status_cache_key({"v": 1, "domain": DOMAIN, "ids": [did_aw("alice"), did_aw("global_agent")]}), client._id_status_generation_key(DOMAIN))
     try:
         await redis.delete(key)
         evidence = await client.id_chain_evidence(bundle, subject, domain=DOMAIN)
@@ -677,7 +677,7 @@ async def test_real_redis_ages_shared_evidence_on_its_own_clock(env, monkeypatch
         )
         for _ in range(2)
     ]
-    key = clients[0]._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]})
+    key = await clients[0]._generation_cache_key(clients[0]._id_status_cache_key({"v": 1, "domain": domain, "ids": [did_aw("global_agent")]}), clients[0]._id_status_generation_key(domain))
     try:
         monkeypatch.setattr(registry_module, "_cache_now", lambda: int(time.time()) + skew)
         written = await _evidence(env, client=clients[0], bundle=None, subject=GLOBAL_SUBJECT, domain=domain)

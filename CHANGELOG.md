@@ -7,6 +7,12 @@
   by child-and-new-parent signed registration; two-key rotation preserves valid
   delegations. Child data is retained; this does not revoke team credentials or
   every registry write made under a stolen key.
+
+- AWID cache invalidation for identity-tree, address and team-certificate
+  writes no longer scans unrelated Redis keys. Random cache generations keep
+  delayed refreshes from restoring invalidated entries without changing the
+  evidence freshness or authorization rules.
+
 - Embedded aweb and AWID applications preserve their host's logging handlers
   and root level. Starting them no longer suppresses later host warnings;
   standalone services still configure their own logging.
