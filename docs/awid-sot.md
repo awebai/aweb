@@ -1250,15 +1250,12 @@ POST /v1/id-certificates/status     Snapshot of exact registered IDs and namespa
 ```
 
 The body is exactly `{v: 1, domain, ids}` with 0–8 distinct canonical did:aw
-strings; any other field (a prefix, a search) is `invalid_shape`. An
-authenticated caller signs the covering-v2 request
-(`operation="read_id_certificate_status"`) with a strict-profile key. Supplied
-but invalid proof, or the legacy form, is 401, never anonymous. Public requests
-are charged to their source IP's `id_certificate_status` bucket, and a verified
-caller also to its key's. Each allows 60 requests per minute. The configured
-service token skips only the IP budget; the verified caller-key budget remains.
-Limits are checked before the DNS lookup and any database read. The domain is
-canonicalized (lowercase, no trailing dot) and must be a valid name.
+strings; any other field (a prefix, a search) is `invalid_shape`. This is a
+public, unsigned read. Requests are charged to their source IP's
+`id_certificate_status` bucket, which allows 60 requests per minute. The
+configured service token skips that budget. Limits are checked before the DNS
+lookup and any database read. The domain is canonicalized (lowercase, no
+trailing dot) and must be a valid name.
 
 The response is one coherent snapshot, read in a single read-only REPEATABLE
 READ transaction: the domain's complete epoch history with `continuity`, then
