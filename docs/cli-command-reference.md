@@ -2664,6 +2664,15 @@ aweb address like acme.aweb.ai/reviewer, or a did:aw identity. The
 resolved address is always shown: mail goes out under this workspace's
 cryptographically verified identity.
 
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
+
 Flags:
 - `--body string Alias for --message`
 - `--cc stringArray Not supported in v1: send to each recipient separately`
@@ -2827,6 +2836,15 @@ Flags:
 
 Send a message and leave the conversation. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
 
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
+
 Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
@@ -2839,6 +2857,15 @@ Flags:
 ### `chat send-and-wait`
 
 Send a message and wait for a reply. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
+
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
 
 Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
@@ -3372,6 +3399,15 @@ With --human, unlock once at a real terminal for this command; each signature
 is described on stderr and the key is wiped at exit. Ordinary human mail
 carries the ID chain and no saved enrollment or creation evidence.
 Use aw id proof to export that evidence for someone else to verify.
+
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
 
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`

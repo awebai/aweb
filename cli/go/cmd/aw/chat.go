@@ -23,6 +23,13 @@ var chatCmd = &cobra.Command{
 		"refused; use aw mail send --to <person> --subject <subject>.",
 }
 
+// The commands that search the sender's other teams for a bare name say how.
+func init() {
+	for _, cmd := range []*cobra.Command{mailSendCmd, chatSendAndWaitCmd, chatSendAndLeaveCmd, beadsMailSendCmd} {
+		cmd.Long += aliasTeamSearchHelp
+	}
+}
+
 func chatStderrCallback(kind, message string) {
 	writeChatStatus(os.Stderr, kind, message)
 }

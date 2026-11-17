@@ -15,6 +15,10 @@
   key, scope or setup command, aw says to run the changed command in a new
   directory and keep `.aw/partial-init.yaml`, instead of "rerun the same
   command in this directory", which the partial state would refuse.
+- The help for `aw mail send`, `aw chat send-and-wait`, `aw chat
+  send-and-leave` and `aw beads-mail send`, and the CLI reference, now
+  describe how a bare recipient name is looked up in this identity's other
+  local teams, including that a team that cannot be read refuses the send.
 - `aw id child ...`, `aw id parent request|import` and `aw id revoke` again
   accept the released form `--human ID --domain DOMAIN`, beside the global
   selector `--human ID --human-domain DOMAIN`: with `--human`, `--domain`
