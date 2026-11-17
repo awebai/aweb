@@ -474,6 +474,14 @@ behind the current pin. The pin then moves by compare-and-swap. Anything else
 is logged as one warning line,
 `team_key_pin_mismatch team=<id> pinned=<key> served=<key> reason=<reason> enforced=<true|false>`,
 and, while enforcement is on, fails closed with 401 `team_key_unverified`.
+One case is neither accepted nor refused: when the registry's act names a
+different key than the one it serves, the served key is a read older than that
+act (a process whose registry cache predates a rotation) or a key substituted
+beside it. In both modes the pin stays, the pinned key is used, and the line is
+`team_key_pin_kept team=<id> pinned=<key> served=<key> reason=key_mismatch`.
+A server remembers its answer for each team's served key for 60 seconds, the
+registry key's own freshness bound, so a lasting mismatch costs one act read
+per minute rather than one per request.
 
 Enforcement is staged. `AWEB_ENFORCE_TEAM_KEY_PINS` (one name for the aweb
 server and every naapp, default off) turns refusal on. While it is off a
@@ -487,6 +495,16 @@ certificate verification, and admitted teams whose key differs (a rotation
 from before acts were kept) can be counted and re-attested by their namespace
 controller before enforcement. **Until it is on, the registry-substitution gap
 this section closes stays open.**
+
+What the measuring mode does and does not protect: it keeps a server on the
+team's current key across processes, so a stale registry read cannot move the
+pin back to an older key and remove the team's members. It does not stop a
+registry that serves another key and withholds the act: that answer looks like
+a rotation from before acts were kept, and the pin moves to it. Closing that
+needs enforcement, which hosted organisations cannot have until the act check
+accepts the delegation evidence their inherited DNS record carries (aweb-adfl):
+a hosted namespace has no `_awid` record of its own, so no act of its
+controller verifies against DNS.
 
 Named residuals:
 
