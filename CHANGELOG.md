@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `aw id parent`, `aw id child` and `aw id revoke` no longer define a
+  per-command `--human`; select a person with the global
+  `--human ID --human-domain DOMAIN`. Their `--domain` organization input
+  remains for agents and `--as-root` operations.
 - `aw` signs every registry controller write in the covering-v2 form, as the
   Python client below does, through one write path: namespace register,
   update and delete; team create, visibility, delete and key rotation;

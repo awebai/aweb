@@ -36,7 +36,8 @@ type childIssuer struct {
 	// issuer cannot issue now.
 	evidence func(ctx context.Context, childID, childDIDKey string) (*awid.IDChainEvidence, error)
 	// human is the issuing human's did:aw; empty for the root.
-	human string
+	human   string
+	session *humanParticipation
 }
 
 // humanParent is a registered human on this machine that may issue: its
@@ -77,13 +78,17 @@ func loadHumanParent(domain, id string) (*humanParent, error) {
 // issuer signs as the human through its keychain key and terminal prompt,
 // once its chain and key verify against fresh status from registryURL.
 func (p *humanParent) issuer(keychain awid.HumanKeyStore, prompt awid.PassphrasePrompt, resolver awid.TXTResolver, registry *awid.RegistryClient, registryURL string) *childIssuer {
+	h := newHumanSigningSession(p.record, keychain, prompt)
+	h.operation = "issue or revoke a child as human " + p.record.StableID
+	h.watchSignals()
 	return &childIssuer{
+		session:     h,
 		parent:      map[string]any{"kind": "identity", "id": p.record.StableID},
 		parentChain: p.chain.Bundle["certificates"].([]any),
 		issuance:    awconfig.IDIssuanceFileStore{Dir: awconfig.IdentityIssuanceDir(p.dir)},
 		invitations: awconfig.IDInvitationFileStore{Dir: awconfig.IdentityInvitationsDir(p.dir)},
 		signer: func(description string) awid.IDCertificateSigner {
-			return awid.HumanSigner(keychain, p.record.StableID, description, prompt)
+			return h.certificateSigner(description)
 		},
 		evidence: func(ctx context.Context, _, _ string) (*awid.IDChainEvidence, error) {
 			subject := awid.IDChainSubject{ID: p.record.StableID, DIDKey: p.record.DIDKey}
@@ -301,6 +306,7 @@ func resumeIDCreateChain(ctx context.Context, opts idCreateOptions, parent *idCr
 	if err != nil {
 		return idCreateOutput{}, err
 	}
+	defer issuer.close()
 	step := agentChainStep{
 		issuer: issuer, agentID: identity.StableID, agentDIDKey: identity.DID, agentKey: key, domain: domain,
 		registryURL: identity.RegistryURL, identityDir: identityDir, registry: registry, now: idCreateNow(opts)(),
@@ -332,4 +338,10 @@ func idCreateNow(opts idCreateOptions) func() time.Time {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func (i *childIssuer) close() {
+	if i != nil && i.session != nil {
+		i.session.close()
+	}
 }

@@ -547,13 +547,25 @@ async def human_command(
                     r"Register your key in that browser, then type yes to continue \[y/N\]: ",
                     r"Confirm your enrollment in that browser, then type yes to continue \[y/N\]: ",
                     "Waiting for human approval at the person's known approval service.",
+                    r"How many keys did you personally register in this enrollment \(1-8\)\? ",
+                    r"Do these keys match the keys you registered\? Type yes to let your issuer bind them \[y/N\]: ",
                     pexpect.EOF,
                 ],
                 async_=True,
             )
             transcript.append(child.before)
-            if found == 6:
+            if found == 8:
                 break
+            if found == 6:
+                assert registered, "key_count_before_browser_registration"
+                # This actor registered exactly one key. Do not derive the
+                # person's answer from the service's registration list.
+                child.sendline("1")
+                continue
+            if found == 7:
+                assert registered, "key_review_before_browser_registration"
+                child.sendline("yes")
+                continue
             if found == 5:
                 if approval_ready is not None:
                     approval_ready.set()

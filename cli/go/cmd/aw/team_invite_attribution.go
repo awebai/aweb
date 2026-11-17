@@ -144,6 +144,7 @@ func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, create
 	if err != nil {
 		return nil, nil, err
 	}
+	defer issuer.close()
 	verdict, err := selectedTeamInviteAuthority(ctx, issuer)
 	if err != nil {
 		return nil, nil, err
@@ -206,6 +207,7 @@ func linkedTeamInviteIssuer(ctx context.Context, link *awconfig.TeamInviteIDChil
 		return opts, nil, err
 	}
 	if issuer.domain != link.Domain || issuer.parent["id"] != link.Parent {
+		issuer.close()
 		return opts, nil, fmt.Errorf("inviter no longer matches the linked ID parent")
 	}
 	return opts, issuer, nil
@@ -216,6 +218,7 @@ func checkTeamInviteIssuer(ctx context.Context, link *awconfig.TeamInviteIDChild
 	if err != nil {
 		return err
 	}
+	defer issuer.close()
 	return checkSelectedTeamInviteIssuer(ctx, issuer)
 }
 
@@ -240,6 +243,7 @@ func completeTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite,
 	if err != nil {
 		return err
 	}
+	defer issuer.close()
 	received, err := executeIDChildReceive(ctx, issuerOpts, raw)
 	if err != nil {
 		return err

@@ -1343,8 +1343,8 @@ init path, not a CSR exchange: the human operator creates their own human key,
 uses the current namespace controller to issue the namespace-parent human
 certificate directly, and registers with the subject's key proof. It creates
 no CSR or invitation. It requires a human interactive invocation; an agent-run
-or non-TTY command cannot use it to mint a human. Human key custody and each
-human signing prompt retain their existing rules. For a human prepared on a
+or non-TTY command cannot use it to mint a human. Human key custody follows §1; all human signatures in one command share its
+single terminal unlock. For a human prepared on a
 different machine, the issuer fixes the invitation and parent BEFORE CSR
 export; key/DID preparation may precede that, but `--domain` alone cannot
 produce an issue CSR without its required invitation ID and parent.
@@ -1377,7 +1377,7 @@ exchange never grants team membership, moves an address or rebinds a contact.
 
 `aw id revoke <id>` revokes a registered identity under §3, using the same
 signer selection as `aw id child invite`: the current identity by default,
-`--human <did:aw> --domain D` for a human held in the keychain, or
+`--human <did:aw> --human-domain D` for a human held in the keychain, or
 `--as-root --domain D` for the namespace root. An identity signer may revoke
 itself; revoking its current child requires that it remain a valid parent.
 Namespace-root authority follows §3. Team membership or team-controller

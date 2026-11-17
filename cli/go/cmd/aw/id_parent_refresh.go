@@ -17,7 +17,7 @@ var idParentRefreshCmd = &cobra.Command{
 	Long:  "Fetch and verify current registered ancestry, preserving local certificates below it.\nFor a branch with only local ancestors, use parent request --resign with the parent.",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		result, err := executeIDParentRefresh(cmd.Context(), idParentOptionsFromFlags())
+		result, err := executeIDParentRefresh(cmd.Context(), idParentOptionsFromFlags(cmd))
 		if err != nil {
 			return err
 		}
@@ -27,7 +27,7 @@ var idParentRefreshCmd = &cobra.Command{
 }
 
 func init() {
-	idParentRefreshCmd.Flags().StringVar(&idParentDomain, "domain", "", "Identity namespace (defaults to the installed chain)")
+	idParentRefreshCmd.Flags().StringVar(&idParentDomain, "domain", "", "Organization namespace for agent operations (defaults to the chain)")
 	idParentRefreshCmd.Flags().StringVar(&idParentRegistry, "registry", "", "Registry origin when DNS names none")
 	idParentCmd.AddCommand(idParentRefreshCmd)
 }
@@ -51,6 +51,7 @@ func executeIDParentRefresh(ctx context.Context, opts idParentOptions) (*awid.ID
 	if err != nil {
 		return nil, err
 	}
+	defer r.close()
 	installed, err := awconfig.LoadInstalledIDChain(r.dir)
 	if err != nil {
 		return nil, err
