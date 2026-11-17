@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `aw` signs every registry controller write in the covering-v2 form, as the
+  Python client below does, through one write path: namespace register,
+  update and delete; team create, visibility, delete and key rotation;
+  certificate register and revoke; address register and delete. The body is
+  serialized once as canonical JSON and those bytes are signed and sent; there
+  is no fallback to the legacy form. `aw` now needs the registry to have
+  `AWID_PUBLIC_ORIGINS` set (stable `aw` 1.36.58 needed it only for
+  ID-certificate writes); without it these commands fail with the registry's
+  503 message naming the setting. aw and the Python client send identical
+  bytes for the same write (`docs/vectors/awid-controller-writes-v1.json`).
 - The Python controller client (`awid.registry.RegistryClient`, both its
   typed `controller_request` and its namespace, team, certificate and address
   methods) signs every registry write in the covering-v2 form: the signature

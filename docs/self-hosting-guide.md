@@ -13,18 +13,24 @@ Source of truth for this guide:
 
 ## Upgrading a registry for the covering controller signatures
 
-**Set `AWID_PUBLIC_ORIGINS` on your `awid` before you upgrade anything that
-writes to the registry through the Python `awid` package**, such as aweb Cloud
-or your own scripts (the aweb server itself makes no controller writes). From
-this release that package signs every controller write in the
-covering form, which names the registry origin it is sent to, and it no longer
-sends the older form. A registry without `AWID_PUBLIC_ORIGINS` refuses those
-writes with 503 (creating namespaces and teams, registering and revoking
-certificates, address writes); a registry older than `awid-service` 0.5.39 may
-refuse them too. The `aw` CLI is not affected by this change: stable `aw`
-1.36.58 already signs its ID-certificate writes this way, and still signs team,
-certificate and address writes in the older form. A registry that serves `aw`
-ID-certificate writes therefore already has the setting.
+**Set `AWID_PUBLIC_ORIGINS` on your `awid` before you upgrade `aw`, or anything
+that writes to the registry through the Python `awid` package** (aweb Cloud,
+your own scripts; the aweb server itself makes no controller writes). From this
+release both sign every controller write in the covering form, which names the
+registry origin it is sent to, and neither sends the older form any more. A
+registry without `AWID_PUBLIC_ORIGINS` refuses those writes with 503, and `aw`
+prints the registry's message, which names the setting: creating and deleting
+namespaces and teams, team visibility and key rotation, registering and
+revoking certificates, and address writes. A registry older than
+`awid-service` 0.5.39 may refuse them too. Stable `aw` 1.36.58 signed only its
+ID-certificate writes this way, so a registry that has served those already has
+the setting; one that has served only team, certificate and address writes may
+not.
+
+Clients address a registry by its origin. `aw` and the Python client refuse a
+registry URL with a path, so a registry served under a path prefix is not
+supported for their controller writes, although the registry itself verifies a
+prefixed path (see [AWID controller requests](awid-controller-requests.md)).
 
 ## 1. Try It Locally
 

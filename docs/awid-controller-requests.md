@@ -26,8 +26,10 @@ team name, certificate ID or preconditions) and:
 
 Every field is required, canonical bytes must match exactly, and extra claims
 are refused. `method` is uppercase; `path` is the external raw path plus raw
-query, including a mount prefix and percent-encoding. Timestamp skew remains
-300 seconds. A covering header, including an empty or malformed one, never
+query, including a mount prefix and percent-encoding. The `aw` and Python
+clients address a registry by its origin and refuse a registry URL with a path,
+so they do not write to a registry served under a path prefix. Timestamp skew
+remains 300 seconds. A covering header, including an empty or malformed one, never
 falls back to a legacy signature. Controller requests cannot use the team-auth
 v2 purpose, and team-auth refuses the AWID purpose.
 
