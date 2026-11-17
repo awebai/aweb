@@ -27,6 +27,14 @@ Optional environment:
 - `AWID_PORT` default `8010`
 - `AWID_DB_SCHEMA` default `awid`
 - `AWID_RATE_LIMIT_BACKEND` default `redis`
+- `AWID_READ_RATE_LIMITS` optional JSON object of positive integer read budgets,
+  for example `{"id_certificate_status":600,"certificate_status":120}`.
+  Values replace request counts in the buckets' existing windows; defaults
+  and write limits remain unchanged. Unknown/write buckets, non-integers and
+  nonpositive values refuse startup. This sizes the registry you operate,
+  not a public registry queried by your server. A configured service token
+  still exempts only the existing service-eligible budgets; signed status
+  callers retain their separate caller-key limit.
 - `AWID_PUBLIC_ORIGINS` comma-separated canonical external registry origins
   used by covering controller requests. Request or proxy headers do not
   configure the trusted origin.

@@ -197,10 +197,22 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
 }
 
 
-def _rate_config(bucket: str) -> tuple[int, int]:
+# Only read capacity is operator-sized here; write/admission limits are separate.
+READ_RATE_BUCKETS = frozenset({
+    "did_key", "did_addresses", "did_log", "did_head", "did_full",
+    "namespace_get", "namespace_list", "address_get", "address_list",
+    "team_get", "team_list", "team_member_get", "certificate_list",
+    "certificate_fetch", "certificate_status", "team_server_get", "revocation_list",
+    "attestation_record_get", "attestation_record_list", "id_certificate_status",
+})
+
+
+def _rate_config(bucket: str, read_limits: dict[str, int] | None = None) -> tuple[int, int]:
     cfg = _BUCKET_DEFAULTS.get(bucket)
     if cfg is None:
         raise ValueError(f"unknown rate limit bucket: {bucket}")
+    if read_limits and bucket in READ_RATE_BUCKETS and bucket in read_limits:
+        return read_limits[bucket], cfg[1]
     return cfg
 
 
@@ -239,7 +251,7 @@ async def enforce_rate_limit(
     key: str,
 ) -> None:
     limiter = await get_rate_limiter(request)
-    limit, window = _rate_config(bucket)
+    limit, window = _rate_config(bucket, getattr(request.app.state, "awid_read_rate_limits", None))
     decision = await limiter.hit(
         bucket=bucket,
         key=key,
@@ -306,7 +318,7 @@ def rate_limit_dep(
                     bucket,
                 )
 
-        limit, window = _rate_config(bucket)
+        limit, window = _rate_config(bucket, getattr(request.app.state, "awid_read_rate_limits", None))
         key = key_extractor(request)
         decision = await limiter.hit(
             bucket=bucket, key=key, limit=limit, window_seconds=window

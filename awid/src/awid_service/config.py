@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 
-from awid.ratelimit import normalize_service_token
+from awid.ratelimit import READ_RATE_BUCKETS, normalize_service_token
 
 
 def _env_bool(name: str, *, default: bool = False) -> bool:
@@ -11,6 +12,19 @@ def _env_bool(name: str, *, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _read_rate_limits() -> dict[str, int]:
+    try:
+        limits = json.loads(os.getenv("AWID_READ_RATE_LIMITS", "{}"))
+    except (ValueError, TypeError) as exc:
+        raise ValueError("AWID_READ_RATE_LIMITS must be a JSON object of read budgets") from exc
+    if (type(limits) is not dict or any(
+        bucket not in READ_RATE_BUCKETS or type(limit) is not int or limit < 1
+        for bucket, limit in limits.items()
+    )):
+        raise ValueError("AWID_READ_RATE_LIMITS requires known read buckets and positive integer limits")
+    return limits
 
 
 @dataclass(frozen=True)
@@ -24,6 +38,7 @@ class Settings:
     db_schema: str
     rate_limit_backend: str
     service_token: str | None
+    read_rate_limits: dict[str, int] = field(default_factory=dict)
     # Behind a transaction pooler (PgBouncer, Neon's -pooler endpoints) asyncpg's
     # statement cache must be off and the pool bounded.
     database_uses_transaction_pooler: bool = False
@@ -77,6 +92,7 @@ def get_settings() -> Settings:
         db_schema=schema,
         rate_limit_backend=rate_limit_backend,
         service_token=normalize_service_token(os.getenv("AWID_SERVICE_TOKEN")),
+        read_rate_limits=_read_rate_limits(),
         database_uses_transaction_pooler=_env_bool("AWID_DATABASE_USES_TRANSACTION_POOLER"),
         database_pooler_max_connections=pooler_max_connections,
         database_statement_cache_size=statement_cache_size,
