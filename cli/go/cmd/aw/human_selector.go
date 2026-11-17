@@ -40,6 +40,17 @@ func prepareIDHumanSelection(cmd *cobra.Command) (bool, error) {
 			}
 		}
 	}
+	if create && strings.TrimSpace(idCreateHumanParent) != "" {
+		// The released form aw id create --human-parent ID --domain DOMAIN
+		// (aw 1.36.58) keeps working: the parent person signs, in the
+		// child's domain. The checks below still apply when either is named.
+		if humanFlag == "" {
+			humanFlag = strings.TrimSpace(idCreateHumanParent)
+		}
+		if humanDomainFlag == "" {
+			humanDomainFlag = strings.TrimSpace(idCreateDomain)
+		}
+	}
 	if humanFlag == "" || humanDomainFlag == "" {
 		return true, usageError("select the person who signs with --human ID --human-domain DOMAIN")
 	}

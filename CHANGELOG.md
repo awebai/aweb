@@ -23,7 +23,8 @@
   accept the released form `--human ID --domain DOMAIN`, beside the global
   selector `--human ID --human-domain DOMAIN`: with `--human`, `--domain`
   names the person's domain. Both may be given only when they name the same
-  domain.
+  domain. `aw id create --human-parent ID --domain DOMAIN` (aw 1.36.58) again
+  works without `--human`: the parent person signs, in the child's domain.
 - `aw chat send-and-wait`, `send-and-leave`, `extend-wait`, `open`,
   `history`, `listen` and `show-pending` to a teammate's alias now use the
   conversation found by the DID the team's agent list confirms for that
