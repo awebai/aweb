@@ -38,6 +38,9 @@ _FORMS = {
     COVERING_CONTROLLER_AUTH_EVENT: 'covering',
     PATH_SIGNED_READ_EVENT: 'path',
 }
+# Distinct aw versions counted per process; later ones count as aw/other. Any
+# key can sign an accepted read, so the client label must not grow without bound.
+MAX_TRACKED_AW_VERSIONS = 16
 # aw's User-Agent: aw/<version> (<os>/<arch>), cli/go/cmd/aw/main.go cliUserAgent.
 _AW_USER_AGENT = re.compile(
     r'aw/(\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z]{1,16}(?:\.[0-9A-Za-z]{1,16}){0,3})?) \([0-9a-z_]{1,16}/[0-9a-z_]{1,16}\)'
@@ -53,6 +56,22 @@ def client_family(user_agent: str | None) -> str:
     if (user_agent or '').startswith('python-httpx/'):
         return 'python-httpx'
     return 'other'
+
+
+def _tracked_client(state, client: str) -> str:
+    """client, or aw/other once MAX_TRACKED_AW_VERSIONS aw versions are tracked."""
+    if not client.startswith('aw/'):
+        return client
+    tracked = getattr(state, 'tracked_aw_versions', None)
+    if tracked is None:
+        tracked = set()
+        state.tracked_aw_versions = tracked
+    if client in tracked:
+        return client
+    if len(tracked) >= MAX_TRACKED_AW_VERSIONS:
+        return 'aw/other'
+    tracked.add(client)
+    return client
 
 
 def record_accepted_auth(request: Request, event: str, operation: str) -> None:
@@ -180,7 +199,7 @@ class ControllerAuthRoute(APIRoute):
                 if counts is None:
                     counts = {}
                     request.app.state.controller_auth_counts = counts
-                client = client_family(request.headers.get('user-agent'))
+                client = _tracked_client(request.app.state, client_family(request.headers.get('user-agent')))
                 for event, operation in sorted(getattr(request.state, 'accepted_auth', ())):
                     key = (event, operation, client)
                     count = counts.get(key, 0) + 1

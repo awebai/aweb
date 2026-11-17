@@ -84,7 +84,10 @@ The covering count shows that requests still arrive, so a silent legacy line
 means no legacy sender rather than no traffic. `client` is one of three
 families: `aw/<version>` when the User-Agent is exactly aw's
 `aw/<version> (<os>/<arch>)`, `python-httpx` for the Python client, and `other`.
-The raw User-Agent is never emitted. Invalid proofs and refused requests are
+Each worker process tracks at most 16 distinct aw versions and counts any later
+one as `aw/other`: any key can sign an accepted read, so a claimed version must
+not grow the counter or the log without bound. The raw User-Agent is never
+emitted. Invalid proofs and refused requests are
 not counted. Only these closed values are emitted: no domains, caller
 identifiers, bodies or credentials. The counts are per worker process. There is
 no public metrics endpoint or new telemetry SDK.

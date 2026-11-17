@@ -12,7 +12,8 @@
   path signature until this registry release is in production.
 - Registry accepted-authentication metrics now name the signed form and the
   sending client family (`aw/<version>`, `python-httpx` or `other`; never the
-  raw User-Agent), counted per operation and client:
+  raw User-Agent; at most 16 aw versions per process, later ones count as
+  `aw/other`), counted per operation and client:
   `awid_legacy_controller_auth_accepted` (unchanged event name, now with
   `client=` and `form=legacy`), and the new `awid_controller_auth_accepted`
   (`form=covering`) and `awid_path_signed_read_accepted` (`form=path`). The

@@ -8,6 +8,7 @@ import pytest
 from awid.controller_request import (
     COVERING_CONTROLLER_AUTH_EVENT,
     LEGACY_CONTROLLER_AUTH_EVENT,
+    MAX_TRACKED_AW_VERSIONS,
     PATH_SIGNED_READ_EVENT,
     client_family,
 )
@@ -253,3 +254,25 @@ async def test_signed_records_read_only_by_the_team_key_in_both_forms(controller
         elsewhere = _signed(form, env.team, path, claims, overrides={'aud': 'https://registry.example.com'})
         response = await env.client.get(path, headers=elsewhere)
         assert response.status_code == 404, response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('form', ['covering', 'path'])
+async def test_distinct_aw_versions_tracked_are_bounded(controller_app, form):
+    """Any fresh key may sign a team list read (it sees public teams), so the
+    per-client counter must not grow with each new aw version a caller claims."""
+    env = controller_app
+    path = '/v1/namespaces/local/teams'
+    claims = {'domain': 'local', 'operation': 'read_team'}
+    for n in range(MAX_TRACKED_AW_VERSIONS + 20):
+        agent = {'User-Agent': f'aw/0.0.{n} (linux/amd64)'}
+        response = await env.client.get(path, headers={**_signed(form, keypair(), path, claims), **agent})
+        assert response.status_code == 200, response.text
+    versions = {client for (_, _, client) in env.app.state.controller_auth_counts if client.startswith('aw/')}
+    assert len(versions - {'aw/other'}) == MAX_TRACKED_AW_VERSIONS
+    event = COVERING_CONTROLLER_AUTH_EVENT if form == 'covering' else PATH_SIGNED_READ_EVENT
+    assert env.app.state.controller_auth_counts[(event, 'read_team', 'aw/other')] == 20
+    size = len(env.app.state.controller_auth_counts)
+    response = await env.client.get(path, headers={**_signed(form, keypair(), path, claims), 'User-Agent': 'aw/9.9.9 (linux/amd64)'})
+    assert response.status_code == 200, response.text
+    assert len(env.app.state.controller_auth_counts) == size
