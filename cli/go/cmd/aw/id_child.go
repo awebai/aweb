@@ -93,6 +93,12 @@ func init() {
 		cmd.Flags().StringVar(&idChildRegistry, "registry", "", "Registry origin for --as-root, when the domain's _awid record names none")
 		idChildCmd.AddCommand(cmd)
 	}
+	for _, cmd := range []*cobra.Command{idChildInviteCmd, idChildReceiveCmd, idChildPendingCmd, idChildShowCmd, idChildApproveCmd, idChildRefuseCmd} {
+		if cmd.Long == "" {
+			cmd.Long = cmd.Short
+		}
+		cmd.Long += humanSigningHelp
+	}
 	idChildInviteCmd.Flags().StringVar(&idChildKind, "kind", "", "Kind of the child: human or agent")
 	idChildInviteCmd.Flags().StringVar(&idChildNote, "recipient", "", "Your private note of who the invitation is for")
 	idChildInviteCmd.Flags().DurationVar(&idChildExpires, "expires", 7*24*time.Hour, "How long the invitation stays open")
@@ -108,6 +114,7 @@ type childIssuerSelection struct {
 }
 
 type idChildOptions struct {
+	Operation       string
 	IdentityHome    string
 	Issuer          childIssuerSelection
 	WorkingDir      string
@@ -126,9 +133,14 @@ type idChildOptions struct {
 	TeamRegistryDomain string
 }
 
-func idChildOptionsFromFlags() idChildOptions {
+func idChildOptionsFromFlags(commands ...*cobra.Command) idChildOptions {
+	operation := "aw id child"
+	if len(commands) > 0 {
+		operation = commands[0].CommandPath()
+	}
 	wd, _ := os.Getwd()
 	return idChildOptions{
+		Operation:       operation,
 		Issuer:          childIssuerSelection{AsRoot: idChildAsRoot, Domain: idChildDomain, Human: idChildHuman},
 		WorkingDir:      wd,
 		RegistryURL:     idChildRegistry,
@@ -188,6 +200,12 @@ func selectChildIssuer(ctx context.Context, opts idChildOptions) (*selectedChild
 		registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
 		registry.DefaultRegistryURL = human.record.RegistryURL
 		issuer := human.issuer(opts.Keychain, opts.Prompt, opts.TXTResolver, registry, human.record.RegistryURL)
+		if opts.Operation != "" {
+			issuer.session.operation = opts.Operation
+		}
+		if opts.Show != nil {
+			issuer.session.output = opts.Show
+		}
 		return &selectedChildIssuer{childIssuer: issuer, domain: domain, registryURL: human.record.RegistryURL, kind: "human"}, nil
 	}
 	return currentAgentIssuer(opts)
@@ -277,7 +295,7 @@ type idChildInviteOutput struct {
 }
 
 func runIDChildInvite(cmd *cobra.Command, args []string) error {
-	out, err := executeIDChildInvite(cmd.Context(), idChildOptionsFromFlags(), idChildKind, idChildNote, idChildExpires)
+	out, err := executeIDChildInvite(cmd.Context(), idChildOptionsFromFlags(cmd), idChildKind, idChildNote, idChildExpires)
 	if err != nil {
 		return err
 	}
@@ -299,6 +317,7 @@ func executeIDChildInvite(ctx context.Context, opts idChildOptions, kind, recipi
 	if err != nil {
 		return idChildInviteOutput{}, err
 	}
+	defer issuer.close()
 	if kind == "human" && issuer.kind == "agent" {
 		return idChildInviteOutput{}, usageError("an agent cannot invite a human; select --as-root or --human")
 	}
@@ -336,7 +355,7 @@ func runIDChildReceive(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	out, err := executeIDChildReceive(cmd.Context(), idChildOptionsFromFlags(), raw)
+	out, err := executeIDChildReceive(cmd.Context(), idChildOptionsFromFlags(cmd), raw)
 	if err != nil {
 		return err
 	}
@@ -349,6 +368,7 @@ func executeIDChildReceive(ctx context.Context, opts idChildOptions, raw []byte)
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
+	defer issuer.close()
 	lock, err := lockChildIssuer(issuer)
 	if err != nil {
 		return idChildRequestOutput{}, err
@@ -497,6 +517,7 @@ func listIDChildRequests(ctx context.Context, opts idChildOptions) ([]awid.IDChi
 	if err != nil {
 		return nil, err
 	}
+	defer issuer.close()
 	listed, err := awid.IDChildRequests(issuer.invitations)
 	if err != nil {
 		return nil, err
@@ -520,6 +541,7 @@ func showIDChildRequest(ctx context.Context, opts idChildOptions, requestID stri
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
+	defer issuer.close()
 	found, err := findReceivedRequest(issuer, requestID)
 	if err != nil {
 		return idChildRequestOutput{}, err
@@ -532,6 +554,7 @@ func executeIDChildRefuse(ctx context.Context, opts idChildOptions, requestID st
 	if err != nil {
 		return err
 	}
+	defer issuer.close()
 	lock, err := lockChildIssuer(issuer)
 	if err != nil {
 		return err
@@ -548,7 +571,7 @@ func executeIDChildRefuse(ctx context.Context, opts idChildOptions, requestID st
 }
 
 func runIDChildPending(cmd *cobra.Command, args []string) error {
-	listed, err := listIDChildRequests(cmd.Context(), idChildOptionsFromFlags())
+	listed, err := listIDChildRequests(cmd.Context(), idChildOptionsFromFlags(cmd))
 	if err != nil {
 		return err
 	}
@@ -557,7 +580,7 @@ func runIDChildPending(cmd *cobra.Command, args []string) error {
 }
 
 func runIDChildShow(cmd *cobra.Command, args []string) error {
-	out, err := showIDChildRequest(cmd.Context(), idChildOptionsFromFlags(), args[0])
+	out, err := showIDChildRequest(cmd.Context(), idChildOptionsFromFlags(cmd), args[0])
 	if err != nil {
 		return err
 	}
@@ -566,7 +589,7 @@ func runIDChildShow(cmd *cobra.Command, args []string) error {
 }
 
 func runIDChildRefuse(cmd *cobra.Command, args []string) error {
-	if err := executeIDChildRefuse(cmd.Context(), idChildOptionsFromFlags(), args[0]); err != nil {
+	if err := executeIDChildRefuse(cmd.Context(), idChildOptionsFromFlags(cmd), args[0]); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Refused %s; nothing was signed.\n", args[0])
@@ -574,7 +597,7 @@ func runIDChildRefuse(cmd *cobra.Command, args []string) error {
 }
 
 func runIDChildApprove(cmd *cobra.Command, args []string) error {
-	response, err := executeIDChildApprove(cmd.Context(), idChildOptionsFromFlags(), args[0])
+	response, err := executeIDChildApprove(cmd.Context(), idChildOptionsFromFlags(cmd), args[0])
 	if err != nil {
 		return err
 	}
@@ -591,6 +614,7 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 	if err != nil {
 		return nil, err
 	}
+	defer issuer.close()
 	found, err := findReceivedRequest(issuer, requestID)
 	if err != nil {
 		return nil, err

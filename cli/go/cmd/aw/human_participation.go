@@ -157,8 +157,17 @@ func loadHumanParticipationState(id, domain string, store awid.HumanKeyStore, pr
 		}
 		chain = installed.Bundle
 	}
+	h := newHumanSigningSession(rec, store, prompt)
+	h.dir, h.chain = dir, chain
+	return h, nil
+}
+
+// Every human path shares this one command-owned unlock and wipe boundary.
+// Callers validate their own command-specific record/chain before using it.
+func newHumanSigningSession(rec *awconfig.HumanRecord, store awid.HumanKeyStore, prompt awid.PassphrasePrompt) *humanParticipation {
+	id := rec.StableID
 	n := 0
-	h := &humanParticipation{record: rec, dir: dir, chain: chain, output: os.Stderr}
+	h := &humanParticipation{record: rec, output: os.Stderr}
 	sign := func(payload []byte, description string) (string, []byte, error) {
 		h.signMu.Lock()
 		defer h.signMu.Unlock()
@@ -220,7 +229,7 @@ func loadHumanParticipationState(id, domain string, store awid.HumanKeyStore, pr
 		return awid.KeySigner(h.unlockedKey)(payload)
 	}
 	h.sign = sign
-	return h, nil
+	return h
 }
 func (h *humanParticipation) membership(team string) (*awconfig.TeamState, *awconfig.TeamMembership, *awid.TeamCertificate, error) {
 	state, err := awconfig.LoadTeamStateFromIdentityHome(h.dir)
@@ -430,3 +439,9 @@ func setHumanMailOperation(recipient, subject, body string) {
 	sum := sha256.Sum256([]byte(body))
 	activeHuman.operation = fmt.Sprintf("mail to %q; subject %q; body sha256 %.12x", recipient, subject, sum)
 }
+
+func (h *humanParticipation) certificateSigner(description string) awid.IDCertificateSigner {
+	return func(payload []byte) (string, []byte, error) { return h.sign(payload, description) }
+}
+
+const humanSigningHelp = "\n\nWhen acting as a human, the first signature asks once for the selected person's\nkeychain passphrase at a real terminal. Each signature is described; the key\nstays in memory for this command, including confirmation waits, and is wiped\non success, error or interruption. Another command asks again."

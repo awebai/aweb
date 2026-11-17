@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
+	"github.com/spf13/cobra"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,6 +34,9 @@ func TestEnrollmentKeyReviewRequiresIndependentCountAndConsent(t *testing.T) {
 			}
 		} else if err == nil || !strings.Contains(err.Error(), tc.reason) {
 			t.Fatalf("count %d: %v", tc.count, err)
+		}
+		if tc.count == 1 && asked {
+			t.Fatal("unexpected key set reached binding confirmation")
 		}
 		if tc.count == 2 && (!asked || !strings.Contains(out.String(), "person-key") || !strings.Contains(out.String(), "unexpected-key")) {
 			t.Fatalf("keys not reviewed: %s", out.String())
@@ -101,6 +108,7 @@ func TestHumanParentCommandUsesOneUnlock(t *testing.T) {
 	p := &humanParent{record: h.record, dir: h.dir, chain: &awconfig.InstalledIDChain{Bundle: map[string]any{"certificates": []any{}}}}
 	count := 0
 	issuer := p.issuer(humanBackupFile{h.record.StableID, filepath.Join(os.Getenv("HOME"), "backup.pbes2")}, func(string) ([]byte, error) { count++; return []byte(humanPassphrase), nil }, nil, nil, "")
+	t.Cleanup(issuer.close)
 	for _, description := range []string{"first certificate", "second certificate"} {
 		if _, _, err := issuer.signer(description)([]byte(description)); err != nil {
 			t.Fatal(err)
@@ -108,5 +116,105 @@ func TestHumanParentCommandUsesOneUnlock(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("human parent unlocked %d times in one command", count)
+	}
+}
+
+func TestEnrollmentKeyCountRequiresAnExplicitNumber(t *testing.T) {
+	for _, text := range []string{"", "yes", "0", "9", "1.0", "-1"} {
+		if _, err := enrollmentKeyCount(text); err == nil {
+			t.Fatalf("accepted %q", text)
+		}
+	}
+	for _, text := range []string{"1", "2", "8"} {
+		if _, err := enrollmentKeyCount(text); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Exercise the actual command's saved-session refusal before any registry call.
+func TestHumanEnrollExpiredCommandGivesRecoverableNextStep(t *testing.T) {
+	h, _, _ := commandUnlockFixture(t, humanPassphrase)
+	oldH, oldI, oldOrigin, oldIntent, oldRestart := activeHuman, humanEnrollIssuer, humanEnrollOrigin, humanEnrollIntent, humanEnrollRestart
+	activeHuman = h
+	humanEnrollIssuer = ""
+	humanEnrollOrigin = ""
+	humanEnrollIntent = ""
+	humanEnrollRestart = false
+	t.Cleanup(func() {
+		activeHuman = oldH
+		humanEnrollIssuer = oldI
+		humanEnrollOrigin = oldOrigin
+		humanEnrollIntent = oldIntent
+		humanEnrollRestart = oldRestart
+	})
+	session := &humanEnrollmentSession{Version: 1, Person: h.record.StableID, Key: h.record.DIDKey, Issuer: "https://holder.example", Intent: map[string]any{"intent": map[string]any{"deadline": json.Number("1")}}}
+	path := filepath.Join(h.dir, "enrollment-session.json")
+	if err := saveHumanEnrollment(path, session); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &cobra.Command{}
+	cmd.SetErr(&bytes.Buffer{})
+	if err := runIDHumanEnroll(cmd, nil); err == nil || !strings.Contains(err.Error(), "--restart") {
+		t.Fatalf("expired command is stuck: %v", err)
+	}
+	loaded, err := loadHumanEnrollment(path, h)
+	if err != nil || !sameEnrollmentValue(loaded.Intent, session.Intent) {
+		t.Fatal("expired attempt was discarded")
+	}
+}
+
+func TestLegacyRequesterCommandWipesSharedKey(t *testing.T) {
+	for _, wrong := range []bool{false, true} {
+		t.Run(fmt.Sprint(wrong), func(t *testing.T) {
+			h, _, _ := commandUnlockFixture(t, humanPassphrase)
+			h.record.Path = awconfig.HumanPathRequest
+			if err := awconfig.SaveHumanRecord(h.record); err != nil {
+				t.Fatal(err)
+			}
+			prompts := 0
+			r, err := selectRequester(idParentOptions{Human: h.record.StableID, Domain: h.record.Domain, HumanAtTerminal: func() error { return nil }, Keychain: humanBackupFile{h.record.StableID, filepath.Join(os.Getenv("HOME"), "backup.pbes2")}, Prompt: func(string) ([]byte, error) {
+				prompts++
+				if wrong {
+					return []byte("wrong"), nil
+				}
+				return []byte(humanPassphrase), nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.close()
+			for _, message := range []string{"mapping", "chain"} {
+				key, sig, err := r.signer(message)([]byte(message))
+				if wrong {
+					if err == nil {
+						t.Fatal("wrong passphrase signed")
+					}
+					continue
+				}
+				pub, err := awid.ExtractPublicKey(key)
+				if err != nil || !ed25519.Verify(pub, []byte(message), sig) {
+					t.Fatal("bad real signature")
+				}
+			}
+			if prompts != 1 {
+				t.Fatalf("prompt count %d", prompts)
+			}
+			raw := r.session.unlockedKey
+			r.close()
+			if !bytes.Equal(raw, make([]byte, len(raw))) {
+				t.Fatal("legacy command kept key bytes")
+			}
+		})
+	}
+}
+
+func TestConfirmedEnrollmentDoesNotExpireOrRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.json")
+	if err := os.WriteFile(path, []byte("saved confirmation"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if archive, err := restartHumanAttempt(path, map[string]any{"deadline": json.Number("1")}, 100, false, true); err != nil || archive != "" {
+		t.Fatal("historical confirmation acquired a deadline", err)
 	}
 }

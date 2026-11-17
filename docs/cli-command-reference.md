@@ -509,6 +509,11 @@ Sign the certificate for one received request and write the response
 terminal that its key fingerprint matches what the recipient told you over a
 separate trusted channel; nothing else approves it.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
 - `--as-root Act as the namespace root, with this machine's controller key`
 - `--domain string Namespace domain (with --as-root or --human)`
@@ -526,6 +531,11 @@ needs to export its request: invitation ID, parent, domain, kind and expiry.
 --recipient is your private note of who it is for; it is never exported.
 An invitation expires after --expires (7 days by default).
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
 - `--as-root Act as the namespace root, with this machine's controller key`
 - `--domain string Namespace domain (with --as-root or --human)`
@@ -542,6 +552,11 @@ Flags:
 
 List the requests bound to your invitations
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
 - `--as-root Act as the namespace root, with this machine's controller key`
 - `--domain string Namespace domain (with --as-root or --human)`
@@ -554,6 +569,11 @@ Flags:
 ### `id child receive`
 
 Receive a child's request against one of your invitations
+
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root, with this machine's controller key`
@@ -568,6 +588,11 @@ Flags:
 
 Refuse one received request without signing
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
 - `--as-root Act as the namespace root, with this machine's controller key`
 - `--domain string Namespace domain (with --as-root or --human)`
@@ -580,6 +605,11 @@ Flags:
 ### `id child show`
 
 Show one received request and the fingerprint of its key
+
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root, with this machine's controller key`
@@ -607,6 +637,11 @@ No namespace controller key
 or API key is used for that path. With --owner-identity-home, the existing
 organization owner's native key authorizes creation using its bound service;
 otherwise the host's human CLI login authorizes it.
+
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
 
 Flags:
 - `--domain string Namespace domain for the global identity address`
@@ -758,6 +793,8 @@ confirm their approval key in the browser named by that signed intent.
 In operator mode, the organization's operator instead runs aweb-key-holder
 issue-person on the holder host. The new person runs aw id human register FILE.
 This command has no operator mode or operator network route.
+An expired approval can be archived with --restart to ask for a fresh approval.
+It never extends or reuses the old approval deadline.
 
 Flags:
 - `--approval-origin string Optional equality pin for your enrolled approval service`
@@ -766,6 +803,7 @@ Flags:
 - `--issuer string Issuer HTTPS origin; defaults to your saved enrollment`
 - `--out string New pending-intent file; default is JSON on stdout`
 - `--person string New person's prepared did:aw`
+- `--restart Archive an expired approval attempt and ask the issuer for a fresh request`
 
 ## `id human enroll`
 
@@ -783,7 +821,12 @@ when the command ends or is interrupted. Each signature is described on stderr.
 The signed intent supplies the approval service and RP ID; --approval-origin is
 an optional equality pin. You see the service before opening its enrollment page.
 Register and confirm your key in that browser, then continue at this terminal.
-Interrupted commands resume their original enrollment. Enrollment of an existing
+Interrupted commands resume their original enrollment. After expiry, use --restart
+to preserve the old attempt and start again; a new person needs a fresh intent.
+Once confirmation is saved, resume activation without --restart, even after expiry.
+Register a second approval key in the same browser enrollment before continuing.
+Lost-key replacement is not implemented: loss of your only key requires the
+operator to issue a new ID and revoke the old one. Enrollment of an existing
 person never adds or changes a creation claim.
 
 Next: use aw id proof --message-file FILE --out proof.json, then give proof.json
@@ -794,6 +837,7 @@ Flags:
 - `-h, --help help for enroll`
 - `--intent string Pending signed enrollment intent handed to a new person by the issuer`
 - `--issuer string Your issuer's HTTPS origin; remembered after first use`
+- `--restart Archive an expired unconfirmed attempt and start fresh; never replace saved confirmation`
 
 ## `id human init`
 
@@ -1033,6 +1077,11 @@ chain and register it at AWID with your own key (--no-register leaves the
 registration pending). A failed registration keeps the signed response;
 run import again to retry it.
 
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
+
 Flags:
 - `--domain string Namespace domain of the invitation`
 - `-h, --help help for import`
@@ -1077,6 +1126,11 @@ the fingerprint shown here through a different trusted channel.
 With --resign, a local agent (whose ID is its did:key) instead asks the parent
 of the certificate it carries to re-sign it with the parent's current key,
 after its key or ancestry changed.
+
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
 
 Flags:
 - `--domain string Namespace domain of the invitation`
@@ -1158,6 +1212,11 @@ namespace root. AWID decides whether the signer may revoke the identity.
 The revocation takes effect at AWID's serialization time; only --as-root
 may set an earlier --cutoff. This revokes ID-tree authority, not team
 membership, addresses or DID key history.
+
+When acting as a human, the first signature asks once for the selected person's
+keychain passphrase at a real terminal. Each signature is described; the key
+stays in memory for this command, including confirmation waits, and is wiped
+on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Revoke as the namespace root, with this machine's controller key`
