@@ -54,8 +54,9 @@ async def test_embedded_aweb_preserves_host_level_handlers_and_warning_capture(t
 
 
 @pytest.mark.asyncio
-async def test_embedded_awid_preserves_host_level_handlers_and_warning_capture(test_db_factory, caplog):
+async def test_embedded_awid_preserves_host_level_handlers_and_warning_capture(test_db_factory, monkeypatch, caplog):
     db = await test_db_factory.create_db(suffix="host_logging_registry")
+    monkeypatch.setenv("AWID_DATABASE_URL", db.config.get_dsn())
     async with Redis.from_url(os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")) as redis:
         async with running_registry(db.config.get_dsn(), redis=redis) as registry:
             app = create_registry(db_infra=registry.app.state.db, redis=redis)
