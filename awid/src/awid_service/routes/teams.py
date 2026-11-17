@@ -7,7 +7,7 @@ import json
 import re
 import secrets
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -528,6 +528,14 @@ class CertificateStatusResponse(BaseModel):
     team_did_key: str
     status: Literal["active", "revoked"]
     revoked_at: str | None
+
+
+class CertificateStatusBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    certificate_ids: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
+        min_length=1, max_length=128,
+    )
 
 
 class CertificateResponse(BaseModel):
@@ -1329,6 +1337,50 @@ async def certificate_status(
         status="revoked" if revoked_at is not None else "active",
         revoked_at=revoked_at.isoformat() if revoked_at is not None else None,
     )
+
+
+@router.post(
+    "/{name}/certificates/status",
+    dependencies=[Depends(rate_limit_dep("certificate_status", allow_trusted_service=True))],
+)
+async def certificate_status_batch(
+    request: Request, domain: str, name: str, db_infra=Depends(get_db),
+) -> dict:
+    """Only the public status facts for explicitly named certificate IDs.
+
+    Missing IDs disclose neither private-team existence nor its controller.
+    This is the bounded counterpart of certificate_status, not a directory.
+    """
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > 256 * 1024:
+            raise HTTPException(status_code=413, detail="Certificate status request too large")
+    try:
+        body = CertificateStatusBatchRequest.model_validate_json(raw)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+    rows = await db_infra.get_manager("aweb").fetch_all(
+        """
+        SELECT tc.certificate_id, t.team_did_key, tc.revoked_at
+        FROM {{tables.team_certificates}} tc
+        JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
+        WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
+          AND tc.certificate_id = ANY($3::text[])
+        """, domain, name, list(dict.fromkeys(body.certificate_ids)),
+    )
+    found = {row["certificate_id"]: row for row in rows}
+    entries = []
+    for certificate_id in dict.fromkeys(body.certificate_ids):
+        entry = {"certificate_id": certificate_id, "status": "missing"}
+        if (row := found.get(certificate_id)) is not None:
+            entry.update(CertificateStatusResponse(
+                team_id=build_team_id(domain, name), team_did_key=row["team_did_key"],
+                status="revoked" if row["revoked_at"] is not None else "active",
+                revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] is not None else None,
+            ).model_dump())
+        entries.append(entry)
+    return {"certificates": entries}
 
 
 class TeamServerRecordBody(BaseModel):

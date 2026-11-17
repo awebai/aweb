@@ -1510,6 +1510,54 @@ class RegistryClient:
         path = f"/v1/namespaces/{quote(domain, safe='')}/teams/{quote(name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
         return await self._request_optional_json("GET", path, registry_url=await self._registry_url_for_domain(domain))
 
+    async def get_team_certificate_statuses(
+        self, domain: str, name: str, certificate_ids: list[str],
+    ) -> dict[str, str]:
+        """Exact published statuses; never a partial revocation directory.
+
+        An old registry falls back to its COMPLETE revocation set. Its
+        non-revoked IDs remain legacy_unchecked, not registered evidence.
+        """
+        ids = list(dict.fromkeys(certificate_ids))
+        if not ids:
+            return {}
+        if any(not isinstance(cid, str) or not 1 <= len(cid) <= 256 for cid in ids):
+            raise ValueError("certificate IDs must contain 1 to 256 characters")
+        path = f"/v1/namespaces/{quote(domain, safe='')}/teams/{quote(name, safe='')}/certificates/status"
+        origin = await self._registry_url_for_domain(domain)
+        statuses = {}
+        for offset in range(0, len(ids), 128):
+            selected = ids[offset:offset + 128]
+            try:
+                data = await self._request_json("POST", path, json={"certificate_ids": selected}, registry_url=origin)
+            except RegistryError as exc:
+                if exc.status_code not in (404, 405):
+                    raise
+                revoked = await RegistryClient.get_team_revocations(self, domain, name)
+                return {cid: "revoked" if cid in revoked else "legacy_unchecked" for cid in ids}
+            entries = data.get("certificates") if isinstance(data, dict) else None
+            if not isinstance(entries, list) or len(entries) != len(selected):
+                raise RegistryError("Invalid AWID certificate status batch", status_code=502)
+            batch = {}
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise RegistryError("Invalid AWID certificate status entry", status_code=502)
+                cid, status = entry.get("certificate_id"), entry.get("status")
+                if cid not in selected or cid in batch or status not in ("active", "revoked", "missing"):
+                    raise RegistryError("Invalid AWID certificate status entry", status_code=502)
+                if status != "missing" and entry.get("team_id") != build_team_id(domain, name):
+                    raise RegistryError("AWID certificate status team mismatch", status_code=502)
+                batch[cid] = status
+            statuses.update(batch)
+        return statuses
+
+    async def get_team_revocations_for_certificates(
+        self, domain: str, name: str, certificate_ids: list[str], *, fresh: bool = False,
+    ) -> set[str]:
+        """Revocation decision ONLY for the named IDs, unlike get_team_revocations."""
+        statuses = await self.get_team_certificate_statuses(domain, name, certificate_ids)
+        return {cid for cid, status in statuses.items() if status == "revoked"}
+
     async def list_team_certificates(
         self,
         domain: str,
