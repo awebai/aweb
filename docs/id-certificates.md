@@ -778,16 +778,14 @@ over-depth or over-limit evidence means unavailable, never a partial success.
 `missing` is an explicit unknown-registration result. Invitation/email/account
 details, secrets and a human directory are not exposed by this endpoint.
 
-Use the existing per-caller rate limiter under the operation
-`id_certificate_status`: public requests charge their source-IP bucket, and an
-authenticated request additionally charges its verified caller-key bucket,
-with a default of 60 requests per minute per bucket. The existing configured
-`X-AWID-Service-Token` exempts only the source-IP bucket; a signed caller's
-key bucket still applies. A submitted ID is not
-caller identity; limit before expensive history/proof work and return 429 without partial
-evidence. The normal deployment rate-limit configuration may size these buckets
-for its callers. The service credential changes no request validation or
-evidence and grants no identity or controller authority.
+Use the existing source-IP rate limiter under the operation
+`id_certificate_status`, with a default of 60 requests per minute per source
+IP. This is a public read; there is no signed caller-key budget. The existing
+configured `X-AWID-Service-Token` exempts the source-IP budget. A submitted ID
+is not caller identity; limit before expensive history/proof work and return
+429 without partial evidence. The normal deployment rate-limit configuration
+may size this bucket for its callers. The service credential changes no
+request validation or evidence and grants no identity or controller authority.
 There is no list, prefix, search or pagination operation for a domain's humans.
 Only exact requested IDs and proof-necessary ancestor/key history are returned,
 never team memberships, private certificate blobs, email/account mappings or
