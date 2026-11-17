@@ -11,12 +11,11 @@ from uuid import uuid4
 
 from redis.exceptions import RedisError
 
-_PREFIX = "awid:registry_cache:v1:team_revocations:"
 _VERSION = "_crl_index_version"
 
 
-def is_revocation_key(key: str) -> bool:
-    return key.startswith(_PREFIX) and not key.endswith((":membership", ":membership-meta"))
+def is_revocation_key(key: str, *, prefix: str) -> bool:
+    return key.startswith(prefix) and not key.endswith((":membership", ":membership-meta"))
 
 
 def index_keys(key: str) -> tuple[str, str]:

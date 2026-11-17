@@ -2896,7 +2896,7 @@ class CachedRegistryClient(RegistryClient):
         payload = json.dumps(entry, separators=(",", ":"), sort_keys=True)
         if retention_seconds is None:
             retention_seconds = ttl_seconds * _STALE_MULTIPLIER
-        if revocation_cache.is_revocation_key(cache_key):
+        if revocation_cache.is_revocation_key(cache_key, prefix=self._team_revocations_cache_key_prefix()):
             if await revocation_cache.publish(self.redis_client, cache_key, entry,
                                               retention_seconds=retention_seconds):
                 return
@@ -3006,7 +3006,7 @@ class CachedRegistryClient(RegistryClient):
     async def _invalidate_keys(self, *keys: str) -> None:
         expanded = list(keys)
         for key in keys:
-            if key and revocation_cache.is_revocation_key(key):
+            if key and revocation_cache.is_revocation_key(key, prefix=self._team_revocations_cache_key_prefix()):
                 expanded.extend(revocation_cache.index_keys(key))
         unique_keys = tuple(dict.fromkeys(key for key in expanded if key))
         if not unique_keys:
@@ -3121,8 +3121,13 @@ class CachedRegistryClient(RegistryClient):
     def _team_metadata_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v2:team:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
+    def _team_revocations_cache_key_prefix(self) -> str:
+        # Publication/invalidation classify the same key family the builder
+        # writes, including its evidence-version and registry scope.
+        return f"awid:registry_cache:v2:team_revocations:{self.registry_url}:"
+
     def _team_revocations_cache_key(self, domain: str, name: str) -> str:
-        return f"awid:registry_cache:v2:team_revocations:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
+        return f"{self._team_revocations_cache_key_prefix()}{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_public_key_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v1:team_public_key:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
