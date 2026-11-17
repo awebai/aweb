@@ -678,7 +678,7 @@ func TestOpenAddressTargetDoesNotMatchHandleOnlyPendingConversation(t *testing.T
 	}
 }
 
-func TestOpenSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
+func TestOpenSupportsStableDIDTargetViaItsCurrentDIDKey(t *testing.T) {
 	deliveredIDsTestPath(t)
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -688,6 +688,7 @@ func TestOpenSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
 					{
 						SessionID:            "s1",
 						Participants:         []string{"alice", "monitor"},
+						ParticipantDIDs:      []string{"did:key:z6MkAlice", "did:key:z6MkMonitor"},
 						ParticipantAddresses: []string{"", "otherco/monitor"},
 						SenderWaiting:        true,
 					},
@@ -1010,7 +1011,7 @@ func TestShowPendingSupportsExactAddressTarget(t *testing.T) {
 	}
 }
 
-func TestShowPendingSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
+func TestShowPendingSupportsStableDIDTargetViaItsCurrentDIDKey(t *testing.T) {
 	server := newMockServer(map[string]http.HandlerFunc{
 		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
 			jsonResponse(w, awid.ChatPendingResponse{
@@ -1018,6 +1019,7 @@ func TestShowPendingSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
 					{
 						SessionID:            "s1",
 						Participants:         []string{"alice", "monitor"},
+						ParticipantDIDs:      []string{"did:key:z6MkAlice", "did:key:z6MkMonitor"},
 						ParticipantAddresses: []string{"", "otherco/monitor"},
 						LastMessage:          "help!",
 						LastFrom:             "monitor",
@@ -2627,7 +2629,8 @@ func TestFindSessionFallbackUsesParticipantAddress(t *testing.T) {
 	}
 }
 
-func TestFindSessionStableDIDHandleOnlyErrorsOnAmbiguousAliasMatches(t *testing.T) {
+// Sessions that name the DID's alias only are not the DID's sessions.
+func TestFindSessionByDIDDoesNotMatchSessionsByAlias(t *testing.T) {
 	t.Parallel()
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -2660,16 +2663,15 @@ func TestFindSessionStableDIDHandleOnlyErrorsOnAmbiguousAliasMatches(t *testing.
 		},
 	})
 
-	_, _, err := findSession(context.Background(), client, "did:aw:monitor")
-	if err == nil {
-		t.Fatal("expected ambiguity error")
-	}
-	if !strings.Contains(err.Error(), "multiple conversations match monitor") {
-		t.Fatalf("err=%v", err)
+	sessionID, _, err := findSession(context.Background(), client, "did:aw:monitor")
+	if err == nil || !strings.Contains(err.Error(), "no conversation found with did:aw:monitor") {
+		t.Fatalf("session_id=%q err=%v, want no conversation", sessionID, err)
 	}
 }
 
-func TestFindSessionStableDIDHandleOnlyAllowsSparseAndRichRowsForSameIdentity(t *testing.T) {
+// A DID target matches no row that lacks the identity's DIDs, whatever
+// alias or address the row names.
+func TestFindSessionByDIDIgnoresRowsWithoutTheIdentitysDID(t *testing.T) {
 	t.Parallel()
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -2711,19 +2713,14 @@ func TestFindSessionStableDIDHandleOnlyAllowsSparseAndRichRowsForSameIdentity(t 
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sessionID != "s-rich" {
-		t.Fatalf("session_id=%s", sessionID)
-	}
-	if senderWaiting {
-		t.Fatal("sender_waiting=true (expected false from fallback)")
+	sessionID, _, err := findSession(context.Background(), client, "did:aw:monitor")
+	if err == nil || !strings.Contains(err.Error(), "no conversation found with did:aw:monitor") {
+		t.Fatalf("session_id=%q err=%v, want no conversation", sessionID, err)
 	}
 }
 
-func TestFindSessionStableDIDHandleOnlyPendingAllowsSparseAndRichRowsForSameIdentity(t *testing.T) {
+// Pending conversations follow the same rule as the session list.
+func TestFindSessionByDIDIgnoresPendingRowsWithoutTheIdentitysDID(t *testing.T) {
 	t.Parallel()
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -2744,6 +2741,9 @@ func TestFindSessionStableDIDHandleOnlyPendingAllowsSparseAndRichRowsForSameIden
 				},
 			})
 		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+		},
 	})
 	t.Cleanup(server.Close)
 
@@ -2762,15 +2762,9 @@ func TestFindSessionStableDIDHandleOnlyPendingAllowsSparseAndRichRowsForSameIden
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sessionID != "s-rich" {
-		t.Fatalf("session_id=%s", sessionID)
-	}
-	if senderWaiting {
-		t.Fatal("sender_waiting=true (expected false from pending)")
+	sessionID, _, err := findSession(context.Background(), client, "did:aw:monitor")
+	if err == nil || !strings.Contains(err.Error(), "no conversation found with did:aw:monitor") {
+		t.Fatalf("session_id=%q err=%v, want no conversation", sessionID, err)
 	}
 }
 
@@ -3157,7 +3151,9 @@ func TestFindSessionAliasAllowsAddressOnlyAndStableDIDRowsForSameIdentity(t *tes
 	}
 }
 
-func TestFindSessionStableDIDHandleOnlyAllowsAddressOnlyAndStableDIDRowsForSameIdentity(t *testing.T) {
+// A DID target matches the row that carries the DID, never a newer row that
+// names only the address the DID resolves to.
+func TestFindSessionByDIDIgnoresARowNamingOnlyTheResolvedAddress(t *testing.T) {
 	t.Parallel()
 
 	server := newMockServer(map[string]http.HandlerFunc{
@@ -3208,7 +3204,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsAddressOnlyAndStableDIDRowsForSameI
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sessionID != "s-address" {
+	if sessionID != "s-stable" {
 		t.Fatalf("session_id=%s", sessionID)
 	}
 	if senderWaiting {

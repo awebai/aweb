@@ -576,15 +576,15 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 		if teamID == "" || teamID == strings.TrimSpace(sel.TeamID) {
 			continue
 		}
+		// A team that cannot be searched may hold the alias too, so the
+		// teams that were searched do not establish a unique match.
 		candidateClient, candidateSel, err := resolveClientSelectionForDirWithTeamOverride(sel.WorkingDir, teamID)
 		if err != nil {
-			debugLog("resolve alias fallback team %s: %v", teamID, err)
-			continue
+			return nil, nil, recipientLookupError(targetAlias, "team "+teamID+" selection", err)
 		}
 		found, err := clientHasAgentAlias(ctx, candidateClient, targetAlias)
 		if err != nil {
-			debugLog("list agents for fallback team %s: %v", teamID, err)
-			continue
+			return nil, nil, recipientLookupError(targetAlias, "team "+teamID+" agent list", err)
 		}
 		if found {
 			candidates = append(candidates, aliasCandidate{client: candidateClient, selection: candidateSel})

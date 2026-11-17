@@ -739,6 +739,9 @@ func findLatestSession(ctx context.Context, client *awid.Client, targetAlias str
 
 func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
 	rawTarget := strings.TrimSpace(targetAlias)
+	if strings.HasPrefix(rawTarget, "did:") {
+		return findSessionByDID(ctx, client, rawTarget, preferWaiting)
+	}
 	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
 	bareAliasTarget := rawTarget != "" &&
 		!strings.HasPrefix(rawTarget, "did:") &&
@@ -946,6 +949,70 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 	}
 
 	return "", false, fmt.Errorf("no conversation found with %s", targetAlias)
+}
+
+// findSessionByDID selects a conversation with the participant whose DID is
+// did, or the other DID of the same identity (its did:aw or current did:key,
+// as resolved for did), with the priorities of findSession. No alias or
+// address is compared: a name is chosen by whoever holds it, and did is the
+// identity the caller confirmed.
+func findSessionByDID(ctx context.Context, client *awid.Client, did string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
+	dids := []string{did}
+	if identity, err := client.ResolveIdentity(ctx, did); err == nil && identity != nil {
+		dids = append(dids, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.DID))
+	}
+	hasParticipant := func(participants, participantDIDs, participantAddresses []string) bool {
+		for _, row := range chatParticipantRows(participants, participantDIDs, participantAddresses) {
+			for _, candidate := range dids {
+				if candidate != "" && strings.EqualFold(row.DID, candidate) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	var pendingResp awid.ChatPendingResponse
+	if err := client.Get(ctx, "/v1/chat/pending", &pendingResp); err != nil {
+		return "", false, fmt.Errorf("getting pending chats: %w", err)
+	}
+	bestSize := -1
+	var bestWaiting bool
+	var bestActivity string
+	for _, p := range pendingResp.Pending {
+		if !hasParticipant(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses) {
+			continue
+		}
+		size := participantIdentityCount(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)
+		better := bestSize < 0
+		if !better && preferWaiting && p.SenderWaiting != bestWaiting {
+			better = p.SenderWaiting
+		} else if !better {
+			better = size < bestSize || (size == bestSize && p.LastActivity > bestActivity)
+		}
+		if better {
+			sessionID, bestWaiting, bestSize, bestActivity = p.SessionID, p.SenderWaiting, size, p.LastActivity
+		}
+	}
+	if sessionID != "" {
+		return sessionID, bestWaiting, nil
+	}
+	sessionsResp, err := client.ChatListSessions(ctx)
+	if err != nil {
+		return "", false, fmt.Errorf("listing chat sessions: %w", err)
+	}
+	for _, s := range sessionsResp.Sessions {
+		if !hasParticipant(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses) {
+			continue
+		}
+		size := participantIdentityCount(s.Participants, s.ParticipantDIDs, s.ParticipantAddresses)
+		if bestSize < 0 || size < bestSize || (size == bestSize && sessionActivity(s) > bestActivity) {
+			sessionID, bestSize, bestActivity = s.SessionID, size, sessionActivity(s)
+		}
+	}
+	if sessionID != "" {
+		return sessionID, false, nil
+	}
+	return "", false, fmt.Errorf("no conversation found with %s", did)
 }
 
 // buildMessages converts ChatMessage slice to Event slice.
@@ -1316,8 +1383,15 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	if waitSeconds > 0 {
 		req.WaitSeconds = &waitSeconds
 	}
-	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
-		if sessionID, _, findErr := findLatestSession(ctx, client, targets[0]); findErr == nil && sessionID != "" {
+	probe := ""
+	if len(targets) == 1 {
+		probe = targets[0]
+		if did := strings.TrimSpace(opts.RecipientDID); did != "" {
+			probe = did
+		}
+	}
+	if probe != "" && !opts.StartConversation && shouldProbeExistingSession(probe) {
+		if sessionID, _, findErr := findLatestSession(ctx, client, probe); findErr == nil && sessionID != "" {
 			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 				Body:        message,
 				Leaving:     opts.Leaving,
@@ -1349,18 +1423,16 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
 }
 
+// shouldProbeExistingSession reports whether a send continues an existing
+// session with target, found by its DID or by the address the caller named.
+// A bare alias is not probed: sessions also hold outside participants, whose
+// address names their holders choose, so matching a session by alias can
+// deliver to someone else. A caller confirms the alias's DID first and passes
+// it as SendOptions.RecipientDID; without one, the send creates a session by
+// alias, which the server resolves in the sender's team.
 func shouldProbeExistingSession(target string) bool {
-	// Probe for any non-empty target. The previous narrow gate (did:/-prefixed
-	// or address-shaped only) skipped bare aliases, which made the CLI fall
-	// through to ChatCreateSession with a fresh auto-generated session_id
-	// (cli/go/awid/chat.go:159 generates UUID4 when signingKey is set). With
-	// the post-aame server-side 'one active 1:1' dedup, that fresh UUID
-	// conflicts with the existing session and 409s. Probing for bare aliases
-	// lets findLatestSession discover the existing session_id, route via
-	// ChatSendMessage on the per-session endpoint, and bypass the conflict
-	// entirely. Ambiguous targets are surfaced by findLatestSession as
-	// 'multiple conversations match' and propagate up.
-	return strings.TrimSpace(target) != ""
+	target = strings.TrimSpace(target)
+	return strings.HasPrefix(target, "did:") || strings.Contains(target, "/") || strings.Contains(target, "~")
 }
 
 // sendCommon handles the post-send wait logic after a message has been created.
