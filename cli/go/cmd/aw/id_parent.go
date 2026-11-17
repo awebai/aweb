@@ -69,7 +69,7 @@ var (
 
 func init() {
 	for _, cmd := range []*cobra.Command{idParentRequestCmd, idParentImportCmd} {
-		cmd.Flags().StringVar(&idParentDomain, "domain", "", "Organization namespace for agent operations; with --human use --human-domain")
+		cmd.Flags().StringVar(&idParentDomain, "domain", "", "Organization namespace for agent operations; with --human, the person's domain, as --human-domain")
 		idParentCmd.AddCommand(cmd)
 	}
 	for _, cmd := range []*cobra.Command{idParentRequestCmd, idParentImportCmd} {

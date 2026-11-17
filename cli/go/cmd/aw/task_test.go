@@ -759,7 +759,9 @@ func TestAwTaskUpdateReportsUnknownStateWhenExistenceProbeFails(t *testing.T) {
 
 	probeMode.Store(1)
 	run = exec.CommandContext(ctx, bin, "task", "update", "PROJ-001", "--status", "closed")
-	run.Env = testCommandEnv(tmp)
+	// The probe never answers; the CLI's supported request deadline bounds
+	// how long that takes to establish, rather than its 30 s default.
+	run.Env = append(testCommandEnv(tmp), "AWEB_HTTP_TIMEOUT=2s")
 	run.Dir = tmp
 	out, err = run.CombinedOutput()
 	if err == nil {

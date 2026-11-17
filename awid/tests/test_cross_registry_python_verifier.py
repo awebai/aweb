@@ -30,6 +30,9 @@ BUNDLE = {"v": 1, "type": "aweb.id-chain", "certificates": [
 class NoCache:
     """An unavailable Redis cannot hide a missing live registry read."""
 
+    async def get(self, *args, **kwargs):
+        raise RedisError("cache unavailable")
+
     def pipeline(self, **kwargs):
         raise RedisError("cache unavailable")
 

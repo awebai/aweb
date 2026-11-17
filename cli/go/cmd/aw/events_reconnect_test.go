@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -95,16 +96,24 @@ func buildAwForTest(t *testing.T, ctx context.Context, tmp string) string {
 // serverURL, with extraEnv added, and returns its combined output and exit error.
 func runEventsStream(t *testing.T, serverURL string, timeoutSeconds int, extraEnv ...string) (string, error) {
 	t.Helper()
+	run := eventsStreamCommand(t, serverURL, timeoutSeconds, extraEnv...)
+	out, err := run.CombinedOutput()
+	return string(out), err
+}
+
+// eventsStreamCommand prepares, on the test goroutine, an `aw events stream`
+// run in its own workspace; the caller may run it from any goroutine.
+func eventsStreamCommand(t *testing.T, serverURL string, timeoutSeconds int, extraEnv ...string) *exec.Cmd {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSeconds+60)*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	tmp := t.TempDir()
 	bin := buildAwForTest(t, ctx, tmp)
 	writeDefaultWorkspaceBindingForTest(t, tmp, serverURL)
 	run := exec.CommandContext(ctx, bin, "events", "stream", "--json", "--timeout", fmt.Sprint(timeoutSeconds))
 	run.Env = append(testCommandEnv(tmp), extraEnv...)
 	run.Dir = tmp
-	out, err := run.CombinedOutput()
-	return string(out), err
+	return run
 }
 
 func decodeEventLines(output string) []map[string]any {
@@ -238,13 +247,30 @@ func TestEventsStreamSurvivesRepeatedCutsAcrossFiveRuns(t *testing.T) {
 		abruptlyCloseStream(t, w, connectedPreamble)
 	})
 
-	for attempt := 1; attempt <= 5; attempt++ {
-		output, err := runEventsStream(t, url, 4)
-		if err != nil {
-			t.Fatalf("run %d/5 exited non-zero (%v):\n%s", attempt, err, output)
+	// The five runs are independent clients of one server: run them at once,
+	// each with its own 4s window, rather than one after another.
+	type result struct {
+		output string
+		err    error
+	}
+	results := make([]result, 5)
+	var wg sync.WaitGroup
+	for i := range results {
+		run := eventsStreamCommand(t, url, 4)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			output, err := run.CombinedOutput()
+			results[i] = result{string(output), err}
+		}(i)
+	}
+	wg.Wait()
+	for i, r := range results {
+		if r.err != nil {
+			t.Fatalf("run %d/5 exited non-zero (%v):\n%s", i+1, r.err, r.output)
 		}
-		if strings.Contains(strings.ToLower(output), "unexpected eof") {
-			t.Fatalf("run %d/5 reported an unexpected EOF:\n%s", attempt, output)
+		if strings.Contains(strings.ToLower(r.output), "unexpected eof") {
+			t.Fatalf("run %d/5 reported an unexpected EOF:\n%s", i+1, r.output)
 		}
 	}
 	if got := opens.Load(); got < 5 {

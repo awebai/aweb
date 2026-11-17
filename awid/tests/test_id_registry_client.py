@@ -585,7 +585,8 @@ async def cached(clocked_client, manual_clock):
     tree.redis = redis
 
     async def evidence_keys(domain: str) -> list[bytes]:
-        return [key async for key in redis.scan_iter(match=f"awid:registry_cache:v1:id_status:{domain}:*")]
+        prefix = client._id_status_cache_key_prefix(domain)
+        return [key async for key in redis.scan_iter(match=f"{prefix}:*")]
 
     async def clear() -> None:
         for domain in (DOMAIN, OTHER_DOMAIN):

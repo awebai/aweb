@@ -516,7 +516,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for approve`
 - `--out string Where to write the response (- for stdout) (default "-")`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
@@ -537,7 +537,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `--expires duration How long the invitation stays open (default 168h0m0s)`
 - `-h, --help help for invite`
 - `--kind string Kind of the child: human or agent`
@@ -557,7 +557,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for pending`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -574,7 +574,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for receive`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -591,7 +591,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for refuse`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -608,7 +608,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for show`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -1080,7 +1080,7 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--domain string Organization namespace for agent operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for import`
 - `--no-register Install the certificate but leave its AWID registration pending`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
@@ -1129,7 +1129,7 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--domain string Organization namespace for agent operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for request`
 - `--invitation-id string Invitation ID the parent gave you`
 - `--out string Where to write the request (- for stdout) (default "-")`
@@ -1216,7 +1216,7 @@ on success, error or interruption. Another command asks again.
 Flags:
 - `--as-root Revoke as the namespace root of --domain, with this machine's controller key`
 - `--cutoff string With --as-root: the earlier time (RFC 3339) the revocation takes effect from`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for revoke`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -2664,6 +2664,15 @@ aweb address like acme.aweb.ai/reviewer, or a did:aw identity. The
 resolved address is always shown: mail goes out under this workspace's
 cryptographically verified identity.
 
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
+
 Flags:
 - `--body string Alias for --message`
 - `--cc stringArray Not supported in v1: send to each recipient separately`
@@ -2827,6 +2836,15 @@ Flags:
 
 Send a message and leave the conversation. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
 
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
+
 Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
@@ -2839,6 +2857,15 @@ Flags:
 ### `chat send-and-wait`
 
 Send a message and wait for a reply. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples
+
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
 
 Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
@@ -3372,6 +3399,15 @@ With --human, unlock once at a real terminal for this command; each signature
 is described on stderr and the key is wiped at exit. Ordinary human mail
 carries the ID chain and no saved enrollment or creation evidence.
 Use aw id proof to export that evidence for someone else to verify.
+
+A bare recipient name is looked up in the selected team. When that team's
+agent list and roster say the name is not there, this identity has other
+local team memberships, and --team is not given, aw looks in those teams:
+a name found in exactly one of them is sent from that team, which aw names
+on stderr; a name found in more than one needs --team. If any of those teams
+cannot be read, the send is refused rather than guessed. When the selected
+team itself cannot be read, aw stays in it, and the send confirms the
+recipient before delivery.
 
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`

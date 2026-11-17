@@ -67,7 +67,15 @@ func (m *mockHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// newMockServer serves handlers. A bare-alias lookup reads the full session
+// list, which the server always serves; a test that does not supply it gets
+// an empty list.
 func newMockServer(handlers map[string]http.HandlerFunc) *httptest.Server {
+	if _, ok := handlers["GET /v1/chat/sessions"]; !ok {
+		handlers["GET /v1/chat/sessions"] = func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+		}
+	}
 	return httptest.NewServer(&mockHandler{handlers: handlers})
 }
 
@@ -3348,6 +3356,38 @@ func TestFindSessionAliasErrorsOnAmbiguousAliasMatches(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "multiple conversations match monitor") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+// A bare alias matched by one pending conversation is still ambiguous when
+// the full session list holds another concrete participant with that alias:
+// the check reads both lists before choosing, and fails closed.
+func TestFindSessionAliasAmbiguityReadsTheFullListBeforeChoosingAPendingMatch(t *testing.T) {
+	t.Parallel()
+
+	server := newMockServer(map[string]http.HandlerFunc{
+		"GET /v1/chat/pending": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{{
+				SessionID:            "s-outside",
+				Participants:         []string{"monitor"},
+				ParticipantAddresses: []string{"otherco.com/monitor"},
+				SenderWaiting:        true,
+			}}})
+		},
+		"GET /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{
+				{SessionID: "s-outside", Participants: []string{"monitor"}, ParticipantAddresses: []string{"otherco.com/monitor"}},
+				{SessionID: "s-team", Participants: []string{"monitor"}, ParticipantAddresses: []string{"acme.com/monitor"}},
+			}})
+		},
+	})
+	t.Cleanup(server.Close)
+
+	for _, find := range []func(context.Context, *awid.Client, string) (string, bool, error){findSession, findLatestSession} {
+		sessionID, _, err := find(context.Background(), mustClient(t, server.URL), "monitor")
+		if err == nil || !strings.Contains(err.Error(), "multiple conversations match monitor") {
+			t.Fatalf("session_id=%q err=%v, want the ambiguity refusal", sessionID, err)
+		}
 	}
 }
 

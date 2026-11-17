@@ -1857,13 +1857,19 @@ func decorateTimeoutError(method string, err error) error {
 	return &OutcomeUnknownError{err: err}
 }
 
-// OutcomeUnknownError is a mutating request that timed out before its
-// response arrived: it may or may not have applied.
+// OutcomeUnknownError is a mutating request whose response never arrived: it
+// may or may not have applied. A registry controller write names the write
+// and a command that reads the state it changes.
 type OutcomeUnknownError struct {
-	err error
+	err   error
+	write string
+	check string
 }
 
 func (e *OutcomeUnknownError) Error() string {
+	if e.write != "" {
+		return e.err.Error() + "\nThe registry may have applied this " + e.write + "; check its state (for example `" + e.check + "`) before retrying."
+	}
 	return e.err.Error() + "\nRequest timed out before a response was received; it may have applied. Check current state before retrying."
 }
 

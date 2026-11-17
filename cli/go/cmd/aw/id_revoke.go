@@ -29,7 +29,7 @@ var (
 )
 
 func init() {
-	idRevokeCmd.Flags().StringVar(&idChildDomain, "domain", "", "Organization namespace for agent or --as-root operations; with --human use --human-domain")
+	idRevokeCmd.Flags().StringVar(&idChildDomain, "domain", "", "Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain")
 	idRevokeCmd.Flags().BoolVar(&idChildAsRoot, "as-root", false, "Revoke as the namespace root of --domain, with this machine's controller key")
 	idRevokeCmd.Flags().StringVar(&idChildRegistry, "registry", "", "Registry origin for --as-root, when the domain's _awid record names none")
 	for _, cmd := range []*cobra.Command{idRevokeCmd} {

@@ -46,6 +46,10 @@ Team certificates remain valid for team membership, local ACLs, and certificate
 verification flows. They are not an address reachability or message routing
 oracle.
 
+`aw` refuses a mail or chat send to an alias when recipient lookup fails,
+instead of passing the bare alias to the server without confirming its
+recipient.
+
 Address discovery distinguishes not requested, observed empty, verified value,
 and unavailable evidence. A failed address read is optional UNKNOWN enrichment,
 not proof that an identity has no address: it never clears a stored binding,

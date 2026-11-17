@@ -142,6 +142,7 @@ async def route_pair(test_db_factory, monkeypatch):
             node = SimpleNamespace(
                 domain=domain, team_id=team_id, team_sk=team_sk, team_did=team_did,
                 registry=registry, registry_client=registry_client, registry_calls=registry_calls,
+                registry_origin=registry_origin,
                 server=server, db=manager, client=client, origin=public_origin, calls=server_calls,
             )
             node.local = await _actor(node, "local", global_identity=False)
