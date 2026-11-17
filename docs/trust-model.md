@@ -519,8 +519,11 @@ Named residuals:
   creation in one transaction; the private display name is not published.
   Withholding an act can make a new team look like a legacy team at first
   contact. The first verified creation/current-key act seeds the pin's signing-time
-  floor, including when the key is unchanged. Legacy creation without that
-  act stays accepted and its first admission remains TOFU; it needs explicit
+  floor at first admission, with an optional attempt bounded to one second.
+  An admitted unchanged key never reads an act, DNS or namespace evidence for
+  seeding. A missing act is remembered by the admitted state; there is no
+  periodic polling or automatic retry. Legacy creation without that act stays
+  accepted and its first admission remains TOFU; it needs explicit
   controller re-attestation before enforcement. A wholly unseen older state
   is still the source-suppression residual above.
 - **Inherited records.** The pin uses the ID tree's same namespace status
@@ -537,10 +540,13 @@ Named residuals:
   namespace-authority question. Portable delegation proofs are separate work.
 - **Measuring moves.** The pin retains its highest accepted act time and the
   key that act actually named. Moving without an act does not mark the new
-  key verified. Unchanged-key reads can establish a fresh baseline; they
-  never lower the retained floor. An outage of that enrichment read does not
-  deny an unchanged admitted key or permit a key change. Existing unqualified pins are re-attested,
-  not guessed from an old timestamp.
+  key verified. Before enabling enforcement, the operator must re-attest
+  every such team and explicitly seed its local server/app pin during the
+  readiness check, using `awid.team_key_acts.seed_team_key_baseline`; an
+  existing unqualified pin is never guessed from its old timestamp. This
+  explicit optional check never lowers the floor. Ordinary unchanged-key
+  requests retain main's acceptance, without seeding I/O or an enrichment
+  failure changing their status, including after enforcement is enabled.
 - **The `local` namespace** has no DNS, so a pinned local team cannot rotate
   without the server operator re-pinning it.
 - **Hosted teams.** A child may share the parent's controller key or use a

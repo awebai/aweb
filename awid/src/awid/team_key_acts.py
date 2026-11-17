@@ -20,8 +20,6 @@ import json
 import logging
 import time
 
-import httpx
-from starlette.exceptions import HTTPException
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,7 +27,6 @@ from typing import Any, Protocol
 
 from awid.external_authority import TXTOutcomeResolver, discover_registry_authority
 from awid.id_certificates import IDCertificateError, IDChainEvidence, namespace_controller_from_evidence
-from awid.registry_types import RegistryError
 from awid.federation_errors import FederationAuthorityError
 from awid.id_tree_requests import CONTROLLER_REQUEST_TYPE
 from awid.signing import verify_did_key_signature
@@ -318,7 +315,8 @@ async def pinned_team_key(
     """Resolve a pin, sharing the ID tree's evidence path and freshness ceiling.
 
     First admission remains TOFU for released creators without acts. A valid
-    creation/current-key act seeds its floor, including on unchanged-key reads.
+    creation/current-key act seeds its floor at admission; existing unchanged
+    keys never perform enrichment I/O.
     Measuring moves retain the floor AND which key its proof actually named.
     """
     if memo is not None:
@@ -352,56 +350,98 @@ async def pinned_team_key(
     return await memo.resolve(team_id, served_key, resolve) if memo is not None else await resolve()
 
 
+BASELINE_SEED_TIMEOUT_SECONDS = 1.0
+
+
+async def seed_team_key_baseline(
+    team_id: str, served_key: str, *, pins: TeamKeyPinStore,
+    fetch_act: Callable[[], Awaitable[Any]], resolver: TXTOutcomeResolver,
+    fetch_namespace_evidence: Callable[[str], Awaitable[IDChainEvidence]] | None = None,
+) -> TeamKeyPin | None:
+    """Optional admission/explicit operator enrichment, bounded to one second.
+
+    Ordinary reads of an admitted unchanged key never call this. A missing act
+    or any read/verification failure leaves its key and floor untouched. The
+    persisted admission remembers the attempt; there is no periodic retry.
+    Operators may explicitly seed an existing pin during readiness checks.
+    """
+    try:
+        async with asyncio.timeout(BASELINE_SEED_TIMEOUT_SECONDS):
+            pin = await pins.pin(team_id)
+            if pin is None:
+                pin = await pins.first_sight(team_id, served_key)
+            if pin.team_did_key != served_key:
+                return None
+            if pin.act_at is not None and pin.act_key == served_key:
+                return pin
+            record = await fetch_act()
+            if record is None:
+                return None
+            domain, name = parse_team_id(team_id)
+            act = await verify_team_key_change(
+                record, domain=domain, name=name, team_did_key=served_key,
+                pinned_at=None, resolver=resolver,
+                fetch_namespace_evidence=fetch_namespace_evidence,
+            )
+            if pin.act_at is not None and act.signed_at < pin.act_at:
+                raise TeamKeyActError("not_newer")
+            new = TeamKeyPin(served_key, act.signed_at, served_key)
+            if await pins.move(team_id, expected=pin, new=new):
+                return new
+            current = await pins.pin(team_id)
+            # The server writes a first-admission row only after member auth.
+            # Carry its checked evidence into that transaction.
+            if current is None:
+                return new
+            if current.team_did_key == served_key and current.act_key == served_key:
+                return current
+    except Exception as exc:
+        # This enrichment cannot turn a valid admitted key into a refusal.
+        # Caller cancellation still propagates; our own deadline is optional.
+        logger.warning(
+            "team_key_pin_baseline_unavailable team=%s error=%s reason=%s",
+            team_id, type(exc).__name__, getattr(exc, "reason", "read_failed"),
+        )
+    return None
+
+
 async def _resolve_pin(team_id, served_key, *, pins, fetch_act, resolver, enforce,
                        fetch_namespace_evidence, witnessed):
     pin = await pins.pin(team_id)
+    admitted = pin is not None
     if pin is None:
         pin = await pins.first_sight(team_id, served_key)
-    baseline = pin.team_did_key == served_key
-    if baseline and pin.act_at is not None and pin.act_key == served_key:
-        witnessed(pin)
+    if pin.team_did_key == served_key:
+        if pin.act_at is not None and pin.act_key == served_key:
+            witnessed(pin)
+        elif not admitted:
+            proof = await seed_team_key_baseline(
+                team_id, served_key, pins=pins, fetch_act=fetch_act,
+                resolver=resolver, fetch_namespace_evidence=fetch_namespace_evidence,
+            )
+            if proof is not None:
+                witnessed(proof)
         return served_key
     domain, name = parse_team_id(team_id)
     try:
-        try:
-            record = await fetch_act()
-        except (RegistryError, httpx.HTTPError, OSError, HTTPException) as exc:
-            status = getattr(exc, "status_code", None)
-            if not baseline or (status is not None and status < 500 and status != 429):
-                raise
-            # Baseline enrichment adds no outage dependency to an unchanged
-            # admitted key. The very same error still refuses a key change.
-            logger.warning("team_key_pin_baseline_unavailable team=%s reason=act_unavailable error=%s status=%s",
-                           team_id, type(exc).__name__, status)
-            return served_key
+        record = await fetch_act()
         if record is None:
             raise TeamKeyActError("no_act")
-        act = await verify_team_key_change(record, domain=domain, name=name, team_did_key=served_key,
-            pinned_at=None if baseline else pin.act_at, resolver=resolver,
-            fetch_namespace_evidence=fetch_namespace_evidence)
-        if baseline and pin.act_at is not None and act.signed_at < pin.act_at:
-            raise TeamKeyActError("not_newer")
+        act = await verify_team_key_change(
+            record, domain=domain, name=name, team_did_key=served_key,
+            pinned_at=pin.act_at, resolver=resolver,
+            fetch_namespace_evidence=fetch_namespace_evidence,
+        )
     except TeamKeyActError as exc:
         if exc.reason == "key_mismatch":
             logger.warning("team_key_pin_kept team=%s pinned=%s served=%s reason=%s",
                            team_id, pin.team_did_key, served_key, exc.reason)
             return pin.team_did_key
-        if baseline and pin.act_at is None:
-            # Released creation did not sign a public key act. Do not change
-            # its admission contract; report it as unready for enforcement.
-            logger.log(logging.DEBUG if exc.reason == "no_act" else logging.WARNING,
-                       "team_key_pin_baseline_unavailable team=%s reason=%s", team_id, exc.reason)
-            return served_key
         _mismatch(team_id, pin.team_did_key, served_key, exc.reason, enforce=enforce)
         return await _move_without_act(team_id, pins, pin, served_key, exc.reason)
     new = TeamKeyPin(served_key, act.signed_at, served_key)
     if not await pins.move(team_id, expected=pin, new=new):
         current = await pins.pin(team_id)
-        if current is None and baseline:
-            # The server admits its row later, after the member is verified.
-            # Carry the checked proof into that admission transaction.
-            witnessed(new)
-            return served_key
         if current is not None and current.team_did_key == served_key:
             if current.act_key == served_key:
                 witnessed(current)

@@ -23,6 +23,7 @@ from awid.team_key_acts import (
     TeamKeyPin,
     TeamKeyUnverified,
     pinned_team_key,
+    seed_team_key_baseline,
     verify_team_key_act,
     verify_team_key_change,
 )
@@ -503,7 +504,7 @@ def test_the_memo_answers_only_the_served_key_it_saw_within_its_window():
 
 
 @pytest.mark.asyncio
-async def test_first_and_unchanged_key_admission_seed_the_verified_act_floor():
+async def test_first_admission_and_explicit_operator_check_seed_the_floor():
     pins = MemoryTeamKeyPins()
     controller, key = keypair(), keypair()[1]
     record = _example_act(controller, key)
@@ -514,6 +515,8 @@ async def test_first_and_unchanged_key_admission_seed_the_verified_act_floor():
     pins = MemoryTeamKeyPins()
     await pins.first_sight(TEAM_ID, key)
     await pinned_team_key(TEAM_ID, key, pins=pins, fetch_act=_fetch(record), resolver=resolver, enforce=True)
+    assert (await pins.pin(TEAM_ID)).act_at is None
+    await seed_team_key_baseline(TEAM_ID, key, pins=pins, fetch_act=_fetch(record), resolver=resolver)
     assert (await pins.pin(TEAM_ID)).act_at == expected.signed_at
 
 
