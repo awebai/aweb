@@ -11,6 +11,7 @@ import json
 import secrets
 import time
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from approval_service.answers import read_answer
 from approval_service.canonical import canonical, parse
@@ -33,6 +34,7 @@ from awid.did import public_key_from_did, stable_id_from_did_key
 from awid.id_certificates import id_certificate_id
 from awid.log import require_canonical_server_origin
 from awid.registry import DIDKeyNotFoundError
+from jsonschema import ValidationError
 
 from .keys import Refused
 
@@ -52,13 +54,17 @@ class Holder:
     def __init__(
         self, store, *, registry, origin, approval_origin=None, rp_id=None, grading=None
     ):
-        require_canonical_server_origin(origin)
         if approval_origin is not None or rp_id is not None or grading is not None:
             if not all((approval_origin, rp_id, grading)):
                 raise Refused("approval_not_configured")
             validate_site(approval_origin, rp_id)
+            try:
+                validate_site(origin, urlsplit(origin).hostname)
+            except (ValueError, TypeError, ValidationError) as error:
+                raise Refused("enforcer_origin_invalid") from error
         elif store.human_issuance() == "approved":
             raise Refused("approval_not_configured")
+        require_canonical_server_origin(origin)
         self.store, self.registry = store, registry
         self.origin, self.approval_origin, self.rp_id = origin, approval_origin, rp_id
         self.grading = grading
