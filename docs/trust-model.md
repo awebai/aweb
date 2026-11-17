@@ -83,9 +83,9 @@ the parent's `controller_did`.
 
 This is the standard mechanism, not a hosted special case. Any namespace owner
 can delegate child namespaces; a hosted operator uses the same public protocol
-under the base domain it controls. The child may register that same parent
-controller as its namespace controller; hosted `*.aweb.ai` namespaces use this
-shape so inherited parent DNS authority and the exact registry row agree.
+under the base domain it controls. A child may register its parent's
+controller key or a distinct child controller key; hosted `*.aweb.ai`
+namespaces use both arrangements.
 
 Authority flows downward: a namespace controller can rotate the team
 controller key, but the team controller cannot rotate the namespace
@@ -516,8 +516,8 @@ Named residuals:
   by the parent, with no `_awid` record of their own, cannot present an act DNS
   verifies: the inherited record names the parent's key. Under enforcement
   their servers refuse a rotated key until the server operator re-pins it.
-  Hosted children are such namespaces: each has its own controller key, and
-  the parent's key signs only for the base domain. Before enforcement serves
+  Hosted children register either their parent's controller key or a distinct
+  controller key. Before enforcement serves
   hosted teams, an inherited authority must accept the child's controller
   through the parent-signed delegation, or hosted team keys are rotated and
   re-pinned first.
