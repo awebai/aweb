@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-17
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-team-key-trust with two backing notes; the chat claim checked against the review branch at af59246dbc, not yet on main. The orphaned-fixture claim was dropped as already pending in open harvest PR #200.
+* **Creation**: decision [chat session selection follows the chat identity rules](/aweb-protocol-expert/decisions/chat-session-selection-follows-identity-rules.md), decided and on a review branch, not yet on main.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
