@@ -84,10 +84,10 @@ async def _refresh_room_authority(request, db, identity):
         team_key = await _resolve_team_key(authority_request, identity.team_id)
         if not team_key:
             raise HTTPException(status_code=401, detail="unknown_team")
-        revoked = await _get_revoked_certificates(authority_request, identity.team_id)
+        revoked = await _get_revoked_certificates(authority_request, identity.team_id, certificate_ids=[identity.certificate_id])
         # None while the registered-certificate requirement is off (aweb-acya.9).
         registered = (
-            await _get_registered_certificates(authority_request, identity.team_id)
+            await _get_registered_certificates(authority_request, identity.team_id, certificate_ids=[identity.certificate_id])
             if require_registered_certificates()
             else None
         )

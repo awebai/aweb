@@ -191,7 +191,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     # the same 503 the certificate-presenting path raises.
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(request, row["team_id"])
+        revoked_certs = await _get_revoked_certificates(request, row["team_id"], certificate_ids=[issuing_certificate_id])
         if issuing_certificate_id in revoked_certs:
             raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
         # Staged existence requirement (default OFF): an unregistered issuing
@@ -200,7 +200,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         # registry or the delegation ends, mirroring the certificate paths.
         # Ordering preserved: revocation keeps its own distinct verdict above.
         if require_registered_certificates():
-            registered_certs = await _get_registered_certificates(request, row["team_id"])
+            registered_certs = await _get_registered_certificates(request, row["team_id"], certificate_ids=[issuing_certificate_id])
             if issuing_certificate_id not in registered_certs:
                 raise HTTPException(
                     status_code=403, detail="grant issuing certificate not registered"

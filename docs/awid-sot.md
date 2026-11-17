@@ -802,6 +802,20 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status
        Cache per (team_id, certificate_id) for at most 60 seconds and fail closed
        on refresh errors. Existing private-read visibility remains unchanged.
 
+POST   /v1/namespaces/{domain}/teams/{name}/certificates/status
+       Exact-ID counterpart of the GET above, anonymous on public and private
+       teams; shares its certificate_status bucket (60/min/IP by default).
+       Body: { "certificate_ids": ["uuid", ...] }, 1 to 128 IDs, each 1 to 256
+       characters, bounded to 256 KiB before JSON parsing. Duplicate IDs are
+       returned once, in first-occurrence order.
+       Response: { "certificates": [ { "certificate_id": "uuid", ... } ] }.
+       Each known ID carries exactly the GET's four public fields. A missing
+       ID carries only certificate_id and status="missing". An unknown team
+       returns the same missing entries, revealing no private team key or
+       existence. No unasked IDs, aliases, member keys or certificate blobs.
+       This status does not replace signature, subject, current-key, identity
+       binding or local-rights checks.
+
 GET    /v1/namespaces/{domain}/teams/{name}/members/{alias}
        Resolve an active team-member reference. The path segment is the
        member name; it is called alias in the current wire path for
@@ -832,7 +846,8 @@ GET    /v1/namespaces/{domain}/teams/{name}/revocations
        Query params: since (timestamp, optional — for incremental sync)
        Response: { "revocations": [{ "certificate_id": "uuid",
                    "revoked_at": "..." }] }
-       This is what services cache to reject removed members.
+       Complete-list SDK consumers retain this meaning. Ordinary server
+       authorization uses the bounded exact-ID status route above.
 
 PUT    /v1/namespaces/{domain}/teams/{name}/server
        Publish the team's aweb.team-server/1 record.

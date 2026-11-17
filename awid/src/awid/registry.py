@@ -1522,8 +1522,13 @@ class RegistryClient:
         ids = list(dict.fromkeys(certificate_ids))
         if not ids:
             return {}
-        if any(not isinstance(cid, str) or not 1 <= len(cid) <= 256 for cid in ids):
-            raise ValueError("certificate IDs must contain 1 to 256 characters")
+        if any(not isinstance(cid, str) or not cid for cid in ids):
+            raise ValueError("certificate IDs must be nonempty strings")
+        if any(len(cid) > 256 for cid in ids):
+            # Registered IDs have this bound, but released verifiers also
+            # accept signed, unregistered certificates with longer IDs.
+            revoked = await RegistryClient.get_team_revocations(self, domain, name)
+            return {cid: "revoked" if cid in revoked else "legacy_unchecked" for cid in ids}
         path = f"/v1/namespaces/{quote(domain, safe='')}/teams/{quote(name, safe='')}/certificates/status"
         origin = await self._registry_url_for_domain(domain)
         statuses = {}
@@ -1558,6 +1563,16 @@ class RegistryClient:
         """Revocation decision ONLY for the named IDs, unlike get_team_revocations."""
         statuses = await self.get_team_certificate_statuses(domain, name, certificate_ids)
         return {cid for cid, status in statuses.items() if status == "revoked"}
+
+    async def get_team_registrations_for_certificates(
+        self, domain: str, name: str, certificate_ids: list[str], *, after_miss: bool = False,
+    ) -> set[str]:
+        """Existence for exact IDs; a legacy non-revocation is not existence."""
+        statuses = await self.get_team_certificate_statuses(domain, name, certificate_ids)
+        if "legacy_unchecked" in statuses.values():
+            registered = await self.list_team_certificates(domain, name, active_only=False)
+            return {cert.certificate_id for cert in registered if cert.certificate_id in statuses}
+        return {cid for cid, status in statuses.items() if status in ("active", "revoked")}
 
     async def list_team_certificates(
         self,
@@ -1833,7 +1848,7 @@ class CachedRegistryClient(RegistryClient):
     """Redis-backed caching wrapper for RegistryClient reads."""
 
     redis_client: Redis
-    _refresh_tasks: dict[str, asyncio.Task[None]]
+    _refresh_tasks: dict[str, asyncio.Task[Any]]
     _domain_verifier: DomainVerifier | None
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
     _team_key_signature_refreshes: dict[str, asyncio.Task[str | None]]
@@ -2350,6 +2365,128 @@ class CachedRegistryClient(RegistryClient):
             retention_seconds=retention_seconds,
         )
         return set(fresh_value)
+
+    async def get_team_revocations_for_certificates(
+        self, domain: str, name: str, certificate_ids: list[str], *, fresh: bool = False,
+    ) -> set[str]:
+        if fresh:
+            statuses = await RegistryClient.get_team_certificate_statuses(self, domain, name, certificate_ids)
+        else:
+            statuses = await self._cached_certificate_statuses(domain, name, certificate_ids)
+        return {cid for cid, status in statuses.items() if status == "revoked"}
+
+    async def get_team_registrations_for_certificates(
+        self, domain: str, name: str, certificate_ids: list[str], *, after_miss: bool = False,
+    ) -> set[str]:
+        if after_miss:
+            # The same team-scoped budget as the existing full-list retry;
+            # callers reach it only after positive certificate verification.
+            try:
+                admitted = await self.redis_client.set(
+                    f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}",
+                    "1", nx=True, ex=_TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS,
+                )
+            except (RedisError, OSError) as exc:
+                raise RegistryError("AWID certificate existence refresh unavailable", status_code=503) from exc
+            if not admitted:
+                raise RegistryError("AWID certificate existence refresh suppressed", status_code=503)
+        statuses = await self._cached_certificate_statuses(
+            domain, name, certificate_ids, registration=True, force=after_miss,
+        )
+        if "legacy_unchecked" in statuses.values():
+            # Keep the old registry's complete-list availability and authority.
+            certificates = (await self.list_team_certificates_fresh(domain, name, active_only=False)
+                            if after_miss else await self.list_team_certificates(domain, name, active_only=False))
+            return {cert.certificate_id for cert in certificates if cert.certificate_id in statuses}
+        return {cid for cid, status in statuses.items() if status in ("active", "revoked")}
+
+    async def _cached_certificate_statuses(
+        self, domain: str, name: str, certificate_ids: list[str], *,
+        registration: bool = False, force: bool = False,
+    ) -> dict[str, str]:
+        ids = list(dict.fromkeys(certificate_ids))
+        if not ids:
+            return {}
+        if any(not isinstance(cid, str) or not cid for cid in ids):
+            raise ValueError("certificate IDs must be nonempty strings")
+        prefix = await self._generation_cache_key(
+            f"awid:registry_cache:v1:certificate_status:{self.registry_url}:{domain}/{name}",
+            self._team_certificates_generation_key(domain, name),
+        )
+        keys = {cid: f"{prefix}:{hashlib.sha256(cid.encode()).hexdigest()}" for cid in ids}
+
+        def decode(value):
+            if value not in ("active", "revoked", "missing", "legacy_unchecked"):
+                raise ValueError("Invalid certificate status cache")
+            return value
+
+        cached = {cid: await self._read_cache_entry(keys[cid], decode=decode) for cid in ids}
+        now = _cache_now()
+        ttl = _TEAM_CERTIFICATES_CACHE_TTL_SECONDS if registration else _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
+        ages = {cid: max(0, now - _cache_entry_fetched_at(entry, _TEAM_REVOCATIONS_CACHE_TTL_SECONDS))
+                for cid, entry in cached.items() if entry is not None}
+        wanted = [cid for cid in ids if force or cid not in ages or ages[cid] >= ttl]
+        result = {cid: entry["value"] for cid, entry in cached.items() if entry is not None}
+        if not wanted:
+            return result
+        blocking = force or any(cid not in ages or ages[cid] > ttl * _STALE_MULTIPLIER for cid in wanted)
+        tasks = {self._refresh_tasks[keys[cid]] for cid in wanted
+                 if keys[cid] in self._refresh_tasks}
+        owned = [cid for cid in wanted if keys[cid] not in self._refresh_tasks]
+        if owned:
+            async def acquire():
+                async with asyncio.timeout(self.timeout_seconds):
+                    try:
+                        values = await RegistryClient.get_team_certificate_statuses(self, domain, name, owned)
+                    except RegistryError as exc:
+                        if exc.status_code in (401, 403):
+                            await self._invalidate_keys(*(keys[cid] for cid in owned))
+                        raise
+                    for cid in owned:
+                        await self._write_cache_entry(
+                            keys[cid], value=values[cid], ttl_seconds=_TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
+                            encode=lambda value: value,
+                            retention_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS * _STALE_MULTIPLIER,
+                            require_write=force,
+                        )
+                    return values
+
+            task = asyncio.create_task(acquire())
+            tasks.add(task)
+            for cid in owned:
+                self._refresh_tasks[keys[cid]] = task
+
+            def finished(done):
+                for cid in owned:
+                    if self._refresh_tasks.get(keys[cid]) is done:
+                        self._refresh_tasks.pop(keys[cid], None)
+                if not done.cancelled() and (failure := done.exception()) is not None:
+                    logger.warning("AWID certificate-status refresh failed for team %s/%s; "
+                                   "original cached age %ss; cause %s", domain, name,
+                                   max((ages[cid] for cid in owned if cid in ages), default="unknown"),
+                                   type(failure).__name__)
+
+            task.add_done_callback(finished)
+        if not blocking:
+            return result
+        try:
+            async with asyncio.timeout(self.timeout_seconds):
+                for values in await asyncio.gather(*(asyncio.shield(task) for task in tasks)):
+                    result.update({cid: value for cid, value in values.items() if cid in keys})
+        except Exception as exc:
+            if isinstance(exc, RegistryError) and exc.status_code in (401, 403):
+                await self._invalidate_keys(*keys.values())
+                raise
+            if not registration and not force and all(
+                cid in ages and ages[cid] <= _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS for cid in ids
+            ):
+                logger.warning("AWID exact revocation refresh failed for team %s/%s; serving "
+                               "last-known statuses aged %ds (outage grace bound %ds): %s",
+                               domain, name, max(ages.values()), _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
+                               type(exc).__name__)
+                return result
+            raise
+        return result
 
     async def refresh_team_certificates_after_miss(
         self, domain: str, name: str,

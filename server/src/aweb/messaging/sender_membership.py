@@ -38,6 +38,13 @@ async def sender_memberships(
         "a.status, a.deleted_at, a.certificate_id, " + member_key_columns_sql("a") + " "
         "FROM {{tables.agents}} AS a WHERE a.agent_id = ANY($1::uuid[])", ids,
     )
+    team_certificates: dict[str, list[str]] = {}
+    for member in members:
+        team = str(member["team_id"])
+        if (team, str(member["agent_id"])) in result:
+            certificate_id = str(member.get("certificate_id") or "").strip()
+            if certificate_id:
+                team_certificates.setdefault(team, []).append(certificate_id)
     revocations = {}
     for member in members:
         key = (str(member["team_id"]), str(member["agent_id"]))
@@ -58,7 +65,7 @@ async def sender_memberships(
             except ValueError:
                 continue
             try:
-                revocations[team] = await _get_revoked_certificates(request, team)
+                revocations[team] = await _get_revoked_certificates(request, team, certificate_ids=team_certificates[team])
             except HTTPException:
                 # The existing revocation helper logs dependency failures.
                 revocations[team] = None

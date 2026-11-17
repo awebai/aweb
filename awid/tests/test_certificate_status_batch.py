@@ -105,6 +105,16 @@ async def test_real_history_cost_depends_only_on_requested_ids(
         FROM {{tables.teams}} t CROSS JOIN generate_series(1, $4::int) n
         WHERE t.domain = $1 AND t.name = $2
     """, domain, "ops", team_did, history)
+    await db.execute("ANALYZE {{tables.team_certificates}}")
+    plan = await db.fetch_one("""
+        EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+        SELECT tc.certificate_id, t.team_did_key, tc.revoked_at
+        FROM {{tables.team_certificates}} tc
+        JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
+        WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
+          AND tc.certificate_id = ANY($3::text[])
+    """, domain, "ops", [active, "old-1", f"old-{history}"])
+    print("R8_PLAN " + json.dumps({"history": history, "plan": dict(plan)}, default=str), flush=True)
     redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
     app = client._transport.app
     app.state.rate_limiter = RedisFixedWindowRateLimiter(redis=redis)

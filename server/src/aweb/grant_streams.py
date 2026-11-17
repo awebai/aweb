@@ -84,11 +84,11 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
 
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(request, row["team_id"])
+        revoked_certs = await _get_revoked_certificates(request, row["team_id"], certificate_ids=[issuing_certificate_id])
         if issuing_certificate_id in revoked_certs:
             return "grant_issuer_revoked"
         if require_registered_certificates():
-            registered_certs = await _get_registered_certificates(request, row["team_id"])
+            registered_certs = await _get_registered_certificates(request, row["team_id"], certificate_ids=[issuing_certificate_id])
             if issuing_certificate_id not in registered_certs:
                 return "grant_issuer_revoked"
     return None

@@ -435,16 +435,23 @@ The cached client applies separate policies to the two team-auth inputs:
 - **Team metadata** from
   `GET /v1/namespaces/{domain}/teams/{name}` supplies the current
   `team_did_key` and dashboard `visibility`.
-- **Revocations** from
-  `GET /v1/namespaces/{domain}/teams/{name}/revocations` supplies revoked
-  certificate ids.
+- **Revocation decisions** for ordinary authorization use
+  `POST /v1/namespaces/{domain}/teams/{name}/certificates/status`, selecting
+  only the certificate IDs that the caller uses. Cached entries contain one
+  exact ID's status, not the team's lifetime revocation history. Sender
+  membership queries batch the IDs for each team.
 
 Team metadata is fresh for **600 seconds (10 minutes)** and remains available
 for one additional 600-second stale-while-revalidate window. Revocations are
 fresh for **60 seconds** and have one additional 60-second stale window. A read
 during a stale window returns the stale value and schedules a background
-refresh. Revocation refresh always fetches the complete paginated set: the
-registry's timestamp-only `since` parameter is not a safe commit cursor because
+refresh. During registry failure only, last-known revocation decisions may be
+served while their original fetch age is at most **15 minutes**, with warning
+telemetry, then fail closed. Exact-ID refresh never treats an unavailable or
+incomplete answer as non-revocation. Against an old registry, the SDK falls
+back to the complete paginated revocation set or refuses; it never returns a
+partial list. The full-list SDK method retains its complete-set meaning.
+The timestamp-only `since` parameter remains unsafe as a commit cursor because
 PostgreSQL timestamps a transaction before a possible row-lock wait. These
 values come from `_TEAM_METADATA_CACHE_TTL_SECONDS`,
 `_TEAM_REVOCATIONS_CACHE_TTL_SECONDS`, and `_STALE_MULTIPLIER` in
@@ -1467,8 +1474,11 @@ own server URL for self-hosted aweb.)
    → aweb rejects the certificate after its revocation view refreshes
 ```
 
-With Redis, the documented cache policy permits up to 20 minutes of stale
-revocation state; without Redis the next verification reads AWID directly.
+With Redis, revocation decisions are fresh for 60 seconds, with one additional
+60-second stale-while-revalidate window. During registry failure only, their
+original fetch age may reach 15 minutes, with warnings, then authorization
+fails closed. This is not a 20-minute cache interval. Without Redis, the next
+verification reads AWID directly.
 Revocation does not itself mutate or delete the aweb runtime projection. That
 row remains available for history until an explicit aweb lifecycle operation
 changes it.
@@ -1672,10 +1682,16 @@ GET /v1/namespaces/{domain}/teams/{name}/revocations
 → { "revocations": [{ "certificate_id": "uuid", "revoked_at": "..." }] }
 ```
 
-The current aweb registry client fetches the complete paginated revocation set
-and does not send the endpoint's optional `since` parameter. Its cache policy is
-the revocation-specific 60-second fresh plus 60-second stale window described
-in [Caching from awid](#caching-from-awid) above.
+Ordinary aweb authorization uses bounded exact-ID certificate-status batches
+and caches only the requested statuses. Revocation decisions retain the
+60-second fresh / 120-second stale ceiling, and during registry failure only,
+the original-age 15-minute outage grace described in
+[Caching from awid](#caching-from-awid). Explicit fresh checks use no grace.
+`get_team_revocations` still fetches the complete paginated set, without
+`since`, for intentional history consumers and old-registry fallback. Past
+its page ceiling it refuses, never truncates. Registration-required mode stays
+independent: an exact observed missing ID is not registered; a legacy
+non-revocation answer alone cannot establish registration.
 
 Dashboard reads use cached awid visibility:
 

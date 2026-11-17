@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- AWID and server authorization can check exact certificate IDs in bounded
+  batches, retaining revocation freshness and outage grace without loading
+  lifetime history. Old registries retain complete-list fallback or refusal.
+
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
   delayed refreshes from restoring invalidated entries without changing the

@@ -87,3 +87,35 @@ async def test_explicit_fresh_read_does_not_use_outage_grace(status_cache):
             await client.get_team_revocations_for_certificates("example.com", "ops", ["active"], fresh=True)
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stale_serve_refreshes_once_and_auth_refusal_drops_the_entry(status_cache):
+    client, redis, now, requests, status = status_cache
+    try:
+        await client.get_team_revocations_for_certificates("example.com", "ops", ["active"])
+        now[0] += 61
+        status[0] = 403
+        assert await client.get_team_revocations_for_certificates("example.com", "ops", ["active"]) == set()
+        tasks = set(client._refresh_tasks.values())
+        await asyncio.gather(*tasks, return_exceptions=True)
+        with pytest.raises(RegistryError) as error:
+            await client.get_team_revocations_for_certificates("example.com", "ops", ["active"])
+        assert error.value.status_code == 403
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_registration_reuses_the_observation_without_importing_revocation_grace(status_cache):
+    client, _, now, requests, status = status_cache
+    try:
+        assert await client.get_team_revocations_for_certificates("example.com", "ops", ["active"]) == set()
+        assert await client.get_team_registrations_for_certificates("example.com", "ops", ["active"]) == {"active"}
+        assert len(requests) == 1
+        status[0] = 503
+        now[0] += 1201
+        with pytest.raises(RegistryError):
+            await client.get_team_registrations_for_certificates("example.com", "ops", ["active"])
+    finally:
+        await client.aclose()
