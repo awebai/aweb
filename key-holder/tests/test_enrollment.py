@@ -18,14 +18,16 @@ from aweb_key_holder.enrollment import Holder
 from aweb_key_holder.keys import KeyStore, Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from pending import expire_pending
+from policy_inputs import policy_file
 
 
 @pytest.fixture
 def holder(tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    store.set_human_issuance("approved")
+    policy = policy_file(tmp_path / "human-approval.json", store.descriptor().domain)
     return Holder(
         store,
+        human_approval_config=policy,
         registry=None,
         origin="https://holder.example",
         approval_origin="https://approval.example",
@@ -61,7 +63,7 @@ def test_first_bootstrap_is_exact_single_use_with_unchanged_retry_bounds(holder)
     assert {row["operation"] for row in holder.store.audit()} == {
         "namespace_id_issue",
         "enrollment_intent",
-        "human_issuance_change",
+        "human_approval_change",
     }
 
 

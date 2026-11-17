@@ -759,7 +759,7 @@ Flags:
 Human identities in a namespace's identity tree
 
 Subcommands:
-- `add` Ask an approved-mode issuer for a new person's pending enrollment
+- `add` Ask your issuer to add a new person
 - `enroll` Enroll an approval key for your new or existing human ID
 - `init` Create your human ID in a namespace
 - `register` Register your issued human certificate with your own key
@@ -771,22 +771,25 @@ Flags:
 
 ### `id human add`
 
-Run as an existing enrolled person with --human ID --human-domain DOMAIN.
-The issuer's approved-mode endpoint asks for human approval through the existing
-428 protocol. Review the exact act in your approval-service browser page. Every
+Run as a current person with --human ID --human-domain DOMAIN.
+With no human_approval requirement, the issuer returns a certificate without
+contacting an approval service or requiring your enrollment. Give it to the new
+person, who runs aw id human register FILE with their own human selector.
+If the organisation requires approval, you must be enrolled; the issuer asks
+for human approval through the existing 428 protocol. Review the exact act in your approval-service browser page. Every
 identity signature uses your keychain key, unlocked once at this terminal for
 this command, including the approval wait. The key is wiped at command exit.
-An agent requester uses the generic aw id request command instead.
+When approval is required, an agent requester uses the generic aw id request
+command instead; agents cannot use the unconfigured issuance path.
 
-This command returns a pending intent; it never enrolls the new person. The new
+The configured approval path returns a pending intent; it never enrolls the new person. The new
 person first prepares their own key with aw id human init and gives you its ID
 and key. Give them the resulting FILE. They run aw id human enroll --intent FILE
 --issuer URL with their own --human ID --human-domain DOMAIN, then register and
 confirm their approval key in the browser named by that signed intent.
 
-In operator mode, the organization's operator instead runs aweb-key-holder
-issue-person on the holder host. The new person runs aw id human register FILE.
-This command has no operator mode or operator network route.
+The first person is still bootstrapped by the organization's operator on the
+holder host. There is no operator network route.
 An expired approval can be archived with --restart to ask for a fresh approval.
 It never extends or reuses the old approval deadline.
 

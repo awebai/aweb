@@ -6,6 +6,7 @@ import sys
 
 import httpx
 import pytest
+from policy_inputs import policy_file
 from approval_service.canonical import parse
 from approval_service.encoding import decode
 from aweb_key_holder.http import create_app
@@ -43,7 +44,6 @@ def retire(holder, person):
 
 async def first_person(native, *, activate):
     holder, registry = native.holder, native.registry
-    holder.store.set_human_issuance("approved")
     root = holder.store.descriptor()
     await registry.controller_request(
         parse_controller_request(
@@ -149,6 +149,9 @@ async def test_active_person_gets_replacement_advice_then_operator_fresh_id_exit
         retire(holder, own["identity"])
         await revoke(registry, holder, own)
         seed, key, person = await register_identity(registry)
+        policy_file(
+            holder.human_approval_config, holder.store.descriptor().domain, None
+        )
         issued = await holder.issue_person(person, key)
         chain = [issued["certificate"]]
         await commit_identity(registry, {"id_chain": chain}, seed, key)

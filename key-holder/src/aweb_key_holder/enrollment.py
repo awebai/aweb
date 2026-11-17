@@ -17,15 +17,14 @@ from approval_service.answers import read_answer
 from approval_service.canonical import canonical, parse
 from approval_service.definitions import check_definition, definition_ref
 from approval_service.encoding import decode, encode
+from approval_service.gate import Gate, load_policy
 from approval_service.enrollment import PublicIssuer
 from approval_service.public import PublicReader, public_errors
 from approval_service.requester import AdmittedRequester, admit_enrollment_target
 from approval_service.seams import (
     check_activation,
     check_creation_proof,
-    check_presentation,
     commitment,
-    make_needs_human,
 )
 from approval_service.verify import Trust
 from approval_service.wire import domain, validate, validate_site
@@ -52,8 +51,30 @@ def expired_pending(row):
 
 class Holder:
     def __init__(
-        self, store, *, registry, origin, approval_origin=None, rp_id=None, grading=None
+        self,
+        store,
+        *,
+        registry,
+        origin,
+        approval_origin=None,
+        rp_id=None,
+        grading=None,
+        human_approval_config=None,
     ):
+        with store._connection() as db:
+            store._refuse_legacy_configuration(db)
+        self.human_approval_config = human_approval_config
+        policy = load_policy(
+            human_approval_config, organisation=store.descriptor().domain
+        )
+        if policy.service is not None:
+            if approval_origin is not None and approval_origin != policy.service:
+                raise Refused("human_approval_invalid")
+            from approval_service.grading import EnrollmentGrading
+
+            approval_origin = policy.service
+            rp_id = rp_id or urlsplit(approval_origin).hostname
+            grading = grading or EnrollmentGrading("passkey_only", None)
         if approval_origin is not None or rp_id is not None or grading is not None:
             if not all((approval_origin, rp_id, grading)):
                 raise Refused("approval_not_configured")
@@ -62,57 +83,116 @@ class Holder:
                 validate_site(origin, urlsplit(origin).hostname)
             except (ValueError, TypeError, ValidationError) as error:
                 raise Refused("enforcer_origin_invalid") from error
-        elif store.human_issuance() == "approved":
-            raise Refused("approval_not_configured")
         require_canonical_server_origin(origin)
         self.store, self.registry = store, registry
         self.origin, self.approval_origin, self.rp_id = origin, approval_origin, rp_id
         self.grading = grading
         self.public = PublicReader(registry)
+        with store._connection() as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            self.gate(db)
 
     def require_approval(self):
+        policy = load_policy(
+            self.human_approval_config, organisation=self.store.descriptor().domain
+        )
+        if policy.service is not None and policy.service != self.approval_origin:
+            raise Refused("human_approval_invalid")
         if not all((self.approval_origin, self.rp_id, self.grading)):
             raise Refused("approval_not_configured")
 
-    def require_approved_issuance(self):
-        if self.store.human_issuance() != "approved":
-            raise Refused("human_issuance_operator")
-        self.require_approval()
+    def gate(self, db=None):
+        if db is None:
+            with self.store._connection() as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                return self.gate(connection)
+        policy = load_policy(
+            self.human_approval_config, organisation=self.store.descriptor().domain
+        )
+        if policy.grade("organisation.human.add") is not None:
+            self.require_approval()
+            if policy.service != self.approval_origin:
+                raise Refused("human_approval_invalid")
+        if db is not None:
+            self.store.observe_policy(db, policy)
+        return Gate(
+            policy, organisation=self.store.descriptor().domain, audience=self.origin
+        )
 
     def issue_person_certificate(self, person, identity_key):
         """Private operator effect: certificate only, never enrollment or evidence."""
         with self.store._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
-            root = self.store._descriptor(db)
-            certificate = self._certificate(root, person, identity_key, now())
-            operation = parse_controller_object(
-                {
-                    "operation": "namespace_id_issue",
-                    "domain": root.domain,
-                    "kind": "human",
-                    "certificate": certificate,
-                }
+            if self.gate(db).policy.grade("organisation.human.add") is not None:
+                raise Refused("human_approval_required")
+            return self._issue_person_certificate(
+                db, person, identity_key, actor="operator"
             )
-            signature = self.store._sign(
-                db,
-                root,
-                ControllerSigningContext(operation, root).signing_bytes(),
-                operation="namespace_id_issue",
-                actor="operator",
-            )
-            return {
-                "state": "issued",
-                "person": person,
-                "identity_key": identity_key,
-                "certificate": {
-                    "certificate": certificate,
-                    "signature": encode(signature),
-                },
+
+    def _issue_person_certificate(self, db, person, identity_key, *, actor):
+        root = self.store._descriptor(db)
+        certificate = self._certificate(root, person, identity_key, now())
+        operation = parse_controller_object(
+            {
+                "operation": "namespace_id_issue",
+                "domain": root.domain,
+                "kind": "human",
+                "certificate": certificate,
             }
+        )
+        signature = self.store._sign(
+            db,
+            root,
+            ControllerSigningContext(operation, root).signing_bytes(),
+            operation="namespace_id_issue",
+            actor=actor,
+        )
+        self.store.advance_person(db, person)
+        return {
+            "state": "issued",
+            "person": person,
+            "identity_key": identity_key,
+            "certificate": {"certificate": certificate, "signature": encode(signature)},
+        }
 
     async def issue_person(self, person, identity_key):
+        if self.gate().policy.grade("organisation.human.add") is not None:
+            raise Refused("human_approval_required")
         await self._new_identity(person, identity_key)
         return self.issue_person_certificate(person, identity_key)
+
+    async def issue_for_person(self, caller, *, person, identity_key, chain):
+        root = self.store.descriptor()
+        trust = await self.public.person(
+            chain,
+            person=caller.identity,
+            identity_key=caller.key,
+            organisation=root.domain,
+        )
+        await self._new_identity(person, identity_key)
+        caller.check_time()
+        with self.store._connection() as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            caller.check_time()
+            gate = self.gate(db)
+            if gate.policy.grade("organisation.human.add") is not None:
+                raise Refused("state_changed")
+            gate.evaluate("organisation.human.add")
+            if (
+                self.store._descriptor(db) != root
+                or trust.namespace_issuer != root.did_key
+                or not 0 <= now() - trust.observed_at <= 60
+            ):
+                raise Refused("status_unavailable")
+            retired = db.execute(
+                "SELECT retired_at FROM enrollments WHERE person=?", (caller.identity,)
+            ).fetchone()
+            if retired is not None and retired["retired_at"] is not None:
+                raise Refused("person_retired")
+            self._check_enrollment_available(db, person)
+            return self._issue_person_certificate(
+                db, person, identity_key, actor=caller.key
+            )
 
     def _nonce_keys(self, db):
         return {
@@ -523,7 +603,11 @@ class Holder:
             raise Refused("requester_mismatch")
 
     async def prepare(self, caller, *, person, identity_key, approver, chain):
-        self.require_approved_issuance()
+        if self.gate().policy.grade("organisation.human.add") is None:
+            return 200, await self.issue_for_person(
+                caller, person=person, identity_key=identity_key, chain=chain
+            )
+        self.require_approval()
         admitted = await self.admit(caller, chain)
         with self.store._connection() as db:
             self._check_enrollment_available(db, person)
@@ -557,10 +641,13 @@ class Holder:
                 start=start,
                 deadline=start + 600,
             )
-            return make_needs_human(request, origin=self.approval_origin)
+            gate = self.gate()
+            if gate.policy.grade("organisation.human.add") is None:
+                raise Refused("state_changed")
+            return gate.evaluate("organisation.human.add", request=request)
 
     async def present(self, caller, value, *, chain):
-        self.require_approved_issuance()
+        self.require_approval()
         validate("presentation", value)
         request = parse(decode(value["request_bytes"]))
         validate("request", request)
@@ -631,14 +718,16 @@ class Holder:
                 raise Refused("state_changed")
             if not self._row(db, request["approver"])["active"]:
                 raise Refused("approver_not_active")
-            check_presentation(
-                value,
-                expected_request=request,
+            gate = self.gate(db)
+            if gate.policy.grade("organisation.human.add") is None:
+                raise Refused("state_changed")
+            gate.evaluate(
+                "organisation.human.add",
+                request=request,
+                presentation=value,
                 presenter=caller.descriptor,
-                origin=self.approval_origin,
                 now=now(),
                 trust=trust,
-                required_grade="passkey_uv",
                 nonce_keys=self._nonce_keys(db),
             )
             target = request["act"]["target"]

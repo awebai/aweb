@@ -49,6 +49,8 @@ def create_app(holder):
             "status_unavailable",
             "issuer_unavailable",
             "identity_unavailable",
+            "human_approval_unavailable",
+            "human_approval_invalid",
         }:
             status = 503
         elif code in {
@@ -67,10 +69,10 @@ def create_app(holder):
             status = 404
         elif code in {
             "approver_not_active",
+            "person_retired",
             "target_is_approver",
             "bootstrap_closed",
             "operation_not_served",
-            "human_issuance_operator",
             "approval_not_configured",
         }:
             status = 403
@@ -120,7 +122,6 @@ def create_app(holder):
     async def humans(request: Request):
         caller, value, chain = await input_for(request)
         await holder.admit(caller, chain)
-        holder.require_approved_issuance()
         if "request_bytes" in value:
             result = await holder.present(caller, value, chain=chain)
             return JSONResponse(result, headers={"Cache-Control": "no-store"})

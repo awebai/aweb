@@ -616,6 +616,10 @@ render() {
   mkdir -p "$run_dir"
   python_in_server "$TEAM_DIR/render_env.py" "$deployment" >"$env_file.tmp"
   mv "$env_file.tmp" "$env_file"
+  python_in_server "$TEAM_DIR/render_env.py" --human-approval "$deployment" >"$run_dir/human-approval.json.tmp"
+  chmod 0644 "$run_dir/human-approval.json.tmp"
+  mv "$run_dir/human-approval.json.tmp" "$run_dir/human-approval.json"
+  printf 'HUMAN_APPROVAL_CONFIG_FILE=%s\n' "$run_dir/human-approval.json" >>"$env_file"
   if [[ -n "$(env_value FRONT_IMAGE)" ]]; then
     mkdir -p "$run_dir/front"
     python_in_server "$TEAM_DIR/render_env.py" --front "$deployment" >"$run_dir/front/Caddyfile.tmp"

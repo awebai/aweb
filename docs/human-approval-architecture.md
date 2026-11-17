@@ -106,15 +106,21 @@ and a different, service-signed receipt.
 
 ## Current rules
 
-Each enforcer currently enforces its own rules. The key holder's private
-`human_issuance` setting defaults to `operator`: issuing a person needs no
-approval service. Its `approved` mode requires an enrolled person's approval
-through awsign. No operation inherently requires human verification merely
-because it exists.
+The shared gate reads the organisation's `human_approval` configuration.
+`organisation.human.add` is its first action, enforced by the key holder.
+The registry does not acquire an approval policy.
 
-The planned track below replaces that setting with one configuration per
-organisation, shared by all enforcers. Enforcement remains with the component
-that owns the effect; the registry does not acquire an approval policy.
+With no requirement configured, a current person of the organisation can use
+`aw id human add` to request a new person's certificate without enrolling an
+approval key or contacting awsign. An agent, an identity with no standing in
+the organisation, a retired person and a revoked person cannot do this. The
+first person is bootstrapped through the holder's private operator command.
+With the action configured, the requester carries the exact 428 request to
+awsign and returns the receipt before issuance proceeds.
+
+The old `human_issuance` setting is retired. An existing approved holder refuses
+to start until the operator writes the replacement `human_approval` section
+and explicitly migrates the store. It never silently becomes approval off.
 
 ## Showing that an ID belongs to a person
 
@@ -196,13 +202,11 @@ parent domain is kept in a key holder as well. It offers a closed list of operat
 without a person under a fixed rule, or requires a receipt.
 
 Issuing a person without an approval service is supported and yields an ID
-without evidence. The issuing setting is `operator` by default: a private
-operator command issues the ID. With awsign configured, an organisation may
-select `approved`, requiring an enrolled person's approval. Agents cannot issue
-people unattended in either mode. Any activated, currently valid person of the
-organisation, enrolled at creation or later, may approve `human.add` in approved mode.
-The shared gate will move this rule to `organisation.human.add`; it has not yet
-replaced this setting.
+without evidence. The deployment file configures `organisation.human.add`, not
+a separate holder switch. Only a current person may use the unconfigured public
+issuance route; the initial operator bootstrap remains private. Any activated,
+currently valid person of the organisation, enrolled at creation or later,
+may approve when the action requires it.
 
 The process that asks it to sign cannot read its memory or storage, cannot
 sign directly, and cannot change its rules. Its database permissions and
@@ -354,12 +358,14 @@ requirement.
 |---|---|
 | `organisation.human.add` | Key holder; Cloud |
 | `team.human.add` | Cloud; aweb server |
-| `secrets.key.read_write` | Secrets application |
 | `agent.root.authorize` | Key holder; Cloud |
 
-The existing holder approval for adding a person moves onto the first action.
-The other declarations do not claim those enforcers or their effects are
-implemented today.
+The holder enforces the first action through the shared gate using the existing
+`human.add` signed act definition. Other declared actions are not enabled yet.
+A Secrets action is not yet defined: Secrets brokers credential use instead of
+issuing keys, and already has its own per-secret approval on its console.
+How that approval relates to organisation configuration is a separate decision;
+there is no key-export endpoint or substitute action in this piece.
 
 ### One configuration per organisation
 
@@ -371,7 +377,6 @@ human_approval:
   service: https://awsign.com
   require:
     organisation.human.add: hardware
-    secrets.key.read_write: passkey
 ```
 
 - Self-hosted: a section of the one deployment file, rendered to each
@@ -389,8 +394,9 @@ human_approval:
 - Permission to approve an action does not grant a role in the application.
 
 There are no per-server switches, second configuration or additional levels.
-The key holder's `human_issuance` setting is replaced by
-`organisation.human.add` in this configuration.
+The key holder uses `organisation.human.add` in this configuration. Until the
+email piece exists, `email` is invalid configuration, as are unknown levels
+and unknown action names.
 
 ### One shared gate
 
@@ -424,17 +430,18 @@ The dashboard offers the same operation for a hosted person.
 
 ### Four pieces, in order
 
-These pieces are planned, not implemented by this document. Build one at a
-time; each is complete only when its stated result works on a real stack with
-product commands.
+Build these pieces in order. The shared gate and holder integration implement
+piece 1; the later pieces remain planned. Each is complete only when its stated
+result works on a real stack with product commands.
 
 1. **Shared gate and configuration (aweb-adfa).** Move
-   `organisation.human.add` onto the gate and add `secrets.key.read_write` as
-   the second action. Done when an operator edits the deployment file, an
-   agent's request for a read-write key receives an approval request, a person
-   approves at awsign, and the request succeeds; and when removing the section
-   lets the same request succeed with no approval service reachable. If only
-   one piece is built before the track is parked, it is this one.
+   `organisation.human.add` onto the shared gate as the one action. Done when
+   an operator edits the deployment file, adding a person through the holder
+   receives an approval request, a person approves at awsign, and the same
+   command succeeds; and when removing the section lets the same command
+   succeed with no approval service reachable. The gate knows nothing about
+   the holder. Secrets is excluded pending the separate decision above. If
+   only one piece is built before the track is parked, it is this one.
 2. **Cloud enrolment and enforcement (aweb-adfb).** Cloud countersigns hosted
    people's enrolment, enforces declared actions with the same gate, and
    provides the configuration dashboard page. Done when a hosted person enrols
