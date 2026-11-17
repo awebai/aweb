@@ -189,3 +189,42 @@ async def test_first_admission_failure_is_optional_and_never_polled_again(world,
     finally:
         transport.release.set()
         await sdk.aclose()
+
+
+@pytest.mark.asyncio
+async def test_measuring_move_requires_explicit_readiness_before_enforcement(world):
+    from awid.team_key_acts import TeamKeyUnverified, seed_team_key_baseline
+
+    transport = ObservedRegistry(world.app)
+    sdk = RegistryClient(world.sdk.registry_url, transport=transport)
+    pins = MemoryTeamKeyPins()
+    team_id = "base:" + world.domain
+    original = await pins.first_sight(team_id, world.team[1])
+    unverified = TeamKeyPin(
+        world.team[1], datetime(2020, 1, 1, tzinfo=timezone.utc), world.parent[1]
+    )
+    assert await pins.move(team_id, expected=original, new=unverified)
+    kwargs = dict(
+        pins=pins,
+        fetch_act=lambda: sdk.get_team_key_act(world.domain, "base"),
+        resolver=world.resolver,
+        fetch_namespace_evidence=sdk.namespace_evidence,
+    )
+    try:
+        # The operator precondition is local, not a refusal selected by an
+        # optional network request. Even an available valid act is not polled.
+        with pytest.raises(TeamKeyUnverified) as refused:
+            await pinned_team_key(team_id, world.team[1], enforce=True, **kwargs)
+        assert refused.value.reason == "baseline_unverified"
+        assert transport.attempts == []
+        proof = await seed_team_key_baseline(team_id, world.team[1], **kwargs)
+        assert proof is not None and proof.act_key == world.team[1]
+        attempts = list(transport.attempts)
+        assert attempts
+        assert (
+            await pinned_team_key(team_id, world.team[1], enforce=True, **kwargs)
+            == world.team[1]
+        )
+        assert transport.attempts == attempts
+    finally:
+        await sdk.aclose()
