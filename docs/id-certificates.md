@@ -423,10 +423,32 @@ requires the hosted operator's authorization and execution of reaffirmation,
 with NULL-witness counts before and after, followed by `aw who` on a hosted
 agent proving its chain is verified, not evidence_unavailable. Public clients
 do not reaffirm implicitly.
-When a parent's controller changes through an authorized recovery or rotation,
-AWID updates its directly delegated children's `parent_controller_key` in the
-same transaction. A child's ordinary rotation updates its current controller
-and epoch atomically; the exposed witness always names that current child key.
+A rotation signed by the previous controller key preserves direct delegations
+bound to that key, updating their `parent_controller_key` in the same
+transaction. Recovery without the previous key withdraws the direct outgoing
+delegation witnesses in the replacement transaction; it does not carry them to
+the new key. Each approved child is restored by registration signed by the child
+and the new parent. An unchanged child's epoch and certificates are kept. If its
+key must also be replaced, parent-authorised recovery opens a replaced epoch
+for that child. A child's ordinary rotation updates its current controller and
+epoch atomically; the exposed witness always names that current child key.
+
+Withdrawal clears both witness fields, retaining child namespaces, keys,
+epochs, IDs, teams and addresses. A reused old parent key cannot revive a
+withdrawn witness. Namespace deletion also withdraws its outgoing witnesses.
+Same-key PUT retries do not withdraw children restored after recovery, and
+same-key first enrollment keeps witnesses already bound to that key. Recovery
+compares the requested key with the open epoch, even if reverify already moved
+the stored row. An exact-TXT child remains independently verifiable without
+the delegation. DNS observation alone never approves or permanently withdraws
+children. Existing evidence retains its normal freshness bounds.
+
+This withdraws public delegation authority. It does not revoke team credentials
+or every registry write made under the stolen key; writers that trust the stored
+controller are a separate boundary. For a hosted parent, explicit reaffirmation
+of its approved organisation and key inventory is part of recovery, before
+resuming creation that depends on those delegations. It is not an implicit
+approval of the registry's list of children.
 
 Brief DNS control can cause a permanent tree cutoff: an attacker who installs
 and proves a new key through the recovery path opens replaced. That is the

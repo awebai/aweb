@@ -575,11 +575,11 @@ async def test_bare_ancestor_never_backfills_child_delegation(clocked_client, ma
 
 
 @pytest.mark.asyncio
-async def test_parent_recovery_propagates_delegated_children_atomically(clocked_client, manual_clock):
+async def test_parent_recovery_withdraws_delegated_children_atomically(clocked_client, manual_clock):
     tree, headers = await _delegated_tree(clocked_client, manual_clock)
     assert (await tree.register_namespace(headers=headers)).status_code == 200
     await tree.replace_root("root_rotated", domain="com")
-    assert (await _namespace(tree))["delegation"]["parent_controller_key"] == did_key("root_rotated")
+    assert "delegation" not in await _namespace(tree)
 
 
 @pytest.mark.parametrize("skip_dns", [False, True])
