@@ -314,7 +314,7 @@ def assert_unenrolled(cwd, expected_id):
     assert "chain" not in result, result
 
 
-def unenrolled_creations(team_dir):
+def unenrolled_creations(team_dir, human):
     """Creation commands that issue no ID certificate report exactly that."""
     domain = "alpha.example.com"
     (ROOT / "plain").mkdir()
@@ -325,11 +325,25 @@ def unenrolled_creations(team_dir):
     assert_unenrolled("plain", plain["did_aw"])
     print("PASS: plain global id create is an unenrolled ID that aw who reports as unregistered_identity", flush=True)
 
-    # accept-invite --global reuses the workspace's existing global identity:
-    # joining a team neither enrolls it nor attributes it to the inviter.
+    # A human-backed inviter defaults to that human. The same chainless
+    # joiner must be refused before it can receive membership or parentage.
     before = {name: (ROOT / "plain/.aw" / name).read_bytes() for name in ("identity.yaml", "signing.key")}
     invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
                          "--member-global", "--json"], cwd=team_dir)
+    assert invite["for_human"] == human, invite
+    command(["id", "team", "accept-invite", invite["token"], "--name", "plain", "--global", "--no-address",
+             "--json"], cwd="plain", refusal="human_required")
+    assert {name: (ROOT / "plain/.aw" / name).read_bytes() for name in before} == before
+    assert not (ROOT / "plain/.aw/id-chain.json").exists()
+    assert not (ROOT / "plain/.aw/teams.yaml").exists()
+    print("PASS: a human-conditioned invite refuses the chainless joiner without changing its identity or granting membership", flush=True)
+
+    # The step's positive claim is membership without ID-tree enrollment.
+    # The fixture host holds the team key; its proven chainless identity sets
+    # no default human condition. Use that real invite, without --parent.
+    invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
+                         "--member-global", "--json"], cwd="plain")
+    assert invite["for_human"] is None, invite
     command(["id", "team", "accept-invite", invite["token"], "--name", "plain", "--global", "--no-address",
              "--json"], cwd="plain")
     assert {name: (ROOT / "plain/.aw" / name).read_bytes() for name in before} == before
@@ -342,6 +356,7 @@ def unenrolled_creations(team_dir):
     before = {name: (home / name).read_bytes() for name in ("identity.yaml", "signing.key", "id-chain.json")}
     invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
                          "--member-global", "--json"], cwd=team_dir)
+    assert invite["for_human"] == human, invite
     command(["id", "team", "accept-invite", invite["token"], "--name", "alice", "--global", "--no-address",
              "--json"], cwd="alice")
     assert {name: (home / name).read_bytes() for name in before} == before
@@ -716,7 +731,7 @@ def main():
     assert_who("bob", "", [dict(id=bob["did_aw"], kind="agent")])
     dashboard_case = dashboard_agent_adoption(human["id"])
     local_case = local_child_resign(human["id"], fresh)
-    unenrolled_creations("fresh")
+    unenrolled_creations("fresh", human["id"])
     revoked_inviter(human["id"])
     second_human_case = human_issues_human(human["id"])
     deployment_cases = deployment_root_attribution(human["id"])
