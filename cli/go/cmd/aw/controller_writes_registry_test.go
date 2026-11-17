@@ -61,6 +61,8 @@ type controllerWriteWorld struct {
 	addressID, addressKey string
 	certificate           *awid.TeamCertificate
 	rotatedKey            ed25519.PrivateKey
+	resigned              *awid.ResignedRecords
+	memberChanges         []awid.MemberCertificateChange
 }
 
 func newKey(t *testing.T) ed25519.PrivateKey {
@@ -141,67 +143,126 @@ func (w *controllerWriteWorld) ownAddress(t *testing.T) {
 }
 
 var controllerWrites = []struct {
-	name  string
-	setup func(*controllerWriteWorld, *testing.T)
-	write func(*controllerWriteWorld, *awid.RegistryClient) error
+	name     string
+	setup    func(*controllerWriteWorld, *testing.T)
+	write    func(*controllerWriteWorld, *awid.RegistryClient) error
+	mainOnly bool // a shape the released registry does not take
 }{
-	{"register_namespace", func(w *controllerWriteWorld, t *testing.T) {
+	{name: "register_namespace", setup: func(w *controllerWriteWorld, t *testing.T) {
 		w.domain, w.namespaceKey = freshName(t, "cov-")+".test", newKey(t)
-	}, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		_, err := c.RegisterNamespaceAt(w.ctx, w.url, w.domain, didOf(w.namespaceKey), w.namespaceKey)
 		return err
 	}},
-	{"update_namespace", func(*controllerWriteWorld, *testing.T) {}, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	{name: "update_namespace", setup: func(*controllerWriteWorld, *testing.T) {}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		_, err := c.UpdateNamespaceDeliveryOriginAt(w.ctx, w.url, w.domain, w.namespaceKey, "https://messages.example.com")
 		return err
 	}},
-	{"delete_namespace", (*controllerWriteWorld).ownNamespace, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	{name: "delete_namespace", setup: (*controllerWriteWorld).ownNamespace, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		return c.DeleteNamespaceAt(w.ctx, w.url, w.domain, w.namespaceKey, "retired")
 	}},
-	{"create_team", func(w *controllerWriteWorld, t *testing.T) {
+	{name: "create_team", setup: func(w *controllerWriteWorld, t *testing.T) {
 		w.team, w.teamKey = freshName(t, "team-"), newKey(t)
-	}, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		_, err := c.CreateTeam(w.ctx, w.url, w.domain, w.team, "Team", didOf(w.teamKey), w.namespaceKey)
 		return err
 	}},
-	{"set_team_visibility", func(*controllerWriteWorld, *testing.T) {}, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	{name: "set_team_visibility", setup: func(*controllerWriteWorld, *testing.T) {}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		_, err := c.SetTeamVisibility(w.ctx, w.url, w.domain, w.team, "public", w.teamKey)
 		return err
 	}},
-	{"delete_team", (*controllerWriteWorld).ownTeam, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	{name: "delete_team", setup: (*controllerWriteWorld).ownTeam, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		return c.DeleteTeam(w.ctx, w.url, w.domain, w.team, w.namespaceKey, "")
 	}},
-	{"rotate_team_key", func(w *controllerWriteWorld, t *testing.T) {
+	{name: "rotate_team_key", setup: func(w *controllerWriteWorld, t *testing.T) {
 		w.ownTeam(t)
 		w.rotatedKey = newKey(t)
-	}, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		_, err := c.RotateTeamKey(w.ctx, w.url, w.domain, w.team, didOf(w.rotatedKey), nil, nil, w.namespaceKey)
 		return err
 	}},
-	{"register_certificate", func(w *controllerWriteWorld, t *testing.T) {
-		w.certificate = w.newCertificate(t)
-	}, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	{name: "rotate_team_key_with_resigned_records", setup: func(w *controllerWriteWorld, t *testing.T) {
+		w.ownTeam(t)
+		issued := time.Now().Add(-time.Minute)
+		teamID := awid.BuildTeamID(w.domain, w.team)
+		record := awid.NewTeamServerRecord(teamID, didOf(w.teamKey), "https://coordination.example.com", issued)
+		signature, err := awid.SignTeamServerRecord(w.teamKey, record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.setup.PublishTeamServerRecord(w.ctx, w.url, w.domain, w.team, record, signature); err != nil {
+			t.Fatalf("setup team server record: %v", err)
+		}
+		w.rotatedKey = newKey(t)
+		resigned := awid.NewTeamServerRecord(teamID, didOf(w.rotatedKey), "https://coordination.example.com", issued.Add(time.Second))
+		resignedSignature, err := awid.SignTeamServerRecord(w.rotatedKey, resigned)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.resigned = &awid.ResignedRecords{TeamServer: &awid.SignedAttestationRecord{Record: resigned, Signature: resignedSignature}}
+	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+		_, err := c.RotateTeamKey(w.ctx, w.url, w.domain, w.team, didOf(w.rotatedKey), w.resigned, nil, w.namespaceKey)
+		return err
+	}},
+	{name: "rotate_team_key_with_member_certificates", mainOnly: true, setup: func(w *controllerWriteWorld, t *testing.T) {
+		w.ownTeam(t)
+		old := w.newCertificate(t)
+		if err := w.setup.RegisterCertificate(w.ctx, w.url, w.domain, w.team, old, w.teamKey); err != nil {
+			t.Fatalf("setup certificate: %v", err)
+		}
+		w.rotatedKey = newKey(t)
+		replacement, err := awid.SignTeamCertificate(w.rotatedKey, awid.TeamCertificateFields{
+			Team: old.Team, MemberDIDKey: old.MemberDIDKey, Alias: old.Alias, IdentityScope: old.IdentityScope,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := awid.EncodeTeamCertificateHeader(replacement)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.memberChanges = []awid.MemberCertificateChange{{OldCertificateID: old.CertificateID, Certificate: encoded}}
+	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+		_, err := c.RotateTeamKey(w.ctx, w.url, w.domain, w.team, didOf(w.rotatedKey), nil, w.memberChanges, w.namespaceKey)
+		return err
+	}},
+	{name: "register_global_certificate", setup: func(w *controllerWriteWorld, t *testing.T) {
+		w.ownAddress(t)
+		cert, err := awid.SignTeamCertificate(w.teamKey, awid.TeamCertificateFields{
+			Team: awid.BuildTeamID(w.domain, w.team), MemberDIDKey: w.addressKey, MemberDIDAW: w.addressDIDAW,
+			MemberAddress: w.domain + "/" + w.address, Alias: freshName(t, "g-"), IdentityScope: "global",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.certificate = cert
+	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		return c.RegisterCertificate(w.ctx, w.url, w.domain, w.team, w.certificate, w.teamKey)
 	}},
-	{"revoke_certificate", func(w *controllerWriteWorld, t *testing.T) {
+	{name: "register_certificate", setup: func(w *controllerWriteWorld, t *testing.T) {
+		w.certificate = w.newCertificate(t)
+	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+		return c.RegisterCertificate(w.ctx, w.url, w.domain, w.team, w.certificate, w.teamKey)
+	}},
+	{name: "revoke_certificate", setup: func(w *controllerWriteWorld, t *testing.T) {
 		w.certificate = w.newCertificate(t)
 		if err := w.setup.RegisterCertificate(w.ctx, w.url, w.domain, w.team, w.certificate, w.teamKey); err != nil {
 			t.Fatalf("setup certificate: %v", err)
 		}
-	}, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		return c.RevokeCertificate(w.ctx, w.url, w.domain, w.team, w.certificate.CertificateID, w.teamKey)
 	}},
-	{"register_address", func(w *controllerWriteWorld, t *testing.T) {
+	{name: "register_address", setup: func(w *controllerWriteWorld, t *testing.T) {
 		w.address = freshName(t, "a-")
 		w.addressDIDAW, w.addressKey = w.identity(t)
-	}, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	}, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		_, err := c.RegisterAddressAt(w.ctx, w.url, w.domain, w.address, w.addressDIDAW, w.addressKey, w.namespaceKey)
 		return err
 	}},
-	{"delete_address", (*controllerWriteWorld).ownAddress, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	{name: "delete_address", setup: (*controllerWriteWorld).ownAddress, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		return c.DeleteAddressAt(w.ctx, w.url, w.domain, w.address, w.namespaceKey, "")
 	}},
-	{"delete_address_if_matches", (*controllerWriteWorld).ownAddress, func(w *controllerWriteWorld, c *awid.RegistryClient) error {
+	{name: "delete_address_if_matches", setup: (*controllerWriteWorld).ownAddress, write: func(w *controllerWriteWorld, c *awid.RegistryClient) error {
 		return c.DeleteAddressIfMatchesAt(w.ctx, w.url, w.domain, w.address, w.addressID, w.addressDIDAW, w.addressKey, w.namespaceKey, "rollback")
 	}},
 }
@@ -221,6 +282,9 @@ func TestControllerWritesCoverTheirBytesAtBothRegistries(t *testing.T) {
 			shared.ownNamespace(t)
 			shared.ownTeam(t)
 			for _, op := range controllerWrites {
+				if op.mainOnly && release.env != "" {
+					continue
+				}
 				for _, changed := range []bool{false, true} {
 					label := op.name + "/as_signed"
 					if changed {

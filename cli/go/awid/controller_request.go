@@ -106,6 +106,11 @@ func (c *RegistryClient) RevokeIDCertificateAt(ctx context.Context, registryURL,
 // with anything but a valid signature by a valid key over the exact payload
 // sends nothing. There is no fallback to the legacy form.
 func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryURL, path, domain, operation string, claims map[string]any, body any, signer IDCertificateSigner, headers map[string]string, out any) error {
+	// An empty registry URL is the client's default registry, as for every
+	// other registry request.
+	if strings.TrimSpace(registryURL) == "" {
+		registryURL = c.defaultRegistryURL()
+	}
 	aud, err := canonicalServerOrigin(registryURL)
 	if err != nil {
 		return err

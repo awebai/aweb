@@ -2,9 +2,12 @@ package awid
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -38,4 +41,32 @@ func coveringPayloadFor(t *testing.T, r *http.Request, fields map[string]string)
 		t.Fatalf("signed payload %s, want %s", signed, payload)
 	}
 	return string(payload)
+}
+
+// An empty registry URL is the client's default registry, as it was before
+// writes were signed in the covering form.
+func TestControllerWriteWithoutRegistryURLUsesTheDefaultRegistry(t *testing.T) {
+	_, controllerKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reached := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		coveringPayloadFor(t, r, map[string]string{
+			"domain": "acme.com", "operation": "create_team", "name": "backend",
+			"timestamp": r.Header.Get("X-AWEB-Timestamp"),
+		})
+		_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "backend:acme.com", "domain": "acme.com", "name": "backend"})
+	}))
+	t.Cleanup(server.Close)
+	client := NewAWIDRegistryClient(server.Client(), nil)
+	client.DefaultRegistryURL = server.URL
+	routeUntrustedRegistriesToInjectedClient(client)
+	if _, err := client.CreateTeam(context.Background(), "", "acme.com", "backend", "Backend", "did:key:z6MkteamKey", controllerKey); err != nil {
+		t.Fatalf("create team at the default registry: %v", err)
+	}
+	if !reached {
+		t.Fatal("the write did not reach the default registry")
+	}
 }
