@@ -95,7 +95,7 @@ async def test_real_history_cost_depends_only_on_requested_ids(
     key, did = controller_identity
     domain = "batch-cost.example"
     await _setup_namespace(client, key, did, domain)
-    team_key, team_did, _ = await _create_team(client, key, did, domain, "ops")
+    team_key, team_did, _ = await _create_team(client, key, did, domain, "ops", visibility="public")
     _, _, active = await _register_member(client, team_key, team_did, domain, "ops", "alice")
     db = awid_db_infra.get_manager("aweb")
     await db.execute("""
