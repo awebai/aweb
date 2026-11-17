@@ -139,7 +139,7 @@ func (c *RegistryClient) RotateTeamKey(
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/rotate"
 	claims := map[string]any{"name": name, "new_team_did_key": newTeamDIDKey}
 	var out TeamRotateResponse
-	if err := c.controllerWrite(ctx, http.MethodPost, registryURL, path, domain, "rotate_team_key", claims, body, keySigner(controllerKey), nil, &out); err != nil {
+	if err := c.controllerWrite(ctx, http.MethodPost, registryURL, path, domain, "rotate_team_key", claims, body, KeySigner(controllerKey), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

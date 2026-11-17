@@ -163,7 +163,7 @@ func (c *RegistryClient) CreateTeam(
 			TeamDIDKey:  strings.TrimSpace(teamDIDKey),
 			Visibility:  "private",
 		},
-		keySigner(controllerKey), nil,
+		KeySigner(controllerKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -206,7 +206,7 @@ func (c *RegistryClient) SetTeamVisibility(
 		path,
 		domain, "set_team_visibility", map[string]any{"team_name": name, "visibility": visibility},
 		teamVisibilityRequest{Visibility: visibility},
-		keySigner(teamKey), nil,
+		KeySigner(teamKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -272,7 +272,7 @@ func (c *RegistryClient) DeleteTeam(
 		path,
 		domain, "delete_team", map[string]any{"team_name": name},
 		body,
-		keySigner(controllerKey), nil,
+		KeySigner(controllerKey), nil,
 		nil,
 	)
 }
@@ -319,7 +319,7 @@ func (c *RegistryClient) RegisterCertificate(
 			"identity_scope": NormalizeIdentityScope(cert.IdentityScope),
 			"certificate":    encodedCert,
 		},
-		keySigner(teamKey), nil,
+		KeySigner(teamKey), nil,
 		nil,
 	); err != nil {
 		var registryErr *RegistryError
@@ -556,7 +556,7 @@ func (c *RegistryClient) RevokeCertificate(
 		certificateRevokeRequest{
 			CertificateID: certificateID,
 		},
-		keySigner(teamKey), nil,
+		KeySigner(teamKey), nil,
 		nil,
 	)
 }
