@@ -145,10 +145,13 @@ async def test_dns_outage_is_distinct_on_every_id_endpoint(dns_tree, operation, 
 async def test_python_client_preserves_retryable_dns_error(dns_tree):
     world = dns_tree
     world.dns.mode = "servfail"
-    async with RegistryClient(ORIGIN, transport=ASGITransport(world.app), timeout_seconds=2) as client:
+    client = RegistryClient(ORIGIN, transport=ASGITransport(world.app), timeout_seconds=2)
+    try:
         with pytest.raises(RegistryError) as failure:
             await client.fetch_id_certificate_status(DOMAIN, {
                 "v": 1, "domain": DOMAIN, "ids": [did_aw("alice")],
             }, registry_origin=ORIGIN)
+    finally:
+        await client.aclose()
     assert failure.value.status_code == 503
     assert failure.value.code == "dns_unavailable"
