@@ -15,11 +15,12 @@
   key, scope or setup command, aw says to run the changed command in a new
   directory and keep `.aw/partial-init.yaml`, instead of "rerun the same
   command in this directory", which the partial state would refuse.
-- `aw chat send-and-wait`, `send-and-leave` and `extend-wait` to a teammate's
-  alias now continue the conversation found by the DID the team's agent list
-  confirms for that alias, never by the alias, which an outside participant
-  may also hold: a chat session with `other.org/bob` could receive a message
-  meant for teammate `bob`. A new conversation is still started by the
+- `aw chat send-and-wait`, `send-and-leave`, `extend-wait`, `open`,
+  `history`, `listen` and `show-pending` to a teammate's alias now use the
+  conversation found by the DID the team's agent list confirms for that
+  alias, never by the alias, which an outside participant may also hold: a
+  chat session with `other.org/bob` could receive a message meant for
+  teammate `bob`, or be shown as his. A new conversation is still started by the
   alias, which the server resolves in the team. A bare alias with no
   confirmed DID still selects a conversation only when it names exactly one
   participant, and that check now covers every conversation, not just the

@@ -156,3 +156,43 @@ async def test_extend_wait_to_a_teammate_alias_never_posts_into_an_outsiders_ses
     else:
         assert code != 0, output
         assert "no conversation found" in output, output
+
+
+@pytest.mark.usefixtures("source_cli_binary")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["open", "history", "show-pending", "listen"])
+@pytest.mark.parametrize("earlier_teammate_session", [False, True], ids=["no-teammate-session", "teammate-session"])
+async def test_reading_a_teammate_alias_uses_the_teammates_session_never_the_outsiders(
+    route_pair, tmp_path, command, earlier_teammate_session,
+):
+    pair = route_pair
+    me = pair.target.global_actor
+    teammate = await _actor(pair.target, "bob", global_identity=False)
+    outsider = await _actor(pair.source, "bob", global_identity=True)
+    root, env = _cli_home(tmp_path, me)
+    binary = Path(os.environ["AW_TEST_CLI_BINARY"])
+
+    teammate_session = None
+    if earlier_teammate_session:
+        earlier = await _cli(binary, root, env, "chat", "send-and-leave", "--plaintext", "--start-conversation",
+                             "bob", "earlier, to my teammate", "--json")
+        teammate_session = earlier["session_id"]
+        # bob answers, so the session also has a message waiting for me.
+        answered, _ = await _send(teammate, me, "chat", continuation=teammate_session)
+        assert answered.status_code == 200, answered.text
+    opened, first_contact = await _send(outsider, me, "chat")
+    assert opened.status_code == 200, opened.text
+
+    args = ["chat", command, "bob", "--json"]
+    if command == "listen":
+        args += ["--wait", "1"]
+    code, output = await _cli_result(binary, root, env, *args)
+
+    assert "multiple conversations match" not in output, output
+    assert first_contact.fields["body"] not in output, "the outsider's message was shown"
+    if earlier_teammate_session:
+        assert code == 0, output
+        assert json.loads(output)["session_id"] == teammate_session, output
+    else:
+        assert code != 0, output
+        assert "no conversation found" in output or "no pending conversation" in output, output

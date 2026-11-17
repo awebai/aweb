@@ -737,6 +737,24 @@ func findLatestSession(ctx context.Context, client *awid.Client, targetAlias str
 	return findSessionWithOptions(ctx, client, targetAlias, false)
 }
 
+// lookupSession is the one session lookup every chat command uses
+// (IDENTITY_RULES.md): a DID the caller confirmed for target is a strong
+// identity and selects alone; otherwise target is matched as given, a bare
+// alias only when it names exactly one participant.
+func lookupSession(ctx context.Context, client *awid.Client, target, confirmedDID string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
+	if did := strings.TrimSpace(confirmedDID); did != "" {
+		return findSessionByConfirmedDID(ctx, client, did, preferWaiting)
+	}
+	return findSessionWithOptions(ctx, client, target, preferWaiting)
+}
+
+func firstConfirmedDID(confirmedDID []string) string {
+	if len(confirmedDID) == 0 {
+		return ""
+	}
+	return confirmedDID[0]
+}
+
 func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
 	rawTarget := strings.TrimSpace(targetAlias)
 	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
@@ -992,6 +1010,10 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 func findSessionByConfirmedDID(ctx context.Context, client *awid.Client, did string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
 	dids := []string{did}
 	address := ""
+	// Resolution only widens the match to the same identity's other DID and
+	// its address. When it fails, did alone matches: a session may then be
+	// missed, and a new one is started with the confirmed participant, but
+	// another participant's session is never chosen.
 	if identity, err := client.ResolveIdentity(ctx, did); err == nil && identity != nil {
 		dids = append(dids, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.DID))
 		address = strings.TrimSpace(identity.Address)
@@ -1422,13 +1444,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		req.WaitSeconds = &waitSeconds
 	}
 	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
-		find := findLatestSession
-		if did := strings.TrimSpace(opts.RecipientDID); did != "" {
-			find = func(ctx context.Context, client *awid.Client, _ string) (string, bool, error) {
-				return findSessionByConfirmedDID(ctx, client, did, false)
-			}
-		}
-		if sessionID, _, findErr := find(ctx, client, targets[0]); findErr == nil && sessionID != "" {
+		if sessionID, _, findErr := lookupSession(ctx, client, targets[0], opts.RecipientDID, false); findErr == nil && sessionID != "" {
 			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 				Body:        message,
 				Leaving:     opts.Leaving,
@@ -1576,8 +1592,10 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 
 // Listen waits for a message in an existing conversation without sending.
 // Returns on any message in the session (not filtered by sender).
-func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSeconds int, callback StatusCallback) (*SendResult, error) {
-	sessionID, _, err := findSession(ctx, client, targetAlias)
+// Listen waits in the session with targetAlias; a confirmedDID the caller
+// confirmed for it selects that session (lookupSession).
+func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSeconds int, callback StatusCallback, confirmedDID ...string) (*SendResult, error) {
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, firstConfirmedDID(confirmedDID), true)
 	if err != nil {
 		return nil, err
 	}
@@ -1596,8 +1614,10 @@ func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSe
 }
 
 // Open fetches unread messages for a conversation and marks them as read.
-func Open(ctx context.Context, client *awid.Client, targetAlias string) (*OpenResult, error) {
-	sessionID, senderWaiting, err := findSession(ctx, client, targetAlias)
+// Open reads the session with targetAlias; a confirmedDID the caller
+// confirmed for it selects that session (lookupSession).
+func Open(ctx context.Context, client *awid.Client, targetAlias string, confirmedDID ...string) (*OpenResult, error) {
+	sessionID, senderWaiting, err := lookupSession(ctx, client, targetAlias, firstConfirmedDID(confirmedDID), true)
 	if err != nil {
 		return nil, err
 	}
@@ -1659,8 +1679,11 @@ func History(ctx context.Context, client *awid.Client, targetAlias string) (*His
 
 // HistoryWithOptions resolves a recipient before fetching the selected history
 // page. Filters reach the server before any message is decrypted.
-func HistoryWithOptions(ctx context.Context, client *awid.Client, targetAlias string, unreadOnly bool, limit int) (*HistoryResult, error) {
-	sessionID, _, err := findLatestSession(ctx, client, targetAlias)
+// HistoryWithOptions reads the latest session with targetAlias; a
+// confirmedDID the caller confirmed for it selects that session
+// (lookupSession).
+func HistoryWithOptions(ctx context.Context, client *awid.Client, targetAlias string, unreadOnly bool, limit int, confirmedDID ...string) (*HistoryResult, error) {
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, firstConfirmedDID(confirmedDID), false)
 	if err != nil {
 		return nil, err
 	}
@@ -1757,13 +1780,7 @@ type ExtendWaitOptions struct {
 }
 
 func ExtendWaitWithOptions(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions) (*ExtendWaitResult, error) {
-	var sessionID string
-	var err error
-	if did := strings.TrimSpace(opts.RecipientDID); did != "" {
-		sessionID, _, err = findSessionByConfirmedDID(ctx, client, did, true)
-	} else {
-		sessionID, _, err = findSession(ctx, client, targetAlias)
-	}
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, opts.RecipientDID, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1786,8 +1803,10 @@ func ExtendWaitWithOptions(ctx context.Context, client *awid.Client, targetAlias
 }
 
 // ShowPending shows the pending conversation with a specific agent.
-func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (*SendResult, error) {
-	sessionID, _, err := findSession(ctx, client, targetAlias)
+// ShowPending shows the pending session with targetAlias; a confirmedDID the
+// caller confirmed for it selects that session (lookupSession).
+func ShowPending(ctx context.Context, client *awid.Client, targetAlias string, confirmedDID ...string) (*SendResult, error) {
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, firstConfirmedDID(confirmedDID), true)
 	if err != nil {
 		return nil, err
 	}
