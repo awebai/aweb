@@ -182,15 +182,13 @@ var mailSendCmd = &cobra.Command{
 			// /v1/agents lists the team's agents; a name it lacks may be a
 			// human on the live roster, which binds the member's current key.
 			if _, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: recipient lookup failed: %v\n", findErr)
-				req.ToAlias = targetValue
+				return recipientLookupError(targetValue, "agent list", findErr)
 			} else if found || sendEncryptE2EE {
 				// Key discovery for a human is scoped to the selected team,
 				// using its original identity-signed assertion.
 				req.ToAlias = targetValue
 			} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
-				debugLog("resolve live team member %s/%s: %v", strings.TrimSpace(sel.TeamID), targetValue, liveErr)
-				req.ToAlias = targetValue
+				return recipientLookupError(targetValue, "live roster", liveErr)
 			} else if liveFound {
 				kind, value := liveTarget.identityTarget()
 				applyMailRecipientTarget(req, kind, value)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `aw mail send` now refuses a bare-alias send when recipient lookup fails,
+  instead of sending by alias as aw 1.20.0 through 1.36.58 did. Plaintext chat
+  follows the same rule. Retry the lookup or use the recipient's full address
+  or DID.
+
 - Remove the unused signed ID-status read and candidate-only signer proof
   contexts and audit kinds. Public ID-status reads and application passkey
   proofs are unchanged. Upgrading removes the nine retired signer tables from

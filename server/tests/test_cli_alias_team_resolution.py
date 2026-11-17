@@ -2,8 +2,8 @@
 
 Disposable SQL provisions two teams. All certificate registrations/revocations,
 roster reads, mail/chat sends and inbox reads use real production services. The
-fault is a genuinely unreachable client-only registry origin (or a conflicting
-registry pin), never a substituted response or product test hook.
+fault is a genuinely unreachable client-only registry origin, a conflicting
+registry pin, or a dropped agent-list TCP connection; no decision is replaced.
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+import uvicorn
+from aweb_naapp_testing.network import make_certificates
 import yaml
 from awid.signing import canonical_json_bytes, load_signing_key_pem, sign_message
 
@@ -34,6 +36,36 @@ async def unavailable_origin():
     try:
         yield f"http://127.0.0.1:{sock.getsockname()[1]}"
     finally:
+        sock.close()
+
+
+@asynccontextmanager
+async def registry_origin(env, tmp_path, monkeypatch, secured):
+    if not secured:
+        async with _registry_http(env.registry_app) as (origin, _):
+            yield origin
+        return
+    certificates = make_certificates(tmp_path, ["localhost"], ["127.0.0.1"])
+    monkeypatch.setenv("SSL_CERT_FILE", str(certificates.ca_file))
+    monkeypatch.setenv("GODEBUG", ",".join(filter(None, [os.environ.get("GODEBUG"), "x509sslcertoverrideplatform=1"])))
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    origin = f"https://127.0.0.1:{sock.getsockname()[1]}"
+    server = uvicorn.Server(uvicorn.Config(
+        env.registry_app, lifespan="off", log_level="error", ws="none",
+        ssl_certfile=str(certificates.cert_file), ssl_keyfile=str(certificates.key_file),
+    ))
+    serving = asyncio.create_task(server.serve(sockets=[sock]))
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(.02)
+        assert server.started
+        yield origin
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(serving, 5)
         sock.close()
 
 
@@ -201,7 +233,7 @@ async def inbox(env, actor):
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("condition,kind", [
-    ("available", "mail"), ("unreachable", "mail"), ("pin_refused", "mail"),
+    ("available", "mail"), ("https", "mail"), ("unreachable", "mail"), ("pin_refused", "mail"),
     ("revoked_unreachable", "mail"), ("not_found", "mail"),
     ("unreachable_not_found", "mail"), ("agent_list_unavailable", "mail"),
     ("listed_agent", "mail"), ("unknown", "mail"),
@@ -209,11 +241,11 @@ async def inbox(env, actor):
     ("agent_list_unavailable", "chat"), ("listed_agent", "chat"), ("unknown", "chat"),
     ("agent_list_unavailable", "chat_wait"), ("unreachable", "chat_wait"),
 ])
-async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_path, condition, kind):
+async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_path, monkeypatch, condition, kind):
     tmp_path = tmp_path.resolve()
     env = privacy_app
     async with (
-        _registry_http(env.registry_app) as (registry_url, _),
+        registry_origin(env, tmp_path, monkeypatch, condition == "https") as registry_url,
         unavailable_origin() as down,
         agent_list_connection_failure(str(env.client.base_url)) as (front, fault),
     ):
@@ -233,6 +265,10 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
             state = yaml.safe_load((world.home / "teams.yaml").read_text())
             next(entry for entry in state["memberships"] if entry["team_id"] == TEAM)["registry_url"] = down
             (world.home / "teams.yaml").write_text(yaml.safe_dump(state))
+        # Faults need not spend the default API timeout retrying a closed
+        # endpoint; this is the real CLI's supported request deadline.
+        if condition not in ("available", "https", "listed_agent", "unknown", "not_found"):
+            world.env["AWEB_HTTP_TIMEOUT"] = "2s"
         fault.enabled = condition == "agent_list_unavailable"
         fault.requests.clear()
         recipient = "bob" if condition == "listed_agent" else "absent-everywhere" if condition == "unknown" else "reviewer"
@@ -241,9 +277,13 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
         binary = Path(os.environ["AW_TEST_CLI_BINARY"])
         command = (["mail", "send", "--to", recipient, "--subject", "alias isolation"] if kind == "mail"
             else ["chat", "send-and-wait" if kind == "chat_wait" else "send-and-leave", recipient, "--start-conversation"])
-        # Observe the actual CLI registry-read failure independently of the
-        # messaging selector, without substituting registry responses.
-        if condition in ("unreachable", "pin_refused", "revoked_unreachable", "unreachable_not_found"):
+        if condition not in ("available", "https", "listed_agent", "unknown", "not_found"):
+            # Exercise the send's own lookup branch, without spending its
+            # request deadline first searching other local memberships.
+            command = ["--team", TEAM, *command]
+        # Independently confirm the real fault once; each send also observes
+        # its own lookup error and must never issue a delivery request.
+        if condition == "unreachable" and kind == "mail":
             roster_code, roster, roster_error = await run_aw(
                 binary, tmp_path, world.env, "id", "team", "members", "--team-id", TEAM,
             )
@@ -284,7 +324,7 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
         assert stored["team_id"] == (world.beta if selected_beta else TEAM), dict(stored)
         assert stored["from_agent_id"] == (world.beta_sender if selected_beta else world.alpha_sender), dict(stored)
         assert stored["to_did"] == expected.did, dict(stored)
-        if condition == "available":
+        if condition in ("available", "https"):
             # The live human lookup becomes a direct-DID send: participants
             # are literal identities, not actor pointers (canonical contract:
             # docs/identity-messaging-contract.md:77-82,113-120).

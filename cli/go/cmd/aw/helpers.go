@@ -552,8 +552,8 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 		return c, sel, nil
 	}
 	// Only a successful absent lookup may search another team's aliases.
-	// On unavailable evidence, keep this team and let its service resolve the
-	// unchanged alias with its current membership and recipient policy.
+	// On unavailable evidence, keep this team. The send path must confirm the
+	// recipient before delivery; retaining a selection is not a lookup result.
 	if _, live, lookupErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetAlias); lookupErr != nil || live {
 		return c, sel, nil
 	}
@@ -620,6 +620,10 @@ func shouldSearchOtherLocalTeamsForAlias(sel *awconfig.Selection, targetAlias st
 		return false
 	}
 	return len(workspace.Memberships) > 1
+}
+
+func recipientLookupError(alias, source string, err error) error {
+	return fmt.Errorf("cannot confirm recipient %q: %s lookup failed: %w; retry or use the recipient's full address or DID", alias, source, err)
 }
 
 func clientAgentForAlias(ctx context.Context, c *aweb.Client, targetAlias string) (awid.AgentView, bool, error) {
