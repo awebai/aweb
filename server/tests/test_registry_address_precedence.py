@@ -1,0 +1,142 @@
+"""Explicit addresses must select AWID identities, not team display aliases.
+
+The server and AWID apps, database queries, auth and message writes are real.
+Only disposable identities, membership rows and registry records are provisioned.
+"""
+
+import json
+from types import SimpleNamespace
+from uuid import UUID, uuid4
+
+import pytest
+import pytest_asyncio
+
+from aweb.mcp.server import create_mcp_app
+from identity_binding_support import register_global_identity
+from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_messages_http import _make_keypair, _signed_team_headers
+
+
+ADDRESS = "example.test/bob"
+
+
+@pytest_asyncio.fixture
+async def address_collision(privacy_app):
+    env = privacy_app
+    # Alice's teammate has the display alias bob but no global address.
+    # The registry's bob is a DIFFERENT identity, whose team alias is carol.
+    target = env.actors["carol"]
+    stable_id = await register_global_identity(env, target, ADDRESS)
+    await env.db.execute(
+        """UPDATE {{tables.agents}}
+           SET did_aw=$1, address=$2, identity_scope='global', did_aw_verified_key=did_key
+           WHERE agent_id=$3""",
+        stable_id, ADDRESS, target.id,
+    )
+    # Confirm the actual AWID response before observing sends. This is not a
+    # resolver stub or a local row pretending to be registry evidence.
+    registry = env.app.state.awid_registry_client
+    binding = await registry.resolve_address_fresh("example.test", "bob")
+    assert binding.did_aw == stable_id
+    assert binding.current_did_key == target.did
+
+    mcp = create_mcp_app(
+        db_infra=env.infra, redis=env.redis, registry_client=registry,
+        public_origin=env.app.state.public_origin,
+    )
+    env.app.mount("/address-mcp", mcp)
+    await mcp.startup()
+
+    async def send(surface, recipient=ADDRESS):
+        actor = env.actors["alice"]
+        if surface == "mcp_mail":
+            payload = {
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "send_mail", "arguments": {
+                    "to": recipient, "subject": "Address authority", "body": "hello", "plaintext": True,
+                }},
+            }
+            path = "/address-mcp/"
+        elif surface == "mail":
+            selector = "to_address" if "/" in recipient else "to_alias"
+            payload = {selector: recipient, "subject": "Address authority", "body": "hello"}
+            path = "/v1/messages"
+        else:
+            selector = "to_addresses" if "/" in recipient else "to_aliases"
+            payload = {selector: [recipient], "message": "hello", "leaving": True}
+            path = "/v1/chat/sessions"
+        # Authenticate the sender, but supply NO signed recipient binding.
+        # This is the server input when a local CLI's address lookup failed;
+        # MCP similarly resolves before it has any signed message binding.
+        raw = json.dumps(payload).encode()
+        response = await env.client.post(path, content=raw, headers={
+            **_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, raw),
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        })
+        assert response.status_code == 200, response.text
+        result = response.json()
+        if surface == "mcp_mail":
+            assert "error" not in result, result
+            tool = result["result"]
+            assert not tool.get("isError"), tool
+            result = json.loads(tool["content"][0]["text"])
+            assert "error" not in result, result
+        return result
+
+    try:
+        yield SimpleNamespace(env=env, stable_id=stable_id, send=send)
+    finally:
+        await mcp.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
+@pytest.mark.parametrize("duplicate_alias", [False, True], ids=["same-team-shadow", "two-team-collision"])
+async def test_registered_address_wins_over_local_aliases(address_collision, surface, duplicate_alias):
+    fixture = address_collision
+    env = fixture.env
+    if duplicate_alias:
+        team = "other:example.test"
+        await env.db.execute(
+            """INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+               VALUES ($1, 'example.test', 'other', $2)""", team, env.team_did,
+        )
+        _, _, other_key = _make_keypair()
+        await env.db.execute(
+            """INSERT INTO {{tables.agents}}
+               (agent_id, team_id, alias, did_key, identity_scope, inbound_mode)
+               VALUES ($1, $2, 'bob', $3, 'local', 'open')""", uuid4(), team, other_key,
+        )
+
+    result = await fixture.send(surface)
+    if surface == "chat":
+        participants = await env.db.fetch_all(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+            UUID(result["session_id"]),
+        )
+        assert {row["did"] for row in participants} == {env.actors["alice"].did, fixture.stable_id}
+    else:
+        message = await env.db.fetch_one(
+            "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", UUID(result["message_id"]),
+        )
+        assert message["to_did"] == fixture.stable_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
+async def test_bare_alias_still_selects_the_team_member(address_collision, surface):
+    fixture = address_collision
+    env = fixture.env
+    result = await fixture.send(surface, "bob")
+    if surface == "chat":
+        participants = await env.db.fetch_all(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+            UUID(result["session_id"]),
+        )
+        assert {row["did"] for row in participants} == {env.actors["alice"].did, env.actors["bob"].did}
+    else:
+        message = await env.db.fetch_one(
+            "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", UUID(result["message_id"]),
+        )
+        assert message["to_did"] == env.actors["bob"].did
