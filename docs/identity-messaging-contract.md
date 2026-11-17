@@ -201,9 +201,19 @@ DNS discovery and one pinned authoritative HTTP chain. Shared failed reads
 publish the same stable failure for five seconds; a wrong claimant cannot poison
 valid evidence for a concurrent correct claim.
 
-Same-registry outbound resolution first checks locally visible recipients before
-registry resolution and keeps the signed address/DID/key/origin contract. A
-client identity's configured registry is an explicit pin for its own address
+Same-registry outbound resolution serves a locally visible recipient without an
+address-registry read when the sender's verified signed recipient binding matches
+that recipient. Without that binding (including a hosted signer preparing an
+envelope), an explicit `domain/name` is resolved at the registry first. A positive
+answer selects that identity, regardless of local aliases. Only an address-absence
+answer accepted by the shared AWID address classifier permits the name to be read
+as a local-scope teammate's label in the sender's own team and that team's namespace.
+An unavailable registry refuses; a generic HTTP 404 is not absence. Other teams'
+aliases cannot make the address ambiguous. Bare aliases and `team~alias` keep their
+team-scoped resolution, and delivery admission, exact contacts and stored
+continuations are unchanged. Mail and chat share this address-target resolver.
+
+A client identity's configured registry is an explicit pin for its own address
 domain. For a foreign first-contact address, the CLI and channel runtimes use
 that domain's valid `_awid` record (including bounded parent inheritance) when
 present; absence of a record, a DNS timeout, a temporary server failure, an
