@@ -140,6 +140,8 @@ async def real_stack(aweb_cloud_db, test_db_factory, monkeypatch) -> AsyncIterat
     awid_app.state.db = infra
     awid_app.state.rate_limiter = NoOpRateLimiter()
     awid_app.state.awid_service_token = service_token
+    # Its public origin, which covering controller signatures name.
+    awid_app.state.awid_public_origins = (REGISTRY_URL,)
     awid_app.include_router(awid_teams_router)
     awid_app.include_router(awid_attestation_records_router)
     awid_app.include_router(awid_did_router)
