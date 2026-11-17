@@ -126,6 +126,7 @@ async def test_dns_outage_is_distinct_on_every_id_endpoint(dns_tree, operation, 
     # A real DNS recovery permits the same operation, rather than turning
     # the temporary failure into a durable empty/missing identity result.
     if expected == "dns_unavailable":
+        assert response.headers["Retry-After"] == "1"
         world.dns.mode = "valid"
         world.resolver.nameservers = ["127.0.0.1"]
         world.resolver.timeout, world.resolver.lifetime = .3, 1

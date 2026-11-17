@@ -337,6 +337,12 @@ parent-authorized delegation under independently discovered inherited DNS.
 Otherwise they are unavailable/evidence_unavailable. No new current status is issued during
 that disagreement; existing caches retain their normal freshness bounds. When
 the same exact key returns after an unavailable interval, its epoch continues.
+A DNS timeout, missing nameservers or another resolver failure returns retryable
+HTTP 503 `dns_unavailable` on status, registration and revocation, with
+`Retry-After: 1`. It does not mean the namespace lacks public proof. A missing
+or malformed record, an unproven root and a missing epoch continue to return
+`evidence_unavailable` when root authority is required.
+
 Publishing another party's public key without holding it grants no authority.
 Delete then re-register is different because deletion is an explicit act.
 

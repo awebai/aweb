@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- ID-tree status, certificate registration and revocation return retryable
+  HTTP 503 `dns_unavailable` for DNS timeouts and resolver failures. Missing
+  or invalid public proof and missing epochs retain `evidence_unavailable`.
+
 - The registry accepts private-team reads signed with the covering-v2
   envelope (operation `read_team`), which binds the registry, the route and
   its query: team list and get, member lookup, certificate list, revocations,

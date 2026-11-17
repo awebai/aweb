@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from awid.controller_request import verify_controller_json_request
-from awid.dns_verify import DnsVerificationError, DomainVerifier, DomainAuthority
+from awid.dns_verify import DnsLookupError, DnsVerificationError, DomainVerifier, DomainAuthority
 from awid.id_certificates import IDCertificateError, decode_id_chain_header, verify_id_certificate
 from awid.did import validate_stable_id
 from awid.ratelimit import rate_limit_dep
@@ -22,6 +23,8 @@ from awid_service.id_revocation import revoke_identity
 from awid_service.id_status import status_snapshot
 from awid_service.id_tree_gate import IdentityTreeRefusal, strict_json_object
 from awid_service.id_tree_clock import app_clock
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/id-certificates", tags=["id-certificates"])
 
@@ -129,6 +132,13 @@ async def _dns_authority(verify_domain: DomainVerifier, domain: str) -> DomainAu
         return None
     try:
         authority = await verify_domain(domain)
+    except DnsLookupError as exc:
+        logger.warning("ID-tree DNS authority lookup unavailable for %s", domain, exc_info=True)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "dns_unavailable", "message": "DNS lookup unavailable; retry later"},
+            headers={"Retry-After": "1"},
+        ) from exc
     except DnsVerificationError:
         return None
     return authority
