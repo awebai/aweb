@@ -148,8 +148,14 @@ async def clean():
 asyncio.run(clean())
 """
                 subprocess.run(['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'), 'python', '-c', cleanup], env=env, check=True)
-        for container in reversed(owned):
-            subprocess.run(['docker', 'rm', '-f', container], stdout=sys.stderr, check=True)
+        remove_owned_containers(owned)
+
+
+def remove_owned_containers(owned):
+    # --rm removes anonymous volumes only when Docker itself removes the
+    # container; an explicit removal must name -v to remove them.
+    for container in reversed(owned):
+        subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=sys.stderr, check=True)
 
 
 if __name__ == '__main__':

@@ -669,6 +669,7 @@ _candidate-gate-docker-boundaries:
 	@test -n "$(CANDIDATE_GATE_IMAGE)" || (echo "CANDIDATE_GATE_IMAGE is required"; exit 2)
 	python3 scripts/e2e/test_candidate_gate_docker_boundaries.py --image "$(CANDIDATE_GATE_IMAGE)"
 	python3 scripts/test-egress/test_postgres.py -v
+	python3 scripts/test-egress/test_awid_fixture.py -v
 
 _candidate-channel-version:
 	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
