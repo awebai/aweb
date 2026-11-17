@@ -9,6 +9,7 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from awid.controller_request import LEGACY_CONTROLLER_AUTH_EVENT
 from awid.signing import canonical_json_bytes, sign_message
 from test_certificates import _register_identity, _signed_certificate_blob
 
@@ -18,6 +19,15 @@ from conftest import (
     controller_request_headers as headers,
     send_controller_request as send,
 )
+
+
+def legacy_counts(env):
+    """Accepted legacy controller operations, summed over client families."""
+    counts = {}
+    for (event, operation, _), count in getattr(env.app.state, 'controller_auth_counts', {}).items():
+        if event == LEGACY_CONTROLLER_AUTH_EVENT:
+            counts[operation] = counts.get(operation, 0) + count
+    return counts
 
 
 def certificate_body(env, *, alias='member', member=None, did_aw=None, address=None):
@@ -133,7 +143,7 @@ async def test_registration_refuses_fields_that_disagree_with_signed_blob(contro
 @pytest.mark.asyncio
 async def test_covering_team_lifecycle_and_legacy_metric(controller_app):
     env = controller_app
-    before = dict(env.app.state.legacy_controller_auth_counts)
+    before = legacy_counts(env)
     body = certificate_body(env)
     claims = {'domain': 'local', 'team_name': 'base', 'operation': 'register_certificate', 'certificate_id': body['certificate_id']}
     result = await send(env, 'POST', '/v1/namespaces/local/teams/base/certificates', claims, body, signer=env.team)
@@ -144,17 +154,17 @@ async def test_covering_team_lifecycle_and_legacy_metric(controller_app):
     assert revoked.status_code == 200, revoked.text
     removed = await send(env, 'DELETE', '/v1/namespaces/local/teams/base', {'domain': 'local', 'operation': 'delete_team', 'team_name': 'base'})
     assert removed.status_code == 200, removed.text
-    assert env.app.state.legacy_controller_auth_counts == before
+    assert legacy_counts(env) == before
     legacy = await send(env, 'POST', '/v1/namespaces/local/teams', {'domain': 'local', 'operation': 'create_team', 'name': 'legacy'}, {'name': 'legacy', 'team_did_key': keypair()[1]}, covering=False)
     assert legacy.status_code == 200, legacy.text
-    assert env.app.state.legacy_controller_auth_counts['create_team'] == before['create_team'] + 1
+    assert legacy_counts(env)['create_team'] == before['create_team'] + 1
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('parent_covering', [False, True])
 async def test_namespace_parent_envelopes_and_remaining_mutations(controller_app, parent_covering):
     env = controller_app
-    before = dict(env.app.state.legacy_controller_auth_counts)
+    before = legacy_counts(env)
     child, rotated = keypair(), keypair()
     path = '/v1/namespaces'
     body = {'domain': 'child.local', 'controller_did': child[1]}
@@ -179,7 +189,7 @@ async def test_namespace_parent_envelopes_and_remaining_mutations(controller_app
     result = await send(env, 'DELETE', path, {'domain': 'child.local', 'operation': 'delete_namespace'}, signer=rotated)
     assert result.status_code == 200, result.text
     for operation in ('authorize_subdomain_registration', 'authorize_subdomain_rotation'):
-        assert env.app.state.legacy_controller_auth_counts.get(operation, 0) == before.get(operation, 0) + (not parent_covering)
+        assert legacy_counts(env).get(operation, 0) == before.get(operation, 0) + (not parent_covering)
     new_team = keypair()
     result = await send(env, 'POST', '/v1/namespaces/local/teams/base/rotate', {'domain': 'local', 'operation': 'rotate_team_key', 'name': 'base', 'new_team_did_key': new_team[1]}, {'new_team_did_key': new_team[1]})
     assert result.status_code == 200, result.text
