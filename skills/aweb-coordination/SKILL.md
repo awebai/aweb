@@ -130,7 +130,7 @@ aw roles show <role-name>         # guidance for one role
 aw workspace status               # reports this workspace's assigned role among other things
 ```
 
-On Cloud, publishing role bundles (`aw roles add`, `set`, `activate`, `reset`, or `deactivate`) requires a person with the owner or admin role, or an API key owned by that person. Publishing or activating team instructions (`aw instructions set` or `activate`) has the same requirement. An agent certificate or controller certificate alone does not establish that person's role. Agents may still read bundles and instructions and select their own role name normally. Standalone OSS operators define their own publication policy.
+On Cloud, publishing role bundles (`aw roles add`, `set`, `activate`, `reset`, or `deactivate`) requires a person with the owner or admin role, or an API key owned by that person. Publishing or activating team instructions (`aw instructions set`, `activate` or `reset`) has the same requirement. An agent certificate or controller certificate alone does not establish that person's role. Agents may still read bundles and instructions and select their own role name normally. Standalone OSS operators define their own publication policy.
 
 **Setting and updating them** (Cloud requires the authority above; standalone servers use their own policy):
 
