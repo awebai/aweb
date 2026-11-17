@@ -122,7 +122,7 @@ class KeyStore:
     def open(cls, directory):
         store = cls(directory)
         with store._connection() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] != 3:
+            if db.execute("PRAGMA user_version").fetchone()[0] != 4:
                 raise Refused("schema_unavailable")
             if db.execute("SELECT count(*) FROM configuration").fetchone()[0] != 1:
                 raise Refused("storage_unavailable")
@@ -148,7 +148,16 @@ class KeyStore:
                     .read_text()
                     + "\nCOMMIT;"
                 )
-            elif version != 3:
+                version = 3
+            if version == 3:
+                db.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + files(__package__)
+                    .joinpath("migrations/004_person_history.sql")
+                    .read_text()
+                    + "\nCOMMIT;"
+                )
+            elif version != 4:
                 raise Refused("schema_unavailable")
 
     def human_issuance(self):
@@ -326,11 +335,54 @@ class KeyStore:
             ),
         )
 
-    def audit(self):
+    @staticmethod
+    def person_revision(db, person):
+        row = db.execute(
+            "SELECT value FROM person_revisions WHERE person=?", (person,)
+        ).fetchone()
+        return row[0] if row else 0
+
+    @staticmethod
+    def advance_person(db, person):
+        db.execute(
+            "INSERT INTO person_revisions VALUES (?,1) ON CONFLICT(person) DO UPDATE SET value=value+1",
+            (person,),
+        )
+
+    def retire_person(self, person):
+        """Withdraw local approval eligibility; keep proofs, nonce and audit history."""
+        with self._connection() as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT retired_at FROM enrollments WHERE person=?", (person,)
+            ).fetchone()
+            if row is None:
+                raise Refused("enrollment_unknown")
+            if row[0] is None:
+                self._sign(
+                    db,
+                    self._descriptor(db),
+                    b"aweb.key-holder.retire/1\n" + canonical({"person": person}),
+                    operation="retire_person",
+                    actor="operator",
+                )
+                db.execute(
+                    "UPDATE enrollments SET active=0,retired_at=? WHERE person=?",
+                    (int(time.time()), person),
+                )
+                self.advance_person(db, person)
+            return {"person": person, "state": "retired"}
+
+    def audit(self, *, after=0, limit=1000):
+        if after < 0 or not 1 <= limit <= 1000:
+            raise Refused("audit_page_invalid")
         with self._connection() as db:
             return [
                 dict(row)
-                for row in db.execute("SELECT * FROM signatures ORDER BY sequence")
+                for row in db.execute(
+                    "SELECT * FROM signatures WHERE sequence>? ORDER BY sequence LIMIT ?",
+                    (after, limit),
+                )
             ]
 
     def encrypted_backup(self, offline_public_key):

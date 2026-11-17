@@ -114,11 +114,19 @@ intent. Old signed intents stay in the append-only audit. Rows with evidence
 are never replaced; activation uses current public Trust without reapplying
 the completed ceremony's deadline.
 
-**Enroll two people before relying on this slice.** Holder-side
-replace/recreate is not implemented: losing the sole activated person's keys
-requires a private operator-issued fresh person if the identity key is also lost. This slice also
-has no local deactivation command. An approver ceases to qualify when current
-registry evidence rejects them, within the shared 60-second freshness bound.
+Replacing a lost enrolled key is not implemented; today a person who loses their only enrolled key is issued a new ID by the operator and enrols again, and the old ID is revoked. Enrol two keys.
+
+The private `audit --after <sequence> --limit <1..1000>` command pages the
+signature record without registry or approval configuration. `retire-person
+--person <did:aw>` withdraws a local enrollment without deleting its evidence,
+nonces or audit; it cannot be reactivated. This frees a stuck first-person
+bootstrap after expiry or an unactivatable evidence-bearing row. For an active
+person, revoke the old ID and use `issue-person` for the fresh ID. A target's
+`expected_revision` fences only that person's enrollment; an unrelated person
+cannot invalidate its outstanding request. Retirement preserves that history.
+Authenticated callers receive `enrollment_replacement_unavailable` with the
+fresh-ID advice for active or retired people. Mode/configuration and row
+existence are disclosed only after the caller's signature and standing checks.
 
 For the one-container runtime, build a complete wheelhouse containing the
 reviewed SDK, holder and pinned approval-library wheels and their locked

@@ -144,6 +144,8 @@ def test_retirement_exits_stuck_state_without_erasing_evidence_or_audit(
         )
         consumed = db.execute("SELECT count(*) FROM consumed").fetchone()[0]
     audit = holder.store.audit()
+    with holder.store._connection() as db:
+        revision = holder.store.person_revision(db, target)
     with pytest.raises(Refused, match="bootstrap_closed"):
         holder.bootstrap_pending(*person())
     result = holder.store.retire_person(target)
@@ -157,6 +159,39 @@ def test_retirement_exits_stuck_state_without_erasing_evidence_or_audit(
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == consumed
     assert holder.store.audit()[:-1] == audit
     assert holder.store.audit()[-1]["actor"] == "operator"
+    with holder.store._connection() as db:
+        assert holder.store.person_revision(db, target) == revision + 1
+    assert holder.store.retire_person(target) == result
+    assert len(holder.store.audit()) == len(audit) + 1
+    with pytest.raises(Refused, match="enrollment_replacement_unavailable"):
+        holder.pending(target)
+    with pytest.raises(Refused, match="enrollment_replacement_unavailable"):
+        holder.bootstrap_pending(target, previous["identity_key"])
     with pytest.raises(Refused, match="approver_not_active"):
         holder.active_person(target)
     assert holder.bootstrap_pending(*person())["state"] == "enrollment_pending"
+
+
+def test_person_history_migrates_existing_enrollment_without_reset(tmp_path):
+    holder = world(tmp_path)
+    target, key = person()
+    saved = holder.bootstrap_pending(target, key)
+    audit = holder.store.audit()
+    with holder.store._connection() as db, db:
+        db.execute("ALTER TABLE enrollments DROP COLUMN retired_at")
+        db.execute("DROP TABLE person_revisions")
+        db.execute(
+            "CREATE TABLE revision (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value INTEGER NOT NULL)"
+        )
+        db.execute("INSERT INTO revision VALUES(1,7)")
+        db.execute("PRAGMA user_version=3")
+    holder.store.migrate()
+    reopened = KeyStore.open(holder.store.directory)
+    assert holder.pending(target) == saved
+    assert reopened.audit() == audit
+    with reopened._connection() as db:
+        assert reopened.person_revision(db, target) == 7
+        assert reopened.person_revision(db, person()[0]) == 0
+    reopened.retire_person(target)
+    with reopened._connection() as db:
+        assert reopened.person_revision(db, target) == 8

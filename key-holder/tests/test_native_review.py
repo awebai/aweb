@@ -1,10 +1,13 @@
 """Review regressions through the real DNS/registry/holder, never SQL authority."""
 
+import json
+import subprocess
+import sys
+
 import httpx
 import pytest
 from approval_service.canonical import parse
 from approval_service.encoding import decode
-from approval_service.seams import make_presentation
 from aweb_key_holder.http import create_app
 from awid.controller_signing import parse_controller_request
 from awid.id_certificates import id_certificate_id
@@ -16,6 +19,26 @@ from test_native_holder import (
     register_identity,
     signature,
 )
+
+
+def retire(holder, person):
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "aweb_key_holder.cli",
+            "--state",
+            str(holder.store.directory),
+            "retire-person",
+            "--person",
+            person,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"person": person, "state": "retired"}
 
 
 async def first_person(native, *, activate):
@@ -87,7 +110,7 @@ async def test_retire_unactivated_evidence_after_public_certificate_revocation(
         evidence = db.execute(
             "SELECT evidence FROM enrollments WHERE person=?", (own["identity"],)
         ).fetchone()[0]
-    holder.store.retire_person(own["identity"])
+    retire(holder, own["identity"])
     _, key, person = await register_identity(registry)
     assert (await holder.bootstrap(person, key))["state"] == "enrollment_pending"
     with holder.store._connection() as db:
@@ -123,7 +146,7 @@ async def test_active_person_gets_replacement_advice_then_operator_fresh_id_exit
         assert answer.status_code == 409
         assert answer.json()["error"]["code"] == "enrollment_replacement_unavailable"
         assert "new ID" in answer.json()["error"]["message"]
-        holder.store.retire_person(own["identity"])
+        retire(holder, own["identity"])
         await revoke(registry, holder, own)
         seed, key, person = await register_identity(registry)
         issued = await holder.issue_person(person, key)
@@ -171,7 +194,11 @@ async def test_two_targets_prepared_together_do_not_invalidate_one_another(
                 "assertion": device.assert_request(request),
             }
             pending.append(
-                make_presentation(request, receipt, origin=holder.approval_origin)
+                {
+                    "version": 1,
+                    "request_bytes": needs["request_bytes"],
+                    "receipt": receipt,
+                }
             )
         for presentation in pending:
             answer = await call(client, "/v1/humans", presentation, **own)

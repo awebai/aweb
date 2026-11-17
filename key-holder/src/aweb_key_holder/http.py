@@ -55,6 +55,7 @@ def create_app(holder):
             "state_changed",
             "enrollment_changed",
             "person_already_exists",
+            "enrollment_replacement_unavailable",
             "nonce_conflict",
             "registration_changed",
             "creation_changed",
@@ -75,8 +76,14 @@ def create_app(holder):
             status = 403
         else:
             status = 401
+        body = {"error": {"code": code}}
+        if code == "enrollment_replacement_unavailable":
+            body["error"]["message"] = (
+                "Replacing a lost enrolled key is not implemented. Ask the operator "
+                "to revoke the old ID, issue a new ID and enrol again. Enrol two keys."
+            )
         return JSONResponse(
-            {"error": {"code": code}},
+            body,
             status_code=status,
             headers={"Cache-Control": "no-store"},
         )
@@ -111,8 +118,9 @@ def create_app(holder):
 
     @app.post("/v1/humans")
     async def humans(request: Request):
-        holder.require_approved_issuance()
         caller, value, chain = await input_for(request)
+        await holder.admit(caller, chain)
+        holder.require_approved_issuance()
         if "request_bytes" in value:
             result = await holder.present(caller, value, chain=chain)
             return JSONResponse(result, headers={"Cache-Control": "no-store"})
@@ -125,8 +133,9 @@ def create_app(holder):
 
     @app.post("/v1/enrollments/{person}")
     async def enrollment_start(person: str, request: Request):
-        holder.require_approval()
         caller, value, chain = await input_for(request)
+        await holder.admit(caller, chain)
+        holder.require_approval()
         if (
             set(value) != {"requester"}
             or value["requester"] != caller.descriptor

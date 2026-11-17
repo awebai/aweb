@@ -114,6 +114,11 @@ def main():
     backup = commands.add_parser("backup")
     backup.add_argument("--offline-public-key", required=True)
     commands.add_parser("migrate")
+    audit = commands.add_parser("audit")
+    audit.add_argument("--after", type=int, default=0)
+    audit.add_argument("--limit", type=int, default=100)
+    retire = commands.add_parser("retire-person")
+    retire.add_argument("--person", required=True)
     configure = commands.add_parser("configure")
     configure.add_argument(
         "--human-issuance", choices=("operator", "approved"), required=True
@@ -137,6 +142,10 @@ def main():
             result = asdict(
                 KeyStore.create(args.state, organisation=args.organisation).descriptor()
             )
+        elif args.command == "audit":
+            result = KeyStore.open(args.state).audit(after=args.after, limit=args.limit)
+        elif args.command == "retire-person":
+            result = KeyStore.open(args.state).retire_person(args.person)
         elif args.command == "configure":
             store = KeyStore.open(args.state)
             store.set_human_issuance(args.human_issuance)
@@ -160,7 +169,12 @@ def main():
         if result is not None:
             print(json.dumps(result, separators=(",", ":")))
     except (Refused, ApprovalRefused) as error:
-        print(json.dumps({"error": error.code}), file=sys.stderr)
+        result = {"error": error.code}
+        if error.code == "enrollment_replacement_unavailable":
+            result["message"] = (
+                "Ask the operator to revoke the old ID, issue a new ID and enrol again. Enrol two keys."
+            )
+        print(json.dumps(result), file=sys.stderr)
         raise SystemExit(1) from None
     except (InvalidJSON, ValidationError):
         print(json.dumps({"error": "request_invalid"}), file=sys.stderr)

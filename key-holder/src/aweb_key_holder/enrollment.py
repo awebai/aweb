@@ -119,7 +119,7 @@ class Holder:
         self, db, *, purpose, operation, requester, approver, target, start, deadline
     ):
         root = self.store._descriptor(db)
-        revision = db.execute("SELECT value FROM revision").fetchone()[0]
+        revision = self.store.person_revision(db, target["person"])
         value = {
             "version": 1,
             "purpose": purpose,
@@ -181,13 +181,24 @@ class Holder:
         previous = db.execute(
             "SELECT * FROM enrollments WHERE person=?", (person,)
         ).fetchone()
+        if previous and (previous["active"] or previous["retired_at"] is not None):
+            raise Refused("enrollment_replacement_unavailable")
         if previous and not expired_pending(previous):
             raise Refused("person_already_exists")
         return previous
 
     def _pending(
-        self, db, *, person, identity_key, requester, certificate, approval=None
+        self,
+        db,
+        *,
+        person,
+        identity_key,
+        requester,
+        certificate,
+        approval=None,
+        actor=None,
     ):
+        actor = actor or requester["key"]
         root = self.store._descriptor(db)
         previous = self._check_enrollment_available(db, person)
         if previous:
@@ -213,7 +224,7 @@ class Holder:
             root,
             ControllerSigningContext(operation, root).signing_bytes(),
             operation="namespace_id_issue",
-            actor=requester["key"],
+            actor=actor,
             approval=approval_digest,
         )
         start = now()
@@ -242,7 +253,7 @@ class Holder:
                 root,
                 "enrollment_intent",
                 intent,
-                actor=requester["key"],
+                actor=actor,
                 approval=approval_digest,
             ),
         }
@@ -257,7 +268,7 @@ class Holder:
                 canonical(approval).decode() if approval is not None else None,
             ),
         )
-        db.execute("UPDATE revision SET value=value+1")
+        self.store.advance_person(db, person)
         return {"state": "enrollment_pending", "intent": signed}
 
     def _row(self, db, person):
@@ -266,6 +277,8 @@ class Holder:
         ).fetchone()
         if row is None:
             raise Refused("enrollment_unknown")
+        if row["retired_at"] is not None:
+            raise Refused("enrollment_replacement_unavailable")
         return row
 
     def pending(self, person):
@@ -276,7 +289,8 @@ class Holder:
     def active_person(self, person):
         with self.store._connection() as db:
             row = db.execute(
-                "SELECT * FROM enrollments WHERE person=? AND active=1", (person,)
+                "SELECT * FROM enrollments WHERE person=? AND active=1 AND retired_at IS NULL",
+                (person,),
             ).fetchone()
             if row is None:
                 raise Refused("approver_not_active")
@@ -292,6 +306,8 @@ class Holder:
                 "SELECT * FROM enrollments WHERE person=?", (person,)
             ).fetchone()
             if old:
+                if old["retired_at"] is not None:
+                    raise Refused("enrollment_replacement_unavailable")
                 if (
                     old["person"] != person
                     or old["identity_key"] != identity_key
@@ -303,7 +319,9 @@ class Holder:
                         "state": "enrollment_pending",
                         "intent": json.loads(old["intent"]),
                     }
-            elif db.execute("SELECT 1 FROM enrollments LIMIT 1").fetchone():
+            elif db.execute(
+                "SELECT 1 FROM enrollments WHERE retired_at IS NULL LIMIT 1"
+            ).fetchone():
                 raise Refused("bootstrap_closed")
             certificate = self._certificate(root, person, identity_key, now())
             return self._pending(
@@ -312,6 +330,7 @@ class Holder:
                 identity_key=identity_key,
                 requester=requester,
                 certificate=certificate,
+                actor="operator",
             )
 
     async def bootstrap(self, person, identity_key):
@@ -364,7 +383,12 @@ class Holder:
             old = db.execute(
                 "SELECT * FROM enrollments WHERE person=?", (person,)
             ).fetchone()
-            if old and not old["active"] and not expired_pending(old):
+            if (
+                old
+                and old["retired_at"] is None
+                and not old["active"]
+                and not expired_pending(old)
+            ):
                 saved = json.loads(old["intent"])
                 previous_intent = saved["intent"]
                 if (
@@ -413,12 +437,21 @@ class Holder:
                     canonical(chain).decode(),
                 ),
             )
+            self.store.advance_person(db, person)
             caller.check_time()
             if not 0 <= now() - trust.observed_at <= 60:
                 raise Refused("status_unavailable")
             return {"state": "enrollment_pending", "intent": signed}
 
     async def enrollment_admission(self, person, caller, chain, *, purpose):
+        admitted = None
+        if chain or caller.identity != person:
+            admitted = await self.admit(caller, chain)
+        else:
+            observation = await self.public.key_observation(person)
+            if observation.current_key != caller.key:
+                raise Refused("identity_key_mismatch")
+            caller.check_time()
         self.require_approval()
         signed = self.pending(person)["intent"]
         i = signed["intent"]
@@ -453,7 +486,7 @@ class Holder:
                 )
                 caller.check_time()
                 return admitted, None
-        return await self.admit(caller, chain), None
+        return admitted or await self.admit(caller, chain), None
 
     async def admit(self, caller, chain):
         root = self.store.descriptor()
@@ -586,9 +619,8 @@ class Holder:
                     "state": "active" if old["active"] else "enrollment_pending",
                     "intent": json.loads(old["intent"]),
                 }
-            if (
-                request["act"]["expected_revision"]
-                != db.execute("SELECT value FROM revision").fetchone()[0]
+            if request["act"]["expected_revision"] != self.store.person_revision(
+                db, request["act"]["target"]["person"]
             ):
                 raise Refused("state_changed")
             if not self._row(db, request["approver"])["active"]:

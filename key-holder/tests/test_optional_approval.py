@@ -73,15 +73,9 @@ async def test_unconfigured_enrollment_and_operator_public_issue_are_clear_refus
         transport=httpx.ASGITransport(app=create_app(holder)), base_url=holder.origin
     ) as client:
         r = await client.post("/v1/humans", json={})
-        assert (
-            r.status_code == 403
-            and r.json()["error"]["code"] == "human_issuance_operator"
-        )
+        assert r.status_code == 401
         r = await client.post("/v1/enrollments/" + person, json={})
-        assert (
-            r.status_code == 403
-            and r.json()["error"]["code"] == "approval_not_configured"
-        )
+        assert r.status_code == 401
 
 
 def test_private_cli_persists_operator_setting_without_runtime_site(tmp_path):
@@ -106,7 +100,13 @@ def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     descriptor = store.descriptor()
     with store._connection() as db, db:
-        # Exact preceding schema: only the new private setting is absent.
+        # Restore the actual v2 schema before running both ordered migrations.
+        db.execute("ALTER TABLE enrollments DROP COLUMN retired_at")
+        db.execute("DROP TABLE person_revisions")
+        db.execute(
+            "CREATE TABLE revision (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value INTEGER NOT NULL)"
+        )
+        db.execute("INSERT INTO revision VALUES (1,0)")
         db.execute("ALTER TABLE configuration DROP COLUMN human_issuance")
         db.execute("PRAGMA user_version=2")
     with pytest.raises(Refused, match="schema_unavailable"):
