@@ -1,7 +1,8 @@
 """Explicit addresses must select AWID identities, not team display aliases.
 
 The server and AWID apps, database queries, auth and message writes are real.
-Only disposable identities, membership rows and registry records are provisioned.
+Disposable identities, membership rows and registry records are provisioned.
+The outage case injects an HTTP 503 at the registry transport boundary only.
 """
 
 import json
@@ -10,18 +11,17 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-
 from aweb.mcp.server import create_mcp_app
 from identity_binding_support import register_global_identity
+from starlette.responses import JSONResponse
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair, _signed_team_headers
-
 
 ADDRESS = "example.test/bob"
 
 
 @pytest_asyncio.fixture
-async def address_collision(privacy_app):
+async def address_collision(privacy_app):  # noqa: F811 -- imported pytest fixture
     env = privacy_app
     # Alice's teammate has the display alias bob but no global address.
     # The registry's bob is a DIFFERENT identity, whose team alias is carol.
@@ -47,7 +47,7 @@ async def address_collision(privacy_app):
     env.app.mount("/address-mcp", mcp)
     await mcp.startup()
 
-    async def send(surface, recipient=ADDRESS):
+    async def request(surface, recipient=ADDRESS):
         actor = env.actors["alice"]
         if surface == "mcp_mail":
             payload = {
@@ -69,11 +69,13 @@ async def address_collision(privacy_app):
         # This is the server input when a local CLI's address lookup failed;
         # MCP similarly resolves before it has any signed message binding.
         raw = json.dumps(payload).encode()
-        response = await env.client.post(path, content=raw, headers={
+        return await env.client.post(path, content=raw, headers={
             **_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, raw),
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         })
+    async def send(surface, recipient=ADDRESS):
+        response = await request(surface, recipient)
         assert response.status_code == 200, response.text
         result = response.json()
         if surface == "mcp_mail":
@@ -85,7 +87,7 @@ async def address_collision(privacy_app):
         return result
 
     try:
-        yield SimpleNamespace(env=env, stable_id=stable_id, send=send)
+        yield SimpleNamespace(env=env, stable_id=stable_id, send=send, request=request)
     finally:
         await mcp.shutdown()
 
@@ -140,3 +142,99 @@ async def test_bare_alias_still_selects_the_team_member(address_collision, surfa
             "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", UUID(result["message_id"]),
         )
         assert message["to_did"] == env.actors["bob"].did
+
+
+async def _remove_registered_address(env):
+    # The real namespace remains verified. Only the address is absent.
+    await env.registry_db.execute(
+        "DELETE FROM {{tables.public_addresses}} WHERE name='bob'",
+    )
+    assert await env.app.state.awid_registry_client.resolve_address_fresh("example.test", "bob") is None
+
+
+async def _assert_local_bob(fixture, surface, result):
+    env = fixture.env
+    if surface == "chat":
+        participants = await env.db.fetch_all(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+            UUID(result["session_id"]),
+        )
+        assert {row["did"] for row in participants} == {env.actors["alice"].did, env.actors["bob"].did}
+    else:
+        message = await env.db.fetch_one(
+            "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", UUID(result["message_id"]),
+        )
+        assert message["to_did"] == env.actors["bob"].did
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
+async def test_derived_local_address_survives_registry_absence(address_collision, surface):
+    """Compatibility control: the displayed address of a local agent still works."""
+    fixture = address_collision
+    await _remove_registered_address(fixture.env)
+    result = await fixture.send(surface)
+    await _assert_local_bob(fixture, surface, result)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
+async def test_derived_local_address_refuses_registry_outage(address_collision, surface, monkeypatch):
+    fixture = address_collision
+    env = fixture.env
+    await _remove_registered_address(env)
+    transport = env.app.state.awid_registry_client.transport
+    registry_app = transport.app
+    lookups = []
+
+    async def unavailable_address(scope, receive, send):
+        if scope["type"] == "http" and scope["path"].endswith("/addresses/bob"):
+            lookups.append(scope["path"])
+            await JSONResponse({"detail": "registry temporarily unavailable"}, status_code=503)(
+                scope, receive, send,
+            )
+        else:
+            await registry_app(scope, receive, send)
+
+    # Leave all authentication, namespace and other registry endpoints real.
+    monkeypatch.setattr(transport, "app", unavailable_address)
+    response = await fixture.request(surface)
+    if surface == "mcp_mail":
+        assert response.status_code == 200, response.text
+        result = json.loads(response.json()["result"]["content"][0]["text"])
+        assert result.get("reason") == "sender_registry_unavailable", result
+        assert "message_id" not in result
+    else:
+        assert response.status_code == 503, response.text
+        assert "sender_registry_unavailable" in response.text
+    assert lookups, "The explicit address must be asked of the registry"
+    for table in ("messages", "chat_sessions"):
+        row = await env.db.fetch_one("SELECT count(*) AS n FROM {{tables." + table + "}}")
+        assert row["n"] == 0, "A refused lookup must create no delivery or session"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
+async def test_registered_address_wins_over_other_team_alias(address_collision, surface):
+    fixture = address_collision
+    env = fixture.env
+    team = "other:example.test"
+    await env.db.execute(
+        """INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+           VALUES ($1, 'example.test', 'other', $2)""", team, env.team_did,
+    )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET team_id=$1 WHERE agent_id=$2", team, env.actors["bob"].id,
+    )
+    result = await fixture.send(surface)
+    if surface == "chat":
+        participants = await env.db.fetch_all(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+            UUID(result["session_id"]),
+        )
+        assert {row["did"] for row in participants} == {env.actors["alice"].did, fixture.stable_id}
+    else:
+        message = await env.db.fetch_one(
+            "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", UUID(result["message_id"]),
+        )
+        assert message["to_did"] == fixture.stable_id
