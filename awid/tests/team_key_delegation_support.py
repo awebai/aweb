@@ -52,6 +52,9 @@ class DNS(asyncio.DatagramProtocol):
 @pytest_asyncio.fixture
 async def world(awid_db_infra, monkeypatch):
     monkeypatch.delenv("AWID_SKIP_DNS_VERIFY", raising=False)
+    # The library app uses the supplied real pool; this required standalone
+    # setting is not read for connections in library mode.
+    monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
     domain = f"org-{uuid4().hex}.example.com"
     registry_origin = f"https://registry-{uuid4().hex}.example.com"
     dns_server = DNS(registry_origin)
