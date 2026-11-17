@@ -157,27 +157,55 @@ async def test_real_address_route_codes_absence_but_missing_namespace_is_not_abs
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cached", [False, True], ids=["plain", "redis"])
 @pytest.mark.parametrize("stage", ["first", "later", "empty", "revoked"])
-async def test_revocation_scan_requires_a_complete_success_not_404(response_server, cached, stage):
+async def test_revocation_scan_requires_a_complete_success_not_404(
+    response_server, cached, stage
+):
     state = response_server
     domain = f"revocations-{uuid4().hex}.example"
     state["status"] = 404
     state["body"] = {"detail": "Team not found"}
     if stage == "later":
-        state["responses"] = [{"status": 200, "body": {
-            "revocations": [{"certificate_id": "withdrawn", "revoked_at": "2026-11-17T00:00:00Z"}],
-            "has_more": True, "next_cursor": "next",
-        }}]
+        state["responses"] = [
+            {
+                "status": 200,
+                "body": {
+                    "revocations": [
+                        {
+                            "certificate_id": "withdrawn",
+                            "revoked_at": "2026-11-17T00:00:00Z",
+                        }
+                    ],
+                    "has_more": True,
+                    "next_cursor": "next",
+                },
+            }
+        ]
     elif stage in ("empty", "revoked"):
         state["status"] = 200
-        state["body"] = {"revocations": ([{"certificate_id": "withdrawn"}] if stage == "revoked" else []), "has_more": False}
+        state["body"] = {
+            "revocations": (
+                [{"certificate_id": "withdrawn"}] if stage == "revoked" else []
+            ),
+            "has_more": False,
+        }
     redis = Redis.from_url(os.environ["REDIS_URL"]) if cached else None
-    client = CachedRegistryClient(state["origin"], redis) if cached else RegistryClient(state["origin"])
+    client = (
+        CachedRegistryClient(state["origin"], redis)
+        if cached
+        else RegistryClient(state["origin"])
+    )
     key = client._team_revocations_cache_key(domain, "ops") if cached else None
-    legacy = key.replace(":v2:team_revocations:", ":v1:team_revocations:") if cached else None
+    legacy = (
+        key.replace(":v2:team_revocations:", ":v1:team_revocations:")
+        if cached
+        else None
+    )
     try:
         if cached:
             # An old client could stamp an uncoded 404 as a fresh empty set.
-            await client._write_cache_entry(legacy, value=set(), ttl_seconds=60, encode=sorted)
+            await client._write_cache_entry(
+                legacy, value=set(), ttl_seconds=60, encode=sorted
+            )
         if stage in ("first", "later"):
             with pytest.raises(RegistryError) as refused:
                 await client.get_team_revocations(domain, "ops")
@@ -185,7 +213,9 @@ async def test_revocation_scan_requires_a_complete_success_not_404(response_serv
             if redis is not None:
                 assert await redis.get(key) is None
         else:
-            assert await client.get_team_revocations(domain, "ops") == ({"withdrawn"} if stage == "revoked" else set())
+            assert await client.get_team_revocations(domain, "ops") == (
+                {"withdrawn"} if stage == "revoked" else set()
+            )
         assert len(state["requests"]) == (2 if stage == "later" else 1)
     finally:
         await client.aclose()

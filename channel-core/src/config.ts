@@ -372,10 +372,21 @@ function lstatIfExists(path: string): Stats | undefined {
 }
 
 async function readYAML<T>(path: string): Promise<T | null> {
+  let content: string;
   try {
-    const content = await readFile(path, "utf-8");
-    return (yaml.load(content) as T) || null;
-  } catch {
-    return null;
+    content = await readFile(path, "utf-8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new Error(`cannot read YAML configuration ${path}`, { cause: error });
   }
+  let value: unknown;
+  try {
+    value = yaml.load(content);
+  } catch (error) {
+    throw new Error(`invalid YAML configuration ${path}`, { cause: error });
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`YAML configuration must contain a mapping: ${path}`);
+  }
+  return value as T;
 }

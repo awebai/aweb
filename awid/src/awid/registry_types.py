@@ -8,6 +8,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+ADDRESS_NOT_FOUND = "address_not_found"
+
+
+def is_address_not_found(status_code: int, body: Any) -> bool:
+    """Only a typed answer from the address endpoint proves address absence."""
+    return (
+        status_code == 404
+        and isinstance(body, dict)
+        and isinstance(body.get("detail"), dict)
+        and body["detail"].get("code") == ADDRESS_NOT_FOUND
+    )
+
 
 @dataclass(frozen=True)
 class IDTreeEnrollment:
