@@ -1,5 +1,6 @@
 """Real member auth and pin storage under inherited DNS, through actual AWID."""
 
+import base64
 import json
 import runpy
 from pathlib import Path
@@ -53,7 +54,7 @@ async def test_member_request_uses_the_shared_child_controller_witness(
         member_address=None,
         alias=member.alias,
         identity_scope="local",
-        certificate=json.dumps(member.certificate()),
+        certificate=base64.b64encode(json.dumps(member.certificate()).encode()).decode(),
     )
     if not delegated:
         await world.db.execute(

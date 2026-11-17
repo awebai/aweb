@@ -363,7 +363,8 @@ async def _resolve_pin(team_id, served_key, *, pins, fetch_act, resolver, enforc
         if baseline and pin.act_at is None:
             # Released creation did not sign a public key act. Do not change
             # its admission contract; report it as unready for enforcement.
-            logger.warning("team_key_pin_baseline_unavailable team=%s reason=%s", team_id, exc.reason)
+            logger.log(logging.DEBUG if exc.reason == "no_act" else logging.WARNING,
+                       "team_key_pin_baseline_unavailable team=%s reason=%s", team_id, exc.reason)
             return served_key
         _mismatch(team_id, pin.team_did_key, served_key, exc.reason, enforce=enforce)
         return await _move_without_act(team_id, pins, pin, served_key, exc.reason)
