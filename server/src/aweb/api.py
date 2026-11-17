@@ -366,13 +366,12 @@ def _make_library_lifespan(
     awid_transport: httpx.AsyncBaseTransport | None,
     domain_verifier: DomainVerifier | None,
 ):
-    """Create lifespan for library mode (uses externally provided connections)."""
+    """Use the embedding host's connections and logging configuration."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        json_format = os.getenv("AWEB_LOG_JSON", "true").lower() == "true"
-        log_level = os.getenv("AWEB_LOG_LEVEL", "info")
-        configure_logging(log_level=log_level, json_format=json_format)
+        # An embedded app must not replace the host's handlers or root level.
+        # Standalone startup configures process logging in its own lifespan.
         logger.info("Starting aweb coordination server (library mode)")
 
         # Use externally provided connections - no initialization needed

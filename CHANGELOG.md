@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Embedded aweb and AWID applications preserve their host's logging handlers
+  and root level. Starting them no longer suppresses later host warnings;
+  standalone services still configure their own logging.
+
 - `aw init` with a hosted API key shows the hosted service's coded refusal
   (for example `creator_must_sign`) with what to do about it, in text and as
   the `--json` error code, instead of `error_code=unknown`. Unknown codes and
