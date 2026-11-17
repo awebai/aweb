@@ -4468,7 +4468,7 @@ func TestTeamAddMemberByDIDIssuesLocalCertificate(t *testing.T) {
 	if got["member"] != memberDID {
 		t.Fatalf("member=%v", got["member"])
 	}
-	if _, ok := got["member_address"]; ok {
+	if got["member_address"] != nil {
 		t.Fatalf("member_address should be omitted in DID path: %v", got["member_address"])
 	}
 	if registeredCert["member_did_key"] != memberDID {
@@ -4480,10 +4480,10 @@ func TestTeamAddMemberByDIDIssuesLocalCertificate(t *testing.T) {
 	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("registry cert identity_scope=%v", registeredCert["identity_scope"])
 	}
-	if _, ok := registeredCert["member_did_aw"]; ok {
+	if registeredCert["member_did_aw"] != nil {
 		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
 	}
-	if _, ok := registeredCert["member_address"]; ok {
+	if registeredCert["member_address"] != nil {
 		t.Fatalf("registry cert member_address=%v", registeredCert["member_address"])
 	}
 }

@@ -109,6 +109,9 @@ async def route_pair(test_db_factory, monkeypatch):
             registry = await stack.enter_async_context(running_registry(dsn, service_token=token, redis=redis))
             registry_sock = _socket()
             registry_origin = _origin(registry_sock)
+            # Served there, the registry has that public origin too, which
+            # covering controller signatures name.
+            registry.app.state.awid_public_origins = (*registry.app.state.awid_public_origins, registry_origin)
             registry_calls = _observe(registry.app)
             await stack.enter_async_context(_listener(registry.app, registry_sock))
             registry_client = RegistryClient(registry_origin, service_token=token)

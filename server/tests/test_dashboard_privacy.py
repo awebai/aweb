@@ -83,6 +83,8 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
         registry_app = create_registry_app(
             db_infra=registry_db, redis=redis, rate_limiter=MemoryFixedWindowRateLimiter(),
         )
+        # The registry's public origin, which covering controller signatures name.
+        registry_app.state.awid_public_origins = ("http://registry.test",)
         async with registry_app.router.lifespan_context(registry_app):
             registry = RegistryClient(
                 registry_url="http://registry.test",

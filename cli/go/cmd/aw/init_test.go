@@ -1953,11 +1953,11 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	if gotCertPayload["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("cert identity_scope=%v", gotCertPayload["identity_scope"])
 	}
-	if _, ok := gotCertPayload["member_did_aw"]; ok {
-		t.Fatalf("local cert should not include member_did_aw: %v", gotCertPayload["member_did_aw"])
+	if gotCertPayload["member_did_aw"] != nil {
+		t.Fatalf("local cert should carry no member_did_aw: %v", gotCertPayload["member_did_aw"])
 	}
-	if _, ok := gotCertPayload["member_address"]; ok {
-		t.Fatalf("local cert should not include member_address: %v", gotCertPayload["member_address"])
+	if gotCertPayload["member_address"] != nil {
+		t.Fatalf("local cert should carry no member_address: %v", gotCertPayload["member_address"])
 	}
 	if gotConnectBody["role"] != "developer" {
 		t.Fatalf("connect role=%v", gotConnectBody["role"])

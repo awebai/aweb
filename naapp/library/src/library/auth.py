@@ -24,6 +24,7 @@ from awid.signing import (
 from awid.team_ids import parse_team_id
 from awid.team_key_acts import (
     MemoryTeamKeyPins,
+    TeamKeyMemo,
     TeamKeyPinStore,
     TeamKeyUnverified,
     pinned_team_key,
@@ -113,13 +114,18 @@ class AWIDTeamCache:
         self._cache: dict[str, CachedTeamFacts] = {}
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
         self._team_key_pins = team_key_pins if team_key_pins is not None else MemoryTeamKeyPins()
+        self._team_key_memo = TeamKeyMemo()
         self._txt_resolver = txt_resolver if txt_resolver is not None else SystemTXTOutcomeResolver()
         self._enforce_team_key_pins = enforce_team_key_pins
 
     async def _pinned_team_key(self, team_id: str, served_key: str) -> str:
         """``served_key`` held to the team's pin (awid.team_key_acts); while
         enforcing, 401 team_key_unverified when no namespace-controller act
-        establishes it."""
+        establishes it. A served key answered within the memo window
+        (awid TeamKeyMemo) reads nothing."""
+        remembered = self._team_key_memo.get(team_id, served_key)
+        if remembered is not None:
+            return remembered
         domain, team_name = parse_team_id(team_id)
 
         async def fetch_act() -> Any:
@@ -142,12 +148,14 @@ class AWIDTeamCache:
                 return None
 
         try:
-            return await pinned_team_key(
+            key = await pinned_team_key(
                 team_id, served_key, pins=self._team_key_pins, fetch_act=fetch_act,
                 resolver=self._txt_resolver, enforce=self._enforce_team_key_pins,
             )
         except TeamKeyUnverified:
             raise HTTPException(status_code=401, detail="team_key_unverified") from None
+        self._team_key_memo.put(team_id, served_key, key)
+        return key
 
     async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
         if not self._headers:

@@ -494,8 +494,23 @@ func isAmbiguousDIDRotationSubmitError(err error) bool {
 }
 
 func (c *RegistryClient) requestJSON(ctx context.Context, method, registryURL, path string, headers map[string]string, body any, out any) error {
+	var raw []byte
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		raw = data
+	}
+	return c.requestBytes(ctx, method, registryURL, path, headers, raw, out)
+}
+
+// requestBytes sends raw (nil for no body) as it is. A retry, where the
+// request is replay-safe, resends the same bytes and the same headers: a
+// signature made once covers every attempt.
+func (c *RegistryClient) requestBytes(ctx context.Context, method, registryURL, path string, headers map[string]string, raw []byte, out any) error {
 	for attempt := 0; ; attempt++ {
-		req, err := c.newRequest(ctx, method, registryURL, path, headers, body)
+		req, err := c.newRequest(ctx, method, registryURL, path, headers, raw)
 		if err != nil {
 			return err
 		}
@@ -612,24 +627,20 @@ func registryPathSegments(path string) []string {
 	return strings.Split(strings.Trim(path, "/"), "/")
 }
 
-func (c *RegistryClient) newRequest(ctx context.Context, method, registryURL, path string, headers map[string]string, body any) (*http.Request, error) {
+func (c *RegistryClient) newRequest(ctx context.Context, method, registryURL, path string, headers map[string]string, raw []byte) (*http.Request, error) {
 	registryURL = strings.TrimSpace(registryURL)
 	if registryURL == "" {
 		registryURL = c.defaultRegistryURL()
 	}
 	var reader io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		reader = bytes.NewReader(data)
+	if raw != nil {
+		reader = bytes.NewReader(raw)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(registryURL, "/")+path, reader)
 	if err != nil {
 		return nil, err
 	}
-	if body != nil {
+	if raw != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")

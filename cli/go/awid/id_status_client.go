@@ -84,7 +84,11 @@ func (c *IDStatusClient) FetchIDCertificateStatus(ctx context.Context, domain st
 	if err != nil {
 		return nil, err
 	}
-	req, err := c.Registry.newRequest(ctx, "POST", registryURL, idStatusPath, nil, request)
+	raw, err := json.Marshal(request)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.Registry.newRequest(ctx, "POST", registryURL, idStatusPath, nil, raw)
 	if err != nil {
 		return nil, err
 	}

@@ -746,7 +746,8 @@ class RegistryClient:
                 if context.role == "parent":
                     headers["X-AWEB-Parent-Timestamp"] = timestamp
                 if plan.format == "covering":
-                    headers["X-AWEB-Signed-Payload"] = base64.urlsafe_b64encode(context.signing_bytes()).rstrip(b"=").decode()
+                    signed = "X-AWEB-Parent-Signed-Payload" if context.role == "parent" else "X-AWEB-Signed-Payload"
+                    headers[signed] = base64.urlsafe_b64encode(context.signing_bytes()).rstrip(b"=").decode()
         mutation = plan.method != "GET"
         if mutation:
             await self._invalidate_controller_request(request, pin)
@@ -1106,26 +1107,20 @@ class RegistryClient:
             if default_delivery_origin is not None
             else None
         )
-        headers = self._signed_namespace_headers(
-            domain=domain,
-            operation="register",
-            signing_key=controller_signing_key,
-            extra_payload=extra_payload,
-        )
+        parent = None
         if parent_signing_key is not None:
-            headers.update(
-                self._signed_parent_namespace_registration_headers(
-                    parent_signing_key=parent_signing_key,
-                    child_domain=domain,
-                    controller_did=controller_did,
-                )
-            )
+            parent = (parent_signing_key, "authorize_subdomain_registration",
+                      {"child_domain": domain, "controller_did": controller_did})
         return _namespace_from_json(
-            await self._request_json(
+            await self._controller_write(
                 "POST",
                 "/v1/namespaces",
-                headers=headers,
-                json={
+                registry_url=registry_url,
+                domain=domain,
+                operation="register",
+                signing_key=controller_signing_key,
+                claims=extra_payload,
+                body={
                     "domain": domain,
                     "controller_did": controller_did,
                     **(
@@ -1134,7 +1129,7 @@ class RegistryClient:
                         else {"default_delivery_origin": default_delivery_origin}
                     ),
                 },
-                registry_url=registry_url,
+                parent=parent,
             )
         )
 
@@ -1168,17 +1163,15 @@ class RegistryClient:
         default_delivery_origin = _canonical_optional_origin(default_delivery_origin)
         signed_origin = default_delivery_origin or ""
         return _namespace_from_json(
-            await self._request_json(
+            await self._controller_write(
                 "PATCH",
                 f"/v1/namespaces/{domain}",
-                headers=self._signed_namespace_headers(
-                    domain=domain,
-                    operation="update_namespace",
-                    signing_key=controller_signing_key,
-                    extra_payload={"default_delivery_origin": signed_origin},
-                ),
-                json={"default_delivery_origin": default_delivery_origin},
                 registry_url=registry_url,
+                domain=domain,
+                operation="update_namespace",
+                signing_key=controller_signing_key,
+                claims={"default_delivery_origin": signed_origin},
+                body={"default_delivery_origin": default_delivery_origin},
             )
         )
 
@@ -1194,22 +1187,20 @@ class RegistryClient:
     ) -> Team:
         registry_url = await self._registry_url_for_domain(domain)
         return _team_from_json(
-            await self._request_json(
+            await self._controller_write(
                 "POST",
                 f"/v1/namespaces/{domain}/teams",
-                headers=self._signed_team_headers(
-                    domain=domain,
-                    name=name,
-                    operation="create_team",
-                    signing_key=namespace_controller_signing_key,
-                ),
-                json={
+                registry_url=registry_url,
+                domain=domain,
+                operation="create_team",
+                signing_key=namespace_controller_signing_key,
+                claims={"name": name},
+                body={
                     "name": name,
                     "display_name": display_name,
                     "team_did_key": team_did_key,
                     "visibility": visibility,
                 },
-                registry_url=registry_url,
             )
         )
 
@@ -1223,17 +1214,15 @@ class RegistryClient:
         """Set visibility using the team's controller, not namespace authority."""
         registry_url = await self._registry_url_for_domain(domain)
         return _team_from_json(
-            await self._request_json(
+            await self._controller_write(
                 "POST",
                 f"/v1/namespaces/{domain}/teams/{name}/visibility",
-                headers=self._signed_namespace_headers(
-                    domain=domain,
-                    operation="set_team_visibility",
-                    signing_key=team_controller_signing_key,
-                    extra_payload={"team_name": name, "visibility": visibility},
-                ),
-                json={"visibility": visibility},
                 registry_url=registry_url,
+                domain=domain,
+                operation="set_team_visibility",
+                signing_key=team_controller_signing_key,
+                claims={"team_name": name, "visibility": visibility},
+                body={"visibility": visibility},
             )
         )
 
@@ -1245,16 +1234,14 @@ class RegistryClient:
     ) -> dict[str, Any]:
         """Delete using namespace authority; active certificates must be revoked first."""
         registry_url = await self._registry_url_for_domain(domain)
-        return await self._request_json(
+        return await self._controller_write(
             "DELETE",
             f"/v1/namespaces/{domain}/teams/{name}",
-            headers=self._signed_namespace_headers(
-                domain=domain,
-                operation="delete_team",
-                signing_key=namespace_controller_signing_key,
-                extra_payload={"team_name": name},
-            ),
             registry_url=registry_url,
+            domain=domain,
+            operation="delete_team",
+            signing_key=namespace_controller_signing_key,
+            claims={"team_name": name},
         )
 
     async def rotate_namespace_controller(
@@ -1266,27 +1253,21 @@ class RegistryClient:
     ) -> Namespace:
         registry_url = await self._registry_url_for_domain(domain)
         _assert_signing_key_matches(new_controller_did, new_controller_signing_key)
-        headers = self._signed_namespace_headers(
-            domain=domain,
-            operation="rotate_controller",
-            signing_key=new_controller_signing_key,
-            extra_payload={"new_controller_did": new_controller_did},
-        )
+        parent = None
         if parent_signing_key is not None:
-            headers.update(
-                self._signed_parent_namespace_headers(
-                    parent_signing_key=parent_signing_key,
-                    child_domain=domain,
-                    new_controller_did=new_controller_did,
-                )
-            )
+            parent = (parent_signing_key, "authorize_subdomain_rotation",
+                      {"child_domain": domain, "new_controller_did": new_controller_did})
         return _namespace_from_json(
-            await self._request_json(
+            await self._controller_write(
                 "PUT",
                 f"/v1/namespaces/{domain}",
-                headers=headers,
-                json={"new_controller_did": new_controller_did},
                 registry_url=registry_url,
+                domain=domain,
+                operation="rotate_controller",
+                signing_key=new_controller_signing_key,
+                claims={"new_controller_did": new_controller_did},
+                body={"new_controller_did": new_controller_did},
+                parent=parent,
             )
         )
 
@@ -1303,21 +1284,19 @@ class RegistryClient:
             key_resolution = await self.resolve_key(did_aw)
             current_did_key = key_resolution.current_did_key
         return _address_from_json(
-            await self._request_json(
+            await self._controller_write(
                 "POST",
                 f"/v1/namespaces/{domain}/addresses",
-                headers=self._signed_address_headers(
-                    domain=domain,
-                    name=name,
-                    operation="register_address",
-                    signing_key=controller_signing_key,
-                ),
-                json={
+                registry_url=registry_url,
+                domain=domain,
+                operation="register_address",
+                signing_key=controller_signing_key,
+                claims={"name": name},
+                body={
                     "name": name,
                     "did_aw": did_aw,
                     "current_did_key": current_did_key,
                 },
-                registry_url=registry_url,
             )
         )
 
@@ -1596,20 +1575,15 @@ class RegistryClient:
         }
         if certificate is not None:
             payload["certificate"] = certificate
-        await self._request_json(
+        await self._controller_write(
             "POST",
             f"/v1/namespaces/{domain}/teams/{name}/certificates",
-            headers=self._signed_namespace_headers(
-                domain=domain,
-                operation="register_certificate",
-                signing_key=team_controller_signing_key,
-                extra_payload={
-                    "team_name": name,
-                    "certificate_id": certificate_id,
-                },
-            ),
-            json=payload,
             registry_url=registry_url,
+            domain=domain,
+            operation="register_certificate",
+            signing_key=team_controller_signing_key,
+            claims={"team_name": name, "certificate_id": certificate_id},
+            body=payload,
         )
 
     async def revoke_team_certificate(
@@ -1621,20 +1595,15 @@ class RegistryClient:
         certificate_id: str,
     ) -> None:
         registry_url = await self._registry_url_for_domain(domain)
-        await self._request_json(
+        await self._controller_write(
             "POST",
             f"/v1/namespaces/{domain}/teams/{name}/certificates/revoke",
-            headers=self._signed_namespace_headers(
-                domain=domain,
-                operation="revoke_certificate",
-                signing_key=team_controller_signing_key,
-                extra_payload={
-                    "team_name": name,
-                    "certificate_id": certificate_id,
-                },
-            ),
-            json={"certificate_id": certificate_id},
             registry_url=registry_url,
+            domain=domain,
+            operation="revoke_certificate",
+            signing_key=team_controller_signing_key,
+            claims={"team_name": name, "certificate_id": certificate_id},
+            body={"certificate_id": certificate_id},
         )
 
     async def revoke_team_certificate_with_proof(
@@ -1692,17 +1661,15 @@ class RegistryClient:
     ) -> Address:
         registry_url = await self._registry_url_for_domain(domain)
         return _address_from_json(
-            await self._request_json(
+            await self._controller_write(
                 "PUT",
                 f"/v1/namespaces/{domain}/addresses/{address_segment(name)}",
-                headers=self._signed_address_headers(
-                    domain=domain,
-                    name=name,
-                    operation="update_address",
-                    signing_key=controller_signing_key,
-                ),
-                json={},
                 registry_url=registry_url,
+                domain=domain,
+                operation="update_address",
+                signing_key=controller_signing_key,
+                claims={"name": name},
+                body={},
             )
         )
 
@@ -1713,16 +1680,14 @@ class RegistryClient:
         controller_signing_key: bytes,
     ) -> None:
         registry_url = await self._registry_url_for_domain(domain)
-        await self._request_json(
+        await self._controller_write(
             "DELETE",
             f"/v1/namespaces/{domain}/addresses/{address_segment(name)}",
-            headers=self._signed_address_headers(
-                domain=domain,
-                name=name,
-                operation="delete_address",
-                signing_key=controller_signing_key,
-            ),
             registry_url=registry_url,
+            domain=domain,
+            operation="delete_address",
+            signing_key=controller_signing_key,
+            claims={"name": name},
         )
 
     async def list_did_addresses(self, did_aw: str) -> list[Address]:
@@ -1739,115 +1704,81 @@ class RegistryClient:
         registry_url = await self._registry_url_for_domain(domain)
         key_resolution = await self.resolve_key(new_did_aw)
         return _address_from_json(
-            await self._request_json(
+            await self._controller_write(
                 "POST",
                 f"/v1/namespaces/{domain}/addresses/{address_segment(name)}/reassign",
-                headers=self._signed_address_headers(
-                    domain=domain,
-                    name=name,
-                    operation="reassign_address",
-                    signing_key=controller_signing_key,
-                ),
-                json={
+                registry_url=registry_url,
+                domain=domain,
+                operation="reassign_address",
+                signing_key=controller_signing_key,
+                claims={"name": name},
+                body={
                     "did_aw": new_did_aw,
                     "current_did_key": key_resolution.current_did_key,
                 },
-                registry_url=registry_url,
             )
         )
 
-    def _signed_namespace_headers(
+    def _controller_headers(
         self,
+        signing_key: bytes,
         *,
+        registry_url: str,
+        method: str,
+        path: str,
+        body: bytes,
         domain: str,
         operation: str,
-        signing_key: bytes,
-        extra_payload: dict[str, Any] | None = None,
+        claims: dict[str, Any] | None = None,
+        parent: bool = False,
     ) -> dict[str, str]:
+        """The covering-v2 signature of one controller write: it covers the
+        destination registry, the method, the path and ``body``, the exact
+        bytes sent. A parent's signature authorizes a child namespace's
+        controller over the same request, in the parent headers."""
         timestamp = _utc_timestamp()
-        from awid.controller_signing import _legacy_controller_payload
-        payload = _legacy_controller_payload(domain, operation, timestamp, extra_payload)
+        payload = covering_payload(
+            aud=canonical_server_origin(registry_url), method=method, path=path, domain=domain,
+            operation=operation, body=body, timestamp=timestamp, claims=claims,
+        )
+        prefix = "X-AWEB-Parent-" if parent else "X-AWEB-"
         return {
-            "Authorization": f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
-            "X-AWEB-Timestamp": timestamp,
-        }
-
-    def _signed_address_headers(
-        self,
-        *,
-        domain: str,
-        name: str,
-        operation: str,
-        signing_key: bytes,
-    ) -> dict[str, str]:
-        return self._signed_namespace_headers(
-            domain=domain, operation=operation, signing_key=signing_key,
-            extra_payload={"name": name},
-        )
-
-    def _signed_team_headers(
-        self,
-        *,
-        domain: str,
-        name: str,
-        operation: str,
-        signing_key: bytes,
-    ) -> dict[str, str]:
-        return self._signed_namespace_headers(
-            domain=domain, operation=operation, signing_key=signing_key,
-            extra_payload={"name": name},
-        )
-
-    def _signed_parent_namespace_headers(
-        self,
-        *,
-        parent_signing_key: bytes,
-        child_domain: str,
-        new_controller_did: str,
-    ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = canonical_json_bytes(
-            {
-                "domain": child_domain,
-                "child_domain": child_domain,
-                "new_controller_did": new_controller_did,
-                "operation": "authorize_subdomain_rotation",
-                "timestamp": timestamp,
-            }
-        )
-        return {
-            "X-AWEB-Parent-Authorization": (
-                f"DIDKey {did_key_from_signing_key(parent_signing_key)} "
-                f"{sign_message(parent_signing_key, payload)}"
+            "X-AWEB-Parent-Authorization" if parent else "Authorization": (
+                f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}"
             ),
-            "X-AWEB-Parent-Timestamp": timestamp,
+            f"{prefix}Timestamp": timestamp,
+            f"{prefix}Signed-Payload": base64.urlsafe_b64encode(payload).rstrip(b"=").decode(),
         }
 
-    def _signed_parent_namespace_registration_headers(
+    async def _controller_write(
         self,
+        method: str,
+        path: str,
         *,
-        parent_signing_key: bytes,
-        child_domain: str,
-        controller_did: str,
-    ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        payload = canonical_json_bytes(
-            {
-                "domain": child_domain,
-                "child_domain": child_domain,
-                "controller_did": controller_did,
-                "operation": "authorize_subdomain_registration",
-                "timestamp": timestamp,
-            }
+        registry_url: str,
+        domain: str,
+        operation: str,
+        signing_key: bytes,
+        claims: dict[str, Any] | None = None,
+        body: dict[str, Any] | None = None,
+        parent: tuple[bytes, str, dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Send one controller write. ``body`` (None for none) is serialized
+        once, and those bytes are both the ones signed and the ones sent.
+        ``parent`` is the parent's (signing key, operation, claims)."""
+        content = canonical_json_bytes(body) if body is not None else b""
+        signed = dict(registry_url=registry_url, method=method, path=path, body=content, domain=domain)
+        headers = self._controller_headers(signing_key, operation=operation, claims=claims, **signed)
+        if parent is not None:
+            parent_key, parent_operation, parent_claims = parent
+            headers.update(self._controller_headers(
+                parent_key, operation=parent_operation, claims=parent_claims, parent=True, **signed,
+            ))
+        if content:
+            headers["Content-Type"] = "application/json"
+        return await self._request_json(
+            method, path, headers=headers, content=content or None, registry_url=registry_url,
         )
-        return {
-            "X-AWEB-Parent-Authorization": (
-                f"DIDKey {did_key_from_signing_key(parent_signing_key)} "
-                f"{sign_message(parent_signing_key, payload)}"
-            ),
-            "X-AWEB-Parent-Timestamp": timestamp,
-        }
-
 
 class CachedRegistryClient(RegistryClient):
     """Redis-backed caching wrapper for RegistryClient reads."""

@@ -127,7 +127,9 @@ func (c *RegistryClient) RotateTeamKey(
 	if controllerKey == nil {
 		return nil, fmt.Errorf("controller signing key is required")
 	}
-	body := map[string]any{"new_team_did_key": newTeamDIDKey}
+	// resigned_records is null when the rotation re-signs no records, as the
+	// Python client sends it.
+	body := map[string]any{"new_team_did_key": newTeamDIDKey, "resigned_records": nil}
 	if resigned != nil {
 		body["resigned_records"] = resigned.wire()
 	}
@@ -135,12 +137,9 @@ func (c *RegistryClient) RotateTeamKey(
 		body["member_certificates"] = members
 	}
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/rotate"
-	headers := signedNamespaceHeaders(domain, "rotate_team_key", controllerKey, map[string]string{
-		"name":             name,
-		"new_team_did_key": newTeamDIDKey,
-	})
+	claims := map[string]any{"name": name, "new_team_did_key": newTeamDIDKey}
 	var out TeamRotateResponse
-	if err := c.requestJSON(ctx, http.MethodPost, registryURL, path, headers, body, &out); err != nil {
+	if err := c.controllerWrite(ctx, http.MethodPost, registryURL, path, domain, "rotate_team_key", claims, body, keySigner(controllerKey), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

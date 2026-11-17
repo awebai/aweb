@@ -139,6 +139,19 @@ purpose refusals. Legacy forms remain accepted and measured until the operator's
 cutoff; clients emit this shape only after the accepting registry is deployed.
 See [AWID controller requests](../awid-controller-requests.md).
 
+### `awid-controller-writes-v1.json`
+
+The controller writes aw and the Python `awid` client both make (namespace
+register, update and delete; team create, visibility, delete and key rotation;
+certificate register and revoke; address register and delete, one with an
+escaped name), as the Python client sends them: the call's arguments, and the
+exact method, raw path, body bytes and signing headers of the covering-v2
+request. Keys come from fixed seeds and the timestamp is fixed.
+`scripts/generate_controller_write_vectors.py` writes the file from the Python
+client and checks it with `--check`; the Python client is the reference because
+the deployed registry is shown to accept its bytes. aw's Go client must send the
+same bytes for the same call.
+
 ## Current protocol fixtures
 
 These fixtures govern shipped non-A2A protocol behavior.

@@ -239,6 +239,9 @@ async def running_registry(
         app.state.rate_limiter = NoOpRateLimiter()
         app.state.awid_service_token = service_token
         mount_registry(app)
+        # Its public origin, which covering controller signatures name. After
+        # mount_registry, which reads AWID_PUBLIC_ORIGINS from the environment.
+        app.state.awid_public_origins = (REGISTRY_URL,)
         yield Registry(app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app))
     finally:
         await infra.close()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 
 import httpx
@@ -21,9 +22,10 @@ from awid.did import (
     generate_keypair,
     stable_id_from_did_key,
 )
+from awid.id_tree_requests import covering_payload
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 import awid.registry as registry_module
-from awid.log import identity_state_hash, log_entry_payload
+from awid.log import canonical_server_origin, identity_state_hash, log_entry_payload
 from aweb.messaging.contacts import resolve_local_namespace_controller_did
 
 
@@ -31,6 +33,26 @@ def _authorization_parts(header: str) -> tuple[str, str]:
     scheme, did_key, signature = header.split(" ")
     assert scheme == "DIDKey"
     return did_key, signature
+
+
+def _covering(request: httpx.Request, claims: dict, *, parent: bool = False, sent: bool = True) -> bytes:
+    """The covering-v2 bytes a controller signs for ``claims`` (the operation,
+    its domain and timestamp, and its extra claims) over exactly this request;
+    with ``sent``, checked against the request's signed-payload header."""
+    expected = covering_payload(
+        aud=canonical_server_origin(f"{request.url.scheme}://{request.url.netloc.decode()}"),
+        method=request.method,
+        path=request.url.raw_path.decode(),
+        domain=claims["domain"],
+        operation=claims["operation"],
+        body=request.content,
+        timestamp=claims["timestamp"],
+        claims={k: v for k, v in claims.items() if k not in ("domain", "operation", "timestamp")},
+    )
+    if sent:
+        header = request.headers["x-aweb-parent-signed-payload" if parent else "x-aweb-signed-payload"]
+        assert base64.urlsafe_b64decode(header + "=" * (-len(header) % 4)) == expected
+    return expected
 
 
 class _FakeRedis:
@@ -204,13 +226,14 @@ async def test_register_address_resolves_current_key_before_posting():
             assert auth_did_key == controller_did
             verify_did_key_signature(
                 did_key=auth_did_key,
-                payload=canonical_json_bytes(
+                payload=_covering(
+                    request,
                     {
                         "domain": "acme.com",
                         "name": "support",
                         "operation": "register_address",
                         "timestamp": timestamp,
-                    }
+                    },
                 ),
                 signature_b64=signature,
             )
@@ -449,25 +472,27 @@ async def test_register_namespace_supports_parent_authorized_subdomains():
         assert parent_did_key == parent_controller_did
         verify_did_key_signature(
             did_key=auth_did_key,
-            payload=canonical_json_bytes(
+            payload=_covering(
+                request,
                 {
                     "domain": "project.aweb.ai",
                     "operation": "register",
                     "timestamp": timestamp,
-                }
+                },
             ),
             signature_b64=signature,
         )
         verify_did_key_signature(
             did_key=parent_did_key,
-            payload=canonical_json_bytes(
+            payload=_covering(
+                request,
                 {
                     "domain": "project.aweb.ai",
                     "child_domain": "project.aweb.ai",
                     "controller_did": child_controller_did,
                     "operation": "authorize_subdomain_registration",
                     "timestamp": parent_timestamp,
-                }
+                }, parent=True,
             ),
             signature_b64=parent_signature,
         )
@@ -516,13 +541,14 @@ async def test_register_namespace_can_set_default_delivery_origin():
         assert auth_did_key == controller_did
         verify_did_key_signature(
             did_key=auth_did_key,
-            payload=canonical_json_bytes(
+            payload=_covering(
+                request,
                 {
                     "domain": "example.com",
                     "operation": "register",
                     "default_delivery_origin": delivery_origin,
                     "timestamp": timestamp,
-                }
+                },
             ),
             signature_b64=signature,
         )
@@ -574,13 +600,14 @@ async def test_update_namespace_delivery_origin_signs_canonical_payload():
         assert auth_did_key == controller_did
         verify_did_key_signature(
             did_key=auth_did_key,
-            payload=canonical_json_bytes(
+            payload=_covering(
+                request,
                 {
                     "domain": "example.com",
                     "operation": "update_namespace",
                     "default_delivery_origin": delivery_origin,
                     "timestamp": timestamp,
-                }
+                },
             ),
             signature_b64=signature,
         )
@@ -634,26 +661,28 @@ async def test_register_namespace_parent_authorization_binds_child_controller_di
         assert auth_did_key == other_controller_did
         verify_did_key_signature(
             did_key=auth_did_key,
-            payload=canonical_json_bytes(
+            payload=_covering(
+                request,
                 {
                     "domain": "project.aweb.ai",
                     "operation": "register",
                     "timestamp": timestamp,
-                }
+                },
             ),
             signature_b64=auth_signature,
         )
         with pytest.raises(ValueError):
             verify_did_key_signature(
                 did_key=parent_did_key,
-                payload=canonical_json_bytes(
+                payload=_covering(
+                    request,
                     {
                         "domain": "project.aweb.ai",
                         "child_domain": "project.aweb.ai",
                         "controller_did": child_controller_did,
                         "operation": "authorize_subdomain_registration",
                         "timestamp": parent_timestamp,
-                    }
+                    }, parent=True, sent=False,
                 ),
                 signature_b64=parent_signature,
             )
@@ -688,13 +717,14 @@ async def test_rotate_namespace_controller_signs_proof_with_new_controller_key()
         assert payload == {"new_controller_did": new_controller_did}
         verify_did_key_signature(
             did_key=auth_did_key,
-            payload=canonical_json_bytes(
+            payload=_covering(
+                request,
                 {
                     "domain": "example.com",
                     "new_controller_did": new_controller_did,
                     "operation": "rotate_controller",
                     "timestamp": timestamp,
-                }
+                },
             ),
             signature_b64=signature,
         )
@@ -742,26 +772,28 @@ async def test_rotate_namespace_controller_supports_parent_authorization_headers
         assert parent_did_key == parent_controller_did
         verify_did_key_signature(
             did_key=auth_did_key,
-            payload=canonical_json_bytes(
+            payload=_covering(
+                request,
                 {
                     "domain": "project.aweb.ai",
                     "new_controller_did": new_controller_did,
                     "operation": "rotate_controller",
                     "timestamp": timestamp,
-                }
+                },
             ),
             signature_b64=auth_signature,
         )
         verify_did_key_signature(
             did_key=parent_did_key,
-            payload=canonical_json_bytes(
+            payload=_covering(
+                request,
                 {
                     "domain": "project.aweb.ai",
                     "child_domain": "project.aweb.ai",
                     "new_controller_did": new_controller_did,
                     "operation": "authorize_subdomain_rotation",
                     "timestamp": parent_timestamp,
-                }
+                }, parent=True,
             ),
             signature_b64=parent_signature,
         )
@@ -826,13 +858,14 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
             assert auth_did_key == controller_did
             verify_did_key_signature(
                 did_key=auth_did_key,
-                payload=canonical_json_bytes(
+                payload=_covering(
+                    request,
                     {
                         "domain": "acme.com",
                         "name": "support",
                         "operation": "update_address",
                         "timestamp": timestamp,
-                    }
+                    },
                 ),
                 signature_b64=signature,
             )
@@ -856,13 +889,14 @@ async def test_list_update_delete_and_reverse_lookup_address_methods():
             assert auth_did_key == controller_did
             verify_did_key_signature(
                 did_key=auth_did_key,
-                payload=canonical_json_bytes(
+                payload=_covering(
+                    request,
                     {
                         "domain": "acme.com",
                         "name": "support",
                         "operation": "delete_address",
                         "timestamp": timestamp,
-                    }
+                    },
                 ),
                 signature_b64=signature,
             )
@@ -1776,13 +1810,14 @@ async def test_cached_registry_client_invalidates_address_reads_on_update():
             assert auth_did_key == controller_did
             verify_did_key_signature(
                 did_key=auth_did_key,
-                payload=canonical_json_bytes(
+                payload=_covering(
+                    request,
                     {
                         "domain": "acme.com",
                         "name": "support",
                         "operation": "update_address",
                         "timestamp": timestamp,
-                    }
+                    },
                 ),
                 signature_b64=signature,
             )
@@ -2003,13 +2038,14 @@ async def test_cached_registry_client_invalidates_address_cache_on_register():
             assert auth_did_key == controller_did
             verify_did_key_signature(
                 did_key=auth_did_key,
-                payload=canonical_json_bytes(
+                payload=_covering(
+                    request,
                     {
                         "domain": "acme.com",
                         "name": "support",
                         "operation": "register_address",
                         "timestamp": timestamp,
-                    }
+                    },
                 ),
                 signature_b64=signature,
             )

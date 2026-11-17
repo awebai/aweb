@@ -18,6 +18,7 @@ from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_key_acts import (
     MemoryTeamKeyPins,
+    TeamKeyMemo,
     TeamKeyActError,
     TeamKeyPin,
     TeamKeyUnverified,
@@ -294,22 +295,98 @@ async def test_a_team_never_seen_is_pinned_to_the_first_key():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('record', [None, 'stale-act'])
-async def test_a_different_key_without_a_valid_act_is_refused(record):
+async def test_a_different_key_without_any_act_is_refused():
+    pins = MemoryTeamKeyPins()
+    _, pinned = keypair()
+    _, served = keypair()
+    await pins.first_sight(TEAM_ID, pinned)
+    with pytest.raises(TeamKeyUnverified) as refused:
+        await pinned_team_key(
+            TEAM_ID, served, pins=pins, fetch_act=_fetch(None), resolver=TXTAnswers({}), enforce=True,
+        )
+    assert refused.value.reason == 'no_act'
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('enforce', [True, False])
+async def test_a_served_key_the_registry_act_does_not_name_keeps_the_pin(enforce, caplog):
+    """The registry serves K1 while its latest act names the pinned K0: a
+    substituted key beside a genuine old act. The pin stays and K0 is used."""
     pins = MemoryTeamKeyPins()
     controller = keypair()
     _, pinned = keypair()
     _, served = keypair()
     await pins.first_sight(TEAM_ID, pinned)
-    if record == 'stale-act':
-        record = _example_act(controller, pinned)  # an act, but for another key
-    with pytest.raises(TeamKeyUnverified) as refused:
-        await pinned_team_key(
-            TEAM_ID, served, pins=pins, fetch_act=_fetch(record),
-            resolver=_dns('_awid.team.example.com', controller[1]), enforce=True,
+    with caplog.at_level(logging.WARNING, logger='awid.team_key_acts'):
+        key = await pinned_team_key(
+            TEAM_ID, served, pins=pins, fetch_act=_fetch(_example_act(controller, pinned)),
+            resolver=_dns('_awid.team.example.com', controller[1]), enforce=enforce,
         )
-    assert refused.value.reason == ('no_act' if record is None else 'key_mismatch')
+    assert key == pinned
     assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None)
+    assert [r.getMessage() for r in caplog.records] == [
+        f'team_key_pin_kept team={TEAM_ID} pinned={pinned} served={served} reason=key_mismatch',
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('enforce', [True, False])
+async def test_a_process_still_served_the_old_key_uses_the_rotated_pin(enforce):
+    """After a rotation with an act, a process whose registry read predates it
+    is served the old key; the act names the new one, so the pin stays."""
+    pins = MemoryTeamKeyPins()
+    controller = keypair()
+    _, old = keypair()
+    _, new = keypair()
+    resolver = _dns('_awid.team.example.com', controller[1])
+    record = _example_act(controller, new)
+    await pins.first_sight(TEAM_ID, old)
+    assert await pinned_team_key(TEAM_ID, new, pins=pins, fetch_act=_fetch(record), resolver=resolver, enforce=enforce) == new
+    moved = await pins.pin(TEAM_ID)
+
+    assert await pinned_team_key(TEAM_ID, old, pins=pins, fetch_act=_fetch(record), resolver=resolver, enforce=enforce) == new
+    assert await pins.pin(TEAM_ID) == moved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('enforce', [True, False])
+async def test_two_rotations_never_move_the_pin_to_the_middle_key(enforce):
+    """K0 -> K1 -> K2 with an act each; a process still holding K1 sees the
+    latest act (K2). The pin does not move to K1 and converges on K2."""
+    pins = MemoryTeamKeyPins()
+    controller = keypair()
+    _, first = keypair()
+    _, middle = keypair()
+    _, last = keypair()
+    resolver = _dns('_awid.team.example.com', controller[1])
+    latest = _example_act(controller, last)
+    await pins.first_sight(TEAM_ID, first)
+
+    assert await pinned_team_key(TEAM_ID, middle, pins=pins, fetch_act=_fetch(latest), resolver=resolver, enforce=enforce) == first
+    assert (await pins.pin(TEAM_ID)).team_did_key == first
+
+    assert await pinned_team_key(TEAM_ID, last, pins=pins, fetch_act=_fetch(latest), resolver=resolver, enforce=enforce) == last
+    assert (await pins.pin(TEAM_ID)).team_did_key == last
+    assert await pinned_team_key(TEAM_ID, middle, pins=pins, fetch_act=_fetch(latest), resolver=resolver, enforce=enforce) == last
+    assert (await pins.pin(TEAM_ID)).team_did_key == last
+
+
+@pytest.mark.asyncio
+async def test_without_enforcement_an_act_for_the_served_key_from_no_dns_controller_moves_the_pin():
+    """The act names the served key but no controller DNS record names its
+    signer (a hosted namespace, S-R1): measuring mode still moves the pin."""
+    pins = MemoryTeamKeyPins()
+    controller = keypair()
+    _, pinned = keypair()
+    _, served = keypair()
+    await pins.first_sight(TEAM_ID, pinned)
+    key = await pinned_team_key(
+        TEAM_ID, served, pins=pins, fetch_act=_fetch(_example_act(controller, served)), resolver=TXTAnswers({}),
+        enforce=False,
+    )
+    assert key == served
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, None)
 
 
 @pytest.mark.asyncio
@@ -400,3 +477,20 @@ async def test_with_enforcement_the_refusal_logs_the_same_line(caplog):
     assert [r.getMessage() for r in caplog.records] == [
         f'team_key_pin_mismatch team={TEAM_ID} pinned={pinned} served={served} reason=no_act enforced=true',
     ]
+
+
+def test_the_memo_answers_only_the_served_key_it_saw_within_its_window():
+    now = [100.0]
+    memo = TeamKeyMemo(seconds=60, clock=lambda: now[0])
+    _, served = keypair()
+    _, other = keypair()
+    _, answer = keypair()
+    assert memo.get(TEAM_ID, served) is None
+    memo.put(TEAM_ID, served, answer)
+    assert memo.get(TEAM_ID, served) == answer
+    assert memo.get(TEAM_ID, other) is None
+    assert memo.get('other:team.example.com', served) is None
+    now[0] += 59.9
+    assert memo.get(TEAM_ID, served) == answer
+    now[0] += 0.1
+    assert memo.get(TEAM_ID, served) is None
