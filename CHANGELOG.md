@@ -5,6 +5,7 @@
 - Embedded aweb and AWID applications preserve their host's logging handlers
   and root level. Starting them no longer suppresses later host warnings;
   standalone services still configure their own logging.
+  In library mode, `AWEB_LOG_LEVEL`, `AWEB_LOG_JSON` and `AWID_LOG_JSON` have no effect; the embedding host configures logging.
 
 - `aw init` with a hosted API key shows the hosted service's coded refusal
   (for example `creator_must_sign`) with what to do about it, in text and as
