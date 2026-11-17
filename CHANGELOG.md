@@ -23,6 +23,34 @@
   key, scope or setup command, aw says to run the changed command in a new
   directory and keep `.aw/partial-init.yaml`, instead of "rerun the same
   command in this directory", which the partial state would refuse.
+- The help for `aw mail send`, `aw chat send-and-wait`, `aw chat
+  send-and-leave` and `aw beads-mail send`, and the CLI reference, now
+  describe how a bare recipient name is looked up in this identity's other
+  local teams, including that a team that cannot be read refuses the send.
+- `aw id child ...`, `aw id parent request|import` and `aw id revoke` again
+  accept the released form `--human ID --domain DOMAIN`, beside the global
+  selector `--human ID --human-domain DOMAIN`: with `--human`, `--domain`
+  names the person's domain. Both may be given only when they name the same
+  domain.
+- `aw chat send-and-wait`, `send-and-leave`, `extend-wait`, `open`,
+  `history`, `listen` and `show-pending` to a teammate's alias now use the
+  conversation found by the DID the team's agent list confirms for that
+  alias, never by the alias, which an outside participant may also hold: a
+  chat session with `other.org/bob` could receive a message meant for
+  teammate `bob`, or be shown as his. A new conversation is still started by the
+  alias, which the server resolves in the team. A bare alias with no
+  confirmed DID still selects a conversation only when it names exactly one
+  participant, and that check now covers every conversation, not just the
+  pending ones, before choosing. When an alias is searched across the
+  sender's other teams, a team whose lookup fails is a refusal, not a team
+  without that alias.
+- A namespace, team or certificate write that aw does not replay, whose
+  answer is lost after the registry received it, now says the registry may
+  have applied it and names a command to check its state before retrying, in
+  text and in the `--json` error message (code `outcome_unknown`). `aw id team
+  rotate-key` no longer reports such a rotation as refused with the team key
+  unchanged: it says the new key is kept as the pending key and that running
+  the command again finishes the rotation.
 - ID-tree status, certificate registration and revocation return retryable
   HTTP 503 `dns_unavailable` for DNS timeouts and resolver failures. Missing
   or invalid public proof and missing epochs retain `evidence_unavailable`.

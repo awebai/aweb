@@ -533,6 +533,17 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 	return c, sel, nil
 }
 
+// aliasTeamSearchHelp describes resolveClientSelectionForAliasTarget to the
+// commands that use it.
+const aliasTeamSearchHelp = "\n\nA bare recipient name is looked up in the selected team. When that team's\n" +
+	"agent list and roster say the name is not there, this identity has other\n" +
+	"local team memberships, and --team is not given, aw looks in those teams:\n" +
+	"a name found in exactly one of them is sent from that team, which aw names\n" +
+	"on stderr; a name found in more than one needs --team. If any of those teams\n" +
+	"cannot be read, the send is refused rather than guessed. When the selected\n" +
+	"team itself cannot be read, aw stays in it, and the send confirms the\n" +
+	"recipient before delivery."
+
 func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias string) (*aweb.Client, *awconfig.Selection, error) {
 	wd, _ := os.Getwd()
 	c, sel, err := resolveClientSelectionForDir(wd)
@@ -576,15 +587,15 @@ func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias strin
 		if teamID == "" || teamID == strings.TrimSpace(sel.TeamID) {
 			continue
 		}
+		// A team that cannot be searched may hold the alias too, so the
+		// teams that were searched do not establish a unique match.
 		candidateClient, candidateSel, err := resolveClientSelectionForDirWithTeamOverride(sel.WorkingDir, teamID)
 		if err != nil {
-			debugLog("resolve alias fallback team %s: %v", teamID, err)
-			continue
+			return nil, nil, recipientLookupError(targetAlias, "team "+teamID+" selection", err)
 		}
 		found, err := clientHasAgentAlias(ctx, candidateClient, targetAlias)
 		if err != nil {
-			debugLog("list agents for fallback team %s: %v", teamID, err)
-			continue
+			return nil, nil, recipientLookupError(targetAlias, "team "+teamID+" agent list", err)
 		}
 		if found {
 			candidates = append(candidates, aliasCandidate{client: candidateClient, selection: candidateSel})

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -298,6 +299,13 @@ func onlyMissingCustodians(detail *awid.ResignedRecordsIncomplete) bool {
 }
 
 func rotateRefusal(teamID string, err error) error {
+	var unknown *awid.OutcomeUnknownError
+	if errors.As(err, &unknown) {
+		return &plainRefusal{
+			text: fmt.Sprintf("the rotation of %s lost its answer (%v); the registry may have applied this rotation; the new key is kept as the pending key, and running aw id team rotate-key again finishes it.", teamID, errors.Unwrap(unknown)),
+			err:  err,
+		}
+	}
 	if awid.MemberCertificatesUnsupported(err) {
 		return fmt.Errorf("AWID refused the rotation of %s: this registry cannot change a team key together with its members' certificates; the team key is unchanged: %w", teamID, err)
 	}

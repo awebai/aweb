@@ -120,6 +120,9 @@ type SendOptions struct {
 	Leaving           bool // Sender is leaving the conversation
 	StartConversation bool // Ignore targets_left, use 5min default wait
 	EncryptE2EE       bool // Send encrypted_v2 chat; fail closed if keys are missing
+	// RecipientDID is the DID the caller confirmed for its one target. An
+	// existing session is then selected by this strong identity only.
+	RecipientDID string
 }
 
 // StatusCallback receives protocol status updates.

@@ -42,9 +42,9 @@ func TestHumanSelectorCLIKeepsActorAndOrganizationSeparate(t *testing.T) {
 		args   []string
 		reason string
 	}{
-		{[]string{"id", "parent", "request", "--domain", "example.com", "--human", "did:aw:selected", "--human-domain", "example.com"}, "with --human, use --human-domain"},
-		{[]string{"id", "child", "invite", "--domain", "example.com", "--human", "did:aw:selected", "--human-domain", "example.com"}, "with --human, use --human-domain"},
-		{[]string{"id", "revoke", "did:aw:target", "--domain", "example.com", "--human", "did:aw:selected", "--human-domain", "example.com"}, "with --human, use --human-domain"},
+		{[]string{"id", "parent", "request", "--domain", "other.example", "--human", "did:aw:selected", "--human-domain", "example.com"}, "--domain and --human-domain name different domains"},
+		{[]string{"id", "child", "invite", "--domain", "other.example", "--human", "did:aw:selected", "--human-domain", "example.com"}, "--domain and --human-domain name different domains"},
+		{[]string{"id", "revoke", "did:aw:target", "--domain", "other.example", "--human", "did:aw:selected", "--human-domain", "example.com"}, "--domain and --human-domain name different domains"},
 		{[]string{"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:other", "--human", "did:aw:selected", "--human-domain", "example.com"}, "same person"},
 		{[]string{"id", "create", "--name", "child", "--domain", "other.example", "--human-parent", "did:aw:selected", "--human", "did:aw:selected", "--human-domain", "example.com"}, "cannot cross domains"},
 		{[]string{"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:selected"}, "--human ID --human-domain DOMAIN"},
@@ -68,6 +68,66 @@ func TestHumanSelectorCLIKeepsActorAndOrganizationSeparate(t *testing.T) {
 				t.Fatal("selection refusal created identity state")
 			}
 		})
+	}
+}
+
+// The released per-command form --human ID --domain DOMAIN keeps working
+// beside the global selector: --domain names the person's domain, and it
+// reaches the same point as --human ID --human-domain DOMAIN.
+func TestReleasedHumanDomainFormStillSelectsThePerson(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	for _, prefix := range [][]string{
+		{"id", "parent", "request"},
+		{"id", "child", "invite"},
+		{"id", "child", "pending"},
+		{"id", "revoke", "did:aw:target"},
+	} {
+		for _, form := range [][]string{
+			{"--human", "did:aw:selected", "--domain", "example.com"},
+			{"--human", "did:aw:selected", "--human-domain", "example.com"},
+			{"--human", "did:aw:selected", "--domain", "example.com", "--human-domain", "example.com"},
+		} {
+			args := append(append([]string{}, prefix...), form...)
+			t.Run(strings.Join(args, " "), func(t *testing.T) {
+				home := t.TempDir()
+				cmd := exec.CommandContext(ctx, bin, args...)
+				cmd.Env = testCommandEnv(home)
+				cmd.Dir = home
+				out, err := cmd.CombinedOutput()
+				if err == nil || !strings.Contains(string(out), "needs a human at") {
+					t.Fatalf("the person was not selected (want the terminal requirement next): %v\n%s", err, out)
+				}
+			})
+		}
+	}
+}
+
+func TestReleasedHumanDomainFormSetsThePersonsDomain(t *testing.T) {
+	oldH, oldHD, oldPD, oldCD := humanFlag, humanDomainFlag, idParentDomain, idChildDomain
+	t.Cleanup(func() { humanFlag, humanDomainFlag, idParentDomain, idChildDomain = oldH, oldHD, oldPD, oldCD })
+	for _, cmd := range []*cobra.Command{idParentRequestCmd, idChildInviteCmd, idRevokeCmd} {
+		humanFlag, humanDomainFlag = "did:aw:selected", ""
+		if err := cmd.Flags().Set("domain", "example.com"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := prepareIDHumanSelection(cmd); err != nil && !strings.Contains(err.Error(), "needs a human at") {
+			t.Fatalf("%s: %v", cmd.CommandPath(), err)
+		}
+		if humanDomainFlag != "example.com" {
+			t.Fatalf("%s: person domain %q, want example.com from --domain", cmd.CommandPath(), humanDomainFlag)
+		}
+		if got := idParentOptionsFromFlags(); got.Domain != "example.com" || got.Human != "did:aw:selected" {
+			t.Fatalf("parent options %+v", got)
+		}
+		if got := idChildOptionsFromFlags(); got.Issuer.Domain != "example.com" || got.Issuer.Human != "did:aw:selected" {
+			t.Fatalf("child options %+v", got.Issuer)
+		}
+		cmd.Flags().Lookup("domain").Changed = false
+		_ = cmd.Flags().Set("domain", "")
+		cmd.Flags().Lookup("domain").Changed = false
 	}
 }
 
