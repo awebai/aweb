@@ -10,6 +10,7 @@ BEGIN
     FOR legacy_schema IN
         SELECT table_schema FROM information_schema.columns
         WHERE table_name = 'schema_migrations' AND column_name = 'module_name'
+          AND has_schema_privilege(table_schema, 'USAGE')
     LOOP
         EXECUTE format(
             'SELECT EXISTS (SELECT 1 FROM %I.schema_migrations WHERE module_name = $1)',

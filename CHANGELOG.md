@@ -6,7 +6,9 @@
   contexts and audit kinds. Public ID-status reads and application passkey
   proofs are unchanged. Upgrading removes the nine retired signer tables from
   schemas whose migration ledgers identify those modules; candidate signer
-  data is discarded. Stop an old signer before upgrading.
+  data and preinstallation proof rows are discarded. Application proof rows
+  retain their bytes and regain their required installation fields. Stop an
+  old signer before upgrading.
 
 - `aw` signs every registry controller write in the covering-v2 form, as the
   Python client below does, through one write path: namespace register,
