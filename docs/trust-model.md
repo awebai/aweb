@@ -545,8 +545,10 @@ Named residuals:
   readiness check, using `awid.team_key_acts.seed_team_key_baseline`; an
   existing unqualified pin is never guessed from its old timestamp. This
   explicit optional check never lowers the floor. Ordinary unchanged-key
-  requests retain main's acceptance, without seeding I/O or an enrichment
-  failure changing their status, including after enforcement is enabled.
+  requests do no seeding I/O. With enforcement on, an unverified measuring
+  move is refused from local pin metadata, without trying an act read; the
+  operator must finish the readiness check first. For an otherwise accepted
+  unchanged key, no enrichment failure changes the request's status.
 - **The `local` namespace** has no DNS, so a pinned local team cannot rotate
   without the server operator re-pinning it.
 - **Hosted teams.** A child may share the parent's controller key or use a

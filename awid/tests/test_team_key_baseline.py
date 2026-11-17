@@ -117,7 +117,7 @@ async def test_unchanged_request_does_not_read_or_wait_for_enrichment(
                     pins=pins,
                     fetch_act=lambda: sdk.get_team_key_act(world.domain, "base"),
                     resolver=world.resolver,
-                    enforce=True,
+                    enforce=not measuring_move,
                     memo=TeamKeyMemo(),
                     fetch_namespace_evidence=evidence,
                 )

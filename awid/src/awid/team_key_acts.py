@@ -412,6 +412,8 @@ async def _resolve_pin(team_id, served_key, *, pins, fetch_act, resolver, enforc
     if pin is None:
         pin = await pins.first_sight(team_id, served_key)
     if pin.team_did_key == served_key:
+        if enforce and pin.act_at is not None and pin.act_key != served_key:
+            _mismatch(team_id, pin.team_did_key, served_key, "baseline_unverified", enforce=True)
         if pin.act_at is not None and pin.act_key == served_key:
             witnessed(pin)
         elif not admitted:
