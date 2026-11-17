@@ -1211,8 +1211,9 @@ A success returns exactly `{certificate_id, registered_at}`. Refusals use
 the tree's refusals (`domain_mismatch`, `human_issuer_is_agent`, `cycle`,
 `duplicate_id`, `missing_parent`, `identity_kind_immutable`, `subject_revoked`,
 `unregistered_parent`, `parent_revoked`, `issuer_key_not_current`,
-`superseded_certificate`, `root_replaced`), and 503 `evidence_unavailable` when the domain has
-no current root authority.
+`superseded_certificate`, `root_replaced`), and 503 `dns_unavailable` when
+the root DNS lookup cannot be completed, or `evidence_unavailable` when the
+domain has no current root authority.
 
 Registration is rate limited in the `id_certificate_register` bucket: 300
 requests per hour per client IP. Every request does signature and database
@@ -1268,8 +1269,9 @@ A success returns exactly `{revoked_at, effective_from}`. Refusals use
 `detail.code`: 400 `invalid_shape` and `invalid_json`, 401 for the envelope,
 403 `revocation_forbidden` and `backdate_forbidden`, 404 `unknown_id` (no
 registered ID by that id), 409 `head_conflict`, 422 `domain_mismatch` and
-`invalid_cutoff`, and 503 `evidence_unavailable`. Revocation is rate limited
-in the `id_certificate_revoke` bucket, 300 requests per hour per client IP,
+`invalid_cutoff`, and 503 `dns_unavailable` when the root DNS lookup cannot
+be completed, or `evidence_unavailable` when root authority is unavailable.
+Revocation is rate limited in the `id_certificate_revoke` bucket, 300 requests per hour per client IP,
 with the same `AWID_SERVICE_TOKEN`-only exemption and rationale as
 registration.
 
@@ -1295,7 +1297,8 @@ not registered in this domain. `observed_at` never precedes the snapshot's
 latest event. No invitation, membership, email or account data appears. While
 the stored controller, the open epoch and exact DNS disagree, or as soon as
 the response being built would exceed 131072 bytes, the endpoint answers 503
-`evidence_unavailable` with no partial evidence.
+`evidence_unavailable` with no partial evidence. A root DNS lookup that cannot
+be completed answers 503 `dns_unavailable`.
 
 ### Cached status client
 
