@@ -92,6 +92,7 @@ def retain(args) -> None:
         "second-outside.json",
         "third-unconfigured-no-evidence-outside.json",
         "approval-record.json",
+        "approval-page.json",
         "controller-public.json",
         "command-failure.stderr",
         "prompt-counts.json",
@@ -853,6 +854,7 @@ def assert_approval_target(request, first, second):
 
 
 def assert_approval_display(actual_digest, text, digest, first, second):
+    actual_digest = json.loads(actual_digest)
     assert actual_digest == digest, "approval_digest_mismatch"
     for value in (first, second, ORG, AUDIENCE, "human.add"):
         assert value in text, "approval_display_mismatch:" + value
@@ -893,12 +895,30 @@ class BrowserActor:
     async def approve(self, digest, first, second):
         from playwright.async_api import expect
 
-        row = self.page.locator("#requests article").filter(
-            has=self.page.get_by_text(digest, exact=True)
-        )
-        await expect(row).to_have_count(1)
+        rows = self.page.locator("#requests article")
+        displayed_digest = json.dumps(digest)
+        row = rows.filter(has=self.page.get_by_text(displayed_digest, exact=True))
+        evidence_path = Path("/work/approval-page.json")
+        evidence = {
+            "url": self.page.url,
+            "expected_digest": digest,
+            "approver": first,
+            "target": second,
+            "status": await self.page.locator("#status").inner_text(),
+            "rows_before_assertion": await rows.all_inner_texts(),
+        }
+        save(evidence_path, evidence)
+        try:
+            await expect(row).to_have_count(1)
+        except AssertionError:
+            evidence["rows_on_failure"] = await rows.all_inner_texts()
+            evidence["status_on_failure"] = await self.page.locator(
+                "#status"
+            ).inner_text()
+            save(evidence_path, evidence)
+            raise
         assert_approval_display(
-            await row.get_by_text(digest, exact=True).inner_text(),
+            await row.get_by_text(displayed_digest, exact=True).inner_text(),
             await row.inner_text(),
             digest,
             first,
@@ -1310,6 +1330,7 @@ async def driver():
                             raise RuntimeError("typed add did not retain needs-human")
                         await asyncio.sleep(0.1)
                     original = retained["request_bytes"]
+                    save(work / "approval-record.json", retained)
                     request = parse(decode(original))
                     assert_approval_target(request, first.identity, second.identity)
                     try:
