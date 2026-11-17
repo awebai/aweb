@@ -156,6 +156,7 @@ def archive_running_tree(root: Path, archive: Path) -> str:
                 "cli/go",
                 "awid",
                 "key-holder",
+                "deploy/team",
             ],
             cwd=root,
             stdout=stream,
