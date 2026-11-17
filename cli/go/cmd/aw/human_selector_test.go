@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -14,12 +13,11 @@ import (
 
 func TestIDHumanSelectorsHaveNoLocalShadows(t *testing.T) {
 	for _, cmd := range []*cobra.Command{idParentRequestCmd, idParentImportCmd, idParentInstallCmd, idParentRefreshCmd, idChildInviteCmd, idChildReceiveCmd, idChildPendingCmd, idChildShowCmd, idChildApproveCmd, idChildRefuseCmd, idRevokeCmd} {
-		if cmd.LocalNonPersistentFlags().Lookup("human") != nil || cmd.LocalNonPersistentFlags().Lookup("domain") != nil {
-			t.Errorf("%s still shadows the shared selector", cmd.CommandPath())
+		if cmd.LocalNonPersistentFlags().Lookup("human") != nil {
+			t.Errorf("%s shadows the global person selector", cmd.CommandPath())
 		}
-		err := cmd.FlagErrorFunc()(cmd, errors.New("unknown flag: --domain"))
-		if err == nil || !strings.Contains(err.Error(), "--human-domain") {
-			t.Errorf("%s old spelling lacks migration help: %v", cmd.CommandPath(), err)
+		if cmd.LocalNonPersistentFlags().Lookup("domain") == nil {
+			t.Errorf("%s lost its organization input", cmd.CommandPath())
 		}
 	}
 }
@@ -35,7 +33,7 @@ func TestIDHumanOptionsUseTheSharedSelection(t *testing.T) {
 	}
 }
 
-func TestHumanSelectorCLIRefusesOldSpellingAndDifferentPerson(t *testing.T) {
+func TestHumanSelectorCLIKeepsActorAndOrganizationSeparate(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), "aw")
@@ -44,13 +42,16 @@ func TestHumanSelectorCLIRefusesOldSpellingAndDifferentPerson(t *testing.T) {
 		args   []string
 		reason string
 	}{
-		{[]string{"id", "parent", "request", "--domain", "example.com"}, "use --human-domain"},
-		{[]string{"id", "child", "invite", "--domain", "example.com"}, "use --human-domain"},
-		{[]string{"id", "revoke", "did:aw:target", "--domain", "example.com"}, "use --human-domain"},
+		{[]string{"id", "parent", "request", "--domain", "example.com", "--human", "did:aw:selected", "--human-domain", "example.com"}, "with --human, use --human-domain"},
+		{[]string{"id", "child", "invite", "--domain", "example.com", "--human", "did:aw:selected", "--human-domain", "example.com"}, "with --human, use --human-domain"},
+		{[]string{"id", "revoke", "did:aw:target", "--domain", "example.com", "--human", "did:aw:selected", "--human-domain", "example.com"}, "with --human, use --human-domain"},
 		{[]string{"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:other", "--human", "did:aw:selected", "--human-domain", "example.com"}, "same person"},
 		{[]string{"id", "create", "--name", "child", "--domain", "other.example", "--human-parent", "did:aw:selected", "--human", "did:aw:selected", "--human-domain", "example.com"}, "cannot cross domains"},
 		{[]string{"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:selected"}, "--human ID --human-domain DOMAIN"},
-		{[]string{"id", "child", "invite", "--as-root", "--human-domain", "example.com", "--kind", "agent", "--recipient", "one child"}, "load namespace controller key"},
+		{[]string{"id", "child", "invite", "--as-root", "--domain", "example.com", "--kind", "agent", "--recipient", "one child"}, "load namespace controller key"},
+		{[]string{"id", "parent", "request", "--human-domain", "example.com"}, "--human-domain requires --human"},
+		{[]string{"id", "child", "invite", "--as-root", "--human-domain", "example.com"}, "--human-domain requires --human"},
+		{[]string{"id", "revoke", "did:aw:target", "--human-domain", "example.com"}, "--human-domain requires --human"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			home := t.TempDir()
