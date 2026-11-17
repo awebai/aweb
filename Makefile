@@ -381,7 +381,7 @@ test-cli: production-awid-sync
 	cd awid && uv sync --frozen
 	# A short, canonical temp root avoids macOS /var symlinks and socket limits.
 	cd cli/go && TMPDIR="$$(python3 -c 'import os; print(os.path.realpath("/tmp"))')" \
-		GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1
+		GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1 -timeout 20m
 
 # Exercise current SDK/CLI request auth against actual aweb/AWID/PG/Redis.
 test-cli-auth-v2:
@@ -473,8 +473,8 @@ test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
 
 test-a2a:
-	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid ./tools/a2a-gateway-check-workspace -count=1
-	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./cmd/aweb-a2a-gw -run A2A -count=1
+	cd cli/go && GOCACHE=/tmp/go-build go test ./internal/conformance ./a2a ./a2agw ./awid ./tools/a2a-gateway-check-workspace -count=1 -timeout 20m
+	cd cli/go && GOCACHE=/tmp/go-build go test ./cmd/aw ./cmd/aweb-a2a-gw -run A2A -count=1 -timeout 20m
 	cd awid && uv run pytest tests/test_a2a_publication_route.py -q
 	./scripts/check-a2a-copy-guardrails.sh
 

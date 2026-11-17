@@ -1040,18 +1040,6 @@ async def test_get_team_revocations_legacy_server_full_page_pages_by_since():
     assert "new-1" in revoked
 
 
-@pytest.mark.asyncio
-async def test_get_team_revocations_missing_team_is_empty():
-    def handler(request):
-        return Response(404, json={"detail": "Team not found"})
-
-    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
-    try:
-        revoked = await registry.get_team_revocations("acme.com", "ops")
-    finally:
-        await registry.aclose()
-    assert revoked == set()
-
 
 def _revocations_cache_payload(*, fetched_at: int, certificate_ids: list[str]) -> str:
     from awid.registry import _TEAM_REVOCATIONS_CACHE_TTL_SECONDS

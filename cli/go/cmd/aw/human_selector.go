@@ -22,7 +22,16 @@ func prepareIDHumanSelection(cmd *cobra.Command) (bool, error) {
 			return true, usageError("--human-domain requires --human ID; use --domain for an agent or --as-root organization")
 		}
 		if humanFlag != "" && cmd.Flags().Changed("domain") {
-			return true, usageError("with --human, use --human-domain DOMAIN instead of --domain")
+			// The released per-command form --human ID --domain DOMAIN keeps
+			// working: --domain is then the person's domain. Both flags may
+			// be given only when they name the same domain.
+			domain, _ := cmd.Flags().GetString("domain")
+			switch {
+			case strings.TrimSpace(humanDomainFlag) == "":
+				humanDomainFlag = strings.TrimSpace(domain)
+			case !strings.EqualFold(strings.TrimSpace(domain), strings.TrimSpace(humanDomainFlag)):
+				return true, usageError("--domain and --human-domain name different domains; with --human, both name the person's domain")
+			}
 		}
 		if humanFlag != "" {
 			asRoot, _ := cmd.Flags().GetBool("as-root")
@@ -59,8 +68,9 @@ func prepareIDHumanSelection(cmd *cobra.Command) (bool, error) {
 	return true, humanAtTerminal()
 }
 
-// Organization input and person selection are different questions. Validation
-// above prevents --domain from being ignored when a person acts.
+// Organization input and person selection are different questions. With
+// --human, the person's domain is --human-domain, or --domain in the released
+// per-command form (prepareIDHumanSelection copies it).
 func idCommandDomain(organization string) string {
 	if humanFlag != "" {
 		return humanDomainFlag

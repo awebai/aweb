@@ -754,7 +754,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
 				TeamID: "backend:demo",
-				Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob"}},
+				Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob", DIDKey: "did:key:z6Mkbob"}},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -894,7 +894,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 		case "/v1/agents":
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{
 				TeamID: "backend:demo",
-				Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob"}},
+				Agents: []awid.AgentView{{AgentID: "bob-agent", Alias: "bob", DIDKey: "did:key:z6Mkbob"}},
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
