@@ -13,6 +13,7 @@ import pytest_asyncio
 from redis.asyncio import Redis
 
 import awid.registry as registry_module
+from awid import revocation_cache
 from awid.registry import CachedRegistryClient, RegistryError
 
 
@@ -150,6 +151,40 @@ async def test_explicit_invalidation_and_authorization_refusal_remove_every_deri
     with pytest.raises(RegistryError) as error:
         await selected(crl)
     assert error.value.status_code == 403
+    assert await crl.redis.exists(crl.key, crl.index, crl.meta) == 0
+
+
+@pytest.mark.asyncio
+async def test_old_backfill_cannot_restore_a_concurrently_replaced_complete_list(crl):
+    await publish(crl, {"revoked"})
+    old = await crl.client._read_cache_entry(crl.key, decode=set)
+    await publish(crl, {"active"})
+    assert not await revocation_cache.publish(crl.redis, crl.key, old["payload"],
+                                              retention_seconds=960, expected=old["raw"])
+    assert await selected(crl) == {"active"}
+
+
+@pytest.mark.asyncio
+async def test_corrupt_empty_prefix_never_allows_an_index_without_its_list(crl):
+    await publish(crl, {"revoked"})
+    meta = json.loads(await crl.redis.get(crl.meta))
+    meta["prefix"] = ""
+    await crl.redis.set(crl.meta, json.dumps(meta), ex=960)
+    await crl.redis.delete(crl.key)
+    crl.upstream[1] = {"active"}
+    assert await selected(crl) == {"active"}
+    assert len(crl.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_r9_generation_change_discards_index_and_team_invalidation_discards_all(crl):
+    await publish(crl, {"revoked"})
+    await crl.client._invalidate_team_certificate_cache_keys(crl.domain, "ops")
+    assert await crl.redis.exists(crl.key) == 1
+    assert await crl.redis.exists(crl.index, crl.meta) == 0
+    assert await selected(crl) == {"revoked"}
+    assert crl.calls == []
+    await crl.client._invalidate_team_cache(crl.domain, "ops")
     assert await crl.redis.exists(crl.key, crl.index, crl.meta) == 0
 
 
