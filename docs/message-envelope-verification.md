@@ -55,6 +55,26 @@ reports "evidence profile unsupported", with unknown continuity, rather than
 invalid evidence. Initial creation without a transition must name a subject key whose computed
 stable ID equals the person ID; mismatch is `creation_key_inconsistent`. This
 consistency check is local and requires no registry reader.
+
+The `human_enrolled_later` profile reports "can approve since T (issuer's
+statement), grade G (issuer's statement)". Its optional confirmation receipt is
+checked separately. Later enrollment never adds a creation claim; an identity
+with no enrollment still has its chain checked and reports "no evidence".
+
+People prepare their identity with `aw id human init`, using the
+passphrase-protected OS keychain at a terminal. An operator can hand them an
+issued certificate to complete with `aw --human ID --human-domain DOMAIN id human
+register FILE`. Approved issuance uses `id human add`, which returns a pending
+intent for the new person; it does not enroll them. The person runs `id human
+enroll --issuer URL` for an existing ID, or adds `--intent FILE` for a new ID,
+then registers and confirms their approval key in the named browser service.
+The signed intent supplies that service; `--approval-origin` is an optional
+equality pin. Repeating the command resumes its saved enrollment.
+
+`aw --human ID --human-domain DOMAIN id proof --message-file FILE --out proof.json`
+exports the person's signed message, chain and saved evidence. The recipient
+runs plain `aw verify proof.json` on another machine. The identity key stays in
+the OS keychain; the proof contains public evidence and no private key.
 The outer export rejects duplicate members,
 including escaped or case-insensitive names for the same field. Unrelated unknown
 outer fields and malformed JSON remain invalid.
@@ -97,8 +117,10 @@ input. A nonzero verification result still prints one result document under
 
 The chain's domain selects its own DNS authority and status registry. Every
 global sender is checked for enrollment through independent public key reads:
-its signed address selects the key registry, or an explicit `--registry` or the
-default public registry supplies that route when the signed sender is an alias.
+its signed address selects the key registry. An addressless proof uses its
+presented leaf certificate's domain for DNS discovery under the same authority
+checks. Without an address or chain, an explicit `--registry` or the default
+public registry supplies that route.
 Only fresh, subject-bound enrollment evidence selects the ID-tree domain, and
 a presented chain in another domain is invalid with `domain_mismatch`.
 Every certificate inside a chain must also belong to that same domain (R3).

@@ -1,27 +1,29 @@
 """Holder-owned enrollment state and concrete shared protocol checks."""
 
-from datetime import datetime, timezone
+import sqlite3
+import time
+from datetime import UTC, datetime
 
-from awid.did import generate_keypair, did_from_public_key, stable_id_from_did_key
-from approval_service.grading import EnrollmentGrading
-from approval_service.seams import check_enrollment_intent, commitment, check_http
+import pytest
 from approval_service.canonical import canonical, parse
 from approval_service.encoding import decode
 from approval_service.enrollment import PublicIssuer
-import sqlite3
-import time
+from approval_service.grading import EnrollmentGrading
+from approval_service.requester import AdmittedRequester
+from approval_service.seams import check_enrollment_intent, check_http, commitment
 from approval_service.verify import Refused as ApprovalRefused
-import pytest
-
+from authenticator import Passkey
+from aweb_key_holder.auth import Caller
 from aweb_key_holder.enrollment import Holder
 from aweb_key_holder.keys import KeyStore, Refused
-from authenticator import Passkey
+from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from pending import expire_pending
 
 
 @pytest.fixture
 def holder(tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    store.set_human_issuance("approved")
     return Holder(
         store,
         registry=None,
@@ -51,7 +53,7 @@ def test_first_bootstrap_is_exact_single_use_with_unchanged_retry_bounds(holder)
         requester=signed["intent"]["requester"],
         origin=holder.approval_origin,
         rp_id=holder.rp_id,
-        now=int(datetime.now(timezone.utc).timestamp()),
+        now=int(datetime.now(UTC).timestamp()),
     )
     assert checked["state"] == "pending" and checked["person"] == target
     with pytest.raises(Refused, match="bootstrap_closed"):
@@ -59,6 +61,7 @@ def test_first_bootstrap_is_exact_single_use_with_unchanged_retry_bounds(holder)
     assert {row["operation"] for row in holder.store.audit()} == {
         "namespace_id_issue",
         "enrollment_intent",
+        "human_issuance_change",
     }
 
 
@@ -67,7 +70,14 @@ def test_new_human_is_not_a_routine_signed_object_or_an_active_approver(holder):
     holder.bootstrap_pending(target, key)
     with pytest.raises(Refused, match="approver_not_active"):
         holder.active_person(target)
-    assert holder.store.audit()[0]["approval"] is None
+    assert (
+        next(
+            row
+            for row in holder.store.audit()
+            if row["operation"] == "namespace_id_issue"
+        )["approval"]
+        is None
+    )
 
 
 def test_bad_creation_proof_cannot_sign_evidence_or_consume_nonce(holder):
@@ -76,7 +86,7 @@ def test_bad_creation_proof_cannot_sign_evidence_or_consume_nonce(holder):
     with pytest.raises((ApprovalRefused, Refused)):
         holder.finish_creation(target, {}, issuer=None)
     assert holder.pending(target) == result
-    assert len(holder.store.audit()) == 2
+    assert len(holder.store.audit()) == 3
     with holder.store._connection() as db:
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == 0
 
@@ -89,7 +99,19 @@ def test_unknown_or_substituted_enrollment_material_is_not_signed(holder):
             target, {"state": "pending", "registrations": []}, registration_count=1
         )
     assert holder.pending(target) == result
-    assert len(holder.store.audit()) == 2
+    assert len(holder.store.audit()) == 3
+
+
+def owner(holder, person):
+    """Explicit checked caller port for the storage/crypto component tests."""
+    key = holder.pending(person)["intent"]["intent"]["identity_key"]
+    caller = Caller(person, key, datetime.now(UTC).isoformat(), b"")
+    return {
+        "caller": caller,
+        "admitted": AdmittedRequester(
+            canonical(caller.descriptor), key, int(time.time())
+        ),
+    }
 
 
 def creation(holder, identity=None):
@@ -108,7 +130,9 @@ def creation(holder, identity=None):
             }
         ],
     }
-    confirmation = holder.bind_registration(target, material, registration_count=1)
+    confirmation = holder.bind_registration(
+        target, material, registration_count=1, **owner(holder, target)
+    )
     request = parse(decode(confirmation["request_bytes"]))
     receipt = {
         "version": 1,
@@ -125,11 +149,16 @@ def test_creation_proof_evidence_and_nonce_commit_once_with_real_webauthn_crypto
 ):
     target, receipt = creation(holder)
     issuer = PublicIssuer(holder.store.descriptor().did_key, int(time.time()))
-    value = holder.finish_creation(target, receipt, issuer=issuer)
+    value = holder.finish_creation(
+        target, receipt, issuer=issuer, **owner(holder, target)
+    )
     assert value["evidence"]["evidence"]["creation"]["grade"] == "passkey_uv"
     assert value["creation_receipt"] == receipt
     audit = holder.store.audit()
-    assert holder.finish_creation(target, receipt, issuer=issuer) == value
+    assert (
+        holder.finish_creation(target, receipt, issuer=issuer, **owner(holder, target))
+        == value
+    )
     assert holder.store.audit() == audit
     with holder.store._connection() as db:
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == 1
@@ -147,7 +176,7 @@ def test_nonce_write_failure_rolls_back_evidence_and_signature_audit(holder):
         )
     issuer = PublicIssuer(holder.store.descriptor().did_key, int(time.time()))
     with pytest.raises(sqlite3.IntegrityError, match="consume_failed"):
-        holder.finish_creation(target, receipt, issuer=issuer)
+        holder.finish_creation(target, receipt, issuer=issuer, **owner(holder, target))
     assert holder.store.audit() == before
     with holder.store._connection() as db:
         assert (
@@ -158,12 +187,48 @@ def test_nonce_write_failure_rolls_back_evidence_and_signature_audit(holder):
         )
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == 0
         db.execute("DROP TRIGGER fail_consumption")
-    assert holder.finish_creation(target, receipt, issuer=issuer)["evidence"]
+    assert holder.finish_creation(
+        target, receipt, issuer=issuer, **owner(holder, target)
+    )["evidence"]
 
 
 def test_controller_http_proof_is_only_for_its_frozen_bootstrap_body(holder):
     target, key = person()
     intent = holder.bootstrap_pending(target, key)["intent"]
+    # New self-carried intents cannot invoke the old controller callback.
+    with pytest.raises(Refused, match="requester_mismatch"):
+        holder.authorize_bootstrap(
+            target,
+            "enrollment_material",
+            canonical(
+                {
+                    "version": 1,
+                    "intent": intent,
+                    "admission": {"team_certificate": None, "id_chain": []},
+                }
+            ),
+            int(time.time()),
+        )
+    with holder.store._connection() as db, db:
+        root = holder.store._descriptor(db)
+        old = {
+            **intent["intent"],
+            "requester": {
+                "kind": "namespace_controller",
+                "namespace": root.domain,
+                "key": root.did_key,
+            },
+        }
+        intent = {
+            "intent": old,
+            "signature": holder._protocol(
+                db, root, "enrollment_intent", old, actor="operator"
+            ),
+        }
+        db.execute(
+            "UPDATE enrollments SET requester=?,intent=? WHERE person=?",
+            (canonical(old["requester"]).decode(), canonical(intent).decode(), target),
+        )
     body = {
         "version": 1,
         "intent": intent,
@@ -215,7 +280,9 @@ def test_expired_bootstrap_can_enroll_again_with_new_bounds_and_old_audit_retain
     assert holder.store.audit()[: len(before)] == before
     _, receipt = creation(holder, identity=(target, key))
     issuer = PublicIssuer(holder.store.descriptor().did_key, int(time.time()))
-    assert holder.finish_creation(target, receipt, issuer=issuer)["evidence"]
+    assert holder.finish_creation(
+        target, receipt, issuer=issuer, **owner(holder, target)
+    )["evidence"]
 
 
 @pytest.mark.parametrize("has_evidence", [False, True])
@@ -226,6 +293,7 @@ def test_live_pending_or_any_evidence_cannot_be_replaced(holder, has_evidence):
             target,
             receipt,
             issuer=PublicIssuer(holder.store.descriptor().did_key, int(time.time())),
+            **owner(holder, target),
         )
         expire_pending(holder, target)
     before = holder.store.audit()

@@ -1,14 +1,13 @@
 """aw's covering identity request profile; possession is not eligibility."""
 
-from dataclasses import dataclass
 import hashlib
-
-from fastapi import HTTPException, Request
+from dataclasses import dataclass
 
 from awid.did import validate_stable_id
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.request_auth import identity_auth_signature_payload
 from awid.signing import verify_did_key_signature
+from fastapi import HTTPException, Request
 
 
 @dataclass(frozen=True)

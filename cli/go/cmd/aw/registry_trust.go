@@ -16,7 +16,7 @@ import (
 func commandLineRegistryOrigins() []string {
 	values := []string{
 		a2aCardRegistry, a2aPublishRegistry, initAWIDRegistry,
-		idAddressClaimRegistryURL, idChildRegistry, idCreateRegistryURL, idHumanInitRegistry,
+		idAddressClaimRegistryURL, idChildRegistry, idCreateRegistryURL, idHumanInitRegistry, idHumanRegisterRegistry,
 		idNamespaceDeleteAddressRegistry, idNamespaceDeleteRegistry, idNamespacePrepareControllerRegistryURL,
 		idNamespaceReaffirmRegistry, idParentRegistry,
 		teamCreateRegistryURL, teamDeleteRegistryURL, teamFetchCertRegistry, teamHumanCreateRegistryURL,

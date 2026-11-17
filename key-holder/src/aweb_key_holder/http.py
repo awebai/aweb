@@ -3,14 +3,13 @@
 import logging
 import sqlite3
 
+from approval_service.canonical import InvalidJSON, parse
+from approval_service.verify import Refused as ApprovalRefused
+from awid.id_certificates import IDCertificateError, decode_id_chain_header
+from awid.request_body_limit import RequestBodyLimitMiddleware
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from jsonschema import ValidationError
-
-from awid.id_certificates import IDCertificateError, decode_id_chain_header
-from awid.request_body_limit import RequestBodyLimitMiddleware
-from approval_service.canonical import InvalidJSON, parse
-from approval_service.verify import Refused as ApprovalRefused
 
 from .auth import authenticate
 from .keys import Refused
@@ -63,6 +62,8 @@ def create_app(holder):
             "target_is_approver",
             "bootstrap_closed",
             "operation_not_served",
+            "human_issuance_operator",
+            "approval_not_configured",
         }:
             status = 403
         else:
@@ -94,7 +95,8 @@ def create_app(holder):
     async def input_for(request):
         caller = await authenticate(request, origin=holder.origin)
         try:
-            bundle = decode_id_chain_header(request.headers.get("X-AWID-ID-Chain", ""))
+            header = request.headers.get("X-AWID-ID-Chain", "")
+            bundle = decode_id_chain_header(header) if header else {"certificates": []}
         except IDCertificateError as error:
             raise Refused("identity_chain_required") from error
         value = parse(caller.body)
@@ -102,6 +104,7 @@ def create_app(holder):
 
     @app.post("/v1/humans")
     async def humans(request: Request):
+        holder.require_approved_issuance()
         caller, value, chain = await input_for(request)
         if "request_bytes" in value:
             result = await holder.present(caller, value, chain=chain)
@@ -113,14 +116,28 @@ def create_app(holder):
             result, status_code=status, headers={"Cache-Control": "no-store"}
         )
 
+    @app.post("/v1/enrollments/{person}")
+    async def enrollment_start(person: str, request: Request):
+        holder.require_approval()
+        caller, value, chain = await input_for(request)
+        if (
+            set(value) != {"requester"}
+            or value["requester"] != caller.descriptor
+            or caller.identity != person
+        ):
+            raise Refused("requester_mismatch")
+        return await holder.enroll_existing(caller, person=person, chain=chain)
+
     @app.post("/v1/enrollments/{person}/binding")
     async def binding(person: str, request: Request):
         caller, value, chain = await input_for(request)
         if set(value) != {"material", "registration_count"}:
             raise Refused("request_invalid")
-        admitted = await holder.admit(caller, chain)
+        admitted, current = await holder.enrollment_admission(
+            person, caller, chain, purpose="holder_binding"
+        )
         result = holder.bind_registration(
-            person, **value, caller=caller, admitted=admitted
+            person, **value, caller=caller, admitted=admitted, current=current
         )
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
