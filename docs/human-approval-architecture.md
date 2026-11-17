@@ -10,8 +10,8 @@ the Python and Go receipt and evidence verifiers, the key holder, and
 `aw id human register|enroll|add`, `aw id proof` and `aw verify`. Approval is
 optional and off by default. Lost-key replacement is not implemented.
 
-[Human verification: planned target](#human-verification-planned-target) records
-Juan's decision of 2026-11-16 and the four pieces still to build. It is a plan,
+[Human verification: planned target](#human-verification-planned-target),
+decided 2026-11-16, describes the four pieces still to build. It is a plan,
 not a claim that those pieces are running. Shipping without them is supported.
 
 ## The rule everything rests on
@@ -303,7 +303,7 @@ stays private; its grade is published.
 
 ## Human verification: planned target
 
-Juan's decision of 2026-11-16. This section is the plan for the optional human
+Decided 2026-11-16. This section is the plan for the optional human
 verification track, for both Cloud and self-hosted organisations. It supersedes
 any earlier requirement that an operation must always need a person. Nothing
 in this track is required before the rest of the product can ship.
@@ -322,6 +322,8 @@ A weaker level never satisfies a stronger requirement. Level names are
 provisional; their wire values must have one shared definition so a rename is
 one change. These are the planned configuration levels, not a change to the
 existing signed key-grade values.
+The existing `certified_hardware` grade satisfies `hardware` and `passkey`,
+`passkey_uv` satisfies `passkey`, and `email` corresponds to no key grade.
 
 | Level | Wire value | What the person does | What it establishes |
 |---|---|---|---|
@@ -441,7 +443,7 @@ product commands.
 3. **Email level (aweb-adfc).** Add private mailbox enrolment, the distinct
    service-signed email receipt and its verification in the gate.
 4. **awsign.com hosted (aweb-adfd).** Host the approval service. This is
-   production work and requires Juan's go.
+   production work and is decided separately.
 
 Shipping before these pieces exist is supported. Existing identity, membership
 and messaging operations remain usable without human verification configured.
