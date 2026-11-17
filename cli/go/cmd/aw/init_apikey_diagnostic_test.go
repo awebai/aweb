@@ -48,7 +48,7 @@ func TestWorkspaceInitShowsAKnownRefusalCodeWithItsRemedy(t *testing.T) {
 			if tc.name == "creator_must_sign" && len(tc.body) != 39 {
 				t.Fatalf("not the observed 39-byte body: %d", len(tc.body))
 			}
-			err := workspaceInitRefusal(t, tc.status, tc.body)
+			err := refuseWorkspaceInit(t, tc.status, tc.body)
 			text := err.Error()
 			for _, want := range []string{"error_code=" + tc.code, tc.remedy} {
 				if !strings.Contains(text, want) {
@@ -71,7 +71,7 @@ func TestWorkspaceInitKeepsAnUnknownOrConflictingRefusalCodePrivate(t *testing.T
 		"conflicting codes": `{"detail":{"code":"creator_must_sign"},"error":{"code":"awid_unavailable"}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := workspaceInitRefusal(t, 403, body)
+			err := refuseWorkspaceInit(t, 403, body)
 			text := err.Error()
 			if !strings.Contains(text, "error_code=unknown") || strings.Contains(text, "PRIVATE_SERVER_CODE") {
 				t.Fatalf("code not kept private: %s", text)
@@ -83,7 +83,7 @@ func TestWorkspaceInitKeepsAnUnknownOrConflictingRefusalCodePrivate(t *testing.T
 	}
 }
 
-func workspaceInitRefusal(t *testing.T, status int, body string) error {
+func refuseWorkspaceInit(t *testing.T, status int, body string) error {
 	t.Helper()
 	server := newLocalHTTPServerHandlerWithURL(t, func(_ string, w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/workspaces/init" {
@@ -102,4 +102,30 @@ func workspaceInitRefusal(t *testing.T, status int, body string) error {
 		t.Fatal("refusal accepted")
 	}
 	return err
+}
+
+// Every vocabulary entry, refused by a service through the real request path:
+// a remedy that changes the bootstrap context never comes with "rerun the same
+// command", and a retryable one always does.
+func TestWorkspaceInitPartialGuidanceFollowsEachRefusal(t *testing.T) {
+	for code, refusal := range workspaceInitRefusalRemedies {
+		t.Run(code, func(t *testing.T) {
+			body := `{"detail":{"code":"` + code + `"}}`
+			if code == "INTERNAL_ERROR" || strings.HasPrefix(code, "awid_") || code == "team_server_configuration_invalid" {
+				body = `{"error":{"code":"` + code + `"}}`
+			}
+			if code == "agent_limit_reached" {
+				body = `{"detail":{"error":"` + code + `"}}`
+			}
+			err := refuseWorkspaceInit(t, 409, body)
+			if got := errorCodeOf(err); got != code {
+				t.Fatalf("code = %q, want %q: %v", got, code, err)
+			}
+			guidance := partialInitGuidance(err)
+			rerun := strings.Contains(guidance, "rerun the same command")
+			if refusal.changesContext == rerun || (refusal.changesContext && !strings.Contains(guidance, "new directory")) {
+				t.Fatalf("changesContext=%v but guidance %q", refusal.changesContext, guidance)
+			}
+		})
+	}
 }

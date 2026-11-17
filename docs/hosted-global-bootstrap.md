@@ -179,6 +179,20 @@ still refuses and does not delete the original partial.
 
 For resumable failures with the original partial retained, the diagnostic says
 "rerun the same command in this directory; do not delete .aw/partial-init.yaml".
+
+A known hosted refusal whose remedy needs a different bootstrap context (another
+name, key, scope or setup command; `changesContext` in
+`workspaceInitRefusalRemedies`) says instead "this attempt's state stays in
+.aw/partial-init.yaml (do not delete it); run the changed command in a new
+directory." The directory left behind keeps the first attempt's signing key and
+context; under `--global` that key's `did:aw` was registered at the registry
+before the hosted call. Rerunning the original command unchanged there still
+resumes the first attempt, and succeeds only if what refused it has changed.
+The directory cannot be used for the changed command: the partial refuses any
+other name, alias, scope, inbound mode, team, service or registry URL, role,
+human name, agent type or API key. Its partial is the only
+copy of that key, so it is not safe to delete.
+
 This guidance does not apply to a quarantined identity mismatch and does not
 remove the remote-state reconciliation requirement above. Successful completion
 removes the temporary partial only after the identity has been persisted and

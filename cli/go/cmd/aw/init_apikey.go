@@ -186,7 +186,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	defer func() {
 		if resultErr != nil && resumable {
 			if info, err := os.Lstat(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); err == nil && info.Mode().IsRegular() {
-				resultErr = fmt.Errorf("%w\nrerun the same command in this directory; do not delete .aw/partial-init.yaml", resultErr)
+				resultErr = fmt.Errorf("%w\n%s", resultErr, partialInitGuidance(resultErr))
 			}
 		}
 	}()
@@ -935,7 +935,7 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 				}
 				return nil, withErrorCode(code, errors.New(guidance+" "+diagnostic))
 			}
-			return nil, withErrorCode(code, fmt.Errorf("workspace init was refused (%d %s): %s %s", resp.StatusCode, code, workspaceInitRefusalRemedies[code], diagnostic))
+			return nil, withErrorCode(code, fmt.Errorf("workspace init was refused (%d %s): %s %s", resp.StatusCode, code, workspaceInitRefusalRemedies[code].remedy, diagnostic))
 		}
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
