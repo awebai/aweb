@@ -337,7 +337,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					if out, err := blocked.CombinedOutput(); err == nil || !strings.Contains(string(out), "teams.yaml") {
 						t.Fatalf("pending home became a general acting principal: %v\n%s", err, out)
 					}
-					inherited := exec.Command(bin, "id", "parent", "request", "--domain", "example.com", "--parent", parent, "--invitation-id", invitation.InvitationID)
+					inherited := exec.Command(bin, "id", "parent", "request", "--human-domain", "example.com", "--parent", parent, "--invitation-id", invitation.InvitationID)
 					inherited.Dir = childDir
 					inherited.Env = append(testCommandEnv(os.Getenv("HOME")), "AWEB_IDENTITY_HOME="+recipientHome)
 					if out, err := inherited.CombinedOutput(); err == nil || !strings.Contains(string(out), "teams.yaml") {

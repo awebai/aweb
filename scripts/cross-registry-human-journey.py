@@ -105,7 +105,7 @@ def csr_requester():
     publish_csr("prepared.json", json.dumps(human))
     invitation = json.loads(wait_file("invitation.json").read_text())
     text, prompts = command(["id", "parent", "request", "--invitation-id", invitation["invitation_id"],
-                             "--domain", "alpha.example.com", "--root-parent", "--human", human["id"],
+                             "--human-domain", "alpha.example.com", "--root-parent", "--human", human["id"],
                              "--out", "/work/csr/request.json"], json_output=False)
     assert prompts == 1, text
     fingerprint, = re.findall(r"different trusted channel: ([0-9a-f-]+)", text)
@@ -114,8 +114,8 @@ def csr_requester():
     publish_csr("fingerprint.txt", fingerprint)
     wait_file("response-ready")
     imported, prompts = command(["id", "parent", "import", "/work/csr/response.json", "--human", human["id"],
-                                "--domain", "alpha.example.com", "--json"])
-    assert imported["registration"] == "registered" and prompts == 2, imported
+                                "--human-domain", "alpha.example.com", "--json"])
+    assert imported["registration"] == "registered" and prompts == 1, imported
     record = yaml.safe_load((human_home / "identity.yaml").read_text())
     assert record["state"] == "registered", record
     outgoing, = (human_home / "requests").glob("*.json")
@@ -139,7 +139,7 @@ def csr_root():
         assert exc.code == 404, exc
     else:
         raise AssertionError("prepare-only human already registered")
-    root = ["--as-root", "--domain", "alpha.example.com"]
+    root = ["--as-root", "--human-domain", "alpha.example.com"]
     invitation, _ = command(["id", "child", "invite", *root, "--kind", "human",
                               "--recipient", "fixture requester", "--json"])
     publish_csr("invitation.json", json.dumps(invitation))
@@ -333,7 +333,7 @@ def human_issues_human(human):
     Both humans share this home and keyring; the two-machine proof is the
     root-human CSR journey (csr_requester and csr_root)."""
     domain = "alpha.example.com"
-    issuer = ["--human", human, "--domain", domain]
+    issuer = ["--human", human, "--human-domain", domain]
     second, prompts = command(["id", "human", "init", "--domain", domain, "--another", "--json"])
     assert second["status"] == "prepared" and prompts == 2, second
     invitation, prompts = command(["id", "child", "invite", *issuer, "--kind", "human",
@@ -342,7 +342,7 @@ def human_issues_human(human):
     request_file = str(ROOT / "human-request.json")
     response_file = str(ROOT / "human-response.json")
     text, prompts = command(["id", "parent", "request", "--invitation-id", invitation["invitation_id"],
-                             "--domain", domain, "--parent", human, "--human", second["id"],
+                             "--human-domain", domain, "--parent", human, "--human", second["id"],
                              "--out", request_file], json_output=False)
     assert prompts == 1, text
     fingerprint, = re.findall(r"different trusted channel: ([0-9a-f-]+)", text)
@@ -353,8 +353,8 @@ def human_issues_human(human):
                          json_output=False, confirmation="y", fingerprint=fingerprint)
     assert prompts == 1
     imported, prompts = command(["id", "parent", "import", response_file, "--human", second["id"],
-                                 "--domain", domain, "--json"])
-    assert imported["registration"] == "registered" and prompts == 2, imported
+                                 "--human-domain", domain, "--json"])
+    assert imported["registration"] == "registered" and prompts == 1, imported
     home, = [h for h in (Path.home() / ".awid/humans" / domain).glob("*")
              if yaml.safe_load((h / "identity.yaml").read_text())["stable_id"] == second["id"]]
     record = yaml.safe_load((home / "identity.yaml").read_text())
@@ -378,7 +378,7 @@ def assert_revoked(cwd, expected_id):
 def agent_under(human, name):
     (ROOT / name).mkdir()
     agent, prompts = command(["id", "create", "--name", name, "--domain", "alpha.example.com",
-                              "--human-parent", human, "--json"], cwd=name)
+                              "--human-parent", human, "--human", human, "--human-domain", "alpha.example.com", "--json"], cwd=name)
     assert agent["human_parent"] == human and prompts == 1, agent
     return agent
 
@@ -493,7 +493,7 @@ def deployment_root_attribution(human):
     print("PASS: one registered root endorsement; local child and grandchild inherit human attribution without prompts", flush=True)
 
     revoked, prompts = command(["id", "revoke", root["did_aw"], "--human", human,
-                                "--domain", domain, "--json"])
+                                "--human-domain", domain, "--json"])
     assert prompts == 1 and revoked["id"] == root["did_aw"], revoked
     cases = []
     for name, did, key in identities:
@@ -536,7 +536,7 @@ def revocations(human):
     print("PASS: an agent revokes itself from AWID's time; a repeat is the same revocation", flush=True)
 
     child = agent_under(human, "revoke-child")
-    as_human = ["--human", human, "--domain", domain]
+    as_human = ["--human", human, "--human-domain", domain]
     command(["id", "revoke", child["did_aw"], *as_human, "--cutoff", "2026-01-01T00:00:00Z"],
             refusal="only --as-root may set --cutoff")
     revoked, prompts = command(["id", "revoke", child["did_aw"], *as_human, "--json"])
@@ -548,11 +548,11 @@ def revocations(human):
     # J10, scoped: the root admits a replacement and revokes the departing
     # human now. Its agents trace to no human; nothing is re-parented.
     departing, prompts = command(["id", "human", "init", "--domain", domain, "--as-root", "--another", "--json"])
-    assert departing["status"] == "registered" and prompts == 4, departing
+    assert departing["status"] == "registered" and prompts == 3, departing
     orphan = agent_under(departing["id"], "revoke-orphan")
     replacement, prompts = command(["id", "human", "init", "--domain", domain, "--as-root", "--another", "--json"])
-    assert replacement["status"] == "registered" and prompts == 4, replacement
-    revoked, prompts = command(["id", "revoke", departing["id"], "--as-root", "--domain", domain, "--json"])
+    assert replacement["status"] == "registered" and prompts == 3, replacement
+    revoked, prompts = command(["id", "revoke", departing["id"], "--as-root", "--human-domain", domain, "--json"])
     assert prompts == 0 and revoked["effective_from"] == revoked["revoked_at"], revoked
     assert_revoked("revoke-orphan", orphan["did_aw"])
     for record_id, case_kind, reason in ((departing["id"], "human", "revoked"),
@@ -615,14 +615,14 @@ def main():
             help_text = subprocess.check_output(["aw", "id", group, "--help"], text=True)
             assert ("invite" if group == "child" else "request") in help_text
     human, prompts = command(["id", "human", "init", "--domain", "alpha.example.com", "--as-root", "--json"])
-    assert human["status"] == "registered" and prompts == 4, human
+    assert human["status"] == "registered" and prompts == 3, human
     human_home, = (Path.home() / ".awid/humans/alpha.example.com").glob("*")
     human_record = yaml.safe_load((human_home / "identity.yaml").read_text())
     assert human_record["stable_id"] == human["id"]
     print("PASS: namespace, root human issuance and human certificate registration through real Secret Service + PTY", flush=True)
 
     args = ["id", "create", "--name", "alice", "--domain", "alpha.example.com",
-            "--human-parent", human["id"], "--json"]
+            "--human-parent", human["id"], "--human", human["id"], "--human-domain", "alpha.example.com", "--json"]
     command(args, fail_registration=True)
     identity_path = ROOT / "alice/.aw/identity.yaml"
     before_identity = identity_path.read_bytes()
@@ -645,7 +645,7 @@ def main():
 
     (ROOT / "fresh").mkdir()
     fresh, prompts = command(["id", "create", "--name", "fresh", "--domain", "alpha.example.com",
-                              "--human-parent", human["id"], "--json"], cwd="fresh")
+                              "--human-parent", human["id"], "--human", human["id"], "--human-domain", "alpha.example.com", "--json"], cwd="fresh")
     assert fresh["human_parent"] == human["id"] and prompts == 1
     print("PASS: fresh --human-parent issuance and agent certificate registration", flush=True)
 

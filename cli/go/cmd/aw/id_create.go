@@ -80,7 +80,7 @@ func init() {
 		}
 		cmd.Long += humanSigningHelp
 	}
-	idCreateCmd.Flags().StringVar(&idCreateHumanParent, "human-parent", "", "did:aw of the issuing human (local key, or a registered account human with --org)")
+	idCreateCmd.Flags().StringVar(&idCreateHumanParent, "human-parent", "", "Parent person did:aw; local signing also needs --human ID --human-domain DOMAIN (with --org, a registered account human)")
 	idCreateCmd.Flags().BoolVar(&idCreateRootParent, "root-parent", false, "Have this machine's namespace controller issue a humanless agent (BYOT only)")
 	idCreateCmd.Flags().BoolVar(&idCreateLocal, "local", false, "Create a key-only local identity (a did:key registered nowhere) in an explicit fresh --identity-home; resumable, and a rerun returns it")
 	idCreateCmd.Flags().BoolVar(&idCreateNoAddress, "no-address", false, "Create a registered identity with no address in an explicit fresh --identity-home, registering its own did:aw at --registry; resumable")

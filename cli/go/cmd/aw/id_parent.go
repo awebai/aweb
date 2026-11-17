@@ -28,8 +28,6 @@ import (
 // --root-parent, never inferred.
 
 var (
-	idParentHuman        string
-	idParentDomain       string
 	idParentInvitationID string
 	idParentParent       string
 	idParentRootParent   bool
@@ -46,7 +44,7 @@ var (
 		Use:   "request",
 		Short: "Export a certificate request against a parent's invitation",
 		Long: "Export a certificate request against the invitation your parent fixed: its\n" +
-			"--invitation-id, --domain and parent (--parent <did:aw|did:key> or --root-parent).\n" +
+			"--invitation-id, --human-domain and parent (--parent <did:aw|did:key> or --root-parent).\n" +
 			"A local did:key parent can issue only a local did:key agent child.\n" +
 			"Send the request file to the parent over your chosen channel, and tell them\n" +
 			"the fingerprint shown here through a different trusted channel.\n\n" +
@@ -69,9 +67,8 @@ var (
 )
 
 func init() {
+	idParentCmd.SetFlagErrorFunc(removedIDDomainFlag)
 	for _, cmd := range []*cobra.Command{idParentRequestCmd, idParentImportCmd} {
-		cmd.Flags().StringVar(&idParentHuman, "human", "", "Act as this human prepared on this machine (did:aw)")
-		cmd.Flags().StringVar(&idParentDomain, "domain", "", "Namespace domain of the invitation")
 		idParentCmd.AddCommand(cmd)
 	}
 	for _, cmd := range []*cobra.Command{idParentRequestCmd, idParentImportCmd} {
@@ -82,7 +79,7 @@ func init() {
 	}
 	idParentRequestCmd.Flags().StringVar(&idParentInvitationID, "invitation-id", "", "Invitation ID the parent gave you")
 	idParentRequestCmd.Flags().StringVar(&idParentParent, "parent", "", "did:aw or did:key of the parent identity")
-	idParentRequestCmd.Flags().BoolVar(&idParentRootParent, "root-parent", false, "The parent is the namespace root of --domain")
+	idParentRequestCmd.Flags().BoolVar(&idParentRootParent, "root-parent", false, "The parent is the namespace root of --human-domain")
 	idParentRequestCmd.Flags().BoolVar(&idParentResign, "resign", false, "Ask the parent to re-sign the certificate this local agent carries")
 	idParentRequestCmd.Flags().StringVar(&idParentOut, "out", "-", "Where to write the request (- for stdout)")
 	idParentImportCmd.Flags().StringVar(&idParentRegistry, "registry", "", "Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)")
@@ -112,7 +109,7 @@ func idParentOptionsFromFlags(commands ...*cobra.Command) idParentOptions {
 	}
 	wd, _ := os.Getwd()
 	return idParentOptions{
-		Operation: operation, Human: idParentHuman, Domain: idParentDomain, WorkingDir: wd, RegistryURL: idParentRegistry, NoRegister: idParentNoRegister,
+		Operation: operation, Human: humanFlag, Domain: humanDomainFlag, WorkingDir: wd, RegistryURL: idParentRegistry, NoRegister: idParentNoRegister,
 		HumanAtTerminal: humanAtTerminal, Keychain: awconfig.HumanKeychain{}, Prompt: awid.TerminalPassphrasePrompt(),
 	}
 }
@@ -214,8 +211,8 @@ func runIDParentRequest(cmd *cobra.Command, args []string) error {
 	var raw []byte
 	var err error
 	if idParentResign {
-		if idParentInvitationID != "" || idParentParent != "" || idParentRootParent || idParentDomain != "" {
-			return usageError("--resign takes its parent, domain and certificate from the installed chain; it takes no --invitation-id, --parent, --root-parent or --domain")
+		if idParentInvitationID != "" || idParentParent != "" || idParentRootParent || humanDomainFlag != "" {
+			return usageError("--resign takes its parent, domain and certificate from the installed chain; it takes no --invitation-id, --parent, --root-parent or --human-domain")
 		}
 		out, raw, err = executeIDParentResign(idParentOptionsFromFlags(cmd))
 	} else {

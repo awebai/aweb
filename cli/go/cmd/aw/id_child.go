@@ -21,14 +21,12 @@ import (
 // issuer fixes an invitation privately (`child invite`), the recipient
 // exports a request naming it, and the issuer receives it, reviews it and
 // approves or refuses it. Files and `-` for stdin/stdout are the transport.
-// The issuer is selected explicitly: --as-root --domain D for the namespace
+// The issuer is selected explicitly: --as-root --human-domain D for the namespace
 // root, --human <did:aw> for a human on this machine, and otherwise the
 // current agent identity.
 
 var (
 	idChildAsRoot   bool
-	idChildDomain   string
-	idChildHuman    string
 	idChildKind     string
 	idChildNote     string
 	idChildExpires  time.Duration
@@ -86,10 +84,9 @@ var (
 )
 
 func init() {
+	idChildCmd.SetFlagErrorFunc(removedIDDomainFlag)
 	for _, cmd := range []*cobra.Command{idChildInviteCmd, idChildReceiveCmd, idChildPendingCmd, idChildShowCmd, idChildApproveCmd, idChildRefuseCmd} {
-		cmd.Flags().BoolVar(&idChildAsRoot, "as-root", false, "Act as the namespace root, with this machine's controller key")
-		cmd.Flags().StringVar(&idChildDomain, "domain", "", "Namespace domain (with --as-root or --human)")
-		cmd.Flags().StringVar(&idChildHuman, "human", "", "Act as this human on this machine (did:aw)")
+		cmd.Flags().BoolVar(&idChildAsRoot, "as-root", false, "Act as the namespace root of --human-domain, with this machine's controller key")
 		cmd.Flags().StringVar(&idChildRegistry, "registry", "", "Registry origin for --as-root, when the domain's _awid record names none")
 		idChildCmd.AddCommand(cmd)
 	}
@@ -141,7 +138,7 @@ func idChildOptionsFromFlags(commands ...*cobra.Command) idChildOptions {
 	wd, _ := os.Getwd()
 	return idChildOptions{
 		Operation:       operation,
-		Issuer:          childIssuerSelection{AsRoot: idChildAsRoot, Domain: idChildDomain, Human: idChildHuman},
+		Issuer:          childIssuerSelection{AsRoot: idChildAsRoot, Domain: humanDomainFlag, Human: humanFlag},
 		WorkingDir:      wd,
 		RegistryURL:     idChildRegistry,
 		HumanAtTerminal: humanAtTerminal,

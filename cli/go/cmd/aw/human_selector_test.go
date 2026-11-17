@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -28,5 +32,40 @@ func TestIDHumanOptionsUseTheSharedSelection(t *testing.T) {
 	child := idChildOptionsFromFlags()
 	if parent.Human != humanFlag || parent.Domain != humanDomainFlag || child.Issuer.Human != humanFlag || child.Issuer.Domain != humanDomainFlag {
 		t.Fatal("commands selected a separate human/domain")
+	}
+}
+
+func TestHumanSelectorCLIRefusesOldSpellingAndDifferentPerson(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	for _, tc := range []struct {
+		args   []string
+		reason string
+	}{
+		{[]string{"id", "parent", "request", "--domain", "example.com"}, "use --human-domain"},
+		{[]string{"id", "child", "invite", "--domain", "example.com"}, "use --human-domain"},
+		{[]string{"id", "revoke", "did:aw:target", "--domain", "example.com"}, "use --human-domain"},
+		{[]string{"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:other", "--human", "did:aw:selected", "--human-domain", "example.com"}, "same person"},
+		{[]string{"id", "create", "--name", "child", "--domain", "other.example", "--human-parent", "did:aw:selected", "--human", "did:aw:selected", "--human-domain", "example.com"}, "cannot cross domains"},
+		{[]string{"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:selected"}, "--human ID --human-domain DOMAIN"},
+		{[]string{"id", "child", "invite", "--as-root", "--human-domain", "example.com", "--kind", "agent", "--recipient", "one child"}, "load namespace controller key"},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			home := t.TempDir()
+			before := homeContents(t, home)
+			cmd := exec.CommandContext(ctx, bin, tc.args...)
+			cmd.Env = testCommandEnv(home)
+			cmd.Dir = home
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), tc.reason) {
+				t.Fatalf("expected %q: %v\n%s", tc.reason, err, out)
+			}
+			after := homeContents(t, home)
+			if len(before) != len(after) {
+				t.Fatal("selection refusal created identity state")
+			}
+		})
 	}
 }
