@@ -228,9 +228,11 @@ class AWIDTeamCache:
         other read is a plain one.
 
         A team's key is held to its pin (``team_key_pins``; pins held for the
-        process when none is given): the registry alone cannot change it, only
-        the namespace controller's act, checked against the controller
-        ``txt_resolver`` (system DNS by default) names. Enforcement is
+        process when none is given): moving it requires the namespace
+        controller's act, checked against the controller
+        ``txt_resolver`` (system DNS by default) names, or the ID tree's
+        inherited delegation witness. For inherited authority the registry
+        names the child controller; exact DNS removes that dependence. Enforcement is
         staged: until ``enforce_team_key_pins``, a mismatch is logged as
         ``team_key_pin_mismatch`` and the registry's key is served."""
         self.registry_url = registry_url.rstrip("/")

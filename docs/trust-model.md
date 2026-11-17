@@ -512,7 +512,8 @@ Named residuals:
   optional `X-AWEB-Team-Key-Act`: a compact controller-signed act naming the
   domain, team and key and committing to the creation body. It is stored with
   creation in one transaction; the private display name is not published.
-  The first verified creation/current-key act seeds the pin's signing-time
+  Withholding an act can make a new team look like a legacy team at first
+  contact. The first verified creation/current-key act seeds the pin's signing-time
   floor, including when the key is unchanged. Legacy creation without that
   act stays accepted and its first admission remains TOFU; it needs explicit
   controller re-attestation before enforcement. A wholly unseen older state
@@ -532,7 +533,8 @@ Named residuals:
 - **Measuring moves.** The pin retains its highest accepted act time and the
   key that act actually named. Moving without an act does not mark the new
   key verified. Unchanged-key reads can establish a fresh baseline; they
-  never lower the retained floor. Existing unqualified pins are re-attested,
+  never lower the retained floor. An outage of that enrichment read does not
+  deny an unchanged admitted key or permit a key change. Existing unqualified pins are re-attested,
   not guessed from an old timestamp.
 - **The `local` namespace** has no DNS, so a pinned local team cannot rotate
   without the server operator re-pinning it.

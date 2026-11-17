@@ -18,6 +18,9 @@ import hashlib
 import json
 import logging
 import time
+
+import httpx
+from starlette.exceptions import HTTPException
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,6 +28,7 @@ from typing import Any, Protocol
 
 from awid.external_authority import TXTOutcomeResolver, discover_registry_authority
 from awid.id_certificates import IDCertificateError, IDChainEvidence, namespace_controller_from_evidence
+from awid.registry_types import RegistryError
 from awid.federation_errors import FederationAuthorityError
 from awid.id_tree_requests import CONTROLLER_REQUEST_TYPE
 from awid.signing import verify_did_key_signature
@@ -333,7 +337,17 @@ async def _resolve_pin(team_id, served_key, *, pins, fetch_act, resolver, enforc
         return served_key
     domain, name = parse_team_id(team_id)
     try:
-        record = await fetch_act()
+        try:
+            record = await fetch_act()
+        except (RegistryError, httpx.HTTPError, OSError, HTTPException) as exc:
+            status = getattr(exc, "status_code", None)
+            if not baseline or (status is not None and status < 500 and status != 429):
+                raise
+            # Baseline enrichment adds no outage dependency to an unchanged
+            # admitted key. The very same error still refuses a key change.
+            logger.warning("team_key_pin_baseline_unavailable team=%s reason=act_unavailable error=%s status=%s",
+                           team_id, type(exc).__name__, status)
+            return served_key
         if record is None:
             raise TeamKeyActError("no_act")
         act = await verify_team_key_change(record, domain=domain, name=name, team_did_key=served_key,

@@ -669,7 +669,10 @@ def _request_timestamp(request, timestamp):
         _require(type(timestamp) is str and re.fullmatch(
             r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z", timestamp) is not None,
             "payload_invalid")
-        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        try:
+            datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ControllerSigningError("payload_invalid") from exc
     else:
         parse_utc_seconds(timestamp)
 

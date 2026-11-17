@@ -1,4 +1,4 @@
-"""Explicit owner-inventory re-attestation; constructing a report never writes.
+"""Explicit owner-inventory re-attestation; reports make no registry mutation.
 
 Hosted callers supply their own approved inventory and controller signer. The
 registry's child/team lists never decide which keys deserve re-attestation.

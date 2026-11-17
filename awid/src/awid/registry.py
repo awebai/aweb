@@ -2919,6 +2919,7 @@ class CachedRegistryClient(RegistryClient):
     async def _invalidate_namespace_cache(self, domain: str) -> None:
         registry_url = await self._registry_url_for_domain(domain)
         await self._invalidate_keys(self._namespace_cache_key(domain, registry_url=registry_url))
+        await self._invalidate_id_status_cache(domain)
 
     async def _invalidate_address_cache(self, *, domain: str, name: str, did_aws: list[str]) -> None:
         registry_url = await self._registry_url_for_domain(domain)

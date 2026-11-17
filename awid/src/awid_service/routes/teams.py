@@ -659,6 +659,8 @@ async def create_team(
     try:
         async with db.transaction() as tx:
             await _lock_namespace_controller(request, tx, domain=domain, caller_did=caller_did)
+            if creation is not None:
+                enforce_timestamp_skew(act.signed_at.isoformat())
             row = await tx.fetch_one(
                 """
                 INSERT INTO {{tables.teams}}
