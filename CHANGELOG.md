@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- AWID cache invalidation for identity-tree, address and team-certificate
+  writes no longer scans unrelated Redis keys. Random cache generations keep
+  delayed refreshes from restoring invalidated entries without changing the
+  evidence freshness or authorization rules.
 - A 404 that is not one of the registry's own answers is no longer absence
   or an empty revocation list in the Python registry client.
 

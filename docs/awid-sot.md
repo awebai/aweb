@@ -1376,13 +1376,22 @@ which raises.
   no outage grace, and nothing older than 60 seconds is presented. The next
   request makes its own attempt. Each domain's entries are independent of
   every other domain's.
-- The same client reads its own identity-tree writes. Its
-  `register_id_certificate` and `revoke_id_certificate` remove every entry for
-  the written domain before the write is sent and again after it succeeds, so
-  the next read in that domain fetches. One entry covers a whole list of IDs,
-  so a write to one ID may change any entry in its domain. Removing the entry
-  before the write also covers a write whose answer is lost after AWID
-  committed it. Other domains' entries are kept.
+- The same client reads its own identity-tree writes. Registration and
+  revocation replace a domain/registry-scoped random cache-generation token
+  before sending the write and again when the attempt ends, including a lost
+  reply. The next acquisition uses the new token and fetches. An in-flight
+  refresh keeps its original token, so it cannot repopulate the current
+  generation. Other domains and configured registry origins are independent.
+  Missing generation metadata produces a miss, never a return to an old
+  generation. Tokens expire after one hour; evidence keeps its original
+  60-second age and expiry. No Redis keyspace scan is needed.
+- Address and certificate-list cache invalidation uses the same token scheme:
+  addresses are scoped by domain/registry, certificate lists by team/registry,
+  across their existing reader partitions. Retained old entries expire under
+  their original bounds. A cache acquisition adds one generation GET; a
+  generation replacement is one SET, independent of unrelated Redis keys.
+  Existing read authority, freshness, outage policy and endpoint shapes remain
+  unchanged.
 
 ### Registry client outbound bounds
 
