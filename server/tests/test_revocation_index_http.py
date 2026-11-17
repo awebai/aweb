@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from awid.registry import CachedRegistryClient
+from awid.registry import CachedRegistryClient, RegistryError
 from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers
 
@@ -78,9 +78,17 @@ async def test_warm_signed_auth_reads_no_full_crl_and_no_registry(privacy_app, m
 
         await env.registry_db.execute("UPDATE {{tables.team_certificates}} SET revoked_at=now() WHERE certificate_id='privacy-alice'")
         await cached._invalidate_keys(crl_key)
-        assert "privacy-alice" in await cached.get_team_revocations("example.test", TEAM_NAME)
-        response = await env.client.get("/v1/agents", headers=_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate))
-        assert response.status_code == 401, response.text
+        if history == 100000:
+            # One more revocation crosses the documented ceiling. A partial
+            # list/index must never be installed, even with a service token.
+            with pytest.raises(RegistryError, match="pagination exceeded 500 pages") as error:
+                await cached.get_team_revocations("example.test", TEAM_NAME)
+            assert error.value.status_code == 502
+            assert await env.redis.exists(crl_key, crl_key + ":membership", crl_key + ":membership-meta") == 0
+        else:
+            assert "privacy-alice" in await cached.get_team_revocations("example.test", TEAM_NAME)
+            response = await env.client.get("/v1/agents", headers=_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate))
+            assert response.status_code == 401, response.text
     finally:
         env.app.state.awid_registry_client = original
         await cached.aclose()
