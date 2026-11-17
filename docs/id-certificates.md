@@ -1120,7 +1120,7 @@ or retroactively attach unrelated legacy agents.
 
 An agent immediately under its organisation's namespace may be adopted once
 through the adoption path by a person of that organisation, keeping its ID and
-key. The recorded creator alone may adopt while their account is active and they are a current member of both the owning organisation and the agent's team; otherwise a current explicit team member with team-admin or owning-organisation owner/admin authority may adopt. The person explicitly
+key. The recorded creator alone may adopt while their account is active and they are a current member of the agent's team; organisation membership is not required. Otherwise, a current explicit team member with team-admin or owning-organisation owner/admin authority may adopt. The person explicitly
 signs for that named agent and key under their checked session or local command.
 A chain already containing a person refuses adoption. An agent immediately
 under another agent is not adopted independently; only its namespace-parented
