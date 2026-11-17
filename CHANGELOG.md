@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `aw init` with a hosted API key shows the hosted service's coded refusal
+  (for example `creator_must_sign`) with what to do about it, in text and as
+  the `--json` error code, instead of `error_code=unknown`. Unknown codes and
+  server messages stay unshown. A refusal whose detail is text or a list no
+  longer loses the response's request ID. When the remedy needs another name,
+  key, scope or setup command, aw says to run the changed command in a new
+  directory and keep `.aw/partial-init.yaml`, instead of "rerun the same
+  command in this directory", which the partial state would refuse.
 - ID-tree status, certificate registration and revocation return retryable
   HTTP 503 `dns_unavailable` for DNS timeouts and resolver failures. Missing
   or invalid public proof and missing epochs retain `evidence_unavailable`.

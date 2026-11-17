@@ -56,7 +56,7 @@ func TestPostAPIKeyWorkspaceInitMalformedConflictKeepsGenericError(t *testing.T)
 	defer server.Close()
 
 	_, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{}, testWorkspaceInitKey)
-	if err == nil || !strings.Contains(err.Error(), "POST /api/v1/workspaces/init returned 409") {
+	if err == nil || !strings.Contains(err.Error(), "error_code=identity_key_mismatch") || strings.Contains(err.Error(), "agent name") {
 		t.Fatalf("error=%v", err)
 	}
 }
