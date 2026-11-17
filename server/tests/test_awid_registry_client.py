@@ -1157,7 +1157,10 @@ async def test_service_token_is_sent_only_to_the_configured_registry():
                 },
             )
         if request.url.path == "/v1/namespaces/external.example/addresses/alice":
-            return httpx.Response(404, json={"detail": "not found"})
+            return httpx.Response(
+                404,
+                json={"detail": {"code": "address_not_found", "message": "Address not found"}},
+            )
         raise AssertionError(f"unexpected request: {request.url}")
 
     async def registry_for_domain(_domain: str) -> str:

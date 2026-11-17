@@ -225,7 +225,7 @@ async def test_history_with_a_wrong_token_reads_public_but_not_private_teams(reg
     (403, {"detail": "team_private"}, 503),
     (403, None, 503),
     (500, {"detail": {"code": "team_private"}}, 503),
-    (404, {"detail": "not found"}, 401),
+    (404, {"detail": "Team not found"}, 401),
 ])
 async def test_history_team_lookup_refusals_map_to_distinct_outcomes(registry, team, status, body, expected):
     def fault(request, response):
