@@ -333,7 +333,7 @@ func TestExtendWait(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	result, err := ExtendWaitWithOptions(context.Background(), mustClient(t, server.URL), "bob", "thinking...", ExtendWaitOptions{})
+	result, err := ExtendWait(context.Background(), mustClient(t, server.URL), "bob", "thinking...")
 	if err != nil {
 		t.Fatal(err)
 	}
