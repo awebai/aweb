@@ -28,7 +28,7 @@ import time
 import tomllib
 from urllib.parse import quote
 
-APPROVAL = "b22bf7984933e34e63581d67f78f3539bc8b5164"
+APPROVAL = "7dac79afab8d6c341b14f7afa1625d2e42a050bb"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
 SITE = "https://approval.adcl6.test"
@@ -854,7 +854,6 @@ def assert_approval_target(request, first, second):
 
 
 def assert_approval_display(actual_digest, text, digest, first, second):
-    actual_digest = json.loads(actual_digest)
     assert actual_digest == digest, "approval_digest_mismatch"
     for value in (first, second, ORG, AUDIENCE, "human.add"):
         assert value in text, "approval_display_mismatch:" + value
@@ -896,7 +895,7 @@ class BrowserActor:
         from playwright.async_api import expect
 
         rows = self.page.locator("#requests article")
-        displayed_digest = json.dumps(digest)
+        displayed_digest = digest
         row = rows.filter(has=self.page.get_by_text(displayed_digest, exact=True))
         evidence_path = Path("/work/approval-page.json")
         evidence = {
