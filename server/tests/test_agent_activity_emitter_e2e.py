@@ -21,13 +21,18 @@ from test_agent_activity_http import _session
 from test_agent_status_host_http import _team_request
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_identity_grants import _session_keypair
+from tests.js_runtime_tree import runtime_repo
 
-REPO = Path(__file__).resolve().parents[2]
-HOST = Path(__file__).with_name("activity_emitter_host.mjs")
+SOURCE_REPO = Path(__file__).resolve().parents[2]
+REPO = runtime_repo(SOURCE_REPO)
+HOST = REPO / "server/tests/activity_emitter_host.mjs"
 
 
 @pytest.fixture(scope="module")
-def channel_core_build():
+def channel_core_build(server_js_runtime):
+    if REPO != SOURCE_REPO:
+        assert server_js_runtime == REPO
+        return
     build = subprocess.run(["npm", "run", "build"], cwd=REPO / "channel-core", capture_output=True, text=True)
     assert build.returncode == 0, build.stdout + build.stderr
 

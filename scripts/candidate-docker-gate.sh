@@ -429,6 +429,7 @@ docker run --rm --init \
   -e PATH="$checkout/candidate-gate/bin:/usr/local/go/bin:/opt/uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   -e AWEB_CANDIDATE_REAL_DOCKER=/usr/bin/docker \
   -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
+  -e AWEB_GATE_UNIT_PROFILE="${AWEB_GATE_UNIT_PROFILE:-portable}" \
   -e AWEB_CANDIDATE_SIBLING_CPUS="$sibling_cpus" \
   -e AWEB_CANDIDATE_SIBLING_MEMORY="$sibling_memory" \
   -e AWEB_CANDIDATE_SIBLING_PIDS="$sibling_pids" \
