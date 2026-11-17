@@ -3,6 +3,7 @@
 import asyncio
 import os
 from types import SimpleNamespace
+from uuid import uuid4
 
 import dns.asyncresolver
 import dns.flags
@@ -10,18 +11,16 @@ import dns.message
 import dns.rcode
 import dns.rrset
 import httpx
-from pgdbm import AsyncDatabaseManager
 import pytest_asyncio
-from redis.asyncio import Redis
-
+from approval_service.grading import EnrollmentGrading
+from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.keys import KeyStore
 from awid.db_config import build_database_config
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app
-from approval_service.grading import EnrollmentGrading
-
-from aweb_key_holder.enrollment import Holder
-from aweb_key_holder.keys import KeyStore
+from pgdbm import AsyncDatabaseManager
+from redis.asyncio import Redis
 
 pytest_plugins = ("pgdbm.fixtures.conftest",)
 
@@ -84,8 +83,14 @@ async def native_holder(tmp_path, test_db_factory):
             app = create_app(db_infra=infra, redis=redis)
             app.state.awid_public_origins = ("http://registry.test",)
             async with app.router.lifespan_context(app):
+                # Each fixture is an independent client/registry world. Keep
+                # one peer for its entire scenario, as the SDK's controller
+                # fixture does; never reset, enlarge or exempt its real quota.
+                peer_id = uuid4().hex
+                peer = "fd00:" + ":".join(peer_id[i : i + 4] for i in range(0, 28, 4))
                 registry = RegistryClient(
-                    "http://registry.test", transport=httpx.ASGITransport(app=app)
+                    "http://registry.test",
+                    transport=httpx.ASGITransport(app=app, client=(peer, 12345)),
                 )
                 try:
                     store.set_human_issuance("approved")

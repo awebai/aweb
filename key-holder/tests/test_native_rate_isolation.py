@@ -1,6 +1,7 @@
 """Real registry/Redis quotas remain enforced for separate transport peers."""
 
 import asyncio
+from contextlib import aclosing
 
 import httpx
 import pytest
@@ -35,8 +36,10 @@ async def test_independent_holder_peer_keeps_real_quota_without_resetting_loopba
 ):
     app, registry = native_holder.app, native_holder.registry
     async with asyncio.timeout(15):
-        async with RegistryClient(
-            "http://registry.test", transport=httpx.ASGITransport(app=app)
+        async with aclosing(
+            RegistryClient(
+                "http://registry.test", transport=httpx.ASGITransport(app=app)
+            )
         ) as loopback:
             await exhaust(loopback)
             # Both independent registry fixtures and real TCP clients formerly
