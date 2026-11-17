@@ -479,9 +479,8 @@ DIDKey signature, not team-certificate auth; the HTTP envelope name does not
 make that subject a namespace/team controller. Issuance authority still comes
 from the separately verified parent certificate signature. Revoke uses the
 same covering family with `operation="revoke_id_certificate"` and the allowed
-revoker's signature. Authenticated status reads use
-`operation="read_id_certificate_status"`; anonymous status has no signature.
-These new endpoints have no legacy envelope fallback. Register first verifies
+revoker's signature. Status reads are public and unsigned.
+Register and revoke have no legacy envelope fallback. Register first verifies
 subject key possession independently; it does not require its not-yet-registered
 child certificate already to confer tree authority.
 

@@ -25,7 +25,6 @@ CONTROLLER_OPERATIONS = frozenset({
     'publish_team_custodian', 'publish_member_custody', 'publish_member_person',
     'register_address', 'update_address', 'delete_address', 'reassign_address',
     'register_id_certificate', 'revoke_id_certificate', 'rotate_namespace_controller',
-    'read_id_certificate_status',
 })
 logger = logging.getLogger(__name__)
 

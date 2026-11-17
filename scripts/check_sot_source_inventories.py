@@ -15,6 +15,13 @@ _TABLE_EVENT_PATTERN = re.compile(
     r"\{\{tables\.([A-Za-z0-9_]+)\}\}",
     re.IGNORECASE,
 )
+# A retired module may have used a configurable schema. Its literal table
+# names are visible even though the schema is chosen from its pgdbm ledgers.
+_RETIRED_SCHEMA_DROP_PATTERN = re.compile(
+    r"EXECUTE\s+format\(\s*'DROP TABLE IF EXISTS %I\.%I'\s*,\s*"
+    r"[A-Za-z_][A-Za-z0-9_]*\s*,\s*'([A-Za-z0-9_]+)'\s*\)",
+    re.IGNORECASE,
+)
 _RAW_TABLE_EVENT_PATTERN = re.compile(
     r"\b(?:CREATE\s+(?:(?:GLOBAL|LOCAL)\s+)?(?:(?:TEMP|TEMPORARY|UNLOGGED)\s+)?|DROP\s+)TABLE\b",
     re.IGNORECASE,
@@ -36,11 +43,15 @@ def extract_sql_tables(migrations_dir: Path) -> list[str]:
         sql = _SQL_COMMENT_PATTERN.sub("", migration.read_text())
         raw_events = _RAW_TABLE_EVENT_PATTERN.findall(sql)
         events = _TABLE_EVENT_PATTERN.findall(sql)
-        if len(events) != len(raw_events):
+        retired = _RETIRED_SCHEMA_DROP_PATTERN.findall(sql)
+        if len(events) + len(retired) != len(raw_events):
             raise ValueError(
                 f"unsupported table declaration in {migration}: every CREATE/DROP TABLE "
-                "must use the {{tables.name}} templated form"
+                "must use the {{tables.name}} template or a literal retired-schema drop"
             )
+        for table in retired:
+            if table in tables:
+                raise ValueError(f"dynamic cleanup targets component table {table} in {migration}")
         for operation, table in events:
             if operation.upper() == "CREATE":
                 if table not in tables:
