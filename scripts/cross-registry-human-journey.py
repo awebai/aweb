@@ -223,6 +223,7 @@ def local_child_resign(human, parent):
              "--registry", "http://awid-a:8010", "--json"], cwd="fresh")
     invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
                          "--member-local", "--json"], cwd="fresh")
+    assert invite["for_human"] == human, invite
     home = child_dir / ".aw"
     command(["--identity-home", str(home), "id", "team", "accept-invite", invite["token"],
              "--name", "local-child", "--local", "--json"], cwd="local-child")
@@ -366,6 +367,7 @@ def unenrolled_creations(team_dir, human):
     (ROOT / "legacy-child").mkdir()
     invite, _ = command(["id", "team", "invite", "--team", "journey-local", "--namespace", domain,
                          "--member-local", "--json"], cwd="plain")
+    assert invite["for_human"] is None, invite
     command(["id", "team", "accept-invite", invite["token"], "--name", "legacy-child", "--local", "--json"],
             cwd="legacy-child")
     unknown, _ = command(["who", "--json"], cwd="legacy-child")
@@ -466,7 +468,7 @@ def revoked_inviter(human):
              "--registry", "http://awid-a:8010", "--json"], cwd="revoked-inviter")
     invite, prompts = command(["id", "team", "invite", *team, "--member-local", "--json"],
                               cwd="revoked-inviter")
-    assert prompts == 0, invite
+    assert prompts == 0 and invite["for_human"] == human, invite
     issuer = ROOT / "revoked-inviter/.aw"
 
     def issuer_state():
@@ -529,6 +531,7 @@ def deployment_root_attribution(human):
     created = unattended(["id", "team", "create", "--name", "deployment", "--namespace", domain,
                           "--registry", "http://awid-a:8010", "--json"])
     invite = unattended(["id", "team", "invite", *team, "--member-global", "--json"])
+    assert invite["for_human"] == human, invite
     unattended(["id", "team", "accept-invite", invite["token"], "--name", root_name,
                 "--global", "--json"])
     unattended(["init", "--url", "http://aweb-a:8000", "--name", root_name,
@@ -537,6 +540,8 @@ def deployment_root_attribution(human):
     preserved = {}
     parent_name = root_name
     for name in ("deployment-child", "deployment-grandchild"):
+        # join-from creates under this parent; both have the expected human,
+        # so the default invite condition is fulfilled by the new child.
         (ROOT / name).mkdir()
         unattended(["init", "--join-from", str(ROOT / parent_name),
                     "--join-team", created["team_id"], "--name", name,

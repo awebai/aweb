@@ -16,6 +16,7 @@ class InviteConditionAssertionTests(unittest.TestCase):
             ({"for_human": "person-a"}, "person-b", False),
             ({"for_human": "person-a"}, "", False),
             ({"for_human": None}, "", True),
+            ({"for_human": ""}, "", False),
             ({}, "", False),
         ]:
             with self.subTest(invite=invite, expected=expected):
