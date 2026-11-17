@@ -739,9 +739,6 @@ func findLatestSession(ctx context.Context, client *awid.Client, targetAlias str
 
 func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
 	rawTarget := strings.TrimSpace(targetAlias)
-	if strings.HasPrefix(rawTarget, "did:") {
-		return findSessionByDID(ctx, client, rawTarget, preferWaiting)
-	}
 	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
 	bareAliasTarget := rawTarget != "" &&
 		!strings.HasPrefix(rawTarget, "did:") &&
@@ -767,6 +764,42 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 			return true
 		}
 		return strings.EqualFold(strings.TrimSpace(itemTeamID), currentTeamID)
+	}
+	if requireUniqueConcreteAlias {
+		// A bare alias must name one concrete participant across every
+		// conversation, pending or not, before any of them is chosen.
+		sessionsResp, err := client.ChatListSessions(ctx)
+		if err != nil {
+			return "", false, fmt.Errorf("listing chat sessions: %w", err)
+		}
+		identityKeys := []string{}
+		appendKeys := func(participants, participantDIDs, participantAddresses []string) {
+			for _, key := range matchedParticipantIdentityKeys(participants, participantDIDs, participantAddresses, targetAlias) {
+				duplicate := false
+				for _, existing := range identityKeys {
+					duplicate = duplicate || strings.EqualFold(existing, key)
+				}
+				if !duplicate {
+					identityKeys = append(identityKeys, key)
+				}
+			}
+		}
+		for _, p := range pendingResp.Pending {
+			if matchesSelectedTeam(p.TeamID) {
+				appendKeys(p.Participants, p.ParticipantDIDs, p.ParticipantAddresses)
+			}
+		}
+		for _, item := range sessionsResp.Sessions {
+			if matchesSelectedTeam(item.TeamID) {
+				appendKeys(item.Participants, item.ParticipantDIDs, item.ParticipantAddresses)
+			}
+		}
+		if len(identityKeys) > 1 {
+			identityKeys = normalizeMatchedIdentityKeys(ctx, client, identityKeys)
+		}
+		if len(identityKeys) > 1 {
+			return "", false, fmt.Errorf("multiple conversations match %s; run `aw chat pending` to choose one", targetAlias)
+		}
 	}
 
 	selectPending := func(match func([]string, []string, []string, string) bool, requireUnique bool, trackConcreteIdentity bool) (string, bool, error) {
@@ -951,18 +984,23 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 	return "", false, fmt.Errorf("no conversation found with %s", targetAlias)
 }
 
-// findSessionByDID selects a conversation with the participant whose DID is
-// did, or the other DID of the same identity (its did:aw or current did:key,
-// as resolved for did), with the priorities of findSession. No alias or
-// address is compared: a name is chosen by whoever holds it, and did is the
-// identity the caller confirmed.
-func findSessionByDID(ctx context.Context, client *awid.Client, did string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
+// findSessionByConfirmedDID selects a conversation with the participant the
+// caller confirmed by did, with the priorities of findSession. A strong
+// identity is available, so only strong identities match (IDENTITY_RULES.md):
+// did, the identity's other DID and its address, as resolved for did. A bare
+// alias, which any participant may hold, is no fallback here.
+func findSessionByConfirmedDID(ctx context.Context, client *awid.Client, did string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
 	dids := []string{did}
+	address := ""
 	if identity, err := client.ResolveIdentity(ctx, did); err == nil && identity != nil {
 		dids = append(dids, strings.TrimSpace(identity.StableID), strings.TrimSpace(identity.DID))
+		address = strings.TrimSpace(identity.Address)
 	}
 	hasParticipant := func(participants, participantDIDs, participantAddresses []string) bool {
 		for _, row := range chatParticipantRows(participants, participantDIDs, participantAddresses) {
+			if address != "" && strings.EqualFold(row.Address, address) {
+				return true
+			}
 			for _, candidate := range dids {
 				if candidate != "" && strings.EqualFold(row.DID, candidate) {
 					return true
@@ -1383,15 +1421,14 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	if waitSeconds > 0 {
 		req.WaitSeconds = &waitSeconds
 	}
-	probe := ""
-	if len(targets) == 1 {
-		probe = targets[0]
+	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
+		find := findLatestSession
 		if did := strings.TrimSpace(opts.RecipientDID); did != "" {
-			probe = did
+			find = func(ctx context.Context, client *awid.Client, _ string) (string, bool, error) {
+				return findSessionByConfirmedDID(ctx, client, did, false)
+			}
 		}
-	}
-	if probe != "" && !opts.StartConversation && shouldProbeExistingSession(probe) {
-		if sessionID, _, findErr := findLatestSession(ctx, client, probe); findErr == nil && sessionID != "" {
+		if sessionID, _, findErr := find(ctx, client, targets[0]); findErr == nil && sessionID != "" {
 			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 				Body:        message,
 				Leaving:     opts.Leaving,
@@ -1423,16 +1460,18 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
 }
 
-// shouldProbeExistingSession reports whether a send continues an existing
-// session with target, found by its DID or by the address the caller named.
-// A bare alias is not probed: sessions also hold outside participants, whose
-// address names their holders choose, so matching a session by alias can
-// deliver to someone else. A caller confirms the alias's DID first and passes
-// it as SendOptions.RecipientDID; without one, the send creates a session by
-// alias, which the server resolves in the sender's team.
 func shouldProbeExistingSession(target string) bool {
-	target = strings.TrimSpace(target)
-	return strings.HasPrefix(target, "did:") || strings.Contains(target, "/") || strings.Contains(target, "~")
+	// Probe for any non-empty target. The previous narrow gate (did:/-prefixed
+	// or address-shaped only) skipped bare aliases, which made the CLI fall
+	// through to ChatCreateSession with a fresh auto-generated session_id
+	// (cli/go/awid/chat.go:159 generates UUID4 when signingKey is set). With
+	// the post-aame server-side 'one active 1:1' dedup, that fresh UUID
+	// conflicts with the existing session and 409s. Probing for bare aliases
+	// lets findLatestSession discover the existing session_id, route via
+	// ChatSendMessage on the per-session endpoint, and bypass the conflict
+	// entirely. Ambiguous targets are surfaced by findLatestSession as
+	// 'multiple conversations match' and propagate up.
+	return strings.TrimSpace(target) != ""
 }
 
 // sendCommon handles the post-send wait logic after a message has been created.
@@ -1706,7 +1745,25 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 
 // ExtendWait sends an extend-wait message requesting more time to reply.
 func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, message string, encryptE2EE ...bool) (*ExtendWaitResult, error) {
-	sessionID, _, err := findSession(ctx, client, targetAlias)
+	return ExtendWaitWithOptions(ctx, client, targetAlias, message, ExtendWaitOptions{EncryptE2EE: len(encryptE2EE) > 0 && encryptE2EE[0]})
+}
+
+// ExtendWaitOptions configures ExtendWaitWithOptions.
+type ExtendWaitOptions struct {
+	EncryptE2EE bool
+	// RecipientDID is the DID the caller confirmed for targetAlias; the
+	// session is then selected by this strong identity only.
+	RecipientDID string
+}
+
+func ExtendWaitWithOptions(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions) (*ExtendWaitResult, error) {
+	var sessionID string
+	var err error
+	if did := strings.TrimSpace(opts.RecipientDID); did != "" {
+		sessionID, _, err = findSessionByConfirmedDID(ctx, client, did, true)
+	} else {
+		sessionID, _, err = findSession(ctx, client, targetAlias)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1714,7 +1771,7 @@ func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, me
 	msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 		Body:        message,
 		ExtendWait:  true,
-		EncryptE2EE: len(encryptE2EE) > 0 && encryptE2EE[0],
+		EncryptE2EE: opts.EncryptE2EE,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sending extend-wait message: %w", err)

@@ -121,8 +121,7 @@ type SendOptions struct {
 	StartConversation bool // Ignore targets_left, use 5min default wait
 	EncryptE2EE       bool // Send encrypted_v2 chat; fail closed if keys are missing
 	// RecipientDID is the DID the caller confirmed for its one target. An
-	// existing session is continued only if found by this DID; without it,
-	// a bare alias target continues no session.
+	// existing session is then selected by this strong identity only.
 	RecipientDID string
 }
 

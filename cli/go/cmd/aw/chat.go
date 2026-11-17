@@ -71,9 +71,10 @@ const (
 // confirmChatAlias confirms a bare alias in the selected team: the DID its
 // agent list names for it, as the server names that chat participant (its
 // did:aw, else its did:key), or else, with useLiveRoster, the DID the team's
-// live roster names. A chat session is then found by that DID, never by the
-// name, which an outside participant chooses for itself. A failed lookup
-// refuses. Any other target, or an alias neither confirms, is unconfirmed.
+// live roster names. A confirmed DID is a strong identity, so it selects the
+// chat session rather than the name, which an outside participant may also
+// hold (chat/IDENTITY_RULES.md). A failed lookup refuses. Any other target,
+// or an alias neither confirms, is unconfirmed.
 func confirmChatAlias(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, target string, useLiveRoster bool) (string, chatAliasSource, error) {
 	target = strings.TrimSpace(target)
 	if !shouldTryLiveRosterAliasFallback(target) {
@@ -104,33 +105,6 @@ func confirmChatAlias(ctx context.Context, c *aweb.Client, sel *awconfig.Selecti
 		}
 	}
 	return "", chatAliasUnconfirmed, nil
-}
-
-// chatSessionRecipient is the identity whose existing session a command
-// selects: an address or DID as given, or the DID confirmed for an alias. An
-// unconfirmed alias selects no session: the name alone could be an outside
-// participant's.
-func chatSessionRecipient(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, target string) (string, error) {
-	target = strings.TrimSpace(target)
-	if !shouldTryLiveRosterAliasFallback(target) {
-		return target, nil
-	}
-	did, source, err := confirmChatAlias(ctx, c, sel, target, true)
-	if err != nil {
-		return "", err
-	}
-	if source == chatAliasUnconfirmed {
-		return "", fmt.Errorf("no team member named %q: neither the agent list nor the team roster lists it; use the recipient's full address or DID", target)
-	}
-	return did, nil
-}
-
-// chatTargetLabel shows a confirmed recipient by the name the user typed.
-func chatTargetLabel(typed, confirmed, shown string) string {
-	if strings.TrimSpace(typed) != strings.TrimSpace(confirmed) && shown == strings.TrimSpace(confirmed) {
-		return strings.TrimSpace(typed)
-	}
-	return shown
 }
 
 // logChatEvent logs a single chat event to the communication log.
@@ -373,15 +347,10 @@ var chatOpenCmd = &cobra.Command{
 			return err
 		}
 		_ = configureClientE2EE(ctx, c, sel, false)
-		target, err := chatSessionRecipient(ctx, c, sel, args[0])
+		result, err := chat.Open(ctx, c.Client, args[0])
 		if err != nil {
 			return err
 		}
-		result, err := chat.Open(ctx, c.Client, target)
-		if err != nil {
-			return err
-		}
-		result.TargetAgent = chatTargetLabel(args[0], target, result.TargetAgent)
 		logsDir := defaultLogsDir()
 		logPolicy := localLogPolicyForSelection(sel)
 		myAddr := selectionAddress(sel)
@@ -427,11 +396,7 @@ var chatHistoryCmd = &cobra.Command{
 		if strings.TrimSpace(chatHistorySessionID) != "" {
 			result, err = chat.HistoryBySession(ctx, c.Client, chatHistorySessionID, chatHistoryMessageID, chatHistoryUnreadOnly, chatHistoryLimit)
 		} else {
-			var target string
-			if target, err = chatSessionRecipient(ctx, c, sel, args[0]); err != nil {
-				return err
-			}
-			result, err = chat.HistoryWithOptions(ctx, c.Client, target, chatHistoryUnreadOnly, chatHistoryLimit)
+			result, err = chat.HistoryWithOptions(ctx, c.Client, args[0], chatHistoryUnreadOnly, chatHistoryLimit)
 		}
 		if err != nil {
 			return err
@@ -575,15 +540,20 @@ var chatExtendWaitCmd = &cobra.Command{
 				return err
 			}
 		}
-		target, err := chatSessionRecipient(ctx, c, sel, args[0])
+		// A teammate's alias selects the session by the DID the agent list
+		// confirms for it.
+		did, source, err := confirmChatAlias(ctx, c, sel, args[0], false)
 		if err != nil {
 			return err
 		}
-		result, err := chat.ExtendWait(ctx, c.Client, target, message, encryptE2EE)
+		opts := chat.ExtendWaitOptions{EncryptE2EE: encryptE2EE}
+		if source == chatAliasFromAgentList {
+			opts.RecipientDID = did
+		}
+		result, err := chat.ExtendWaitWithOptions(ctx, c.Client, args[0], message, opts)
 		if err != nil {
 			return humanMailOnlyRefusal(err)
 		}
-		result.TargetAgent = chatTargetLabel(args[0], target, result.TargetAgent)
 		logsDir := defaultLogsDir()
 		logPolicy := localLogPolicyForSelection(sel)
 		appendCommLog(logsDir, commLogNameForSelection(sel), logPolicy, &CommLogEntry{
@@ -624,15 +594,10 @@ var chatListenCmd = &cobra.Command{
 			return err
 		}
 		_ = configureClientE2EE(ctx, c, sel, false)
-		target, err := chatSessionRecipient(ctx, c, sel, args[0])
+		result, err := chat.Listen(ctx, c.Client, args[0], chatListenWait, chatStderrCallback)
 		if err != nil {
 			return err
 		}
-		result, err := chat.Listen(ctx, c.Client, target, chatListenWait, chatStderrCallback)
-		if err != nil {
-			return err
-		}
-		result.TargetAgent = chatTargetLabel(args[0], target, result.TargetAgent)
 		logsDir := defaultLogsDir()
 		logPolicy := localLogPolicyForSelection(sel)
 		myAddr := selectionAddress(sel)
@@ -657,15 +622,10 @@ var chatShowPendingCmd = &cobra.Command{
 			return err
 		}
 		_ = configureClientE2EE(ctx, c, sel, false)
-		target, err := chatSessionRecipient(ctx, c, sel, args[0])
+		result, err := chat.ShowPending(ctx, c.Client, args[0])
 		if err != nil {
 			return err
 		}
-		result, err := chat.ShowPending(ctx, c.Client, target)
-		if err != nil {
-			return err
-		}
-		result.TargetAgent = chatTargetLabel(args[0], target, result.TargetAgent)
 		logsDir := defaultLogsDir()
 		logPolicy := localLogPolicyForSelection(sel)
 		myAddr := selectionAddress(sel)
