@@ -121,9 +121,11 @@ address. Mail and chat use the same server resolver:
   `did:aw`, through local residence or federation, regardless of local aliases
   or duplicate names across teams.
 - Only the address endpoint's coded `address_not_found` answer permits the
-  derived namespace/alias reading. It considers only local-scope agents with
-  neither a `did:aw` nor a registered address. One match selects that local
-  identity; multiple matches refuse with 409 and name `team~alias` as the remedy.
+  derived namespace/alias reading. It considers only a local-scope agent in
+  the sender's own team, whose namespace must match the address domain, with
+  neither a `did:aw` nor a registered address. Other teams' aliases never enter
+  this lookup or produce an ambiguity error. A sender without team context,
+  an out-of-team name and an unused name get the same non-disclosing refusal.
   A global agent is never selected through this fallback.
 - A missing namespace, generic HTTP 404, DNS failure, timeout or other inability
   to establish the address refuses with the typed unavailable/protocol answer;

@@ -17,10 +17,7 @@ from aweb.messaging.address_auth import (
     namespace_uses_home_registry,
     refuse_same_origin_nonresident,
 )
-from aweb.messaging.alias_targets import (
-    AmbiguousLocalAddressError,
-    get_agent_by_namespace_alias,
-)
+from aweb.messaging.alias_targets import get_local_agent_by_derived_address
 from aweb.messaging.runtime import MessagingRuntime
 
 
@@ -80,11 +77,11 @@ async def resolve_address_target(db, *, runtime: MessagingRuntime, auth, address
         return recipient
 
     # A positive binding, including a nonresident one, can never reach here.
-    # The derived reading is exclusively for local identities without claims.
-    try:
-        local = await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
-    except AmbiguousLocalAddressError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # The derived reading is exclusively for local identities without claims
+    # in the sender's own team. Absence and out-of-team names are indistinguishable.
+    local = await get_local_agent_by_derived_address(
+        db, team_id=auth.team_id, namespace=domain, alias=name,
+    )
     if local is None:
         raise FederationAuthorityError("recipient_identity_not_found")
     recipient = identity_recipient(local, address)

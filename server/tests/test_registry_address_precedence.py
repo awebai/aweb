@@ -15,7 +15,11 @@ from aweb.mcp.server import create_mcp_app
 from identity_binding_support import register_global_identity
 from starlette.responses import JSONResponse
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
-from test_messages_http import _make_keypair, _signed_team_headers
+from test_messages_http import (
+    _make_keypair,
+    _signed_identity_headers,
+    _signed_team_headers,
+)
 
 ADDRESS = "example.test/bob"
 
@@ -47,7 +51,9 @@ async def address_collision(privacy_app):  # noqa: F811 -- imported pytest fixtu
     env.app.mount("/address-mcp", mcp)
     await mcp.startup()
 
-    async def request(surface, recipient=ADDRESS):
+    identity_sk, _, identity_did = _make_keypair()
+
+    async def request(surface, recipient=ADDRESS, *, identity_only=False):
         actor = env.actors["alice"]
         if surface == "mcp_mail":
             payload = {
@@ -70,7 +76,8 @@ async def address_collision(privacy_app):  # noqa: F811 -- imported pytest fixtu
         # MCP similarly resolves before it has any signed message binding.
         raw = json.dumps(payload).encode()
         return await env.client.post(path, content=raw, headers={
-            **_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, raw),
+            **(_signed_identity_headers(identity_sk, identity_did, "", raw) if identity_only else
+               _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, raw)),
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         })
@@ -243,7 +250,7 @@ async def test_registered_address_wins_over_other_team_alias(address_collision, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
-async def test_derived_local_address_ambiguity_names_team_selector(address_collision, surface):
+async def test_derived_address_selects_own_team_despite_duplicate_alias(address_collision, surface):
     fixture = address_collision
     env = fixture.env
     await _remove_registered_address(env)
@@ -257,14 +264,8 @@ async def test_derived_local_address_ambiguity_names_team_selector(address_colli
         """INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, identity_scope, inbound_mode)
            VALUES ($1, $2, 'bob', $3, 'local', 'open')""", uuid4(), team, key,
     )
-    response = await fixture.request(surface)
-    if surface == "mcp_mail":
-        assert response.status_code == 200, response.text
-        result = json.loads(response.json()["result"]["content"][0]["text"])
-        assert "team~alias" in str(result.get("error")), result
-    else:
-        assert response.status_code == 409, response.text
-        assert "team~alias" in response.text
+    result = await fixture.send(surface)
+    await _assert_local_bob(fixture, surface, result)
 
 
 @pytest.mark.asyncio
@@ -283,10 +284,41 @@ async def test_absent_address_never_selects_a_global_alias(address_collision, su
     if surface == "mcp_mail":
         assert response.status_code == 200, response.text
         result = json.loads(response.json()["result"]["content"][0]["text"])
-        assert result.get("reason") == "recipient_identity_not_found", result
+        assert "error" in result and "message_id" not in result, result
     else:
         assert response.status_code == 404, response.text
         assert "recipient_identity_not_found" in response.text
+    for table in ("messages", "chat_sessions"):
+        row = await env.db.fetch_one("SELECT count(*) AS n FROM {{tables." + table + "}}")
+        assert row["n"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
+@pytest.mark.parametrize("identity_only", [False, True], ids=["other-team", "no-team"])
+async def test_derived_address_refusal_does_not_reveal_other_teams(address_collision, surface, identity_only):
+    fixture = address_collision
+    env = fixture.env
+    await _remove_registered_address(env)
+    team = "other:example.test"
+    await env.db.execute(
+        """INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+           VALUES ($1, 'example.test', 'other', $2)""", team, env.team_did,
+    )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET team_id=$1 WHERE agent_id=$2", team, env.actors["bob"].id,
+    )
+    occupied = await fixture.request(surface, identity_only=identity_only)
+    unused = await fixture.request(surface, "example.test/unused", identity_only=identity_only)
+    assert occupied.status_code == unused.status_code
+    assert occupied.json() == unused.json()
+    if surface == "mcp_mail":
+        assert occupied.status_code == 200, occupied.text
+        result = json.loads(occupied.json()["result"]["content"][0]["text"])
+        assert "error" in result and "message_id" not in result, result
+    else:
+        assert occupied.status_code == 404, occupied.text
+        assert "recipient_identity_not_found" in occupied.text
     for table in ("messages", "chat_sessions"):
         row = await env.db.fetch_one("SELECT count(*) AS n FROM {{tables." + table + "}}")
         assert row["n"] == 0
