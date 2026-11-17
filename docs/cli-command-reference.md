@@ -640,7 +640,7 @@ on success, error or interruption. Another command asks again.
 Flags:
 - `--domain string Namespace domain for the global identity address`
 - `-h, --help help for create`
-- `--human-parent string Parent person did:aw; local signing also needs --human ID --human-domain DOMAIN (with --org, a registered account human)`
+- `--human-parent string Parent person did:aw, who signs locally in --domain (--human ID --human-domain DOMAIN may also name them; with --org, a registered account human)`
 - `--inbound-mode string Hosted inbound delivery mode (default team-and-contacts; requires --org)`
 - `--local Create a key-only local identity (a did:key registered nowhere) in an explicit fresh --identity-home; resumable, and a rerun returns it`
 - `--name string Global identity name (address name under --domain)`

@@ -113,9 +113,19 @@ type TeamRotateResponse struct {
 }
 
 // RotateTeamKey replaces the team key at AWID, under namespace-controller
-// authority. With resigned non-nil the records swap atomically with the key,
-// and members' certificates are replaced in the same transaction.
+// authority. With resigned non-nil the records swap atomically with the key.
 func (c *RegistryClient) RotateTeamKey(
+	ctx context.Context,
+	registryURL, domain, name, newTeamDIDKey string,
+	resigned *ResignedRecords,
+	controllerKey ed25519.PrivateKey,
+) (*TeamRotateResponse, error) {
+	return c.RotateTeamKeyWithMembers(ctx, registryURL, domain, name, newTeamDIDKey, resigned, nil, controllerKey)
+}
+
+// RotateTeamKeyWithMembers is RotateTeamKey that also replaces members'
+// certificates in the same transaction.
+func (c *RegistryClient) RotateTeamKeyWithMembers(
 	ctx context.Context,
 	registryURL, domain, name, newTeamDIDKey string,
 	resigned *ResignedRecords,

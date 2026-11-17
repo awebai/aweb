@@ -129,3 +129,7 @@ func (g *GrantHome) validate() error {
 	}
 	return nil
 }
+
+func CustodyRunDir(root string) string {
+	return filepath.Join(filepath.Clean(root), "run")
+}

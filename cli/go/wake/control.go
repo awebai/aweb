@@ -271,7 +271,7 @@ func callWithTimeout(socketPath string, req ControlRequest, timeout time.Duratio
 // registrations and the per-instance state files, plus whatever the daemon
 // last mirrored into status.json.
 func StatusFromStore(store *Store, maxStreams int) (Status, error) {
-	registrations, faults, err := store.ListRegistrations()
+	registrations, faults, err := store.ListRegistrationsWithFaults()
 	if err != nil {
 		return Status{}, err
 	}

@@ -87,7 +87,7 @@ func TestControllerWritesMatchThePythonClientBytes(t *testing.T) {
 			case "delete_team":
 				err = client.DeleteTeam(ctx, url, domain, text("name"), key("namespace_controller_signing_key"), "")
 			case "rotate_team_key":
-				_, err = client.RotateTeamKey(ctx, url, domain, text("name"), text("new_team_did_key"), nil, nil, key("namespace_controller_signing_key"))
+				_, err = client.RotateTeamKeyWithMembers(ctx, url, domain, text("name"), text("new_team_did_key"), nil, nil, key("namespace_controller_signing_key"))
 			case "register_team_certificate":
 				cert, decodeErr := DecodeTeamCertificateHeader(text("certificate"))
 				if decodeErr != nil {

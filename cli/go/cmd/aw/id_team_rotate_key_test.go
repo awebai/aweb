@@ -337,7 +337,7 @@ func TestRotateKeyPromotesAPendingKeyAWIDAlreadyHolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	pendingDID := awid.ComputeDIDKey(pendingPub)
-	if _, err := f.registry.RotateTeamKey(context.Background(), f.registryURL, f.domain, f.team, pendingDID, nil, nil, f.controllerKey); err != nil {
+	if _, err := f.registry.RotateTeamKey(context.Background(), f.registryURL, f.domain, f.team, pendingDID, nil, f.controllerKey); err != nil {
 		t.Fatalf("rotate at AWID: %v", err)
 	}
 
