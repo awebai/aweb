@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	proof "github.com/awebai/approval-service/verify"
 	"github.com/awebai/aw/awid"
@@ -35,6 +36,64 @@ type EvidenceReport struct {
 	Currentness              string  `json:"currentness"`
 	Continuity               string  `json:"continuity"`
 	AsOf                     *int64  `json:"as_of,omitempty"`
+	Profile                  string  `json:"profile,omitempty"`
+	ApprovalSince            *int64  `json:"can_approve_since,omitempty"`
+}
+
+// CheckHumanEvidence keeps later enrollment separate from creation. The shared
+// approval verifier authenticates its statement and optional confirmation proof;
+// neither result supplies trust or changes the independently checked ID chain.
+func CheckHumanEvidence(link Link, statement, receipt map[string]any, trust, current *proof.Trust, now int64) EvidenceReport {
+	if stringValue(objectValue(statement, "evidence"), "kind") != "human_enrolled_later" {
+		return CheckCreationEvidence(link, statement, receipt, trust, current, now)
+	}
+	r := CheckCreationEvidence(link, nil, nil, nil, nil, now)
+	r.Presence, r.Profile = "present", "human_enrolled_later"
+	r.Proof = Check{"not_evaluated", "statement_unverified"}
+	if trust == nil {
+		r.Statement = Check{"unavailable", "trust_input_unavailable"}
+		return r
+	}
+	if trust.Person != link.ID || trust.Certificate != link.Certificate || trust.IdentityKey != link.Key {
+		r.Statement = Check{"invalid", "binding_mismatch"}
+		return r
+	}
+	claimed, err := proof.VerifyEnrollmentEvidence(statement, nil, *trust)
+	if err != nil {
+		status := "invalid"
+		if err.Error() == "enrollment_evidence_unsupported" {
+			status = "unsupported"
+		}
+		r.Statement = Check{status, err.Error()}
+		return r
+	}
+	r.Statement = Check{"valid", "checked"}
+	r.IssuerAuthenticatedGrade, r.Credential, r.ApprovalSince = &claimed.Grade, &claimed.Credential, &claimed.Since
+	r.AsOf = &trust.ObservedAt
+	if current != nil {
+		r.Currentness = "unknown"
+		if current.Person == link.ID && current.ObservedAt >= 0 && now >= current.ObservedAt && now-current.ObservedAt <= 60 {
+			r.Currentness = "not_current"
+			if current.IdentityKey == link.Key && current.Certificate == link.Certificate && current.Issuer == trust.Issuer {
+				r.Currentness = "current"
+			}
+		}
+	}
+	if receipt == nil {
+		r.Proof = Check{"unavailable", "absent_proof"}
+		return r
+	}
+	_, err = proof.VerifyEnrollmentEvidence(statement, receipt, *trust)
+	if err != nil {
+		r.Proof = Check{"invalid", err.Error()}
+		no := false
+		r.ProofBindsGrade = &no
+		return r
+	}
+	r.Proof = Check{"valid", "checked"}
+	yes := true
+	r.ProofBindsGrade = &yes
+	return r
 }
 
 func integer(value any) (int64, bool) {
@@ -240,6 +299,20 @@ func FormatEvidence(r EvidenceReport) string {
 	}
 	if r.IssuerAuthenticatedGrade == nil {
 		return line + "issuer statement checked; grade unavailable; proof " + r.Proof.Status
+	}
+	if r.Profile == "human_enrolled_later" && r.ApprovalSince != nil {
+		line += fmt.Sprintf("can approve since %s (issuer's statement), grade %s (issuer's statement)", time.Unix(*r.ApprovalSince, 0).UTC().Format(time.RFC3339), *r.IssuerAuthenticatedGrade)
+		if r.Proof.Status == "valid" {
+			line += "; confirmation proof checked"
+		} else if r.Proof.Reason == "absent_proof" {
+			line += "; proof not presented"
+		} else {
+			line += "; proof " + r.Proof.Status + ": " + r.Proof.Reason
+		}
+		if r.Currentness != "current" {
+			line += "; currentness " + strings.ReplaceAll(r.Currentness, "_", " ")
+		}
+		return line
 	}
 	grade := "a passkey and user verification"
 	if *r.IssuerAuthenticatedGrade == "certified_hardware" {
