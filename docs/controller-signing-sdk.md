@@ -94,3 +94,12 @@ Existing raw-key client APIs remain supported. `delete_namespace` and
 does not expose recovery, rotation or revocation to every holder caller; the
 holder retains its existing eligibility checks. Team rotation deployment still
 depends on members' released certificate-fetch workflow.
+
+Team creation obtains two signatures under the same closed `team_register`
+operation: its covering request and the compact public creation act, selected
+by the immutable context's `public_team_key_act` flag. The holder continues to
+check that operation and audit each signature; it never signs arbitrary bytes.
+Creation and team-rotation request timestamps accept UTC `Z` with up to six
+fractional digits so successive acts can be ordered within one second. Other
+signed-object timestamp formats remain unchanged; second-precision requests
+remain accepted.

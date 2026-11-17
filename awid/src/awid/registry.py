@@ -732,6 +732,8 @@ class RegistryClient:
         selected = dict(controllers)
         pin = canonical_server_origin(self.registry_url)
         timestamp = _utc_timestamp()
+        if request.operation in {"team_register", "team_rotate"}:
+            timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         plan = controller_http_plan(request)
         contexts = [ControllerSigningContext(request, selected[role], role, timestamp, pin)
                     for role in roles]
@@ -3089,7 +3091,7 @@ class CachedRegistryClient(RegistryClient):
 
 
 def _utc_timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _lookup_cache_scope(caller_did_key: str | None) -> str:

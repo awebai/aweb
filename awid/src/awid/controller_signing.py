@@ -13,6 +13,7 @@ import hashlib
 import inspect
 import json
 import re
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Literal
 from urllib.parse import quote, urlencode
@@ -660,6 +661,19 @@ def controller_http_plan(request: ControllerRequest) -> ControllerHTTPPlan:
     )
 
 
+def _request_timestamp(request, timestamp):
+    # A creation baseline and a later rotation may occur in the same second.
+    # Only these request timestamps gain precision; signed record formats stay
+    # at their frozen second precision and released second timestamps work.
+    if request.operation in {"team_register", "team_rotate"}:
+        _require(type(timestamp) is str and re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z", timestamp) is not None,
+            "payload_invalid")
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    else:
+        parse_utc_seconds(timestamp)
+
+
 def build_controller_payload(
     request, *, controller, role="controller", timestamp=None, registry_origin=None
 ):
@@ -706,7 +720,7 @@ def _build_controller_payload(
             return record_signing_bytes(p["record"])
         if op == "address_replacement":
             return _snapshot(p)
-    parse_utc_seconds(timestamp)
+    _request_timestamp(request, timestamp)
     origin = canonical_server_origin(registry_origin)
     plan = controller_http_plan(request)
     if plan.format == "object":
@@ -745,6 +759,7 @@ class ControllerSigningContext:
         if self.public_team_key_act:
             _require(self.request.operation == "team_register" and self.role == "controller", "operation_invalid")
             _check_controller(self.request, self.controller, self.role)
+            _request_timestamp(self.request, self.timestamp)
             from awid.team_key_acts import creation_act_payload
             p = self.request.parameters
             return creation_act_payload(domain=self.request.domain, name=p["name"],

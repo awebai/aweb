@@ -128,7 +128,10 @@ func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryUR
 	if target.RawQuery != "" {
 		signedPath += "?" + target.RawQuery
 	}
-	timestamp := c.now().UTC().Format("2006-01-02T15:04:05.999999Z")
+	timestamp := c.now().UTC().Format("2006-01-02T15:04:05Z")
+	if operation == "create_team" || operation == "rotate_team_key" {
+		timestamp = c.now().UTC().Format("2006-01-02T15:04:05.999999Z")
+	}
 	payload, err := ControllerRequestPayload(aud, method, signedPath, raw, timestamp, domain, operation, claims)
 	if err != nil {
 		return err

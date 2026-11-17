@@ -113,3 +113,8 @@ Unlike the covering request, this public proof can establish the key without
 publishing a private team's display name. Released callers remain accepted;
 a missing act is repaired by explicit same-key re-attestation. Old registries
 may ignore the additional header. The existing covering request is unchanged.
+
+Team creation/rotation callers can emit fractional-second request timestamps
+(up to six digits); this orders successive team-key acts within a second.
+Released second-precision requests remain accepted, and signed records keep
+their existing timestamp grammar.

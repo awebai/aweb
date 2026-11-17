@@ -21,7 +21,7 @@ class TeamKeyBackfillTarget:
     team_did_key: str
 
 
-async def reaffirm_team_keys(client, inventory, *, controllers, signer, apply=False, resolver=None) -> dict[str, Any]:
+async def reaffirm_team_keys(client, inventory, *, controllers=None, signer=None, apply=False, resolver=None) -> dict[str, Any]:
     """Readiness counts, optionally followed by guarded same-key writes/readback.
 
     ``controllers`` maps approved domains to the operator's current controller
@@ -30,6 +30,8 @@ async def reaffirm_team_keys(client, inventory, *, controllers, signer, apply=Fa
     Re-running it skips ready teams. A conflicting inventory key never writes.
     """
     targets = tuple(inventory)
+    if apply and (controllers is None or signer is None):
+        raise ValueError("apply requires current controller descriptors and signer")
     if len({(t.domain, t.name) for t in targets}) != len(targets):
         raise ValueError('duplicate team in approved inventory')
     resolver = resolver or SystemTXTOutcomeResolver()

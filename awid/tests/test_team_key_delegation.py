@@ -20,7 +20,9 @@ from awid.registry import CachedRegistryClient
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.team_key_acts import TeamKeyActError, verify_team_key_change
 from awid_service.main import create_app
-from conftest import CONTROLLER_ORIGIN, controller_keypair
+from conftest import controller_keypair
+
+CONTROLLER_ORIGIN = "https://registry.example.com"
 
 DOMAIN = 'org.example.com'
 
@@ -38,7 +40,7 @@ class DNS(asyncio.DatagramProtocol):
         name = query.question[0].name.to_text().rstrip('.')
         if name in self.records:
             value = awid_txt_value(self.records[name], registry_url=CONTROLLER_ORIGIN)
-            answer.answer.append(dns.rrset.from_text(name, 0, 'IN', 'TXT', '"' + value + '"'))
+            answer.answer.append(dns.rrset.from_text(name + '.', 0, 'IN', 'TXT', '"' + value + '"'))
         else:
             answer.set_rcode(dns.rcode.NXDOMAIN)
         self.transport.sendto(answer.to_wire(), peer)
