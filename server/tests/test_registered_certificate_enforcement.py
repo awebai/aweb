@@ -69,6 +69,9 @@ class _FakeRegistry(LegacyTeamFacts):
         self.list_calls = 0
         self.last_active_only: bool | None = None
 
+    async def get_team_key_act(self, domain: str, name: str):
+        return None
+
     async def get_team_public_key(self, domain: str, name: str) -> str | None:
         return self.team_did_key
 

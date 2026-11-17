@@ -31,6 +31,9 @@ def _app(aweb_db, controller_did_key: str) -> FastAPI:
             return aweb_db
 
     class _Registry:
+        async def get_team_key_act(self, domain, name):
+            return None
+
         async def get_team_public_key(self, domain, name):
             assert (domain, name) == ("acme.com", "backend")
             return controller_did_key

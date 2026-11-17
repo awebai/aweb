@@ -113,6 +113,7 @@ def _build_test_app(aweb_db, team_did_key, redis=None):
 
     registry = AsyncMock()
     registry.get_team_public_key = AsyncMock(return_value=team_did_key)
+    registry.get_team_key_act = AsyncMock(return_value=None)
     registry.get_team_revocations = AsyncMock(return_value=set())
     app.state.awid_registry_client = legacy_registry(registry)
     return app

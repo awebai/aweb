@@ -73,6 +73,8 @@ async def world(monkeypatch, aweb_cloud_db):
     )
 
     async def handler(request):
+        if request.url.path.endswith("/key-act"):
+            return httpx.Response(404, json={"detail": "No team key act"})
         if request.url.path.endswith("/revocations"):
             env.revocation_reads += 1
             return httpx.Response(200, json={

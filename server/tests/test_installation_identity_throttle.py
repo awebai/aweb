@@ -50,7 +50,7 @@ class Storage:
         if "FROM {{tables.teams}}" in sql:
             # The team's admitted key pin: the key the registry serves.
             assert args == (TEAM,)
-            return {"team_did_key": self.world.team_did, "team_key_act_at": None}
+            return {"team_did_key": self.world.team_did, "team_key_act_at": None, "team_key_act_key": None}
         assert "FROM {{tables.agents}}" in sql
         return {
             "agent_id": self.world.agent_id,

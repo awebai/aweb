@@ -12,6 +12,7 @@ controller and can move the pin by lying about delegation.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -261,6 +262,28 @@ class TeamKeyMemo:
         self._seconds = seconds
         self._clock = clock
         self._entries: dict[str, tuple[str, str, float, TeamKeyPin | None]] = {}
+        self._pending: dict[tuple[str, str], asyncio.Task[str]] = {}
+
+    async def resolve(self, team_id: str, served_key: str, load: Callable[[], Awaitable[str]]) -> str:
+        remembered = self.get(team_id, served_key)
+        if remembered is not None:
+            return remembered
+        key = (team_id, served_key)
+        task = self._pending.get(key)
+        if task is None:
+            task = asyncio.create_task(load())
+            self._pending[key] = task
+
+            def finished(done):
+                if self._pending.get(key) is done:
+                    del self._pending[key]
+                # A departing last reader must not leave an unobserved error.
+                if not done.cancelled():
+                    done.exception()
+
+            task.add_done_callback(finished)
+        # A caller's cancellation cannot abort the lookup shared by others.
+        return await asyncio.shield(task)
 
     def get(self, team_id: str, served_key: str) -> str | None:
         entry = self._entries.get(team_id)
@@ -302,28 +325,31 @@ async def pinned_team_key(
         remembered = memo.get(team_id, served_key)
         if remembered is not None:
             return remembered
-    deadline = None
-    proof = None
+    async def resolve():
+        deadline = None
+        proof = None
 
-    async def namespace(domain):
-        nonlocal deadline
-        evidence = await fetch_namespace_evidence(domain)
-        if evidence.age_seconds is not None:
-            deadline = time.monotonic() + max(0, 60 - evidence.age_seconds)
-        return evidence
+        async def namespace(domain):
+            nonlocal deadline
+            evidence = await fetch_namespace_evidence(domain)
+            if evidence.age_seconds is not None:
+                deadline = time.monotonic() + max(0, 60 - evidence.age_seconds)
+            return evidence
 
-    def witnessed(value):
-        nonlocal proof
-        proof = value
+        def witnessed(value):
+            nonlocal proof
+            proof = value
 
-    answer = await _resolve_pin(team_id, served_key, pins=pins, fetch_act=fetch_act,
-        resolver=resolver, enforce=enforce,
-        fetch_namespace_evidence=namespace if fetch_namespace_evidence is not None else None,
-        witnessed=witnessed)
-    if memo is not None:
-        memo.put(team_id, served_key, answer, proof=proof,
-                 seconds=None if deadline is None else max(0, deadline - time.monotonic()))
-    return answer
+        answer = await _resolve_pin(team_id, served_key, pins=pins, fetch_act=fetch_act,
+            resolver=resolver, enforce=enforce,
+            fetch_namespace_evidence=namespace if fetch_namespace_evidence is not None else None,
+            witnessed=witnessed)
+        if memo is not None:
+            memo.put(team_id, served_key, answer, proof=proof,
+                     seconds=None if deadline is None else max(0, deadline - time.monotonic()))
+        return answer
+
+    return await memo.resolve(team_id, served_key, resolve) if memo is not None else await resolve()
 
 
 async def _resolve_pin(team_id, served_key, *, pins, fetch_act, resolver, enforce,

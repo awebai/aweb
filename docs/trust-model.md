@@ -83,10 +83,12 @@ the parent's `controller_did`.
 
 This is the standard mechanism, not a hosted special case. Any namespace owner
 can delegate child namespaces; a hosted operator uses the same public protocol
-under the base domain it controls. A hosted child registers its own namespace
-controller key. The parent authorizes that child controller through the
-delegation witness; an inherited DNS record names the parent controller, not
-the child controller.
+under the base domain it controls. A child may register the parent's controller
+key or a different controller key. Both cases exist among hosted `*.aweb.ai`
+namespaces. The parent authorizes the child's registered controller through the
+delegation witness; an inherited DNS record names the parent controller. The
+witness binds that key to the child's current controller, including when they
+are the same key.
 
 Authority flows downward: a namespace controller can rotate the team
 controller key, but the team controller cannot rotate the namespace
@@ -541,10 +543,10 @@ Named residuals:
   not guessed from an old timestamp.
 - **The `local` namespace** has no DNS, so a pinned local team cannot rotate
   without the server operator re-pinning it.
-- **Hosted teams.** A child has its own controller key, delegated by the
-  parent. Under inherited DNS the registry names that controller, as above;
-  pinning also does not protect against an operator that holds both keys and
-  the registry.
+- **Hosted teams.** A child may share the parent's controller key or use a
+  different key. Under inherited DNS the registry names the child controller,
+  as above; pinning also does not protect against an operator that holds the
+  controller keys and the registry.
 - **The registry can withhold acts.** That denies the new key; it grants
   nothing.
 
