@@ -2,14 +2,10 @@
 
 ## Unreleased
 
-- **Breaking CLI spelling change — Juan 2026-11-16: drop old flags.**
-  `aw id parent`, `aw id child` and `aw id revoke` use the shared
-  `--human ID --human-domain DOMAIN` selector. Their old local `--domain`
-  spelling is removed, with an error naming `--human-domain`; there are no
-  aliases. Namespace-only agent and `--as-root` operations on these commands
-  also use `--human-domain`. `id create --human-parent` still names the parent
-  person; local self-custody signing explicitly selects that same person with
-  `--human ID --human-domain DOMAIN`.
+- `aw id parent`, `aw id child` and `aw id revoke` no longer define a
+  per-command `--human`; select a person with the global
+  `--human ID --human-domain DOMAIN`. Their `--domain` organization input
+  remains for agents and `--as-root` operations.
 
 - Candidate-only root endorsement, signer admission/removal, signer operation
   status and protected-profile commands and the in-tree signer host are removed.

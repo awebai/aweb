@@ -70,3 +70,16 @@ func TestHumanSelectorCLIKeepsActorAndOrganizationSeparate(t *testing.T) {
 		})
 	}
 }
+
+func TestIDAgentOptionsKeepTheirOrganizationInput(t *testing.T) {
+	oldH, oldHD, oldPD, oldCD := humanFlag, humanDomainFlag, idParentDomain, idChildDomain
+	humanFlag, humanDomainFlag = "", ""
+	idParentDomain, idChildDomain = "parent.example", "child.example"
+	t.Cleanup(func() { humanFlag, humanDomainFlag, idParentDomain, idChildDomain = oldH, oldHD, oldPD, oldCD })
+	if got := idParentOptionsFromFlags(); got.Human != "" || got.Domain != "parent.example" {
+		t.Fatalf("parent selected another principal: %+v", got)
+	}
+	if got := idChildOptionsFromFlags(); got.Issuer.Human != "" || got.Issuer.Domain != "child.example" {
+		t.Fatalf("child selected another principal: %+v", got.Issuer)
+	}
+}

@@ -17,8 +17,19 @@ func prepareIDHumanSelection(cmd *cobra.Command) (bool, error) {
 	if !create && !(tree && humanSelectionRequested()) {
 		return false, nil
 	}
-	if tree && humanFlag == "" {
-		return true, nil
+	if tree {
+		if humanDomainFlag != "" && humanFlag == "" {
+			return true, usageError("--human-domain requires --human ID; use --domain for an agent or --as-root organization")
+		}
+		if humanFlag != "" && cmd.Flags().Changed("domain") {
+			return true, usageError("with --human, use --human-domain DOMAIN instead of --domain")
+		}
+		if humanFlag != "" {
+			asRoot, _ := cmd.Flags().GetBool("as-root")
+			if asRoot {
+				return true, usageError("--human and --as-root name different actors; choose one")
+			}
+		}
 	}
 	if humanFlag == "" || humanDomainFlag == "" {
 		return true, usageError("select the person who signs with --human ID --human-domain DOMAIN")
@@ -48,9 +59,11 @@ func prepareIDHumanSelection(cmd *cobra.Command) (bool, error) {
 	return true, humanAtTerminal()
 }
 
-func removedIDDomainFlag(_ *cobra.Command, err error) error {
-	if err.Error() == "unknown flag: --domain" {
-		return usageError("--domain was removed from id parent, id child and id revoke; use --human-domain DOMAIN (with --human ID for a person, or --as-root for the namespace root)")
+// Organization input and person selection are different questions. Validation
+// above prevents --domain from being ignored when a person acts.
+func idCommandDomain(organization string) string {
+	if humanFlag != "" {
+		return humanDomainFlag
 	}
-	return err
+	return organization
 }

@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -13,6 +14,32 @@ import yaml
 ROOT = Path("/work")
 # Synthetic fixture input, typed into /dev/tty. Never argv or environment.
 PASSPHRASE = "disposable journey human passphrase"
+
+# Literal dashboard templates: awebai/ac main 9e2057596,
+# AgentAdoption.tsx:119,141; HumanIdentityControllerRecovery.tsx:79,91,92.
+DASHBOARD_COMMANDS = {
+    "adoption_request": "aw id parent request --domain <domain> --parent <parent-id> --invitation-id <invitation> --out request.json",
+    "adoption_import": "aw id parent import response.json --domain <domain>",
+    "recovery_invite": 'aw id child invite --as-root --domain <domain> --kind human --recipient "My human ID"',
+    "recovery_receive": "aw id child receive human-recovery-request.json --as-root --domain <domain>",
+    "recovery_approve": "aw id child approve <request-id> --as-root --domain <domain> --out resp.json",
+}
+
+
+def dashboard_command(name, values, **kwargs):
+    rendered = DASHBOARD_COMMANDS[name]
+    for key, value in values.items():
+        rendered = rendered.replace("<" + key + ">", value)
+    assert "<" not in rendered, "dashboard_template_not_expanded"
+    argv = shlex.split(rendered)
+    assert argv.pop(0) == "aw"
+    result = command(argv, json_output=False, **kwargs)
+    if result is not None:
+        # command() has asserted the actual subprocess exit was zero.
+        with (ROOT / "dashboard-commands.jsonl").open("a") as stream:
+            stream.write(json.dumps(dict(name=name, command=rendered, exit=0)) + "\n")
+        print("PASS: literal dashboard " + name + ": " + rendered, flush=True)
+    return result
 
 
 def barrier(name):
@@ -139,26 +166,31 @@ def csr_root():
         assert exc.code == 404, exc
     else:
         raise AssertionError("prepare-only human already registered")
-    root = ["--as-root", "--human-domain", "alpha.example.com"]
-    invitation, _ = command(["id", "child", "invite", *root, "--kind", "human",
-                              "--recipient", "fixture requester", "--json"])
+    root = ["--as-root", "--domain", "alpha.example.com"]
+    text, prompts = dashboard_command("recovery_invite", {"domain": "alpha.example.com"})
+    assert prompts == 0
+    invitation_id, = re.findall(r"Invitation: +([0-9a-f-]+)", text)
+    invitation = dict(invitation_id=invitation_id, domain="alpha.example.com",
+                      parent=dict(kind="namespace", id="alpha.example.com"), kind="human")
     publish_csr("invitation.json", json.dumps(invitation))
     request = json.loads(wait_file("request.json").read_text())
     fingerprint = wait_file("fingerprint.txt").read_text()
     request_id = request["request"]["request_id"]
-    received, _ = command(["id", "child", "receive", "/work/csr/request.json", *root, "--json"])
-    assert received["state"] == "pending" and received["fingerprint"] == fingerprint, received
+    (ROOT / "alice/human-recovery-request.json").write_bytes(wait_file("request.json").read_bytes())
+    text, prompts = dashboard_command("recovery_receive", {"domain": "alpha.example.com"})
+    assert prompts == 0 and fingerprint in text and "pending" in text, text
     issuance = Path.home() / ".awid/controllers/alpha.example.com.id-issuance"
     before = {p.name: p.read_bytes() for p in issuance.glob("*.json")}
-    approve = ["id", "child", "approve", request_id, *root, "--out", "/work/csr/response.json"]
-    command(approve, json_output=False, confirmation="n", fingerprint=fingerprint)
+    approve = {"domain": "alpha.example.com", "request-id": request_id}
+    dashboard_command("recovery_approve", approve, confirmation="n", fingerprint=fingerprint)
     assert not (ROOT / "csr/response.json").exists()
     assert {p.name: p.read_bytes() for p in issuance.glob("*.json")} == before
     pending, _ = command(["id", "child", "show", request_id, *root, "--json"])
     assert pending["state"] == "pending" and not pending.get("certificate_id"), pending
     assert pending["invitation_void"] is False, pending
     print("PASS: declined CSR fingerprint approval signs nothing and leaves the request pending", flush=True)
-    command(approve, json_output=False, confirmation="y", fingerprint=fingerprint)
+    dashboard_command("recovery_approve", approve, confirmation="y", fingerprint=fingerprint)
+    publish_csr("response.json", (ROOT / "alice/resp.json").read_text())
     after = {p.name: p.read_bytes() for p in issuance.glob("*.json")}
     assert len(after) == len(before) + 1
     publish_csr("response-ready", "")
@@ -325,6 +357,31 @@ def unenrolled_creations(team_dir):
     assert unknown["outcome"] == "unknown" and unknown["reason"] == "legacy_no_chain", unknown
     assert unknown["human_id"] is None and "chain" not in unknown, unknown
     print("PASS: chainless inviter keeps its local child honestly unknown", flush=True)
+
+
+def dashboard_agent_adoption(human):
+    domain, cwd = "alpha.example.com", "dashboard-agent"
+    (ROOT / cwd).mkdir()
+    created, prompts = command(["id", "create", "--name", cwd, "--domain", domain,
+                                "--root-parent", "--json"], cwd=cwd)
+    assert prompts == 0 and created["root_parent"]
+    person = ["--human", human, "--human-domain", domain]
+    invitation, prompts = command(["id", "child", "invite", *person, "--kind", "agent",
+                                    "--recipient", "dashboard adoption", "--json"])
+    assert prompts == 0
+    dashboard_command("adoption_request", {"domain": domain, "parent-id": human,
+                       "invitation": invitation["invitation_id"]}, cwd=cwd)
+    request_file = str(ROOT / cwd / "request.json")
+    received, _ = command(["id", "child", "receive", request_file, *person, "--json"])
+    _, prompts = command(["id", "child", "approve", received["request_id"], *person,
+                          "--out", str(ROOT / cwd / "response.json")], json_output=False)
+    assert prompts == 1
+    dashboard_command("adoption_import", {"domain": domain}, cwd=cwd)
+    assert_who(cwd, human, [dict(id=human, kind="human"), dict(id=created["did_aw"], kind="agent")])
+    home = ROOT / cwd / ".aw"
+    record = yaml.safe_load((home / "identity.yaml").read_text())
+    record["did_key"], record["domain"] = record["did"], domain
+    return public_case(home, record, kind="agent", human=human)
 
 
 def human_issues_human(human):
@@ -552,7 +609,7 @@ def revocations(human):
     orphan = agent_under(departing["id"], "revoke-orphan")
     replacement, prompts = command(["id", "human", "init", "--domain", domain, "--as-root", "--another", "--json"])
     assert replacement["status"] == "registered" and prompts == 3, replacement
-    revoked, prompts = command(["id", "revoke", departing["id"], "--as-root", "--human-domain", domain, "--json"])
+    revoked, prompts = command(["id", "revoke", departing["id"], "--as-root", "--domain", domain, "--json"])
     assert prompts == 0 and revoked["effective_from"] == revoked["revoked_at"], revoked
     assert_revoked("revoke-orphan", orphan["did_aw"])
     for record_id, case_kind, reason in ((departing["id"], "human", "revoked"),
@@ -657,13 +714,14 @@ def main():
     for name, identity in (("alice", resumed), ("fresh", fresh)):
         assert_who(name, human["id"], [dict(id=human["id"], kind="human"), dict(id=identity["did_aw"], kind="agent")])
     assert_who("bob", "", [dict(id=bob["did_aw"], kind="agent")])
+    dashboard_case = dashboard_agent_adoption(human["id"])
     local_case = local_child_resign(human["id"], fresh)
     unenrolled_creations("fresh")
     revoked_inviter(human["id"])
     second_human_case = human_issues_human(human["id"])
     deployment_cases = deployment_root_attribution(human["id"])
     revoked_cases = revocations(human["id"])
-    cases = [public_case(human_home, human_record, kind="human", human=human["id"]), local_case, second_human_case,
+    cases = [public_case(human_home, human_record, kind="human", human=human["id"]), local_case, second_human_case, dashboard_case,
              *deployment_cases, *revoked_cases]
     for name, parent in [("alice", human["id"]), ("fresh", human["id"]), ("bob", "")]:
         home = ROOT / name / ".aw"
@@ -674,6 +732,10 @@ def main():
         cases.append(public_case(home, record, kind="agent", human=parent))
     if os.environ.get("AWEB_CROSS_REGISTRY_CSR") == "1":
         cases.append(csr_root())
+    completed = {json.loads(line)["name"] for line in (ROOT / "dashboard-commands.jsonl").read_text().splitlines()}
+    expected = set(DASHBOARD_COMMANDS) if os.environ.get("AWEB_CROSS_REGISTRY_CSR") == "1" else {"adoption_request", "adoption_import"}
+    assert expected <= completed, "dashboard_command_not_executed"
+    print("PASS: literal Cloud dashboard commands execute unchanged", flush=True)
     cases.append(delegated_namespace())
     (ROOT / "journey-public.json").write_text(json.dumps(cases))
     (ROOT / "alice-create.json").write_text(json.dumps(resumed))

@@ -27,6 +27,7 @@ var idParentRefreshCmd = &cobra.Command{
 }
 
 func init() {
+	idParentRefreshCmd.Flags().StringVar(&idParentDomain, "domain", "", "Organization namespace for agent operations (defaults to the chain)")
 	idParentRefreshCmd.Flags().StringVar(&idParentRegistry, "registry", "", "Registry origin when DNS names none")
 	idParentCmd.AddCommand(idParentRefreshCmd)
 }

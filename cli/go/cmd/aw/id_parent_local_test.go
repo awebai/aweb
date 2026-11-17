@@ -58,7 +58,7 @@ func TestParentRequestBinaryAcceptsLocalParentForLocalChild(t *testing.T) {
 				t.Fatal(err)
 			}
 			outputPath := filepath.Join(root, "request.json")
-			cmd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "parent", "request", "--human-domain", "example.com", "--invitation-id", "11111111-1111-4111-8111-111111111111", "--parent", tc.parent, "--out", outputPath)
+			cmd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "parent", "request", "--domain", "example.com", "--invitation-id", "11111111-1111-4111-8111-111111111111", "--parent", tc.parent, "--out", outputPath)
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(), "HOME="+root, "AW_CONFIG_PATH=", "AW_NO_UPDATE_CHECK=1")
 			output, runErr := cmd.CombinedOutput()

@@ -18,7 +18,7 @@ var (
 		Short: "Revoke a registered identity's ID-tree authority",
 		Long: "Revoke a registered identity under docs/id-certificates.md §3, signed by\n" +
 			"the current identity (itself, or its current child), by --human <did:aw>\n" +
-			"--human-domain D for a human on this machine, or by --as-root --human-domain D for the\n" +
+			"--human-domain D for a human on this machine, or by --as-root --domain D for the\n" +
 			"namespace root. AWID decides whether the signer may revoke the identity.\n" +
 			"The revocation takes effect at AWID's serialization time; only --as-root\n" +
 			"may set an earlier --cutoff. This revokes ID-tree authority, not team\n" +
@@ -29,8 +29,8 @@ var (
 )
 
 func init() {
-	idRevokeCmd.SetFlagErrorFunc(removedIDDomainFlag)
-	idRevokeCmd.Flags().BoolVar(&idChildAsRoot, "as-root", false, "Revoke as the namespace root of --human-domain, with this machine's controller key")
+	idRevokeCmd.Flags().StringVar(&idChildDomain, "domain", "", "Organization namespace for agent or --as-root operations; with --human use --human-domain")
+	idRevokeCmd.Flags().BoolVar(&idChildAsRoot, "as-root", false, "Revoke as the namespace root of --domain, with this machine's controller key")
 	idRevokeCmd.Flags().StringVar(&idChildRegistry, "registry", "", "Registry origin for --as-root, when the domain's _awid record names none")
 	for _, cmd := range []*cobra.Command{idRevokeCmd} {
 		if cmd.Long == "" {

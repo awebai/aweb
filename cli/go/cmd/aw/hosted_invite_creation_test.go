@@ -115,7 +115,7 @@ func TestHostedInviteRequiresPinnedPreviewBeforeAccept(t *testing.T) {
 				for _, step := range []string{
 					"On parent did:aw:issuer",
 					"aw --json id child invite --kind agent --recipient " + shellQuote(pending.DIDKey),
-					childCommand + " id parent request --human-domain example.com --parent did:aw:issuer",
+					childCommand + " id parent request --domain example.com --parent did:aw:issuer",
 					`--invitation-id "$(jq -r .invitation_id id-invitation.json)" --out id-request.json`,
 					"aw --json id child receive id-request.json > id-received.json",
 					`aw id child approve "$(jq -r .request_id id-received.json)" --out id-response.json`,

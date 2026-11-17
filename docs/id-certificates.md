@@ -1346,7 +1346,7 @@ no CSR or invitation. It requires a human interactive invocation; an agent-run
 or non-TTY command cannot use it to mint a human. Human key custody follows §1; all human signatures in one command share its
 single terminal unlock. For a human prepared on a
 different machine, the issuer fixes the invitation and parent BEFORE CSR
-export; key/DID preparation may precede that, but `--human-domain` alone cannot
+export; key/DID preparation may precede that, but `--domain` alone cannot
 produce an issue CSR without its required invitation ID and parent.
 
 `aw id parent install <chain-file|->` installs an already-issued public chain
@@ -1363,7 +1363,7 @@ The CLI surfaces are `aw id parent request` (issue or --resign),
 `child invite` creates the issuer's local self_custodial invitation record and
 exports only its invitation ID, parent, domain, kind and expiry, never the
 private recipient note; its default expiry is a CLI default, not a protocol
-constant. The issuer is selected explicitly: `--as-root --human-domain D` for the
+constant. The issuer is selected explicitly: `--as-root --domain D` for the
 namespace root, or the selected human or agent issuer's records. Files and
 `-` for stdin/stdout are the transport; callers convey the public files over
 their chosen channel. `aw id request` retains its existing signed-HTTP meaning,
@@ -1378,7 +1378,7 @@ exchange never grants team membership, moves an address or rebinds a contact.
 `aw id revoke <id>` revokes a registered identity under §3, using the same
 signer selection as `aw id child invite`: the current identity by default,
 `--human <did:aw> --human-domain D` for a human held in the keychain, or
-`--as-root --human-domain D` for the namespace root. An identity signer may revoke
+`--as-root --domain D` for the namespace root. An identity signer may revoke
 itself; revoking its current child requires that it remain a valid parent.
 Namespace-root authority follows §3. Team membership or team-controller
 authority alone is insufficient. Only `--as-root` accepts

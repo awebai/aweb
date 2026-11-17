@@ -26,6 +26,7 @@ import (
 // current agent identity.
 
 var (
+	idChildDomain   string
 	idChildAsRoot   bool
 	idChildKind     string
 	idChildNote     string
@@ -84,9 +85,9 @@ var (
 )
 
 func init() {
-	idChildCmd.SetFlagErrorFunc(removedIDDomainFlag)
 	for _, cmd := range []*cobra.Command{idChildInviteCmd, idChildReceiveCmd, idChildPendingCmd, idChildShowCmd, idChildApproveCmd, idChildRefuseCmd} {
-		cmd.Flags().BoolVar(&idChildAsRoot, "as-root", false, "Act as the namespace root of --human-domain, with this machine's controller key")
+		cmd.Flags().StringVar(&idChildDomain, "domain", "", "Organization namespace for agent or --as-root operations; with --human use --human-domain")
+		cmd.Flags().BoolVar(&idChildAsRoot, "as-root", false, "Act as the namespace root of --domain, with this machine's controller key")
 		cmd.Flags().StringVar(&idChildRegistry, "registry", "", "Registry origin for --as-root, when the domain's _awid record names none")
 		idChildCmd.AddCommand(cmd)
 	}
@@ -138,7 +139,7 @@ func idChildOptionsFromFlags(commands ...*cobra.Command) idChildOptions {
 	wd, _ := os.Getwd()
 	return idChildOptions{
 		Operation:       operation,
-		Issuer:          childIssuerSelection{AsRoot: idChildAsRoot, Domain: humanDomainFlag, Human: humanFlag},
+		Issuer:          childIssuerSelection{AsRoot: idChildAsRoot, Domain: idCommandDomain(idChildDomain), Human: humanFlag},
 		WorkingDir:      wd,
 		RegistryURL:     idChildRegistry,
 		HumanAtTerminal: humanAtTerminal,

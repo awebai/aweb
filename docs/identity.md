@@ -255,8 +255,8 @@ admission invite on a hosted team. There is deliberately no `anyone` value for
 
 On another machine, an invite for a different human does not authorize the
 issuer to become the parent. First obtain a chain from the joiner's own creator
-with `aw id child invite`, `aw id parent request --human-domain <creator-domain>`,
-and `aw id parent import --human-domain <creator-domain>`, then retry the same join in
+with `aw id child invite`, `aw id parent request --domain <creator-domain>`,
+and `aw id parent import --domain <creator-domain>`, then retry the same join in
 that key-and-chain home. No prior team membership is required. The refusal
 names this exchange; it does not name the invite issuer as the parent.
 

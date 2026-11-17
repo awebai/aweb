@@ -515,7 +515,8 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--as-root Act as the namespace root of --human-domain, with this machine's controller key`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
 - `-h, --help help for approve`
 - `--out string Where to write the response (- for stdout) (default "-")`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
@@ -535,7 +536,8 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--as-root Act as the namespace root of --human-domain, with this machine's controller key`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
 - `--expires duration How long the invitation stays open (default 168h0m0s)`
 - `-h, --help help for invite`
 - `--kind string Kind of the child: human or agent`
@@ -554,7 +556,8 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--as-root Act as the namespace root of --human-domain, with this machine's controller key`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
 - `-h, --help help for pending`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -570,7 +573,8 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--as-root Act as the namespace root of --human-domain, with this machine's controller key`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
 - `-h, --help help for receive`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -586,7 +590,8 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--as-root Act as the namespace root of --human-domain, with this machine's controller key`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
 - `-h, --help help for refuse`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -602,7 +607,8 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--as-root Act as the namespace root of --human-domain, with this machine's controller key`
+- `--as-root Act as the namespace root of --domain, with this machine's controller key`
+- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
 - `-h, --help help for show`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -1071,6 +1077,7 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
+- `--domain string Organization namespace for agent operations; with --human use --human-domain`
 - `-h, --help help for import`
 - `--no-register Install the certificate but leave its AWID registration pending`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
@@ -1083,6 +1090,7 @@ Verify and install an already-issued public ID chain for this home's own did:key
 The home must have no chain or the identical chain. This does not adopt or re-parent.
 
 Flags:
+- `--domain string Organization namespace for agent operations (defaults to the chain)`
 - `-h, --help help for install`
 - `--registry string Registry origin when DNS names none`
 
@@ -1094,6 +1102,7 @@ Fetch and verify current registered ancestry, preserving local certificates belo
 For a branch with only local ancestors, use parent request --resign with the parent.
 
 Flags:
+- `--domain string Organization namespace for agent operations (defaults to the chain)`
 - `-h, --help help for refresh`
 - `--registry string Registry origin when DNS names none`
 
@@ -1102,7 +1111,7 @@ Flags:
 ### `id parent request`
 
 Export a certificate request against the invitation your parent fixed: its
---invitation-id, --human-domain and parent (--parent <did:aw|did:key> or --root-parent).
+--invitation-id, --domain and parent (--parent <did:aw|did:key> or --root-parent).
 A local did:key parent can issue only a local did:key agent child.
 Send the request file to the parent over your chosen channel, and tell them
 the fingerprint shown here through a different trusted channel.
@@ -1117,12 +1126,13 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
+- `--domain string Organization namespace for agent operations; with --human use --human-domain`
 - `-h, --help help for request`
 - `--invitation-id string Invitation ID the parent gave you`
 - `--out string Where to write the request (- for stdout) (default "-")`
 - `--parent string did:aw or did:key of the parent identity`
 - `--resign Ask the parent to re-sign the certificate this local agent carries`
-- `--root-parent The parent is the namespace root of --human-domain`
+- `--root-parent The parent is the namespace root of the selected organization`
 
 ## `id proof`
 
@@ -1189,7 +1199,7 @@ Flags:
 
 Revoke a registered identity under docs/id-certificates.md §3, signed by
 the current identity (itself, or its current child), by --human <did:aw>
---human-domain D for a human on this machine, or by --as-root --human-domain D for the
+--human-domain D for a human on this machine, or by --as-root --domain D for the
 namespace root. AWID decides whether the signer may revoke the identity.
 The revocation takes effect at AWID's serialization time; only --as-root
 may set an earlier --cutoff. This revokes ID-tree authority, not team
@@ -1201,8 +1211,9 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--as-root Revoke as the namespace root of --human-domain, with this machine's controller key`
+- `--as-root Revoke as the namespace root of --domain, with this machine's controller key`
 - `--cutoff string With --as-root: the earlier time (RFC 3339) the revocation takes effect from`
+- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
 - `-h, --help help for revoke`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 

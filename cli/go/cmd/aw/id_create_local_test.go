@@ -231,7 +231,7 @@ func TestTheLocalCommandMakesAHomeTheParentExchangeAccepts(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := filepath.Join(root, "request.json")
-	request := exec.CommandContext(ctx, bin, "--identity-home", home, "id", "parent", "request", "--human-domain", "example.com",
+	request := exec.CommandContext(ctx, bin, "--identity-home", home, "id", "parent", "request", "--domain", "example.com",
 		"--invitation-id", "11111111-1111-4111-8111-111111111111", "--parent", awid.ComputeDIDKey(parentPub), "--out", out)
 	request.Dir, request.Env = root, testCommandEnv(root)
 	if output, err := request.CombinedOutput(); err != nil {

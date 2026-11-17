@@ -68,7 +68,7 @@ func pendingHostedExchangeTarget(cmd *cobra.Command, home awconfig.IdentityHome)
 			return false, err
 		}
 	}
-	_, err := pendingHostedInviteRequester(idParentOptions{WorkingDir: mustGetwd(), IdentityHome: home.Root, Domain: humanDomainFlag})
+	_, err := pendingHostedInviteRequester(idParentOptions{WorkingDir: mustGetwd(), IdentityHome: home.Root, Domain: idParentDomain})
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -216,7 +216,7 @@ func (state *hostedInviteCreation) prepareRequest(root string, material workspac
 On parent %s, in its own identity home (requires jq for the JSON IDs):
   aw --json id child invite --kind agent --recipient %s > id-invitation.json
 Transfer id-invitation.json to this child, then run:
-  aw --identity-home %s id parent request --human-domain %s --parent %s --invitation-id "$(jq -r .invitation_id id-invitation.json)" --out id-request.json
+  aw --identity-home %s id parent request --domain %s --parent %s --invitation-id "$(jq -r .invitation_id id-invitation.json)" --out id-request.json
 Transfer id-request.json to the parent, then run there:
   aw --json id child receive id-request.json > id-received.json
   aw id child approve "$(jq -r .request_id id-received.json)" --out id-response.json
