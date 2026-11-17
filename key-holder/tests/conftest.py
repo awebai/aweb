@@ -21,6 +21,7 @@ from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app
 from pgdbm import AsyncDatabaseManager
 from redis.asyncio import Redis
+from policy_inputs import policy_file
 
 pytest_plugins = ("pgdbm.fixtures.conftest",)
 
@@ -93,10 +94,11 @@ async def native_holder(tmp_path, test_db_factory):
                     transport=httpx.ASGITransport(app=app, client=(peer, 12345)),
                 )
                 try:
-                    store.set_human_issuance("approved")
+                    policy = policy_file(tmp_path / "human-approval.json", root.domain)
                     holder = Holder(
                         store,
                         registry=registry,
+                        human_approval_config=policy,
                         origin="https://holder.example",
                         approval_origin="https://approval.example",
                         rp_id="approval.example",

@@ -22,7 +22,7 @@ generated inside the holder. Use `descriptor` to read a descriptor and
 `migrate` explicitly applies ordered holder-store migrations; serving never
 applies them. Mount the private state only into the holder, under its own UID.
 
-The default issuing rule is `operator`. No awsign configuration is required:
+Approval is off by default. Start without an approval service:
 
 ```sh
 aweb-key-holder --state /private/holder/state \
@@ -30,31 +30,60 @@ aweb-key-holder --state /private/holder/state \
   serve --bind 127.0.0.1 --port 8081
 ```
 
-The private operator command issues only a person's signed certificate:
+The first person's certificate is issued by the private operator command
+`issue-person --person <did:aw> --identity-key <did:key>` on the holder host.
+The person completes `aw id human register FILE` with their keychain key.
+There is no enrolment or creation evidence. There is no operator HTTP route.
+After that, a current person can use `aw id human add --issuer URL ...` without
+an approval key when no requirement is configured. Agents, unrelated keys,
+retired people and revoked people are refused on that path.
+Local retirement applies only to enrolled people. To stop a never-enrolled
+person from adding people, the operator revokes that person's ID at the registry;
+`retire-person` has no enrollment row to retire for them.
+
+To require approval, the operator adds the organisation's one section to the
+existing deployment.yaml:
+
+```yaml
+human_approval:
+  service: https://awsign.com
+  require:
+    organisation.human.add: passkey
+```
+
+`deploy/team/teamctl render deployment.yaml` writes the shared
+`human-approval.json` snapshot beside the rendered env file. Start the holder
+with `--human-approval-config /path/to/human-approval.json`, or set
+`HUMAN_APPROVAL_CONFIG_FILE` to that same read-only file. This is a source path,
+not a second policy. The source is read again at the locked effect; missing or
+invalid configured files refuse, while removing the section and rendering again
+writes approval off. Email and unknown actions or levels refuse until supported.
+Every applied change is signed into the existing append-only audit.
+If the last applied policy required approval, omitting the source path also
+refuses startup and effects. Pass the file to keep that policy; to turn approval
+off, explicitly render and apply an empty policy instead of omitting the file.
+
+The configuration's service supplies the approval origin and RP ID. The default
+enrolment grading is passkey-only; the existing hardware metadata inputs may
+select hardware grading. An explicit `--approval-origin` is an equality pin.
+A `hardware` requirement refuses startup or effects with passkey-only grading:
+start with `--grading hardware --mds-cache DIR` and the existing metadata inputs.
+The generic 428 loop and the frozen `human.add` receipt remain unchanged.
+The private `issue-person` command cannot bypass a configured requirement;
+initial creation with enrolment uses the private first-person `bootstrap` flow.
+
+The former `configure --human-issuance` command is removed, with no alias.
+An old approved store refuses startup. Write and render an equivalent
+`human_approval` requirement, then run:
 
 ```sh
 aweb-key-holder --state /private/holder/state \
-  --registry-origin https://api.awid.ai --origin https://holder.example.org \
-  issue-person --person <did:aw> --identity-key <did:key>
+  --human-approval-config /path/to/human-approval.json migrate
 ```
 
-The person registers that certificate with their own identity key. There is no
-enrollment or creation evidence. Agents cannot invoke this private command.
-To require approval for public human issuance, the operator persists the rule:
-
-```sh
-aweb-key-holder --state /private/holder/state configure --human-issuance approved
-```
-
-Then restart the same state volume with `--approval-origin https://awsign.com
---rp-id awsign.com --grading passkey_only` in addition to the normal runtime
-flags. `approved` without this configuration refuses `approval_not_configured`.
-`configure --human-issuance operator` restores private issuance. Each change
-records its time and old/new values in the append-only signature audit; the
-operator role is recorded, without claiming which human ran the command. In operator
-mode, `POST /v1/humans` explicitly refuses `human_issuance_operator`.
-The operator's `issue-person` command remains available in approved mode for
-the first person and recovery, and uses the same signature audit.
+This ordered migration preserves the keys, enrollments and signature history.
+It cannot turn an old approved store into approval off. An old operator store
+can run `migrate` without a requirement. Serving never migrates automatically.
 
 Production operators can instead select `--grading hardware --mds-cache <path>`.
 Set `--mds-manifest FILE` to the operator-installed reviewed pin and
@@ -97,7 +126,7 @@ The enrollment and approval interfaces are:
   issuer-authenticated grade and issuer-clock `since`. It never changes how the
   ID was created: "can approve since T (issuer's statement), grade G".
   Any activated, currently valid person in the organisation, enrolled at creation
-  or later, may approve `human.add` when the issuing setting is `approved`.
+  or later, may approve `human.add` when `organisation.human.add` is configured.
 
 
 The enforcer never contacts awsign. A signed pending certificate or creation
@@ -116,8 +145,8 @@ the completed ceremony's deadline.
 
 Replacing a lost enrolled key is not implemented; today a person who loses their only enrolled key is issued a new ID by the operator and enrols again, and the old ID is revoked. Enrol two keys.
 
-Before starting an existing private volume, run `aweb-key-holder --state <path>
-migrate` to apply the ordered schema migrations.
+Before starting an existing private volume, apply the ordered schema migrations
+as described above, with an explicit policy file for a previously approved holder.
 
 The private `audit --after <sequence> --limit <1..1000>` command pages the
 signature record without registry or approval configuration. `retire-person

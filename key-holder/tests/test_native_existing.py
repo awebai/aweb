@@ -4,6 +4,7 @@ import httpx
 import pytest
 from approval_service.statements import verify_enrollment_evidence
 from aweb_key_holder.auth import Caller
+from policy_inputs import policy_file
 from aweb_key_holder.http import create_app
 from aweb_key_holder.keys import Refused
 from awid.controller_signing import parse_controller_request
@@ -34,6 +35,7 @@ async def test_existing_person_self_enrolls_and_controller_cannot_carry_it(
         signer=lambda ctx: holder.store.sign_controller(ctx, actor="operator"),
     )
     seed, key, person = await register_identity(registry)
+    policy_file(holder.human_approval_config, root.domain, None)
     issued = await holder.issue_person(person, key)
     assert "evidence" not in issued
     chain = [issued["certificate"]]

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	proof "github.com/awebai/approval-service/verify"
 	"github.com/spf13/cobra"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,5 +103,75 @@ func TestHumanAddExpiredCommandGivesRecoverableNextStep(t *testing.T) {
 	after, _ := os.ReadFile(path)
 	if !bytes.Equal(before, after) {
 		t.Fatal("refusal changed original approval")
+	}
+}
+
+func TestHumanAddIssuedPacketUsesTheIndependentController(t *testing.T) {
+	raw, err := os.ReadFile("../../../../docs/vectors/id-certificates-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v map[string]any
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	if err = d.Decode(&v); err != nil {
+		t.Fatal(err)
+	}
+	signed := enrollmentObject(enrollmentObject(enrollmentObject(v["certificates"])["alice"])["signed"])
+	cert := enrollmentObject(signed["certificate"])
+	key := enrollmentText(enrollmentObject(enrollmentObject(v["keys"])["alice"])["did_key"])
+	person, domain, controller := enrollmentText(cert["id"]), enrollmentText(cert["domain"]), enrollmentText(cert["issuer_key"])
+	packet := map[string]any{"state": "issued", "person": person, "identity_key": key, "certificate": signed}
+	if err := checkHumanAddIssued(packet, person, key, domain, controller); err != nil {
+		t.Fatal(err)
+	}
+	for name, values := range map[string][]string{
+		"wrong person":     {"did:aw:other", key, domain, controller},
+		"wrong key":        {person, controller, domain, controller},
+		"wrong domain":     {person, key, "other.test", controller},
+		"wrong controller": {person, key, domain, key},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if checkHumanAddIssued(packet, values[0], values[1], values[2], values[3]) == nil {
+				t.Fatal("accepted unrelated issued certificate")
+			}
+		})
+	}
+}
+
+func TestHumanAddWithoutEnrollmentReachesTheIssuer(t *testing.T) {
+	r := humanAddRequestVector(t)
+	h, prompts, _ := commandUnlockFixture(t, humanPassphrase)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer := "https://" + listener.Addr().String()
+	_ = listener.Close()
+	target := enrollmentObject(enrollmentObject(r["act"])["target"])
+	oldH, oldIssuer, oldOrigin, oldPerson, oldKey, oldOut, oldRestart := activeHuman, humanAddIssuer, humanAddOrigin, humanAddPerson, humanAddKey, humanAddOut, humanAddRestart
+	activeHuman, humanAddIssuer, humanAddOrigin = h, issuer, ""
+	humanAddPerson, humanAddKey = enrollmentText(target["person"]), enrollmentText(target["identity_key"])
+	humanAddOut, humanAddRestart = "", false
+	t.Cleanup(func() {
+		activeHuman, humanAddIssuer, humanAddOrigin, humanAddPerson, humanAddKey, humanAddOut, humanAddRestart = oldH, oldIssuer, oldOrigin, oldPerson, oldKey, oldOut, oldRestart
+	})
+	// An explicit issuer must not depend on unrelated, unfinished enrollment
+	// state when no approval is required.
+	if err := os.WriteFile(filepath.Join(h.dir, "enrollment-session.json"), []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.SetErr(&bytes.Buffer{})
+	err = runIDHumanAdd(cmd, nil)
+	if err == nil || !strings.Contains(err.Error(), "connect: connection refused") {
+		t.Fatalf("unenrolled person must reach the actual issuer connection, not require awsign first: %v", err)
+	}
+	if len(*prompts) != 1 {
+		t.Fatalf("issuer request signed with %d unlocks", len(*prompts))
+	}
+	if _, err := os.Stat(filepath.Join(h.dir, "approval-binding.json")); !os.IsNotExist(err) {
+		t.Fatal("test unexpectedly has enrollment")
 	}
 }

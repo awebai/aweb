@@ -28,3 +28,6 @@ RUN update-ca-certificates && /opt/venv/bin/python -c "import certifi; from path
 ENV PATH=/opt/venv/bin:$PATH
 COPY aw /usr/local/bin/aw
 COPY journey.py /journey.py
+
+COPY holder/deploy/team/render_env.py /deployment/render_env.py
+COPY holder/deploy/team/config.schema.json /deployment/config.schema.json

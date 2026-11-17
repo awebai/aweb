@@ -14,14 +14,19 @@ from aweb_key_holder.http import create_app
 from aweb_key_holder.keys import KeyStore, Refused
 from awid.id_certificates import id_certificate_id
 from test_enrollment import creation, owner, person
+from policy_inputs import policy_file
 
 
 def world(tmp_path, *, approved=True):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    if approved:
-        store.set_human_issuance("approved")
+    policy = policy_file(
+        tmp_path / "human-approval.json",
+        store.descriptor().domain,
+        "passkey" if approved else None,
+    )
     return Holder(
         store,
+        human_approval_config=policy,
         registry=None,
         origin="https://holder.example",
         approval_origin="https://approval.example",
@@ -43,7 +48,7 @@ def test_bootstrap_audit_names_the_operator_not_the_pending_subject(tmp_path):
 
 
 def test_private_audit_reader_is_paged_and_needs_no_runtime_config(tmp_path):
-    holder = world(tmp_path)
+    holder = world(tmp_path, approved=False)
     holder.issue_person_certificate(*person())
     holder.issue_person_certificate(*person())
     entries = holder.store.audit()
@@ -184,6 +189,9 @@ def test_person_history_migrates_existing_enrollment_without_reset(tmp_path):
             "CREATE TABLE revision (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value INTEGER NOT NULL)"
         )
         db.execute("INSERT INTO revision VALUES(1,7)")
+        db.execute(
+            "ALTER TABLE configuration ADD COLUMN human_issuance TEXT NOT NULL DEFAULT 'operator'"
+        )
         db.execute("PRAGMA user_version=3")
     holder.store.migrate()
     reopened = KeyStore.open(holder.store.directory)

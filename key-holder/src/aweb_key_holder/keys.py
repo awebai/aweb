@@ -15,7 +15,7 @@ from importlib.resources import files
 from pathlib import Path
 from uuid import uuid4
 
-from approval_service.canonical import canonical
+from approval_service.canonical import canonical, parse
 from approval_service.verify import Refused as ApprovalRefused
 from awid.controller_signing import (
     ControllerDescriptor,
@@ -32,6 +32,19 @@ class Refused(ApprovalRefused):
     def __init__(self, code):
         self.code = code
         super().__init__(code)
+
+
+HUMAN_APPROVAL_MESSAGES = {
+    "human_approval_source_required": (
+        "The last applied policy required approval. Pass the rendered file "
+        "with --human-approval-config FILE or HUMAN_APPROVAL_CONFIG_FILE. "
+        "To turn approval off, explicitly render an empty human_approval section."
+    ),
+    "human_approval_hardware_grading_required": (
+        "The hardware requirement needs --grading hardware and --mds-cache DIR. "
+        "Passkey-only grading cannot satisfy it."
+    ),
+}
 
 
 # Explicit holder rules, not an automatic import of every future SDK operation.
@@ -122,13 +135,14 @@ class KeyStore:
     def open(cls, directory):
         store = cls(directory)
         with store._connection() as db:
-            if db.execute("PRAGMA user_version").fetchone()[0] != 4:
+            store._refuse_legacy_configuration(db)
+            if db.execute("PRAGMA user_version").fetchone()[0] != 5:
                 raise Refused("schema_unavailable")
             if db.execute("SELECT count(*) FROM configuration").fetchone()[0] != 1:
                 raise Refused("storage_unavailable")
         return store
 
-    def migrate(self):
+    def migrate(self, *, policy=None):
         with self._connection() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version == 1:
@@ -157,42 +171,67 @@ class KeyStore:
                     .read_text()
                     + "\nCOMMIT;"
                 )
-            elif version != 4:
+                version = 4
+            if version == 4:
+                approved = (
+                    db.execute("SELECT human_issuance FROM configuration").fetchone()[0]
+                    == "approved"
+                )
+                if approved and (
+                    policy is None or policy.grade("organisation.human.add") is None
+                ):
+                    raise Refused("legacy_human_issuance_write_human_approval")
+                db.executescript(
+                    "BEGIN IMMEDIATE;\n"
+                    + files(__package__)
+                    .joinpath("migrations/005_human_approval.sql")
+                    .read_text()
+                )
+                if policy is not None:
+                    self.observe_policy(db, policy, legacy_approved=approved)
+                db.execute("COMMIT")
+            elif version != 5:
                 raise Refused("schema_unavailable")
 
-    def human_issuance(self):
-        with self._connection() as db:
-            return db.execute("SELECT human_issuance FROM configuration").fetchone()[0]
+    @staticmethod
+    def _refuse_legacy_configuration(db):
+        columns = {row[1] for row in db.execute("PRAGMA table_info(configuration)")}
+        if "human_issuance" in columns:
+            raise Refused("legacy_human_issuance_write_human_approval")
 
-    def set_human_issuance(self, mode):
-        """Private operator setting; never exposed through the HTTP application."""
-        if mode not in ("operator", "approved"):
-            raise Refused("issuing_setting_invalid")
-        with self._connection() as db, db:
-            db.execute("BEGIN IMMEDIATE")
-            previous = db.execute(
-                "SELECT human_issuance FROM configuration"
-            ).fetchone()[0]
-            if previous == mode:
-                return
-            descriptor = self._descriptor(db)
-            payload = b"aweb.key-holder.setting/1\n" + canonical(
-                {
-                    "version": 1,
-                    "type": "aweb.holder.setting",
-                    "setting": "human_issuance",
-                    "from": previous,
-                    "to": mode,
-                }
-            )
-            self._sign(
-                db,
-                descriptor,
-                payload,
-                operation="human_issuance_change",
-                actor="operator",
-            )
-            db.execute("UPDATE configuration SET human_issuance=?", (mode,))
+    def observe_policy(
+        self, db, policy, *, legacy_approved=False, source_configured=True
+    ):
+        """Audit configuration and refuse an implicit downgrade from its absence.
+
+        The record supplies no approval policy. A previous requirement only
+        requires an explicit source, including an explicit empty policy to turn off.
+        """
+        section = policy.as_section()
+        previous = db.execute(
+            "SELECT payload FROM signatures WHERE operation='human_approval_change' ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        prefix = b"aweb.key-holder.human-approval/1\n"
+        before = {"require": {}}
+        if previous:
+            raw = base64.b64decode(previous["payload"], validate=True)
+            if not raw.startswith(prefix):
+                raise Refused("storage_unavailable")
+            before = parse(raw[len(prefix) :])["to"]
+        elif legacy_approved:
+            before = {"legacy_human_issuance": "approved"}
+        if not source_configured and before.get("require"):
+            raise Refused("human_approval_source_required")
+        if before == section:
+            return
+        payload = prefix + canonical({"version": 1, "from": before, "to": section})
+        self._sign(
+            db,
+            self._descriptor(db),
+            payload,
+            operation="human_approval_change",
+            actor="operator",
+        )
 
     @contextmanager
     def _connection(self):

@@ -12,6 +12,7 @@ from aweb_key_holder.http import create_app
 from aweb_key_holder.keys import KeyStore, Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.id_certificates import verify_id_certificate
+from policy_inputs import policy_file
 
 
 def target():
@@ -20,9 +21,12 @@ def target():
     return stable_id_from_did_key(key), key
 
 
-def test_operator_is_persisted_default_and_can_issue_without_awsign(tmp_path):
+def test_absent_policy_is_off_and_operator_can_issue_without_awsign(tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    assert store.human_issuance() == "operator"
+    with store._connection() as db:
+        assert "human_issuance" not in {
+            row[1] for row in db.execute("PRAGMA table_info(configuration)")
+        }
     holder = Holder(store, registry=None, origin="https://holder.example")
     person, key = target()
     result = holder.issue_person_certificate(person, key)
@@ -38,25 +42,31 @@ def test_operator_is_persisted_default_and_can_issue_without_awsign(tmp_path):
         holder.active_person(person)
 
 
-def test_approved_mode_requires_configuration_but_keeps_operator_command(tmp_path):
+def test_configured_gate_requires_the_enrollment_site_and_private_issuance_cannot_bypass(
+    tmp_path,
+):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    store.set_human_issuance("approved")
-    with pytest.raises(Refused, match="approval_not_configured"):
-        Holder(store, registry=None, origin="https://holder.example")
+    policy = policy_file(tmp_path / "human-approval.json", store.descriptor().domain)
+    derived = Holder(
+        store,
+        registry=None,
+        origin="https://holder.example",
+        human_approval_config=policy,
+    )
+    assert derived.approval_origin == "https://approval.example"
+    assert derived.rp_id == "approval.example"
     holder = Holder(
         store,
         registry=None,
         origin="https://holder.example",
+        human_approval_config=policy,
         approval_origin="https://approval.example",
         rp_id="approval.example",
         grading=EnrollmentGrading("passkey_only", None),
     )
-    assert holder.issue_person_certificate(*target())["state"] == "issued"
-    assert store.audit()[-1]["actor"] == "operator"
-    assert store.audit()[-1]["operation"] == "namespace_id_issue"
-    with pytest.raises(Refused, match="issuing_setting_invalid"):
-        store.set_human_issuance("agent")
-    assert store.human_issuance() == "approved"
+    with pytest.raises(Refused, match="human_approval_required"):
+        holder.issue_person_certificate(*target())
+    assert holder.bootstrap_pending(*target())["state"] == "enrollment_pending"
 
 
 @pytest.mark.asyncio
@@ -78,22 +88,26 @@ async def test_unconfigured_enrollment_and_operator_public_issue_are_clear_refus
         assert r.status_code == 401
 
 
-def test_private_cli_persists_operator_setting_without_runtime_site(tmp_path):
+def test_old_private_setting_is_not_an_accepted_alias(tmp_path):
     state = tmp_path / "private"
-
-    def run(*args):
-        return subprocess.run(
-            [sys.executable, "-m", "aweb_key_holder.cli", "--state", str(state), *args],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    assert run("init", "--organisation", "example.test").returncode == 0
-    r = run("configure", "--human-issuance", "approved")
-    assert r.returncode == 0, (r.stdout, r.stderr)
-    assert json.loads(r.stdout) == {"human_issuance": "approved"}
-    assert KeyStore.open(state).human_issuance() == "approved"
+    KeyStore.create(state, organisation="example.test")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "aweb_key_holder.cli",
+            "--state",
+            str(state),
+            "configure",
+            "--human-issuance",
+            "approved",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "invalid choice" in result.stderr
 
 
 def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
@@ -107,49 +121,62 @@ def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
             "CREATE TABLE revision (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value INTEGER NOT NULL)"
         )
         db.execute("INSERT INTO revision VALUES (1,0)")
-        db.execute("ALTER TABLE configuration DROP COLUMN human_issuance")
         db.execute("PRAGMA user_version=2")
     with pytest.raises(Refused, match="schema_unavailable"):
         KeyStore.open(store.directory)
     store.migrate()
     reopened = KeyStore.open(store.directory)
     assert reopened.descriptor() == descriptor
-    assert reopened.human_issuance() == "operator"
+    with reopened._connection() as db:
+        assert "human_issuance" not in {
+            row[1] for row in db.execute("PRAGMA table_info(configuration)")
+        }
     assert reopened.audit() == []
 
 
-def test_issuing_rule_changes_are_audited_atomically(tmp_path):
+def test_applied_policy_changes_are_audited_atomically(tmp_path):
     import base64
-
+    import sqlite3
     from approval_service.canonical import parse
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    store.set_human_issuance("approved")
-    store.set_human_issuance("approved")
-    store.set_human_issuance("operator")
+    path = policy_file(tmp_path / "human-approval.json", "example.test", None)
+    holder = Holder(
+        store,
+        registry=None,
+        origin="https://holder.example",
+        human_approval_config=path,
+        approval_origin="https://approval.example",
+        rp_id="approval.example",
+        grading=EnrollmentGrading("passkey_only", None),
+    )
+    policy_file(path, "example.test")
+    holder.gate()
+    holder.gate()
+    policy_file(path, "example.test", None)
+    holder.gate()
     rows = store.audit()
     assert len(rows) == 2
     changes = []
     for row in rows:
-        assert row["operation"] == "human_issuance_change"
+        assert row["operation"] == "human_approval_change"
         assert row["actor"] == "operator" and row["at"] > 0
         raw = base64.b64decode(row["payload"])
-        prefix = b"aweb.key-holder.setting/1\n"
+        prefix = b"aweb.key-holder.human-approval/1\n"
         assert raw.startswith(prefix)
         changes.append(parse(raw[len(prefix) :]))
-    assert [(c["from"], c["to"]) for c in changes] == [
-        ("operator", "approved"),
-        ("approved", "operator"),
+    assert [(c["from"]["require"], c["to"]["require"]) for c in changes] == [
+        ({}, {"organisation.human.add": "passkey"}),
+        ({"organisation.human.add": "passkey"}, {}),
     ]
     with store._connection() as db:
         db.execute(
-            "CREATE TRIGGER fail_setting BEFORE UPDATE OF human_issuance ON configuration BEGIN SELECT RAISE(ABORT,'setting_failed'); END"
+            "CREATE TRIGGER fail_policy BEFORE INSERT ON signatures WHEN NEW.operation='human_approval_change' BEGIN SELECT RAISE(ABORT,'policy_failed'); END"
         )
-    import sqlite3
-
-    with pytest.raises(sqlite3.IntegrityError, match="setting_failed"):
-        store.set_human_issuance("approved")
-    assert store.human_issuance() == "operator" and store.audit() == rows
+    policy_file(path, "example.test")
+    with pytest.raises(sqlite3.IntegrityError, match="policy_failed"):
+        holder.gate()
+    assert store.audit() == rows
 
 
 @pytest.mark.parametrize(

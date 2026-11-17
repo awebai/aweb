@@ -221,6 +221,22 @@ def render_front(config: object) -> str:
     return out
 
 
+def render_human_approval(config: object) -> str:
+    """One non-secret policy snapshot; semantic policy validation is shared by enforcers."""
+    config = normalize(config)
+    return (
+        json.dumps(
+            {
+                "organisation": config["team"]["id"].split(":", 1)[1],
+                "human_approval": config.get("human_approval", {}),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+
 def env_file(settings: dict[str, str]) -> str:
     for name, value in settings.items():
         if any(character in value for character in "\n\r\0"):
@@ -230,13 +246,17 @@ def env_file(settings: dict[str, str]) -> str:
 
 def main(argv: list[str]) -> int:
     front = len(argv) == 3 and argv[1] == "--front"
-    if len(argv) != 2 and not front:
-        print("usage: render_env.py [--front] deployment.yaml", file=sys.stderr)
+    human_approval = len(argv) == 3 and argv[1] == "--human-approval"
+    if len(argv) != 2 and not front and not human_approval:
+        print("usage: render_env.py [--front|--human-approval] deployment.yaml", file=sys.stderr)
         return 2
     path = argv[-1]
     try:
         config = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-        sys.stdout.write(render_front(config) if front else env_file(render(config)))
+        if human_approval:
+            sys.stdout.write(render_human_approval(config))
+        else:
+            sys.stdout.write(render_front(config) if front else env_file(render(config)))
     except (OSError, yaml.YAMLError) as exc:
         print(f"render_env: {path} cannot be read: {type(exc).__name__}", file=sys.stderr)
         return 1

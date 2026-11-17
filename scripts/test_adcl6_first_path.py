@@ -33,6 +33,9 @@ class RunningTreeTests(unittest.TestCase):
                 file = root / path
                 file.parent.mkdir()
                 file.write_text(path)
+            deployment = root / "deploy/team/render_env.py"
+            deployment.parent.mkdir(parents=True)
+            deployment.write_text("deployment renderer")
 
             def commit():
                 subprocess.run(["git", "add", "."], cwd=root, check=True)
@@ -63,6 +66,7 @@ class RunningTreeTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(contents.getmember("awid/source.txt"))
                 self.assertIsNotNone(contents.getmember("key-holder/source.txt"))
+                self.assertIsNotNone(contents.getmember("deploy/team/render_env.py"))
             source.write_text("second")
             with self.assertRaisesRegex(RuntimeError, "clean"):
                 archive_running_tree(root, archive)
@@ -106,9 +110,16 @@ class SaveTests(unittest.TestCase):
 class ApprovalAssertionTests(unittest.TestCase):
     def test_display_accepts_expected_digest_and_refuses_another(self):
         text = f"human.add first second {ORG} {AUDIENCE}"
-        assert_approval_display("a" * 64, text, "a" * 64, "first", "second")
+        assert_approval_display(json.dumps("a" * 64), text, "a" * 64, "first", "second")
         with self.assertRaisesRegex(AssertionError, "approval_digest_mismatch"):
-            assert_approval_display("b" * 64, text, "a" * 64, "first", "second")
+            assert_approval_display(
+                json.dumps("b" * 64), text, "a" * 64, "first", "second"
+            )
+
+    def test_display_requires_the_json_rendering_of_the_frozen_page(self):
+        text = f"human.add first second {ORG} {AUDIENCE}"
+        with self.assertRaises(json.JSONDecodeError):
+            assert_approval_display("a" * 64, text, "a" * 64, "first", "second")
 
     def test_request_accepts_expected_target_and_refuses_another(self):
         request = {"approver": "first", "act": {"target": {"person": "second"}}}
@@ -120,7 +131,9 @@ class ApprovalAssertionTests(unittest.TestCase):
     def test_display_refuses_another_target_even_with_right_digest(self):
         text = f"human.add first third {ORG} {AUDIENCE}"
         with self.assertRaisesRegex(AssertionError, "approval_display_mismatch:second"):
-            assert_approval_display("a" * 64, text, "a" * 64, "first", "second")
+            assert_approval_display(
+                json.dumps("a" * 64), text, "a" * 64, "first", "second"
+            )
 
 
 class OutsideAssertionTests(unittest.TestCase):

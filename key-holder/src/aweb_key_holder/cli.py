@@ -3,16 +3,18 @@
 import argparse
 import asyncio
 import json
+import os
 import sys
 from dataclasses import asdict
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from approval_service.canonical import InvalidJSON
 from approval_service.verify import Refused as ApprovalRefused
 from awid.registry import RegistryError
 from jsonschema import ValidationError
 
-from .keys import KeyStore, Refused
+from .keys import HUMAN_APPROVAL_MESSAGES, KeyStore, Refused
 
 
 async def operate(args, parser):
@@ -25,6 +27,17 @@ async def operate(args, parser):
 
     if not all((args.registry_origin, args.origin)):
         parser.error("runtime commands require --registry-origin and --origin")
+    store = KeyStore.open(args.state)
+    if args.human_approval_config is not None:
+        from approval_service.gate import load_policy
+
+        policy = load_policy(
+            args.human_approval_config, organisation=store.descriptor().domain
+        )
+        if policy.service is not None:
+            args.approval_origin = args.approval_origin or policy.service
+            args.rp_id = args.rp_id or urlsplit(policy.service).hostname
+            args.grading = args.grading or "passkey_only"
     configured = any((args.approval_origin, args.rp_id, args.grading))
     if configured and not all((args.approval_origin, args.rp_id, args.grading)):
         parser.error(
@@ -32,7 +45,6 @@ async def operate(args, parser):
         )
     if args.grading == "hardware" and args.mds_cache is None:
         parser.error("hardware grading requires --mds-cache")
-    store = KeyStore.open(args.state)
 
     async def pinned(domain):
         if domain != store.descriptor().domain:
@@ -54,6 +66,7 @@ async def operate(args, parser):
         approval_origin=args.approval_origin,
         rp_id=args.rp_id,
         grading=grading,
+        human_approval_config=args.human_approval_config,
     )
 
     def body():
@@ -99,6 +112,12 @@ def main():
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--registry-origin")
     parser.add_argument("--origin")
+    parser.add_argument(
+        "--human-approval-config",
+        type=Path,
+        default=os.environ.get("HUMAN_APPROVAL_CONFIG_FILE"),
+        help="Read-only organisation policy rendered from deployment.yaml; omission means approval off",
+    )
     parser.add_argument("--approval-origin")
     parser.add_argument("--rp-id")
     parser.add_argument("--grading", choices=("passkey_only", "hardware"))
@@ -119,10 +138,6 @@ def main():
     audit.add_argument("--limit", type=int, default=100)
     retire = commands.add_parser("retire-person")
     retire.add_argument("--person", required=True)
-    configure = commands.add_parser("configure")
-    configure.add_argument(
-        "--human-issuance", choices=("operator", "approved"), required=True
-    )
     issue = commands.add_parser("issue-person")
     issue.add_argument("--person", required=True)
     issue.add_argument("--identity-key", required=True)
@@ -146,12 +161,18 @@ def main():
             result = KeyStore.open(args.state).audit(after=args.after, limit=args.limit)
         elif args.command == "retire-person":
             result = KeyStore.open(args.state).retire_person(args.person)
-        elif args.command == "configure":
-            store = KeyStore.open(args.state)
-            store.set_human_issuance(args.human_issuance)
-            result = {"human_issuance": store.human_issuance()}
         elif args.command == "migrate":
-            KeyStore(args.state).migrate()
+            from approval_service.gate import load_policy
+
+            store = KeyStore(args.state)
+            policy = (
+                load_policy(
+                    args.human_approval_config, organisation=store.descriptor().domain
+                )
+                if args.human_approval_config is not None
+                else None
+            )
+            store.migrate(policy=policy)
             result = {"state": "migrated"}
         elif args.command in {"descriptor", "create-team-key", "backup"}:
             store = KeyStore.open(args.state)
@@ -170,6 +191,16 @@ def main():
             print(json.dumps(result, separators=(",", ":")))
     except (Refused, ApprovalRefused) as error:
         result = {"error": error.code}
+        if error.code in HUMAN_APPROVAL_MESSAGES:
+            result["message"] = HUMAN_APPROVAL_MESSAGES[error.code]
+        if error.code == "legacy_human_issuance_write_human_approval":
+            result["message"] = (
+                "human_issuance is retired. For an old approved store, write the "
+                "human_approval section in deployment.yaml, render it, then run "
+                "aweb-key-holder --state DIR --human-approval-config FILE migrate. "
+                "The old approved setting cannot be silently disabled. "
+                "An old operator store can run migrate without a requirement."
+            )
         if error.code == "enrollment_replacement_unavailable":
             result["message"] = (
                 "Ask the operator to revoke the old ID, issue a new ID and enrol again. Enrol two keys."

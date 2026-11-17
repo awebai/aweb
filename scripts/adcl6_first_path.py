@@ -28,7 +28,7 @@ import time
 import tomllib
 from urllib.parse import quote
 
-APPROVAL = "aa736fbd4164f9378cd0bba67264d8a69a263594"
+APPROVAL = "b22bf7984933e34e63581d67f78f3539bc8b5164"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
 SITE = "https://approval.adcl6.test"
@@ -49,7 +49,9 @@ STEP_OWNERS = {
     "holder_private_cli": [
         "controller/namespace setup",
         "operator issue-person",
-        "configure human issuance",
+    ],
+    "deployment_operator": [
+        "edit deployment.yaml human_approval and run the product policy renderer",
     ],
     "driver": [
         "disposable service and authoritative DNS fixture lifecycle",
@@ -88,7 +90,9 @@ def retain(args) -> None:
         "first-outside.json",
         "first-no-evidence-outside.json",
         "second-outside.json",
+        "third-unconfigured-no-evidence-outside.json",
         "approval-record.json",
+        "approval-page.json",
         "controller-public.json",
         "command-failure.stderr",
         "prompt-counts.json",
@@ -153,6 +157,7 @@ def archive_running_tree(root: Path, archive: Path) -> str:
                 "cli/go",
                 "awid",
                 "key-holder",
+                "deploy/team",
             ],
             cwd=root,
             stdout=stream,
@@ -171,7 +176,9 @@ def prepare(args) -> None:
     root = Path(__file__).resolve().parents[1]
     archive = runtime / "source.tar"
     source_sha = archive_running_tree(root, archive)
-    extract(archive, source_sha, build / "holder", ("awid/", "key-holder/"))
+    extract(
+        archive, source_sha, build / "holder", ("awid/", "key-holder/", "deploy/team/")
+    )
     go_tree = subprocess.check_output(
         ["git", "rev-parse", f"{source_sha}:cli/go"], cwd=root, text=True
     ).strip()
@@ -676,6 +683,40 @@ class Person:
         )
 
 
+async def deployment_policy(section):
+    """Operator edits the one deployment file; the product renders its policy."""
+    path = Path("/work/deployment.yaml")
+    value = (
+        json.loads(path.read_text())
+        if path.exists()
+        else {
+            "team": {"id": "journey:" + ORG},
+            "postgres": {},
+            "network": {"servicesCidr": NETWORK},
+            "aweb": {
+                "image": "ghcr.io/awebai/aweb-server@sha256:" + "0" * 64,
+                "publicOrigin": "https://aweb." + ORG,
+            },
+            "compose": {"secretsDir": "/fixture-secrets"},
+        }
+    )
+    if section is None:
+        value.pop("human_approval", None)
+    else:
+        value["human_approval"] = section
+    save(path, value)
+    rendered = await command(
+        "python", "/deployment/render_env.py", "--human-approval", str(path)
+    )
+    public_file(Path("/public/human-approval.json"), rendered.decode())
+    assert json.loads(rendered)["human_approval"] == (section or {})
+    public_file(
+        Path("/work/public")
+        / ("policy-configured.json" if section else "policy-off.json"),
+        rendered.decode(),
+    )
+
+
 async def enable_holder_approval():
     """Change only the owned holder; its key volume and audience stay fixed."""
     name, project = os.environ["HOLDER_CONTAINER"], os.environ["PROJECT"]
@@ -687,7 +728,9 @@ async def enable_holder_approval():
     (public,) = [mount for mount in old["Mounts"] if mount["Destination"] == "/public"]
     assert state["Type"] == "volume" and state["Name"].startswith(project + "_")
     before = await holder_cli("descriptor")
-    await holder_cli("configure", None, None, "--human-issuance", "approved")
+    await deployment_policy(
+        {"service": SITE, "require": {"organisation.human.add": "passkey"}}
+    )
     # Keep the old phase's startup/configuration evidence before replacing it.
     public_file(
         Path("/work/public/holder-operator-config.json"),
@@ -734,6 +777,7 @@ async def enable_holder_approval():
     for value in old["Config"]["Env"]:
         # This owned service has only image defaults and public fixture inputs.
         args += ["--env", value]
+    args += ["--env", "HUMAN_APPROVAL_CONFIG_FILE=/public/human-approval.json"]
     args += [
         old["Image"],
         "sh",
@@ -810,6 +854,7 @@ def assert_approval_target(request, first, second):
 
 
 def assert_approval_display(actual_digest, text, digest, first, second):
+    actual_digest = json.loads(actual_digest)
     assert actual_digest == digest, "approval_digest_mismatch"
     for value in (first, second, ORG, AUDIENCE, "human.add"):
         assert value in text, "approval_display_mismatch:" + value
@@ -850,12 +895,30 @@ class BrowserActor:
     async def approve(self, digest, first, second):
         from playwright.async_api import expect
 
-        row = self.page.locator("#requests article").filter(
-            has=self.page.get_by_text(digest, exact=True)
-        )
-        await expect(row).to_have_count(1)
+        rows = self.page.locator("#requests article")
+        displayed_digest = json.dumps(digest)
+        row = rows.filter(has=self.page.get_by_text(displayed_digest, exact=True))
+        evidence_path = Path("/work/approval-page.json")
+        evidence = {
+            "url": self.page.url,
+            "expected_digest": digest,
+            "approver": first,
+            "target": second,
+            "status": await self.page.locator("#status").inner_text(),
+            "rows_before_assertion": await rows.all_inner_texts(),
+        }
+        save(evidence_path, evidence)
+        try:
+            await expect(row).to_have_count(1)
+        except AssertionError:
+            evidence["rows_on_failure"] = await rows.all_inner_texts()
+            evidence["status_on_failure"] = await self.page.locator(
+                "#status"
+            ).inner_text()
+            save(evidence_path, evidence)
+            raise
         assert_approval_display(
-            await row.get_by_text(digest, exact=True).inner_text(),
+            await row.get_by_text(displayed_digest, exact=True).inner_text(),
             await row.inner_text(),
             digest,
             first,
@@ -1267,6 +1330,7 @@ async def driver():
                             raise RuntimeError("typed add did not retain needs-human")
                         await asyncio.sleep(0.1)
                     original = retained["request_bytes"]
+                    save(work / "approval-record.json", retained)
                     request = parse(decode(original))
                     assert_approval_target(request, first.identity, second.identity)
                     try:
@@ -1323,6 +1387,62 @@ async def driver():
                 "plain outsider aw verify checks creation statement and proof"
             ):
                 await outside(second, "creation")
+            async with phase(
+                "deployment section removed: human add/register succeed with awsign stopped"
+            ):
+                await deployment_policy(None)
+                names = (
+                    (
+                        await command(
+                            "docker",
+                            "ps",
+                            "--all",
+                            "--quiet",
+                            "--filter",
+                            "label=com.docker.compose.project=" + os.environ["PROJECT"],
+                            "--filter",
+                            "label=com.docker.compose.service=approval",
+                        )
+                    )
+                    .decode()
+                    .split()
+                )
+                assert len(names) == 1, "owned_approval_service_not_unique"
+                await command("docker", "stop", "--time", "10", names[0])
+                try:
+                    response = await client.get(SITE + "/health")
+                except httpx.TransportError:
+                    pass
+                else:
+                    assert response.status_code != 200, (
+                        "approval_service_still_reachable"
+                    )
+                third = await person("third-unconfigured")
+                issued_path = work / "third-issued.json"
+                await first.aw(
+                    "id",
+                    "human",
+                    "add",
+                    "--issuer",
+                    AUDIENCE,
+                    "--person",
+                    third.identity,
+                    "--identity-key",
+                    third.key,
+                    "--out",
+                    str(issued_path),
+                    json_output=False,
+                )
+                issued = json.loads(issued_path.read_text())
+                assert issued["state"] == "issued" and "intent" not in issued
+                result = await third.aw(
+                    "id", "human", "register", str(issued_path), "--json"
+                )
+                assert (
+                    result["status"] == "registered" and result["id"] == third.identity
+                )
+                assert not (third.record_dir / "approval-binding.json").exists()
+                await outside(third, "none")
         report["completed"] = True
         save(work / "journey.json", report)
         print("PASS: adcl6 first self-custody add-human journey completed", flush=True)

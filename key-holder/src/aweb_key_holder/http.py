@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from jsonschema import ValidationError
 
 from .auth import authenticate
-from .keys import Refused
+from .keys import HUMAN_APPROVAL_MESSAGES, Refused
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,10 @@ def create_app(holder):
             "status_unavailable",
             "issuer_unavailable",
             "identity_unavailable",
+            "human_approval_unavailable",
+            "human_approval_invalid",
+            "human_approval_source_required",
+            "human_approval_hardware_grading_required",
         }:
             status = 503
         elif code in {
@@ -67,16 +71,18 @@ def create_app(holder):
             status = 404
         elif code in {
             "approver_not_active",
+            "person_retired",
             "target_is_approver",
             "bootstrap_closed",
             "operation_not_served",
-            "human_issuance_operator",
             "approval_not_configured",
         }:
             status = 403
         else:
             status = 401
         body = {"error": {"code": code}}
+        if code in HUMAN_APPROVAL_MESSAGES:
+            body["error"]["message"] = HUMAN_APPROVAL_MESSAGES[code]
         if code == "enrollment_replacement_unavailable":
             body["error"]["message"] = (
                 "Replacing a lost enrolled key is not implemented. Ask the operator "
@@ -120,7 +126,6 @@ def create_app(holder):
     async def humans(request: Request):
         caller, value, chain = await input_for(request)
         await holder.admit(caller, chain)
-        holder.require_approved_issuance()
         if "request_bytes" in value:
             result = await holder.present(caller, value, chain=chain)
             return JSONResponse(result, headers={"Cache-Control": "no-store"})
