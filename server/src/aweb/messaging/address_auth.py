@@ -124,9 +124,8 @@ def unreachable_address_refusal(address: str) -> str:
     """Why a full address reaches no one, in words that do not say whether a
     local identity holds that name."""
     return (
-        f"{address} is not a registered address. A local identity has no address and "
-        "is reachable only from inside its own team, by alias; a global identity is "
-        "reachable by address once one is assigned."
+        f"{address} could not be resolved to a recipient. Check the registered address, "
+        "or use team~alias to select a local team member."
     )
 
 

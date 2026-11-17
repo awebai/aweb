@@ -179,7 +179,8 @@ async def test_derived_local_address_survives_registry_absence(address_collision
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
-async def test_derived_local_address_refuses_registry_outage(address_collision, surface, monkeypatch):
+@pytest.mark.parametrize("registry_status", [503, 404], ids=["outage", "uncoded-proxy-404"])
+async def test_derived_local_address_refuses_registry_outage(address_collision, surface, registry_status, monkeypatch):
     fixture = address_collision
     env = fixture.env
     await _remove_registered_address(env)
@@ -190,7 +191,7 @@ async def test_derived_local_address_refuses_registry_outage(address_collision, 
     async def unavailable_address(scope, receive, send):
         if scope["type"] == "http" and scope["path"].endswith("/addresses/bob"):
             lookups.append(scope["path"])
-            await JSONResponse({"detail": "registry temporarily unavailable"}, status_code=503)(
+            await JSONResponse({"detail": "unavailable upstream"}, status_code=registry_status)(
                 scope, receive, send,
             )
         else:
@@ -238,3 +239,54 @@ async def test_registered_address_wins_over_other_team_alias(address_collision, 
             "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", UUID(result["message_id"]),
         )
         assert message["to_did"] == fixture.stable_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
+async def test_derived_local_address_ambiguity_names_team_selector(address_collision, surface):
+    fixture = address_collision
+    env = fixture.env
+    await _remove_registered_address(env)
+    team = "other:example.test"
+    await env.db.execute(
+        """INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+           VALUES ($1, 'example.test', 'other', $2)""", team, env.team_did,
+    )
+    _, _, key = _make_keypair()
+    await env.db.execute(
+        """INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, identity_scope, inbound_mode)
+           VALUES ($1, $2, 'bob', $3, 'local', 'open')""", uuid4(), team, key,
+    )
+    response = await fixture.request(surface)
+    if surface == "mcp_mail":
+        assert response.status_code == 200, response.text
+        result = json.loads(response.json()["result"]["content"][0]["text"])
+        assert "team~alias" in str(result.get("error")), result
+    else:
+        assert response.status_code == 409, response.text
+        assert "team~alias" in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail"])
+async def test_absent_address_never_selects_a_global_alias(address_collision, surface):
+    fixture = address_collision
+    env = fixture.env
+    await _remove_registered_address(env)
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET alias='local-bob' WHERE agent_id=$1", env.actors["bob"].id,
+    )
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET alias='bob' WHERE agent_id=$1", env.actors["carol"].id,
+    )
+    response = await fixture.request(surface)
+    if surface == "mcp_mail":
+        assert response.status_code == 200, response.text
+        result = json.loads(response.json()["result"]["content"][0]["text"])
+        assert result.get("reason") == "recipient_identity_not_found", result
+    else:
+        assert response.status_code == 404, response.text
+        assert "recipient_identity_not_found" in response.text
+    for table in ("messages", "chat_sessions"):
+        row = await env.db.fetch_one("SELECT count(*) AS n FROM {{tables." + table + "}}")
+        assert row["n"] == 0

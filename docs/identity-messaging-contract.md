@@ -113,10 +113,30 @@ the participant remain readable through the thread, without unread attribution.
 
 ## Direct Address Send Protocol
 
-For a send to a global address (`domain/name`):
+An explicit `domain/name` has two meanings, in this order: its registered
+identity, or a derived address displayed for a local agent without a registered
+address. Mail and chat use the same server resolver:
 
-1. The client/server classifies the target as a registry address, not a local
-   alias.
+- Ask the authoritative registry first. A found address selects its exact
+  `did:aw`, through local residence or federation, regardless of local aliases
+  or duplicate names across teams.
+- Only the address endpoint's coded `address_not_found` answer permits the
+  derived namespace/alias reading. It considers only local-scope agents with
+  neither a `did:aw` nor a registered address. One match selects that local
+  identity; multiple matches refuse with 409 and name `team~alias` as the remedy.
+  A global agent is never selected through this fallback.
+- A missing namespace, generic HTTP 404, DNS failure, timeout or other inability
+  to establish the address refuses with the typed unavailable/protocol answer;
+  it is not evidence of address absence. Missing identity evidence after a
+  successful address lookup likewise cannot authorize the derived reading.
+- Bare aliases and `team~alias` keep their team-scoped selection and do not
+  require registry address resolution. Signed recipient constraints must still
+  agree with the selected identity; continuations retain their stored identity.
+
+For a registered address:
+
+1. The client/server resolves the address through the registry before consulting
+   local residence.
 2. AWID resolves the address to the target `did:aw`, current `did:key`, and
    address-route delivery origin. Legacy reachability metadata is not consulted
    as a resolver or authorization gate; non-neutral legacy rows are a migration
@@ -201,8 +221,9 @@ DNS discovery and one pinned authoritative HTTP chain. Shared failed reads
 publish the same stable failure for five seconds; a wrong claimant cannot poison
 valid evidence for a concurrent correct claim.
 
-Same-registry outbound resolution first checks locally visible recipients before
-registry resolution and keeps the signed address/DID/key/origin contract. A
+Same-registry outbound resolution follows the registry-first precedence in
+[Direct Address Send Protocol](#direct-address-send-protocol) and keeps the signed
+address/DID/key/origin contract. A
 client identity's configured registry is an explicit pin for its own address
 domain. For a foreign first-contact address, the CLI and channel runtimes use
 that domain's valid `_awid` record (including bounded parent inheritance) when
