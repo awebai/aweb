@@ -97,7 +97,7 @@ async def native_holder(tmp_path, test_db_factory):
                         rp_id="approval.example",
                         grading=EnrollmentGrading("passkey_only", None),
                     )
-                    yield SimpleNamespace(holder=holder, registry=registry)
+                    yield SimpleNamespace(holder=holder, registry=registry, app=app)
                 finally:
                     await registry.aclose()
     finally:
