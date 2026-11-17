@@ -104,3 +104,27 @@ func TestHumanAddExpiredCommandGivesRecoverableNextStep(t *testing.T) {
 		t.Fatal("refusal changed original approval")
 	}
 }
+
+func TestHumanAddIssuedPacketUsesTheIndependentController(t *testing.T) {
+	raw, err := os.ReadFile("../../../../docs/vectors/id-certificates-v1.json")
+	if err != nil { t.Fatal(err) }
+	var v map[string]any
+	d := json.NewDecoder(bytes.NewReader(raw)); d.UseNumber()
+	if err = d.Decode(&v); err != nil { t.Fatal(err) }
+	signed := enrollmentObject(enrollmentObject(enrollmentObject(v["certificates"])["alice"])["signed"])
+	cert := enrollmentObject(signed["certificate"])
+	key := enrollmentText(enrollmentObject(enrollmentObject(v["keys"])["alice"])["did_key"])
+	person, domain, controller := enrollmentText(cert["id"]), enrollmentText(cert["domain"]), enrollmentText(cert["issuer_key"])
+	packet := map[string]any{"state":"issued", "person":person, "identity_key":key, "certificate":signed}
+	if err := checkHumanAddIssued(packet, person, key, domain, controller); err != nil { t.Fatal(err) }
+	for name, values := range map[string][]string{
+		"wrong person": {"did:aw:other", key, domain, controller},
+		"wrong key": {person, controller, domain, controller},
+		"wrong domain": {person,key,"other.test",controller},
+		"wrong controller": {person,key,domain,key},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if checkHumanAddIssued(packet,values[0],values[1],values[2],values[3]) == nil { t.Fatal("accepted unrelated issued certificate") }
+		})
+	}
+}
