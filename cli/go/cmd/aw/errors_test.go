@@ -33,6 +33,8 @@ func TestErrorEnvelopeCarriesAStableCode(t *testing.T) {
 		{name: "detail that is not a string", err: &awid.APIError{StatusCode: 422, Body: `{"detail":[{"loc":["name"]}]}`}, code: "http_error", status: 422},
 		{name: "tagged refusal", err: fmt.Errorf("init: %w", withErrorCode("alias_conflict", &awid.APIError{StatusCode: 409, Body: `{"detail":"alias exists"}`})), code: "alias_conflict", status: 409, detail: "alias exists"},
 		{name: "alias conflict keeps the server's code", err: &awid.APIError{StatusCode: 409, Body: `{"detail":{"code":"alias_active","message":"Alias already active"}}`}, code: "alias_conflict", status: 409, detail: "Alias already active", reason: "alias_active"},
+		{name: "hosted alias taken", err: fmt.Errorf("accept hosted team invite: %w", &awid.APIError{StatusCode: 409, Body: `{"detail":"Alias already taken in this team","reason":"alias_taken"}`}), code: "alias_conflict", status: 409, detail: "Alias already taken in this team", reason: "alias_taken"},
+		{name: "uncertain alias response", err: &awid.APIError{StatusCode: 503, Body: `{"detail":"unavailable","reason":"alias_taken"}`}, code: "http_error", status: 503, detail: "unavailable", reason: "alias_taken"},
 		{name: "registry refusal", err: fmt.Errorf("register: %w", &awid.RegistryError{StatusCode: 409, Detail: `{"detail":"Alias already active in team"}`}), code: "http_error", status: 409, detail: "Alias already active in team"},
 		{name: "registry refusal with a coded detail", err: &awid.RegistryError{StatusCode: 409, Detail: `{"detail":{"code":"certificate_already_registered"}}`, Code: "certificate_already_registered"}, code: "http_error", status: 409, reason: "certificate_already_registered"},
 		// The server's own refusal code travels as reason, beside the class code.

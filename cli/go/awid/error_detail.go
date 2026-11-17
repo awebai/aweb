@@ -3,6 +3,7 @@ package awid
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 )
 
@@ -19,7 +20,7 @@ type ErrorDetail struct {
 }
 
 // DescribeError classifies err. Codes: http_error, alias_conflict (a refusal
-// whose detail carries the code alias_active), outcome_unknown,
+// coded alias_active or HTTP 409 alias_taken), outcome_unknown,
 // encryption_key_missing, decrypt_failed, recipient_custodial_no_e2ee, and
 // error for any other error.
 func DescribeError(err error) ErrorDetail {
@@ -29,7 +30,7 @@ func DescribeError(err error) ErrorDetail {
 		detail.HTTPStatus = status
 		serverCode, text := responseDetail(body)
 		detail.Code, detail.Detail, detail.Reason = "http_error", text, serverCode
-		if serverCode == "alias_active" {
+		if serverCode == "alias_active" || (status == http.StatusConflict && serverCode == "alias_taken") {
 			detail.Code = "alias_conflict"
 		}
 	}

@@ -2,13 +2,13 @@
 
 ## Unreleased
 
+- `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
   delayed refreshes from restoring invalidated entries without changing the
   evidence freshness or authorization rules.
 - A 404 that is not one of the registry's own answers is no longer absence
   or an empty revocation list in the Python registry client.
-
 - Namespace key-loss recovery and deletion withdraw direct child delegations
   instead of transferring them to the new key. Approved children are restored
   by child-and-new-parent signed registration; two-key rotation preserves valid
