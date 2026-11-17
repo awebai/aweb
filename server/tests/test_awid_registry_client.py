@@ -66,9 +66,11 @@ class _FakeRedis:
             raise RedisError("redis unavailable")
         return self.values.get(key)
 
-    async def set(self, key: str, value: str, *, ex: int | None = None):
+    async def set(self, key: str, value: str, *, ex: int | None = None, nx: bool = False):
         if self.fail:
             raise RedisError("redis unavailable")
+        if nx and key in self.values:
+            return None
         self.values[key] = value
         self.expirations[key] = ex
         return True
@@ -1722,7 +1724,7 @@ async def test_cached_registry_client_invalidate_address_cache_removes_signed_en
     )
 
     await client._write_cache_entry(
-        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=owner_did_key),
+        await client._generation_cache_key(client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=owner_did_key), client._address_generation_key("acme.com", "https://api.awid.ai")),
         value=registry_module.Address(
             address_id="addr-1",
             domain="acme.com",
@@ -1738,7 +1740,10 @@ async def test_cached_registry_client_invalidate_address_cache_removes_signed_en
 
     await client._invalidate_address_cache(domain="acme.com", name="support", did_aws=[])
 
-    assert redis.values == {}
+    current_key = await client._generation_cache_key(
+        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=owner_did_key), client._address_generation_key("acme.com", "https://api.awid.ai"),
+    )
+    assert await redis.get(current_key) is None
 
 
 @pytest.mark.asyncio
@@ -1754,7 +1759,7 @@ async def test_cached_registry_client_invalidate_address_cache_removes_signed_li
     )
 
     await client._write_cache_entry(
-        client._domain_addresses_cache_key("acme.com", registry_url="https://api.awid.ai", caller_did_key=owner_did_key),
+        await client._generation_cache_key(client._domain_addresses_cache_key("acme.com", registry_url="https://api.awid.ai", caller_did_key=owner_did_key), client._address_generation_key("acme.com", "https://api.awid.ai")),
         value=[
             registry_module.Address(
                 address_id="addr-1",
@@ -1772,7 +1777,10 @@ async def test_cached_registry_client_invalidate_address_cache_removes_signed_li
 
     await client._invalidate_address_cache(domain="acme.com", name="support", did_aws=[])
 
-    assert redis.values == {}
+    current_key = await client._generation_cache_key(
+        client._domain_addresses_cache_key("acme.com", registry_url="https://api.awid.ai", caller_did_key=owner_did_key), client._address_generation_key("acme.com", "https://api.awid.ai"),
+    )
+    assert await redis.get(current_key) is None
 
 
 @pytest.mark.asyncio
@@ -2070,7 +2078,7 @@ async def test_cached_registry_client_invalidates_address_cache_on_register():
         transport=httpx.MockTransport(handler),
     )
     await client._write_cache_entry(
-        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=None),
+        await client._generation_cache_key(client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=None), client._address_generation_key("acme.com", "https://api.awid.ai")),
         value=registry_module.Address(
             address_id="addr-1",
             domain="acme.com",
@@ -2208,7 +2216,7 @@ async def test_cached_registry_client_delete_address_invalidates_reverse_lookup_
         transport=httpx.MockTransport(handler),
     )
     await client._write_cache_entry(
-        client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=None),
+        await client._generation_cache_key(client._address_cache_key("acme.com", "support", registry_url="https://api.awid.ai", caller_did_key=None), client._address_generation_key("acme.com", "https://api.awid.ai")),
         value=registry_module.Address(
             address_id="addr-1",
             domain="acme.com",
