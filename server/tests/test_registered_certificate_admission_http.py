@@ -23,7 +23,8 @@ class _CountLists(httpx.AsyncHTTPTransport):
         self.reads = 0
 
     async def handle_async_request(self, request):
-        if request.method == "GET" and request.url.path.endswith("/certificates"):
+        if ((request.method == "GET" and request.url.path.endswith("/certificates"))
+                or (request.method == "POST" and request.url.path.endswith("/certificates/status"))):
             self.reads += 1
         return await super().handle_async_request(request)
 

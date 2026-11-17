@@ -2378,9 +2378,14 @@ class CachedRegistryClient(RegistryClient):
     async def get_team_registrations_for_certificates(
         self, domain: str, name: str, certificate_ids: list[str], *, after_miss: bool = False,
     ) -> set[str]:
+        statuses = await self._cached_certificate_statuses(domain, name, certificate_ids, registration=True)
+        if "legacy_unchecked" in statuses.values():
+            # Keep the complete private-reader partition, write fence,
+            # cancellation isolation and five-second retry budget unchanged.
+            certificates = (await self.refresh_team_certificates_after_miss(domain, name)
+                            if after_miss else await self.list_team_certificates(domain, name, active_only=False))
+            return {cert.certificate_id for cert in certificates if cert.certificate_id in statuses}
         if after_miss:
-            # The same team-scoped budget as the existing full-list retry;
-            # callers reach it only after positive certificate verification.
             try:
                 admitted = await self.redis_client.set(
                     f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}",
@@ -2390,14 +2395,9 @@ class CachedRegistryClient(RegistryClient):
                 raise RegistryError("AWID certificate existence refresh unavailable", status_code=503) from exc
             if not admitted:
                 raise RegistryError("AWID certificate existence refresh suppressed", status_code=503)
-        statuses = await self._cached_certificate_statuses(
-            domain, name, certificate_ids, registration=True, force=after_miss,
-        )
-        if "legacy_unchecked" in statuses.values():
-            # Keep the old registry's complete-list availability and authority.
-            certificates = (await self.list_team_certificates_fresh(domain, name, active_only=False)
-                            if after_miss else await self.list_team_certificates(domain, name, active_only=False))
-            return {cert.certificate_id for cert in certificates if cert.certificate_id in statuses}
+            statuses = await self._cached_certificate_statuses(
+                domain, name, certificate_ids, registration=True, force=True,
+            )
         return {cid for cid, status in statuses.items() if status in ("active", "revoked")}
 
     async def _cached_certificate_statuses(

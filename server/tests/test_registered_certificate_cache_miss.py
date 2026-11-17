@@ -44,6 +44,9 @@ async def world(monkeypatch, aweb_cloud_db):
     )
 
     async def handler(request):
+        if request.method == "POST" and request.url.path.endswith("/certificates/status"):
+            # This fixture exercises the supported old-registry fallback.
+            return httpx.Response(404)
         if request.url.path.endswith("/revocations"):
             return httpx.Response(200, json={
                 "revocations": [{"certificate_id": value} for value in env.revoked], "has_more": False,
@@ -248,6 +251,9 @@ async def test_caller_cancellation_does_not_extend_deadline_or_cancel_other_wait
 @pytest.mark.parametrize("stall", [False, True])
 async def test_cache_write_failure_or_stall_is_transient(world, monkeypatch, stall):
     world.registered.append("cert-new")
+    # As with the fixture's warm full revocation set, establish the exact
+    # non-revocation before failing the registration-refresh cache write.
+    await world.registry.get_team_revocations_for_certificates("acme.com", "backend", ["cert-new"])
     original = world.redis.set
 
     async def write(key, value, ex=None, nx=False):
