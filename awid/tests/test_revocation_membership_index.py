@@ -74,6 +74,19 @@ async def publish(env, values):
 
 
 @pytest.mark.asyncio
+async def test_first_warm_membership_read_uses_the_current_crl_key_index(crl):
+    # Populate through the real SDK key builder and its ordinary complete-list
+    # path. The FIRST subsequent member check must use the index; a fallback
+    # that repairs an unindexed v2 entry would hide a broken publish classifier.
+    assert await crl.client.get_team_revocations(crl.domain, "ops") == {"revoked"}
+    crl.redis.commands.clear()
+    assert await selected(crl) == {"revoked"}
+    assert crl.redis.commands == ["EVAL"]
+    assert len(crl.calls) == 1
+    assert await crl.redis.exists(crl.index, crl.meta) == 2
+
+
+@pytest.mark.asyncio
 async def test_complete_list_stamp_and_index_publish_with_one_expiry(crl):
     await publish(crl, {"revoked"})
     assert await selected(crl) == {"revoked"}
