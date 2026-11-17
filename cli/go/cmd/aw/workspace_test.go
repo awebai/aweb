@@ -1380,7 +1380,13 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			mu.Lock()
+			agents := make([]awid.AgentView, 0, len(didToAlias))
+			for did, alias := range didToAlias {
+				agents = append(agents, awid.AgentView{AgentID: alias + "-agent", Alias: alias, DIDKey: did})
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: agents})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/roles/active"):
@@ -1739,7 +1745,13 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			mu.Lock()
+			agents := make([]awid.AgentView, 0, len(didToAlias))
+			for did, alias := range didToAlias {
+				agents = append(agents, awid.AgentView{AgentID: alias + "-agent", Alias: alias, DIDKey: did})
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: agents})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/roles/active"):
