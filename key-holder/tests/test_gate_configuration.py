@@ -159,3 +159,119 @@ def test_actual_legacy_cli_names_the_replacement_section(tmp_path):
     assert result.returncode != 0
     assert "human_approval section in deployment.yaml" in result.stderr
     assert "--human-approval-config FILE migrate" in result.stderr
+
+
+def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tmp_path):
+    from approval_service.canonical import parse
+    from approval_service.gate import Policy
+    from policy_inputs import policy_file
+    import base64
+
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    with store._connection() as db, db:
+        db.execute(
+            "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
+        )
+        db.execute("PRAGMA user_version=4")
+    store.migrate(
+        policy=Policy.from_section(
+            {
+                "service": "https://approval.example",
+                "require": {"organisation.human.add": "passkey"},
+            }
+        )
+    )
+    before = store.audit()
+    with pytest.raises(Refused, match="human_approval_source_required"):
+        Holder(store, registry=None, origin="https://holder.example")
+    assert store.audit() == before
+    path = policy_file(tmp_path / "policy.json", "example.test", None)
+    holder = Holder(
+        store,
+        registry=None,
+        origin="https://holder.example",
+        human_approval_config=path,
+    )
+    assert holder.gate().policy.grade("organisation.human.add") is None
+    rows = store.audit()
+    assert len(rows) == len(before) + 1
+    prefix = b"aweb.key-holder.human-approval/1\n"
+    change = parse(base64.b64decode(rows[-1]["payload"])[len(prefix) :])
+    assert change["from"]["require"] == {"organisation.human.add": "passkey"}
+    assert change["to"]["require"] == {}
+    # Once the operator explicitly turned it off, omission is no downgrade.
+    Holder(store, registry=None, origin="https://holder.example")
+    assert store.audit() == rows
+
+
+def test_effect_in_older_source_less_process_cannot_disable_applied_requirement(
+    tmp_path,
+):
+    from awid.did import generate_keypair, did_from_public_key, stable_id_from_did_key
+    from policy_inputs import policy_file
+
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    old = Holder(store, registry=None, origin="https://holder.example")
+    path = policy_file(tmp_path / "policy.json", "example.test")
+    Holder(
+        store,
+        registry=None,
+        origin="https://holder.example",
+        human_approval_config=path,
+    )
+    before = store.audit()
+    _, public = generate_keypair()
+    key = did_from_public_key(public)
+    with pytest.raises(Refused, match="human_approval_source_required"):
+        old.issue_person_certificate(stable_id_from_did_key(key), key)
+    assert store.audit() == before
+
+
+@pytest.mark.parametrize("explicit_passkey", [False, True])
+def test_hardware_requirement_refuses_passkey_only_grading_before_start(
+    tmp_path, explicit_passkey
+):
+    from policy_inputs import policy_file
+
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    path = policy_file(tmp_path / "policy.json", "example.test", "hardware")
+    grading = (
+        {"grading": EnrollmentGrading("passkey_only", None)} if explicit_passkey else {}
+    )
+    with pytest.raises(Refused, match="human_approval_hardware_grading_required"):
+        Holder(
+            store,
+            registry=None,
+            origin="https://holder.example",
+            human_approval_config=path,
+            **grading,
+        )
+    assert store.audit() == []
+
+
+def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(tmp_path):
+    from policy_inputs import policy_file
+
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    path = policy_file(tmp_path / "policy.json", "example.test")
+    holder = Holder(
+        store,
+        registry=None,
+        origin="https://holder.example",
+        human_approval_config=path,
+    )
+    before = store.audit()
+    policy_file(path, "example.test", "hardware")
+    with pytest.raises(Refused, match="human_approval_hardware_grading_required"):
+        holder.gate()
+    assert store.audit() == before
+    hardware = Holder(
+        store,
+        registry=None,
+        origin="https://holder.example",
+        human_approval_config=path,
+        grading=EnrollmentGrading("hardware", None),
+    )
+    assert (
+        hardware.gate().policy.grade("organisation.human.add") == "certified_hardware"
+    )
