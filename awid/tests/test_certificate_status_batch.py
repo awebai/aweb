@@ -187,6 +187,7 @@ async def test_default_public_quota_does_not_regress_serial_members(
     registry = CachedRegistryClient("http://testserver", redis,
                                     transport=Counted(app=app, client=(ip, 12345)))
     try:
+        await registry.invalidate_team_certificate_cache(domain, "ops")
         ids = [f"member-{n}" for n in range(1, active + 1)]
         for cid in ids:
             assert cid not in await registry.get_team_revocations(domain, "ops")
