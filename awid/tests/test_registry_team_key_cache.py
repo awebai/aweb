@@ -10,7 +10,7 @@ import pytest_asyncio
 
 import awid.registry as registry_module
 from awid.registry import CachedRegistryClient, RegistryError
-from test_registry_client import FakeRedis, ScanUnavailableRedis
+from test_registry_client import FakeRedis
 
 
 @pytest_asyncio.fixture
@@ -130,15 +130,19 @@ async def test_key_not_found_is_not_cached_or_served_as_outage_grace(key_cache):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scan_unavailable", [False, True])
-async def test_certificate_cache_invalidation_clears_key_even_if_scan_fails(key_cache, scan_unavailable):
+@pytest.mark.parametrize("generation_unavailable", [False, True])
+async def test_certificate_cache_invalidation_clears_key_even_if_generation_write_fails(key_cache, generation_unavailable):
+    class GenerationUnavailableRedis(FakeRedis):
+        async def set(self, *args, **kwargs):
+            raise OSError("Redis generation unavailable")
+
     env = key_cache
-    if scan_unavailable:
-        object.__setattr__(env.registry, "redis_client", ScanUnavailableRedis())
+    if generation_unavailable:
+        object.__setattr__(env.registry, "redis_client", GenerationUnavailableRedis())
     assert await _key(env) == "did:key:old"
     env.state["key"] = "did:key:new"
-    if scan_unavailable:
-        with pytest.raises(OSError, match="Redis scan unavailable"):
+    if generation_unavailable:
+        with pytest.raises(OSError, match="Redis generation unavailable"):
             await env.registry.invalidate_team_certificate_cache("example.com", "backend")
     else:
         await env.registry.invalidate_team_certificate_cache("example.com", "backend")
