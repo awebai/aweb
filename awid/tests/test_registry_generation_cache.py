@@ -11,7 +11,7 @@ import httpx
 import pytest
 from redis.asyncio import Redis
 
-from awid.registry import CachedRegistryClient
+from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from test_id_status_client import (
     BUNDLE, DOMAIN, SUBJECT, _evidence, _fixture, env as env,
 )
@@ -38,7 +38,7 @@ async def test_id_invalidation_uses_no_keyspace_scan(env):
 async def test_generation_loss_never_reuses_retained_evidence(env):
     await _evidence(env)
     # Keep every evidence entry, lose only its generation metadata.
-    generation_keys = [key for key in env.redis.values if "generation" in key]
+    generation_keys = [key for key in env.redis.values if key.startswith("awid:cache_generation:")]
     assert generation_keys
     await env.redis.delete(*generation_keys)
     env.status[DOMAIN] = _fixture("alice-revoked-now")
@@ -92,6 +92,40 @@ async def test_two_registry_origins_do_not_share_status_cache(env):
         assert (await other.id_chain_evidence(BUNDLE, SUBJECT, domain=DOMAIN)).status == expected
     finally:
         await other.aclose()
+
+
+@pytest.mark.asyncio
+async def test_lost_mutation_reply_rotates_the_generation_again(env, monkeypatch):
+    await _evidence(env)
+    generations = []
+
+    async def committed_but_reply_lost(self, *args, **kwargs):
+        generations.append(env.redis.values[self._id_status_generation_key(DOMAIN)])
+        # Another read can finish between the pre-write fence and the commit.
+        await _evidence(env)
+        env.status[DOMAIN] = _fixture("alice-revoked-now")
+        raise RegistryError("reply lost", status_code=503)
+
+    monkeypatch.setattr(RegistryClient, "register_id_certificate", committed_but_reply_lost)
+    with pytest.raises(RegistryError, match="reply lost"):
+        await env.client.register_id_certificate(BUNDLE, signer=None, expected_head=None, invitation_id=None)
+    assert env.redis.values[env.client._id_status_generation_key(DOMAIN)] != generations[0]
+    assert (await _evidence(env)).status == env.status[DOMAIN]
+
+
+@pytest.mark.asyncio
+async def test_address_and_certificate_generation_scopes_are_isolated(env):
+    client = env.client
+    key = client._team_certificates_generation_key(DOMAIN, "team")
+    other = client._team_certificates_generation_key(DOMAIN, "other")
+    address = client._address_generation_key(DOMAIN, client.registry_url)
+    original = [await client._generation_cache_key("data", scope) for scope in (key, other, address)]
+    await client._invalidate_team_certificate_cache_keys(DOMAIN, "team")
+    current = [await client._generation_cache_key("data", scope) for scope in (key, other, address)]
+    assert current[0] != original[0]
+    assert current[1:] == original[1:]
+    await client._invalidate_address_cache(domain=DOMAIN, name="agent", did_aws=[])
+    assert await client._generation_cache_key("data", address) != current[2]
 
 
 class CountedRedis(Redis):

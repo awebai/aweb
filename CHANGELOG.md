@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- AWID cache invalidation for identity-tree, address and team-certificate
+  writes no longer scans unrelated Redis keys. Random cache generations keep
+  delayed refreshes from restoring invalidated entries without changing the
+  evidence freshness or authorization rules.
+
 - Embedded aweb and AWID applications preserve their host's logging handlers
   and root level. Starting them no longer suppresses later host warnings;
   standalone services still configure their own logging.
