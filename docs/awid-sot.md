@@ -206,7 +206,8 @@ The same credential also exempts the IP limit on these operations:
 | POST | `/v1/id-certificates/status` | `id_certificate_status` (IP only) |
 
 Their existing proofs, controller authorization, validation and responses are
-unchanged. A signed ID-status caller still spends its caller-key budget.
+unchanged. ID-status reads are public and spend only the source-IP budget;
+there is no signed caller-key budget.
 Every registry route with an IP limiter accepts this rate-only exemption.
 Missing, wrong or unconfigured service credentials retain the public budgets.
 Public callers keep the existing 10/hour DID, namespace and team creation

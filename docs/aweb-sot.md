@@ -1356,6 +1356,12 @@ Supported clean-directory outcomes:
   default identity scope is local. With `--global`, this reuses the current
   self-custodial global identity; if none exists the CLI fails with `aw id
   create` guidance rather than silently creating a local identity.
+- `--invite <token> [--parent <creator-home>]`: accept an existing invite and
+  connect. `--parent` selects a same-machine creator for a fresh child,
+  independently of the invite issuer; omit it to reuse an existing chain.
+  Joining preserves existing parentage and checks the invite's stored human
+  condition. `--join-from` is the shorthand that selects the same source for
+  both the creator and the invite.
 - `--admission-team-id <team> --expect-account <account-id>`: use host CLI
   auth with scope `cli.team_admission` to issue one admission invite, then
   accept and connect. Missing CLI auth starts bounded device authorization in
@@ -1416,16 +1422,26 @@ namespace family.
 
 ### Global agent (joining an existing team via invite)
 
+This example uses an invite issuer with no verified nearest human, so the
+invite has no human condition. An issuer with a verified nearest human defaults
+all its invites, including `--member-global`, to requiring that human;
+`--for-human <did:aw>` requires the named person instead. Acceptance checks the
+joining agent's chain against current registry evidence before granting
+membership. A chainless global identity cannot meet a human condition: joining
+never gives an existing identity the issuer as its parent. A conditioned join
+refuses if the chain is missing, names another human, or current evidence is
+unavailable. See [creator selection and invite conditions](identity.md#3-join-team).
+
 ```
 1. aw id create --name alice --domain acme.com
    → identity created at awid (did:aw, did:key, address)
 
-2. Team controller invites alice:
+2. Team controller, acting with an issuer that has no verified human, invites alice:
    aw id team invite --member-global
    → returns invite token
 
 3. Alice accepts:
-   aw id team accept-invite <token> --address acme.com/alice
+   aw id team accept-invite <token> --global --address acme.com/alice
    → team controller signs certificate for alice's did:key
    → certificate saved under .aw/team-certs/<team>.pem
 
