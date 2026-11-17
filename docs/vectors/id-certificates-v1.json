@@ -12126,6 +12126,175 @@
         "old_certificate_unchanged": true,
         "human_authority": false
       }
+    },
+    {
+      "name": "namespace-recovery-withdraws-delegations-and-explicit-restore",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "child_epoch_preserved": true
+      }
+    },
+    {
+      "name": "namespace-recovery-reused-parent-key-no-revival",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "implicit_revival": false
+      }
+    },
+    {
+      "name": "namespace-recovery-same-key-retry-preserves-restored-child",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "restored_child_valid": true
+      }
+    },
+    {
+      "name": "namespace-reverify-before-recovery-withdraws-delegations",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "delegation_withdrawn": true
+      }
+    },
+    {
+      "name": "namespace-pre-epoch-recovery-withdraws-delegations",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "delegation_withdrawn": true
+      }
+    },
+    {
+      "name": "namespace-pre-epoch-same-key-enrollment-preserves-delegation",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "child_epoch_preserved": true
+      }
+    },
+    {
+      "name": "namespace-parent-authorized-recovery-withdraws-own-children",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "incoming_delegation_preserved": true
+      }
+    },
+    {
+      "name": "namespace-delete-reregister-withdraws-delegations",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "implicit_revival": false
+      }
+    },
+    {
+      "name": "namespace-two-key-rotation-preserves-only-current-delegations",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "stale_delegation_promoted": false
+      }
+    },
+    {
+      "name": "namespace-recovery-keeps-own-txt-child-independent",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "exact_child_valid": true
+      }
+    },
+    {
+      "name": "namespace-observation-does-not-withdraw-delegations",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "delegation_preserved": true
+      }
+    },
+    {
+      "name": "namespace-recovery-racing-old-parent-registration-refuses",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "old_parent_status": 401
+      }
+    },
+    {
+      "name": "namespace-recovery-racing-committed-child-registration-clears",
+      "input": {
+        "parent_domain": "com",
+        "child_domain": "example.com",
+        "previous_parent_key": "depth1",
+        "new_parent_key": "root_rotated",
+        "child_key": "root"
+      },
+      "expected": {
+        "delegation_withdrawn": true
+      }
     }
   ],
   "raw_wire_refusals": [
