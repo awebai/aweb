@@ -1,12 +1,15 @@
 """Exact-ID authorization reads must not materialize lifetime team history."""
 
 import json
+import os
 import time
 from uuid import uuid4
 
 import httpx
 import pytest
+from redis.asyncio import Redis
 
+from awid.ratelimit import RedisFixedWindowRateLimiter
 from awid.registry import RegistryClient, RegistryError
 from test_team_visibility_enforcement import (
     _create_team, _register_member, _revoke_member, _setup_namespace,
@@ -102,11 +105,18 @@ async def test_real_history_cost_depends_only_on_requested_ids(
         FROM {{tables.teams}} t CROSS JOIN generate_series(1, $4::int) n
         WHERE t.domain = $1 AND t.name = $2
     """, domain, "ops", team_did, history)
+    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    app = client._transport.app
+    app.state.rate_limiter = RedisFixedWindowRateLimiter(redis=redis)
+    # A private source-IP bucket, with the real default limiter still enabled.
+    ip = "127." + ".".join(str(n) for n in os.urandom(3))
+    upstream = httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=(ip, 12345)),
+                                base_url="http://testserver")
     requests = []
 
     class CountedApp(httpx.AsyncBaseTransport):
         async def handle_async_request(self, request):
-            response = await client.send(request)
+            response = await upstream.send(request)
             await response.aread()
             requests.append({"method": request.method, "bytes": len(response.content)})
             return response
@@ -115,8 +125,11 @@ async def test_real_history_cost_depends_only_on_requested_ids(
     try:
         started = time.perf_counter()
         if history > 100000:
-            with pytest.raises(RegistryError, match="pagination exceeded 500 pages"):
+            # Default public quota may refuse before the 500-page ceiling;
+            # either refusal is safe, neither may return a partial set.
+            with pytest.raises(RegistryError) as old_failure:
                 await registry.get_team_revocations(domain, "ops")
+            assert old_failure.value.status_code in (429, 502)
         else:
             assert len(await registry.get_team_revocations(domain, "ops")) == history
         before = {"requests": len(requests), "bytes": sum(r["bytes"] for r in requests),
@@ -132,3 +145,5 @@ async def test_real_history_cost_depends_only_on_requested_ids(
                         "seconds": time.perf_counter() - started}}, sort_keys=True), flush=True)
     finally:
         await registry.aclose()
+        await upstream.aclose()
+        await redis.aclose()
