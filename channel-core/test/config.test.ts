@@ -7,6 +7,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -61,6 +62,22 @@ describe("resolveConfig", () => {
     expect(config.did).toBe(external.did);
     expect(config.signingKey).toEqual(external.seed);
     expect(config.did).not.toBe(shadow.did);
+  });
+
+  test.each(["did: [", "", "null", "a scalar", "[]"])("refuses corrupt identity.yaml: %j", async (content) => {
+    const { external, workdir } = await createShadowedPrincipalFixture();
+    process.env.AWEB_IDENTITY_HOME = external.identityHome;
+    writeFileSync(join(external.identityHome, "identity.yaml"), content);
+    await expect(resolveConfig(workdir)).rejects.toThrow(/identity\.yaml/);
+  });
+
+  test("refuses an unreadable identity file but permits a missing optional identity file", async () => {
+    const { shadow, workdir } = await createShadowedPrincipalFixture();
+    const path = join(shadow.identityHome, "identity.yaml");
+    rmSync(path);
+    expect((await resolveConfig(workdir)).did).toBe(shadow.did);
+    mkdirSync(path);
+    await expect(resolveConfig(workdir)).rejects.toThrow(/identity\.yaml/);
   });
 
   test("keeps tolerating a symlinked working-directory .aw when the external selector is unset", async () => {
