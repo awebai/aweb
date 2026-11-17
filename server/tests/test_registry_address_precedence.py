@@ -89,7 +89,7 @@ async def address_collision(privacy_app, monkeypatch):  # noqa: F811 -- imported
                 }},
             }
             path = "/address-mcp/"
-        elif surface in {"mail", "api_key_mail"}:
+        elif surface == "mail":
             selector = "to_address" if "/" in recipient else "to_alias"
             payload = {selector: recipient, "subject": "Address authority", "body": "hello"}
             path = "/v1/messages"
@@ -114,7 +114,7 @@ async def address_collision(privacy_app, monkeypatch):  # noqa: F811 -- imported
                            signed_payload=canonical.decode(), signature=sign_message(actor.sk, canonical))
         raw = json.dumps(payload).encode()
         return await env.client.post(path, content=raw, headers={
-            **(proxy_headers if surface in {"hosted_mcp_mail", "api_key_mail"} else
+            **(proxy_headers if surface == "hosted_mcp_mail" else
                _signed_identity_headers(identity_sk, identity_did, "", raw) if identity_only else
                _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, raw)),
             "Content-Type": "application/json",
@@ -139,7 +139,7 @@ async def address_collision(privacy_app, monkeypatch):  # noqa: F811 -- imported
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail", "hosted_mcp_mail", "api_key_mail"])
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail", "hosted_mcp_mail"])
 @pytest.mark.parametrize("duplicate_alias", [False, True], ids=["same-team-shadow", "two-team-collision"])
 async def test_registered_address_wins_over_local_aliases(address_collision, surface, duplicate_alias):
     fixture = address_collision
@@ -172,7 +172,7 @@ async def test_registered_address_wins_over_local_aliases(address_collision, sur
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail", "hosted_mcp_mail", "api_key_mail"])
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail", "hosted_mcp_mail"])
 async def test_bare_alias_still_selects_the_team_member(address_collision, surface):
     fixture = address_collision
     env = fixture.env
@@ -224,7 +224,7 @@ async def test_derived_local_address_survives_registry_absence(address_collision
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail", "hosted_mcp_mail", "api_key_mail"])
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail", "hosted_mcp_mail"])
 @pytest.mark.parametrize("registry_status", [503, 404], ids=["outage", "uncoded-proxy-404"])
 async def test_derived_local_address_refuses_registry_outage(address_collision, surface, registry_status, monkeypatch):
     fixture = address_collision
@@ -385,7 +385,7 @@ async def test_signed_visible_recipient_binding_works_without_address_registry(a
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("surface", ["hosted_mcp_mail", "api_key_mail"])
+@pytest.mark.parametrize("surface", ["hosted_mcp_mail"])
 async def test_hosted_bare_alias_works_during_address_registry_outage(address_collision, surface, monkeypatch):
     fixture = address_collision
     env = fixture.env
