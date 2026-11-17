@@ -494,3 +494,18 @@ def test_the_memo_answers_only_the_served_key_it_saw_within_its_window():
     assert memo.get(TEAM_ID, served) == answer
     now[0] += 0.1
     assert memo.get(TEAM_ID, served) is None
+
+
+@pytest.mark.asyncio
+async def test_first_and_unchanged_key_admission_seed_the_verified_act_floor():
+    pins = MemoryTeamKeyPins()
+    controller, key = keypair(), keypair()[1]
+    record = _example_act(controller, key)
+    resolver = _dns('_awid.team.example.com', controller[1])
+    await pinned_team_key(TEAM_ID, key, pins=pins, fetch_act=_fetch(record), resolver=resolver, enforce=True)
+    expected = verify_team_key_act(record, domain='team.example.com', name='base', team_did_key=key)
+    assert (await pins.pin(TEAM_ID)).act_at == expected.signed_at
+    pins = MemoryTeamKeyPins()
+    await pins.first_sight(TEAM_ID, key)
+    await pinned_team_key(TEAM_ID, key, pins=pins, fetch_act=_fetch(record), resolver=resolver, enforce=True)
+    assert (await pins.pin(TEAM_ID)).act_at == expected.signed_at
