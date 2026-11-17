@@ -97,9 +97,14 @@ available files and report an uncertain outcome; never infer remote rollback.
 
 The native HTTP diagnostic prints `category=hosted_http_failure`,
 numeric `status`, a fixed known `error_code` or `unknown`, and a syntactically
-validated UUID `request_id` or `unknown`. It omits arbitrary bodies for generic
-HTTP failures and 401/404; recognized 409 identity-mismatch guidance retains its
-existing message contract. Do not forward whole stderr on that basis. Extract
+validated UUID `request_id` or `unknown`. The known codes are the hosted
+service's coded refusals of `POST /api/v1/workspaces/init`
+(`workspaceInitRefusalRemedies` in `cli/go/cmd/aw/init_apikey_diagnostic.go`),
+read from `detail.code`, `error.code` or `detail.error`. A known code is printed
+with aw's own remedy for it and is the `--json` error `code`. An unknown code,
+or codes that disagree within one body, stay `unknown`. It omits arbitrary bodies
+and server messages for every HTTP failure; recognized 409 identity-mismatch
+guidance retains its existing message contract. Do not forward whole stderr on that basis. Extract
 only the diagnostic fields for handoff; raw native output still stays private.
 Request IDs are service-provided correlation values, not authenticated transaction
 receipts. Invalid, contradictory or unavailable IDs stay unknown. This summary

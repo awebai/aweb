@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `aw init` with a hosted API key shows the hosted service's coded refusal
+  (for example `creator_must_sign`) with what to do about it, in text and as
+  the `--json` error code, instead of `error_code=unknown`. Unknown codes and
+  server messages stay unshown. A refusal whose detail is text or a list no
+  longer loses the response's request ID.
 - The registry accepts private-team reads signed with the covering-v2
   envelope (operation `read_team`), which binds the registry, the route and
   its query: team list and get, member lookup, certificate list, revocations,
