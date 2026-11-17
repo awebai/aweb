@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `aw mail send` now refuses a bare-alias send when recipient lookup fails,
+  instead of sending by alias as aw 1.20.0 through 1.36.58 did. Plaintext chat
+  follows the same rule. Retry the lookup or use the recipient's full address
+  or DID.
 - The registry accepts private-team reads signed with the covering-v2
   envelope (operation `read_team`), which binds the registry, the route and
   its query: team list and get, member lookup, certificate list, revocations,

@@ -2,8 +2,8 @@
 
 Disposable SQL provisions two teams. All certificate registrations/revocations,
 roster reads, mail/chat sends and inbox reads use real production services. The
-fault is a genuinely unreachable client-only registry origin (or a conflicting
-registry pin), never a substituted response or product test hook.
+fault is a genuinely unreachable client-only registry origin, a conflicting
+registry pin, or a dropped agent-list TCP connection; no decision is replaced.
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+import uvicorn
+from aweb_naapp_testing.network import make_certificates
 import yaml
 from awid.signing import canonical_json_bytes, load_signing_key_pem, sign_message
 
@@ -35,6 +37,93 @@ async def unavailable_origin():
         yield f"http://127.0.0.1:{sock.getsockname()[1]}"
     finally:
         sock.close()
+
+
+@asynccontextmanager
+async def registry_origin(env, tmp_path, monkeypatch, secured):
+    if not secured:
+        async with _registry_http(env.registry_app) as (origin, _):
+            yield origin
+        return
+    certificates = make_certificates(tmp_path, ["localhost"], ["127.0.0.1"])
+    monkeypatch.setenv("SSL_CERT_FILE", str(certificates.ca_file))
+    monkeypatch.setenv("GODEBUG", ",".join(filter(None, [os.environ.get("GODEBUG"), "x509sslcertoverrideplatform=1"])))
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    origin = f"https://127.0.0.1:{sock.getsockname()[1]}"
+    server = uvicorn.Server(uvicorn.Config(
+        env.registry_app, lifespan="off", log_level="error", ws="none",
+        ssl_certfile=str(certificates.cert_file), ssl_keyfile=str(certificates.key_file),
+    ))
+    serving = asyncio.create_task(server.serve(sockets=[sock]))
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(.02)
+        assert server.started
+        yield origin
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(serving, 5)
+        sock.close()
+
+
+@asynccontextmanager
+async def agent_list_connection_failure(origin):
+    """A TCP fault at the client edge, with all other requests forwarded.
+
+    Drop only the agent-list request, without inventing a roster, identity,
+    auth result or send response. Closing each forwarded connection lets us
+    inspect the next request even when the CLI normally reuses connections.
+    """
+    from types import SimpleNamespace
+    from urllib.parse import urlsplit
+
+    upstream = urlsplit(origin)
+    fault = SimpleNamespace(enabled=False, requests=[])
+
+    async def forward(reader, writer):
+        upstream_writer = None
+        try:
+            headers = await reader.readuntil(b"\r\n\r\n")
+            method, target, _ = headers.split(b"\r\n", 1)[0].decode().split()
+            fault.requests.append((method, target))
+            if fault.enabled and method == "GET" and target.split("?", 1)[0] == "/v1/agents":
+                return
+            upstream_reader, upstream_writer = await asyncio.open_connection(upstream.hostname, upstream.port)
+            lines = [line for line in headers.split(b"\r\n")[:-2] if not line.lower().startswith(b"connection:")]
+            upstream_writer.write(b"\r\n".join([*lines, b"Connection: close", b"", b""]))
+            await upstream_writer.drain()
+
+            async def body():
+                while chunk := await reader.read(65536):
+                    upstream_writer.write(chunk)
+                    await upstream_writer.drain()
+
+            sending = asyncio.create_task(body())
+            try:
+                while chunk := await upstream_reader.read(65536):
+                    writer.write(chunk)
+                    await writer.drain()
+            finally:
+                sending.cancel()
+                await asyncio.gather(sending, return_exceptions=True)
+        except (asyncio.IncompleteReadError, ConnectionError):
+            pass
+        finally:
+            if upstream_writer:
+                upstream_writer.close()
+                await upstream_writer.wait_closed()
+            writer.close()
+            await writer.wait_closed()
+
+    server = await asyncio.start_server(forward, "127.0.0.1", 0)
+    try:
+        yield f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}", fault
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 async def run_aw(binary, cwd, env, *args):
@@ -144,15 +233,24 @@ async def inbox(env, actor):
 @pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("condition,kind", [
-    ("available", "mail"), ("unreachable", "mail"), ("pin_refused", "mail"),
+    ("available", "mail"), ("https", "mail"), ("unreachable", "mail"), ("pin_refused", "mail"),
     ("revoked_unreachable", "mail"), ("not_found", "mail"),
-    ("unreachable_not_found", "mail"),
+    ("unreachable_not_found", "mail"), ("agent_list_unavailable", "mail"),
+    ("listed_agent", "mail"), ("unknown", "mail"),
     ("available", "chat"), ("unreachable", "chat"),
+    ("agent_list_unavailable", "chat"), ("listed_agent", "chat"), ("unknown", "chat"),
+    ("agent_list_unavailable", "chat_wait"), ("unreachable", "chat_wait"),
 ])
-async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_path, condition, kind):
+async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_path, monkeypatch, condition, kind):
     tmp_path = tmp_path.resolve()
     env = privacy_app
-    async with _registry_http(env.registry_app) as (registry_url, _), unavailable_origin() as down:
+    async with (
+        registry_origin(env, tmp_path, monkeypatch, condition == "https") as registry_url,
+        unavailable_origin() as down,
+        agent_list_connection_failure(str(env.client.base_url)) as (front, fault),
+    ):
+        env.client.base_url = front
+        env.app.state.public_origin = front
         world = await memberships(env, tmp_path, registry_url, missing=condition in ("not_found", "unreachable_not_found"))
         if condition == "revoked_unreachable":
             await env.app.state.awid_registry_client.revoke_team_certificate(
@@ -167,14 +265,25 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
             state = yaml.safe_load((world.home / "teams.yaml").read_text())
             next(entry for entry in state["memberships"] if entry["team_id"] == TEAM)["registry_url"] = down
             (world.home / "teams.yaml").write_text(yaml.safe_dump(state))
+        # Faults need not spend the default API timeout retrying a closed
+        # endpoint; this is the real CLI's supported request deadline.
+        if condition not in ("available", "https", "listed_agent", "unknown", "not_found"):
+            world.env["AWEB_HTTP_TIMEOUT"] = "2s"
+        fault.enabled = condition == "agent_list_unavailable"
+        fault.requests.clear()
+        recipient = "bob" if condition == "listed_agent" else "absent-everywhere" if condition == "unknown" else "reviewer"
         body = tmp_path / "body.txt"
         body.write_text("The selected team's reviewer is the intended recipient.")
         binary = Path(os.environ["AW_TEST_CLI_BINARY"])
-        command = (["mail", "send", "--to", "reviewer", "--subject", "alias isolation"] if kind == "mail"
-            else ["chat", "send-and-leave", "reviewer", "--start-conversation"])
-        # Observe the actual CLI registry-read failure independently of the
-        # messaging selector, without substituting registry responses.
-        if condition in ("unreachable", "pin_refused", "revoked_unreachable", "unreachable_not_found"):
+        command = (["mail", "send", "--to", recipient, "--subject", "alias isolation"] if kind == "mail"
+            else ["chat", "send-and-wait" if kind == "chat_wait" else "send-and-leave", recipient, "--start-conversation"])
+        if condition not in ("available", "https", "listed_agent", "unknown", "not_found"):
+            # Exercise the send's own lookup branch, without spending its
+            # request deadline first searching other local memberships.
+            command = ["--team", TEAM, *command]
+        # Independently confirm the real fault once; each send also observes
+        # its own lookup error and must never issue a delivery request.
+        if condition == "unreachable" and kind == "mail":
             roster_code, roster, roster_error = await run_aw(
                 binary, tmp_path, world.env, "id", "team", "members", "--team-id", TEAM,
             )
@@ -182,36 +291,48 @@ async def test_bare_alias_never_changes_team_on_unknown_roster(privacy_app, tmp_
         code, result, stderr = await run_aw(binary, tmp_path, world.env, *command, "--plaintext", "--body-file", str(body))
         rows = await env.db.fetch_all("SELECT * FROM {{tables.messages}} ORDER BY created_at")
         alpha_inbox, beta_inbox = await inbox(env, env.actors["alice"]), await inbox(env, env.actors["carol"])
-        if kind == "chat" or condition in ("revoked_unreachable", "unreachable_not_found"):
+        lookup_failed = condition in ("unreachable", "pin_refused", "revoked_unreachable", "unreachable_not_found", "agent_list_unavailable")
+        if lookup_failed or condition == "unknown" or (kind.startswith("chat") and condition != "listed_agent"):
             assert code != 0, (result, stderr)
             assert not rows and not alpha_inbox and not beta_inbox, (rows, alpha_inbox, beta_inbox)
             assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 0
-            if kind == "chat":
-                assert result["error"]["reason"] == "recipient_human_mail_only", (result, stderr)
-            if condition == "unreachable_not_found":
-                # A real HTTP not-found answer establishes that the send
-                # reached the selected service, rather than refusing locally
-                # because its separate client-side AWID read was unavailable.
+            assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 0
+            if lookup_failed:
+                message = result["error"]["message"]
+                assert "lookup failed" in message and "retry" in message, (result, stderr)
+                assert "full address" in message and "DID" in message, (result, stderr)
+                assert "agent list" in message if condition == "agent_list_unavailable" else "roster" in message
+                assert not any(method == "POST" and path in ("/v1/messages", "/v1/chat/sessions") for method, path in fault.requests)
+            elif condition == "unknown":
                 assert result["error"]["http_status"] == 404, (result, stderr)
-                assert "Recipient agent not found" in result["error"]["message"], (result, stderr)
+                assert any(method == "POST" for method, _ in fault.requests)
+            else:
+                assert result["error"]["reason"] == "recipient_human_mail_only", (result, stderr)
+            return
+        if kind == "chat":
+            assert code == 0, (result, stderr)
+            assert not rows and not alpha_inbox and not beta_inbox
+            assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 1
+            assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 1
             return
         assert code == 0, (result, stderr)
         assert len(rows) == 1, rows
         [stored] = rows
         selected_beta = condition == "not_found"
-        expected = env.actors["carol"] if selected_beta else env.actors["alice"]
+        expected = env.actors["carol"] if selected_beta else env.actors["bob"] if condition == "listed_agent" else env.actors["alice"]
         assert stored["message_id"] == UUID(result["message_id"])
         assert stored["team_id"] == (world.beta if selected_beta else TEAM), dict(stored)
         assert stored["from_agent_id"] == (world.beta_sender if selected_beta else world.alpha_sender), dict(stored)
         assert stored["to_did"] == expected.did, dict(stored)
-        if condition == "available":
+        if condition in ("available", "https"):
             # The live human lookup becomes a direct-DID send: participants
             # are literal identities, not actor pointers (canonical contract:
             # docs/identity-messaging-contract.md:77-82,113-120).
             assert stored["to_agent_id"] is None, dict(stored)
         else:
             assert stored["to_agent_id"] == expected.id, dict(stored)
-        assert [str(row["message_id"]) for row in (beta_inbox if selected_beta else alpha_inbox)] == [result["message_id"]]
+        selected_inbox = await inbox(env, env.actors["bob"]) if condition == "listed_agent" else beta_inbox if selected_beta else alpha_inbox
+        assert [str(row["message_id"]) for row in selected_inbox] == [result["message_id"]]
         assert not (alpha_inbox if selected_beta else beta_inbox)
         if selected_beta:
             assert world.beta in stderr, (result, stderr)
