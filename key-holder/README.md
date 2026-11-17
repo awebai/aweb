@@ -116,6 +116,9 @@ the completed ceremony's deadline.
 
 Replacing a lost enrolled key is not implemented; today a person who loses their only enrolled key is issued a new ID by the operator and enrols again, and the old ID is revoked. Enrol two keys.
 
+Before starting an existing private volume, run `aweb-key-holder --state <path>
+migrate` to apply the ordered schema migrations.
+
 The private `audit --after <sequence> --limit <1..1000>` command pages the
 signature record without registry or approval configuration. `retire-person
 --person <did:aw>` withdraws a local enrollment without deleting its evidence,
