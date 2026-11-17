@@ -28,12 +28,14 @@ def controller_keypair():
 class DNS(asyncio.DatagramProtocol):
     def __init__(self, registry_origin):
         self.records = {}
+        self.queries = 0
         self.registry_origin = registry_origin
 
     def connection_made(self, transport):
         self.transport = transport
 
     def datagram_received(self, wire, peer):
+        self.queries += 1
         query = dns.message.from_wire(wire)
         answer = dns.message.make_response(query)
         name = query.question[0].name.to_text().rstrip(".")
@@ -111,6 +113,7 @@ async def world(awid_db_infra, monkeypatch):
                     )
                     yield SimpleNamespace(
                         domain=domain,
+                        app=app,
                         sdk=sdk,
                         dns=dns_server,
                         parent=parent,
