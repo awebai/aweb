@@ -83,9 +83,10 @@ the parent's `controller_did`.
 
 This is the standard mechanism, not a hosted special case. Any namespace owner
 can delegate child namespaces; a hosted operator uses the same public protocol
-under the base domain it controls. The child may register that same parent
-controller as its namespace controller; hosted `*.aweb.ai` namespaces use this
-shape so inherited parent DNS authority and the exact registry row agree.
+under the base domain it controls. A hosted child registers its own namespace
+controller key. The parent authorizes that child controller through the
+delegation witness; an inherited DNS record names the parent controller, not
+the child controller.
 
 Authority flows downward: a namespace controller can rotate the team
 controller key, but the team controller cannot rotate the namespace
@@ -468,9 +469,12 @@ with the namespace controller's `rotate_team_key` act, which AWID keeps exactly
 as signed and serves at `GET /v1/namespaces/{domain}/teams/{name}/key-act`.
 The verifier (`awid.team_key_acts`) requires that the act names exactly that
 team and key, that its signature verifies, that its signer is the controller
-**DNS** names for the domain, or the current child controller established
-through the ID tree's delegated namespace evidence under an inherited record, and that it was signed after the act
-behind the current pin. The pin then moves by compare-and-swap. Anything else
+**DNS** names for an exact record, or the current child controller established
+by the ID tree's same namespace evidence read under an inherited record. That
+evidence must bind the selected DNS ancestor and key to the child's current
+epoch, within the same 60-second freshness bound; an inherited witness never
+overrides a found exact record. The act must be newer than the act behind the
+current pin. The pin then moves by compare-and-swap. Anything else
 is logged as one warning line,
 `team_key_pin_mismatch team=<id> pinned=<key> served=<key> reason=<reason> enforced=<true|false>`,
 and, while enforcement is on, fails closed with 401 `team_key_unverified`.
@@ -501,10 +505,9 @@ team's current key across processes, so a stale registry read cannot move the
 pin back to an older key and remove the team's members. It does not stop a
 registry that serves another key and withholds the act: that answer looks like
 a rotation from before acts were kept, and the pin moves to it. Closing that
-needs enforcement, which hosted organisations cannot have until the act check
-accepts the delegation evidence their inherited DNS record carries (aweb-adfl):
-a hosted namespace has no `_awid` record of its own, so no act of its
-controller verifies against DNS.
+needs enforcement and an explicit baseline for legacy teams. Hosted
+organisations use the inherited delegation check described below; its trust
+cost remains even with enforcement on.
 
 Named residuals:
 
@@ -538,8 +541,10 @@ Named residuals:
   not guessed from an old timestamp.
 - **The `local` namespace** has no DNS, so a pinned local team cannot rotate
   without the server operator re-pinning it.
-- **Hosted teams.** Pinning separates the registry from the namespace
-  controller; it does not protect against an operator that holds both.
+- **Hosted teams.** A child has its own controller key, delegated by the
+  parent. Under inherited DNS the registry names that controller, as above;
+  pinning also does not protect against an operator that holds both keys and
+  the registry.
 - **The registry can withhold acts.** That denies the new key; it grants
   nothing.
 

@@ -304,3 +304,50 @@ async def test_backfill_concurrent_rotation_reports_conflict_without_restoring_i
     assert (
         await world.db.fetch_value("SELECT count(*) FROM {{tables.team_key_acts}}") == 1
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cancel_first', [False, True])
+async def test_concurrent_baseline_reads_share_one_real_act_even_if_first_reader_leaves(world, cancel_first):
+    import asyncio
+    from awid.team_key_acts import MemoryTeamKeyPins, TeamKeyMemo, pinned_team_key
+
+    memo = TeamKeyMemo()
+    pins = MemoryTeamKeyPins()
+    team_id = 'base:' + world.domain
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    reads = 0
+
+    async def act():
+        nonlocal reads
+        reads += 1
+        entered.set()
+        await release.wait()
+        return await world.sdk.get_team_key_act(world.domain, 'base')
+
+    async def read():
+        return await pinned_team_key(team_id, world.team[1], pins=pins,
+            fetch_act=act, resolver=world.resolver, enforce=True,
+            fetch_namespace_evidence=world.sdk.namespace_evidence, memo=memo)
+
+    tasks = [asyncio.create_task(read()) for _ in range(20)]
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        for _ in range(40):
+            await asyncio.sleep(0)
+        if cancel_first:
+            tasks[0].cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await tasks[0]
+        release.set()
+        answers = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), 10)
+        assert reads == 1
+        assert answers[int(cancel_first):] == [world.team[1]] * (20-int(cancel_first))
+        assert (await pins.pin(team_id)).act_key == world.team[1]
+    finally:
+        release.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
