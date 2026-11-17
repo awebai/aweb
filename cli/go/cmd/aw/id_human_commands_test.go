@@ -24,10 +24,14 @@ func TestHumanEnrollmentRegistrationAndProofRequireHumanCustody(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "aw")
 	buildAwBinary(t, ctx, bin)
 	commands := map[string][]string{
-		"add":      {"id", "human", "add", "--issuer", "https://issuer.example.invalid", "--person", "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "--identity-key", "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"},
-		"enroll":   {"id", "human", "enroll", "--issuer", "https://issuer.example.invalid"},
-		"register": {"id", "human", "register", "issued.json"},
-		"proof":    {"id", "proof", "--message-file", "message.txt"},
+		"parent request":      {"id", "parent", "request", "--root-parent", "--invitation-id", "no-file"},
+		"child approve":       {"id", "child", "approve", "no-file"},
+		"revoke":              {"id", "revoke", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"},
+		"create human parent": {"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:2e2SPDJNyxg5Dt6EFJX3Tcn8Tauj"},
+		"add":                 {"id", "human", "add", "--issuer", "https://issuer.example.invalid", "--person", "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", "--identity-key", "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX"},
+		"enroll":              {"id", "human", "enroll", "--issuer", "https://issuer.example.invalid"},
+		"register":            {"id", "human", "register", "issued.json"},
+		"proof":               {"id", "proof", "--message-file", "message.txt"},
 	}
 	for name, args := range commands {
 		for _, terminal := range []bool{false, true} {
