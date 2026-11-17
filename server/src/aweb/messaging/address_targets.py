@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 
 from awid.federation_errors import FederationAuthorityError
-from awid.team_ids import parse_team_id
 
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
@@ -80,11 +79,9 @@ async def resolve_address_target(
 
     registry = runtime.registry_client
     authority = runtime.federation_authority
-    # The configured SDK retains its own outbound registry-selection policy.
-    # A team label is not registry authority: even here its address endpoint
-    # must answer before an unsigned name can select a local identity.
-    own_namespace = bool(auth.team_id and parse_team_id(auth.team_id)[0] == domain)
-    home_namespace = own_namespace or await namespace_uses_home_registry(db, registry, domain)
+    # Keep the existing registry-selection rule: a team label alone does not
+    # authorize the configured registry. Foreign authority remains strict.
+    home_namespace = await namespace_uses_home_registry(db, registry, domain)
     try:
         if registry is not None and (home_namespace or authority is None):
             resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
