@@ -12,6 +12,7 @@ from typing import Any
 ADDRESS_NOT_FOUND = "address_not_found"
 logger = logging.getLogger(__name__)
 _legacy_address_not_found_count = 0
+_legacy_team_not_found_count = 0
 
 
 def is_address_not_found(status_code: int, body: Any) -> bool:
@@ -37,6 +38,22 @@ def is_address_not_found(status_code: int, body: Any) -> bool:
         )
         return True
     return False
+
+
+def is_team_not_found(status_code: int, body: Any) -> bool:
+    """Exact released missing-team answer; caller must gate route and page."""
+    if status_code != 404 or body != {"detail": "Team not found"}:
+        return False
+    global _legacy_team_not_found_count
+    _legacy_team_not_found_count += 1
+    logger.warning(
+        "AWID legacy missing team accepted",
+        extra={
+            "event": "awid_legacy_team_not_found",
+            "count": _legacy_team_not_found_count,
+        },
+    )
+    return True
 
 
 @dataclass(frozen=True)

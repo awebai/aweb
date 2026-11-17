@@ -354,6 +354,16 @@ answer and measured zero legacy use across supported deployments, including
 foreign registries; it is a separate reviewed compatibility change. No date or
 local registry upgrade alone removes support.
 
+**Missing-team revocation compatibility.** On the first revocations page
+only, the exact released HTTP 404 body `{"detail":"Team not found"}` means
+no such team; the SDK returns an empty set and the caller must independently
+read the team key before authenticating. A generic/proxy 404, any other body,
+or any later-page 404 is a failure, never an empty or partial revocation list.
+Each accepted legacy answer emits `awid_legacy_team_not_found` with a cumulative
+per-process `count`. Removal has the same supported-version, zero-observed-use
+and separate-review requirements as the address compatibility above; a local
+upgrade alone does not remove support.
+
 **Creation precondition.** `POST /v1/namespaces/{domain}/addresses`
 requires that the target `did_aw` is already registered at awid
 (see [Identity operations](#identity-operations)). If

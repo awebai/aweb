@@ -63,6 +63,7 @@ from awid.registry_paths import address_segment
 from awid.registry_transport import RegistryOverrideTransport
 from awid.registry_types import (
     is_address_not_found,
+    is_team_not_found,
     RegistryError as RegistryError,
     RegistryThrottled as RegistryThrottled,
     DIDKeyNotFoundError as DIDKeyNotFoundError,
@@ -1456,8 +1457,8 @@ class RegistryClient:
         """Page through the revocations route and report what was read.
 
         With ``since`` this reads only the tail of the list; without it, the
-        whole list. Either way the walk is all-or-nothing: any failure
-        propagates, so a caller never observes a partial page-through and
+        whole list. The exact released first-page missing-team answer returns
+        an empty set; every other failure propagates, so a caller never observes a partial page-through and
         can never mistake one for current data.
         """
         registry_url = await self._registry_url_for_domain(domain)
@@ -1473,11 +1474,18 @@ class RegistryClient:
                 query += f"&cursor={quote(cursor, safe='')}"
             elif legacy_since is not None:
                 query += f"&since={quote(legacy_since, safe='')}"
-            data = await self._request_json(
-                "GET",
-                f"{base_path}?{query}",
-                registry_url=registry_url,
-            )
+            try:
+                data = await self._request_json(
+                    "GET",
+                    f"{base_path}?{query}",
+                    registry_url=registry_url,
+                )
+            except RegistryError as exc:
+                if _page == 0 and is_team_not_found(exc.status_code, exc.body):
+                    # Released SDK/Cloud callers interpret this as no team;
+                    # their independent key read must still establish authority.
+                    return _RevocationScan(set(), None, True)
+                raise
             entries = data.get("revocations", [])
             before = len(revoked)
             revoked |= {r["certificate_id"] for r in entries}
