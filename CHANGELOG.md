@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- ID-tree status, certificate registration and revocation return retryable
+  HTTP 503 `dns_unavailable` for DNS timeouts and resolver failures. Missing
+  or invalid public proof and missing epochs retain `evidence_unavailable`.
 - `aw mail send` now refuses a bare-alias send when recipient lookup fails,
   instead of sending by alias as aw 1.20.0 through 1.36.58 did. Plaintext chat
   follows the same rule. Retry the lookup or use the recipient's full address
