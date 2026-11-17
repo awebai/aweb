@@ -72,6 +72,7 @@ async def test_typed_and_raw_clients_produce_the_same_wire(
             )
 
     monkeypatch.setattr(registry_module, "_utc_timestamp", lambda: TS)
+    monkeypatch.setattr(registry_module, "datetime", FrozenDateTime)
     monkeypatch.setattr(auth_module, "datetime", FrozenDateTime)
     operation = case.split("-", 1)[0]
     domain = "child.local" if case.endswith("-parent") else "local"

@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import os
 from types import SimpleNamespace
+from uuid import uuid4
+from nacl.signing import SigningKey
 
 import dns.asyncresolver
 import dns.message
@@ -22,14 +24,14 @@ from awid.team_key_acts import TeamKeyActError, verify_team_key_change
 from awid_service.main import create_app
 from conftest import controller_keypair
 
-CONTROLLER_ORIGIN = "https://registry.example.com"
 
 DOMAIN = 'org.example.com'
 
 
 class DNS(asyncio.DatagramProtocol):
-    def __init__(self):
+    def __init__(self, registry_origin):
         self.records = {}
+        self.registry_origin = registry_origin
 
     def connection_made(self, transport):
         self.transport = transport
@@ -39,7 +41,7 @@ class DNS(asyncio.DatagramProtocol):
         answer = dns.message.make_response(query)
         name = query.question[0].name.to_text().rstrip('.')
         if name in self.records:
-            value = awid_txt_value(self.records[name], registry_url=CONTROLLER_ORIGIN)
+            value = awid_txt_value(self.records[name], registry_url=self.registry_origin)
             answer.answer.append(dns.rrset.from_text(name + '.', 0, 'IN', 'TXT', '"' + value + '"'))
         else:
             answer.set_rcode(dns.rcode.NXDOMAIN)
@@ -48,7 +50,8 @@ class DNS(asyncio.DatagramProtocol):
 
 @pytest_asyncio.fixture
 async def world(awid_db_infra, monkeypatch):
-    dns_server = DNS()
+    registry_origin = f"https://registry-{uuid4().hex}.example.com"
+    dns_server = DNS(registry_origin)
     channel, _ = await asyncio.get_running_loop().create_datagram_endpoint(
         lambda: dns_server, local_addr=('127.0.0.1', 0))
     resolver = dns.asyncresolver.Resolver(configure=False)
@@ -60,9 +63,9 @@ async def world(awid_db_infra, monkeypatch):
     try:
         async with Redis.from_url(redis_url) as redis:
             app = create_app(db_infra=awid_db_infra, redis=redis, rate_limiter=MemoryFixedWindowRateLimiter())
-            app.state.awid_public_origins = (CONTROLLER_ORIGIN,)
+            app.state.awid_public_origins = (registry_origin,)
             async with app.router.lifespan_context(app):
-                sdk = CachedRegistryClient(registry_url=CONTROLLER_ORIGIN, redis_client=redis,
+                sdk = CachedRegistryClient(registry_url=registry_origin, redis_client=redis,
                                            transport=httpx.ASGITransport(app=app))
                 try:
                     await sdk.register_namespace('example.com', parent[1], parent[0])
@@ -117,16 +120,14 @@ async def test_missing_delegation_never_authorises_the_child_act(world):
 @pytest.mark.parametrize('apply', [False, True])
 async def test_owner_inventory_backfill_is_explicit_idempotent_and_preserves_team_state(world, apply):
     from awid.controller_signing import ControllerDescriptor
-    from awid.signing import sign_message
     from awid.team_key_backfill import TeamKeyBackfillTarget, reaffirm_team_keys
-    import base64
 
     await world.db.execute('DELETE FROM {{tables.team_key_acts}}')
     original = dict(await world.db.fetch_one('SELECT * FROM {{tables.teams}}'))
     controller = ControllerDescriptor('namespace', DOMAIN, world.child[1], 'local', 0)
 
     def signer(context):
-        return world.child[1], base64.b64decode(sign_message(world.child[0], context.signing_bytes()))
+        return world.child[1], SigningKey(world.child[0]).sign(context.signing_bytes()).signature
 
     report = await reaffirm_team_keys(world.sdk, [TeamKeyBackfillTarget(DOMAIN, 'base', world.team[1])],
         controllers={DOMAIN: controller}, signer=signer, apply=apply, resolver=world.resolver)
