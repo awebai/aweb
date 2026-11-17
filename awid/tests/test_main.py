@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
+import sys
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -194,13 +196,21 @@ async def test_wrong_trusted_service_token_falls_back_and_emits_metric_signal(
     _, public_key = generate_keypair()
     missing_did_aw = stable_id_from_did_key(did_from_public_key(public_key))
 
-    async with app.router.lifespan_context(app):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
-            response = await test_client.get(
-                f"/v1/did/{missing_did_aw}/key",
-                headers={"X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"},
-            )
+    # The embedding host, rather than the library, selects its output sink.
+    rate_logger = logging.getLogger("awid.ratelimit")
+    handler = logging.StreamHandler(sys.stdout)
+    rate_logger.addHandler(handler)
+    try:
+        async with app.router.lifespan_context(app):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+                response = await test_client.get(
+                    f"/v1/did/{missing_did_aw}/key",
+                    headers={"X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"},
+                )
+    finally:
+        rate_logger.removeHandler(handler)
+        handler.close()
 
     assert response.status_code == 404
     assert len(fake_redis.eval_calls) == 1
@@ -341,6 +351,7 @@ def _assert_limited(response):
 async def test_every_read_bucket_trusted_exemption(
     client, fake_redis, monkeypatch, caplog, bucket, path, status
 ):
+    caplog.set_level(logging.INFO, logger="awid.ratelimit")
     token = "trusted-service-token-with-at-least-32-bytes"
     wrong = "wrong-service-token-with-at-least-32-bytes"
     app = client._transport.app
@@ -544,6 +555,7 @@ async def test_service_provisioning_token_does_not_authorize_writes(client, monk
 
 @pytest.mark.asyncio
 async def test_service_exemption_telemetry_is_aggregated_per_bucket(client, fake_redis, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="awid.ratelimit")
     token = "trusted-service-token-with-at-least-32-bytes"
     monkeypatch.setattr(client._transport.app.state, "awid_service_token", token)
     path = _missing_did_path("/v1/did/{did}")
