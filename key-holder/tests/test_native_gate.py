@@ -144,8 +144,21 @@ async def test_receipt_is_rechecked_after_the_actual_effect_lock_wait(
     from approval_service.canonical import canonical
     from approval_service.encoding import encode
     from approval_service.seams import check_presentation
+    from approval_service.grading import EnrollmentGrading
     from awid.id_certificates import id_certificate_id
 
+    if change == "policy":
+        previous = native_holder.holder
+        # Hardware grading may still enroll ordinary passkeys. The software
+        # credential below remains passkey_uv, so tightening the requirement
+        # tests the receipt's actual grade, not an impossible runtime setting.
+        native_holder.holder = Holder(
+            previous.store,
+            registry=previous.registry,
+            origin=previous.origin,
+            human_approval_config=previous.human_approval_config,
+            grading=EnrollmentGrading("hardware", None),
+        )
     holder = native_holder.holder
     own, device, confirmation, _ = await first_person(native_holder, activate=True)
     _, key, target = await register_identity(native_holder.registry)

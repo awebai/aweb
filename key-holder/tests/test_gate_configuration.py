@@ -275,3 +275,92 @@ def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(tm
     assert (
         hardware.gate().policy.grade("organisation.human.add") == "certified_hardware"
     )
+
+
+def test_cli_hardware_grading_uses_policy_site_and_names_missing_cache(tmp_path):
+    import subprocess
+    import sys
+    from policy_inputs import policy_file
+
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    path = policy_file(tmp_path / "policy.json", "example.test", "hardware")
+    answer = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "aweb_key_holder.cli",
+            "--state",
+            str(store.directory),
+            "--registry-origin",
+            "https://registry.example",
+            "--origin",
+            "https://holder.example",
+            "--human-approval-config",
+            str(path),
+            "--grading",
+            "hardware",
+            "serve",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=3,
+    )
+    assert answer.returncode != 0
+    assert "hardware grading requires --mds-cache" in answer.stderr
+
+
+@pytest.mark.parametrize("problem", ["missing_source", "hardware"])
+def test_cli_policy_refusal_explains_the_operator_action(tmp_path, problem):
+    import os
+    import subprocess
+    import sys
+    from approval_service.gate import Policy
+    from policy_inputs import policy_file
+
+    store = KeyStore.create(tmp_path / "private", organisation="example.test")
+    command = [
+        sys.executable,
+        "-m",
+        "aweb_key_holder.cli",
+        "--state",
+        str(store.directory),
+        "--registry-origin",
+        "https://registry.example",
+        "--origin",
+        "https://holder.example",
+    ]
+    if problem == "missing_source":
+        with store._connection() as db, db:
+            db.execute(
+                "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
+            )
+            db.execute("PRAGMA user_version=4")
+        store.migrate(
+            policy=Policy.from_section(
+                {
+                    "service": "https://approval.example",
+                    "require": {"organisation.human.add": "passkey"},
+                }
+            )
+        )
+        expected = (
+            "--human-approval-config FILE",
+            "explicitly render an empty human_approval section",
+        )
+    else:
+        path = policy_file(tmp_path / "policy.json", "example.test", "hardware")
+        command += ["--human-approval-config", str(path)]
+        expected = ("--grading hardware", "--mds-cache DIR")
+    environment = dict(os.environ)
+    environment.pop("HUMAN_APPROVAL_CONFIG_FILE", None)
+    result = subprocess.run(
+        [*command, "serve"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=3,
+        env=environment,
+    )
+    assert result.returncode == 1, result.stderr
+    assert all(part in result.stderr for part in expected), result.stderr
