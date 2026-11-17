@@ -24,7 +24,7 @@ service_plan = _worker_module.service_plan
 
 
 def runner_args(token, dns_ip, image, profile='portable', server_workers=0):
-    # Portable CI limits remain the default. CCX33 is opt-in until measured.
+    # Portable direct callers retain their limits; the CCX33 unit stage selects 7.
     cpus, memory = {'portable': ('2', '8g'), 'ccx33': ('7', '16g')}[profile]
     worker_env = ['-e', f'AWEB_SERVER_TEST_WORKERS={server_workers}'] if server_workers else []
     return ['run', '-d', '--init', '--user', '1000:1000', '--network', token,
@@ -45,7 +45,8 @@ def docker(*args):
 def postgres_args(runner, port=5432, parallel=False):
     # Disposable databases must not wait on the host disk's WAL fsync. Bound
     # both RAM and WAL growth, and prohibit swapping the tmpfs back to disk.
-    memory = '1280m' if parallel else '2g'
+    # Worker 0 also serves the later serial unit suites: keep its original cap.
+    memory = '1280m' if parallel and port != 5432 else '2g'
     port_args = ['-c', f'port={port}'] if parallel else []
     return ['run', '-d', '--network', 'container:' + runner,
             '--cpus', '1', '--memory', memory, '--memory-swap', memory, '--pids-limit', '512',
@@ -56,7 +57,9 @@ def postgres_args(runner, port=5432, parallel=False):
 
 
 def redis_args(runner, port=6379, parallel=False):
-    limits = (['--cpus', '.25', '--memory', '128m', '--memory-swap', '128m', '--pids-limit', '128']
+    primary = port == 6379
+    limits = (['--cpus', '1' if primary else '.25', '--memory', '1g' if primary else '128m',
+               '--memory-swap', '1g' if primary else '128m', '--pids-limit', '512' if primary else '128']
               if parallel else ['--cpus', '1', '--memory', '1g', '--pids-limit', '512'])
     command = ['redis-server', '--port', str(port)] if parallel else []
     return ['run', '-d', '--network', 'container:' + runner, *limits, 'redis:7', *command]
@@ -111,9 +114,9 @@ def main():
     parser.add_argument('--evidence', type=Path, required=True)
     parser.add_argument('--image', help='already prepared source/dependency image')
     parser.add_argument('--profile', choices=('portable', 'ccx33'), default='portable',
-                        help='bounded runner resources; CCX33 is an explicit measurement profile')
+                        help='bounded runner resources; CCX33 unit resource profile')
     parser.add_argument('--server-workers', type=int, choices=(0, 7), default=0,
-                        help='opt-in seven-worker server services; requires ccx33 profile')
+                        help='seven-worker server services; requires ccx33 profile')
     parser.add_argument('--command', nargs=argparse.REMAINDER, help='guard qualification command instead of make targets')
     parser.add_argument('targets', nargs='*', default=['test-server', 'test-awid', 'test-cli', 'test-channel', 'test-channel-name-live-contract', 'test-channel-core', 'test-pi-extension'])
     args = parser.parse_args()

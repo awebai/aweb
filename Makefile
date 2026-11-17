@@ -3,6 +3,8 @@
 TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 # Parallel server execution is opt-in and needs the owned worker service plan.
 SERVER_TEST_WORKERS ?= $(or $(AWEB_SERVER_TEST_WORKERS),0)
+# The VM recipe supplies its selected type; other callers remain portable.
+CANDIDATE_UNIT_PROFILE ?= $(or $(AWEB_GATE_UNIT_PROFILE),portable)
 SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER_TEST_WORKERS) --dist loadscope --max-worker-restart=0,)
 
 .PHONY: help clean test test-shipping production-awid-sync test-server naapp-sync lint-naapp test-naapp test-awid test-awid-pooler test-cli test-cli-auth-v2 test-node-deps test-channel test-channel-name-live-contract test-channel-core test-wake-channel-core-bundle test-channel-core-process-guard test-pi-extension candidate-gate test-candidate-ledger release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e test-team-deployment-e2e check-a2a-copy-guardrails check-extension-docs build \
@@ -610,7 +612,7 @@ test-candidate-ledger:
 	python3 scripts/test_candidate_gate_ledger.py
 
 _candidate-unit-suites:
-	python3 scripts/test-egress/docker.py --evidence "$$CANDIDATE_LOG_DIR/test-egress" --command bash scripts/candidate-suite.sh --isolated-suites
+	python3 scripts/test-egress/docker.py --profile $(CANDIDATE_UNIT_PROFILE) --server-workers $(if $(filter ccx33,$(CANDIDATE_UNIT_PROFILE)),7,0) --evidence "$$CANDIDATE_LOG_DIR/test-egress" --command bash scripts/candidate-suite.sh --isolated-suites
 
 # The gate's own ledger test runs first, on the host, so a gate change that
 # breaks it stops every train and release candidate before any stage runs.

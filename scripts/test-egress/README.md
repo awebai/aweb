@@ -89,15 +89,17 @@ server's pytest interval with 3064.42s and 3980.80s, while reporting source and
 host differences; the enclosing image-build/command time is a separate cost.
 No automatic repetition or default quota change follows from one result.
 
-## Opt-in parallel server experiment
+## Parallel server unit stage
 
 The normal unit path is `_candidate-unit-suites` ->
-`candidate-suite.sh --isolated-suites` -> `make test-server`. Its default is
-`uv run --offline --no-sync pytest -q`, one pytest process. Server's locked dev
-requirements include xdist, but neither its presence nor the CPU profile
-turns workers on.
+`candidate-suite.sh --isolated-suites` -> `make test-server`. The VM recipe
+passes its selected type as `AWEB_GATE_UNIT_PROFILE`. On CCX33 this stage now
+selects the measured seven-worker/profile-ccx33 path. Other callers retain the
+portable serial unit path; `CANDIDATE_UNIT_PROFILE=portable` explicitly selects
+it on a smaller host. Direct `make test-server` is still serial unless its
+worker plan is explicitly provided.
 
-After source review, one proposed measurement uses:
+The equivalent server-only measurement command is:
 
 ```sh
 python3 scripts/test-egress/docker.py --profile ccx33 --server-workers 7 \
@@ -131,13 +133,16 @@ selected database](https://redis.io/docs/latest/develop/pubsub/#database--scopin
 The suite has fixed named pub/sub channels as well as key caches. Separate
 Redis servers isolate both; the real TCP fault proxy follows each worker URL.
 
-The opt-in limits are PG 1280 MiB/1 CPU/PID512 per worker, Redis
-128 MiB/0.25 CPU/PID128 per worker, and the existing 16-GiB/7-CPU/PID2048
-runner plus 128-MiB DNS. Their memory caps sum to 25.75 GiB, leaving 6.25 GiB
-of a nominal 32-GiB host before kernel reservation, for the host and preparation. Quotas are caps, not reserved
-cores. The completed serial measurement's sampled PostgreSQL high-water was
-569 MiB and Redis 18 MiB; those observations support this budget, not a claim
-that seven-worker native behavior has passed. Each PG keeps its existing
+Worker 0 keeps the original serial services' 2-GiB/1-CPU PostgreSQL and
+1-GiB/1-CPU/PID512 Redis limits for AWID/naapp/CLI after the server workers
+exit. The other six pairs use PostgreSQL 1280 MiB/1 CPU/PID512 and Redis
+128 MiB/0.25 CPU/PID128. The runner is 16 GiB/7 CPU/PID2048 and DNS 128 MiB.
+Their memory caps total 27.375 GiB, leaving 4.625 GiB of a nominal 32-GiB host
+before kernel reservation, for the host and preparation. Quotas are caps, not
+reserved cores. The reviewed seven-worker measurement at `0d556192b9` had
+4763 passes and one expected failure in 640.96s versus 2798.88s serial.
+The primary-service caps are retained for the later serial targets; the next
+complete unit run qualifies this default wiring. Each PG keeps its existing
 1-GiB tmpfs and bounded WAL. IDs are recorded as created and removed through
 the existing reverse-order finalizer; worker/storage mappings are retained in
 `worker-services.json`.

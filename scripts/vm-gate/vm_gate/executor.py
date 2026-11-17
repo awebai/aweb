@@ -48,7 +48,8 @@ class Executor:
 
     def env(self, root=False):
         home = "/root" if root else "/home/gateuser"
-        return f"env -i HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator "
+        profile = "ccx33" if self.config.get("server_type") == "ccx33" else "portable"
+        return f"env -i HOME={home} PATH={HOST_PATH} GOTOOLCHAIN=local PYTHONPATH={REMOTE}/operator AWEB_GATE_UNIT_PROFILE={profile} "
 
     def host_check(self, root=False):
         return (

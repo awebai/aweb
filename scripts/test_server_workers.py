@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -39,10 +40,17 @@ class ServerWorkerTests(unittest.TestCase):
             )
             self.assertEqual(env["AWID_REDIS_URL"], env["REDIS_URL"])
             self.assertEqual(env["AWEB_REDIS_URL"], env["REDIS_URL"])
-            self.assertEqual(pg[pg.index("--memory") + 1], "1280m")
-            self.assertEqual(pg[pg.index("--memory-swap") + 1], "1280m")
+            pg_memory = "2g" if worker == "gw0" else "1280m"
+            self.assertEqual(pg[pg.index("--memory") + 1], pg_memory)
+            self.assertEqual(pg[pg.index("--memory-swap") + 1], pg_memory)
             self.assertIn("/var/lib/postgresql/data:rw,noexec,nosuid,size=1g", pg)
-            self.assertEqual(redis[redis.index("--memory") + 1], "128m")
+            redis_memory = "1g" if worker == "gw0" else "128m"
+            self.assertEqual(redis[redis.index("--memory") + 1], redis_memory)
+            self.assertEqual(redis[redis.index("--memory-swap") + 1], redis_memory)
+            self.assertEqual(
+                redis[redis.index("--pids-limit") + 1],
+                "512" if worker == "gw0" else "128",
+            )
             for args in (pg, redis):
                 self.assertEqual(
                     args[args.index("--network") + 1], "container:owned-runner"
@@ -125,6 +133,60 @@ print(json.dumps({'pg_port':DEFAULT_TEST_CONFIG.port,'redis':test_agent_wake.RED
                 self.assertEqual(data["pg_port"], 5432 + index)
                 self.assertEqual(data["redis"], f"redis://127.0.0.1:{6379 + index}/0")
                 self.assertEqual(data["env"], data["redis"])
+
+    def test_unit_default_uses_selected_host_profile_and_portable_override(self):
+        gate = (ROOT / "scripts/candidate-docker-gate.sh").read_text()
+        launch = gate[gate.index("docker run --rm --init \\") :]
+        launch = launch[: launch.index('  2>&1 | tee "$LOG_DIR/gate.log"')]
+        capture = (
+            "docker() { "
+            + shlex.quote(sys.executable)
+            + " -c 'import json,sys; print(json.dumps(sys.argv[1:]))' \"$@\"; }\n"
+        )
+        for supplied, override, profile, workers in [
+            (None, None, "portable", "0"),
+            ("ccx33", None, "ccx33", "7"),
+            ("ccx33", "portable", "portable", "0"),
+        ]:
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if k not in {"AWEB_GATE_UNIT_PROFILE", "CANDIDATE_UNIT_PROFILE"}
+            }
+            if supplied:
+                env["AWEB_GATE_UNIT_PROFILE"] = supplied
+            # Exercise the real outer-container argv as well as the Make entry:
+            # an env-i host setting is otherwise lost at the Docker boundary.
+            forwarded = subprocess.run(
+                ["bash", "-c", capture + launch],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=10,
+            )
+            self.assertEqual(forwarded.returncode, 0, forwarded.stderr)
+            argv = json.loads(forwarded.stdout)
+            container_env = dict(
+                argv[i + 1].split("=", 1) for i, item in enumerate(argv) if item == "-e"
+            )
+            env.pop("AWEB_GATE_UNIT_PROFILE", None)
+            if "AWEB_GATE_UNIT_PROFILE" in container_env:
+                env["AWEB_GATE_UNIT_PROFILE"] = container_env["AWEB_GATE_UNIT_PROFILE"]
+            command = ["make", "-n", "_candidate-unit-suites"]
+            if override:
+                command.append("CANDIDATE_UNIT_PROFILE=" + override)
+            result = subprocess.run(
+                command, cwd=ROOT, env=env, text=True, capture_output=True, timeout=10
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(
+                "--profile " + profile + " --server-workers " + workers, result.stdout
+            )
+            self.assertIn(
+                "--command bash scripts/candidate-suite.sh --isolated-suites",
+                result.stdout,
+            )
 
     def test_canonical_make_entry_selects_workers_only_when_requested(self):
         for workers, expected in [("0", False), ("7", True)]:
