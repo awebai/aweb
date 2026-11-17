@@ -678,8 +678,9 @@ async def create_team(
             )
             if creation is not None:
                 await _record_key_act(tx, row["team_uuid"], {**creation, "team_did_key": body.team_did_key})
-    except QueryError as exc:
-        if not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
+    except (QueryError, asyncpg.UniqueViolationError) as exc:
+        cause = exc.__cause__ if isinstance(exc, QueryError) else exc
+        if not isinstance(cause, asyncpg.UniqueViolationError):
             raise
         raise HTTPException(status_code=409, detail="Team already exists")
 

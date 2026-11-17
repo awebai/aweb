@@ -162,7 +162,10 @@ async def test_public_client_wire_keeps_its_method_target_body_and_route_claims(
 async def test_client_headers_carry_the_covering_envelope(case):
     sent = await capture_call(case.call, **case.kwargs)
     authentication = {name for name in sent.headers if name == "authorization" or name.startswith("x-aweb-")}
-    assert authentication == {"authorization", "x-aweb-timestamp", "x-aweb-signed-payload"}
+    expected = {"authorization", "x-aweb-timestamp", "x-aweb-signed-payload"}
+    if case.call == "register_team":
+        expected.add("x-aweb-team-key-act")
+    assert authentication == expected
 
 
 @pytest.mark.asyncio

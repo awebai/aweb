@@ -20,6 +20,8 @@ import base64
 import json
 import sys
 from pathlib import Path
+from datetime import datetime
+from unittest.mock import patch
 
 import httpx
 
@@ -123,11 +125,18 @@ async def wire(method: str, arguments: dict) -> dict:
 
 
 async def generate() -> dict:
-    registry_module._utc_timestamp = lambda: TIMESTAMP
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromisoformat(TIMESTAMP.replace("Z", "+00:00")).astimezone(tz)
+
+    # Freeze both request clocks, including precise team-act timestamps, and
+    # restore the live client's clocks when generation finishes.
     cases = []
-    for name, method, arguments in CASES:
-        cases.append({"name": name, "python_method": method, "arguments": arguments,
-                      "expected": await wire(method, arguments)})
+    with patch.object(registry_module, "_utc_timestamp", lambda: TIMESTAMP), patch.object(registry_module, "datetime", FrozenDatetime):
+        for name, method, arguments in CASES:
+            cases.append({"name": name, "python_method": method, "arguments": arguments,
+                          "expected": await wire(method, arguments)})
     return {
         "description": (
             "Controller writes that aw and the Python awid client both make, as the Python client sends them: "
