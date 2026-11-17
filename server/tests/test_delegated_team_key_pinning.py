@@ -35,8 +35,9 @@ async def test_request_pin_checks_the_actual_delegated_namespace(
     world, aweb_cloud_db, monkeypatch, delegated
 ):
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
+    db = aweb_cloud_db.aweb_db
     team_id = "base:" + world.domain
-    await aweb_cloud_db.execute(
+    await db.execute(
         "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) "
         "VALUES ($1,$2,$3,$4)",
         team_id,
@@ -69,7 +70,7 @@ async def test_request_pin_checks_the_actual_delegated_namespace(
         assert response.status_code == 200, response.text
         assert response.json()["key"] == world.team[1]
         assert (
-            await aweb_cloud_db.fetch_value(
+            await db.fetch_value(
                 "SELECT team_key_act_key FROM {{tables.teams}} WHERE team_id=$1",
                 team_id,
             )
@@ -79,7 +80,7 @@ async def test_request_pin_checks_the_actual_delegated_namespace(
         assert response.status_code == 401, response.text
         assert response.json()["detail"] == "team_key_unverified"
         assert (
-            await aweb_cloud_db.fetch_value(
+            await db.fetch_value(
                 "SELECT team_did_key FROM {{tables.teams}} WHERE team_id=$1", team_id
             )
             == world.parent[1]
