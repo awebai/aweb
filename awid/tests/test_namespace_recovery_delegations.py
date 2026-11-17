@@ -279,12 +279,13 @@ async def test_delete_and_same_key_reregistration_do_not_restore_child_grants(ca
 
 
 @consumes("namespace-two-key-rotation-preserves-only-current-delegations")
-async def test_two_key_rotation_preserves_only_delegations_bound_to_previous_key(case, delegation_world):
+@pytest.mark.parametrize("stale_key", ["alice", "root_rotated"])
+async def test_two_key_rotation_preserves_only_delegations_bound_to_previous_key(case, delegation_world, stale_key):
     world = delegation_world
     ok(await register_child(world, domain="stale.example.com", child="bob"))
     await world.db.execute(
         "UPDATE {{tables.dns_namespaces}} SET parent_controller_key=$2 WHERE domain=$1",
-        "stale.example.com", did_key("alice"),
+        "stale.example.com", did_key(stale_key),
     )
     before = await epochs(world)
     ok(await rotate(world))
