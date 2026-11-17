@@ -21,7 +21,11 @@ async def response_server():
     async def handle(reader, writer):
         raw = await reader.readuntil(b"\r\n\r\n")
         state["requests"].append(raw.split(b"\r\n", 1)[0])
-        answer = state["responses"].pop(0) if state.get("responses") else state
+        request_path = raw.split(b" ", 2)[1].split(b"?", 1)[0].decode()
+        if state.get("team") and request_path.endswith("/teams/ops"):
+            answer = state["team"]
+        else:
+            answer = state["responses"].pop(0) if state.get("responses") else state
         body = json.dumps(answer["body"]).encode()
         writer.write(
             f"HTTP/1.1 {answer['status']} Result\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode()
@@ -186,15 +190,27 @@ async def test_real_address_route_codes_absence_but_missing_namespace_is_not_abs
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cached", [False, True], ids=["plain", "redis"])
-@pytest.mark.parametrize("stage", ["first", "later", "empty", "revoked"])
+@pytest.mark.parametrize("stage", ["missing", "first", "later", "empty", "revoked"])
 async def test_revocation_scan_requires_a_complete_success_not_404(
-    response_server, cached, stage
+    response_server, cached, stage, caplog
 ):
     state = response_server
     domain = f"revocations-{uuid4().hex}.example"
     state["status"] = 404
     state["body"] = {"detail": "Team not found"}
-    if stage == "later":
+    if stage == "first":
+        state["body"] = {"detail": "Not Found"}
+        state["team"] = {
+            "status": 200,
+            "body": {
+                "team_id": f"ops:{domain}",
+                "domain": domain,
+                "name": "ops",
+                "team_did_key": "did:key:known-team",
+                "created_at": "2026-11-17T00:00:00Z",
+            },
+        }
+    elif stage == "later":
         state["responses"] = [
             {
                 "status": 200,
@@ -236,17 +252,34 @@ async def test_revocation_scan_requires_a_complete_success_not_404(
             await client._write_cache_entry(
                 legacy, value=set(), ttl_seconds=60, encode=sorted
             )
+        if stage == "first":
+            assert (
+                await client.get_team_public_key(domain, "ops") == "did:key:known-team"
+            )
         if stage in ("first", "later"):
             with pytest.raises(RegistryError) as refused:
                 await client.get_team_revocations(domain, "ops")
             assert refused.value.status_code == 404
             if redis is not None:
                 assert await redis.get(key) is None
+        elif stage == "missing":
+            # Cloud consumes these exact SDK answers: no dependency exception,
+            # then no team key, which its verifier maps to 401 rather than 503.
+            assert await client.get_team_revocations(domain, "ops") == set()
+            assert await client.get_team_public_key(domain, "ops") is None
         else:
             assert await client.get_team_revocations(domain, "ops") == (
                 {"withdrawn"} if stage == "revoked" else set()
             )
-        assert len(state["requests"]) == (2 if stage == "later" else 1)
+        assert len(state["requests"]) == (
+            2 if stage in ("missing", "first", "later") else 1
+        )
+        missing_reads = [
+            r
+            for r in caplog.records
+            if getattr(r, "event", "") == "awid_legacy_team_not_found"
+        ]
+        assert len(missing_reads) == (1 if stage == "missing" else 0)
     finally:
         await client.aclose()
         if redis is not None:
