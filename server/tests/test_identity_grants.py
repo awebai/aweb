@@ -161,6 +161,7 @@ def _build_app(aweb_db) -> FastAPI:
     # Grant auth checks the issuing certificate against the registry's
     # revocations (aweb-abfn); default to none revoked.
     registry = AsyncMock()
+    registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
     registry.get_team_revocations = AsyncMock(return_value=set())
     registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     app.state.awid_registry_client = registry
@@ -782,6 +783,7 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.state.redis = None
     app.state.rate_limiter = None
     registry = AsyncMock()
+    registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
     registry.get_team_revocations = AsyncMock(return_value=set())
     registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     app.state.awid_registry_client = registry
@@ -1371,6 +1373,7 @@ async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_d
     stream_app.state.public_origin = "http://test"
     stream_app.state.redis = None
     stream_registry = AsyncMock()
+    stream_registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
     stream_registry.get_team_revocations = AsyncMock(return_value=set())
     stream_registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     stream_app.state.awid_registry_client = stream_registry
@@ -1780,6 +1783,7 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     deny_app.state.db = _DbShim(aweb_cloud_db.aweb_db)
     deny_app.state.public_origin = "http://test"
     deny_registry = AsyncMock()
+    deny_registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
     deny_registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     deny_app.state.awid_registry_client = deny_registry
@@ -1988,6 +1992,7 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     deny_app.state.public_origin = "http://test"
     deny_app.state.redis = None
     deny_registry = AsyncMock()
+    deny_registry.get_team_revocations_for_certificates = None  # Legacy SDK interface.
     deny_registry.get_team_revocations = AsyncMock(return_value=set())
     deny_registry.get_team_fresh = AsyncMock(side_effect=legacy_team)
     deny_app.state.awid_registry_client = deny_registry

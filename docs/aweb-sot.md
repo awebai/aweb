@@ -1483,8 +1483,10 @@ own server URL for self-hosted aweb.)
    → aweb rejects the certificate after its revocation view refreshes
 ```
 
-With Redis, the documented cache policy permits up to 20 minutes of stale
-revocation state; without Redis the next verification reads AWID directly.
+With Redis, revocations are fresh for 60 seconds with one additional 60-second
+stale window. During registry failure only, last-known data may be served while
+its original fetch age is at most 15 minutes, with warnings; then the read
+fails closed. Without Redis the next verification reads AWID directly.
 Revocation does not itself mutate or delete the aweb runtime projection. That
 row remains available for history until an explicit aweb lifecycle operation
 changes it.

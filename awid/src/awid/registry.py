@@ -20,6 +20,8 @@ from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
 
+from awid import revocation_cache
+
 import httpx
 from nacl.signing import SigningKey
 from redis.asyncio import Redis
@@ -1448,6 +1450,14 @@ class RegistryClient:
         """Read the complete live revocation set; propagate any registry failure."""
         return await RegistryClient.get_team_revocations(self, domain, name)
 
+    async def get_team_revocations_for_certificates(
+        self, domain: str, name: str, certificate_ids: list[str], *, fresh: bool = False,
+    ) -> set[str]:
+        """Select IDs from the COMPLETE CRL; never make per-ID registry queries."""
+        revoked = (await self.get_team_revocations_fresh(domain, name)
+                   if fresh else await self.get_team_revocations(domain, name))
+        return revoked.intersection(certificate_ids)
+
     async def _scan_team_revocations(
         self,
         domain: str,
@@ -2224,6 +2234,26 @@ class CachedRegistryClient(RegistryClient):
         return value
 
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
+        return await self._cached_team_revocations(domain, name)
+
+    async def get_team_revocations_for_certificates(
+        self, domain: str, name: str, certificate_ids: list[str], *, fresh: bool = False,
+    ) -> set[str]:
+        """Local membership in the same complete CRL and freshness policy.
+
+        The derived Redis index does not replace the evidence or make an
+        exact-ID registry request. Fresh checks still fetch the complete CRL.
+        """
+        ids = list(dict.fromkeys(certificate_ids))
+        if not ids:
+            return set()
+        if fresh:
+            return (await self.get_team_revocations_fresh(domain, name)).intersection(ids)
+        return await self._cached_team_revocations(domain, name, certificate_ids=ids)
+
+    async def _cached_team_revocations(
+        self, domain: str, name: str, *, certificate_ids: list[str] | None = None,
+    ) -> set[str]:
         # Revocations get a dedicated read path rather than _cached_read: they
         # and controller keys have an outage grace (see
         # _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS). Freshness, staleness, and
@@ -2233,7 +2263,20 @@ class CachedRegistryClient(RegistryClient):
         ttl_seconds = _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
         retention_seconds = ttl_seconds + _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
 
-        cached = await self._read_cache_entry(cache_key, decode=lambda payload: set(payload))
+        cached = None
+        if certificate_ids is not None:
+            cached = await revocation_cache.read(self.redis_client, cache_key, certificate_ids, now=_cache_now())
+        if cached is None:
+            cached = await self._read_cache_entry(cache_key, decode=lambda payload: set(payload))
+            if cached is not None and certificate_ids is not None:
+                # One cold upgrade/repair, under CAS and the old remaining TTL.
+                # A failed repair never substitutes for the complete-list read.
+                entry = {**cached["payload"], "fetched_at": _cache_entry_fetched_at(cached, ttl_seconds)}
+                await revocation_cache.publish(self.redis_client, cache_key, entry,
+                                               retention_seconds=retention_seconds, expected=cached["raw"])
+
+        def project(value):
+            return value if certificate_ids is None else value.intersection(certificate_ids)
         # Refresh the complete paginated set. A timestamp-only high-water mark
         # cannot safely order commits: PostgreSQL NOW() is transaction-start
         # time, so a revocation that waited on a row lock can commit after our
@@ -2247,7 +2290,7 @@ class CachedRegistryClient(RegistryClient):
             fetched_at = _cache_entry_fetched_at(cached, ttl_seconds)
             cached_age = max(0, _cache_now() - fetched_at)
             if cached["fresh"]:
-                return cached["value"]
+                return project(cached["value"])
             if cached_age <= ttl_seconds * _STALE_MULTIPLIER:
                 # Stale-while-revalidate, as before — but a failed background
                 # refresh is now loud instead of a swallowed debug line.
@@ -2271,7 +2314,7 @@ class CachedRegistryClient(RegistryClient):
                     retention_seconds=retention_seconds,
                     on_failure=_on_refresh_failure,
                 ):
-                    return cached["value"]
+                    return project(cached["value"])
 
         try:
             fresh_value = await fetcher()
@@ -2294,7 +2337,7 @@ class CachedRegistryClient(RegistryClient):
                     _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
                     exc,
                 )
-                return cached["value"]
+                return project(cached["value"])
             # Beyond the grace (or nothing cached): fail closed, exactly as
             # before the grace existed — the enforcement path sees the failure.
             raise
@@ -2309,7 +2352,7 @@ class CachedRegistryClient(RegistryClient):
             encode=encode,
             retention_seconds=retention_seconds,
         )
-        return set(fresh_value)
+        return project(set(fresh_value))
 
     async def refresh_team_certificates_after_miss(
         self, domain: str, name: str,
@@ -2819,6 +2862,7 @@ class CachedRegistryClient(RegistryClient):
                 # beside "value" can read it back. Tiers that store none simply
                 # never look.
                 "payload": payload,
+                "raw": raw,
             }
         except Exception:
             logger.warning("Invalid AWID cache payload for %s; dropping entry", cache_key)
@@ -2852,6 +2896,13 @@ class CachedRegistryClient(RegistryClient):
         payload = json.dumps(entry, separators=(",", ":"), sort_keys=True)
         if retention_seconds is None:
             retention_seconds = ttl_seconds * _STALE_MULTIPLIER
+        if revocation_cache.is_revocation_key(cache_key, prefix=self._team_revocations_cache_key_prefix()):
+            if await revocation_cache.publish(self.redis_client, cache_key, entry,
+                                              retention_seconds=retention_seconds):
+                return
+            # No usable index: keep the ordinary complete-list cache. A plain
+            # entry lacks the version prefix, so an old index cannot answer.
+            await self._invalidate_keys(*revocation_cache.index_keys(cache_key))
         if require_write:
             if not await self.redis_client.set(cache_key, payload, ex=retention_seconds):
                 raise RegistryError("AWID certificate existence cache write failed", status_code=503)
@@ -2953,7 +3004,11 @@ class CachedRegistryClient(RegistryClient):
         await self._invalidate_generation(self._id_status_generation_key(domain))
 
     async def _invalidate_keys(self, *keys: str) -> None:
-        unique_keys = tuple(dict.fromkeys(key for key in keys if key))
+        expanded = list(keys)
+        for key in keys:
+            if key and revocation_cache.is_revocation_key(key, prefix=self._team_revocations_cache_key_prefix()):
+                expanded.extend(revocation_cache.index_keys(key))
+        unique_keys = tuple(dict.fromkeys(key for key in expanded if key))
         if not unique_keys:
             return
         try:
@@ -2968,6 +3023,10 @@ class CachedRegistryClient(RegistryClient):
             self._team_certificates_generation_key(domain, name),
             tolerate_unavailable=tolerate_unavailable,
         )
+        # R9's list generation also discards the derived CRL index. The full
+        # CRL retains its own freshness; a later membership read can backfill
+        # from it without making another registry request.
+        await self._invalidate_keys(*revocation_cache.index_keys(self._team_revocations_cache_key(domain, name)))
 
     async def _invalidate_generation(self, key: str, *, tolerate_unavailable: bool = True) -> None:
         try:
@@ -3062,8 +3121,13 @@ class CachedRegistryClient(RegistryClient):
     def _team_metadata_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v2:team:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
+    def _team_revocations_cache_key_prefix(self) -> str:
+        # Publication/invalidation classify the same key family the builder
+        # writes, including its evidence-version and registry scope.
+        return f"awid:registry_cache:v2:team_revocations:{self.registry_url}:"
+
     def _team_revocations_cache_key(self, domain: str, name: str) -> str:
-        return f"awid:registry_cache:v2:team_revocations:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
+        return f"{self._team_revocations_cache_key_prefix()}{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_public_key_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v1:team_public_key:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"

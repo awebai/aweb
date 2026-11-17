@@ -62,3 +62,15 @@ func SaveWorktreeContextTo(path string, ctx *WorktreeContext) error {
 func bytesTrimRightNewlines(b []byte) []byte {
 	return []byte(strings.TrimRight(string(b), "\n"))
 }
+
+func LoadWorktreeContextFromDir(startDir string) (*WorktreeContext, string, error) {
+	p, err := FindWorktreeContextPath(startDir)
+	if err != nil {
+		return nil, "", err
+	}
+	ctx, err := LoadWorktreeContextFrom(p)
+	if err != nil {
+		return nil, "", err
+	}
+	return ctx, p, nil
+}

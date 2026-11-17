@@ -47,7 +47,6 @@ func TestHumanSelectorCLIKeepsActorAndOrganizationSeparate(t *testing.T) {
 		{[]string{"id", "revoke", "did:aw:target", "--domain", "other.example", "--human", "did:aw:selected", "--human-domain", "example.com"}, "--domain and --human-domain name different domains"},
 		{[]string{"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:other", "--human", "did:aw:selected", "--human-domain", "example.com"}, "same person"},
 		{[]string{"id", "create", "--name", "child", "--domain", "other.example", "--human-parent", "did:aw:selected", "--human", "did:aw:selected", "--human-domain", "example.com"}, "cannot cross domains"},
-		{[]string{"id", "create", "--name", "child", "--domain", "example.com", "--human-parent", "did:aw:selected"}, "--human ID --human-domain DOMAIN"},
 		{[]string{"id", "child", "invite", "--as-root", "--domain", "example.com", "--kind", "agent", "--recipient", "one child"}, "load namespace controller key"},
 		{[]string{"id", "parent", "request", "--human-domain", "example.com"}, "--human-domain requires --human"},
 		{[]string{"id", "child", "invite", "--as-root", "--human-domain", "example.com"}, "--human-domain requires --human"},
@@ -79,6 +78,8 @@ func TestReleasedHumanDomainFormStillSelectsThePerson(t *testing.T) {
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), "aw")
 	buildAwBinary(t, ctx, bin)
+	type invocation struct{ prefix, form []string }
+	var invocations []invocation
 	for _, prefix := range [][]string{
 		{"id", "parent", "request"},
 		{"id", "child", "invite"},
@@ -90,6 +91,20 @@ func TestReleasedHumanDomainFormStillSelectsThePerson(t *testing.T) {
 			{"--human", "did:aw:selected", "--human-domain", "example.com"},
 			{"--human", "did:aw:selected", "--domain", "example.com", "--human-domain", "example.com"},
 		} {
+			invocations = append(invocations, invocation{prefix, form})
+		}
+	}
+	// aw 1.36.58's id create took the signing person from --human-parent and
+	// the domain from --domain; the global selector may still name them.
+	for _, form := range [][]string{
+		{"--human-parent", "did:aw:selected"},
+		{"--human-parent", "did:aw:selected", "--human", "did:aw:selected", "--human-domain", "example.com"},
+	} {
+		invocations = append(invocations, invocation{[]string{"id", "create", "--name", "child", "--domain", "example.com"}, form})
+	}
+	for _, inv := range invocations {
+		prefix, form := inv.prefix, inv.form
+		{
 			args := append(append([]string{}, prefix...), form...)
 			t.Run(strings.Join(args, " "), func(t *testing.T) {
 				home := t.TempDir()

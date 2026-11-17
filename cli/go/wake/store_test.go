@@ -257,7 +257,7 @@ func TestStoreRoundTripsRegistrationsAndCanonicalisesHomes(t *testing.T) {
 		t.Fatalf("home=%q want %q", loaded.Home, home)
 	}
 
-	all, _, err := store.ListRegistrations()
+	all, _, err := store.ListRegistrationsWithFaults()
 	if err != nil || len(all) != 1 {
 		t.Fatalf("registrations=%v err=%v", all, err)
 	}
@@ -266,7 +266,7 @@ func TestStoreRoundTripsRegistrationsAndCanonicalisesHomes(t *testing.T) {
 	if err != nil || !existed {
 		t.Fatalf("existed=%t err=%v", existed, err)
 	}
-	if all, _, _ := store.ListRegistrations(); len(all) != 0 {
+	if all, _, _ := store.ListRegistrationsWithFaults(); len(all) != 0 {
 		t.Fatalf("registrations survived deletion: %v", all)
 	}
 }

@@ -404,7 +404,7 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 		opts.AfterRead()
 	}
 	newDID := didOf(newKey)
-	_, err = registry.RotateTeamKey(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
+	_, err = registry.RotateTeamKeyWithMembers(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
 	if detail, ok := awid.ResignedRecordsIncompleteDetail(err); ok && onlyMissingCustodians(detail) {
 		learned := append([]string{}, detail.Missing.TeamCustodians...)
 		sort.Strings(learned)
@@ -417,7 +417,7 @@ func executeTeamRotateKey(ctx context.Context, opts teamRotateKeyOptions) (teamR
 			}
 		}
 		out.LearnedCustodians = learned
-		_, err = registry.RotateTeamKey(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
+		_, err = registry.RotateTeamKeyWithMembers(ctx, registryURL, domain, teamName, newDID, &rotation.resigned, rotation.members, controllerKey)
 	}
 	if err != nil {
 		return teamRotateKeyOutput{}, rotateRefusal(teamID, err)

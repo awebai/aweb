@@ -245,7 +245,7 @@ async def current_membership(registry_client, row: dict | None) -> dict | None:
         return _without_team_context(row)
     if not certificate_id:
         return row
-    revoked = await revoked_certificates(registry_client, team_id)
+    revoked = await revoked_certificates(registry_client, team_id, certificate_ids=[certificate_id])
     if certificate_id not in revoked:
         # Staged existence requirement (default OFF): an unregistered
         # certificate can never appear in the revocation set, so once
