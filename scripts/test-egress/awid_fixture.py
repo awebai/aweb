@@ -6,7 +6,7 @@ schema), for test helpers that seed state the CLI cannot publish itself.
 Rate limits are off unless AWID_FIXTURE_RATE_LIMITS=production, which runs the
 production bucket values on the in-memory limiter, private to this fixture.
 AWID_PUBLIC_ORIGINS is the fixture's own loopback origin, unless
-AWID_FIXTURE_PUBLIC_ORIGINS=none leaves it unset.
+AWID_FIXTURE_PUBLIC_ORIGINS=none leaves it unset or names other origins.
 
 With AWID_FIXTURE_RELEASE=production it serves the AWID release production runs,
 as published (pinned in production-awid/), instead of this repository's AWID;
@@ -90,11 +90,14 @@ def main():
             env.pop('AWID_RATE_LIMIT_DISABLED')
             env['AWID_RATE_LIMIT_BACKEND'] = 'memory'
         # The origin it serves on, which covering controller signatures name,
-        # as any deployed registry has; a test of the missing setting opts out.
-        if os.environ.get('AWID_FIXTURE_PUBLIC_ORIGINS') != 'none':
-            env['AWID_PUBLIC_ORIGINS'] = f'http://127.0.0.1:{port}'
-        else:
+        # as any deployed registry has; a test of the missing setting opts out,
+        # and a test that fronts the fixture with its own server names that
+        # server's origin.
+        public_origins = os.environ.get('AWID_FIXTURE_PUBLIC_ORIGINS', '')
+        if public_origins == 'none':
             env.pop('AWID_PUBLIC_ORIGINS', None)
+        else:
+            env['AWID_PUBLIC_ORIGINS'] = public_origins or f'http://127.0.0.1:{port}'
         if os.environ.get('AWID_FIXTURE_RELEASE') == 'production':
             if env.get('AWID_FIXTURE_DNS_DOMAIN'):
                 raise RuntimeError('the production AWID fixture has no DNS dependency')

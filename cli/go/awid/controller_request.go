@@ -11,10 +11,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync/atomic"
 )
 
 const controllerRequestType = "aweb.awid-controller-request"
@@ -149,7 +152,48 @@ func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryUR
 	for k, v := range headers {
 		signed[k] = v
 	}
-	return c.requestBytes(ctx, method, aud, path, signed, raw, out)
+	var sent atomic.Bool
+	traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				sent.Store(true)
+			}
+		},
+	})
+	err = c.requestBytes(traced, method, aud, path, signed, raw, out)
+	var answered *RegistryError
+	if err != nil && sent.Load() && !errors.As(err, &answered) && !isReplaySafeRegistryRequest(method, path) {
+		// The registry received the whole write and its answer was lost. aw
+		// does not replay such a write, and the registry may have applied it.
+		state := controllerWriteStates[operation]
+		if state.write == "" {
+			state = controllerWriteState{write: strings.ReplaceAll(operation, "_", " "), check: "aw id show"}
+		}
+		return &OutcomeUnknownError{err: err, write: state.write, check: state.check}
+	}
+	return err
+}
+
+// controllerWriteState names a controller write to the user and a command
+// that reads the registry state it changes.
+type controllerWriteState struct {
+	write string
+	check string
+}
+
+var controllerWriteStates = map[string]controllerWriteState{
+	"create_team":             {"team create", "aw id team members"},
+	"set_team_visibility":     {"team visibility change", "aw id team members"},
+	"delete_team":             {"team delete", "aw id team members"},
+	"rotate_team_key":         {"team key rotation", "aw id team members"},
+	"register_certificate":    {"certificate registration", "aw id team members --include-revoked"},
+	"revoke_certificate":      {"certificate revocation", "aw id team members --include-revoked"},
+	"register_id_certificate": {"ID certificate registration", "aw id show"},
+	"revoke_id_certificate":   {"ID certificate revocation", "aw id show"},
+	"update_namespace":        {"namespace update", "aw id namespace <domain>"},
+	"delete_namespace":        {"namespace delete", "aw id namespace <domain>"},
+	"register_address":        {"address registration", "aw id namespace addresses <domain>"},
+	"delete_address":          {"address delete", "aw id namespace addresses <domain>"},
 }
 
 func idBundleLeafDomain(bundle map[string]any) (string, error) {

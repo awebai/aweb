@@ -15,6 +15,13 @@
   key, scope or setup command, aw says to run the changed command in a new
   directory and keep `.aw/partial-init.yaml`, instead of "rerun the same
   command in this directory", which the partial state would refuse.
+- A namespace, team or certificate write that aw does not replay, whose
+  answer is lost after the registry received it, now says the registry may
+  have applied it and names a command to check its state before retrying, in
+  text and in the `--json` error message (code `outcome_unknown`). `aw id team
+  rotate-key` no longer reports such a rotation as refused with the team key
+  unchanged: it says the new key is kept as the pending key and that running
+  the command again finishes the rotation.
 - ID-tree status, certificate registration and revocation return retryable
   HTTP 503 `dns_unavailable` for DNS timeouts and resolver failures. Missing
   or invalid public proof and missing epochs retain `evidence_unavailable`.
