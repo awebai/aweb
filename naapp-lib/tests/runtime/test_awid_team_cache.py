@@ -406,10 +406,11 @@ async def test_status_path_verifies_without_a_token_and_reuses_for_at_most_a_min
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
         assert [r.url.path for r in registry.transport.calls] == [
-            "/v1/namespaces/example.com/teams/backend/certificates/target/status"
+            "/v1/namespaces/example.com/teams/backend/certificates/target/status",
+            "/v1/namespaces/example.com/teams/backend/key-act",
         ]
 
-        assert "X-AWID-Service-Token" not in registry.transport.calls[0].headers
+        assert all("X-AWID-Service-Token" not in call.headers for call in registry.transport.calls)
         cached = cache._certificate_cache[(TEAM_ID, "target")]
         assert 0 < cached.expires_at - time.monotonic_ns() <= seconds_to_ns(60)
         await registry.revoke("target")
@@ -433,8 +434,11 @@ async def test_status_cache_is_per_certificate(registry, team):
     with pytest.raises(HTTPException) as caught:
         await cache.get(TEAM_ID, "unpublished")
     assert caught.value.status_code == 401
-    assert [r.url.path.rsplit("/", 2)[-2] for r in registry.transport.calls] == [
-        "target", "unpublished"]
+    assert [r.url.path for r in registry.transport.calls] == [
+        "/v1/namespaces/example.com/teams/backend/certificates/target/status",
+        "/v1/namespaces/example.com/teams/backend/key-act",
+        "/v1/namespaces/example.com/teams/backend/certificates/unpublished/status",
+    ]
 
 
 async def test_without_a_certificate_id_the_team_key_is_a_plain_read(registry, team):
