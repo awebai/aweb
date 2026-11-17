@@ -62,6 +62,8 @@ from awid.registry_auth import RegistryRequestAuth, path_signature_headers
 from awid.registry_paths import address_segment
 from awid.registry_transport import RegistryOverrideTransport
 from awid.registry_types import (
+    is_address_not_found,
+    is_team_not_found,
     RegistryError as RegistryError,
     RegistryThrottled as RegistryThrottled,
     DIDKeyNotFoundError as DIDKeyNotFoundError,
@@ -202,8 +204,6 @@ class _RevocationScan:
     # False if any entry arrived without a parseable revoked_at. Such a scan
     # cannot produce a trustworthy mark, so it must not be used to advance one.
     entries_all_timestamped: bool
-    # True if the route answered 404 (team deleted, or never existed).
-    team_missing: bool
 
 
 def _parse_revoked_at(value: Any) -> datetime | None:
@@ -1308,12 +1308,18 @@ class RegistryClient:
         signing_key: bytes | None = None,
         did_key: str | None = None,
     ) -> Address | None:
-        data = await self._request_optional_json(
-            "GET",
-            f"/v1/namespaces/{domain}/addresses/{address_segment(name)}",
-            registry_url=await self._registry_url_for_domain(domain),
-        )
-        return None if data is None else _address_from_json(data)
+        """None means coded address absence or the exact released legacy body."""
+        try:
+            data = await self._request_json(
+                "GET",
+                f"/v1/namespaces/{domain}/addresses/{address_segment(name)}",
+                registry_url=await self._registry_url_for_domain(domain),
+            )
+        except RegistryError as exc:
+            if is_address_not_found(exc.status_code, exc.body):
+                return None
+            raise
+        return _address_from_json(data)
 
     async def resolve_address_fresh(
         self,
@@ -1451,9 +1457,9 @@ class RegistryClient:
         """Page through the revocations route and report what was read.
 
         With ``since`` this reads only the tail of the list; without it, the
-        whole list. Either way the walk is all-or-nothing: any failure other
-        than a 404 propagates, so a caller never observes a partial
-        page-through and can never mistake one for current data.
+        whole list. The exact released first-page missing-team answer returns
+        an empty set; every other failure propagates, so a caller never observes a partial page-through and
+        can never mistake one for current data.
         """
         registry_url = await self._registry_url_for_domain(domain)
         base_path = f"/v1/namespaces/{domain}/teams/{name}/revocations"
@@ -1475,8 +1481,10 @@ class RegistryClient:
                     registry_url=registry_url,
                 )
             except RegistryError as exc:
-                if exc.status_code == 404:
-                    return _RevocationScan(revoked, newest, all_timestamped, True)
+                if _page == 0 and is_team_not_found(exc.status_code, exc.body):
+                    # Released SDK/Cloud callers interpret this as no team;
+                    # their independent key read must still establish authority.
+                    return _RevocationScan(set(), None, True)
                 raise
             entries = data.get("revocations", [])
             before = len(revoked)
@@ -1492,7 +1500,7 @@ class RegistryClient:
                 newest = page_newest
             if "has_more" in data:
                 if not data.get("has_more") or not data.get("next_cursor"):
-                    return _RevocationScan(revoked, newest, all_timestamped, False)
+                    return _RevocationScan(revoked, newest, all_timestamped)
                 cursor = data["next_cursor"]
                 continue
             # Legacy server: no truncation signal. Its hard limit was 1000
@@ -1500,7 +1508,7 @@ class RegistryClient:
             # new, is the end. So is a page whose rows carry no usable
             # revoked_at, because there is then nothing to page forward from.
             if len(entries) < 1000 or len(revoked) == before or page_newest is None:
-                return _RevocationScan(revoked, newest, all_timestamped, False)
+                return _RevocationScan(revoked, newest, all_timestamped)
             legacy_since = page_newest.isoformat()
             cursor = None
         raise RegistryError(f"AWID revocations pagination exceeded {MAX_REGISTRY_PAGES} pages", status_code=502)
@@ -3040,7 +3048,7 @@ class CachedRegistryClient(RegistryClient):
         return f"{self._address_cache_key_prefix(domain, name, registry_url=registry_url)}:{_lookup_cache_scope(caller_did_key)}"
 
     def _address_cache_key_prefix(self, domain: str, name: str, *, registry_url: str) -> str:
-        return f"awid:registry_cache:v2:address:{registry_url}:{domain}:{name}"
+        return f"awid:registry_cache:v3:address:{registry_url}:{domain}:{name}"
 
     def _team_reader_cache_suffix(self, domain: str, name: str) -> str:
         if not self.member_signing_keys or self.service_token:
@@ -3052,7 +3060,7 @@ class CachedRegistryClient(RegistryClient):
         return f"awid:registry_cache:v2:team:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_revocations_cache_key(self, domain: str, name: str) -> str:
-        return f"awid:registry_cache:v1:team_revocations:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
+        return f"awid:registry_cache:v2:team_revocations:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"
 
     def _team_public_key_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v1:team_public_key:{self.registry_url}:{domain}/{name}{self._team_reader_cache_suffix(domain, name)}"

@@ -344,6 +344,27 @@ PUT    /v1/namespaces/{domain}/addresses/{name}    Compatibility no-op for legac
 DELETE /v1/namespaces/{domain}/addresses/{name}    Delete (controller auth)
 ```
 
+**Address-read absence compatibility.** A missing address answers HTTP 404
+with `{"detail":{"code":"address_not_found","message":"Address not found"}}`.
+SDK readers also accept the exact released bodies `{"detail":"Address not found"}`
+and `{"detail":"Namespace not found"}`, only on the address endpoint. Generic/proxy
+404s and failed key/log reads do not prove SDK address absence. Each legacy acceptance emits
+`awid_legacy_address_not_found` with a cumulative per-process `count`.
+Removal requires a supported registry-version floor that guarantees the coded
+answer and measured zero legacy use across supported deployments, including
+foreign registries; it is a separate reviewed compatibility change. No date or
+local registry upgrade alone removes support.
+
+**Missing-team revocation compatibility.** On the first revocations page
+only, the exact released HTTP 404 body `{"detail":"Team not found"}` means
+no such team; the SDK returns an empty set and the caller must independently
+read the team key before authenticating. A generic/proxy 404, any other body,
+or any later-page 404 is a failure, never an empty or partial revocation list.
+Each accepted legacy answer emits `awid_legacy_team_not_found` with a cumulative
+per-process `count`. Removal has the same supported-version, zero-observed-use
+and separate-review requirements as the address compatibility above; a local
+upgrade alone does not remove support.
+
 **Creation precondition.** `POST /v1/namespaces/{domain}/addresses`
 requires that the target `did_aw` is already registered at awid
 (see [Identity operations](#identity-operations)). If
