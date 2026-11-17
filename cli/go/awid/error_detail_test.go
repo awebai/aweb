@@ -25,7 +25,7 @@ func TestRegistryCodedAliasConflictParsesAndDescribes(t *testing.T) {
 	}
 }
 
-// The server's coded alias conflicts: only alias_active is an alias conflict.
+// Preserve existing coded-detail classifications alongside the hosted reason.
 func TestServerCodedAliasConflictDescribes(t *testing.T) {
 	for _, tc := range []struct {
 		code, want string
