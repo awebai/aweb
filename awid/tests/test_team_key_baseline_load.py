@@ -24,7 +24,10 @@ import pytest
 import awid.ratelimit as rate_module
 import awid.team_key_acts as candidate
 from awid.registry import RegistryClient
-from test_team_key_baseline import ObservedRegistry, controller_keypair, world  # noqa: F401
+import test_team_key_baseline as baseline
+
+ObservedRegistry = baseline.ObservedRegistry
+world = baseline.world
 
 MAIN = "56d513923dc86a7dc4019502332a4e5e1365647a"
 
