@@ -23,7 +23,6 @@ class ServerWorkerTests(unittest.TestCase):
         env = os.environ.copy()
         env.update(
             PYTHONPATH="tests",
-            UV_CACHE_DIR="/tmp/uv-cache",
             UV_OFFLINE="1",
             PYTHONPYCACHEPREFIX="/tmp/pycache",
         )
