@@ -107,7 +107,7 @@ wheels = [
 [[package]]
 name = "aweb-approval-service"
 version = "0.0.0"
-source = { git = "https://github.com/awebai/approval-service.git?rev=b75a7beab8a9dee9449f158d666662a8fa393177#b75a7beab8a9dee9449f158d666662a8fa393177" }
+source = { git = "https://github.com/awebai/approval-service.git?rev=7b66caf29dc912e65a2f5c8f3200e8bd6a81c31d#7b66caf29dc912e65a2f5c8f3200e8bd6a81c31d" }
 dependencies = [
     { name = "asyncpg" },
     { name = "awid-service" },
@@ -140,7 +140,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aweb-approval-service", git = "https://github.com/awebai/approval-service.git?rev=b75a7beab8a9dee9449f158d666662a8fa393177" },
+    { name = "aweb-approval-service", git = "https://github.com/awebai/approval-service.git?rev=7b66caf29dc912e65a2f5c8f3200e8bd6a81c31d" },
     { name = "awid-service", editable = "../awid" },
     { name = "pynacl", specifier = ">=1.6.2" },
 ]
