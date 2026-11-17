@@ -15,6 +15,11 @@
   key, scope or setup command, aw says to run the changed command in a new
   directory and keep `.aw/partial-init.yaml`, instead of "rerun the same
   command in this directory", which the partial state would refuse.
+- `aw id child ...`, `aw id parent request|import` and `aw id revoke` again
+  accept the released form `--human ID --domain DOMAIN`, beside the global
+  selector `--human ID --human-domain DOMAIN`: with `--human`, `--domain`
+  names the person's domain. Both may be given only when they name the same
+  domain.
 - `aw chat send-and-wait`, `send-and-leave`, `extend-wait`, `open`,
   `history`, `listen` and `show-pending` to a teammate's alias now use the
   conversation found by the DID the team's agent list confirms for that

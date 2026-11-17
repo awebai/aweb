@@ -516,7 +516,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for approve`
 - `--out string Where to write the response (- for stdout) (default "-")`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
@@ -537,7 +537,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `--expires duration How long the invitation stays open (default 168h0m0s)`
 - `-h, --help help for invite`
 - `--kind string Kind of the child: human or agent`
@@ -557,7 +557,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for pending`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -574,7 +574,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for receive`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -591,7 +591,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for refuse`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -608,7 +608,7 @@ on success, error or interruption. Another command asks again.
 
 Flags:
 - `--as-root Act as the namespace root of --domain, with this machine's controller key`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for show`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
@@ -1080,7 +1080,7 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--domain string Organization namespace for agent operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for import`
 - `--no-register Install the certificate but leave its AWID registration pending`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
@@ -1129,7 +1129,7 @@ stays in memory for this command, including confirmation waits, and is wiped
 on success, error or interruption. Another command asks again.
 
 Flags:
-- `--domain string Organization namespace for agent operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for request`
 - `--invitation-id string Invitation ID the parent gave you`
 - `--out string Where to write the request (- for stdout) (default "-")`
@@ -1216,7 +1216,7 @@ on success, error or interruption. Another command asks again.
 Flags:
 - `--as-root Revoke as the namespace root of --domain, with this machine's controller key`
 - `--cutoff string With --as-root: the earlier time (RFC 3339) the revocation takes effect from`
-- `--domain string Organization namespace for agent or --as-root operations; with --human use --human-domain`
+- `--domain string Organization namespace for agent or --as-root operations; with --human, the person's domain, as --human-domain`
 - `-h, --help help for revoke`
 - `--registry string Registry origin for --as-root, when the domain's _awid record names none`
 
