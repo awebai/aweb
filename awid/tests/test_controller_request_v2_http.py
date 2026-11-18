@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from enum import Enum, auto
 from uuid import uuid4
 
 import httpx
 import pytest
 
 from awid.controller_request import LEGACY_CONTROLLER_AUTH_EVENT
+import awid.dns_auth as dns_auth
 from awid.signing import canonical_json_bytes, sign_message
 from test_certificates import _register_identity, _signed_certificate_blob
 
@@ -19,6 +21,38 @@ from conftest import (
     controller_request_headers as headers,
     send_controller_request as send,
 )
+
+
+class ControllerEnvelopeForm(Enum):
+    LEGACY = auto()
+    COVERING = auto()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("form", list(ControllerEnvelopeForm), ids=["legacy", "covering"])
+@pytest.mark.parametrize("offset", [-301, -300, 0, 300, 301])
+async def test_controller_timestamp_window_at_real_admission(controller_app, monkeypatch, form, offset):
+    env = controller_app
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    monkeypatch.setattr(dns_auth, "_utc_now", lambda: now)
+    body = {"name": "clocked", "team_did_key": keypair()[1], "visibility": "public"}
+    content = json.dumps(body).encode()
+    path = "/v1/namespaces/local/teams"
+    timestamp = (now + timedelta(seconds=offset)).isoformat()
+    signed = headers(
+        *env.controller, {"domain": "local", "operation": "create_team", "name": "clocked"},
+        "POST", path, content, covering=form is ControllerEnvelopeForm.COVERING,
+        overrides={"timestamp": timestamp},
+    )
+    signed["X-AWEB-Timestamp"] = timestamp
+    response = await env.client.post(path, content=content, headers={**signed, "Content-Type": "application/json"})
+    if abs(offset) > 300:
+        assert response.status_code == 401, response.text
+        assert response.json()["detail"] == "Timestamp outside allowed skew window"
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.teams}} WHERE name='clocked'") == 0
+    else:
+        assert response.status_code == 200, response.text
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.teams}} WHERE name='clocked'") == 1
 
 
 def legacy_counts(env):

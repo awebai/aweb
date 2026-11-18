@@ -15,9 +15,10 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Final, Literal
 
 from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header
+from awid.contract import IdentityScope
 from awid.controller_signing import (
     ControllerDescriptor,
     ControllerObjectRequest,
@@ -46,6 +47,8 @@ __all__ = [
     "envelope_headers",
     "utc_timestamp",
 ]
+
+TEAM_CONTROLLER_SCOPE: Final[Literal["team"]] = "team"
 
 
 def did_key(key: SigningKey) -> str:
@@ -76,6 +79,8 @@ class Member:
         return did_key(self.member_key)
 
     def certificate(self) -> dict[str, Any]:
+        """Issue the current scope shape (docs/identity.md:57-73)."""
+        scope = IdentityScope.GLOBAL if self.extra_cert_fields.get("member_did_aw") else IdentityScope.LOCAL
         cert = {
             "version": 1,
             "certificate_id": self.certificate_id,
@@ -83,14 +88,14 @@ class Member:
             "team_did_key": self.team_did_key,
             "member_did_key": self.did_key,
             "alias": self.alias,
-            "identity_scope": "global" if self.extra_cert_fields.get("member_did_aw") else "local",
+            "identity_scope": scope.value,
             "issued_at": "2026-01-01T00:00:00Z",
             **self.extra_cert_fields,
         }
         name, domain = self.team_id.split(":", 1)
         context = ControllerSigningContext(
-            ControllerObjectRequest("team_certificate_issue", domain, {"name": name, "certificate": cert}),
-            ControllerDescriptor("team", domain, self.team_did_key, "test-member", 0, team=name),
+            request=ControllerObjectRequest(operation="team_certificate_issue", domain=domain, parameters={"name": name, "certificate": cert}),
+            controller=ControllerDescriptor(scope=TEAM_CONTROLLER_SCOPE, domain=domain, did_key=self.team_did_key, key_reference="test-member", generation=0, team=name),
         )
         cert["signature"] = sign_message(bytes(self.team_key), context.signing_bytes())
         return cert

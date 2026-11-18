@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from awid.log import identity_state_hash, log_entry_payload
+import awid.dns_auth as dns_auth
 from awid.e2ee_keys import encryption_key_id
 from awid.signing import canonical_json_bytes, sign_message
 from awid_service.routes import did as did_routes
@@ -39,6 +40,24 @@ def register_vector(identity_vectors):
 
 def _register_body(register_vector: dict) -> dict:
     return {**register_vector["entry_payload"], "proof": register_vector["signature_b64"]}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("offset", [-301, -300, 0, 300, 301])
+async def test_did_registration_timestamp_window_at_real_admission(client, awid_db_infra, identity_vectors, register_vector, monkeypatch, offset):
+    body = _register_body(register_vector)
+    now = datetime.fromisoformat(body["timestamp"].replace("Z", "+00:00"))
+    monkeypatch.setattr(dns_auth, "_utc_now", lambda: now)
+    body["timestamp"] = (now + timedelta(seconds=offset)).isoformat().replace("+00:00", "Z")
+    payload = log_entry_payload(**{key: value for key, value in body.items() if key != "proof"})
+    body["proof"] = sign_message(bytes.fromhex(identity_vectors["key_seeds"]["initial_seed_hex"]), payload)
+    response = await client.post("/v1/did", json=body)
+    if abs(offset) > 300:
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == "401: Timestamp outside allowed skew window"
+        assert await awid_db_infra.get_manager().fetch_value("SELECT count(*) FROM {{tables.did_aw_mappings}}") == 0
+    else:
+        assert response.status_code == 200, response.text
 
 
 def _signed_get_headers(identity_vectors: dict, path: str) -> dict[str, str]:

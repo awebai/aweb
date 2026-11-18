@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 from awid.did import stable_id_from_did_key
 
 
-IDENTITY_SCOPES = ("local", "global")
+class IdentityScope(StrEnum):
+    """The two certificate scopes in docs/identity.md:66."""
+
+    LOCAL = "local"
+    GLOBAL = "global"
+
+
+IDENTITY_SCOPES = (IdentityScope.LOCAL.value, IdentityScope.GLOBAL.value)
 IDENTITY_CUSTODY_MODES = ("self", "custodial")
 _LEGACY_SCOPE_ALIASES = {
     "ephemeral": "local",

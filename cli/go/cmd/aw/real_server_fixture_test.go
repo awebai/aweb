@@ -90,7 +90,7 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	t.Cleanup(cancel)
 	world := &realCommandWorld{
 		Context: ctx, Binary: filepath.Join(t.TempDir(), "aw"),
-		Domain: "commands.test", NamespaceKey: newKey(t), TeamKey: newKey(t),
+		Domain: freshName(t, "commands-") + ".test", NamespaceKey: newKey(t), TeamKey: newKey(t),
 	}
 	buildAwBinary(t, ctx, world.Binary)
 	world.Stack = realCommandStack(t, ctx, commandStackAuthority{Domain: world.Domain, ControllerDID: didOf(world.NamespaceKey)})
