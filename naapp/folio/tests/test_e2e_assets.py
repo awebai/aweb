@@ -35,12 +35,20 @@ _SVG_WITH_SCRIPT = base64.b64encode(
 ).decode("ascii")
 
 
-def _upload_asset(folio: RunningFolio, team: Any, *, content_type: str = "image/png", data_base64: str = _ONE_BY_ONE_PNG) -> dict[str, Any]:
+def _upload_asset(
+    folio: RunningFolio,
+    team: Any,
+    *,
+    content_type: str = "image/png",
+    data_base64: str = _ONE_BY_ONE_PNG,
+) -> dict[str, Any]:
     result = _aw_request(
         team,
         "POST",
         f"{folio.origin}/v1/assets",
-        body=json.dumps({"content_type": content_type, "data_base64": data_base64}, separators=(",", ":")),
+        body=json.dumps(
+            {"content_type": content_type, "data_base64": data_base64}, separators=(",", ":")
+        ),
     )
     data = _aw_json(result, context="upload asset")
     assert isinstance(data, dict)
@@ -58,14 +66,19 @@ def test_image_asset_upload_embed_render_and_team_scoped_sanitizer(
         team_a,
         "POST",
         f"{folio.origin}/v1/assets",
-        body=json.dumps({"content_type": "image/svg+xml", "data_base64": _SVG_WITH_SCRIPT}, separators=(",", ":")),
+        body=json.dumps(
+            {"content_type": "image/svg+xml", "data_base64": _SVG_WITH_SCRIPT},
+            separators=(",", ":"),
+        ),
     )
     _assert_aw_status(invalid_svg, 400, context="reject SVG asset upload")
     mismatched = _aw_request(
         team_a,
         "POST",
         f"{folio.origin}/v1/assets",
-        body=json.dumps({"content_type": "image/png", "data_base64": _SVG_WITH_SCRIPT}, separators=(",", ":")),
+        body=json.dumps(
+            {"content_type": "image/png", "data_base64": _SVG_WITH_SCRIPT}, separators=(",", ":")
+        ),
     )
     _assert_aw_status(mismatched, 400, context="reject asset magic byte mismatch")
 

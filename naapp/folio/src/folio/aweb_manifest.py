@@ -295,4 +295,3 @@ MANIFEST: dict[str, Any] = {
         {"kid": "folio:grant-read-1", "purposes": ["app-grant-read"]},
     ],
 }
-

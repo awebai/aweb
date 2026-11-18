@@ -63,14 +63,20 @@ def test_theme_wraps_present_page_and_body_team_cannot_cross_scope(
     team_a = _provision_team(aw_workspace_factory("theme-a"), folio=folio, alias="alice")
     team_b = _provision_team(aw_workspace_factory("theme-b"), folio=folio, alias="bob")
 
-    _create_document(folio, team_a, slug="memo", title="Memo", body="# Plain\n\nA table:\n\n| A | B |\n| - | - |\n| 1 | 2 |")
+    _create_document(
+        folio,
+        team_a,
+        slug="memo",
+        title="Memo",
+        body="# Plain\n\nA table:\n\n| A | B |\n| - | - |\n| 1 | 2 |",
+    )
     no_theme = _mint_present(folio, team_a, slug="memo")
     no_theme_page = httpx.get(no_theme["url"], timeout=10.0)
     assert no_theme_page.status_code == 200, no_theme_page.text
     assert "Presented with folio" in no_theme_page.text
     assert "theme-header" in no_theme_page.text
     assert "Brand header" not in no_theme_page.text
-    assert "<img class=\"brand-logo\"" not in no_theme_page.text
+    assert '<img class="brand-logo"' not in no_theme_page.text
     assert "<table>" in no_theme_page.text
 
     invalid_logo = _aw_request(
@@ -187,9 +193,9 @@ def test_builtin_aweb_preset_themes_present_page_per_scheme(
     assert _get_theme(folio, team)["preset"] == "aweb"
 
     # Document/light default uses the aweb identity light palette.
-    light_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
-        "</style>", 1
-    )[0]
+    light_style = httpx.get(
+        _mint_present(folio, team, slug="brand")["url"], timeout=10.0
+    ).text.split("</style>", 1)[0]
     light_colors = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", light_style))
     for name, value in _AWEB_LIGHT_PALETTE.items():
         assert light_colors[name] == value
@@ -200,9 +206,9 @@ def test_builtin_aweb_preset_themes_present_page_per_scheme(
         team,
         {"preset": "aweb", "tokens": {"layout": {"color_scheme": "dark", "mode": "presentation"}}},
     )
-    dark_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
-        "</style>", 1
-    )[0]
+    dark_style = httpx.get(
+        _mint_present(folio, team, slug="brand")["url"], timeout=10.0
+    ).text.split("</style>", 1)[0]
     dark_colors = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", dark_style))
     for name, value in _AWEB_DARK_PALETTE.items():
         assert dark_colors[name] == value
@@ -219,9 +225,9 @@ def test_builtin_aweb_preset_themes_present_page_per_scheme(
             },
         },
     )
-    custom_style = httpx.get(_mint_present(folio, team, slug="brand")["url"], timeout=10.0).text.split(
-        "</style>", 1
-    )[0]
+    custom_style = httpx.get(
+        _mint_present(folio, team, slug="brand")["url"], timeout=10.0
+    ).text.split("</style>", 1)[0]
     custom_colors = dict(re.findall(r"(--[\w-]+):\s*([^;]+);", custom_style))
     assert custom_colors["--bg"] == "#001122"
     assert custom_colors["--accent"] == "rgb(1, 2, 3)"

@@ -96,7 +96,7 @@ def test_render_presented_markdown_renders_only_trusted_video_embeds() -> None:
     assert str(other_id) not in html
     assert "evil.example" not in html
     assert "user-controlled" not in html
-    assert "sandbox=\"allow-scripts allow-same-origin allow-presentation\"" in html
+    assert 'sandbox="allow-scripts allow-same-origin allow-presentation"' in html
 
 
 def test_render_presented_markdown_without_asset_context_strips_images() -> None:
@@ -115,7 +115,9 @@ def test_present_surface_is_noindex() -> None:
 
 def test_present_route_sets_x_robots_tag(monkeypatch) -> None:
     app = folio_api.create_app()
-    present_route = next(route for route in app.routes if getattr(route, "path", None) == "/present/{token}")
+    present_route = next(
+        route for route in app.routes if getattr(route, "path", None) == "/present/{token}"
+    )
     db_dependency = present_route.dependant.dependencies[0].call
     app.dependency_overrides[db_dependency] = lambda: object()
 
@@ -165,7 +167,7 @@ def test_render_presented_page_sanitizes_theme_tokens_and_header_footer() -> Non
     assert "<script" not in html.lower()
     assert "&lt;/style&gt;&lt;script&gt;alert(3)&lt;/script&gt;" in html
     assert "&lt;img src=x onerror=alert(4)&gt;" in html
-    assert "<img class=\"brand-logo\" src=\"/assets/logo-id\"" in html
+    assert '<img class="brand-logo" src="/assets/logo-id"' in html
 
 
 def test_render_editor_page_uses_nonce_and_escapes_script_breakout() -> None:
@@ -246,7 +248,13 @@ def test_sanitize_layout_tokens_normalizes_case_and_whitespace() -> None:
 
 def test_sanitize_layout_tokens_rejects_unknown_values() -> None:
     assert sanitize_layout_tokens(
-        {"layout": {"mode": "presentation; } body { display: none } .x {", "measure": "enormous", "color_scheme": 42}}
+        {
+            "layout": {
+                "mode": "presentation; } body { display: none } .x {",
+                "measure": "enormous",
+                "color_scheme": 42,
+            }
+        }
     ) == {"mode": "document", "measure": "default", "color_scheme": "light"}
 
 
@@ -273,7 +281,9 @@ def test_render_presented_page_defaults_to_document_layout_light() -> None:
 
 
 def test_render_presented_page_presentation_wide_dark() -> None:
-    theme = {"tokens": {"layout": {"mode": "presentation", "measure": "wide", "color_scheme": "dark"}}}
+    theme = {
+        "tokens": {"layout": {"mode": "presentation", "measure": "wide", "color_scheme": "dark"}}
+    }
     html = render_presented_page(body="# Hi", theme=theme)
     assert 'class="folio-layout-presentation folio-measure-wide"' in html
     assert '<meta name="color-scheme" content="dark">' in html
@@ -297,7 +307,11 @@ def test_render_presented_page_auto_color_scheme_emits_dark_media_query() -> Non
 def test_render_presented_page_layout_tokens_cannot_escape() -> None:
     theme = {
         "tokens": {
-            "layout": {"mode": "presentation; } body { display: none } .x {", "measure": "enormous", "color_scheme": "neon"}
+            "layout": {
+                "mode": "presentation; } body { display: none } .x {",
+                "measure": "enormous",
+                "color_scheme": "neon",
+            }
         }
     }
     html = render_presented_page(body="# Hi", theme=theme)
@@ -327,21 +341,27 @@ def test_presentation_without_nonce_stays_script_free() -> None:
 
 
 def test_content_security_policy_document_mode_forbids_script() -> None:
-    csp = content_security_policy(mode="document", nonce="abc", stream_host="customer-example.cloudflarestream.com")
+    csp = content_security_policy(
+        mode="document", nonce="abc", stream_host="customer-example.cloudflarestream.com"
+    )
     assert "script-src 'none'" in csp
     assert "nonce-abc" not in csp
     assert "frame-src https://customer-example.cloudflarestream.com" in csp
 
 
 def test_content_security_policy_presentation_mode_uses_nonce() -> None:
-    csp = content_security_policy(mode="presentation", nonce="abc", stream_host="customer-example.cloudflarestream.com")
+    csp = content_security_policy(
+        mode="presentation", nonce="abc", stream_host="customer-example.cloudflarestream.com"
+    )
     assert "script-src 'nonce-abc'" in csp
     assert "default-src 'none'" in csp
 
 
 def test_present_route_sets_content_security_policy(monkeypatch) -> None:
     app = folio_api.create_app()
-    present_route = next(route for route in app.routes if getattr(route, "path", None) == "/present/{token}")
+    present_route = next(
+        route for route in app.routes if getattr(route, "path", None) == "/present/{token}"
+    )
     db_dependency = present_route.dependant.dependencies[0].call
     app.dependency_overrides[db_dependency] = lambda: object()
 
@@ -423,7 +443,9 @@ def test_put_theme_rejects_transparent_or_alpha_contrast_bypass() -> None:
     client = TestClient(app)
 
     for value in ("transparent", "rgba(0, 0, 0, 0)", "#00000000"):
-        response = client.put("/v1/theme", json={"tokens": {"colors": {"text": value, "surface": "#ffffff"}}})
+        response = client.put(
+            "/v1/theme", json={"tokens": {"colors": {"text": value, "surface": "#ffffff"}}}
+        )
         assert response.status_code == 422, (value, response.text)
 
 
@@ -518,7 +540,10 @@ def test_put_theme_rejects_auto_scheme_unreadable_against_dark_palette() -> None
 
     response = client.put(
         "/v1/theme",
-        json={"preset": "aweb", "tokens": {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17191c"}}},
+        json={
+            "preset": "aweb",
+            "tokens": {"layout": {"color_scheme": "auto"}, "colors": {"text": "#17191c"}},
+        },
     )
     assert response.status_code == 422, response.text
 
@@ -547,7 +572,9 @@ _ORIGIN = "https://folio.aweb.ai"
 
 
 def _render_media(body: str) -> str:
-    return render_presented_markdown(body, public_origin=_ORIGIN, allowed_asset_ids={_MEDIA_A, _MEDIA_B})
+    return render_presented_markdown(
+        body, public_origin=_ORIGIN, allowed_asset_ids={_MEDIA_A, _MEDIA_B}
+    )
 
 
 def test_media_directive_emits_allowlisted_figure() -> None:
@@ -571,21 +598,41 @@ def test_media_directive_emits_allowlisted_figure() -> None:
 
 
 def test_media_directive_with_invalid_src_is_dropped() -> None:
-    html = _render_media("\n".join([":::media", "src: https://evil.example.com/x.png", "alt: x", ":::"]))
+    html = _render_media(
+        "\n".join([":::media", "src: https://evil.example.com/x.png", "alt: x", ":::"])
+    )
     assert "<figure" not in html
     assert "evil.example.com" not in html
 
 
 def test_media_directive_invalid_placement_and_size_fall_back() -> None:
     html = _render_media(
-        "\n".join([":::media", f"src: /assets/{_MEDIA_A}", "alt: x", "placement: diagonal", "size: enormous", ":::"])
+        "\n".join(
+            [
+                ":::media",
+                f"src: /assets/{_MEDIA_A}",
+                "alt: x",
+                "placement: diagonal",
+                "size: enormous",
+                ":::",
+            ]
+        )
     )
     assert '<figure class="folio-media folio-block">' in html
 
 
 def test_media_full_width_ignores_size() -> None:
     html = _render_media(
-        "\n".join([":::media", f"src: /assets/{_MEDIA_A}", "alt: x", "placement: full-width", "size: w-half", ":::"])
+        "\n".join(
+            [
+                ":::media",
+                f"src: /assets/{_MEDIA_A}",
+                "alt: x",
+                "placement: full-width",
+                "size: w-half",
+                ":::",
+            ]
+        )
     )
     assert '<figure class="folio-media folio-full-width">' in html
     assert "folio-w-half" not in html
@@ -626,14 +673,24 @@ def test_first_media_block_gets_fetchpriority_rest_lazy() -> None:
 
 def test_media_caption_with_tags_is_escaped() -> None:
     html = _render_media(
-        "\n".join([":::media", f"src: /assets/{_MEDIA_A}", "alt: x", "caption: <script>alert(1)</script>", ":::"])
+        "\n".join(
+            [
+                ":::media",
+                f"src: /assets/{_MEDIA_A}",
+                "alt: x",
+                "caption: <script>alert(1)</script>",
+                ":::",
+            ]
+        )
     )
     assert "<script" not in html.lower()
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
 
 
 def test_media_figures_never_admit_an_iframe() -> None:
-    html = _render_media('<figure class="folio-full-bleed"><iframe src="https://evil.example/frame"></iframe></figure>')
+    html = _render_media(
+        '<figure class="folio-full-bleed"><iframe src="https://evil.example/frame"></iframe></figure>'
+    )
     assert "<iframe" not in html
     assert "evil.example" not in html
 
@@ -644,26 +701,38 @@ def test_raw_figure_cannot_inject_non_folio_class() -> None:
 
 
 def test_repo_keeps_initial_migration_and_adds_forward_session_migration() -> None:
-    migrations = sorted((Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations").glob("*.sql"))
+    migrations = sorted(
+        (Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations").glob("*.sql")
+    )
 
     assert [migration.name for migration in migrations] == [
-        "001_initial.sql", "002_edit_sessions.sql", "003_installation_capabilities.sql",
+        "001_initial.sql",
+        "002_edit_sessions.sql",
+        "003_installation_capabilities.sql",
     ]
 
 
 def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:
-    migration = (Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations" / "001_initial.sql").read_text()
+    migration = (
+        Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations" / "001_initial.sql"
+    ).read_text()
 
     assert "CREATE TABLE IF NOT EXISTS {{tables.assets}}" in migration
     assert "asset_id UUID PRIMARY KEY" in migration
     assert "team_id TEXT NOT NULL REFERENCES {{tables.teams}}" in migration
     assert "kind TEXT NOT NULL DEFAULT 'image' CHECK (kind IN ('image', 'video'))" in migration
     assert "bytes BYTEA" in migration
-    assert "content_type TEXT CHECK (content_type IN ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm'))" in migration
+    assert (
+        "content_type TEXT CHECK (content_type IN ('image/png', 'image/jpeg', 'image/gif', 'image/webp', 'video/mp4', 'video/quicktime', 'video/webm'))"
+        in migration
+    )
     assert "stream_uid TEXT UNIQUE" in migration
     assert "stream_status TEXT CHECK" in migration
     assert "upload_expires_at TIMESTAMPTZ" in migration
-    assert "CHECK ((kind = 'image' AND bytes IS NOT NULL AND stream_uid IS NULL) OR (kind = 'video' AND bytes IS NULL AND stream_uid IS NOT NULL))" in migration
+    assert (
+        "CHECK ((kind = 'image' AND bytes IS NOT NULL AND stream_uid IS NULL) OR (kind = 'video' AND bytes IS NULL AND stream_uid IS NOT NULL))"
+        in migration
+    )
     assert "CREATE TABLE IF NOT EXISTS {{tables.themes}}" in migration
     assert "team_id TEXT PRIMARY KEY REFERENCES {{tables.teams}}" in migration
     assert "tokens JSONB NOT NULL DEFAULT '{}'::jsonb" in migration
@@ -673,7 +742,9 @@ def test_initial_migration_contains_team_scoped_assets_and_themes() -> None:
 
 
 def test_initial_migration_presentation_links_are_document_version_bound() -> None:
-    migration = (Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations" / "001_initial.sql").read_text()
+    migration = (
+        Path(__file__).resolve().parents[1] / "src" / "folio" / "migrations" / "001_initial.sql"
+    ).read_text()
 
     assert "CREATE TABLE IF NOT EXISTS {{tables.presentation_links}}" in migration
     assert "token TEXT PRIMARY KEY" in migration
@@ -685,5 +756,8 @@ def test_initial_migration_presentation_links_are_document_version_bound() -> No
     assert "certificate_id TEXT NOT NULL" in migration
     assert "editable BOOLEAN NOT NULL DEFAULT FALSE" in migration
     assert "created_by_editor_name TEXT" in migration
-    assert "FOREIGN KEY (document_id, version_number) REFERENCES {{tables.document_versions}}" in migration
+    assert (
+        "FOREIGN KEY (document_id, version_number) REFERENCES {{tables.document_versions}}"
+        in migration
+    )
     assert "arti" + "fact" not in migration.lower()

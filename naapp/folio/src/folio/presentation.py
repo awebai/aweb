@@ -109,16 +109,30 @@ _LAYOUT_ALLOWED = {
 }
 _COLOR_SCHEME_META = {"light": "light", "dark": "dark", "auto": "light dark"}
 _LIGHT_PALETTE = {
-    "--bg": "#ffffff", "--surface": "#ffffff", "--text": "#17191c",
-    "--muted": "#4c515b", "--border": "#c3c9d3", "--accent": "#2342e8",
-    "--accent-ink": "#ffffff", "--code-bg": "#f0f2f5",
-    "--warn": "#b45309", "--danger": "#b91c1c", "--danger-ink": "#ffffff",
+    "--bg": "#ffffff",
+    "--surface": "#ffffff",
+    "--text": "#17191c",
+    "--muted": "#4c515b",
+    "--border": "#c3c9d3",
+    "--accent": "#2342e8",
+    "--accent-ink": "#ffffff",
+    "--code-bg": "#f0f2f5",
+    "--warn": "#b45309",
+    "--danger": "#b91c1c",
+    "--danger-ink": "#ffffff",
 }
 _DARK_PALETTE = {
-    "--bg": "#17191c", "--surface": "#17191c", "--text": "#f7f8fb",
-    "--muted": "#bfc5d0", "--border": "#454e5e", "--accent": "#a5b5ff",
-    "--accent-ink": "#17191c", "--code-bg": "#252a33",
-    "--warn": "#e0a544", "--danger": "#f06d6d", "--danger-ink": "#17191c",
+    "--bg": "#17191c",
+    "--surface": "#17191c",
+    "--text": "#f7f8fb",
+    "--muted": "#bfc5d0",
+    "--border": "#454e5e",
+    "--accent": "#a5b5ff",
+    "--accent-ink": "#17191c",
+    "--code-bg": "#252a33",
+    "--warn": "#e0a544",
+    "--danger": "#f06d6d",
+    "--danger-ink": "#17191c",
 }
 _AWEB_LIGHT_PALETTE = _LIGHT_PALETTE
 _AWEB_DARK_PALETTE = _DARK_PALETTE
@@ -146,6 +160,7 @@ def _identity_meta(public_origin: str | None) -> str:
   <meta name="twitter:image" content="{origin}/brand/field-v1/folio-card.png">
   <meta name="twitter:image:alt" content="folio">'''
 
+
 # Built-in named themes: a preset supplies a (light, dark) base palette applied
 # per color_scheme. Per-team custom color tokens still override the base.
 _BUILTIN_THEMES = {
@@ -163,9 +178,13 @@ def _resolve_base_palettes(preset: Any) -> tuple[dict[str, str], dict[str, str]]
     if name is not None:
         return _BUILTIN_THEMES[name]
     return _LIGHT_PALETTE, _DARK_PALETTE
+
+
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 _RGB_COLOR_RE = re.compile(r"^rgba?\(([^)]+)\)$", re.IGNORECASE)
-_ASSET_PATH_RE = re.compile(r"^/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$")
+_ASSET_PATH_RE = re.compile(
+    r"^/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"
+)
 _IMG_WITHOUT_SRC_RE = re.compile(r"<img\b(?![^>]*\bsrc=)[^>]*>", re.IGNORECASE)
 _MARKDOWN_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 _MEDIA_IMAGE_PLACEMENTS = {"block", "wrap-left", "wrap-right", "full-width", "full-bleed"}
@@ -320,7 +339,9 @@ def sanitize_theme_tokens(tokens: Any) -> dict[str, dict[str, str]]:
         safe_fonts = {
             str(key): value.lower().strip()
             for key, value in fonts.items()
-            if key in _FONT_VARIABLES and isinstance(value, str) and value.lower().strip() in _FONT_ALLOWLIST
+            if key in _FONT_VARIABLES
+            and isinstance(value, str)
+            and value.lower().strip() in _FONT_ALLOWLIST
         }
         if safe_fonts:
             sanitized["fonts"] = safe_fonts
@@ -376,7 +397,9 @@ def theme_contrast_error(tokens: Any, *, preset: Any = None) -> str | None:
         surface = custom_surface or palette["--surface"]
         for label, value in (("text", text), ("surface", surface)):
             if not _is_opaque_color(value):
-                return f"Theme {label} color must be a fully opaque color so contrast can be verified."
+                return (
+                    f"Theme {label} color must be a fully opaque color so contrast can be verified."
+                )
         ratio = contrast_ratio(text, surface)
         if ratio is None:
             return "Theme text/surface colors could not be evaluated for contrast."
@@ -431,11 +454,13 @@ def _editor_theme_css(theme: dict[str, Any] | None) -> str:
     palette = dark if scheme == "dark" else light
     if scheme == "auto":
         palette = {name: f"light-dark({value}, {dark[name]})" for name, value in light.items()}
-    return (f"color-scheme: {_COLOR_SCHEME_META[scheme]};\n"
-            + _palette_declarations(palette, "      ")
-            + "\n      --font-body: Archivo, Arial, sans-serif;"
-            + "\n      --font-heading: var(--font-body);\n"
-            + _theme_css(safe))
+    return (
+        f"color-scheme: {_COLOR_SCHEME_META[scheme]};\n"
+        + _palette_declarations(palette, "      ")
+        + "\n      --font-body: Archivo, Arial, sans-serif;"
+        + "\n      --font-heading: var(--font-body);\n"
+        + _theme_css(safe)
+    )
 
 
 def _theme_css(tokens: dict[str, dict[str, str]] | None) -> str:
@@ -480,7 +505,9 @@ def _asset_id_from_same_origin_src(src: str, *, public_origin: str | None) -> UU
         return None
 
 
-def _safe_image_src(src: str, *, public_origin: str | None, image_asset_ids: set[UUID]) -> str | None:
+def _safe_image_src(
+    src: str, *, public_origin: str | None, image_asset_ids: set[UUID]
+) -> str | None:
     asset_id = _asset_id_from_same_origin_src(src, public_origin=public_origin)
     if asset_id is None or asset_id not in image_asset_ids:
         return None
@@ -495,8 +522,8 @@ def _video_iframe_html(*, iframe_url: str, title: str) -> str:
         f'<iframe src="{safe_url}" title="{safe_title}" loading="lazy" '
         'allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture" '
         'allowfullscreen sandbox="allow-scripts allow-same-origin allow-presentation"></iframe>'
-        f'<figcaption>{safe_title}</figcaption>'
-        '</figure>'
+        f"<figcaption>{safe_title}</figcaption>"
+        "</figure>"
     )
 
 
@@ -520,14 +547,20 @@ def _replace_video_markdown(
             status = escape(str(embed.get("status") or "processing"))
             return f'\n\n<div class="folio-video-pending">Video is {status}.</div>\n\n'
         token = f"FOLIO_VIDEO_{secrets.token_urlsafe(24)}"
-        replacements[token] = _video_iframe_html(iframe_url=iframe_url, title=alt or "Embedded video")
+        replacements[token] = _video_iframe_html(
+            iframe_url=iframe_url, title=alt or "Embedded video"
+        )
         return f"\n\n{token}\n\n"
 
     return _MARKDOWN_IMAGE_RE.sub(replace, body), replacements
 
 
 def _media_img_tag(src: str, alt: str, state: dict[str, bool]) -> str:
-    attrs = ['class="folio-img"', f'src="{escape(src, quote=True)}"', f'alt="{escape(alt, quote=True)}"']
+    attrs = [
+        'class="folio-img"',
+        f'src="{escape(src, quote=True)}"',
+        f'alt="{escape(alt, quote=True)}"',
+    ]
     if state["first"]:
         attrs.append('fetchpriority="high"')
         state["first"] = False
@@ -554,9 +587,14 @@ def _parse_directive_fields(block: str) -> tuple[dict[str, str], list[str]]:
 
 
 def _render_image_directive(
-    fields: dict[str, str], public_origin: str | None, image_asset_ids: set[UUID], state: dict[str, bool]
+    fields: dict[str, str],
+    public_origin: str | None,
+    image_asset_ids: set[UUID],
+    state: dict[str, bool],
 ) -> str:
-    safe = _safe_image_src(fields.get("src", ""), public_origin=public_origin, image_asset_ids=image_asset_ids)
+    safe = _safe_image_src(
+        fields.get("src", ""), public_origin=public_origin, image_asset_ids=image_asset_ids
+    )
     if safe is None:
         return ""
     placement = fields.get("placement", "block").strip().lower()
@@ -587,7 +625,9 @@ def _render_gallery_directive(
         match = _GALLERY_ITEM_RE.match(raw_item.strip())
         if match is None:
             continue
-        safe = _safe_image_src(match.group(1), public_origin=public_origin, image_asset_ids=image_asset_ids)
+        safe = _safe_image_src(
+            match.group(1), public_origin=public_origin, image_asset_ids=image_asset_ids
+        )
         if safe is None:
             continue
         img = _media_img_tag(safe, match.group(2) or "", state)
@@ -620,7 +660,9 @@ def _preprocess_media(body: str, *, public_origin: str | None, image_asset_ids: 
             if kind == "media":
                 return _render_image_directive(fields, public_origin, image_asset_ids, state)
             return _render_gallery_directive(fields, items, public_origin, image_asset_ids, state)
-        safe = _safe_image_src(match.group("src"), public_origin=public_origin, image_asset_ids=image_asset_ids)
+        safe = _safe_image_src(
+            match.group("src"), public_origin=public_origin, image_asset_ids=image_asset_ids
+        )
         if safe is None:
             return match.group(0)
         img = _media_img_tag(safe, match.group("alt"), state)
@@ -657,11 +699,15 @@ def render_presented_markdown(
 
     embeds = asset_embeds or {}
     image_asset_ids = {
-        asset_id for asset_id, embed in embeds.items() if str(embed.get("kind") or "image") == "image"
+        asset_id
+        for asset_id, embed in embeds.items()
+        if str(embed.get("kind") or "image") == "image"
     }
     image_asset_ids.update(allowed_asset_ids or set())
     video_embeds = {
-        asset_id: embed for asset_id, embed in embeds.items() if str(embed.get("kind") or "") == "video"
+        asset_id: embed
+        for asset_id, embed in embeds.items()
+        if str(embed.get("kind") or "") == "video"
     }
     preprocessed_body, trusted_video_replacements = _replace_video_markdown(
         body,
@@ -677,7 +723,9 @@ def render_presented_markdown(
             kept = " ".join(token for token in value.split() if token.startswith("folio-"))
             return kept or None
         if tag == "img" and attribute == "src":
-            return _safe_image_src(value, public_origin=public_origin, image_asset_ids=image_asset_ids)
+            return _safe_image_src(
+                value, public_origin=public_origin, image_asset_ids=image_asset_ids
+            )
         return value
 
     unsafe_html = markdown.markdown(
@@ -723,7 +771,9 @@ def render_presented_page(
     root_css = _root_css(layout, theme_css, light_palette=light_palette, dark_palette=dark_palette)
     body_class = f"folio-layout-{layout['mode']} folio-measure-{layout['measure']}"
     color_scheme_meta = _COLOR_SCHEME_META[layout["color_scheme"]]
-    fullscreen_html = _fullscreen_control(nonce) if layout["mode"] == "presentation" and nonce else ""
+    fullscreen_html = (
+        _fullscreen_control(nonce) if layout["mode"] == "presentation" and nonce else ""
+    )
     logo_url = str((theme or {}).get("logo_url") or "")
     header = str((theme or {}).get("header") or "")
     footer = str((theme or {}).get("footer") or "")
@@ -732,8 +782,12 @@ def render_presented_page(
         if logo_url
         else ""
     )
-    header_html = f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
-    footer_html = f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    header_html = (
+        f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
+    )
+    footer_html = (
+        f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    )
     title = escape("Presented document")
     return f"""<!doctype html>
 <html lang="en">
@@ -937,8 +991,12 @@ def render_editor_page(
         if logo_url
         else ""
     )
-    header_html = f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
-    footer_html = f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    header_html = (
+        f'      <header class="theme-header">{escape(header)}</header>\n' if header else ""
+    )
+    footer_html = (
+        f'      <footer class="theme-footer">{escape(footer)}</footer>\n' if footer else ""
+    )
     initial_json = _script_json({"body": body, "version_number": version_number, "token": token})
     root_css = ":root {" + _editor_theme_css(theme) + "}"
     return f"""<!doctype html>
