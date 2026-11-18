@@ -831,7 +831,12 @@ async def test_identity_grant_status_reports_effective_issuer_revocation(aweb_cl
     assert after.status_code == 200, after.text
     assert after.json()["status"] == "active"
     assert after.json()["effective_status"] == "issuer_revoked"
-    assert after.json()["status_detail"] == "grant issuing certificate revoked"
+    assert after.json()["status_detail"].startswith(
+        "grant issuing certificate revoked. "
+    )
+    assert after.json()["status_detail"].endswith(
+        "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
+    )
 
 
 @pytest.mark.asyncio
@@ -892,7 +897,10 @@ async def test_grant_with_revoked_issuing_certificate_is_rejected(aweb_cloud_db)
             ),
         )
     assert after.status_code == 403
-    assert after.json()["detail"] == "grant issuing certificate revoked"
+    assert after.json()["detail"].startswith("grant issuing certificate revoked. ")
+    assert after.json()["detail"].endswith(
+        "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
+    )
 
 
 @pytest.mark.asyncio
@@ -955,7 +963,12 @@ async def test_grant_with_unregistered_issuing_certificate_rejected_when_require
             ),
         )
         assert resp.status_code == 403
-        assert resp.json()["detail"] == "grant issuing certificate not registered"
+        assert resp.json()["detail"].startswith(
+            "grant issuing certificate not registered. "
+        )
+        assert resp.json()["detail"].endswith(
+            "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
+        )
 
         # A registered issuing certificate keeps the delegation working.
         app.state.awid_registry_client.list_team_certificates = AsyncMock(

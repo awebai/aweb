@@ -10,7 +10,11 @@ from fastapi import HTTPException, Request
 
 from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state
 from aweb.config import require_registered_certificates
-from aweb.member_team_key import grant_issuer_current, member_key_columns_sql
+from aweb.member_team_key import (
+    GRANT_ISSUER_RECOVERY_DETAIL,
+    grant_issuer_current,
+    member_key_columns_sql,
+)
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
@@ -25,7 +29,8 @@ GRANT_TERMINAL_DETAILS = {
     "grant_expired": "identity grant expired",
     "grant_revoked": "identity grant revoked",
     "grant_subject_inactive": "identity grant subject inactive",
-    "grant_issuer_revoked": "identity grant issuer revoked",
+    "grant_issuer_revoked": "identity grant issuer revoked. "
+    + GRANT_ISSUER_RECOVERY_DETAIL,
 }
 
 

@@ -41,6 +41,12 @@ CURRENT_MEMBERSHIP_REQUIRED_DETAIL = (
 )
 
 
+GRANT_ISSUER_RECOVERY_DETAIL = (
+    "This grant was issued from a certificate that is no longer current. "
+    "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
+)
+
+
 def recipient_not_found(*, label: str | None = None) -> NotFoundError:
     """Tell the sender how to restore a missing current-member recipient."""
     detail = "Recipient name does not identify a current member of the team"
@@ -371,7 +377,9 @@ def grant_issuer_current(row) -> bool:
     (certificate_id and member_key_columns_sql), still has its issuing
     certificate: the subject is a member under the current key and that
     member's certificate is the one the grant was issued from. A credential
-    issued from a superseded certificate does not return."""
+    issued from a superseded certificate does not return: reaccepting the
+    member does not renew an earlier delegation (docs/identity.md:766-769).
+    """
     if not member_key_current(row):
         return False
     issuer = str(row.get("issued_by_certificate_id") or "").strip()

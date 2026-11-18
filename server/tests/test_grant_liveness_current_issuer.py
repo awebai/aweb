@@ -102,6 +102,9 @@ async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
         ),
     )
     assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"].endswith(
+        "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
+    )
     # This is the same public native reader used by roster/status. Root Redis
     # presence cannot mask the grant-specific question in this assertion.
     assert workspace not in await valid_grant_liveness_by_workspace(env.db, [workspace])

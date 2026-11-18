@@ -21,7 +21,11 @@ from fastapi import HTTPException, Request
 from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
 from aweb.config import get_settings, require_registered_certificates
-from aweb.member_team_key import grant_issuer_current, member_key_columns_sql
+from aweb.member_team_key import (
+    GRANT_ISSUER_RECOVERY_DETAIL,
+    grant_issuer_current,
+    member_key_columns_sql,
+)
 from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state, never_expires
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
@@ -214,7 +218,10 @@ async def _verify_identity_grant_row(
     if row["status"] != "active" or row["deleted_at"] is not None:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
     if not grant_issuer_current(row):
-        raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
+        raise HTTPException(
+            status_code=403,
+            detail="grant issuing certificate revoked. " + GRANT_ISSUER_RECOVERY_DETAIL,
+        )
     # A grant is a delegation from a membership; revoking the issuing
     # certificate must end the delegation with it (aweb-abfn). Grants minted
     # before issued_by_certificate_id was recorded cannot be checked and are
@@ -227,7 +234,9 @@ async def _verify_identity_grant_row(
         )
         if issuing_certificate_id in revoked_certs:
             raise HTTPException(
-                status_code=403, detail="grant issuing certificate revoked"
+                status_code=403,
+                detail="grant issuing certificate revoked. "
+                + GRANT_ISSUER_RECOVERY_DETAIL,
             )
         # Staged existence requirement (default OFF): an unregistered issuing
         # certificate is unrevocable, so with
@@ -240,7 +249,9 @@ async def _verify_identity_grant_row(
             )
             if issuing_certificate_id not in registered_certs:
                 raise HTTPException(
-                    status_code=403, detail="grant issuing certificate not registered"
+                    status_code=403,
+                    detail="grant issuing certificate not registered. "
+                    + GRANT_ISSUER_RECOVERY_DETAIL,
                 )
 
     required = (

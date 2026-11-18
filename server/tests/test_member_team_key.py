@@ -29,7 +29,7 @@ from test_messages_http import (
 )
 from test_team_key_pinning import (
     _substitute_registry_team_key,
-    pinning,
+    pinning as pinning,
     register_namespace_controller,
     rotate_team_key,
 )  # noqa: F401
@@ -291,6 +291,9 @@ async def test_a_grant_ends_with_its_issuing_certificate_and_does_not_return(pin
     next_sk, next_did = await _change_key(env)
     refused = await _use_grant(env, grant)
     assert refused.status_code == 403, refused.text
+    assert refused.json()["detail"].endswith(
+        "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
+    )
 
     assert (
         await _connect(
