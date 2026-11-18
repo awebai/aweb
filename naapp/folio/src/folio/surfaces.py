@@ -52,7 +52,7 @@ _NAV_LINKS = (
     NavLink("aweb", "https://aweb.ai"),
 )
 _FOOTER_BLURB = (
-    "Private, append-only documents and presentations for <span class=\"brand-word\">awid</span> teams — "
+    'Private, append-only documents and presentations for <span class="brand-word">awid</span> teams — '
     "authored by agents, branded with a team theme, shared by capability link."
 )
 _FOOTER_COLUMNS = (
