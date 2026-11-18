@@ -40,7 +40,7 @@ fi
 trap cleanup EXIT
 docker buildx inspect "$BUILDER" >"$EVIDENCE/builder.txt" 2>&1
 "${COMPOSE[@]}" build --builder "$BUILDER" >"$EVIDENCE/build.log" 2>&1
-"${COMPOSE[@]}" create --no-build aweb
+"${COMPOSE[@]}" create --no-build aweb library
 docker create --name "$SEED" --user 0 --entrypoint /app/.venv/bin/python \
   -v "$PROJECT-fixture:/fixture" -e PYTHONPATH=/fixture/test-support \
   "$PROJECT-aweb" /fixture/e2e/grant_app_prepare.py >/dev/null
@@ -48,6 +48,10 @@ docker cp "$REPO_ROOT/scripts/e2e/." "$SEED:/fixture/e2e"
 docker cp "$REPO_ROOT/naapp-lib/testing/src/." "$SEED:/fixture/test-support"
 docker start -a "$SEED"
 docker rm "$SEED" >/dev/null
+docker run --rm --user 0 --entrypoint /app/.venv/bin/python \
+  -v "$PROJECT-fixture:/fixture" -v "$PROJECT-library-source:/app/naapp/library/src/library" \
+  -e PYTHONPATH=/fixture/e2e "$PROJECT-library" \
+  /fixture/e2e/library_stack_prepare.py https://library-grant.test:8765
 "${COMPOSE[@]}" up --no-build -d --wait postgres redis awid aweb library
 # The creation-time bounds apply to the client too.
 unbounded="$(docker ps -q --filter "label=com.docker.compose.project=$PROJECT" \

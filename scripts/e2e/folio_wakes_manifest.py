@@ -13,11 +13,11 @@ import os
 import sys
 
 from folio.aweb_manifest import MANIFEST_PATH
+from stack_manifest import template_at_origin
 
 version, events, manifest_version = sys.argv[1], sys.argv[2] == "true", int(sys.argv[3])
-manifest = json.loads(MANIFEST_PATH.read_text())
+manifest = template_at_origin(json.loads(MANIFEST_PATH.read_text()), os.environ["FOLIO_WAKES_ORIGIN"])
 manifest_version = max(manifest_version, manifest["manifest_version"])
-manifest["app"]["origin"] = os.environ["FOLIO_WAKES_ORIGIN"]
 manifest["app"]["version"] = version
 if not events:
     manifest["events"] = []

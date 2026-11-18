@@ -63,7 +63,7 @@ services:
       retries: 30
 
   aweb:
-    command: ["/app/.venv/bin/python", "/fixture/e2e/folio_wakes_server.py"]
+    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://folio-wakes.test:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "folio-wakes-test/1", "--port", "38000"]
     cpus: "1"
     mem_limit: "1g"
     pids_limit: 512

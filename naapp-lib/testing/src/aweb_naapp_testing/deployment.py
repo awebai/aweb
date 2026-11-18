@@ -38,6 +38,8 @@ from nacl.signing import SigningKey
 from aweb_naapp_testing.network import local_address, make_certificates
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+# The locked server source environment runs the stack server, not an installed aweb artifact.
+STACK_SERVER = REPOSITORY_ROOT / "scripts" / "e2e" / "stack_server.py"
 SERVER_PROJECT = REPOSITORY_ROOT / "server"
 
 
@@ -635,25 +637,6 @@ def running_coordination_server(
             AWID_REGISTRY_URL=stack.awid_url,
             AWID_SERVICE_TOKEN=awid_service_token,
         )
-        # Use the locked server source environment, not an installed aweb artifact.
-        runner = tmp_path / "installation-server.py"
-        runner.write_text(
-            "import sys\n"
-            "from urllib.parse import urlsplit\n"
-            "import uvicorn\n"
-            "from aweb.api import create_app\n"
-            "from aweb.app_manifests import ManifestFetcher\n"
-            "from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations, parse_destination\n"
-            "origin = urlsplit(sys.argv[1])\n"
-            "destination = parse_destination({'host': origin.hostname, 'port': origin.port, 'path': '/**', "
-            "'methods': ['GET'], 'network': 'internal', 'cidr': origin.hostname + '/32'}, "
-            "internal_destinations=InternalDestinations.ALLOWED)\n"
-            "app = create_app()\n"
-            "app.state.manifest_fetcher = ManifestFetcher(destination=destination, egress=Egress("
-            "addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED), "
-            "resolver=DnsResolver(), user_agent='naapp-install-test/1', ca_file=sys.argv[2]))\n"
-            "uvicorn.run(app, fd=int(sys.argv[3]))\n"
-        )
         with (tmp_path / "coordination.log").open("w+") as log:
             proc = subprocess.Popen(
                 [
@@ -664,9 +647,14 @@ def running_coordination_server(
                     "--project",
                     str(SERVER_PROJECT),
                     "python",
-                    str(runner),
+                    str(STACK_SERVER),
+                    "--app-origin",
                     app_origin,
+                    "--ca-file",
                     str(ca_file),
+                    "--user-agent",
+                    "naapp-install-test/1",
+                    "--fd",
                     str(listener.fileno()),
                 ],
                 env=env,

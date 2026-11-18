@@ -26,7 +26,7 @@ services:
       APP_ENV: test
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
   aweb:
-    command: ["/app/.venv/bin/python", "/fixture/e2e/grant_app_server.py"]
+    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://library-grant.test:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "grant-app-test/1", "--port", "8000"]
     environment:
       AWEB_PUBLIC_ORIGIN: http://127.0.0.1:8000
       AWID_PUBLIC_REGISTRY_URL: http://awid:8010
@@ -49,8 +49,11 @@ services:
     command: ["/app/.venv/bin/uvicorn", "library.api:app", "--host", "0.0.0.0", "--port", "8765", "--ssl-keyfile", "/fixture/tls/server.key", "--ssl-certfile", "/fixture/tls/server.pem"]
     environment:
       LIBRARY_PUBLIC_ORIGIN: https://library-grant.test:8765
+      LIBRARY_APP_KEY_FILES: '{"library:grant-read-1": "/fixture/library/grant-read.hex"}'
     volumes:
       - fixture:/fixture:ro
+      # Library's template published from this stack's origin (library_stack_prepare.py).
+      - library-source:/app/naapp/library/src/library
     networks:
       default:
         aliases: [library-grant.test]
@@ -75,3 +78,5 @@ services:
 volumes:
   fixture:
     name: ${GRANT_APP_E2E_PROJECT:?set by runner}-fixture
+  library-source:
+    name: ${GRANT_APP_E2E_PROJECT:?set by runner}-library-source
