@@ -1,4 +1,5 @@
 """Real PG/HTTP/browser editor refresh; the separate CLI e2e uses real AWID."""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,9 +21,13 @@ __all__ = ["present_world"]
 @pytest.fixture
 async def live_world(present_world):
     app, db, settings = present_world
+
     async def owner(request: Request):
-        request.state.folio_installation = await app.state.folio_runtime.installation_fence().permit(OWNER.team_id)
+        request.state.folio_installation = (
+            await app.state.folio_runtime.installation_fence().permit(OWNER.team_id)
+        )
         return OWNER
+
     for route in app.routes:
         for dep in getattr(getattr(route, "dependant", None), "dependencies", ()):
             if dep.name == "actor":
@@ -33,8 +38,14 @@ async def live_world(present_world):
 async def link(world, *, editable=False, version=None):
     _, db, settings = world
     return await mint_presentation_link(
-        db, installation_id="test-installation", principal=OWNER, settings=settings, slug="draft", version=version,
-        editable=editable, ttl_seconds=300,
+        db,
+        installation_id="test-installation",
+        principal=OWNER,
+        settings=settings,
+        slug="draft",
+        version=version,
+        editable=editable,
+        ttl_seconds=300,
     )
 
 
@@ -74,7 +85,9 @@ async def test_clean_editor_follows_agent_and_other_browser(live_world, live_bro
         assert response.status_code == 200
     await expect(editor.locator("#body")).to_have_value("# Agent second", timeout=10000)
     other_link = await link(live_world, editable=True)
-    await other.goto(origin + urlsplit(other_link["url"]).path + "#" + urlsplit(other_link["url"]).fragment)
+    await other.goto(
+        origin + urlsplit(other_link["url"]).path + "#" + urlsplit(other_link["url"]).fragment
+    )
     await other.locator("#body").fill("# Person third")
     await other.locator("#save").click()
     await expect(other.locator("#save")).to_be_disabled()
@@ -91,11 +104,16 @@ async def test_dirty_editor_retains_draft_until_explicit_latest_load(live_world,
     await page.locator("#body").focus()
     await page.locator("#body").evaluate("el => el.setSelectionRange(3, 8)")
     async with httpx.AsyncClient(base_url=origin) as client:
-        assert (await client.post("/v1/documents/draft/versions", content="Remote second")).status_code == 200
+        assert (
+            await client.post("/v1/documents/draft/versions", content="Remote second")
+        ).status_code == 200
     await expect(page.locator("#load-latest")).to_be_visible(timeout=10000)
     await expect(page.locator("#body")).to_have_value("My unsaved text")
     await expect(page.locator("#body")).to_be_focused()
-    assert await page.locator("#body").evaluate("el => [el.selectionStart, el.selectionEnd]") == [3, 8]
+    assert await page.locator("#body").evaluate("el => [el.selectionStart, el.selectionEnd]") == [
+        3,
+        8,
+    ]
     await page.locator("#load-latest").click()
     await expect(page.locator("#load-dialog")).to_be_visible()
     await page.locator("#load-cancel").click()
@@ -105,12 +123,14 @@ async def test_dirty_editor_retains_draft_until_explicit_latest_load(live_world,
     await expect(page.locator("#body")).to_have_value("Remote second")
     await expect(page.locator("#save")).to_be_disabled()
     await page.locator("#body").fill("Explicit new draft")
-    async with page.expect_response(lambda response: response.url.endswith('/edit')) as saved:
+    async with page.expect_response(lambda response: response.url.endswith("/edit")) as saved:
         await page.locator("#save").click()
     assert (await saved.value).status == 200
     await expect(page.locator("#save")).to_be_disabled()
     _, db, _ = live_world
-    rows = await db.fetch_all("SELECT body FROM {{tables.document_versions}} ORDER BY version_number")
+    rows = await db.fetch_all(
+        "SELECT body FROM {{tables.document_versions}} ORDER BY version_number"
+    )
     assert [r["body"] for r in rows] == ["Original", "Remote second", "Explicit new draft"]
 
 
@@ -132,7 +152,9 @@ async def test_typing_while_refresh_is_in_flight_keeps_text(live_world, live_bro
     await page.goto(origin + urlsplit(edit["url"]).path + "#" + urlsplit(edit["url"]).fragment)
     await expect(page.locator("#body")).to_have_value("Original")
     async with httpx.AsyncClient(base_url=origin) as client:
-        assert (await client.post("/v1/documents/draft/versions", content="Remote version")).status_code == 200
+        assert (
+            await client.post("/v1/documents/draft/versions", content="Remote version")
+        ).status_code == 200
     changed.set()
     try:
         await asyncio.wait_for(held.wait(), timeout=10)
