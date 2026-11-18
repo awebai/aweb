@@ -69,6 +69,7 @@ from aweb.messaging.messages import (
 from aweb.messaging.participant_succession import predecessor_target_for_mail
 from aweb.messaging.participants import messaging_participant_by_alias
 from aweb.messaging.recipient_bindings import signed_recipient_matches
+from aweb.messaging.kinds import MessageKind
 from aweb.messaging.recipients import resolve_address_recipient
 from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.sender_address import sender_address as _sender_address
@@ -1129,7 +1130,7 @@ async def resolve_mail_target(
             runtime,
             address=address,
             source=source,
-            kind="mail",
+            kind=MessageKind.MAIL,
             signed_payload=payload.signed_payload,
             signature=payload.signature,
         )

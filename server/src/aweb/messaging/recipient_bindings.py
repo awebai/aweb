@@ -2,6 +2,12 @@
 
 from collections.abc import Mapping, Sequence
 from typing import Any
+from enum import Enum, auto
+
+
+class RecipientBindingUse(Enum):
+    SEND_CLAIMS = auto()
+    ADDRESS_VISIBILITY = auto()
 
 
 def signed_recipient_matches(
@@ -9,9 +15,11 @@ def signed_recipient_matches(
     *,
     recipients: Sequence[Mapping[str, Any]],
     allowed_to: set[str],
-    require_identity: bool = False,
+    use: RecipientBindingUse = RecipientBindingUse.SEND_CLAIMS,
 ) -> bool:
     """Validate supplied claims; released plaintext envelopes may omit them.
+
+    Implements docs/identity-messaging-contract.md:128-139.
 
     Address resolution requires a DID claim before signed bytes can establish
     visibility. Group identity claims still require exactly one recipient.
@@ -21,7 +29,7 @@ def signed_recipient_matches(
         return False
     signed_did = str(payload.get("to_did") or "").strip()
     signed_stable = str(payload.get("to_stable_id") or "").strip()
-    if require_identity and not (signed_did or signed_stable):
+    if use is RecipientBindingUse.ADDRESS_VISIBILITY and not (signed_did or signed_stable):
         return False
     if signed_did:
         if len(recipients) != 1:

@@ -25,12 +25,13 @@ from aweb.messaging.alias_targets import (
     get_agent_by_namespace_alias,
     namespace_exists,
 )
-from aweb.messaging.recipient_bindings import signed_recipient_matches
+from aweb.messaging.kinds import MessageKind
+from aweb.messaging.recipient_bindings import RecipientBindingUse, signed_recipient_matches
 
 logger = logging.getLogger(__name__)
 
 
-async def _local_address(db, *, domain: str, name: str) -> dict | None:
+async def _local_recipient_at_address(db, *, domain: str, name: str) -> dict | None:
     try:
         return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
     except AmbiguousLocalAddressError as exc:
@@ -40,14 +41,14 @@ async def _local_address(db, *, domain: str, name: str) -> dict | None:
         ) from exc
 
 
-def _signed_address_binding(
-    signed, *, address: str, recipient: dict, kind: str
+def _signature_binds_recipient_address(
+    signed, *, address: str, recipient: dict, kind: MessageKind
 ) -> bool:
     return bool(
         isinstance(signed, dict)
         and signed.get("type") == kind
         and signed_recipient_matches(
-            signed, recipients=[recipient], allowed_to={address}, require_identity=True
+            signed, recipients=[recipient], allowed_to={address}, use=RecipientBindingUse.ADDRESS_VISIBILITY
         )
     )
 
@@ -59,11 +60,13 @@ async def resolve_address_recipient(
     *,
     address: str,
     source: str,
-    kind: str,
+    kind: MessageKind,
     signed_payload: str | None = None,
     signature: str | None = None,
 ) -> dict:
     """Return the exact admitted identity and route for the sender's address.
+
+    Implements docs/identity-messaging-contract.md:120-145,208-222.
 
     Local visibility, signed identity binding and strict authority discovery are
     shared by both message kinds. The returned participant is identity-scoped;
@@ -80,9 +83,9 @@ async def resolve_address_recipient(
     signed = verified_signed_payload_json(
         signed_payload=signed_payload, signature=signature, did_key=auth.did_key
     )
-    local = await _local_address(db, domain=domain, name=name)
+    local = await _local_recipient_at_address(db, domain=domain, name=name)
     if local is not None:
-        bound = _signed_address_binding(
+        bound = _signature_binds_recipient_address(
             signed, address=address, recipient=local, kind=kind
         )
         needs_current = (
@@ -146,9 +149,9 @@ async def resolve_address_recipient(
         ).strip()
         return recipient
 
-    # Preserve the released local fallback, with the same visibility and signed
-    # recipient rule used before discovery. An absent registry grants no new key.
-    local = await _local_address(db, domain=domain, name=name)
+    # Local fallback requires the same visibility and signed-recipient rule as
+    # the first local lookup. An absent registry grants no new key.
+    local = await _local_recipient_at_address(db, domain=domain, name=name)
     if local is None:
         if await namespace_exists(db, domain):
             raise FederationAuthorityError("recipient_identity_not_found")
@@ -165,7 +168,7 @@ async def resolve_address_recipient(
         and requires_registry_address_binding(local)
         and not (
             local_recipient_visible_to_auth(local, auth)
-            or _signed_address_binding(
+            or _signature_binds_recipient_address(
                 signed, address=address, recipient=local, kind=kind
             )
         )

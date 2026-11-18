@@ -7,7 +7,7 @@ from typing import Sequence
 
 from awid.external_authority import RegistryAuthority, canonical_protocol_address, compare_claim_to_evidence
 from awid.external_registry import ExternalAuthorityEvidence, StrictExternalRegistry
-from awid.federation_errors import FederationAuthorityError
+from awid.federation_errors import FederationAuthorityError, FederationErrorSpec
 
 from .authority_state import (
     AddressAuthorityCandidate,
@@ -16,6 +16,7 @@ from .authority_state import (
     CheckpointCandidate,
 )
 from .authority_work import AuthorityLease
+from .lookup_policy import AUTHORITY_CAS_CONFLICT, SENDER_IDENTITY_NOT_FOUND, EvidenceCacheUse
 
 
 @dataclass(frozen=True)
@@ -123,9 +124,11 @@ class FederationAuthorityCore:
         fences: Sequence[AuthorityLease] = (),
         address: str | None = None,
         discovered_authority: RegistryAuthority | None = None,
-        not_found_reason: str = "sender_identity_not_found",
+        not_found: FederationErrorSpec = SENDER_IDENTITY_NOT_FOUND,
     ) -> CommittedAuthorityEvidence:
         """Fetch current authority, commit it, and retry one checkpoint race.
+
+        Implements docs/identity-messaging-contract.md:178-210.
 
         A sender claim is independently checked when supplied. Address discovery
         derives its claim only from the resolver's verified evidence.
@@ -134,20 +137,20 @@ class FederationAuthorityCore:
             claim.canonical_address if claim is not None else address or ""
         )
 
-        async def fetch(snapshot, *, bypass_cache=False):
+        async def fetch_authority_evidence(snapshot, *, cache_use: EvidenceCacheUse = EvidenceCacheUse.NORMAL):
             kwargs = {
                 "authority_generation": authority_generation,
                 "checkpoint": snapshot,
             }
-            if bypass_cache:
+            if cache_use is EvidenceCacheUse.BYPASS:
                 kwargs["bypass_cache"] = True
             if discovered_authority is not None:
                 kwargs["discovered_authority"] = discovered_authority
-            if not_found_reason != "sender_identity_not_found":
-                kwargs["not_found_reason"] = not_found_reason
+            if not_found != SENDER_IDENTITY_NOT_FOUND:
+                kwargs["not_found_reason"] = not_found.reason
             return await resolver.fetch_evidence(canonical, **kwargs)
 
-        def evidence_claim(value):
+        def claim_for_evidence(value: ExternalAuthorityEvidence) -> AuthorityClaim:
             return claim or AuthorityClaim(
                 canonical_address=canonical,
                 did_aw=value.did_aw,
@@ -160,25 +163,25 @@ class FederationAuthorityCore:
             if claim is not None
             else None
         )
-        evidence = await fetch(snapshot)
+        evidence = await fetch_authority_evidence(snapshot)
         if claim is None:
             snapshot = await self.repository.get_checkpoint(evidence.did_aw)
             if snapshot is not None:
-                evidence = await fetch(snapshot, bypass_cache=True)
+                evidence = await fetch_authority_evidence(snapshot, cache_use=EvidenceCacheUse.BYPASS)
         try:
             token = await self.commit_verified_evidence(
-                evidence_claim(evidence),
+                claim_for_evidence(evidence),
                 evidence,
                 publishing_fence=publishing_fence,
                 fences=fences,
             )
         except FederationAuthorityError as exc:
-            if exc.reason != "federation_authority_cas_conflict":
+            if exc.reason != AUTHORITY_CAS_CONFLICT.reason:
                 raise
             winner = await self.repository.get_checkpoint(evidence.did_aw)
-            evidence = await fetch(winner, bypass_cache=True)
+            evidence = await fetch_authority_evidence(winner, cache_use=EvidenceCacheUse.BYPASS)
             token = await self.commit_verified_evidence(
-                evidence_claim(evidence),
+                claim_for_evidence(evidence),
                 evidence,
                 publishing_fence=publishing_fence,
                 fences=fences,

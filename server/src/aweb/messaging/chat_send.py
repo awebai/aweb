@@ -66,6 +66,7 @@ from aweb.messaging.mail_routing import _require_live_mail_participant
 from aweb.messaging.messages import authorize_message_delivery, policy_rows_for_participant
 from aweb.messaging.participants import messaging_participant_by_alias, messaging_participants_by_aliases
 from aweb.messaging.recipient_bindings import signed_recipient_matches
+from aweb.messaging.kinds import MessageKind
 from aweb.messaging.recipients import resolve_address_recipient
 from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.sender_address import sender_address as _sender_address
@@ -175,7 +176,7 @@ def validate_encrypted_chat_payload(
     try:
         validate_e2ee_message_envelope(
             envelope,
-            kind="chat",
+            kind=MessageKind.CHAT,
             message_id=payload.message_id,
             conversation_id=session_id,
             sender_did=(auth.did_key or actor_did).strip(),
@@ -904,7 +905,7 @@ async def _resolve_named_recipients(
             runtime,
             address=address,
             source=source,
-            kind="chat",
+            kind=MessageKind.CHAT,
             signed_payload=signed_payload,
             signature=signature,
         )

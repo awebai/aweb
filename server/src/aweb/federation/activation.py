@@ -21,6 +21,10 @@ from awid.external_registry import StrictExternalRegistry
 from awid.federation_errors import FederationAuthorityError
 
 from .authority import AuthorityClaim, FederationAuthorityCore
+from .lookup_policy import (
+    AUTHORITY_CAS_CONFLICT, SENDER_IDENTITY_NOT_FOUND, RECIPIENT_IDENTITY_NOT_FOUND,
+    SENDER_LOOKUP, CONTACT_LOOKUP, AuthorityLookupPolicy, AuthorityResultState,
+)
 from .authority_state import AuthorityRepository, AuthoritySecurityToken
 from .authority_work import AuthorityLease, AuthorityWorkRepository, AuthorityWorkResult
 from .transport import PRIVATE_DELIVERY_ORIGINS_SETTING, AddressCheckedTransport, private_delivery_origins
@@ -80,16 +84,16 @@ class FederationAuthorityActivation:
     def _raise_published_failure(
         result: AuthorityWorkResult | None,
         *,
-        not_found_reason: str = "sender_identity_not_found",
+        lookup: AuthorityLookupPolicy = SENDER_LOOKUP,
     ) -> None:
-        if result is None or result.status != "failed":
+        if result is None or result.status != AuthorityResultState.FAILED:
             return
         reason = str(result.evidence.get("reason") or "").strip()
         if not reason:
-            raise FederationAuthorityError("federation_authority_cas_conflict")
+            raise FederationAuthorityError(AUTHORITY_CAS_CONFLICT.reason)
         # Discovery/evidence results are shared by sender and contact lookups.
-        if reason in {"sender_identity_not_found", "recipient_identity_not_found"}:
-            reason = not_found_reason
+        if reason in {SENDER_IDENTITY_NOT_FOUND.reason, RECIPIENT_IDENTITY_NOT_FOUND.reason}:
+            reason = lookup.missing_identity.reason
         raise FederationAuthorityError(
             reason,
             did_aw=str(result.evidence.get("did_aw") or "").strip() or None,
@@ -99,7 +103,7 @@ class FederationAuthorityActivation:
     async def _publish_failure(
         self,
         error: FederationAuthorityError,
-        *leases: AuthorityLease | None,
+        *, leases: tuple[AuthorityLease | None, ...],
     ) -> None:
         evidence = {
             "reason": error.reason,
@@ -112,7 +116,7 @@ class FederationAuthorityActivation:
             try:
                 await self.work.publish_result(
                     lease,
-                    status="failed",
+                    status=AuthorityResultState.FAILED,
                     evidence=evidence,
                     ttl_seconds=5,
                 )
@@ -124,12 +128,12 @@ class FederationAuthorityActivation:
         self,
         canonical_address: str,
         result: AuthorityWorkResult | None,
-        *, not_found_reason: str = "recipient_identity_not_found",
+        *, lookup: AuthorityLookupPolicy = CONTACT_LOOKUP,
     ) -> ResolvedContactIdentity | None:
         self._raise_published_failure(
-            result, not_found_reason=not_found_reason
+            result, lookup=lookup
         )
-        if result is None or result.status != "verified":
+        if result is None or result.status != AuthorityResultState.VERIFIED:
             return None
         evidence = result.evidence
         if evidence.get("canonical_address") != canonical_address:
@@ -164,13 +168,12 @@ class FederationAuthorityActivation:
         cached = await self.core.authorize_from_shared_cohort(claim) if claim.delivery_origin else None
         if cached is not None:
             return AuthorizedFederationSender(
-                cached, cached.canonical_address, claim.delivery_origin
+                token=cached, canonical_address=cached.canonical_address, delivery_origin=claim.delivery_origin
             )
         resolved = await self._resolve_address(
             claim.canonical_address,
             source_ip=source_ip,
-            not_found_reason="sender_identity_not_found",
-            busy_reason="federation_authority_cas_conflict",
+            lookup=SENDER_LOOKUP,
         )
         if resolved.did_aw != claim.did_aw:
             raise FederationAuthorityError(
@@ -190,8 +193,7 @@ class FederationAuthorityActivation:
         return await self._resolve_address(
             address,
             source_ip=source_ip,
-            not_found_reason="recipient_identity_not_found",
-            busy_reason="federation_resolver_busy",
+            lookup=CONTACT_LOOKUP,
         )
 
     async def _resolve_address(
@@ -199,8 +201,7 @@ class FederationAuthorityActivation:
         address: str,
         *,
         source_ip: str,
-        not_found_reason: str,
-        busy_reason: str,
+        lookup: AuthorityLookupPolicy,
     ) -> ResolvedContactIdentity:
         canonical = canonical_protocol_address(address)
         domain = canonical.split("/", 1)[0]
@@ -223,9 +224,9 @@ class FederationAuthorityActivation:
                 result = await self.work.wait_for_result(
                     discovery_key, deadline_seconds=5
                 )
-                resolved = await self._contact_from_result(canonical, result, not_found_reason=not_found_reason)
+                resolved = await self._contact_from_result(canonical, result, lookup=lookup)
                 if resolved is None:
-                    raise FederationAuthorityError(busy_reason)
+                    raise FederationAuthorityError(lookup.busy.reason)
                 return resolved
             authority = await self._discover_registry_authority(domain)
             await self.work.consume_token(
@@ -245,9 +246,9 @@ class FederationAuthorityActivation:
                 result = await self.work.wait_for_result(
                     evidence_key, deadline_seconds=5
                 )
-                resolved = await self._contact_from_result(canonical, result, not_found_reason=not_found_reason)
+                resolved = await self._contact_from_result(canonical, result, lookup=lookup)
                 if resolved is None:
-                    raise FederationAuthorityError(busy_reason)
+                    raise FederationAuthorityError(lookup.busy.reason)
                 return resolved
             authority_generation = evidence_lease.fence
             committed = await self.core.resolve_evidence_and_commit(
@@ -258,7 +259,7 @@ class FederationAuthorityActivation:
                 publishing_fence=evidence_lease.fence,
                 fences=(discovery, evidence_lease),
                 discovered_authority=authority,
-                not_found_reason=not_found_reason,
+                not_found=lookup.missing_identity,
             )
             token, evidence = committed.token, committed.evidence
             result = {
@@ -271,19 +272,19 @@ class FederationAuthorityActivation:
                 "delivery_origin": evidence.delivery_origin,
             }
             published = await self.work.publish_result(
-                evidence_lease, status="verified", evidence=result, ttl_seconds=60
+                evidence_lease, status=AuthorityResultState.VERIFIED, evidence=result, ttl_seconds=60
             )
-            await self.work.publish_result(discovery, status="verified", evidence=result, ttl_seconds=60)
+            await self.work.publish_result(discovery, status=AuthorityResultState.VERIFIED, evidence=result, ttl_seconds=60)
             result_published = True
             resolved = await self._contact_from_result(
-                canonical, published, not_found_reason=not_found_reason
+                canonical, published, lookup=lookup
             )
             if resolved is None:
-                raise FederationAuthorityError(busy_reason)
+                raise FederationAuthorityError(lookup.busy.reason)
             return resolved
         except FederationAuthorityError as exc:
             if not result_published:
-                await self._publish_failure(exc, evidence_lease, discovery)
+                await self._publish_failure(exc, leases=(evidence_lease, discovery))
             raise
         finally:
             await self.work.release_permits(owner_id=owner_id)

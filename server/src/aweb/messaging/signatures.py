@@ -1,4 +1,4 @@
-"""Wire-shape validation for Ed25519 message signatures."""
+"""Plaintext message signature shape and authenticated authorship."""
 
 from __future__ import annotations
 
@@ -20,7 +20,10 @@ INVALID_MESSAGE_SIGNATURE = (
 def require_verified_message_signature(
     *, signed_payload: str, signature: str, did_key: str
 ) -> None:
-    """Authenticate the original message bytes under the transport's sender key."""
+    """Authenticate original bytes under the transport sender's key.
+
+    Implements docs/identity-messaging-contract.md:132-139.
+    """
     try:
         verify_did_key_signature(
             did_key=did_key,

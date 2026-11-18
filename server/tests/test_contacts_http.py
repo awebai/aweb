@@ -21,6 +21,7 @@ from awid.federation_errors import FederationAuthorityError
 from awid.registry import Address, AddressDelivery, IDTreeEnrollment, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.api import create_app
+from aweb.federation.lookup_policy import SENDER_LOOKUP
 from aweb.federation.activation import FederationAuthorityActivation
 from aweb.federation.authority import FederationAuthorityCore
 from aweb.federation.authority_state import AuthorityRepository
@@ -387,7 +388,7 @@ async def test_shared_not_found_result_uses_current_lookup_role(published_reason
             await activation._contact_from_result(
                 "juan.aweb.ai/missing",
                 result,
-                not_found_reason="sender_identity_not_found",
+                lookup=SENDER_LOOKUP,
             )
     expected_reason = "recipient_identity_not_found" if contact else "sender_identity_not_found"
     assert raised.value.reason == expected_reason
