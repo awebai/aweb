@@ -185,3 +185,36 @@ func TestHumanBindingRefreshPacketKeepsTheSelectedPersonAndService(t *testing.T)
 		})
 	}
 }
+
+func TestHumanBindingRefreshRetainedReplayAfterLiveSave(t *testing.T) {
+	h, binding := refreshBindingFixture(t)
+	packet, err := proof.Parse(refreshPacketFixture(t, h, binding))
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet["previous_binding_commitment"] = "sha256:" + strings.Repeat("1", 64)
+	raw, err := proof.Canonical(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readHumanBindingRefreshPacket(raw, humanBindingRefreshInput{Human: h, Current: binding, Source: bindingRefreshRetainedReplay}); err != nil {
+		t.Fatalf("lost pending-file cleanup must remain replayable: %v", err)
+	}
+}
+
+func TestHumanBindingRefreshLoadsOriginalUntilLiveExists(t *testing.T) {
+	h, binding := refreshBindingFixture(t)
+	if err := saveHumanEnrollment(filepath.Join(h.dir, "approval-binding.json"), binding); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loadHumanApprovalBinding(h.dir)
+	if err != nil || !sameEnrollmentValue(loaded, binding) {
+		t.Fatalf("initial binding unavailable: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(h.dir, "approval-live-binding.json"), []byte("broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadHumanApprovalBinding(h.dir); err == nil {
+		t.Fatal("silently fell back from corrupt live binding to historical evidence")
+	}
+}

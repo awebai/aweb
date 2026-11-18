@@ -129,11 +129,8 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 	digest := sha256.Sum256(append([]byte(targetURL+"\n"), canonical...))
 	recordPath := filepath.Join(h.dir, fmt.Sprintf("human-add-%x.json", digest))
 	loadApproval := func() error {
-		raw, e := readFileBounded(filepath.Join(h.dir, "approval-binding.json"), maxResponseBytes)
-		if e != nil {
-			return fmt.Errorf("this issuer requires approval; run aw id human enroll first: %w", e)
-		}
-		binding, e = proof.Parse(raw)
+		var e error
+		binding, e = loadHumanApprovalBinding(h.dir)
 		if e != nil {
 			return e
 		}

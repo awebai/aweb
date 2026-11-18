@@ -762,6 +762,7 @@ Subcommands:
 - `add` Ask your issuer to add a new person
 - `enroll` Enroll an approval key for your new or existing human ID
 - `init` Create your human ID in a namespace
+- `refresh-binding` Refresh your live approval binding after an issuer or controller change
 - `register` Register your issued human certificate with your own key
 
 Flags:
@@ -859,6 +860,22 @@ Flags:
 - `--domain string Namespace domain`
 - `-h, --help help for init`
 - `--registry string Registry origin, when the domain's _awid record names none (a record naming api.awid.ai counts as naming none)`
+
+## `id human refresh-binding`
+
+### `id human refresh-binding`
+
+Run this yourself with --human ID --human-domain DOMAIN at a terminal.
+The holder re-signs your existing approval keys under its current authority.
+The approval service checks your own-person packet; no new key is enrolled.
+
+The new live binding is saved separately from the original enrollment and
+historical proof evidence. A retry carries the same retained packet until the
+service confirms it. This command never replaces a lost approval key.
+
+Flags:
+- `-h, --help help for refresh-binding`
+- `--issuer string Issuer HTTPS origin; defaults to your saved enrollment`
 
 ## `id human register`
 
