@@ -18,7 +18,7 @@ import (
 )
 
 func TestIdentityHomeNeutralExemptionsAreExact(t *testing.T) {
-	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd, teamAdmissionInviteCmd, orgCreateCmd, orgListCmd, orgAvailabilityCmd, auditVerifyCmd, verifyCmd, validateAliasCmd, validateTeamIDCmd, validateTeamServerURLCmd}
+	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd, teamAdmissionInviteCmd, orgCreateCmd, orgListCmd, orgAvailabilityCmd, auditVerifyCmd, verifyCmd, validateAliasCmd, validateTeamIDCmd, validateTeamServerURLCmd, teamRevokeInviteCmd}
 	if len(identityHomeNeutralCommandExemptions) != len(want) {
 		t.Fatalf("identity-neutral exemption count=%d want %d", len(identityHomeNeutralCommandExemptions), len(want))
 	}

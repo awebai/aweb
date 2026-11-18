@@ -708,10 +708,10 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 	// also explicit. A missing controller must not silently switch authority.
 	controllerKey, err := awconfig.LoadControllerKey(domain)
 	if errors.Is(err, os.ErrNotExist) {
-		return usageError("no local controller key for --namespace %s; pass --hosted for a hosted sibling, or install the namespace controller key for BYOT (aw id namespace prepare-controller --domain %s)", domain, domain)
+		return withErrorCode(codeControllerKeyMissing, usageError("no local controller key for --namespace %s; pass --hosted for a hosted sibling, or install the namespace controller key for BYOT (aw id namespace prepare-controller --domain %s)", domain, domain))
 	}
 	if err != nil {
-		return fmt.Errorf("load controller key for %s: %w (run `aw id namespace prepare-controller --domain %s` first)", domain, err, domain)
+		return withErrorCode(codeControllerKeyMissing, fmt.Errorf("load controller key for %s: %w (run `aw id namespace prepare-controller --domain %s` first)", domain, err, domain))
 	}
 	if cmd.Flags().Changed("request-id") || teamCreateShowToken {
 		return usageError("--request-id and --show-token require hosted creation; use --hosted")
@@ -753,17 +753,22 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 }
 
 func runTeamInvite(cmd *cobra.Command, args []string) error {
-	return runTeamInviteWithOutput(cmd, args, false)
+	if cmd.Flags().Changed("team-id") {
+		if err := applyHumanTeamIDToInvite(teamHumanInviteTeamID); err != nil {
+			return err
+		}
+	}
+	return runTeamInviteWithOutput(cmd, args, inviteOutputProtocol)
 }
 
 func runTeamHumanInvite(cmd *cobra.Command, args []string) error {
 	if err := applyHumanTeamIDToInvite(teamHumanInviteTeamID); err != nil {
 		return err
 	}
-	return runTeamInviteWithOutput(cmd, args, true)
+	return runTeamInviteWithOutput(cmd, args, inviteOutputJoin)
 }
 
-func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bool) error {
+func runTeamInviteWithOutput(cmd *cobra.Command, args []string, style teamInviteOutputStyle) error {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
@@ -782,59 +787,44 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 		return err
 	}
 
-	var humanOption []string
+	var humanCondition *string
 	if cmd.Flags().Changed("for-human") {
-		value, _ := cmd.Flags().GetString("for-human")
+		value, err := cmd.Flags().GetString("for-human")
+		if err != nil {
+			return err
+		}
 		if err := validateInviteHuman(value); err != nil {
 			return err
 		}
-		humanOption = []string{value}
+		humanCondition = &value
 	}
-	localInvite := !global
-	hasTeamKey := false
-	if !awconfig.IsGrantHome(home.Root) {
-		hasTeamKey, err = awconfig.TeamKeyExists(domain, team)
-		if err != nil {
-			return err
-		}
+	plan, err := planTeamInvite(teamInviteSource{WorkingDir: workingDir, Home: home, Domain: domain, Team: team, RegistryURL: registryURL, AwebURL: awebURL})
+	if err != nil {
+		return err
 	}
-	var inviteID, token, expiresAt string
-	var resolvedHuman *string
-	if hasTeamKey {
-		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite, humanOption...)
-		if err != nil {
-			return err
-		}
-	} else if strings.TrimSpace(awebURL) != "" {
-		created, err := createHostedTeamInvite(workingDir, "", awid.BuildTeamID(domain, team), localInvite, humanOption...)
-		if err != nil {
-			return err
-		}
-		resolvedHuman = created.ForHuman
-		inviteID, token, expiresAt = strings.TrimSpace(created.InviteID), strings.TrimSpace(created.Token), strings.TrimSpace(created.ExpiresAt)
-	} else {
-		inviteID, token, err = createTeamInviteToken(domain, team, registryURL, awebURL, localInvite, humanOption...)
-		if err != nil {
-			return err
-		}
+	if teamInvitePreflight {
+		printOutput(teamInvitePreflightOutput{TeamID: awid.BuildTeamID(domain, team), Kind: plan.Kind}, formatJSONOutput)
+		return nil
 	}
-	if hasTeamKey || strings.TrimSpace(awebURL) == "" {
-		saved, err := awconfig.LoadTeamInvite(inviteID)
-		if err != nil {
-			return err
-		}
-		resolvedHuman = saved.ForHuman
+	scope := inviteMemberLocal
+	if global {
+		scope = inviteMemberGlobal
 	}
+	created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: scope, ForHuman: humanCondition})
+	if err != nil {
+		return err
+	}
+
 	if !jsonFlag {
-		fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(expiresAt))
+		fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(created.ExpiresAt))
 	}
 	printOutput(teamInviteOutput{
-		ForHuman:      resolvedHuman,
+		ForHuman:      created.ForHuman,
 		Status:        "created",
-		InviteID:      inviteID,
-		Token:         token,
-		ExpiresAt:     expiresAt,
-		PorcelainJoin: porcelainJoin,
+		InviteID:      created.InviteID,
+		Token:         created.Token,
+		ExpiresAt:     created.ExpiresAt,
+		PorcelainJoin: style == inviteOutputJoin,
 	}, formatTeamInvite)
 	return nil
 }
@@ -1789,7 +1779,7 @@ func createTeamInviteTokenAt(domain, team, registryURL, awebURL string, local bo
 		return "", "", err
 	}
 	if !exists {
-		return "", "", usageError("no team key for %s/%s; run `aw id team create` first", domain, team)
+		return "", "", withErrorCode(codeControllerKeyMissing, usageError("no team key for %s/%s; run `aw id team create` first", domain, team))
 	}
 
 	requested, err := requestedInviteHuman(forHuman)
@@ -1977,21 +1967,16 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if err != nil {
 		return nil, fmt.Errorf("invite not found (token may be invalid or expired): %w", err)
 	}
-	if invite.IDChild != nil || invite.ForHuman != nil || opts.ParentHome != "" {
-		dir, err := awconfig.DefaultTeamInvitesDir()
-		if err != nil {
-			return nil, err
-		}
-		lock, err := awconfig.LockExclusive(filepath.Join(dir, invite.InviteID+".lock"))
-		if err != nil {
-			return nil, err
-		}
-		defer lock.Close()
-		invite, err = awconfig.LoadTeamInvite(decoded.InviteID)
-		if err != nil {
-			return nil, err
-		}
+	inviteLock, err := awconfig.LockTeamInvite(decoded.InviteID)
+	if err != nil {
+		return nil, err
 	}
+	defer closeTeamInviteLock(inviteLock)
+	invite, err = awconfig.LoadTeamInvite(decoded.InviteID)
+	if err != nil {
+		return nil, err
+	}
+
 	if invite.Secret != decoded.Secret {
 		return nil, fmt.Errorf("invalid invite token: secret mismatch")
 	}
@@ -2140,7 +2125,9 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 			return nil, err
 		}
 	}
-	removeConsumedTeamInvite(invite.InviteID)
+	if err := recordConsumedTeamInvite(invite.InviteID); err != nil {
+		return nil, err
+	}
 
 	consumedInviteParent(token, opts.ParentHome)
 	return &acceptedTeamInvite{
@@ -2567,7 +2554,9 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 	if localLink != nil {
-		removeConsumedTeamInvite(localLink.InviteID)
+		if err := recordConsumedTeamInvite(localLink.InviteID); err != nil {
+			return nil, err
+		}
 	}
 	consumedInviteParent(token, opts.ParentHome)
 	return &acceptedTeamInvite{
@@ -3857,7 +3846,11 @@ func postTeamRegister(ctx context.Context, endpoint string, body map[string]any,
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			debugLog("close service registration response: %v", err)
+		}
+	}()
 	responseLimit := int64(awid.MaxResponseSize)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		responseLimit = awid.MaxErrorResponseSize
@@ -3867,15 +3860,7 @@ func postTeamRegister(ctx context.Context, endpoint string, body map[string]any,
 		return fmt.Errorf("read service register response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var detail struct {
-			Detail any `json:"detail"`
-		}
-		_ = json.Unmarshal(responseBody, &detail)
-		if detail.Detail != nil {
-			encoded, _ := json.Marshal(detail.Detail)
-			return fmt.Errorf("service register: http %d: %s", resp.StatusCode, strings.TrimSpace(string(encoded)))
-		}
-		return fmt.Errorf("service register: http %d", resp.StatusCode)
+		return serviceRegisterRefusal(serviceRegisterFailure{Status: resp.StatusCode, Body: responseBody})
 	}
 	if out != nil {
 		if err := json.Unmarshal(responseBody, out); err != nil {
@@ -3883,6 +3868,35 @@ func postTeamRegister(ctx context.Context, endpoint string, body map[string]any,
 		}
 	}
 	return nil
+}
+
+type serviceRegisterFailure struct {
+	Status int
+	Body   []byte
+}
+
+// Keep the released registration sentence while the shared error reader carries
+// the service's code and HTTP metadata (docs/cli-identity-selection.md:13).
+func serviceRegisterRefusal(failure serviceRegisterFailure) error {
+	refusal := &awid.APIError{StatusCode: failure.Status, Body: string(failure.Body)}
+	message := fmt.Sprintf("service register: http %d", failure.Status)
+	var body struct {
+		Detail any `json:"detail"`
+	}
+	if err := json.Unmarshal(failure.Body, &body); err != nil {
+		debugLog("read service registration refusal detail: %v", err)
+	} else if body.Detail != nil {
+		encoded, err := json.Marshal(body.Detail)
+		if err != nil {
+			return fmt.Errorf("encode service registration refusal detail: %w", err)
+		}
+		message += ": " + strings.TrimSpace(string(encoded))
+	}
+	var result error = &plainRefusal{text: message, jsonMessage: message, err: refusal}
+	if code := awid.RefusalCode(refusal); code != "" {
+		result = withErrorCode(code, result)
+	}
+	return result
 }
 
 func newTeamCloudHTTPClient() *http.Client {
@@ -4447,10 +4461,11 @@ func ensureLocalTeamRegistered(
 		}
 		existingTeam, getErr := registry.GetTeam(ctx, registryURL, domain, name, teamPriv)
 		if getErr != nil {
-			return nil, fmt.Errorf("create team at registry: %w", err)
+			debugLog("read existing team after name conflict: %v", getErr)
+			return nil, withErrorCode(codeTeamNameTaken, fmt.Errorf("create team at registry: %w\nRestore this team's controller key to reuse it, or choose another --name.", err))
 		}
 		if strings.TrimSpace(existingTeam.TeamDIDKey) != teamDIDKey {
-			return nil, fmt.Errorf("team %s/%s is already pinned to %s", domain, name, existingTeam.TeamDIDKey)
+			return nil, withErrorCode(codeTeamNameTaken, fmt.Errorf("team %s/%s is already pinned to %s\nRestore its current controller key to reuse this team, or choose another --name.", domain, name, existingTeam.TeamDIDKey))
 		}
 	}
 

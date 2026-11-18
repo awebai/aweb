@@ -413,3 +413,238 @@ func TestOATSWakeReadinessReportsUnavailableControlWithoutClaimingReadiness(t *t
 		t.Fatalf("unavailable control readiness: %s", stdout.String())
 	}
 }
+
+func TestOATSRevokeUnusedLocalInviteAndReportConsumed(t *testing.T) {
+	bin, dir := buildDoctorBinary(t)
+	t.Setenv("HOME", dir)
+	_, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamKey("example.com", "one", key); err != nil {
+		t.Fatal(err)
+	}
+	invite := &awconfig.TeamInvite{InviteID: "unused-test-invite", Domain: "example.com", TeamName: "one", Secret: "not-for-output", IdentityScope: awid.IdentityModeLocal, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+	if err := awconfig.SaveTeamInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+	run := func(id string) ([]byte, error) {
+		cmd := exec.Command(bin, "id", "team", "revoke-invite", "--invite-id", id, "--json")
+		cmd.Dir = dir
+		cmd.Env = append(testCommandEnv(dir), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")
+		return cmd.CombinedOutput()
+	}
+	out, err := run(invite.InviteID)
+	if err != nil {
+		t.Fatalf("cancel unused: %v\n%s", err, out)
+	}
+	var result struct {
+		Status   string `json:"status"`
+		Message  string `json:"message"`
+		NextStep string `json:"next_step"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "cancelled" || !strings.Contains(result.Message, "unused invite") || !strings.Contains(result.Message, "does not revoke an issued certificate") || !strings.Contains(result.NextStep, "aw id team remove-member --team one --namespace example.com") {
+		t.Fatalf("cancellation scope: %s", out)
+	}
+	if strings.Contains(string(out), invite.Secret) {
+		t.Fatal("cancellation leaked token secret")
+	}
+	out, err = run(invite.InviteID)
+	if err != nil {
+		t.Fatalf("absent cancellation is idempotent: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "absent") || !strings.Contains(string(out), "may already have been used") {
+		t.Fatalf("absent did not distinguish used: %s", out)
+	}
+	// An existing secret-free tombstone establishes consumption; unlike an
+	// absent legacy record it must never be described as a cancelled invite.
+	data, err := json.Marshal(map[string]any{"invite_id": "used-test-invite", "domain": "example.com", "team_name": "one", "identity_scope": "local", "created_at": invite.CreatedAt, "consumed_at": invite.CreatedAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := awconfig.DefaultTeamInvitesDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store, "used-test-invite.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err = run("used-test-invite")
+	if err == nil || !strings.Contains(string(out), "invite_already_used") || !strings.Contains(string(out), "aw id team remove-member") {
+		t.Fatalf("used is not cancelled: %v\n%s", err, out)
+	}
+	childStore := awconfig.IDInvitationFileStore{Dir: awconfig.IdentityInvitationsDir(filepath.Join(dir, "issuer"))}
+	childID := "11111111-1111-4111-8111-111111111111"
+	child := &awid.IDInvitation{InvitationID: childID, Mode: awid.IDInvitationSelfCustodial, Parent: map[string]any{"id": "did:aw:parent"}, Domain: "example.com", Kind: "agent", Recipient: "unused child", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}
+	if err := childStore.PutInvitation(child); err != nil {
+		t.Fatal(err)
+	}
+	invite.InviteID = "linked-test-invite"
+	invite.IDChild = &awconfig.TeamInviteIDChild{InvitationID: childID, Parent: "did:aw:parent", Domain: "example.com", IssuerHome: filepath.Join(dir, "issuer")}
+	if err := awconfig.SaveTeamInvite(invite); err != nil {
+		t.Fatal(err)
+	}
+	out, err = run(invite.InviteID)
+	if err != nil || !strings.Contains(string(out), "voided") {
+		t.Fatalf("linked child disposition: %v\n%s", err, out)
+	}
+	child, err = childStore.Invitation(childID)
+	if err != nil || child == nil || !child.Void {
+		t.Fatalf("linked child was left usable: %#v; %v", child, err)
+	}
+}
+
+func requireConsumedInviteRecord(t *testing.T, inviteID string) {
+	t.Helper()
+	invite, err := awconfig.LoadTeamInvite(inviteID)
+	if err != nil {
+		t.Fatalf("read consumed invite: %v", err)
+	}
+	if invite.Secret != "" || invite.ConsumedAt == "" {
+		t.Fatalf("consumed invite must retain only a secret-free tombstone: %s", inviteID)
+	}
+}
+
+func TestOATSRegistrationErrorDecoderPreservesEveryServiceSentenceAndCode(t *testing.T) {
+	for _, code := range []string{"service_url_mismatch", "awid_team_not_found", "awid_team_controller_mismatch", "awid_team_missing_controller", "invalid_controller_signature", "invalid_controller_timestamp", "validation_error", "future_service_refusal"} {
+		body := []byte(`{"detail":{"code":"` + code + `","message":"Choose the correct controller and retry."}}`)
+		err := serviceRegisterRefusal(serviceRegisterFailure{Status: 422, Body: body})
+		want := `service register: http 422: {"code":"` + code + `","message":"Choose the correct controller and retry."}`
+		if err.Error() != want {
+			t.Fatalf("service sentence changed: %q", err)
+		}
+		envelope := errorEnvelope(err, err.Error())
+		if envelope.Error.Code != code || envelope.Error.Reason != code || envelope.Error.HTTPStatus != 422 || envelope.Error.Message != want {
+			t.Fatalf("service error lost code/metadata: %#v", envelope)
+		}
+	}
+}
+
+func TestOATSNamespaceControllerRefusalHasCodeAndPreservesRemedy(t *testing.T) {
+	t.Parallel()
+	bin, dir := buildDoctorBinary(t)
+	cmd := exec.Command(bin, "id", "team", "create", "--name", "one", "--namespace", "example.com", "--json")
+	cmd.Dir = dir
+	cmd.Env = append(testCommandEnv(dir), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err == nil {
+		t.Fatal("missing namespace controller accepted")
+	}
+	var result cliErrorEnvelope
+	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
+		t.Fatal(err)
+	}
+	want := "no local controller key for --namespace example.com; pass --hosted for a hosted sibling, or install the namespace controller key for BYOT (aw id namespace prepare-controller --domain example.com)"
+	if result.Error.Code != codeControllerKeyMissing || result.Error.Message != want {
+		t.Fatalf("controller remedy: %s\n%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestOATSInvitePreflightUsesMintAuthorityWithoutCreatingRecords(t *testing.T) {
+	bin, dir := buildDoctorBinary(t)
+	t.Setenv("HOME", dir)
+	teamID := "one:example.com"
+	if err := awconfig.SaveTeamState(dir, &awconfig.TeamState{ActiveTeam: teamID, Memberships: []awconfig.TeamMembership{{TeamID: teamID, Alias: "root", CertPath: "team-certs/one__example.com.pem", RegistryURL: "https://registry.invalid", AwebURL: "https://service.invalid"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(awconfig.WorktreeWorkspacePath(dir), &awconfig.WorktreeWorkspace{AwebURL: "https://service.invalid", Memberships: []awconfig.WorktreeMembership{{TeamID: teamID, Alias: "root", CertPath: "team-certs/one__example.com.pem", WorkspaceID: "11111111-1111-4111-8111-111111111111"}}}); err != nil {
+		t.Fatal(err)
+	}
+	_, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamKey("example.com", "one", key); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"controller", "hosted"} {
+		for _, prefix := range [][]string{{"team", "invite"}, {"id", "team", "invite"}} {
+			cmd := exec.Command(bin, append(prefix, "--team-id", teamID, "--preflight", "--json")...)
+			cmd.Dir = dir
+			cmd.Env = append(testCommandEnv(dir), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("preflight %s: %v\n%s", kind, err, out)
+			}
+			var result map[string]any
+			if err := json.Unmarshal(out, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result["kind"] != kind || result["team_id"] != teamID {
+				t.Fatalf("wrong authority plan: %s", out)
+			}
+			if _, exists := result["token"]; exists {
+				t.Fatalf("preflight minted a token: %s", out)
+			}
+			for _, path := range []string{filepath.Join(dir, ".config", "aw", "team-invites"), filepath.Join(dir, ".aw", "invitations"), filepath.Join(dir, ".aw", "signing.key")} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("preflight created %s: %v", path, err)
+				}
+			}
+		}
+		if kind == "controller" {
+			path, err := awconfig.TeamKeyPath("example.com", "one")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func TestOATSGlobalCompletionRequiresRecordedRegistration(t *testing.T) {
+	t.Parallel()
+	bin, dir := buildDoctorBinary(t)
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(dir), key); err != nil {
+		t.Fatal(err)
+	}
+	_, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamID := "one:example.com"
+	identity := &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub), Address: "example.com/worker", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryStatus: "pending"}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: identity.DID, MemberDIDAW: identity.StableID, MemberAddress: identity.Address, Alias: "worker", IdentityScope: awid.IdentityModeGlobal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath, err := awconfig.SaveTeamCertificateForTeam(dir, teamID, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamState(dir, &awconfig.TeamState{ActiveTeam: teamID, Memberships: []awconfig.TeamMembership{{TeamID: teamID, Alias: "worker", CertPath: certPath}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(awconfig.WorktreeWorkspacePath(dir), &awconfig.WorktreeWorkspace{AwebURL: "https://service.invalid", Memberships: []awconfig.WorktreeMembership{{TeamID: teamID, Alias: "worker", CertPath: certPath, WorkspaceID: "workspace-one"}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, registration := range []string{"pending", "registered"} {
+		identity.RegistryStatus = registration
+		if err := awconfig.SaveWorktreeIdentityTo(awconfig.WorktreeIdentityPath(dir), identity); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(bin, "id", "status", "--team", teamID, "--json")
+		cmd.Dir, cmd.Env = dir, append(testCommandEnv(dir), "AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("status: %v\n%s", err, out)
+		}
+		var result map[string]any
+		if err := json.Unmarshal(out, &result); err != nil {
+			t.Fatal(err)
+		}
+		if result["mint_complete"] != (registration == "registered") {
+			t.Fatalf("registration %s completion: %s", registration, out)
+		}
+	}
+}

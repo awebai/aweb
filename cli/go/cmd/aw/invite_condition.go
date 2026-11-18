@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -184,13 +185,22 @@ func consumedInviteParent(token, parentHome string) {
 		return
 	}
 	id := "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
-	removeConsumedTeamInvite(id)
+	if err := recordConsumedTeamInvite(id); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+	}
 }
 
-// removeConsumedTeamInvite is the shared post-accept record cleanup for native
-// and hosted local parent exchanges.
-func removeConsumedTeamInvite(id string) {
-	if err := awconfig.DeleteTeamInvite(id); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", id, err)
+// recordConsumedTeamInvite retains the irreversible issuance consequence, with
+// no remaining bearer secret, before the accepting operation reports success.
+func recordConsumedTeamInvite(id string) error {
+	if err := awconfig.ConsumeTeamInvite(awconfig.ConsumeTeamInviteInput{InviteID: id, Now: time.Now()}); err != nil {
+		return fmt.Errorf("membership was issued, but recording consumed invite %s failed: %w; retain the identity home and reconcile this invite before retrying", id, err)
+	}
+	return nil
+}
+
+func closeTeamInviteLock(lock io.Closer) {
+	if err := lock.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "close local invite lock: %v\n", err)
 	}
 }

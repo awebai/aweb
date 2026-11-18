@@ -4990,9 +4990,7 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	}
 	registeredCert = nil
 	registeredCertMu.Unlock()
-	if _, err := awconfig.LoadTeamInvite(inviteID); !os.IsNotExist(err) {
-		t.Fatalf("external local accept did not consume invite token, err=%v", err)
-	}
+	requireConsumedInviteRecord(t, inviteID)
 	rootTeamState, err := awconfig.LoadTeamState(tmp)
 	if err != nil {
 		t.Fatal(err)
@@ -5054,9 +5052,7 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if teamState.Membership("ops:acme.com") == nil {
 		t.Fatal("expected ops team membership in teams.yaml")
 	}
-	if _, err := awconfig.LoadTeamInvite(globalInviteID); !os.IsNotExist(err) {
-		t.Fatalf("global accept did not consume invite token, err=%v", err)
-	}
+	requireConsumedInviteRecord(t, globalInviteID)
 	acceptedCert, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(identityHome, "ops:acme.com")
 	if err != nil {
 		t.Fatalf("accepted certificate missing from principal: %v", err)

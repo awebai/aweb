@@ -13,6 +13,7 @@ import (
 )
 
 type initRecoveryStage string
+type initializationRegistryObservation string
 
 const offlineIdentityInspectionAnnotation = "aw.offline-identity-inspection"
 
@@ -22,27 +23,36 @@ const (
 	initRecoveryResponse initRecoveryStage = "response_received"
 )
 
+const (
+	initializationRegistryUnknown    initializationRegistryObservation = "unknown"
+	initializationRegistryPending    initializationRegistryObservation = "pending"
+	initializationRegistryRegistered initializationRegistryObservation = "registered"
+	initializationRegistryLocal      initializationRegistryObservation = "not_applicable"
+)
+
 type initRecoveryStatus struct {
 	Present bool              `json:"present"`
 	Stage   initRecoveryStage `json:"stage"`
 }
 
 type identityStatusOutput struct {
-	TeamID              string             `json:"team_id"`
-	SigningKeyPresent   bool               `json:"signing_key_present"`
-	IdentityPresent     bool               `json:"identity_present"`
-	DID                 string             `json:"did"`
-	StableID            string             `json:"stable_id"`
-	Address             string             `json:"address"`
-	Alias               string             `json:"alias"`
-	CertificatePresent  bool               `json:"certificate_present"`
-	CertificateID       string             `json:"certificate_id"`
-	WorkspaceBound      bool               `json:"workspace_bound"`
-	WorkspaceID         string             `json:"workspace_id"`
-	Service             string             `json:"service"`
-	PartialInit         initRecoveryStatus `json:"partial_init"`
-	PendingHostedAccept bool               `json:"pending_hosted_accept"`
-	MintComplete        bool               `json:"mint_complete"`
+	TeamID              string                            `json:"team_id"`
+	SigningKeyPresent   bool                              `json:"signing_key_present"`
+	IdentityPresent     bool                              `json:"identity_present"`
+	IdentityRegistered  bool                              `json:"identity_registered"`
+	RegistryStatus      initializationRegistryObservation `json:"registry_status"`
+	DID                 string                            `json:"did"`
+	StableID            string                            `json:"stable_id"`
+	Address             string                            `json:"address"`
+	Alias               string                            `json:"alias"`
+	CertificatePresent  bool                              `json:"certificate_present"`
+	CertificateID       string                            `json:"certificate_id"`
+	WorkspaceBound      bool                              `json:"workspace_bound"`
+	WorkspaceID         string                            `json:"workspace_id"`
+	Service             string                            `json:"service"`
+	PartialInit         initRecoveryStatus                `json:"partial_init"`
+	PendingHostedAccept bool                              `json:"pending_hosted_accept"`
+	MintComplete        bool                              `json:"mint_complete"`
 }
 
 var idStatusCmd = &cobra.Command{
@@ -82,7 +92,7 @@ func runIdentityStatus(cmd *cobra.Command, args []string) error {
 // docs/orchestrator-integration.md:95-98. Completeness is local evidence, not a
 // new authority to mint, join, reuse, recover or revoke an identity.
 func inspectIdentityInitialization(home awconfig.IdentityHome) (identityStatusOutput, error) {
-	out := identityStatusOutput{TeamID: strings.TrimSpace(teamFlag), PartialInit: initRecoveryStatus{Stage: initRecoveryAbsent}}
+	out := identityStatusOutput{TeamID: strings.TrimSpace(teamFlag), RegistryStatus: initializationRegistryUnknown, PartialInit: initRecoveryStatus{Stage: initRecoveryAbsent}}
 	keyPath, err := awconfig.IdentityHomePath(home, "signing.key")
 	if err != nil {
 		return out, err
@@ -108,6 +118,15 @@ func inspectIdentityInitialization(home awconfig.IdentityHome) (identityStatusOu
 			return out, fmt.Errorf("identity DID does not match its signing key")
 		}
 		out.IdentityPresent = identity.DID != ""
+		switch identity.RegistryStatus {
+		case string(initializationRegistryRegistered):
+			out.RegistryStatus = initializationRegistryRegistered
+		case string(initializationRegistryPending):
+			out.RegistryStatus = initializationRegistryPending
+		case string(initializationRegistryLocal):
+			out.RegistryStatus = initializationRegistryLocal
+		}
+		out.IdentityRegistered = out.RegistryStatus == initializationRegistryRegistered
 		out.DID, out.StableID, out.Address = identity.DID, identity.StableID, identity.Address
 	}
 	state, err := awconfig.LoadTeamStateFromIdentityHome(home.Root)
@@ -132,7 +151,7 @@ func inspectIdentityInitialization(home awconfig.IdentityHome) (identityStatusOu
 	}
 	if partial != nil {
 		out.PartialInit = initRecoveryStatus{Present: true, Stage: initRecoveryPrepared}
-		if partial.ResponseJSON != "" {
+		if partial.ResponseJSON != "" || (partial.IDTree != nil && partial.IDTree.ResponseJSON != "") {
 			out.PartialInit.Stage = initRecoveryResponse
 		}
 	}
@@ -145,7 +164,7 @@ func inspectIdentityInitialization(home awconfig.IdentityHome) (identityStatusOu
 		return out, err
 	}
 	out.PendingHostedAccept = err == nil
-	out.MintComplete = out.SigningKeyPresent && out.IdentityPresent && out.CertificatePresent && out.WorkspaceBound && !out.PartialInit.Present && !out.PendingHostedAccept
+	out.MintComplete = out.SigningKeyPresent && out.IdentityPresent && out.IdentityRegistered && out.CertificatePresent && out.WorkspaceBound && !out.PartialInit.Present && !out.PendingHostedAccept
 	return out, nil
 }
 
@@ -178,8 +197,13 @@ func inspectInitializationMembership(home awconfig.IdentityHome, state *awconfig
 		}
 		out.CertificatePresent = cert.CertificateID != ""
 		out.CertificateID, out.Alias = cert.CertificateID, cert.Alias
+		if out.DID == "" {
+			out.DID = cert.MemberDIDKey
+		}
 		if awid.NormalizeIdentityScope(cert.IdentityScope) == awid.IdentityModeLocal {
 			out.IdentityPresent = cert.MemberDIDKey != ""
+			out.IdentityRegistered = out.IdentityPresent
+			out.RegistryStatus = initializationRegistryLocal
 		} else if out.StableID != cert.MemberDIDAW || out.Address != cert.MemberAddress {
 			return fmt.Errorf("global identity does not match its team certificate")
 		}

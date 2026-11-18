@@ -81,12 +81,42 @@ func TestOATSRealServiceRegisterPreservesCode(t *testing.T) {
 	}
 }
 
+func TestOATSRealTeamNameTakenPreservesThePrivateTeamBoundary(t *testing.T) {
+	world := newRealCommandWorld(t)
+	t.Setenv("HOME", t.TempDir())
+	_, err := ensureLocalTeamRegistered(world.Context, world.Registry, world.Stack.RegistryURL, world.Domain, "backend", "Existing private team", world.NamespaceKey)
+	if err == nil || errorCodeOf(err) != codeTeamNameTaken || !strings.HasSuffix(err.Error(), "Restore this team's controller key to reuse it, or choose another --name.") {
+		t.Fatalf("private name conflict lost code or action: %v", err)
+	}
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
+	registered, err := ensureLocalTeamRegistered(world.Context, world.Registry, world.Stack.RegistryURL, world.Domain, "backend", "Existing private team", world.NamespaceKey)
+	if err != nil || registered == nil {
+		t.Fatalf("existing controller cannot reuse its own team: %v", err)
+	}
+}
+
 func TestOATSRealControllerRetirement(t *testing.T) {
 	world := newRealCommandWorld(t)
 	member := world.addLocalMember(t, "worker")
+	peer := world.addLocalMember(t, "peer")
 	t.Setenv("HOME", filepath.Dir(member.Home))
 	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
 		t.Fatal(err)
+	}
+	peerStatus := world.requireCommand(t, peer.Home, "id", "status", "--team", world.TeamID)
+	var peerBinding identityStatusOutput
+	if err := json.Unmarshal([]byte(peerStatus), &peerBinding); err != nil {
+		t.Fatal(err)
+	}
+	refusal, err := world.runInIdentityHome(member.Home, "workspace", "delete", peerBinding.WorkspaceID)
+	if err == nil || !strings.Contains(refusal, aliasReleaseNotSelf) {
+		t.Fatalf("controller custody broadened other-member retirement: %v\n%s", err, refusal)
+	}
+	peerCertificate, err := world.Registry.GetTeamCertificateStatus(world.Context, world.Stack.RegistryURL, world.Domain, "backend", peer.Certificate.CertificateID)
+	if err != nil || peerCertificate.Status != "active" {
+		t.Fatalf("other member's certificate changed: %#v; %v", peerCertificate, err)
 	}
 	out := world.requireCommand(t, member.Home, "id", "status", "--team", world.TeamID)
 	var status identityStatusOutput
@@ -108,4 +138,77 @@ func TestOATSRealControllerRetirement(t *testing.T) {
 	if certificate.Status != "revoked" {
 		t.Fatalf("reported complete with active certificate: %#v", certificate)
 	}
+}
+
+func TestOATSRealRetirementResumesOnlyControllerRevocation(t *testing.T) {
+	world := newRealCommandWorld(t)
+	member := world.addLocalMember(t, "worker")
+	t.Setenv("HOME", filepath.Dir(member.Home))
+	statusJSON := world.requireCommand(t, member.Home, "id", "status", "--team", world.TeamID)
+	var status identityStatusOutput
+	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {
+		t.Fatal(err)
+	}
+	out, err := world.runInIdentityHome(member.Home, "workspace", "delete", status.WorkspaceID)
+	if err == nil {
+		t.Fatalf("missing controller must be incomplete: %s", out)
+	}
+	var pending workspaceDeleteOutput
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&pending); err != nil {
+		t.Fatalf("pending receipt: %v\n%s", err, out)
+	}
+	if pending.AliasReleased || pending.RetirementCode != retiredKeyHolderRequired || pending.ReceiptPath == "" || !strings.Contains(pending.NextStep, member.Certificate.CertificateID) {
+		t.Fatalf("false retirement completion: %s", out)
+	}
+	if _, err := os.Stat(pending.ReceiptPath); err != nil {
+		t.Fatal(err)
+	}
+	receiptBytes, err := os.ReadFile(pending.ReceiptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt localRetirementReceipt
+	if err := json.Unmarshal(receiptBytes, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	receipt.CertificateID = "11111111-1111-4111-8111-111111111111"
+	if err := saveLocalRetirementReceipt(pending.ReceiptPath, receipt); err != nil {
+		t.Fatal(err)
+	}
+	mismatch, err := world.runInIdentityHome(member.Home, "workspace", "delete", status.WorkspaceID)
+	if err == nil || !strings.Contains(mismatch, "select its original identity home before retrying") {
+		t.Fatalf("mismatched receipt was accepted: %v\n%s", err, mismatch)
+	}
+	if err := os.WriteFile(pending.ReceiptPath, receiptBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := world.Registry.GetTeamCertificateStatus(world.Context, world.Stack.RegistryURL, world.Domain, "backend", member.Certificate.CertificateID)
+	if err != nil || certificate.Status != "active" {
+		t.Fatalf("missing key revoked membership: %#v; %v", certificate, err)
+	}
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
+	out = world.requireCommand(t, member.Home, "workspace", "delete", status.WorkspaceID)
+	var retired workspaceDeleteOutput
+	if err := json.Unmarshal([]byte(out), &retired); err != nil {
+		t.Fatal(err)
+	}
+	if !retired.AliasReleased || retired.RetirementCode != retiredAndRevoked {
+		t.Fatalf("controller-only retry incomplete: %s", out)
+	}
+	certificate, err = world.Registry.GetTeamCertificateStatus(world.Context, world.Stack.RegistryURL, world.Domain, "backend", member.Certificate.CertificateID)
+	if err != nil || certificate.Status != "revoked" {
+		t.Fatalf("retry did not revoke exact certificate: %#v; %v", certificate, err)
+	}
+	// A completed local receipt is enough for another idempotent read of the
+	// result, even after the operator removes its local controller key.
+	keyPath, err := awconfig.TeamKeyPath(world.Domain, "backend")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	world.requireCommand(t, member.Home, "workspace", "delete", status.WorkspaceID)
 }

@@ -185,7 +185,7 @@ func validateInitOutcomeFlags() error {
 		return nil
 	}
 	if strings.TrimSpace(activeIdentityHome.Root) != "" && activeIdentityHome.External() && !initWorkspaceTeam {
-		return usageError("aw init with --identity-home is only supported for --workspace-team; refusing to use an external identity home for account, team, or add-agent init")
+		return usageError("aw init with --identity-home is only supported for --workspace-team or explicit fresh --join-from; refusing to use an external identity home for account, team, or add-agent init")
 	}
 	return nil
 }

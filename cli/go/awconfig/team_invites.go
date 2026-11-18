@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // TeamInvite is a pending team invite stored locally by the team controller.
@@ -39,6 +41,41 @@ type TeamInvite struct {
 	AwebURL       string `json:"aweb_url,omitempty" yaml:"aweb_url,omitempty"`
 	OperationID   string `json:"operation_id,omitempty" yaml:"operation_id,omitempty"`
 	CreatedAt     string `json:"created_at" yaml:"created_at"`
+	ExpiresAt     string `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
+	ConsumedAt    string `json:"consumed_at,omitempty" yaml:"consumed_at,omitempty"`
+}
+
+type ConsumeTeamInviteInput struct {
+	InviteID string
+	Now      time.Time
+}
+
+// ConsumeTeamInvite keeps a secret-free record so cancellation can distinguish
+// an issued membership from an unused grant. The accepting caller holds the
+// invite lock across issuance and consumption; this writer never revokes a cert.
+func ConsumeTeamInvite(input ConsumeTeamInviteInput) error {
+	if input.Now.IsZero() {
+		return fmt.Errorf("a consumption time is required")
+	}
+	invite, err := LoadTeamInvite(input.InviteID)
+	if err != nil {
+		return err
+	}
+	if invite.ConsumedAt != "" {
+		return nil
+	}
+	invite.Secret = ""
+	invite.ConsumedAt = input.Now.UTC().Format(time.RFC3339)
+	return SaveTeamInvite(invite)
+}
+
+// LockTeamInvite serializes acceptance and cancellation of the same saved grant.
+func LockTeamInvite(inviteID string) (io.Closer, error) {
+	path, err := teamInvitePath(inviteID)
+	if err != nil {
+		return nil, err
+	}
+	return LockExclusive(strings.TrimSuffix(path, ".json") + ".lock")
 }
 
 // UnmarshalJSON preserves pending invites written before identity_scope became
@@ -154,7 +191,8 @@ func LoadTeamInvite(inviteID string) (*TeamInvite, error) {
 	return &invite, nil
 }
 
-// DeleteTeamInvite removes a consumed invite file.
+// DeleteTeamInvite removes a saved invite. Issuance uses ConsumeTeamInvite so
+// later cancellation can report that the invite was already used.
 func DeleteTeamInvite(inviteID string) error {
 	path, err := teamInvitePath(inviteID)
 	if err != nil {

@@ -96,23 +96,20 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 		awebURL = strings.TrimSpace(workspace.AwebURL)
 	}
 
-	hasTeamKey, err := awconfig.TeamKeyExists(domain, team)
+	home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir)}
+	if identityHome != "" {
+		home = awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
+	}
+	registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
+	plan, err := planTeamInvite(teamInviteSource{WorkingDir: workingDir, Home: home, Domain: domain, Team: team, RegistryURL: registryURL, AwebURL: awebURL})
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	var token string
-	if hasTeamKey {
-		registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
-		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, true, "", workingDir, identityHome)
-	} else if strings.TrimSpace(awebURL) != "" {
-		_, token, err = createHostedTeamInviteTokenAt(workingDir, identityHome, teamID, true)
-	} else {
-		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, true, "", workingDir, identityHome)
-	}
+	created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: inviteMemberLocal})
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	return workspaceTeamInvite{Token: token, AwebURL: awebURL}, nil
+	return workspaceTeamInvite{Token: created.Token, AwebURL: awebURL}, nil
 }
 
 func acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, homeDir, token, preferredAwebURL, alias string) (*acceptedTeamInvite, error) {

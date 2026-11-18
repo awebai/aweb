@@ -57,21 +57,25 @@ var workspaceMigrateMultiTeamCmd = &cobra.Command{
 }
 
 var workspaceDeleteCmd = &cobra.Command{
-	Use:   "delete <workspace-id-or-name>",
-	Short: "Delete a local workspace and its local identity, retiring yourself when it is your own",
+	Annotations: map[string]string{identityNoRenewalAnnotation: "true"},
+	Use:         "delete <workspace-id-or-name>",
+	Short:       "Delete a local workspace and its local identity, retiring yourself when it is your own",
 	Long: `Delete a local workspace and its local identity.
 
-Deleting YOUR OWN workspace on a hosted team, with a local identity, retires you:
-the hosted team controller revokes your membership certificate, so your name
-becomes reusable by a later "aw team join". Any other target is a local delete
-only, and does not release the name.
+Deleting YOUR OWN workspace with a local identity can retire its membership.
+On a hosted team, the service controller revokes the membership certificate.
+On a non-hosted team, the command deletes the workspace while the member
+credential is valid, saves a local receipt, then revokes with the local team key.
+If revocation cannot finish, retain the home and receipt and follow next_step.
+Retrying uses the receipt and performs only the remaining controller operation.
 
 Read alias_released in the output, not identity_deleted. Deleting local state
 says nothing about the membership certificate, and an active certificate is what
 makes a rejoin under the same name fail. alias_released_reason says why:
 
   not_own_workspace        the target is not the workspace you are running as
-  team_not_hosted          self-hosted or BYOT; no cloud-held controller to revoke
+  controller_key_missing  workspace deleted; give next_step to the team key holder
+  retired_revocation_pending  workspace deleted; retry using the retained receipt
   global_identity          global identities are retired by team-authorized removal
   no_workspace_credential  no workspace-bound key and no team certificate in local
                            config to authenticate with
@@ -80,9 +84,8 @@ When this command can retire you, it does not fall back to a plain delete: a
 failure is reported as a failure, because a success report for a retirement that
 did not happen is what leaks names.
 
-With --identity-home, the only destructive operation admitted for an external
-principal is this own hosted local self-release path. Non-eligible external
-principals fail closed instead of falling back to generic workspace delete.`,
+With --identity-home, own local retirement uses the selected home. Global and
+other-member targets fail closed instead of falling back to generic deletion.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runWorkspaceDelete,
 }
@@ -143,7 +146,10 @@ type workspaceDeleteOutput struct {
 	// field rather than silently reading a missing one.
 	AliasReleased bool `json:"alias_released"`
 	// Why. Empty only when nothing was attempted.
-	AliasReleasedReason string `json:"alias_released_reason,omitempty"`
+	AliasReleasedReason string            `json:"alias_released_reason,omitempty"`
+	RetirementCode      retirementOutcome `json:"retirement_code,omitempty"`
+	ReceiptPath         string            `json:"receipt_path,omitempty"`
+	NextStep            string            `json:"next_step,omitempty"`
 }
 
 var saveWorktreeWorkspaceTo = awconfig.SaveWorktreeWorkspaceTo
@@ -308,7 +314,13 @@ func workspaceDeleteRefusal(selection *awconfig.Selection, reason string) error 
 }
 
 func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
-	workingDir, _ := os.Getwd()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if resumed, err := resumeLocalControllerRetirement(localRetirementRequest{Command: cmd, WorkingDir: workingDir, Target: strings.TrimSpace(args[0])}); resumed || err != nil {
+		return err
+	}
 	client, selection, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
 		return err
@@ -369,6 +381,9 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	// held, and falling back to the plain delete would reproduce the exact defect
 	// this change exists to fix - a success report for a retirement that did not
 	// happen.
+	if handled, err := retireLocalControllerMember(localRetirementRequest{Command: cmd, WorkingDir: workingDir, Target: workspaceID, Client: client, Selection: selection}); handled || err != nil {
+		return err
+	}
 	plan := planSelfRetire(workingDir, selection, workspaceID)
 	if selection != nil && selection.ExternalIdentityHome && !plan.eligible {
 		return workspaceDeleteRefusal(selection, plan.reason)
@@ -909,6 +924,15 @@ func formatWorkspaceDelete(v any) string {
 	}
 	if strings.TrimSpace(out.DeletedAt) != "" {
 		sb.WriteString(fmt.Sprintf("Deleted at: %s\n", out.DeletedAt))
+	}
+	if out.RetirementCode != "" {
+		fmt.Fprintf(&sb, "Retirement: %s\n", out.RetirementCode)
+	}
+	if out.ReceiptPath != "" {
+		fmt.Fprintf(&sb, "Receipt: %s\n", out.ReceiptPath)
+	}
+	if out.NextStep != "" {
+		fmt.Fprintf(&sb, "%s\n", out.NextStep)
 	}
 	return sb.String()
 }
