@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/awebai/aw/awconfig"
 	"net/http"
 	"os"
 	"os/exec"
@@ -106,5 +107,29 @@ func TestCreationAuthorityLegacyAndPersonMetadataKeepAPIPath(t *testing.T) {
 				t.Fatalf("got=%+v err=%v", got, err)
 			}
 		})
+	}
+}
+
+func TestTeamExtendNeverChoosesCreatorByDirectoryOrder(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	t.Setenv("AWEB_API_KEY", "")
+	root := t.TempDir()
+	for _, name := range []string{"alice", "zebra"} {
+		home := filepath.Join(root, "agents", "instances", name)
+		if err := awconfig.SaveTeamState(home, &awconfig.TeamState{ActiveTeam: "dev:example.com", Memberships: []awconfig.TeamMembership{{TeamID: "dev:example.com", Alias: name, CertPath: awconfig.TeamCertificateRelativePath("dev:example.com")}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err := resolveTeamExtendAuthority(root)
+	if err == nil {
+		t.Fatal("extend silently selected a sibling as creator")
+	}
+	for _, want := range []string{"choose the creating workspace", filepath.Join(root, "agents", "instances", "alice"), filepath.Join(root, "agents", "instances", "zebra")} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error=%v missing %q", err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "agents", "instances", "child")); !os.IsNotExist(err) {
+		t.Fatalf("wrote a child before choosing creator: %v", err)
 	}
 }
