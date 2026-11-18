@@ -3,13 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"github.com/awebai/aw/awconfig"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/awebai/aw/awconfig"
 )
 
 func TestCreationAuthorityDecision(t *testing.T) {
@@ -120,16 +121,32 @@ func TestTeamExtendNeverChoosesCreatorByDirectoryOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	_, err := resolveTeamExtendAuthority(root)
-	if err == nil {
-		t.Fatal("extend silently selected a sibling as creator")
-	}
-	for _, want := range []string{"choose the creating workspace", filepath.Join(root, "agents", "instances", "alice"), filepath.Join(root, "agents", "instances", "zebra")} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error=%v missing %q", err, want)
+	for _, swapped := range []bool{false, true} {
+		if swapped {
+			first := filepath.Join(root, "agents", "instances", "alice")
+			last := filepath.Join(root, "agents", "instances", "zebra")
+			if err := os.Rename(first, first+"-swap"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(last, first); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(first+"-swap", last); err != nil {
+				t.Fatal(err)
+			}
 		}
-	}
-	if _, err := os.Stat(filepath.Join(root, "agents", "instances", "child")); !os.IsNotExist(err) {
-		t.Fatalf("wrote a child before choosing creator: %v", err)
+		_, err := resolveTeamExtendAuthority(root)
+		if err == nil {
+			t.Fatal("extend silently selected a sibling as creator")
+		}
+		for _, want := range []string{"choose the creating workspace", filepath.Join(root, "agents", "instances", "alice"), filepath.Join(root, "agents", "instances", "zebra")} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error=%v missing %q", err, want)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(root, "agents", "instances", "child")); !os.IsNotExist(err) {
+			t.Fatalf("wrote a child before choosing creator: %v", err)
+		}
+
 	}
 }

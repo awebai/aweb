@@ -63,254 +63,282 @@ func TestPostAPIKeyWorkspaceInitMalformedConflictKeepsGenericError(t *testing.T)
 
 func TestInitAPIKeyAliasCreatesLocalSelfCustodialCLIWorkspace(t *testing.T) {
 	t.Parallel()
+	for _, personCommand := range []bool{false, true} {
+		t.Run(fmt.Sprint("person-command-", personCommand), func(t *testing.T) {
 
-	const apiKey = "aw_sk_test_ephemeral"
+			const apiKey = "aw_sk_test_ephemeral"
 
-	// Exercise plugin management on the actual local bootstrap state, rather
-	// than a resident fixture that supplies a global identity.yaml.
-	var manifest []byte
-	app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !serveNoManifestCatalog(w, r) {
-			_, _ = w.Write(manifest)
-		}
-	}))
-	defer app.Close()
-	manifest = []byte(appTestManifest(app.URL, "/v1/things/{thing_id}"))
-	installation := installationWireFixture(t, func() []byte { return manifest })
-	var installPosts atomic.Int32
+			// Exercise plugin management on the actual local bootstrap state, rather
+			// than a resident fixture that supplies a global identity.yaml.
+			var manifest []byte
+			app := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !serveNoManifestCatalog(w, r) {
+					_, _ = w.Write(manifest)
+				}
+			}))
+			defer app.Close()
+			manifest = []byte(appTestManifest(app.URL, "/v1/things/{thing_id}"))
+			installation := installationWireFixture(t, func() []byte { return manifest })
+			var installPosts atomic.Int32
 
-	teamPub, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	teamDIDKey := awid.ComputeDIDKey(teamPub)
-
-	var (
-		initAuthHeader string
-		initBody       map[string]any
-		connectBody    map[string]any
-	)
-
-	var server *httptest.Server
-	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
-		if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/api/v1/apps/") {
-			cert := requireCertificateAuthForTest(t, r)
-			body, err := io.ReadAll(r.Body)
+			teamPub, teamKey, err := awid.GenerateKeypair()
 			if err != nil {
-				t.Error(err)
-				return
-			}
-			payload := requestSigningPayloadForTest(t, r, body)
-			auth := strings.Fields(r.Header.Get("Authorization"))
-			var signature []byte
-			if len(auth) == 3 {
-				signature, _ = base64.RawStdEncoding.DecodeString(auth[2])
-			}
-			publicKey, _ := base64.StdEncoding.DecodeString(initBody["public_key"].(string))
-			if len(auth) != 3 || auth[1] != cert.MemberDIDKey || cert.Team != "backend:acme.com" || cert.IdentityScope != awid.IdentityModeLocal || !ed25519.Verify(publicKey, payload, signature) {
-				t.Error("installation did not use the bootstrapped local member's certificate and signing key")
-				w.WriteHeader(http.StatusForbidden)
-				return
-			}
-			r.Body = io.NopCloser(bytes.NewReader(body))
-			if r.Method == http.MethodPost {
-				installPosts.Add(1)
-			}
-			// The wire fixture is mounted beneath the bootstrap service's /api.
-			mounted := r.Clone(r.Context())
-			mounted.URL.Path = strings.TrimPrefix(r.URL.Path, "/api")
-			if installation(w, mounted) {
-				return
-			}
-		}
-		if serveUnadvertisedHealth(w, r) {
-			return
-		}
-		if r.URL.Path == "/api/v1/identity-grants" {
-			http.NotFound(w, r)
-			return
-		}
-		switch r.URL.Path {
-		case "/api/v1/workspaces/init":
-			initAuthHeader = strings.TrimSpace(r.Header.Get("Authorization"))
-			if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
 				t.Fatal(err)
 			}
-			publicKeyB64, _ := initBody["public_key"].(string)
-			publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyB64)
-			if err != nil {
-				t.Fatalf("decode public_key: %v", err)
-			}
-			didKey, _ := initBody["did"].(string)
-			if got := awid.ComputeDIDKey(ed25519.PublicKey(publicKeyBytes)); got != didKey {
-				t.Fatalf("did=%q does not match public_key => %q", didKey, got)
-			}
-			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-				Team:          "backend:acme.com",
-				MemberDIDKey:  didKey,
-				Alias:         "alice",
-				IdentityScope: awid.IdentityModeLocal,
+			teamDIDKey := awid.ComputeDIDKey(teamPub)
+
+			var (
+				initAuthHeader string
+				initBody       map[string]any
+				connectBody    map[string]any
+			)
+
+			var server *httptest.Server
+			server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+				if personCommand && r.URL.Path == "/api/v1/teams/current" {
+					json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:acme.com", "api_key_kind": "person"})
+					return
+				}
+				if serveAPIKeyCreationTeamRead(w, r, "backend:acme.com") {
+					return
+				}
+				if strings.HasPrefix(r.URL.Path, "/api/v1/apps/") {
+					cert := requireCertificateAuthForTest(t, r)
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					payload := requestSigningPayloadForTest(t, r, body)
+					auth := strings.Fields(r.Header.Get("Authorization"))
+					var signature []byte
+					if len(auth) == 3 {
+						signature, _ = base64.RawStdEncoding.DecodeString(auth[2])
+					}
+					publicKey, _ := base64.StdEncoding.DecodeString(initBody["public_key"].(string))
+					if len(auth) != 3 || auth[1] != cert.MemberDIDKey || cert.Team != "backend:acme.com" || cert.IdentityScope != awid.IdentityModeLocal || !ed25519.Verify(publicKey, payload, signature) {
+						t.Error("installation did not use the bootstrapped local member's certificate and signing key")
+						w.WriteHeader(http.StatusForbidden)
+						return
+					}
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					if r.Method == http.MethodPost {
+						installPosts.Add(1)
+					}
+					// The wire fixture is mounted beneath the bootstrap service's /api.
+					mounted := r.Clone(r.Context())
+					mounted.URL.Path = strings.TrimPrefix(r.URL.Path, "/api")
+					if installation(w, mounted) {
+						return
+					}
+				}
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
+				if r.URL.Path == "/api/v1/identity-grants" {
+					http.NotFound(w, r)
+					return
+				}
+				switch r.URL.Path {
+				case "/api/v1/workspaces/init":
+					initAuthHeader = strings.TrimSpace(r.Header.Get("Authorization"))
+					if err := json.NewDecoder(r.Body).Decode(&initBody); err != nil {
+						t.Fatal(err)
+					}
+					publicKeyB64, _ := initBody["public_key"].(string)
+					publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyB64)
+					if err != nil {
+						t.Fatalf("decode public_key: %v", err)
+					}
+					didKey, _ := initBody["did"].(string)
+					if got := awid.ComputeDIDKey(ed25519.PublicKey(publicKeyBytes)); got != didKey {
+						t.Fatalf("did=%q does not match public_key => %q", didKey, got)
+					}
+					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+						Team:          "backend:acme.com",
+						MemberDIDKey:  didKey,
+						Alias:         "alice",
+						IdentityScope: awid.IdentityModeLocal,
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					encoded, err := awid.EncodeTeamCertificateHeader(cert)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"server_url":     serverURL + "/api",
+						"team_cert":      encoded,
+						"alias":          "alice",
+						"team_id":        "backend:acme.com",
+						"workspace_id":   "ws-1",
+						"did":            didKey,
+						"stable_id":      "",
+						"identity_scope": awid.IdentityModeLocal,
+						"custody":        awid.CustodySelf,
+						"api_key":        "workspace-sk-ephemeral",
+					})
+				case "/api/v1/connect":
+					requireCertificateAuthForTest(t, r)
+					if err := json.NewDecoder(r.Body).Decode(&connectBody); err != nil {
+						t.Fatal(err)
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"team_id":      "backend:acme.com",
+						"alias":        "alice",
+						"agent_id":     "agent-1",
+						"workspace_id": "ws-1",
+						"repo_id":      "repo-1",
+						"team_did_key": teamDIDKey,
+					})
+				case "/v1/agents/heartbeat":
+					w.WriteHeader(http.StatusOK)
+				case "/api/v1/agents/me/encryption-key":
+					writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "alice")
+				default:
+					t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+				}
 			})
+
+			tmp, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
-			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			var result connectOutput
+			if personCommand {
+				bin := filepath.Join(t.TempDir(), "aw")
+				buildAwBinary(t, context.Background(), bin)
+				command := exec.Command(bin, "init", "--aweb-url", externalLikeTestURL(t, server.URL), "--name", "requested-alias", "--role", "backend", "--json", "--do-not-touch-agents-md")
+				command.Dir = tmp
+				command.Env = append(testCommandEnv(t.TempDir()), "AWEB_API_KEY="+apiKey)
+				var stderr bytes.Buffer
+				command.Stderr = &stderr
+				output, err := command.Output()
+				if err != nil {
+					t.Fatalf("OATS setup init: %v %s", err, stderr.String())
+				}
+				if err := json.Unmarshal(output, &result); err != nil {
+					t.Fatalf("init output=%s: %v", output, err)
+				}
+			} else {
+				result, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
+					WorkingDir: tmp,
+					AwebURL:    externalLikeTestURL(t, server.URL),
+					APIKey:     apiKey,
+					Alias:      "requested-alias",
+					Role:       "backend",
+				})
+				if err != nil {
+					t.Fatalf("runAPIKeyBootstrapInit: %v", err)
+				}
+
+			}
+
+			if initAuthHeader != "Bearer "+apiKey {
+				t.Fatalf("Authorization=%q", initAuthHeader)
+			}
+			if initBody["alias"] != "requested-alias" {
+				t.Fatalf("init alias=%v", initBody["alias"])
+			}
+			if initBody["role_name"] != "backend" {
+				t.Fatalf("init role_name=%v", initBody["role_name"])
+			}
+			if _, ok := initBody["lifetime"]; ok {
+				t.Fatalf("workspace init request must not send lifetime: %v", initBody["lifetime"])
+			}
+			if initBody["identity_scope"] != awid.IdentityModeLocal {
+				t.Fatalf("init identity_scope=%v", initBody["identity_scope"])
+			}
+			if initBody["custody"] != awid.CustodySelf {
+				t.Fatalf("init custody=%v", initBody["custody"])
+			}
+			if _, ok := initBody["identity_type"]; ok {
+				t.Fatalf("local CLI workspace bootstrap must not send hosted identity_type: %v", initBody["identity_type"])
+			}
+			if _, ok := initBody["address"]; ok {
+				t.Fatalf("local CLI workspace bootstrap must not request an address: %v", initBody["address"])
+			}
+			if connectBody["role"] != "backend" {
+				t.Fatalf("connect role=%v", connectBody["role"])
+			}
+			if result.TeamID != "backend:acme.com" {
+				t.Fatalf("team_id=%q", result.TeamID)
+			}
+			if result.AwebURL != server.URL+"/api" {
+				t.Fatalf("aweb_url=%q", result.AwebURL)
+			}
+
+			signingKey, err := awid.LoadSigningKey(filepath.Join(tmp, ".aw", "signing.key"))
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("load signing key: %v", err)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"server_url":     serverURL + "/api",
-				"team_cert":      encoded,
-				"alias":          "alice",
-				"team_id":        "backend:acme.com",
-				"workspace_id":   "ws-1",
-				"did":            didKey,
-				"stable_id":      "",
-				"identity_scope": awid.IdentityModeLocal,
-				"custody":        awid.CustodySelf,
-				"api_key":        "workspace-sk-ephemeral",
-			})
-		case "/api/v1/connect":
-			requireCertificateAuthForTest(t, r)
-			if err := json.NewDecoder(r.Body).Decode(&connectBody); err != nil {
-				t.Fatal(err)
+			cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "backend:acme.com"))
+			if err != nil {
+				t.Fatalf("load team certificate: %v", err)
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id":      "backend:acme.com",
-				"alias":        "alice",
-				"agent_id":     "agent-1",
-				"workspace_id": "ws-1",
-				"repo_id":      "repo-1",
-				"team_did_key": teamDIDKey,
-			})
-		case "/v1/agents/heartbeat":
-			w.WriteHeader(http.StatusOK)
-		case "/api/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", "backend:acme.com", "alice")
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	})
+			gotDidKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+			if cert.MemberDIDKey != gotDidKey {
+				t.Fatalf("cert member_did_key=%q want %q", cert.MemberDIDKey, gotDidKey)
+			}
+			if cert.MemberDIDAW != "" {
+				t.Fatalf("cert member_did_aw=%q", cert.MemberDIDAW)
+			}
+			if cert.MemberAddress != "" {
+				t.Fatalf("cert member_address=%q", cert.MemberAddress)
+			}
+			if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("identity.yaml should not exist for local API-key init: %v", err)
+			}
+			workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
+			if err != nil {
+				t.Fatalf("load workspace.yaml: %v", err)
+			}
+			if workspace.APIKey != "workspace-sk-ephemeral" {
+				t.Fatalf("workspace api_key=%q", workspace.APIKey)
+			}
+			if workspace.AwebURL != server.URL+"/api" {
+				t.Fatalf("workspace aweb_url=%q", workspace.AwebURL)
+			}
+			if containsStringUnderTree(t, filepath.Join(tmp, ".aw"), apiKey) {
+				t.Fatal("AWEB_API_KEY was written to disk")
+			}
 
-	tmp, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-		WorkingDir: tmp,
-		AwebURL:    externalLikeTestURL(t, server.URL),
-		APIKey:     apiKey,
-		Alias:      "requested-alias",
-		Role:       "backend",
-	})
-	if err != nil {
-		t.Fatalf("runAPIKeyBootstrapInit: %v", err)
-	}
+			ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+			bin := filepath.Join(t.TempDir(), awBinaryNameForTest())
+			buildAwBinary(t, ctx, bin)
+			invoke := func(args ...string) []byte {
+				t.Helper()
+				command := exec.CommandContext(ctx, bin, append([]string{"--json"}, args...)...)
+				command.Dir = tmp
+				command.Env = append(testCommandEnv(tmp), "AW_HOME="+filepath.Join(tmp, "host"), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AW_NO_UPDATE_CHECK=1")
+				out, err := command.CombinedOutput()
+				if err != nil {
+					t.Fatalf("%v: %v\n%s", args, err, out)
+				}
+				return out
+			}
+			out := invoke("plugin", "install", app.URL)
+			if installPosts.Load() != 1 {
+				t.Fatalf("local member install reported success without server registration: POSTs=%d output=%s", installPosts.Load(), out)
+			}
+			catalog, err := loadAppApprovals(filepath.Join(tmp, ".aw"))
+			if err != nil || catalog.Installations["backend:acme.com"]["testapp"].InstallationID != "fixture-testapp" {
+				t.Fatalf("missing local member installation approval: %v %s", err, out)
+			}
+			// A selected external local home uses the same principal for management.
+			invoke("--identity-home", filepath.Join(tmp, ".aw"), "plugin", "update", "testapp")
+			invoke("--identity-home", filepath.Join(tmp, ".aw"), "plugin", "remove", "testapp")
+			catalog, err = loadAppApprovals(filepath.Join(tmp, ".aw"))
+			if err != nil || len(catalog.Installations["backend:acme.com"]) != 0 {
+				t.Fatalf("remove retained approval: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("management must not promote the local identity: %v", err)
+			}
 
-	if initAuthHeader != "Bearer "+apiKey {
-		t.Fatalf("Authorization=%q", initAuthHeader)
-	}
-	if initBody["alias"] != "requested-alias" {
-		t.Fatalf("init alias=%v", initBody["alias"])
-	}
-	if initBody["role_name"] != "backend" {
-		t.Fatalf("init role_name=%v", initBody["role_name"])
-	}
-	if _, ok := initBody["lifetime"]; ok {
-		t.Fatalf("workspace init request must not send lifetime: %v", initBody["lifetime"])
-	}
-	if initBody["identity_scope"] != awid.IdentityModeLocal {
-		t.Fatalf("init identity_scope=%v", initBody["identity_scope"])
-	}
-	if initBody["custody"] != awid.CustodySelf {
-		t.Fatalf("init custody=%v", initBody["custody"])
-	}
-	if _, ok := initBody["identity_type"]; ok {
-		t.Fatalf("local CLI workspace bootstrap must not send hosted identity_type: %v", initBody["identity_type"])
-	}
-	if _, ok := initBody["address"]; ok {
-		t.Fatalf("local CLI workspace bootstrap must not request an address: %v", initBody["address"])
-	}
-	if connectBody["role"] != "backend" {
-		t.Fatalf("connect role=%v", connectBody["role"])
-	}
-	if result.TeamID != "backend:acme.com" {
-		t.Fatalf("team_id=%q", result.TeamID)
-	}
-	if result.AwebURL != server.URL+"/api" {
-		t.Fatalf("aweb_url=%q", result.AwebURL)
-	}
-
-	signingKey, err := awid.LoadSigningKey(filepath.Join(tmp, ".aw", "signing.key"))
-	if err != nil {
-		t.Fatalf("load signing key: %v", err)
-	}
-	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(tmp, "backend:acme.com"))
-	if err != nil {
-		t.Fatalf("load team certificate: %v", err)
-	}
-	gotDidKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	if cert.MemberDIDKey != gotDidKey {
-		t.Fatalf("cert member_did_key=%q want %q", cert.MemberDIDKey, gotDidKey)
-	}
-	if cert.MemberDIDAW != "" {
-		t.Fatalf("cert member_did_aw=%q", cert.MemberDIDAW)
-	}
-	if cert.MemberAddress != "" {
-		t.Fatalf("cert member_address=%q", cert.MemberAddress)
-	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("identity.yaml should not exist for local API-key init: %v", err)
-	}
-	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(tmp, ".aw", "workspace.yaml"))
-	if err != nil {
-		t.Fatalf("load workspace.yaml: %v", err)
-	}
-	if workspace.APIKey != "workspace-sk-ephemeral" {
-		t.Fatalf("workspace api_key=%q", workspace.APIKey)
-	}
-	if workspace.AwebURL != server.URL+"/api" {
-		t.Fatalf("workspace aweb_url=%q", workspace.AwebURL)
-	}
-	if containsStringUnderTree(t, filepath.Join(tmp, ".aw"), apiKey) {
-		t.Fatal("AWEB_API_KEY was written to disk")
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-	defer cancel()
-	bin := filepath.Join(t.TempDir(), awBinaryNameForTest())
-	buildAwBinary(t, ctx, bin)
-	invoke := func(args ...string) []byte {
-		t.Helper()
-		command := exec.CommandContext(ctx, bin, append([]string{"--json"}, args...)...)
-		command.Dir = tmp
-		command.Env = append(testCommandEnv(tmp), "AW_HOME="+filepath.Join(tmp, "host"), "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AW_NO_UPDATE_CHECK=1")
-		out, err := command.CombinedOutput()
-		if err != nil {
-			t.Fatalf("%v: %v\n%s", args, err, out)
-		}
-		return out
-	}
-	out := invoke("plugin", "install", app.URL)
-	if installPosts.Load() != 1 {
-		t.Fatalf("local member install reported success without server registration: POSTs=%d output=%s", installPosts.Load(), out)
-	}
-	catalog, err := loadAppApprovals(filepath.Join(tmp, ".aw"))
-	if err != nil || catalog.Installations["backend:acme.com"]["testapp"].InstallationID != "fixture-testapp" {
-		t.Fatalf("missing local member installation approval: %v %s", err, out)
-	}
-	// A selected external local home uses the same principal for management.
-	invoke("--identity-home", filepath.Join(tmp, ".aw"), "plugin", "update", "testapp")
-	invoke("--identity-home", filepath.Join(tmp, ".aw"), "plugin", "remove", "testapp")
-	catalog, err = loadAppApprovals(filepath.Join(tmp, ".aw"))
-	if err != nil || len(catalog.Installations["backend:acme.com"]) != 0 {
-		t.Fatalf("remove retained approval: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(tmp, ".aw", "identity.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("management must not promote the local identity: %v", err)
+		})
 	}
 }
 

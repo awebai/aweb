@@ -86,7 +86,9 @@ func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity
 	return currentIdentityRegistryURL(ctx, &own, registry)
 }
 
-// No chain is the legacy path only when current evidence establishes absence.
+// A local did:key can be chainless: it has no portable enrollment witness.
+// A global did:aw needs authoritative no-enrollment evidence even when only
+// selecting an invite condition. Present unreadable/malformed files refuse.
 // A team key is never an ID-parent credential.
 func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconfig.TeamInviteIDChild, error) {
 	link, _, err := prepareTeamInviteAuthority(ctx, opts, true, nil)
@@ -117,9 +119,6 @@ func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, create
 	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, domain)
 	if err != nil {
 		return nil, nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
-	}
-	if chain == nil && !createChild {
-		return nil, nil, nil
 	}
 	if chain == nil {
 		resolution, err := identityKeyRoute(ctx, identity, opts.RegistryURL)
@@ -325,6 +324,7 @@ func bindTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite, hom
 	} else {
 		for _, name := range []string{"identity.yaml", "signing.key"} {
 			if _, err := os.Stat(filepath.Join(home, name)); err == nil {
+				fmt.Fprintln(os.Stderr, "Joining membership only; this existing identity keeps its parentage.")
 				return false, nil
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return false, err

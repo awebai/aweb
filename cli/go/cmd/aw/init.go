@@ -40,7 +40,7 @@ notices arrive after tool calls, with no mail or idle wake-up support.
 After confirming channel/broker delivery, use --remove-notify-hook on its own
 for backed-up removal of exact aw notify PostToolUse entries from the current
 directory's and, inside a git repo, the repository root's .claude/settings.json.
-Init and upgrades never remove them implicitly.`,
+Init and upgrades never remove them implicitly.` + "\n\n" + creationAuthorityHelp + "\nA selected native workspace (--identity-home or AWEB_IDENTITY_HOME) may create a child into a clean current directory; its own home is never overwritten.",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Root initialization runs first with hook traversal enabled.
 	},
@@ -179,6 +179,15 @@ func validateInitOutcomeFlags() error {
 		return usageError("workspace-team creation requires an explicit --identity-home target; refusing to extend inherited identity home %s", activeIdentityHome.Root)
 	}
 	if strings.TrimSpace(activeIdentityHome.Root) != "" && activeIdentityHome.External() && !initWorkspaceTeam {
+		// A native acting workspace may create into the clean cwd. Other init
+		// outcomes keep the existing external-destination refusal.
+		if len(outcomes) == 0 && !initBYOD && initDomain == "" && initUsername == "" {
+			wd, _ := os.Getwd()
+			creator, err := resolveAgentCreation(wd, "", "", "", false)
+			if err == nil && (creator.Mode == "invitation" || creator.Mode == "controller") {
+				return nil
+			}
+		}
 		return usageError("aw init with --identity-home is only supported for --workspace-team; refusing to use an external identity home for account, team, or add-agent init")
 	}
 	return nil
@@ -623,7 +632,46 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if apiKey := resolveInitAPIKey(); apiKey != "" {
+	creationDir, _ := os.Getwd()
+	apiKey := resolveInitAPIKey()
+	var apiSelected *apiKeyCreationTeam
+	// Existing certificates still reconnect normally. An explicitly selected
+	// source principal can create into a fresh directory through its invitation.
+	selectedHome, err := identityHomeForDir(creationDir)
+	if err != nil {
+		return err
+	}
+	if apiKey != "" || selectedHome.External() {
+		base, err := resolveAPIKeyInitAwebURL()
+		if err != nil {
+			return err
+		}
+		creation, err := resolveAgentCreation(creationDir, apiKey, base, "", false)
+		if err != nil {
+			return err
+		}
+		apiSelected = creation.SelectedTeam
+		if creation.Mode == "invitation" || creation.Mode == "controller" {
+			if !selectedHome.External() {
+				return usageError("creation requires a fresh target directory; use aw init --join-from <workspace> in the new directory")
+			}
+			if err := ensureConnectTargetClean(creationDir); err != nil {
+				return err
+			}
+			printCreationAuthority(creation)
+			invite, err := createWorkspaceTeamInviteForTeamAt(creationDir, selectedHome.Root, creation.SourceTeam)
+			if err != nil {
+				return err
+			}
+			// The acting source is not the child destination. The invite record keeps
+			// the existing same-machine parent exchange bound to this source.
+			oldHome := activeIdentityHome
+			activeIdentityHome = awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(creationDir)}
+			defer func() { activeIdentityHome = oldHome }()
+			return acceptInitInviteAndConnect(cmd, creationDir, invite.Token, invite.AwebURL)
+		}
+	}
+	if apiKey != "" {
 		wd, _ := os.Getwd()
 		awebURL, err := resolveAPIKeyInitAwebURL()
 		if err != nil {
@@ -637,8 +685,15 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		if identityHome.External() {
+			identityHome = awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(wd)}
+			oldHome := activeIdentityHome
+			activeIdentityHome = identityHome
+			defer func() { activeIdentityHome = oldHome }()
+		}
 		requestedAlias := resolveAliasValue(resolveInitLocalName())
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
+			SelectedTeam: apiSelected,
 			WorkingDir:   wd,
 			IdentityHome: identityHome.Root,
 			AwebURL:      awebURL,

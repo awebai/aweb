@@ -59,7 +59,7 @@ classic name; omitted scope comes from `profile.yaml`.
 
 Flags (all reused from `add` where they exist there):
 
-- `--api-key <key>` — explicit team API key; wins over discovery and bypasses
+- `--api-key <key>` — explicit person setup key; wins over discovery and bypasses
   any assertion inferred from the current workspace. The `AWEB_API_KEY` env var
   selects the same API-key authority tier, but when cwd has an active team that
   team is asserted against the server response (flag wins over env).
@@ -81,9 +81,14 @@ concerns; a caller who needs them has a workspace and should use `add`).
 Precedence is deterministic and overridable. The first tier that can
 select an anchor wins; lower tiers are not consulted after that:
 
-1. **Team API key** — explicit `--api-key`, else `AWEB_API_KEY`. Used
+1. **Person setup key** — explicit `--api-key`, else `AWEB_API_KEY`. Used
    directly via the API-key bootstrap path (`runAPIKeyBootstrapInit` per
-   member, as `add` does in API-key mode). The key itself determines the
+   member, as `add` does in API-key mode). `GET /api/v1/teams/current`
+   identifies `api_key_kind=person` or `workspace`. A workspace key instead
+   selects the native signing creator for the requested team and prints a
+   notice; without one it refuses with creator/setup-key guidance. A missing
+   or unknown kind preserves the API path, without a warning. Stored
+   workspace keys never create another identity. The key itself determines the
    team. An explicit `--api-key` does not consult workspace team state; it is
    the opt-out when the caller deliberately wants to extend a different team.
 
@@ -116,8 +121,8 @@ select an anchor wins; lower tiers are not consulted after that:
    created in place by `aw team admin create`.
 3. **A discovered invite-capable agent** — scan the candidate homes under
    the agents root (next section), gather the qualifying ones, apply the
-   ambiguity rule below, and borrow the lexicographically first qualifying
-   home as the invite anchor. The new members join that agent's active
+   ambiguity rule below, and use the single qualifying
+   home as the invite anchor, printing its path as the creator. The new members join that agent's active
    team.
 4. **Error** — nothing found. The error names both missing inputs and the
    alternative verb:
@@ -129,12 +134,11 @@ select an anchor wins; lower tiers are not consulted after that:
    --api-key, or create a new team with aw team admin create <name>
    ```
 
-Why explicit-key-first: tiers 2–3 are discovery — they depend on what
-happens to be on disk. An explicit key is the caller saying exactly which
-team and which authority; it must not be overridden by whatever the scan
-finds. (`aw team admin add` keeps its existing opposite ordering — workspace
-first, API key as fallback — because for `add` the cwd workspace IS the
-explicit context. The asymmetry is deliberate.)
+A person's setup key is explicit creation authority and wins over disk. A
+workspace key is not creation authority: the selected native workspace signs
+its child using the existing invitation exchange. This rule is shared with
+`add`, `init` and `add-worktree`. The service keeps the legacy API path when
+key-kind metadata is absent or unknown.
 
 **Invite-capable**, concretely: for a candidate home,
 `resolveTeamInviteTarget(home)` resolves an active team (workspace/team
@@ -148,8 +152,8 @@ add` exercises today via `createAndAcceptTeamInviteForEmptyAgent`; `extend`
 changes where the anchor comes from, not what it can do.
 
 Capability is proven at mint time, not pre-checked per candidate: discovery
-selects the first candidate whose team state resolves (and matches
-`--team-id` when given); if its mint then fails, that failure surfaces
+gathers candidates whose team state resolves (and matches
+`--team-id` when given); one candidate may be used. If its mint then fails, that failure surfaces
 as-is with the anchor's path named — it does not silently fall through to
 the next candidate, which would make failures order-dependent and opaque.
 
@@ -159,8 +163,8 @@ Ambiguity is judged WITHIN a tier, and only after every higher tier has
 failed to select an anchor. A lower tier never re-opens or overrides a
 higher one:
 
-- Tier 1: the key names the team. Explicit `--api-key` consults nothing on
-  disk. Ambient `AWEB_API_KEY` consults only cwd's active team for the
+- Tier 1: a person setup key names the team. Explicit person `--api-key` consults nothing on
+  disk. A workspace key must select its native signing creator. Ambient `AWEB_API_KEY` consults only cwd's active team for the
   side-effect-safe assertion described above; it does not scan candidate homes
   or select authority from disk.
 - Tier 2: if the current workspace is invite-capable (and its active team
@@ -170,8 +174,9 @@ higher one:
 - Tier 3: `--team-id`, when given, filters the qualifying candidates to
   those whose active team matches. Without `--team-id`, if the qualifying
   candidates span more than one active team, `extend` errors and lists the
-  teams found, asking for `--team-id`. Within a single team, the
-  lexicographically first qualifying home wins.
+  teams found, asking for `--team-id`. Within a single team, exactly one qualifying home is used and printed as
+  the creator. Several homes are listed in a refusal before any write; run
+  from the intended creating workspace or select its `--identity-home`.
 
 `extend` never guesses among teams.
 

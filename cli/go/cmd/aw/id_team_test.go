@@ -1353,6 +1353,8 @@ func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	var memberStableID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+memberStableID+"/key":
+			json.NewEncoder(w).Encode(map[string]any{"did_aw": memberStableID, "current_did_key": memberDIDKey, "id_tree": map[string]any{"enrolled": false}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/alice":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"address_id":      "addr-alice",

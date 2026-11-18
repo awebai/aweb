@@ -136,6 +136,13 @@ for backed-up removal of exact aw notify PostToolUse entries from the current
 directory's and, inside a git repo, the repository root's .claude/settings.json.
 Init and upgrades never remove them implicitly.
 
+Creation authority comes from the creator's native signing workspace, never its stored workspace API key. A supplied person's setup key takes the API path. A supplied workspace key uses the signing workspace for the requested team. Older servers and unknown api_key_kind values keep the existing API path.
+
+Using this workspace's signed invitation; the supplied agent API key is not creating the child.
+
+This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
+A selected native workspace (--identity-home or AWEB_IDENTITY_HOME) may create a child into a clean current directory; its own home is never overwritten.
+
 Flags:
 - `--admission-team-id string Add an agent through host human admission for this explicit team ID`
 - `--agent-type string Runtime label (default: AWEB_AGENT_TYPE or agent; human kind is verified by the server)`
@@ -237,6 +244,12 @@ Flags:
 Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.
 
 New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.
+
+Creation authority comes from the creator's native signing workspace, never its stored workspace API key. A supplied person's setup key takes the API path. A supplied workspace key uses the signing workspace for the requested team. Older servers and unknown api_key_kind values keep the existing API path.
+
+Using this workspace's signed invitation; the supplied agent API key is not creating the child.
+
+This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
 
 Flags:
 - `-h, --help help for add-worktree`
@@ -2018,6 +2031,12 @@ Flags:
 
 Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.
 
+Creation authority comes from the creator's native signing workspace, never its stored workspace API key. A supplied person's setup key takes the API path. A supplied workspace key uses the signing workspace for the requested team. Older servers and unknown api_key_kind values keep the existing API path.
+
+Using this workspace's signed invitation; the supplied agent API key is not creating the child.
+
+This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
+
 Flags:
 - `--attach Attach or switch to the tmux session after --start launch (default true)`
 - `--blueprint string Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)`
@@ -2064,6 +2083,8 @@ Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.
 With --org, create a hosted team using human CLI authorization and return an invite.
 This explicit mode creates no local identity or profile; accept the invite separately.
 
+An agent's workspace key cannot found a new team. Use a setup key from the dashboard, a namespace controller with aw team admin create --byot --namespace <domain>, or the signed aw id team create --hosted operation.
+
 Flags:
 - `--agent stringArray Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]`
 - `--blueprint string With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory`
@@ -2090,7 +2111,13 @@ Flags:
 
 ### `team admin extend`
 
-Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY in a workspace with an active team uses that team as an assertion against the API key's team; explicit --api-key bypasses the workspace assertion.
+Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. A person's setup key (explicit --api-key or AWEB_API_KEY) takes the API path; a workspace key selects signed creation instead. With no current creator, exactly one discovered agent workspace is selected and named; several candidates require choosing a workspace or its --identity-home.
+
+Creation authority comes from the creator's native signing workspace, never its stored workspace API key. A supplied person's setup key takes the API path. A supplied workspace key uses the signing workspace for the requested team. Older servers and unknown api_key_kind values keep the existing API path.
+
+Using this workspace's signed invitation; the supplied agent API key is not creating the child.
+
+This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>.
 
 Flags:
 - `--api-key string Team API key for extending a team (overrides AWEB_API_KEY)`

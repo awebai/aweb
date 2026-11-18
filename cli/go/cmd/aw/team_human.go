@@ -117,7 +117,7 @@ var teamHumanCreateCmd = &cobra.Command{
 		"--home with a single spec uses that spec for the root workspace profile.\n" +
 		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.\n\n" +
 		"With --org, create a hosted team using human CLI authorization and return an invite.\n" +
-		"This explicit mode creates no local identity or profile; accept the invite separately.",
+		"This explicit mode creates no local identity or profile; accept the invite separately.\n\n" + creationFoundingRefusal,
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanCreate,
 }
@@ -125,7 +125,7 @@ var teamHumanCreateCmd = &cobra.Command{
 var teamHumanAddCmd = &cobra.Command{
 	Use:   "add <agent-spec>...",
 	Short: "Add agents to this team's agents/instances layout",
-	Long:  "Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.",
+	Long:  "Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.\n\n" + creationAuthorityHelp,
 	Args:  cobra.MinimumNArgs(1),
 	RunE:  runTeamHumanAdd,
 }
@@ -536,6 +536,15 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	if home.External() {
 		return usageError("team admin create creates a first-agent identity; refusing to change selected identity home %s; use id team create for a sibling team", home.Root)
+	}
+	if !teamHumanCreateBYOT && resolveInitAPIKey() != "" {
+		base, err := resolveAPIKeyInitAwebURL()
+		if err != nil {
+			return err
+		}
+		if _, err := resolveAgentCreation(wd, resolveInitAPIKey(), base, "", true); err != nil {
+			return err
+		}
 	}
 	printTeamCreateExtendNotice(wd)
 	createHomeOverride := ""
@@ -1474,6 +1483,7 @@ const (
 )
 
 type teamHumanAddRunOptions struct {
+	Creation              *creationAuthority
 	CWD                   string
 	InviteAnchorDir       string
 	AgentsRoot            string
@@ -1541,13 +1551,26 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	if err := preflightTeamHumanAddRosterAliases(wd, agentsRoot, resolvedSpecs); err != nil {
 		return err
 	}
-	apiKeyBootstrapMode := opts.ForceAPIKey
-	if !apiKeyBootstrapMode {
-		apiKeyBootstrapMode, err = shouldUseAPIKeyBootstrapForTeamAdd(inviteAnchorDir)
+	apiKey := strings.TrimSpace(opts.APIKey)
+	if apiKey == "" {
+		apiKey = resolveInitAPIKey()
+	}
+	var creation creationAuthority
+	if opts.Creation != nil {
+		creation = *opts.Creation
+	} else {
+		base, err := resolveAPIKeyInitAwebURL()
+		if err != nil {
+			return err
+		}
+		creation, err = resolveAgentCreation(inviteAnchorDir, apiKey, base, opts.ExpectedTeamID, false)
 		if err != nil {
 			return err
 		}
 	}
+	printCreationAuthority(creation)
+	apiKeyBootstrapMode := creation.Mode == "api"
+	opts.APIKey = apiKey
 	plans := make([]teamHumanAddedAgent, 0, len(resolvedSpecs))
 	for _, spec := range resolvedSpecs {
 		if spec.Profile != nil && teamHumanAddLayoutOnly {

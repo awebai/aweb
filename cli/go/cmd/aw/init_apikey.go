@@ -30,6 +30,7 @@ const maxWorkspaceAPIKeyLength = 4096
 const apiKeyPartialInitVersion = 1
 
 type apiKeyInitRequest struct {
+	SelectedTeam       *apiKeyCreationTeam
 	CreationInvitation *awid.IDCreationInvitation
 	WorkingDir         string
 	IdentityHome       string
@@ -167,11 +168,14 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 			return connectOutput{}, err
 		}
 	}
-	readContext, readCancel := commandAPIContext(nil)
-	selectedTeam, err := readAPIKeyCreationTeam(readContext, req.AwebURL, req.APIKey)
-	readCancel()
-	if err != nil {
-		return connectOutput{}, err
+	selectedTeam := req.SelectedTeam
+	if selectedTeam == nil {
+		readContext, readCancel := commandAPIContext(nil)
+		selectedTeam, err = readAPIKeyCreationTeam(readContext, req.AwebURL, req.APIKey)
+		readCancel()
+		if err != nil {
+			return connectOutput{}, err
+		}
 	}
 	req.SelectedTeamID, req.CanonicalTeamID = selectedTeam.TeamID, selectedTeam.CanonicalTeamID
 	req.CreationInvitation = selectedTeam.CreationInvitation

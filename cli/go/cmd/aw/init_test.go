@@ -631,7 +631,7 @@ func TestInitInviteIdentityScopeDefaultsLocalAndHonorsGlobal(t *testing.T) {
 	}
 }
 
-func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T) {
+func TestOATSSpawnJoinFromStoredWorkspaceKeyPreservesCreator(t *testing.T) {
 	oldJoinFrom, oldJoinTeam, oldName, oldGlobal := initJoinFrom, initJoinTeam, initName, initGlobal
 	oldJSON, oldServer := jsonFlag, serverFlag
 	t.Cleanup(func() {
@@ -691,19 +691,25 @@ func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T)
 		t.Fatal(err)
 	}
 	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceKey, CreatedAt: "2026-09-26T00:00:00Z"})
+	binding, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(source, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding.APIKey = "aw_sk_stored_workspace"
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(source, ".aw", "workspace.yaml"), binding); err != nil {
+		t.Fatal(err)
+	}
 	sourceBefore := fileDigestsForTest(t, filepath.Join(source, ".aw"))
 	target := t.TempDir()
-	withTestWorkingDir(t, target, func() {
-		initJoinFrom = source
-		initJoinTeam = teamID
-		initName = "target"
-		initGlobal = false
-		jsonFlag = true
-		var out bytes.Buffer
-		if err := runInitJoinFrom(authTestCmd(&out)); err != nil {
-			t.Fatalf("runInitJoinFrom: %v\n%s", err, out.String())
-		}
-	})
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, context.Background(), bin)
+	command := exec.Command(bin, "init", "--join-from="+source, "--join-team="+teamID, "--name=target", "--json", "--do-not-touch-agents-md")
+	command.Dir = target
+	command.Env = withoutEnvForTest(testCommandEnv(t.TempDir()), "AWEB_URL", "AWEB_API_KEY", "AWEB_ROLE_NAME", "AWEB_ROLE")
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("OATS spawn: %v %s", err, out)
+	}
+
 	if !sawCreateInvite || !sawAccept || !sawConnect {
 		t.Fatalf("create=%t accept=%t connect=%t", sawCreateInvite, sawAccept, sawConnect)
 	}
@@ -852,7 +858,7 @@ func TestInitJoinFromDenialLeavesTargetEmptyAndSuggestsAdmission(t *testing.T) {
 		initName = "target"
 		err = runInitJoinFrom(authTestCmd(&bytes.Buffer{}))
 	})
-	if err == nil || !strings.Contains(err.Error(), "create hosted team invite") || !strings.Contains(err.Error(), "--admission-team-id "+teamID) {
+	if err == nil || !strings.Contains(err.Error(), "create hosted team invite") || !strings.Contains(err.Error(), "; alternatively use --admission-team-id "+teamID) {
 		t.Fatalf("expected denial with admission alternative, got %v", err)
 	}
 	if entries, readErr := os.ReadDir(target); readErr != nil || len(entries) != 0 {

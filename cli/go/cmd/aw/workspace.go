@@ -34,7 +34,7 @@ var workspaceAddWorktreeCmd = &cobra.Command{
 	Use:   "add-worktree [role]",
 	Short: "Legacy convenience: create a sibling git worktree and coordination workspace",
 	Long: "Legacy convenience for existing users: create a sibling git worktree and initialize a new coordination workspace in it.\n\n" +
-		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.",
+		"New setup flows should prefer explicit git worktree/filesystem steps followed by aw init, invite/join, or service init primitives unless this command is reduced to a transparent wrapper with no identity/team orchestration.\n\n" + creationAuthorityHelp,
 	Args: cobra.RangeArgs(0, 1),
 	RunE: runWorkspaceAddWorktree,
 }
@@ -486,6 +486,12 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return usageError("current worktree is missing aweb_url; run `aw init` first")
 	}
 
+	creation, err := resolveAgentCreation(workingDir, resolveInitAPIKey(), sourceServerURL, teamID, false)
+	if err != nil {
+		return err
+	}
+	printCreationAuthority(creation)
+
 	alias := strings.TrimSpace(workspaceAddAlias)
 	aliasExplicit := alias != ""
 	if aliasExplicit && !isValidWorkspaceAlias(alias) {
@@ -552,26 +558,24 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid team_id in workspace.yaml: %w", err)
 	}
 
-	// When the team controller key is available locally (BYOD), mint the
-	// certificate directly.  When it is not (hosted/API-key bootstrapped
-	// workspaces), delegate certificate issuance to the cloud via the
-	// parent workspace's API key.
+	// Keep local controller issuance; otherwise use the selected creator
+	// invitation or an explicitly supplied setup/legacy API credential.
 	hasTeamKey, err := awconfig.TeamKeyExists(teamDomain, teamName)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return fmt.Errorf("check team key: %w", err)
 	}
 
-	if hasTeamKey {
+	if creation.Mode == "controller" && hasTeamKey {
 		_, err = addWorktreeViaLocalTeamKey(
 			worktreePath, root, branchName, branchCreated,
 			teamID, teamDomain, teamName, sourceServerURL, workingDir, sourceIdentityHome,
 			alias, role, state,
 		)
-	} else if strings.TrimSpace(state.APIKey) != "" {
+	} else if creation.Mode == "api" {
 		_, err = addWorktreeViaCloudBootstrap(
 			worktreePath, root, branchName, branchCreated,
-			sourceServerURL, alias, role, state,
+			sourceServerURL, alias, role, state, resolveInitAPIKey(), creation.SelectedTeam,
 		)
 	} else {
 		_, err = addWorktreeViaPrimaryInvite(
@@ -652,9 +656,9 @@ func addWorktreeViaLocalTeamKey(
 
 func addWorktreeViaCloudBootstrap(
 	worktreePath, root, branchName string, branchCreated bool,
-	sourceServerURL, alias, role string, state *awconfig.WorktreeWorkspace,
+	sourceServerURL, alias, role string, state *awconfig.WorktreeWorkspace, apiKey string, selectedTeam *apiKeyCreationTeam,
 ) (connectOutput, error) {
-	apiKey := strings.TrimSpace(state.APIKey)
+	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, usageError(
@@ -672,6 +676,7 @@ func addWorktreeViaCloudBootstrap(
 
 	fmt.Fprintln(os.Stderr, "Requesting certificate from cloud...")
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
+		SelectedTeam: selectedTeam,
 		WorkingDir:   worktreePath,
 		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
 		AwebURL:      awebURL,

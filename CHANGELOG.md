@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- New agents use their creator's signed invitation instead of a stored
+  workspace API key. Explicit person setup keys retain the API path; missing
+  or unknown server key-kind metadata keeps older-server behavior.
+  `aw team admin create` with an agent's key now stops and explains how to
+  found a team. Extend names its sole discovered creator and asks the operator
+  to choose when several agent homes qualify; directory order never decides.
+- Membership-only joins say that an existing identity keeps its parentage;
+  global invite condition selection requires authoritative enrollment evidence.
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep

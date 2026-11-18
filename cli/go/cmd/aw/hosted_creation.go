@@ -275,6 +275,7 @@ func finishHostedIDTree(ctx context.Context, tree *hostedIDTreeRecovery, respons
 }
 
 type apiKeyCreationTeam struct {
+	APIKeyKind         string                     `json:"api_key_kind,omitempty"`
 	CreationInvitation *awid.IDCreationInvitation `json:"creation_invitation,omitempty"`
 	TeamID             string                     `json:"team_id"`
 	CanonicalTeamID    string                     `json:"canonical_team_id"`
