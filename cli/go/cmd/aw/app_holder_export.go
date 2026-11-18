@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/atomicfile"
 )
 
 const holderExportType = "aweb.human-role-credential"
@@ -85,7 +85,7 @@ func writeHolderExport(path string, e holderCredentialExport) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return atomicfile.Write(path, append(data, '\n'), 0o644)
 }
 
 // bindsTo refuses an export made for any other holding.

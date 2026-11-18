@@ -144,7 +144,7 @@ func runIDHumanAdd(cmd *cobra.Command, args []string) error {
 		client = humanEnrollmentClient(h, origin)
 		client.PollInterval = 5 * time.Second
 		client.Notify = cmd.ErrOrStderr()
-		client.Retain = approvalRecordWriter(recordPath, origin, targetURL)
+		client.Retain = approvalRecordWriter(approvalRecordLocation{Path: recordPath, Origin: origin, Enforcer: targetURL})
 		return nil
 	}
 	ctx := cmd.Context()

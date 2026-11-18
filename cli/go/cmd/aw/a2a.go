@@ -17,6 +17,7 @@ import (
 	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -342,18 +343,38 @@ const maxStoredA2ATaskTokens = 50
 // directory; otherwise the token is only printed.
 func saveA2ATaskTokenBestEffort(rpcURL string, task a2a.Task) {
 	taskID := strings.TrimSpace(task.ID)
-	token, _ := task.Metadata["task_bearer_token"].(string)
-	token = strings.TrimSpace(token)
-	if taskID == "" || token == "" {
+	token, hasToken := task.Metadata["task_bearer_token"].(string)
+	if !hasToken || taskID == "" || strings.TrimSpace(token) == "" {
 		return
 	}
-	if info, err := os.Stat(".aw"); err != nil || !info.IsDir() {
+	info, err := os.Stat(".aw")
+	if errors.Is(err, os.ErrNotExist) || (err == nil && !info.IsDir()) {
 		return
 	}
-	path := filepath.Join(".aw", "a2a-credentials.yaml")
+	if err == nil {
+		err = persistA2ATaskToken(filepath.Join(".aw", "a2a-credentials.yaml"), a2aCredentialEntry{
+			URL: strings.TrimSpace(rpcURL), Host: urlHost(rpcURL),
+			TaskID: taskID, TaskToken: strings.TrimSpace(token), CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", formatTaskTokenPersistenceError(err))
+	}
+}
+
+func formatTaskTokenPersistenceError(err error) string {
+	return fmt.Sprintf("Warning: could not persist task token: %v. Keep the task token from this response and repair `.aw/a2a-credentials.yaml` before polling.", err)
+}
+
+func persistA2ATaskToken(path string, credential a2aCredentialEntry) error {
 	var file a2aCredentialsFile
-	if data, err := os.ReadFile(path); err == nil {
-		_ = yaml.Unmarshal(data, &file)
+	data, err := os.ReadFile(path)
+	if err == nil {
+		if err := yaml.Unmarshal(data, &file); err != nil {
+			return fmt.Errorf("read task credentials: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	kept := file.Credentials[:0]
 	var taskEntries []a2aCredentialEntry
@@ -362,32 +383,20 @@ func saveA2ATaskTokenBestEffort(rpcURL string, task a2a.Task) {
 			kept = append(kept, entry)
 			continue
 		}
-		if strings.TrimSpace(entry.TaskID) == taskID {
-			continue
+		if strings.TrimSpace(entry.TaskID) != credential.TaskID {
+			taskEntries = append(taskEntries, entry)
 		}
-		taskEntries = append(taskEntries, entry)
 	}
-	taskEntries = append(taskEntries, a2aCredentialEntry{
-		URL:       strings.TrimSpace(rpcURL),
-		Host:      urlHost(rpcURL),
-		TaskID:    taskID,
-		TaskToken: token,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339),
-	})
+	taskEntries = append(taskEntries, credential)
 	if len(taskEntries) > maxStoredA2ATaskTokens {
 		taskEntries = taskEntries[len(taskEntries)-maxStoredA2ATaskTokens:]
 	}
 	file.Credentials = append(kept, taskEntries...)
-	data, err := yaml.Marshal(file)
+	data, err = yaml.Marshal(file)
 	if err != nil {
-		return
+		return err
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not persist task token: %v\n", err)
-		return
-	}
-	// WriteFile only applies the mode on create; tighten pre-existing files.
-	_ = os.Chmod(path, 0o600)
+	return atomicfile.Write(path, data, 0o600)
 }
 
 // loadA2ATaskTokenBestEffort returns the stored token for a specific task.

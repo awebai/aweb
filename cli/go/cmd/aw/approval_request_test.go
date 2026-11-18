@@ -13,7 +13,7 @@ func TestApprovalRequestFlagsAndPrivateOriginalRequestRecord(t *testing.T) {
 		}
 	}
 	path := filepath.Join(t.TempDir(), "approval.json")
-	retain := approvalRecordWriter(path, "https://awsign.com", "https://holder.example/humans")
+	retain := approvalRecordWriter(approvalRecordLocation{Path: path, Origin: "https://awsign.com", Enforcer: "https://holder.example/humans"})
 	request := []byte(`{"deadline":1300,"requester":{"key":"original"}}`)
 	if e := retain("request", request); e != nil {
 		t.Fatal(e)

@@ -91,7 +91,7 @@ func TestHumanAddExpiredCommandGivesRecoverableNextStep(t *testing.T) {
 	digest := sha256.Sum256(append([]byte(targetURL+"\n"), body...))
 	path := filepath.Join(h.dir, fmt.Sprintf("human-add-%x.json", digest))
 	raw, _ := proof.Canonical(r)
-	if err := approvalRecordWriter(path, origin, targetURL)("request", raw); err != nil {
+	if err := approvalRecordWriter(approvalRecordLocation{Path: path, Origin: origin, Enforcer: targetURL})("request", raw); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(path)
