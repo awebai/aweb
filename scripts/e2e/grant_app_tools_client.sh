@@ -87,6 +87,9 @@ aw_in "$RESIDENT" id team create --name devteam --namespace grant-app.test --reg
 invite="$(aw_in "$RESIDENT" id team invite --team devteam --namespace grant-app.test --global --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')"
 aw_in "$RESIDENT" id team accept-invite "$invite" --global --alias alice --json >/dev/null
 aw_in "$RESIDENT" init --url "$AWEB_URL" >/dev/null
+# Library reads each installed team's grant from the team's published server.
+aw_in "$RESIDENT" id team set-server --team devteam --namespace grant-app.test \
+  --url "$AWEB_URL" --registry "$AWID_URL" --json >/dev/null
 
 echo "=== Install the real Library app ==="
 principal="$(aw_in "$RESIDENT" id show --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["did_key"])')"

@@ -32,15 +32,23 @@ services:
       AWID_PUBLIC_REGISTRY_URL: http://awid:8010
     volumes:
       - fixture:/fixture:ro
-    depends_on:
-      library:
-        condition: service_healthy
+    # Library shares this namespace: its TLS name resolves here, and the team
+    # server URL the client publishes (127.0.0.1:8000) reaches this server from
+    # Library as well as from the client.
+    networks:
+      default:
+        aliases: [library-grant.test]
     cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
     labels:
       aweb.acceptance: grant-app-tools
   library:
+    network_mode: service:aweb
+    ports: !reset []
+    depends_on:
+      aweb:
+        condition: service_healthy
     cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
@@ -54,9 +62,6 @@ services:
       - fixture:/fixture:ro
       # Library's template published from this stack's origin (library_stack_prepare.py).
       - library-source:/app/naapp/library/src/library
-    networks:
-      default:
-        aliases: [library-grant.test]
     healthcheck:
       test: ["CMD", "python3", "-c", "import ssl,urllib.request; urllib.request.urlopen('https://library-grant.test:8765/ready', context=ssl.create_default_context(cafile='/fixture/tls/ca.pem'))"]
 
