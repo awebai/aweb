@@ -119,24 +119,27 @@ async def test_federation_accepts_identity_encoded_response(content_encoding: st
 
 
 @pytest.mark.asyncio
-async def test_federation_redirect_target_receives_no_request():
-    target_hits = 0
+@pytest.mark.parametrize("status", [200, 307])
+async def test_federation_redirect_target_receives_no_request(status):
+    requests = []
 
     def handler(request):
-        nonlocal target_hits
-        if request.url.host == "target.test":
-            target_hits += 1
-            return Response(200, json={})
-        return Response(307, headers={"Location": "https://target.test/final"})
+        requests.append((request.method, str(request.url)))
+        return Response(status, json={}, headers={"Location": "https://target.test/final"})
 
-    with pytest.raises(Exception):
-        await deliver_federated_message(
-            delivery_origin="https://source.test",
-            envelope=_envelope(),
-            signature="signature",
-            transport=MockTransport(handler),
+    async def deliver():
+        return await deliver_federated_message(
+            delivery_origin="https://source.test", envelope=_envelope(),
+            signature="signature", transport=MockTransport(handler),
         )
-    assert target_hits == 0
+
+    if status == 307:
+        with pytest.raises(FederatedMailDeliveryError) as refused:
+            await deliver()
+        assert (refused.value.status_code, refused.value.reason) == (502, "HTTP 307")
+    else:
+        assert await deliver() == {}
+    assert requests == [("POST", "https://source.test/v1/federation/messages")]
 
 
 class SlowResponseStream(httpx.AsyncByteStream):

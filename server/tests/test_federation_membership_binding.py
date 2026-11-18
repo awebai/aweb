@@ -15,7 +15,7 @@ from tests.test_federation_activation_delivery import _DB, _envelope, _seed_reci
 
 
 @pytest.mark.asyncio
-async def test_reused_certificate_metadata_cannot_manufacture_federation_membership(real_stack):
+async def test_ignored_certificate_metadata_does_not_confer_same_team_admission(real_stack):
     manager = real_stack.aweb_db
     registered = Member(team_id="backend:beta.example", alias="admitted", certificate_id="active-id")
     await real_stack.awid_db.execute(

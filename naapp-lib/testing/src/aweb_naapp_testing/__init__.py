@@ -18,6 +18,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from awid.attestation_records import ATTESTATION_HEADER, encode_attestation_header
+from awid.controller_signing import (
+    ControllerDescriptor,
+    ControllerObjectRequest,
+    ControllerSigningContext,
+)
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 
@@ -78,11 +83,16 @@ class Member:
             "team_did_key": self.team_did_key,
             "member_did_key": self.did_key,
             "alias": self.alias,
-            "lifetime": "persistent",
+            "identity_scope": "global" if self.extra_cert_fields.get("member_did_aw") else "local",
             "issued_at": "2026-01-01T00:00:00Z",
             **self.extra_cert_fields,
         }
-        cert["signature"] = sign_message(bytes(self.team_key), canonical_json_bytes(cert))
+        name, domain = self.team_id.split(":", 1)
+        context = ControllerSigningContext(
+            ControllerObjectRequest("team_certificate_issue", domain, {"name": name, "certificate": cert}),
+            ControllerDescriptor("team", domain, self.team_did_key, "test-member", 0, team=name),
+        )
+        cert["signature"] = sign_message(bytes(self.team_key), context.signing_bytes())
         return cert
 
     def headers(

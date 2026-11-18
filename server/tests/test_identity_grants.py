@@ -6,6 +6,7 @@ from time import monotonic
 import base64
 import hashlib
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from dataclasses import asdict, replace
@@ -1230,6 +1231,10 @@ def _team_identity_call_sites(source: str, path_label: str) -> list[tuple[str, s
     function, adds a row.
     """
     tree = ast.parse(source)
+    names = {"get_team_identity"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("team_auth_deps"):
+            names.update(alias.asname or alias.name for alias in node.names if alias.name == "get_team_identity")
     parents: dict[ast.AST, ast.AST] = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
@@ -1238,7 +1243,9 @@ def _team_identity_call_sites(source: str, path_label: str) -> list[tuple[str, s
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if not isinstance(node.func, ast.Name) or node.func.id != "get_team_identity":
+        direct = isinstance(node.func, ast.Name) and node.func.id in names
+        qualified = isinstance(node.func, ast.Attribute) and node.func.attr == "get_team_identity"
+        if not (direct or qualified):
             continue
         parent = parents.get(node)
         while parent is not None and not isinstance(parent, (ast.AsyncFunctionDef, ast.FunctionDef)):
@@ -1248,17 +1255,7 @@ def _team_identity_call_sites(source: str, path_label: str) -> list[tuple[str, s
 
 
 def _direct_team_identity_calls() -> list[tuple[str, str]]:
-    paths = [
-        REPO_ROOT / "server/src/aweb/coordination/routes/tasks.py",
-        REPO_ROOT / "server/src/aweb/coordination/routes/workspaces.py",
-        REPO_ROOT / "server/src/aweb/coordination/routes/team_roles.py",
-        REPO_ROOT / "server/src/aweb/coordination/routes/team_instructions.py",
-        REPO_ROOT / "server/src/aweb/coordination/routes/repos.py",
-        REPO_ROOT / "server/src/aweb/routes/apps.py",
-        REPO_ROOT / "server/src/aweb/routes/connect.py",
-        REPO_ROOT / "server/src/aweb/routes/events.py",
-        REPO_ROOT / "server/src/aweb/routes/hook_bindings.py",
-    ]
+    paths = sorted((REPO_ROOT / "server/src/aweb").rglob("*.py"))
     rows: list[tuple[str, str]] = []
     for path in paths:
         rows.extend(_team_identity_call_sites(path.read_text(), str(path.relative_to(REPO_ROOT))))
@@ -1318,6 +1315,8 @@ def test_route_grant_scope_declarations_are_known_and_reviewable():
 
 def test_the_call_site_guard_sees_every_call_with_its_enclosing_function():
     source = """
+from aweb.team_auth_deps import get_team_identity as root_auth
+
 async def reviewed(request, db):
     return await get_team_identity(request, db)
 
@@ -1328,22 +1327,55 @@ async def unreviewed(request, db):
 
 def unrelated(request):
     return other(request)
+
+async def aliased(request, db):
+    return await root_auth(request, db)
+
+async def qualified(request, db):
+    return await auth.get_team_identity(request, db)
 """
     assert _team_identity_call_sites(source, "x.py") == [
+        ("x.py", "aliased"),
+        ("x.py", "qualified"),
         ("x.py", "reviewed"),
         ("x.py", "unreviewed"),
         ("x.py", "unreviewed"),
     ]
 
 
-def test_direct_team_identity_calls_are_reviewed_root_only_sites():
+def test_direct_team_identity_calls_have_explicit_reviewed_purposes():
+    # Authentication adapters call the root verifier only on their certificate
+    # branch; grants have their own scoped branch before these calls. Routes
+    # below deliberately require root certificate authority.
     assert _direct_team_identity_calls() == [
+        ("server/src/aweb/identity_auth_deps.py", "get_messaging_auth"),
+        ("server/src/aweb/mcp/auth.py", "_resolve_auth"),
         ("server/src/aweb/routes/apps.py", "_caller"),
         ("server/src/aweb/routes/connect.py", "get_team_info"),
         ("server/src/aweb/routes/events.py", "_subscription_read_identity"),
         ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route"),
         ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route"),
         ("server/src/aweb/routes/hook_bindings.py", "_owner_act_route"),
+    ]
+
+
+def test_direct_team_identity_inventory_sees_a_new_module(tmp_path, monkeypatch):
+    # Populate the old scanner's directories too: absence of a formerly named
+    # file must not be mistaken for detecting the new call.
+    for path in (
+        "coordination/routes/tasks.py", "coordination/routes/workspaces.py",
+        "coordination/routes/team_roles.py", "coordination/routes/team_instructions.py",
+        "coordination/routes/repos.py", "routes/apps.py", "routes/connect.py",
+        "routes/events.py", "routes/hook_bindings.py",
+    ):
+        source = tmp_path / "server/src/aweb" / path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_text("")
+    added = tmp_path / "server/src/aweb/routes/new_identity_consumer.py"
+    added.write_text("async def new_consumer(request, db):\n    return await get_team_identity(request, db)\n")
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    assert _direct_team_identity_calls() == [
+        ("server/src/aweb/routes/new_identity_consumer.py", "new_consumer"),
     ]
 
 @pytest.mark.asyncio

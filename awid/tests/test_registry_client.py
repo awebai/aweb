@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import aclosing
 import dataclasses
 import inspect
 import json
 import logging
-from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -140,26 +140,24 @@ async def test_registry_client_forces_identity_encoding_over_caller_header(
 
 
 @pytest.mark.asyncio
-async def test_registry_client_redirect_target_receives_no_request():
-    target_hits = 0
+@pytest.mark.parametrize("status", [200, 307])
+async def test_registry_client_redirect_target_receives_no_request(status):
+    requests = []
 
     def handler(request):
-        nonlocal target_hits
-        if request.url.host == "target.test":
-            target_hits += 1
-            return Response(200, json={})
-        return Response(307, headers={"Location": "http://target.test/final"})
+        requests.append((request.method, str(request.url)))
+        return Response(status, json={}, headers={"Location": "http://target.test/final"})
 
-    registry = RegistryClient(
-        registry_url="http://registry.test",
-        transport=MockTransport(handler),
-    )
-    try:
-        with pytest.raises(Exception):
-            await registry.health()
-    finally:
-        await registry.aclose()
-    assert target_hits == 0
+    async with aclosing(RegistryClient(
+        registry_url="http://registry.test", transport=MockTransport(handler),
+    )) as registry:
+        if status == 307:
+            with pytest.raises(RegistryError) as refused:
+                await registry.health()
+            assert refused.value.status_code == 307
+        else:
+            assert await registry.health() == {}
+    assert requests == [("GET", "http://registry.test/health")]
 
 
 class SlowResponseStream(httpx.AsyncByteStream):
