@@ -61,7 +61,12 @@ async def lock_native_actors(
     for subject in subjects:
         if not isinstance(subject, NativeMessagingSubject) or not all(
             isinstance(value, str) and value
-            for value in (subject.actor_id, subject.team_id, subject.principal, subject.signing_key_id)
+            for value in (
+                subject.actor_id,
+                subject.team_id,
+                subject.principal,
+                subject.signing_key_id,
+            )
         ):
             raise ContractError("invalid", "actor binding")
         try:
@@ -85,7 +90,9 @@ async def lock_native_actors(
             row["did_aw"] or row["did_key"], row["did_key"], str(row["agent_id"]), row["team_id"]
         )
         if (current.principal, current.signing_key_id, current.team_id) != (
-            subject.principal, subject.signing_key_id, subject.team_id
+            subject.principal,
+            subject.signing_key_id,
+            subject.team_id,
         ):
             raise ContractError("stale", "current actor binding")
         facts.append(current)
