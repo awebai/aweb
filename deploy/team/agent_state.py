@@ -29,7 +29,8 @@ run/custody.sock in each custody root (none by default: the container's seats
 are local identities, not grant homes). Each is recorded in the manifest; any
 other socket or FIFO refuses the capture. Links come after every other member.
 
-restore copies the ciphertext into a private directory and checks it against
+restore copies the ciphertext into a private directory beside the target
+(removed when it ends) and checks it against
 the manifest's digest, decrypts it once to check every member and the count
 before anything is written, then decrypts it again into a target where
 nothing is, under a parent no one but root or this user can change, comparing
@@ -37,7 +38,7 @@ each member with the checked one. It refuses unless no container with the
 given name exists on this host.
 
 Every age process runs under a deadline, and is killed and reaped on any
-failure, interruption or timeout; a partial ciphertext is removed, and a
+failure, interruption (SIGINT), termination (SIGTERM) or timeout; a partial ciphertext is removed, and a
 partial restore is named as incomplete and left for inspection.
 
 Encryption does not protect the state on its source host: whoever is root
@@ -53,6 +54,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -191,20 +193,21 @@ def settle(stream: BinaryIO, failed: bool) -> str | None:
 
 
 def read_whole(read: Callable[[], BinaryIO], each: Callable[[tarfile.TarFile], object]) -> None:
-    """One whole read of the stream, ended on every path: a failure aborts
-    the stream (an age child is killed and reaped) and reports what the
-    abort said beside the first error."""
+    """One whole read of the stream, ended on every path, its final drain
+    and close included: a failure aborts the stream (an age child is killed
+    and reaped) and reports what the abort said beside the first error."""
     stream = read()
     try:
         with tarfile.open(fileobj=stream, mode="r|") as tar:
             each(tar)
+        settle(stream, False)
     except (Refused, tarfile.TarError, OSError) as error:
         said = settle(stream, True)
-        raise Refused(f"{error}" + (f"; {said}" if said else "")) from None
+        message = str(error)
+        raise Refused(message + (f"; {said}" if said and said not in message else "")) from None
     except BaseException:
         settle(stream, True)
         raise
-    settle(stream, False)
 
 
 def restore(read: Callable[[], BinaryIO], target: Path, count: int) -> int:
@@ -249,6 +252,15 @@ def restore(read: Callable[[], BinaryIO], target: Path, count: int) -> int:
 
 
 # --- child processes ---------------------------------------------------------
+
+
+class Terminated(BaseException):
+    """SIGTERM, raised where the process is, so that every owned child is
+    ended as on an interrupt."""
+
+
+def terminate(signum: int, frame: object) -> None:
+    raise Terminated()
 
 
 class Child:
@@ -449,7 +461,9 @@ def restore_command(args: argparse.Namespace) -> None:
     name = manifest["ciphertext"]["file"]
     if PurePosixPath(name).name != name or not parts(name):
         raise Refused(f"the manifest names {name!r}, not a file of the backup")
-    private = Path(tempfile.mkdtemp(prefix="agent-state-restore-"))
+    # The private copy sits beside the target, under the parent checked for it.
+    secure_parent(args.target)
+    private = Path(tempfile.mkdtemp(prefix=".agent-state-restore-", dir=args.target.parent))
     try:
         copy = private / "state.tar.age"
         shutil.copyfile(args.backup / name, copy)
@@ -482,11 +496,19 @@ def main(argv: list[str]) -> int:
     restore_parser.add_argument("--identity", type=Path, required=True)
     restore_parser.add_argument("--target", type=Path, required=True)
     args = parser.parse_args(argv)
+    signal.signal(signal.SIGTERM, terminate)
     try:
         (capture_command if args.command == "capture" else restore_command)(args)
     except (Refused, OSError) as refused:
         print(f"agent_state: {refused}", file=sys.stderr)
         return 1
+    except (Terminated, KeyboardInterrupt) as stopped:
+        incomplete = ""
+        if args.command == "restore" and os.path.lexists(args.target):
+            incomplete = f"; {args.target} is incomplete and left for inspection"
+        print(f"agent_state: {'terminated' if isinstance(stopped, Terminated) else 'interrupted'}; its age child"
+              f" was killed and reaped{incomplete}", file=sys.stderr)
+        return 143 if isinstance(stopped, Terminated) else 130
     return 0
 
 

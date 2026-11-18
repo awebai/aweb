@@ -328,3 +328,89 @@ def test_an_age_binary_other_than_the_pinned_one_refuses(tmp_path):
     impostor.chmod(0o755)
     with pytest.raises(agent_state.Refused, match="is not the pinned age binary"):
         agent_state.pinned_age(impostor, "0" * 64)
+
+
+def test_an_interrupt_while_the_last_read_drains_the_child_kills_and_reaps_it(tmp_path):
+    # Reproduced by servers: a child that writes a whole archive and then
+    # sleeps holds the final drain; an interrupt there must still end it.
+    import signal
+    import threading
+
+    command = emits(tmp_path, "drain", TWO, "time.sleep(600)")
+    children = []
+
+    def read():
+        children.append(agent_state.Decrypted(command, 600))
+        return children[-1]
+
+    threading.Timer(1.0, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
+    with pytest.raises(KeyboardInterrupt):
+        agent_state.read_whole(read, lambda tar: list(tar))
+    assert children[0].process.returncode is not None
+
+
+def test_a_failed_exit_found_at_the_final_drain_is_reported_once_and_reaped(tmp_path):
+    command = emits(tmp_path, "late-failure", TWO, "sys.exit(1)")
+    children = []
+
+    def read():
+        children.append(agent_state.Decrypted(command, 30))
+        return children[-1]
+
+    with pytest.raises(agent_state.Refused) as refused:
+        agent_state.read_whole(read, lambda tar: list(tar))
+    assert str(refused.value).count("exited 1") == 1
+    assert children[0].process.returncode == 1
+
+
+def test_a_terminated_cli_ends_its_age_child_and_leaves_no_partial(tmp_path):
+    # SIGTERM to the CLI is turned into the same cleanup as an interrupt. The
+    # docker and age here are stand-ins at the process boundary: what is
+    # tested is the CLI's ownership of its child, not docker or age.
+    import hashlib
+    import signal
+    import time
+
+    root = state(tmp_path)
+    out = tmp_path / "backup"
+    started = tmp_path / "started"
+    fake_age = tmp_path / "age"
+    fake_age.write_text(f"#!{sys.executable}\nimport sys, time\n"
+                        "if sys.argv[1:] == ['--version']:\n    print('v1.3.2'); sys.exit(0)\n"
+                        f"open({str(started)!r}, 'w').close()\n"
+                        "out = sys.argv[sys.argv.index('--output') + 1]\n"
+                        "open(out, 'wb').write(b'partial')\n"
+                        "time.sleep(600)\n")
+    fake_age.chmod(0o755)
+    pin = hashlib.sha256(fake_age.read_bytes()).hexdigest()
+    recipients = tmp_path / "recipients"
+    recipients.write_text("age1fictional\n")
+    # The writer is absent: a docker that lists no container.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "docker").write_text("#!/bin/sh\ncase \"$1\" in info) echo daemon-1 ;; *) ;; esac\n")
+    (bin_dir / "docker").chmod(0o755)
+    cli = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, sys.argv[1]); import agent_state; "
+         "agent_state.DOCKER_ENV['PATH'] = sys.argv[2]; sys.exit(agent_state.main(sys.argv[3:]))",
+         str(TEAM), str(bin_dir), "capture", "--state", str(root), "--container", "agent", "--age", str(fake_age),
+         "--age-sha256", pin, "--recipients", str(recipients), "--out", str(out), "--deadline", "600"],
+        stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        # The age stand-in marks that it has started writing; the signal comes after.
+        deadline = time.monotonic() + 30
+        while not started.exists():
+            assert time.monotonic() < deadline and cli.poll() is None, "the capture never started its age"
+            time.sleep(0.05)
+        cli.send_signal(signal.SIGTERM)
+        _, stderr = cli.communicate(timeout=30)
+    finally:
+        try:
+            os.killpg(cli.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    assert cli.returncode == 143 and "terminated" in stderr
+    assert sorted(path.name for path in out.iterdir()) == []
+    with pytest.raises(ProcessLookupError):
+        os.killpg(cli.pid, 0)
