@@ -10,7 +10,8 @@ checked before anything is written, on both sides:
 - its name is a path inside the archive, named once;
 - it is a regular file, a directory, a symbolic link or a hard link to an
   earlier regular file;
-- no member lies under a member that is a link, so extracting never writes
+- the archive's root, and every member another member lies under, is a
+  directory: never a file, and never a link, so extracting never writes
   through a link;
 - a link's target is relative and, resolved through the archive's own links,
   stays inside it.
@@ -87,10 +88,16 @@ def check(members: list[tarfile.TarInfo]) -> None:
                 raise Refused(f"{member.name}: an empty link")
             links[path] = member.linkname
         seen[path] = member
+    root = seen.get(())
+    if root is not None and not root.isdir():
+        raise Refused(f"{root.name}: the archive's root is not a directory")
     for path, member in seen.items():
         for depth in range(1, len(path)):
+            ancestor = "./" + "/".join(path[:depth])
             if path[:depth] in links:
-                raise Refused(f"{member.name}: under the link ./{'/'.join(path[:depth])}")
+                raise Refused(f"{member.name}: under the link {ancestor}")
+            if path[:depth] in seen and not seen[path[:depth]].isdir():
+                raise Refused(f"{member.name}: under {ancestor}, which is not a directory")
     for path, target in links.items():
         try:
             resolve(links, path[:-1], target, [0])

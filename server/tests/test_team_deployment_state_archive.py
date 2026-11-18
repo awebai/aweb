@@ -169,6 +169,10 @@ DIRECTORY = entry(".", tarfile.DIRTYPE)
     ([DIRECTORY, entry("./fifo", tarfile.FIFOTYPE)], "not a regular file, a directory or a link"),
     ([DIRECTORY, entry("./hard", tarfile.LNKTYPE, "./missing")], "a hard link to no earlier file"),
     ([DIRECTORY, entry("./x", data=b""), entry("./x", data=b"")], "named twice"),
+    ([DIRECTORY, entry("./file", data=b"bytes"), entry("./file/child", data=b"")], "under ./file, which is not a directory"),
+    ([DIRECTORY, entry("./file", data=b"bytes"), entry("./same", tarfile.LNKTYPE, "./file"),
+      entry("./same/child", data=b"")], "under ./same, which is not a directory"),
+    ([entry(".", data=b"bytes")], "the archive's root is not a directory"),
     ([DIRECTORY, entry("./a", tarfile.SYMTYPE, "")], "an empty link"),
 ])
 def test_unpack_refuses_before_writing_anything(tmp_path, members, refusal):
