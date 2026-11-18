@@ -121,6 +121,15 @@ class Registry:
                 }
                 if name in state.git_heads:
                     doc["gitHead"] = state.git_heads[name]
+                if not version_request:
+                    # npm view resolves an exact version from the packument.
+                    doc["versions"] = {
+                        doc["version"]: {
+                            "name": name,
+                            "version": doc["version"],
+                            "dist": doc["dist"],
+                        }
+                    }
                 self.answer(200, json.dumps(doc).encode())
 
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)

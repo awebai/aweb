@@ -4900,6 +4900,7 @@ Upgrade aw to the latest version
 
 Flags:
 - `-h, --help help for upgrade`
+- `--version string Install an exact released version; explicitly selecting an older version permits a downgrade with a warning`
 
 ## `version`
 

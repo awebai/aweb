@@ -998,7 +998,7 @@ func TestExecuteHostedPathConnectsAndClaimsHumanAgainstServers(t *testing.T) {
 	}
 
 	wantClaudeCalls := []string{
-		"plugin marketplace add " + claudeChannelMarketplace,
+		strings.TrimPrefix(marketplaceInstructionForTest(), "claude "),
 		"plugin install " + claudeChannelPlugin,
 	}
 	if len(*claudeCalls) != len(wantClaudeCalls) {

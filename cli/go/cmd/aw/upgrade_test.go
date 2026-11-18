@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -172,13 +173,13 @@ func TestVerifyChecksum(t *testing.T) {
 	correctChecksum := fmt.Sprintf("%x", hash)
 
 	t.Run("correct checksum passes", func(t *testing.T) {
-		if err := verifyChecksum(filePath, correctChecksum); err != nil {
+		if err := verifyChecksum(archiveChecksum{Path: filePath, SHA256: correctChecksum}); err != nil {
 			t.Errorf("verifyChecksum with correct checksum failed: %v", err)
 		}
 	})
 
 	t.Run("wrong checksum fails", func(t *testing.T) {
-		err := verifyChecksum(filePath, "0000000000000000000000000000000000000000000000000000000000000000")
+		err := verifyChecksum(archiveChecksum{Path: filePath, SHA256: "0000000000000000000000000000000000000000000000000000000000000000"})
 		if err == nil {
 			t.Error("verifyChecksum with wrong checksum should fail")
 		}
@@ -219,7 +220,7 @@ func TestExtractBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := extractBinary(archivePath, "aw", destDir); err != nil {
+	if err := extractBinary(binaryExtraction{ArchivePath: archivePath, BinaryName: "aw", Destination: destDir}); err != nil {
 		t.Fatalf("extractBinary failed: %v", err)
 	}
 
@@ -298,7 +299,7 @@ func TestExtractBinary_PathTraversal(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			err := extractBinary(archivePath, "aw", destDir)
+			err := extractBinary(binaryExtraction{ArchivePath: archivePath, BinaryName: "aw", Destination: destDir})
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected error for traversal-only archive")
@@ -331,23 +332,23 @@ func TestFindChecksum(t *testing.T) {
 	dir := t.TempDir()
 	checksumsPath := filepath.Join(dir, "checksums.txt")
 
-	content := "abc123def456  aw_0.7.0_linux_amd64.tar.gz\nfff000aaa111  aw_0.7.0_darwin_arm64.tar.gz\n"
+	content := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  aw_0.7.0_linux_amd64.tar.gz\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  aw_0.7.0_darwin_arm64.tar.gz\n"
 	if err := os.WriteFile(checksumsPath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Run("finds matching checksum", func(t *testing.T) {
-		got, err := findChecksum(checksumsPath, "aw_0.7.0_linux_amd64.tar.gz")
+		got, err := findChecksum(checksumLookup{Path: checksumsPath, ArtifactName: "aw_0.7.0_linux_amd64.tar.gz"})
 		if err != nil {
 			t.Fatalf("findChecksum failed: %v", err)
 		}
-		if got != "abc123def456" {
-			t.Errorf("got %q, want %q", got, "abc123def456")
+		if got != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+			t.Errorf("got %q, want %q", got, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 		}
 	})
 
 	t.Run("returns error for missing file", func(t *testing.T) {
-		_, err := findChecksum(checksumsPath, "aw_0.7.0_windows_amd64.zip")
+		_, err := findChecksum(checksumLookup{Path: checksumsPath, ArtifactName: "aw_0.7.0_windows_amd64.zip"})
 		if err == nil {
 			t.Error("expected error for missing checksum entry")
 		}
@@ -355,7 +356,7 @@ func TestFindChecksum(t *testing.T) {
 }
 
 func TestDownloadFile_RejectsHTTP(t *testing.T) {
-	err := downloadFile(filepath.Join(t.TempDir(), "test"), "http://example.com/file")
+	err := downloadFile(releaseDownload{Destination: filepath.Join(t.TempDir(), "test"), URL: "http://example.com/file"})
 	if err == nil {
 		t.Error("expected error for non-HTTPS URL")
 	}
@@ -689,4 +690,198 @@ func testCommandPath(parts ...string) *cobra.Command {
 		current = child
 	}
 	return current
+}
+
+func TestSelfUpdateMissingChecksumRefusesBeforeDownload(t *testing.T) {
+	old := version
+	version = "1.0.0"
+	t.Cleanup(func() { version = old })
+	archive := fmt.Sprintf("aw_2.0.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		archive = strings.TrimSuffix(archive, "tar.gz") + "zip"
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(releaseInfo{TagName: "v2.0.0", Assets: []releaseAsset{{Name: archive, BrowserDownloadURL: "https://127.0.0.1:1/" + archive}}})
+	}))
+	defer server.Close()
+	var out bytes.Buffer
+	err := selfUpdate(&out, server.URL)
+	if err == nil || !strings.Contains(err.Error(), archive) || !strings.Contains(err.Error(), "Retry aw upgrade when the release includes checksums.txt.") {
+		t.Fatalf("missing actionable digest refusal: %v", err)
+	}
+}
+
+func TestReplaceBinaryDoesNotTouchPredictableNeighbors(t *testing.T) {
+	dir := t.TempDir()
+	current, next, userFile := filepath.Join(dir, "aw"), filepath.Join(dir, "download"), filepath.Join(dir, "user-data")
+	for p, data := range map[string]string{current: "serving", next: "new", userFile: "keep"} {
+		if err := os.WriteFile(p, []byte(data), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(userFile, current+".new"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(current+".old", []byte("keep-old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceBinary(binaryReplacement{CurrentPath: current, CandidatePath: next}); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]string{current: "new", userFile: "keep", current + ".old": "keep-old"} {
+		got, err := os.ReadFile(p)
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q %v; want %q", p, got, err, want)
+		}
+	}
+}
+
+func TestUpgradeDigestRefusalKeepsServingBinary(t *testing.T) {
+	oldVersion := version
+	version = "1.0.0"
+	t.Cleanup(func() { version = oldVersion })
+	archiveName := fmt.Sprintf("aw_2.0.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		archiveName = strings.TrimSuffix(archiveName, "tar.gz") + "zip"
+	}
+	for _, digestCase := range []string{"missing entry", "mismatch"} {
+		t.Run(digestCase, func(t *testing.T) {
+			destination := filepath.Join(t.TempDir(), "aw")
+			original := []byte("the serving executable")
+			if err := os.WriteFile(destination, original, 0755); err != nil {
+				t.Fatal(err)
+			}
+			var server *httptest.Server
+			server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/repos/awebai/aw/releases/latest":
+					json.NewEncoder(w).Encode(releaseInfo{TagName: "v2.0.0", Assets: []releaseAsset{
+						{Name: archiveName, BrowserDownloadURL: server.URL + "/" + archiveName},
+						{Name: "checksums.txt", BrowserDownloadURL: server.URL + "/checksums.txt"},
+					}})
+				case r.URL.Path == "/checksums.txt":
+					name := archiveName
+					if digestCase == "missing entry" {
+						name = "other.tar.gz"
+					}
+					fmt.Fprintf(w, "%s  %s\n", strings.Repeat("0", 64), name)
+				default:
+					w.Write([]byte("corrupted archive"))
+				}
+			}))
+			defer server.Close()
+			previous := http.DefaultTransport
+			http.DefaultTransport = server.Client().Transport
+			t.Cleanup(func() { http.DefaultTransport = previous })
+			var out bytes.Buffer
+			err := selfUpdateTo(&out, upgradeLocation{APIBase: server.URL, Destination: destination})
+			if err == nil || !strings.Contains(err.Error(), archiveName) || !strings.Contains(err.Error(), "Retry aw upgrade") {
+				t.Fatalf("missing actionable refusal: %v", err)
+			}
+			got, readErr := os.ReadFile(destination)
+			if readErr != nil || !bytes.Equal(got, original) {
+				t.Fatalf("serving executable damaged: %q %v", got, readErr)
+			}
+		})
+	}
+}
+
+func TestOversizedArchiveBinaryRefusesBeforeCreatingOutput(t *testing.T) {
+	directory := t.TempDir()
+	archive := filepath.Join(directory, "large.tar.gz")
+	var encoded bytes.Buffer
+	compressed := gzip.NewWriter(&encoded)
+	writer := tar.NewWriter(compressed)
+	if err := writer.WriteHeader(&tar.Header{Name: "aw", Mode: 0755, Size: maxUpgradeBinaryBytes + 1, Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	// The real header declares the oversized file. Its body is unnecessary:
+	// refusal must precede opening any output or attempting to consume that body.
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, encoded.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(directory, "out")
+	if err := os.Mkdir(destination, 0700); err != nil {
+		t.Fatal(err)
+	}
+	err := extractBinary(binaryExtraction{ArchivePath: archive, BinaryName: "aw", Destination: destination})
+	if err == nil || !strings.Contains(err.Error(), "size limit") || !strings.Contains(err.Error(), "Retry aw upgrade") {
+		t.Fatalf("missing actionable size refusal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "aw")); !os.IsNotExist(err) {
+		t.Fatalf("created output before refusing oversized binary: %v", err)
+	}
+}
+
+func TestExplicitDowngradeUsesExactReleaseAndWarns(t *testing.T) {
+	previous := version
+	version = "2.0.0"
+	t.Cleanup(func() { version = previous })
+	archiveName := fmt.Sprintf("aw_1.0.0_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	if runtime.GOOS == "windows" {
+		archiveName = strings.TrimSuffix(archiveName, "tar.gz") + "zip"
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/awebai/aw/releases/tags/v1.0.0" {
+			t.Errorf("downgrade fetched %s instead of requested tag", r.URL.Path)
+		}
+		if err := json.NewEncoder(w).Encode(releaseInfo{TagName: "v1.0.0", Assets: []releaseAsset{{Name: archiveName, BrowserDownloadURL: "https://127.0.0.1:1/" + archiveName}}}); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	err := selfUpdateTo(&output, upgradeLocation{APIBase: server.URL, Destination: filepath.Join(t.TempDir(), "aw"), RequestedVersion: "1.0.0"})
+	if err == nil || !strings.Contains(err.Error(), "checksums.txt is missing") {
+		t.Fatalf("explicit version skipped digest refusal: %v", err)
+	}
+	warning := "Warning: downgrading aw v2.0.0 to v1.0.0 because --version 1.0.0 was explicitly requested. Older releases may contain known vulnerabilities."
+	if !strings.Contains(output.String(), warning) {
+		t.Fatalf("missing downgrade warning: %s", output.String())
+	}
+}
+
+func TestAutomaticUpgradeDoesNotSelectOlderRelease(t *testing.T) {
+	previous := version
+	version = "2.0.0"
+	t.Cleanup(func() { version = previous })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/awebai/aw/releases/latest" {
+			t.Errorf("unexpected artifact request: %s", r.URL.Path)
+		}
+		if err := json.NewEncoder(w).Encode(releaseInfo{TagName: "v1.0.0"}); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer server.Close()
+	var output bytes.Buffer
+	if err := selfUpdateTo(&output, upgradeLocation{APIBase: server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "downgrading") || strings.Contains(output.String(), "Updating") {
+		t.Fatalf("selected older release without --version: %s", output.String())
+	}
+}
+
+func TestChecksumRecordMustHaveExactlyTwoFields(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "checksums.txt")
+	checksum := strings.Repeat("a", 64)
+	for _, content := range []string{checksum + " aw.tgz extra\n", checksum + " aw.tgz\n" + checksum + " aw.tgz extra\n"} {
+		if err := os.WriteFile(file, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := findChecksum(checksumLookup{Path: file, ArtifactName: "aw.tgz"}); err == nil {
+			t.Fatalf("accepted malformed checksum record: %s", content)
+		}
+	}
+	if err := os.WriteFile(file, []byte(checksum+" *aw.tgz\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := findChecksum(checksumLookup{Path: file, ArtifactName: "aw.tgz"})
+	if err != nil || actual != checksum {
+		t.Fatalf("binary marker checksum refused: %q %v", actual, err)
+	}
 }

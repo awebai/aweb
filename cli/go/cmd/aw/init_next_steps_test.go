@@ -244,7 +244,7 @@ func TestInitNextStepsNameEachChannelPathOnce(t *testing.T) {
 	if !strings.Contains(text, "aw init --setup-channel") || strings.Contains(text, "claude plugin install") {
 		t.Fatalf("channel install listed twice:\n%s", text)
 	}
-	if n := strings.Count(text, "pi install npm:@awebai/pi@latest"); n != 1 {
+	if n := strings.Count(text, "pi install "+piChannelExtensionSource); n != 1 {
 		t.Fatalf("Pi install named %d times:\n%s", n, text)
 	}
 }
@@ -341,7 +341,7 @@ func TestInitOutcomeFollowsWhatGuidedSetupDid(t *testing.T) {
 			if got := strings.Contains(steps, "aw init --inject-docs"); got != tc.wantDocsStep {
 				t.Fatalf("inject-docs step shown=%t, want %t:\n%s", got, tc.wantDocsStep, text)
 			}
-			if n := strings.Count(text, "pi install npm:@awebai/pi@latest"); n > 1 {
+			if n := strings.Count(text, "pi install "+piChannelExtensionSource); n > 1 {
 				t.Fatalf("Pi install named %d times:\n%s", n, text)
 			}
 			if n := strings.Count(text, "claude --dangerously-load-development-channels"); n > 1 {

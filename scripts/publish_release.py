@@ -437,6 +437,8 @@ def publish_aw_npm(
         "windows/amd64": ("aw-windows-x64", "aw.exe", "aweb-a2a-gw.exe"),
         "windows/arm64": ("aw-windows-arm64", "aw.exe", "aweb-a2a-gw.exe"),
     }
+    if "-rc." not in version:
+        run(root, "python3", "cli/go/check_release_channels.py", "--require-published")
     npm_root = root / "cli/go/npm"
     ldflags = (
         f"-s -w -X main.version={version} -X main.commit={source_sha} "

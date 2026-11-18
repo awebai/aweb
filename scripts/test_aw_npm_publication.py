@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import functools
+from enum import Enum
 import hashlib
 import http.server
 import io
@@ -33,6 +34,11 @@ PACKAGES = [
     "aw-windows-arm64",
     "aw",
 ]
+
+
+class ReadbackVisibility(Enum):
+    IMMEDIATE = "immediate"
+    DELAYED = "delayed"
 
 
 class PublicationTest(unittest.TestCase):
@@ -118,7 +124,7 @@ class PublicationTest(unittest.TestCase):
         self.exercise_runnerless()
 
     def test_runnerless_lag_exhausts_one_budget_without_republishing(self):
-        self.exercise_runnerless(lag=True)
+        self.exercise_runnerless(visibility=ReadbackVisibility.DELAYED)
 
     def test_runnerless_build_commands_disable_notifier(self):
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -154,7 +160,7 @@ class PublicationTest(unittest.TestCase):
                         )
             self.assertEqual(registry.reads, set())
 
-    def exercise_runnerless(self, lag=False):
+    def exercise_runnerless(self, *, visibility=ReadbackVisibility.IMMEDIATE):
         # Real pack/inspect/publish/read-back logic with a fixture compiler
         # and an owned HTTP registry. No binary/runtime claim is made.
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -167,6 +173,11 @@ class PublicationTest(unittest.TestCase):
                 ROOT / "cli/go/npm",
                 root / "cli/go/npm",
                 ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            from release_compatibility_fixture import prepare_release_compatibility
+
+            compatibility_env = prepare_release_compatibility(
+                root=root, registry=registry, marketplace=root / "marketplace"
             )
             (root / "scripts").mkdir()
             shutil.copyfile(
@@ -187,6 +198,7 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
             )
             env = {
                 **fixture_env(),
+                **compatibility_env,
                 "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
                 "NPM_CONFIG_REGISTRY": registry.url,
                 "NPM_CONFIG_USERCONFIG": str(config),
@@ -201,10 +213,12 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
             }
             readbacks = []
             first_read = None
-            if lag:
+            if visibility is ReadbackVisibility.DELAYED:
 
                 def visible(name):
                     nonlocal first_read
+                    if name in {"@awebai/pi", "@awebai/claude-channel"}:
+                        return True
                     if first_read is None:
                         first_read = time.monotonic()
                     # One 4-second budget refuses the second package at 5s;
@@ -226,7 +240,7 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
                     str(arg).endswith("npm/readback.py") for arg in args
                 ):
                     readbacks.append(args)
-                    if lag:
+                    if visibility is ReadbackVisibility.DELAYED:
                         # Shorten only the public verifier's budget for this
                         # real-time HTTP control; no authority/HTTP substitution.
                         args += ("--deadline-seconds", "4", "--backoff-seconds", "1")
@@ -240,7 +254,7 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
                 mock.patch.object(publisher, "request_json", return_value=(404, {})),
                 mock.patch.object(publisher, "run", side_effect=observe_run),
             ):
-                if lag:
+                if visibility is ReadbackVisibility.DELAYED:
                     with self.assertRaisesRegex(
                         publisher.PublishRefusal, "uncertain at deadline"
                     ):
@@ -267,7 +281,8 @@ pathlib.Path(sys.argv[sys.argv.index("-o")+1]).write_bytes(b"fixture compiler ou
                     ("@awebai/" + p, kind)
                     for p in PACKAGES
                     for kind in ("version", "tag")
-                },
+                }
+                | {("@awebai/pi", "tag"), ("@awebai/claude-channel", "tag")},
             )
             self.assertEqual(
                 len(readbacks),

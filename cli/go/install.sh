@@ -16,7 +16,8 @@
 set -e
 
 REPO="awebai/aw"
-BINARY="aw"
+RELEASE_BASE_URL="${AW_RELEASE_BASE_URL:-https://github.com/awebai/aw/releases/download}"
+REQUESTED_VERSION="${AW_VERSION:-}"
 
 # Track where we installed for PATH warning messages
 LAST_INSTALL_PATH=""
@@ -97,16 +98,16 @@ resign_for_macos() {
 
     # Check if codesign is available
     if ! command -v codesign >/dev/null 2>&1; then
-        log_warning "codesign not found, skipping re-signing"
-        return 0
+        log_error "Cannot sign $binary_path. Install the macOS command line tools and retry the installer."
+        return 1
     fi
 
     log_info "Re-signing binary for macOS..."
-    codesign --remove-signature "$binary_path" 2>/dev/null || true
     if codesign --force --sign - "$binary_path"; then
         log_success "Binary re-signed for this machine"
     else
-        log_warning "Failed to re-sign binary (non-fatal)"
+        log_error "Cannot sign $binary_path. Install the macOS command line tools and retry the installer."
+        return 1
     fi
 }
 
@@ -116,17 +117,15 @@ get_latest_version() {
 
     log_info "Fetching latest release..."
 
-    if command -v curl >/dev/null 2>&1; then
-        response=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest")
-    elif command -v wget >/dev/null 2>&1; then
-        response=$(wget -qO- "https://api.github.com/repos/$REPO/releases/latest")
-    else
-        log_error "Neither curl nor wget found. Please install one of them."
-        exit 1
+    local metadata
+    metadata=$(mktemp) || return 1
+    if ! download_release_file "https://api.github.com/repos/$REPO/releases/latest" "$metadata"; then
+        rm -f "$metadata"
+        log_error "Could not read the latest release. Set AW_VERSION to a published version and retry the installer."
+        return 1
     fi
-
-    # Store full response for asset checking
-    RELEASE_JSON="$response"
+    response=$(cat "$metadata")
+    rm -f "$metadata"
 
     # Extract version from tag_name field (vX.Y.Z -> X.Y.Z)
     VERSION=$(echo "$response" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/' | head -1)
@@ -139,48 +138,249 @@ get_latest_version() {
     log_info "Latest version: v$VERSION"
 }
 
-# Check if release has a specific asset
-release_has_asset() {
-    local asset_name=$1
-
-    if echo "$RELEASE_JSON" | grep -Fq "\"name\": \"$asset_name\""; then
-        return 0
-    fi
-
-    return 1
-}
-
-# Verify checksum of downloaded file
+# Require exactly one well-formed SHA-256 entry for this exact archive name.
 verify_checksum() {
-    local file="$1"
-    local checksums_file="$2"
-    local filename
+    local file="$1" checksums_file="$2" filename expected actual
     filename=$(basename "$file")
-    local expected actual
-
-    log_info "Verifying checksum..."
-
+    expected=$(awk -v name="$filename" '$2 == name || $2 == "*" name { if (NF != 2) print "invalid"; else print $1 }' "$checksums_file") || return 1
+    if [[ ! "$expected" =~ ^[[:xdigit:]]{64}$ ]]; then
+        log_error "Cannot verify $filename: missing, duplicate or invalid checksum. Retry the installer when the release includes a valid checksums.txt."
+        return 1
+    fi
     if command -v sha256sum >/dev/null 2>&1; then
-        expected=$(grep "$filename" "$checksums_file" | awk '{print $1}')
         actual=$(sha256sum "$file" | awk '{print $1}')
     elif command -v shasum >/dev/null 2>&1; then
-        expected=$(grep "$filename" "$checksums_file" | awk '{print $1}')
         actual=$(shasum -a 256 "$file" | awk '{print $1}')
     else
-        log_error "sha256sum or shasum required for checksum verification"
-        echo "Install coreutils (Linux) or use macOS which includes shasum"
-        exit 1
+        log_error "Cannot verify $filename. Install sha256sum or shasum, then retry the installer."
+        return 1
     fi
-
+    expected=$(printf '%s' "$expected" | tr 'A-F' 'a-f')
     if [ "$expected" != "$actual" ]; then
-        log_error "Checksum verification failed!"
-        echo "  Expected: $expected"
-        echo "  Actual:   $actual"
-        exit 1
+        log_error "Digest mismatch for $filename. Retry the installer to download a fresh archive."
+        return 1
     fi
-
-    log_success "Checksum verified"
+    log_success "Checksum verified for $filename"
 }
+
+# HTTPS is required for every hop, including redirects.
+download_release_file() {
+    local url="$1" dest="$2"
+    if [[ "$url" != https://* ]]; then
+        log_error "Refusing insecure release URL. Retry the installer with an HTTPS release source."
+        return 1
+    fi
+    if command -v curl >/dev/null 2>&1; then
+        local status=0 code
+        code=$(curl --proto '=https' --proto-redir '=https' --max-redirs 10 --max-time 300 -fsSL -w '%{http_code}' -o "$dest" "$url") || status=$?
+        if [ "$code" = 404 ]; then return 44; fi
+        return "$status"
+    else
+        local status=0 response
+        response=$(mktemp) || return 1
+        wget --https-only --max-redirect=10 --timeout=300 --server-response -q -O "$dest" "$url" 2>"$response" || status=$?
+        if awk '$1 ~ /^HTTP\// { code=$2 } END { exit code != 404 }' "$response"; then status=44; fi
+        rm -f "$response"
+        return "$status"
+    fi
+}
+
+# BEGIN GENERATED RELEASE VERIFIER
+verify_signed_release() {
+    if ! command -v python3 >/dev/null 2>&1 || ! command -v openssl >/dev/null 2>&1; then
+        log_error "Cannot verify $1. Install Python 3 and OpenSSL with Ed25519 support, then retry the installer."
+        return 1
+    fi
+    python3 - "$1" "$2" "$3" "$4" <<'PY'
+from __future__ import annotations
+
+import argparse
+from enum import Enum
+import base64
+import hashlib
+import json
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import urllib.parse
+import urllib.request
+
+SCHEMA = "aw-release-manifest-v1"
+STATEMENT_SCHEMA = "aw-release-statement-v1"
+MAX_STATEMENT_BYTES = 256
+
+
+class ManifestCommand(Enum):
+    CREATE = "create"
+    VERIFY = "verify"
+    READBACK = "readback"
+    STATEMENT = "statement"
+    ATTACH = "attach-signature"
+
+
+HERE = Path(__file__).resolve().parent
+
+
+def version_key(value):
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:-rc\.([1-9]\d*))?", value)
+    if not match:
+        raise ValueError("invalid release version")
+    major, minor, patch, rc = match.groups()
+    return int(major), int(minor), int(patch), rc is None, int(rc or 0)
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate manifest JSON key")
+        result[key] = value
+    return result
+
+
+def parse_statement(statement):
+    """Enforce docs/install-integrity.md:28-39, the bounded canonical statement."""
+    if len(statement) > MAX_STATEMENT_BYTES:
+        raise ValueError("release statement exceeds 256 bytes")
+    match = re.fullmatch(
+        rb"aw-release-statement-v1\nversion=(v?[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[1-9][0-9]*)?)\n"
+        rb"source_commit=([0-9a-f]{40}(?:[0-9a-f]{24})?)\n"
+        rb"manifest_sha256=([0-9a-f]{64})\n",
+        statement,
+    )
+    if not match:
+        raise ValueError("invalid canonical release statement")
+    return tuple(field.decode("ascii") for field in match.groups())
+
+
+def create_statement(manifest_bytes):
+    manifest = json.loads(manifest_bytes, object_pairs_hook=unique_object)
+    statement = (
+        f"{STATEMENT_SCHEMA}\nversion={manifest['version']}\n"
+        f"source_commit={manifest['source_commit']}\n"
+        f"manifest_sha256={hashlib.sha256(manifest_bytes).hexdigest()}\n"
+    ).encode("ascii")
+    parse_statement(statement)
+    return statement
+
+
+def verify_manifest(
+    *, manifest_bytes, signature_bytes, keys, requested_version, running_version=""
+):
+    signature = json.loads(signature_bytes, object_pairs_hook=unique_object)
+    if not isinstance(signature, dict):
+        raise ValueError("release signature envelope must be an object")
+    public = base64.b64decode(keys.get(signature["key_id"], ""), validate=True)
+    signed = base64.b64decode(signature["signature"], validate=True)
+    statement = base64.b64decode(signature["statement"], validate=True)
+    if len(statement) > MAX_STATEMENT_BYTES:
+        raise ValueError("release statement exceeds 256 bytes")
+    if len(public) != 32 or len(signed) != 64:
+        raise ValueError("release signing key is not pinned or signature is malformed")
+    # Ed25519 SubjectPublicKeyInfo prefix followed by the pinned public key.
+    with tempfile.TemporaryDirectory(prefix="aw-release-verify-") as tmp:
+        directory = Path(tmp)
+        (directory / "key.der").write_bytes(
+            bytes.fromhex("302a300506032b6570032100") + public
+        )
+        (directory / "statement").write_bytes(statement)
+        (directory / "signature").write_bytes(signed)
+        result = subprocess.run(
+            [
+                "openssl",
+                "pkeyutl",
+                "-verify",
+                "-pubin",
+                "-keyform",
+                "DER",
+                "-inkey",
+                str(directory / "key.der"),
+                "-rawin",
+                "-in",
+                str(directory / "statement"),
+                "-sigfile",
+                str(directory / "signature"),
+            ],
+            capture_output=True,
+        )
+        if result.returncode:
+            raise ValueError(
+                "invalid publisher signature (OpenSSL with Ed25519 support is required)"
+            )
+    statement_version, statement_commit, statement_digest = parse_statement(statement)
+    if hashlib.sha256(manifest_bytes).hexdigest() != statement_digest:
+        raise ValueError("release manifest digest does not match signed statement")
+    manifest = json.loads(manifest_bytes, object_pairs_hook=unique_object)
+    if (
+        manifest.get("version") != statement_version
+        or manifest.get("source_commit") != statement_commit
+    ):
+        raise ValueError(
+            "release statement version or source commit differs from manifest"
+        )
+    if manifest.get("schema") != SCHEMA or not re.fullmatch(
+        r"[0-9a-f]{40}(?:[0-9a-f]{24})?", manifest.get("source_commit", "")
+    ):
+        raise ValueError("invalid release manifest schema or source commit")
+    version = version_key(manifest["version"])
+    if version < version_key(requested_version) or (
+        running_version
+        and running_version != "dev"
+        and version < version_key(running_version)
+    ):
+        raise ValueError(
+            "release manifest is older than requested_version or running version"
+        )
+    if version != version_key(requested_version):
+        raise ValueError(
+            "release manifest version does not match requested_version version"
+        )
+    artifacts = manifest["artifacts"]
+    if not isinstance(artifacts, dict) or not artifacts:
+        raise ValueError("release manifest must name its artifacts")
+    for name, entry in artifacts.items():
+        if (
+            not name
+            or Path(name).name != name
+            or any(c in name for c in "\\\r\n")
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", entry["sha256"])
+            or type(entry["size"]) is not int
+            or entry["size"] < 0
+        ):
+            raise ValueError("invalid artifact entry")
+    return manifest
+
+
+def stream_digest(stream):
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_artifact(file, manifest):
+    entry = manifest["artifacts"].get(file.name)
+    if entry is None:
+        raise ValueError(f"{file.name} is absent from the signed manifest")
+    with file.open("rb") as stream:
+        digest = stream_digest(stream)
+    if file.stat().st_size != entry["size"] or digest != entry["sha256"].lower():
+        raise ValueError(f"digest mismatch for {file.name}")
+
+
+import sys
+try:
+    keys = json.loads('{}', object_pairs_hook=unique_object)
+    artifact, manifest_path, signature_path, requested = sys.argv[1:]
+    manifest = verify_manifest(manifest_bytes=Path(manifest_path).read_bytes(), signature_bytes=Path(signature_path).read_bytes(), keys=keys, requested_version=requested)
+    verify_artifact(Path(artifact), manifest)
+except (OSError, ValueError, KeyError, TypeError) as error:
+    print(f"Cannot verify {sys.argv[1]}: {error}. Retry the installer from a current signed release.", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+# END GENERATED RELEASE VERIFIER
 
 # Returns a list of full paths to 'aw' found in PATH (earlier entries first)
 get_aw_paths_in_path() {
@@ -284,14 +484,60 @@ verify_installation() {
     fi
 }
 
+# The archive and output paths are explicit so refusal never loses its context.
+extract_release_binary() {
+    local archive="$1" output="$2" binary="${2##*/}" filename="${1##*/}"
+    case "$archive" in
+        *.tar.gz)
+            if ! tar -xzf "$archive" -O "$binary" > "$output"; then
+                log_error "Cannot extract $filename. Retry the installer to download a fresh archive."
+                return 1
+            fi
+            ;;
+        *.zip)
+            if ! command -v unzip >/dev/null 2>&1; then
+                log_error "Cannot extract $filename: unzip is missing. Install unzip and retry the installer."
+                return 1
+            fi
+            if ! unzip -p "$archive" "$binary" > "$output"; then
+                log_error "Cannot extract $filename. Retry the installer to download a fresh archive."
+                return 1
+            fi
+            ;;
+    esac
+}
+
+stage_verified_binary() {
+    local candidate="$1" destination="$2" archive_name="$3" staged
+    local install_dir="${destination%/*}"
+    if ! staged=$(mktemp "$install_dir/.aw-install.XXXXXX"); then
+        log_error "Cannot stage $archive_name for $destination. Check destination directory permissions and retry the installer."
+        return 1
+    fi
+    if ! cp "$candidate" "$staged" || ! chmod 755 "$staged" || ! mv -f "$staged" "$destination"; then
+        rm -f "$staged"
+        log_error "Cannot replace $destination from $archive_name. Check destination directory permissions and retry the installer."
+        return 1
+    fi
+}
+
 # Download and install from GitHub releases
 install_from_release() {
     local platform=$1
     local tmp_dir
     tmp_dir=$(mktemp -d)
 
-    # Get latest release version
-    get_latest_version
+    # An explicitly selected release never silently becomes latest.
+    if [ -n "$REQUESTED_VERSION" ]; then
+        VERSION="${REQUESTED_VERSION#v}"
+    else
+        if ! get_latest_version; then rm -rf "$tmp_dir"; return 1; fi
+    fi
+    if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-rc\.[1-9][0-9]*)?$ ]]; then
+        log_error "Invalid release version. Set AW_VERSION to a published version and retry the installer."
+        rm -rf "$tmp_dir"
+        return 1
+    fi
 
     # Construct download URL
     local ext="tar.gz"
@@ -301,78 +547,48 @@ install_from_release() {
         binary="aw.exe"
     fi
 
-    local archive_name="${binary}_${VERSION}_${platform}.${ext}"
-    local url="https://github.com/$REPO/releases/download/v$VERSION/$archive_name"
-    local checksums_url="https://github.com/$REPO/releases/download/v$VERSION/checksums.txt"
+    local archive_name="aw_${VERSION}_${platform}.${ext}"
+    local url="${RELEASE_BASE_URL%/}/v$VERSION/$archive_name"
+    local checksums_url="${RELEASE_BASE_URL%/}/v$VERSION/checksums.txt"
 
-    if ! release_has_asset "$archive_name"; then
-        log_warning "No prebuilt archive available for platform ${platform}."
+
+    if ! download_release_file "$checksums_url" "$tmp_dir/checksums.txt"; then
+        log_error "Cannot verify $archive_name: checksums.txt is unavailable. Retry the installer when the release includes checksums.txt."
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    log_info "Downloading $archive_name..."
+    if ! download_release_file "$url" "$tmp_dir/$archive_name"; then
+        log_error "Could not download $archive_name. Retry the installer to download a fresh archive."
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    if ! verify_checksum "$tmp_dir/$archive_name" "$tmp_dir/checksums.txt"; then
         rm -rf "$tmp_dir"
         return 1
     fi
 
-    # Check if checksums are available
-    local skip_checksum=""
-    if ! release_has_asset "checksums.txt"; then
-        log_warning "Checksums not available for this release, skipping verification"
-        skip_checksum=1
-    fi
-
-    log_info "Downloading $archive_name..."
-
-    cd "$tmp_dir"
-    if command -v curl >/dev/null 2>&1; then
-        if ! curl -fsSL -o "$archive_name" "$url"; then
-            log_error "Download failed"
-            cd - > /dev/null || cd "$HOME"
-            rm -rf "$tmp_dir"
-            return 1
-        fi
-        if [ -z "$skip_checksum" ]; then
-            if ! curl -fsSL -o "checksums.txt" "$checksums_url"; then
-                log_warning "Failed to download checksums, skipping verification"
-                skip_checksum=1
-            fi
-        fi
-    elif command -v wget >/dev/null 2>&1; then
-        if ! wget -q -O "$archive_name" "$url"; then
-            log_error "Download failed"
-            cd - > /dev/null || cd "$HOME"
-            rm -rf "$tmp_dir"
-            return 1
-        fi
-        if [ -z "$skip_checksum" ]; then
-            if ! wget -q -O "checksums.txt" "$checksums_url"; then
-                log_warning "Failed to download checksums, skipping verification"
-                skip_checksum=1
-            fi
-        fi
-    fi
-
-    # Verify checksum if available
-    if [ -z "$skip_checksum" ]; then
-        verify_checksum "$tmp_dir/$archive_name" "$tmp_dir/checksums.txt"
-    fi
-
-    # Extract archive
-    log_info "Extracting archive..."
-    if [ "$ext" = "tar.gz" ]; then
-        if ! tar -xzf "$archive_name"; then
-            log_error "Failed to extract archive"
-            rm -rf "$tmp_dir"
-            return 1
-        fi
+    local manifest_status=0
+    download_release_file "${RELEASE_BASE_URL%/}/v$VERSION/release-manifest.json" "$tmp_dir/release-manifest.json" || manifest_status=$?
+    if [ "$manifest_status" -eq 44 ]; then
+        log_warning "release-manifest.json is missing; publisher authentication is unavailable. This install requires the release SHA-256 digest. Retry the installer after signed releases are published for publisher verification."
+    elif [ "$manifest_status" -ne 0 ]; then
+        log_error "Cannot verify $archive_name: release-manifest.json could not be fetched. Retry the installer to fetch the complete release."
+        rm -rf "$tmp_dir"
+        return 1
     else
-        if ! command -v unzip >/dev/null 2>&1; then
-            log_error "unzip required but not found"
+        if ! download_release_file "${RELEASE_BASE_URL%/}/v$VERSION/release-manifest.sig" "$tmp_dir/release-manifest.sig" || ! verify_signed_release "$tmp_dir/$archive_name" "$tmp_dir/release-manifest.json" "$tmp_dir/release-manifest.sig" "$VERSION"; then
+            log_error "Cannot verify $archive_name: signed manifest verification failed. Retry the installer from a current signed release."
             rm -rf "$tmp_dir"
             return 1
         fi
-        if ! unzip -q "$archive_name"; then
-            log_error "Failed to extract archive"
-            rm -rf "$tmp_dir"
-            return 1
-        fi
+    fi
+    cd "$tmp_dir"
+
+    log_info "Extracting $archive_name..."
+    if ! extract_release_binary "$tmp_dir/$archive_name" "$tmp_dir/$binary"; then
+        rm -rf "$tmp_dir"
+        return 1
     fi
 
     # Determine install location
@@ -384,18 +600,15 @@ install_from_release() {
         mkdir -p "$install_dir"
     fi
 
-    # Install binary
-    log_info "Installing to $install_dir..."
-    if [[ -w "$install_dir" ]]; then
-        mv "$binary" "$install_dir/"
-        chmod +x "$install_dir/$binary"
-    else
-        sudo mv "$binary" "$install_dir/"
-        sudo chmod +x "$install_dir/$binary"
+    # Complete the private candidate before the single same-directory rename.
+    if ! resign_for_macos "$tmp_dir/$binary"; then
+        rm -rf "$tmp_dir"
+        return 1
     fi
-
-    # Re-sign for macOS to avoid Gatekeeper delays
-    resign_for_macos "$install_dir/$binary"
+    if ! stage_verified_binary "$tmp_dir/$binary" "$install_dir/$binary" "$archive_name"; then
+        rm -rf "$tmp_dir"
+        return 1
+    fi
 
     LAST_INSTALL_PATH="$install_dir/$binary"
     log_success "aw installed to $install_dir/$binary"
@@ -414,134 +627,6 @@ install_from_release() {
     return 0
 }
 
-# Check if Go is installed and meets minimum version
-check_go() {
-    if command -v go >/dev/null 2>&1; then
-        local go_version
-        go_version=$(go version | awk '{print $3}' | sed 's/go//')
-        log_info "Go detected: $(go version)"
-
-        # Extract major and minor version numbers
-        local major minor
-        major=$(echo "$go_version" | cut -d. -f1)
-        minor=$(echo "$go_version" | cut -d. -f2)
-
-        # Check if Go version is 1.21 or later
-        if [ "$major" -eq 1 ] && [ "$minor" -lt 21 ]; then
-            log_error "Go 1.21 or later is required (found: $go_version)"
-            echo ""
-            echo "Please upgrade Go:"
-            echo "  - Download from https://go.dev/dl/"
-            echo "  - Or use your package manager to update"
-            echo ""
-            return 1
-        fi
-
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Install using go install (fallback)
-install_with_go() {
-    log_info "Installing aw using 'go install'..."
-
-    if go install github.com/$REPO/cmd/aw@latest; then
-        log_success "aw installed successfully via go install"
-
-        # Record where we expect the binary to have been installed
-        local gobin bin_dir
-        gobin=$(go env GOBIN 2>/dev/null || true)
-        if [ -n "$gobin" ]; then
-            bin_dir="$gobin"
-        else
-            bin_dir="$(go env GOPATH)/bin"
-        fi
-        LAST_INSTALL_PATH="$bin_dir/aw"
-
-        # Re-sign for macOS to avoid Gatekeeper delays
-        resign_for_macos "$bin_dir/aw"
-
-        # Check if GOPATH/bin (or GOBIN) is in PATH
-        if [[ ":$PATH:" != *":$bin_dir:"* ]]; then
-            log_warning "$bin_dir is not in your PATH"
-            echo ""
-            echo "Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-            echo "  export PATH=\"\$PATH:$bin_dir\""
-            echo ""
-        fi
-
-        return 0
-    else
-        log_error "go install failed"
-        return 1
-    fi
-}
-
-# Build from source (last resort)
-build_from_source() {
-    log_info "Building aw from source..."
-
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
-
-    cd "$tmp_dir"
-    log_info "Cloning repository..."
-
-    if git clone --depth 1 https://github.com/$REPO.git; then
-        cd aw
-        log_info "Building binary..."
-
-        if go build -o aw ./cmd/aw; then
-            # Determine install location
-            local install_dir
-            if [[ -w /usr/local/bin ]]; then
-                install_dir="/usr/local/bin"
-            else
-                install_dir="$HOME/.local/bin"
-                mkdir -p "$install_dir"
-            fi
-
-            log_info "Installing to $install_dir..."
-            if [[ -w "$install_dir" ]]; then
-                mv aw "$install_dir/"
-            else
-                sudo mv aw "$install_dir/"
-            fi
-
-            # Re-sign for macOS to avoid Gatekeeper delays
-            resign_for_macos "$install_dir/aw"
-
-            log_success "aw installed to $install_dir/aw"
-            LAST_INSTALL_PATH="$install_dir/aw"
-
-            # Check if install_dir is in PATH
-            if [[ ":$PATH:" != *":$install_dir:"* ]]; then
-                log_warning "$install_dir is not in your PATH"
-                echo ""
-                echo "Add this to your shell profile (~/.bashrc, ~/.zshrc, etc.):"
-                echo "  export PATH=\"\$PATH:$install_dir\""
-                echo ""
-            fi
-
-            cd - > /dev/null || cd "$HOME"
-            rm -rf "$tmp_dir"
-            return 0
-        else
-            log_error "Build failed"
-            cd - > /dev/null || cd "$HOME"
-            rm -rf "$tmp_dir"
-            return 1
-        fi
-    else
-        log_error "Failed to clone repository"
-        rm -rf "$tmp_dir"
-        return 1
-    fi
-}
-
-# Main installation flow
 main() {
     echo ""
     echo "⚡ aw (aweb CLI) Installer"
@@ -558,49 +643,9 @@ main() {
         exit 0
     fi
 
-    log_warning "Failed to install from releases, trying alternative methods..."
-
-    # Try go install as fallback
-    if check_go; then
-        if install_with_go; then
-            verify_installation
-            exit 0
-        fi
-    fi
-
-    # Try building from source as last resort
-    log_warning "Falling back to building from source..."
-
-    if ! check_go; then
-        log_warning "Go is not installed"
-        echo ""
-        echo "aw requires Go 1.21 or later to build from source. You can:"
-        echo "  1. Install Go from https://go.dev/dl/"
-        echo "  2. Use your package manager:"
-        echo "     - macOS: brew install go"
-        echo "     - Ubuntu/Debian: sudo apt install golang"
-        echo "     - Other Linux: Check your distro's package manager"
-        echo ""
-        echo "After installing Go, run this script again."
-        exit 1
-    fi
-
-    if build_from_source; then
-        verify_installation
-        exit 0
-    fi
-
-    # All methods failed
-    log_error "Installation failed"
-    echo ""
-    echo "Manual installation:"
-    echo "  1. Download from https://github.com/$REPO/releases/latest"
-    echo "  2. Extract and move 'aw' to your PATH"
-    echo ""
-    echo "Or install from source:"
-    echo "  1. Install Go from https://go.dev/dl/"
-    echo "  2. Run: go install github.com/$REPO/cmd/aw@latest"
-    echo ""
+    log_error "Verified release installation failed. Retry the installer when the release is available with checksums.txt."
+    echo "For an explicit source build, choose a reviewed version and run:"
+    echo "  go install github.com/$REPO/cmd/aw@<version>"
     exit 1
 }
 

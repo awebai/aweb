@@ -300,12 +300,17 @@ publish and promotion commands. Release registry traffic must not depend on
 whether npm's unrelated self-update check is due in the operator's cache.
 
 
-The Claude marketplace does not duplicate channel or skills versions. Its npm
-sources omit `version`, so Claude resolves npm's public `latest`; the packaged
-`.claude-plugin/plugin.json` supplies the installed version and the candidate
-gate keeps it equal to `package.json`. A successful npm publication is therefore
-the complete release action—there is no marketplace-pointer commit or follow-up
-command.
+The independently moving Claude marketplace can follow public npm releases, but
+`aw` installs the immutable marketplace revision in
+`cli/go/internal/releaseverify/channels.json`. Its `aweb-channel` npm source must
+pin that mapping's exact channel version, rather than resolving `latest`.
+Before cutting an aw final, publish the mapped Pi and channel packages, commit
+the exact channel source version in the marketplace, and record that immutable
+revision in aw's compatibility mapping. The final publication check verifies both
+npm versions and the marketplace entry before publication. A staging marketplace
+branch can supply the revision without moving the field's default marketplace.
+Package publication alone does not update an already pinned aw installation;
+changing its compatibility mapping requires another reviewed aw release.
 
 GitHub omits tag-push events when more than three tags are pushed together, so
 never batch this step. When `awid-service` moves together with `aweb` or

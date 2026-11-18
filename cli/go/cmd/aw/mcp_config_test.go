@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/awebai/aw/internal/releaseverify"
 	"testing"
 )
 
@@ -30,8 +31,8 @@ func TestChannelMCPConfig(t *testing.T) {
 		t.Fatalf("expected command=npx, got %v", aweb["command"])
 	}
 	args, ok := aweb["args"].([]any)
-	if !ok || len(args) != 1 || args[0] != "@awebai/claude-channel" {
-		t.Fatalf("expected args=[@awebai/claude-channel], got %v", aweb["args"])
+	if !ok || len(args) != 2 || args[0] != "--yes" || args[1] != "@awebai/claude-channel@"+releaseverify.ChannelVersions().ClaudeChannel {
+		t.Fatalf("expected an exact compatibility-mapped channel package, got %v", aweb["args"])
 	}
 	if aweb["cwd"] != "/tmp/test-project" {
 		t.Fatalf("expected cwd=/tmp/test-project, got %v", aweb["cwd"])

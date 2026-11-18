@@ -1542,7 +1542,10 @@ class NpmRcContractTest(unittest.TestCase):
     def test_aw_workflow_carries_staged_final_declaration_to_distribution_tag(self):
         workflow = (ROOT / ".github/workflows/aw-release.yml").read_text()
         shell = textwrap.dedent(workflow.split("        run: |\n", 1)[1])
-        with tempfile.TemporaryDirectory() as directory:
+        from test_npm_readback import Registry
+        from release_compatibility_fixture import prepare_release_compatibility
+
+        with tempfile.TemporaryDirectory() as directory, Registry().serve() as registry:
             root = Path(directory)
             upstream, seed, remote = (
                 root / "upstream",
@@ -1566,6 +1569,9 @@ class NpmRcContractTest(unittest.TestCase):
                 ROOT / "cli/go/npm",
                 upstream / "cli/go/npm",
                 ignore=shutil.ignore_patterns("__pycache__"),
+            )
+            compatibility_env = prepare_release_compatibility(
+                root=upstream, registry=registry, marketplace=root / "marketplace"
             )
             manifest = upstream / "cli/go/npm/aw/package.json"
             package = json.loads(manifest.read_text())
@@ -1598,6 +1604,7 @@ class NpmRcContractTest(unittest.TestCase):
             (root / "runner").mkdir()
             env = {
                 **os.environ,
+                **compatibility_env,
                 "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
                 "REAL_GIT": shutil.which("git"),
                 "OWN_REMOTE": str(remote),

@@ -42,7 +42,7 @@ func TestInitNextStepLinesHostedPromoteChannelAndDashboard(t *testing.T) {
 		"aw claim-human --email <your-email>",
 		"claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
 		"Channel delivery works in any permission mode, including auto and plan.",
-		"pi install npm:@awebai/pi@latest",
+		"pi install " + piChannelExtensionSource,
 		"https://aweb.ai/docs/cli-tutorial.md",
 	} {
 		if !strings.Contains(text, want) {
@@ -69,7 +69,7 @@ func TestInitNextStepLinesLocalDirAllDoneStillShowsChannelLaunch(t *testing.T) {
 	if !strings.Contains(text, "Channel delivery works in any permission mode, including auto and plan.") {
 		t.Fatalf("missing the permission-mode guidance:\n%s", text)
 	}
-	if !strings.Contains(text, "pi install npm:@awebai/pi@latest") {
+	if !strings.Contains(text, "pi install "+piChannelExtensionSource) {
 		t.Fatalf("missing the Pi wake-up path:\n%s", text)
 	}
 	if !strings.Contains(text, "https://aweb.ai/docs/cli-tutorial.md") {
@@ -88,12 +88,12 @@ func TestChannelLaunchInstructionsCarryInstallLaunchWhyAndPi(t *testing.T) {
 	text := buf.String()
 
 	for _, want := range []string{
-		"claude plugin marketplace add awebai/claude-plugins",
+		marketplaceInstructionForTest(),
 		"claude plugin install aweb-channel@awebai-marketplace",
 		"claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace",
 		"Channel delivery works in any permission mode, including auto and plan.",
 		"confirm --dangerously-load-development-channels; that is expected",
-		"pi install npm:@awebai/pi@latest",
+		"pi install " + piChannelExtensionSource,
 		"sender's verification shown",
 	} {
 		if !strings.Contains(text, want) {

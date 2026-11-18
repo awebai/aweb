@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"github.com/awebai/aw/internal/releaseverify"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -65,15 +66,22 @@ func TestChannelPluginRunnerDefaultsToNotExecutingClaude(t *testing.T) {
 	}
 }
 
-func TestEnsureClaudeChannelPluginRunsMarketplaceAndInstall(t *testing.T) {
+func TestEnsureClaudeChannelPluginRequiresPinnedMarketplace(t *testing.T) {
 	withFakeClaudeOnPath(t)
 	calls := withFakeClaudePluginRunner(t, nil)
 	result := EnsureClaudeChannelPlugin(channelPluginOptions{RequireClaude: true})
+	marketplace, pinErr := releaseverify.ClaudeMarketplace()
+	if pinErr != nil {
+		if result.Error == nil || !strings.Contains(result.Error.Error(), "Retry with a published aw release") || len(*calls) != 0 {
+			t.Fatalf("missing actionable pin refusal: %+v calls %v", result, *calls)
+		}
+		return
+	}
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
 	want := [][]string{
-		{"plugin", "marketplace", "add", claudeChannelMarketplace},
+		{"plugin", "marketplace", "add", marketplace},
 		{"plugin", "install", claudeChannelPlugin},
 	}
 	if !reflect.DeepEqual(*calls, want) {
@@ -126,7 +134,7 @@ func TestEnsurePiChannelExtensionInstallsAndVerifiesWhenMissing(t *testing.T) {
 				return []byte("No packages installed\n"), nil
 			}
 			return []byte("User packages:\n  npm:@awebai/pi\n"), nil
-		case "install npm:@awebai/pi@latest --no-approve":
+		case "install " + piChannelExtensionSource + " --no-approve":
 			return []byte("installed\n"), nil
 		default:
 			return nil, errors.New("unexpected command")
@@ -166,7 +174,7 @@ func TestEnsurePiChannelExtensionReturnsInstallError(t *testing.T) {
 		return []byte("network down"), errors.New("boom")
 	})
 	result := EnsurePiChannelExtension()
-	if result.Error == nil || !strings.Contains(result.Error.Error(), "pi install npm:@awebai/pi@latest --no-approve") || !strings.Contains(result.Error.Error(), "network down") {
+	if result.Error == nil || !strings.Contains(result.Error.Error(), "pi install "+piChannelExtensionSource+" --no-approve") || !strings.Contains(result.Error.Error(), "network down") {
 		t.Fatalf("expected install error with output, got %+v", result)
 	}
 }
@@ -216,4 +224,12 @@ func TestChannelStartInstructionsLeavePermissionModeToUser(t *testing.T) {
 	if !strings.Contains(text, "Channel delivery works in any permission mode, including auto and plan.") {
 		t.Fatalf("missing permission-mode guidance:\n%s", text)
 	}
+}
+
+func marketplaceInstructionForTest() string {
+	source, err := releaseverify.ClaudeMarketplace()
+	if err != nil {
+		return "Retry with a published aw release"
+	}
+	return "claude plugin marketplace add " + source
 }

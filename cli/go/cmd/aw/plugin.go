@@ -968,7 +968,11 @@ func readAllBounded(r io.Reader, max int64) ([]byte, error) {
 // returns an error if src exceeds max, so a truncated artifact is never
 // accepted, hashed as provenance, or installed.
 func copyBounded(dst io.Writer, src io.Reader, max int64, h hash.Hash) (int64, error) {
-	n, err := io.Copy(io.MultiWriter(dst, h), io.LimitReader(src, max+1))
+	writer := dst
+	if h != nil {
+		writer = io.MultiWriter(dst, h)
+	}
+	n, err := io.Copy(writer, io.LimitReader(src, max+1))
 	if err != nil {
 		return n, err
 	}
@@ -1587,7 +1591,7 @@ func resolveTrustedPluginCommand(name string) (pluginResolution, error) {
 	if manifestPluginExists(dir, name) {
 		return pluginResolution{Kind: pluginResolutionManifest, Path: manifestPluginManifestPath(dir, name)}, nil
 	}
-	path, ok, err := resolveTrustedExternalPluginInDir(dir, name)
+	path, ok, err := resolveTrustedExternalPluginInDir(externalPluginLocation{Directory: dir, Name: name})
 	if err != nil {
 		return pluginResolution{}, err
 	}
@@ -1600,7 +1604,14 @@ func resolveTrustedPluginCommand(name string) (pluginResolution, error) {
 	return pluginResolution{Kind: pluginResolutionExternal, Path: path}, nil
 }
 
-func resolveTrustedExternalPluginInDir(dir, name string) (string, bool, error) {
+type externalPluginLocation struct {
+	Directory string
+	Name      string
+}
+
+// resolveTrustedExternalPluginInDir implements docs/install-integrity.md:20-22.
+func resolveTrustedExternalPluginInDir(location externalPluginLocation) (string, bool, error) {
+	dir, name := location.Directory, location.Name
 	path := filepath.Join(dir, pluginExecutableName(name))
 	info, err := os.Stat(path)
 	if err != nil {
@@ -1615,6 +1626,31 @@ func resolveTrustedExternalPluginInDir(dir, name string) (string, bool, error) {
 	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		return "", false, fmt.Errorf("plugin %q is not executable: %s", name, path)
 	}
+	provenance, err := loadPluginProvenance(pluginProvenancePath(dir, name))
+	if err != nil {
+		return "", false, err
+	}
+	// Legacy manually installed executables have no recorded digest. Managed
+	// installs must still contain exactly the bytes the user installed.
+	if provenance != nil {
+		f, err := os.Open(path)
+		if err != nil {
+			return "", false, err
+		}
+		h := sha256.New()
+		_, hashErr := copyBounded(io.Discard, f, maxPluginBytes, h)
+		closeErr := f.Close()
+		if hashErr != nil {
+			return "", false, hashErr
+		}
+		if closeErr != nil {
+			return "", false, closeErr
+		}
+		if provenance.Digest != "sha256:"+hex.EncodeToString(h.Sum(nil)) {
+			return "", false, fmt.Errorf("plugin %q no longer matches its installed digest. Reinstall it with aw plugin remove %s followed by aw plugin install <source>.", name, name)
+		}
+	}
+
 	return path, true, nil
 }
 

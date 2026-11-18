@@ -653,6 +653,10 @@ deploy-site: verify-site
 		echo "Advanced $(SITE_DEPLOY_BRANCH) to $$source_sha; verify the Render deploy and https://awid.ai"
 
 test-npm-exact-publish:
+	python3 cli/go/generate_install_verifier.py --check
+	python3 cli/go/check_release_channels.py
+	python3 -m unittest discover -s cli/go -p 'test_release_*.py'
+	python3 cli/go/npm/test-install-integrity.py
 	bash scripts/e2e/test_npm_exact_publish.sh
 
 test-pypi-exact-publish:

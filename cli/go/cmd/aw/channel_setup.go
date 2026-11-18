@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/awebai/aw/internal/releaseverify"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,15 +11,14 @@ import (
 )
 
 const (
-	claudeChannelMarketplace = "awebai/claude-plugins"
-	claudeChannelPlugin      = "aweb-channel@awebai-marketplace"
-	claudeChannelSpec        = "plugin:" + claudeChannelPlugin
+	claudeChannelPlugin = "aweb-channel@awebai-marketplace"
+	claudeChannelSpec   = "plugin:" + claudeChannelPlugin
 
 	piChannelExtensionPackage = "npm:@awebai/pi"
-	piChannelExtensionSource  = piChannelExtensionPackage + "@latest"
 )
 
 var (
+	piChannelExtensionSource      = piChannelExtensionPackage + "@" + releaseverify.ChannelVersions().Pi
 	runClaudeChannelPluginCommand = runClaudeChannelPluginCommandExec
 	runPiChannelExtensionCommand  = runPiChannelExtensionCommandExec
 )
@@ -52,8 +53,13 @@ func ensureClaudeChannelPlugin(opts channelPluginOptions, runCommand func(...str
 		}
 		return result
 	}
-	if err := runCommand("plugin", "marketplace", "add", claudeChannelMarketplace); err != nil {
-		result.Error = fmt.Errorf("claude plugin marketplace add %s: %w", claudeChannelMarketplace, err)
+	marketplace, err := releaseverify.ClaudeMarketplace()
+	if err != nil {
+		result.Error = err
+		return result
+	}
+	if err := runCommand("plugin", "marketplace", "add", marketplace); err != nil {
+		result.Error = fmt.Errorf("claude plugin marketplace add %s: %w", marketplace, err)
 		return result
 	}
 	if err := runCommand("plugin", "install", claudeChannelPlugin); err != nil {
@@ -182,7 +188,16 @@ func printChannelStartInstructions() {
 func printManualChannelInstructions() {
 	fmt.Fprintln(commandStdout)
 	fmt.Fprintln(commandStdout, "To enable the aweb channel for Claude Code, install the plugin:")
-	fmt.Fprintln(commandStdout, "    claude plugin marketplace add "+claudeChannelMarketplace)
+	printClaudeMarketplaceInstruction(commandStdout, "    ")
 	fmt.Fprintln(commandStdout, "    claude plugin install "+claudeChannelPlugin)
 	printChannelStartInstructions()
+}
+
+func printClaudeMarketplaceInstruction(out io.Writer, indent string) {
+	marketplace, err := releaseverify.ClaudeMarketplace()
+	if err != nil {
+		fmt.Fprintln(out, indent+err.Error())
+		return
+	}
+	fmt.Fprintln(out, indent+"claude plugin marketplace add "+marketplace)
 }

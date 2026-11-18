@@ -998,7 +998,7 @@ func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
 func printChannelLaunchInstructions(out io.Writer) {
 	fmt.Fprintln(out, "To use the channel directly inside Claude Code (real-time coordination),")
 	fmt.Fprintln(out, "install the plugin once:")
-	fmt.Fprintln(out, "  claude plugin marketplace add awebai/claude-plugins")
+	printClaudeMarketplaceInstruction(out, "  ")
 	fmt.Fprintln(out, "  claude plugin install aweb-channel@awebai-marketplace")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Then start Claude Code with this exact line:")
@@ -1023,7 +1023,7 @@ var channelLaunchWhyLines = []string{
 // channelPiPathLines name Pi as the other maintained wake-up path.
 var channelPiPathLines = []string{
 	"Pi is the other maintained wake-up path:",
-	"  pi install npm:@awebai/pi@latest",
+	"  pi install " + piChannelExtensionSource,
 	"Then start pi in the workspace. Mail and chat wake the session, with the",
 	"sender's verification shown.",
 }

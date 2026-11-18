@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/awebai/aw/internal/releaseverify"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -39,7 +40,7 @@ func channelMCPConfig(cwd string) map[string]any {
 		"mcpServers": map[string]any{
 			"aweb": map[string]any{
 				"command": "npx",
-				"args":    []string{"@awebai/claude-channel"},
+				"args":    []string{"--yes", "@awebai/claude-channel@" + releaseverify.ChannelVersions().ClaudeChannel},
 				"cwd":     cwd,
 			},
 		},

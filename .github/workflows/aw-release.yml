@@ -34,6 +34,9 @@ jobs:
           git clone --branch main \
             "https://x-access-token:${AW_REPO_TOKEN}@github.com/awebai/aw.git" \
             "$external"
+          if [[ "$version" != *-rc.* ]]; then
+            python3 cli/go/check_release_channels.py --require-published
+          fi
           find "$external" -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
           cp -a cli/go/. "$external/"
           git -C "$external" config user.name 'github-actions[bot]'
