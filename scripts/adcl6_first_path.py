@@ -28,7 +28,7 @@ import time
 import tomllib
 from urllib.parse import quote
 
-APPROVAL = "7dac79afab8d6c341b14f7afa1625d2e42a050bb"
+APPROVAL = "8fb07631144622cf72eee721c1dd8c9b40e40697"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
 SITE = "https://approval.adcl6.test"
@@ -43,6 +43,7 @@ STEP_OWNERS = {
         "human register",
         "human enroll start/material/confirm/activate",
         "human add through generic 428 approval",
+        "human refresh-binding through own-person holder and service",
         "id proof with stored evidence",
         "plain outside aw verify",
     ],
@@ -157,6 +158,7 @@ def archive_running_tree(root: Path, archive: Path) -> str:
                 "cli/go",
                 "awid",
                 "key-holder",
+                "naapp-lib",
                 "deploy/team",
             ],
             cwd=root,
@@ -180,7 +182,7 @@ def stage_product_source(
     archive = runtime / "source.tar"
     source_sha = archive_running_tree(root, archive)
     extract(
-        archive, source_sha, build / "holder", ("awid/", "key-holder/", "deploy/team/")
+        archive, source_sha, build / "holder", ("awid/", "key-holder/", "naapp-lib/", "deploy/team/")
     )
     go_tree = subprocess.check_output(
         ["git", "rev-parse", f"{source_sha}:cli/go"], cwd=root, text=True
