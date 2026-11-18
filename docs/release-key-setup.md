@@ -171,7 +171,8 @@ guidance. Save these four PASS lines, the exact source SHA/tool versions, the
 statement, signature, public key and both manifest files for sign-verify/Antares.
 Do not record secrets or enable traffic/debug logging. If any step fails, stop
 and send the error for review; no active/successor provisioning or pin publication
-follows a failed proof.
+follows a failed proof. Do not guess PINs, regenerate keys or change device
+configuration to work around a refusal.
 
 ## Device 2: active release key
 
