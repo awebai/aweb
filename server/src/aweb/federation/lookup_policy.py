@@ -17,8 +17,12 @@ class AuthorityLookupPolicy:
     busy: FederationErrorSpec
 
 
-SENDER_LOOKUP = AuthorityLookupPolicy(missing_identity=SENDER_IDENTITY_NOT_FOUND, busy=AUTHORITY_CAS_CONFLICT)
-CONTACT_LOOKUP = AuthorityLookupPolicy(missing_identity=RECIPIENT_IDENTITY_NOT_FOUND, busy=RESOLVER_BUSY)
+SENDER_LOOKUP = AuthorityLookupPolicy(
+    missing_identity=SENDER_IDENTITY_NOT_FOUND, busy=AUTHORITY_CAS_CONFLICT
+)
+CONTACT_LOOKUP = AuthorityLookupPolicy(
+    missing_identity=RECIPIENT_IDENTITY_NOT_FOUND, busy=RESOLVER_BUSY
+)
 
 
 class AuthorityResultState(StrEnum):

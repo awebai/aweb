@@ -22,8 +22,13 @@ from awid.federation_errors import FederationAuthorityError
 
 from .authority import AuthorityClaim, FederationAuthorityCore
 from .lookup_policy import (
-    AUTHORITY_CAS_CONFLICT, SENDER_IDENTITY_NOT_FOUND, RECIPIENT_IDENTITY_NOT_FOUND,
-    SENDER_LOOKUP, CONTACT_LOOKUP, AuthorityLookupPolicy, AuthorityResultState,
+    AUTHORITY_CAS_CONFLICT,
+    SENDER_IDENTITY_NOT_FOUND,
+    RECIPIENT_IDENTITY_NOT_FOUND,
+    SENDER_LOOKUP,
+    CONTACT_LOOKUP,
+    AuthorityLookupPolicy,
+    AuthorityResultState,
 )
 from .authority_state import AuthorityRepository, AuthoritySecurityToken
 from .authority_work import AuthorityLease, AuthorityWorkRepository, AuthorityWorkResult
@@ -92,7 +97,10 @@ class FederationAuthorityActivation:
         if not reason:
             raise FederationAuthorityError(AUTHORITY_CAS_CONFLICT.reason)
         # Discovery/evidence results are shared by sender and contact lookups.
-        if reason in {SENDER_IDENTITY_NOT_FOUND.reason, RECIPIENT_IDENTITY_NOT_FOUND.reason}:
+        if reason in {
+            SENDER_IDENTITY_NOT_FOUND.reason,
+            RECIPIENT_IDENTITY_NOT_FOUND.reason,
+        }:
             reason = lookup.missing_identity.reason
         raise FederationAuthorityError(
             reason,
