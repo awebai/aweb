@@ -21,21 +21,21 @@ func TestCreationAuthorityDecision(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		input   creationAuthorityInput
-		mode    string
+		mode    creationAuthorityMode
 		notice  string
 		refusal string
 	}{
-		{"stored key is not an input", creationAuthorityInput{SourceTeam: "dev:example.com"}, "invitation", "", ""},
-		{"no key with signer", creationAuthorityInput{SourceTeam: "dev:example.com", RequestedTeam: "dev:example.com"}, "invitation", "", ""},
-		{"workspace key with signer", creationAuthorityInput{SuppliedKey: true, KeyKind: "workspace", SourceTeam: "dev:example.com", RequestedTeam: "dev:example.com"}, "invitation", notice, ""},
-		{"workspace key without signer", creationAuthorityInput{SuppliedKey: true, KeyKind: "workspace"}, "", "", a5},
-		{"workspace key wrong team", creationAuthorityInput{SuppliedKey: true, KeyKind: "workspace", SourceTeam: "dev:example.com", RequestedTeam: "ops:example.com"}, "", "", "This workspace belongs to dev:example.com, not ops:example.com. " + a5},
-		{"person key wins", creationAuthorityInput{SuppliedKey: true, KeyKind: "person", SourceTeam: "dev:example.com"}, "api", "", ""},
-		{"absent field older server", creationAuthorityInput{SuppliedKey: true, SourceTeam: "dev:example.com"}, "api", "", ""},
-		{"unknown field older behavior", creationAuthorityInput{SuppliedKey: true, KeyKind: "future", SourceTeam: "dev:example.com"}, "api", "", ""},
-		{"stale team kind is unknown", creationAuthorityInput{SuppliedKey: true, KeyKind: "team", SourceTeam: "dev:example.com"}, "api", "", ""},
-		{"local controller", creationAuthorityInput{SourceTeam: "dev:example.com", LocalController: true}, "controller", "", ""},
-		{"founding with workspace key", creationAuthorityInput{SuppliedKey: true, KeyKind: "workspace", Founding: true, SourceTeam: "dev:example.com"}, "", "", "An agent's workspace key cannot found a new team. Use a setup key from the dashboard, a namespace controller with aw team admin create --byot --namespace <domain>, or the signed aw id team create --hosted operation."},
+		{"stored key is not an input", creationAuthorityInput{SourceTeam: "dev:example.com"}, creationAuthorityInvitation, "", ""},
+		{"no key with signer", creationAuthorityInput{SourceTeam: "dev:example.com", RequestedTeam: "dev:example.com"}, creationAuthorityInvitation, "", ""},
+		{"workspace key with signer", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindWorkspace, SourceTeam: "dev:example.com", RequestedTeam: "dev:example.com"}, creationAuthorityInvitation, notice, ""},
+		{"workspace key without signer", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindWorkspace}, creationAuthorityUnselected, "", a5},
+		{"workspace key wrong team", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindWorkspace, SourceTeam: "dev:example.com", RequestedTeam: "ops:example.com"}, creationAuthorityUnselected, "", "This workspace belongs to dev:example.com, not ops:example.com. " + a5},
+		{"person key wins", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindPerson, SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
+		{"absent field older server", creationAuthorityInput{SuppliedKey: true, SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
+		{"unknown field older behavior", creationAuthorityInput{SuppliedKey: true, KeyKind: "future", SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
+		{"stale team kind is unknown", creationAuthorityInput{SuppliedKey: true, KeyKind: "team", SourceTeam: "dev:example.com"}, creationAuthorityAPI, "", ""},
+		{"local controller", creationAuthorityInput{SourceTeam: "dev:example.com", LocalController: true}, creationAuthorityController, "", ""},
+		{"founding with workspace key", creationAuthorityInput{SuppliedKey: true, KeyKind: creationKeyKindWorkspace, Founding: true, SourceTeam: "dev:example.com"}, creationAuthorityUnselected, "", "An agent's workspace key cannot found a new team. Use a setup key from the dashboard, a namespace controller with aw team admin create --byot --namespace <domain>, or the signed aw id team create --hosted operation."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := decideCreationAuthority(tc.input)
@@ -105,8 +105,8 @@ func TestCreationAuthorityLegacyAndPersonMetadataKeepAPIPath(t *testing.T) {
 				}
 				json.NewEncoder(w).Encode(body)
 			}))
-			got, err := resolveAgentCreation(t.TempDir(), "aw_sk_input", server.URL, "", false)
-			if err != nil || got.Mode != "api" || got.Notice != "" {
+			got, err := resolveAgentCreation(agentCreationRequest{WorkingDir: t.TempDir(), APIKey: "aw_sk_input", AwebURL: server.URL})
+			if err != nil || got.Mode != creationAuthorityAPI || got.Notice != "" {
 				t.Fatalf("got=%+v err=%v", got, err)
 			}
 		})
@@ -240,7 +240,7 @@ func TestCreationWorkspaceKeyDoesNotHideMalformedSource(t *testing.T) {
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "dev:example.com", "api_key_kind": "workspace"})
 	}))
-	if _, err := resolveAgentCreation(root, "aw_sk_workspace", server.URL, "", false); err == nil {
+	if _, err := resolveAgentCreation(agentCreationRequest{WorkingDir: root, APIKey: "aw_sk_workspace", AwebURL: server.URL}); err == nil {
 		t.Fatal("malformed source enabled API bootstrap")
 	}
 }

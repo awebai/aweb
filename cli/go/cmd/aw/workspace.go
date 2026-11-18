@@ -488,7 +488,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return usageError("current worktree is missing aweb_url; run `aw init` first")
 	}
 
-	creation, err := resolveAgentCreation(workingDir, resolveInitAPIKey(), sourceServerURL, teamID, false)
+	creation, err := resolveAgentCreation(agentCreationRequest{WorkingDir: workingDir, APIKey: resolveInitAPIKey(), AwebURL: sourceServerURL, RequestedTeam: teamID})
 	if err != nil {
 		var refusal *apiKeyTeamReadError
 		if errors.As(err, &refusal) && refusal.status == http.StatusUnauthorized {
@@ -572,13 +572,13 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("check team key: %w", err)
 	}
 
-	if creation.Mode == "controller" && hasTeamKey {
+	if creation.Mode == creationAuthorityController && hasTeamKey {
 		_, err = addWorktreeViaLocalTeamKey(
 			worktreePath, root, branchName, branchCreated,
 			teamID, teamDomain, teamName, sourceServerURL, workingDir, sourceIdentityHome,
 			alias, role, state,
 		)
-	} else if creation.Mode == "api" {
+	} else if creation.Mode == creationAuthorityAPI {
 		_, err = addWorktreeViaCloudBootstrap(
 			worktreePath, root, branchName, branchCreated,
 			sourceServerURL, alias, role, state, resolveInitAPIKey(), creation.SelectedTeam,

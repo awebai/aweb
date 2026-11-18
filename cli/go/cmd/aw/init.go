@@ -182,12 +182,15 @@ func validateInitOutcomeFlags() error {
 		// A native acting workspace may create into the clean cwd. Other init
 		// outcomes keep the existing external-destination refusal.
 		if len(outcomes) == 0 && !initBYOD && initDomain == "" && initUsername == "" {
-			wd, _ := os.Getwd()
-			creator, err := resolveAgentCreation(wd, "", "", "", false)
+			wd, err := os.Getwd()
 			if err != nil {
 				return err
 			}
-			if creator.Mode == "invitation" || creator.Mode == "controller" {
+			creator, err := resolveAgentCreation(agentCreationRequest{WorkingDir: wd})
+			if err != nil {
+				return err
+			}
+			if creator.Mode == creationAuthorityInvitation || creator.Mode == creationAuthorityController {
 				return nil
 			}
 		}
@@ -635,7 +638,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	creationDir, _ := os.Getwd()
+	creationDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	apiKey := resolveInitAPIKey()
 	var apiSelected *apiKeyCreationTeam
 	// Existing certificates still reconnect normally. An explicitly selected
@@ -649,12 +655,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		creation, err := resolveAgentCreation(creationDir, apiKey, base, "", false)
+		creation, err := resolveAgentCreation(agentCreationRequest{WorkingDir: creationDir, APIKey: apiKey, AwebURL: base})
 		if err != nil {
 			return err
 		}
 		apiSelected = creation.SelectedTeam
-		if creation.Mode == "invitation" || creation.Mode == "controller" {
+		if creation.Mode == creationAuthorityInvitation || creation.Mode == creationAuthorityController {
 			if !selectedHome.External() {
 				return usageError("creation requires a fresh target directory; use aw init --join-from <workspace> in the new directory")
 			}
@@ -675,7 +681,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if apiKey != "" {
-		wd, _ := os.Getwd()
+		wd := creationDir
 		awebURL, err := resolveAPIKeyInitAwebURL()
 		if err != nil {
 			return err

@@ -649,7 +649,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := resolveAgentCreation(creationTarget, resolveInitAPIKey(), base, "", true); err != nil {
+		if _, err := resolveAgentCreation(agentCreationRequest{WorkingDir: creationTarget, APIKey: resolveInitAPIKey(), AwebURL: base, Founding: true}); err != nil {
 			return err
 		}
 	}
@@ -1560,13 +1560,13 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		if err != nil {
 			return err
 		}
-		creation, err = resolveAgentCreation(inviteAnchorDir, apiKey, base, opts.ExpectedTeamID, false)
+		creation, err = resolveAgentCreation(agentCreationRequest{WorkingDir: inviteAnchorDir, APIKey: apiKey, AwebURL: base, RequestedTeam: opts.ExpectedTeamID})
 		if err != nil {
 			return err
 		}
 	}
 	printCreationAuthority(creation)
-	apiKeyBootstrapMode := creation.Mode == "api"
+	apiKeyBootstrapMode := creation.Mode == creationAuthorityAPI
 	opts.APIKey = apiKey
 	plans := make([]teamHumanAddedAgent, 0, len(resolvedSpecs))
 	for _, spec := range resolvedSpecs {

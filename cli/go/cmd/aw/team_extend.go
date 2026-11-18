@@ -299,7 +299,7 @@ func selectTeamExtendCreation(wd string, authority teamExtendAuthority) (teamExt
 		if err != nil {
 			return teamExtendAuthority{}, err
 		}
-		if selected.APIKeyKind == "workspace" {
+		if selected.APIKeyKind == creationKeyKindWorkspace {
 			requested := teamID
 			if requested == "" {
 				requested = selected.CanonicalTeamID
@@ -329,7 +329,7 @@ func selectTeamExtendCreation(wd string, authority teamExtendAuthority) (teamExt
 			if ok {
 				anchor = candidate.HomeDir
 			}
-			creation, err := resolveAgentCreation(anchor, apiKey, base, requested, false, selected)
+			creation, err := resolveAgentCreation(agentCreationRequest{WorkingDir: anchor, APIKey: apiKey, AwebURL: base, RequestedTeam: requested, SelectedTeam: selected})
 			if err != nil {
 				return teamExtendAuthority{}, err
 			}

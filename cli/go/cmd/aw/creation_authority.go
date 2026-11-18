@@ -14,9 +14,35 @@ const creationWorkspaceNotice = "Using this workspace's signed invitation; the s
 const creationA5 = "This is an agent's workspace key. Run creation from that agent's workspace, or use a setup key from the dashboard. To create here from another workspace, use aw init --join-from <workspace>."
 const creationFoundingRefusal = "An agent's workspace key cannot found a new team. Use a setup key from the dashboard, a namespace controller with aw team admin create --byot --namespace <domain>, or the signed aw id team create --hosted operation."
 
+type creationAuthorityMode string
+
+const (
+	creationAuthorityUnselected creationAuthorityMode = ""
+	creationAuthorityAPI        creationAuthorityMode = "api"
+	creationAuthorityInvitation creationAuthorityMode = "invitation"
+	creationAuthorityController creationAuthorityMode = "controller"
+)
+
+type creationKeyKind string
+
+const (
+	creationKeyKindUnspecified creationKeyKind = ""
+	creationKeyKindPerson      creationKeyKind = "person"
+	creationKeyKindWorkspace   creationKeyKind = "workspace"
+)
+
+type agentCreationRequest struct {
+	WorkingDir    string
+	APIKey        string
+	AwebURL       string
+	RequestedTeam string
+	Founding      bool
+	SelectedTeam  *apiKeyCreationTeam
+}
+
 type creationAuthorityInput struct {
 	SuppliedKey     bool
-	KeyKind         string
+	KeyKind         creationKeyKind
 	SourceTeam      string
 	RequestedTeam   string
 	LocalController bool
@@ -24,7 +50,7 @@ type creationAuthorityInput struct {
 }
 
 type creationAuthority struct {
-	Mode         string
+	Mode         creationAuthorityMode
 	Notice       string
 	SelectedTeam *apiKeyCreationTeam
 	SourceTeam   string
@@ -32,17 +58,18 @@ type creationAuthority struct {
 
 // Only an authoritative workspace classification changes a supplied key's
 // behavior. Missing and future kinds retain the released API path.
+// Implements docs/grow-team.md:38-56 and docs/cli-identity-selection.md:43-49.
 func decideCreationAuthority(in creationAuthorityInput) (creationAuthority, error) {
-	if in.SuppliedKey && in.KeyKind != "workspace" {
-		return creationAuthority{Mode: "api"}, nil
+	if in.SuppliedKey && in.KeyKind != creationKeyKindWorkspace {
+		return creationAuthority{Mode: creationAuthorityAPI}, nil
 	}
 	if in.SuppliedKey && in.Founding {
 		return creationAuthority{}, fmt.Errorf("%s", creationFoundingRefusal)
 	}
 	if in.SourceTeam != "" && (in.RequestedTeam == "" || in.SourceTeam == in.RequestedTeam) {
-		mode := "invitation"
+		mode := creationAuthorityInvitation
 		if in.LocalController {
-			mode = "controller"
+			mode = creationAuthorityController
 		}
 		notice := ""
 		if in.SuppliedKey {
@@ -62,17 +89,14 @@ func decideCreationAuthority(in creationAuthorityInput) (creationAuthority, erro
 // Inspect the selected acting principal, never a stored workspace API key.
 // Issuer ancestry and current membership authority are verified by the existing
 // invitation path when it signs; this preflight only selects that path.
-func resolveAgentCreation(workingDir, apiKey, awebURL, requestedTeam string, founding bool, preselected ...*apiKeyCreationTeam) (creationAuthority, error) {
-	input := creationAuthorityInput{SuppliedKey: strings.TrimSpace(apiKey) != "", RequestedTeam: requestedTeam, Founding: founding}
-	var selected *apiKeyCreationTeam
+func resolveAgentCreation(request agentCreationRequest) (creationAuthority, error) {
+	input := creationAuthorityInput{SuppliedKey: strings.TrimSpace(request.APIKey) != "", RequestedTeam: request.RequestedTeam, Founding: request.Founding}
+	selected := request.SelectedTeam
 	if input.SuppliedKey {
-		if len(preselected) > 0 {
-			selected = preselected[0]
-		}
 		if selected == nil {
 			ctx, cancel := commandAPIContext(nil)
 			var err error
-			selected, err = readAPIKeyCreationTeam(ctx, awebURL, apiKey)
+			selected, err = readAPIKeyCreationTeam(ctx, request.AwebURL, request.APIKey)
 			cancel()
 			if err != nil {
 				return creationAuthority{}, err
@@ -80,20 +104,20 @@ func resolveAgentCreation(workingDir, apiKey, awebURL, requestedTeam string, fou
 		}
 
 		input.KeyKind = selected.APIKeyKind
-		if input.KeyKind != "workspace" || founding {
+		if input.KeyKind != creationKeyKindWorkspace || request.Founding {
 			decision, err := decideCreationAuthority(input)
 			decision.SelectedTeam = selected
 			return decision, err
 		}
-		if requestedTeam == "" {
+		if request.RequestedTeam == "" {
 			input.RequestedTeam = selected.CanonicalTeamID
 		}
 	}
-	home, err := identityHomeForDir(workingDir)
+	home, err := identityHomeForDir(request.WorkingDir)
 	if err != nil {
 		return creationAuthority{}, err
 	}
-	workspace, teams, _, err := loadCurrentWorkspaceAndTeamState(workingDir, externalIdentityHomeRoot(home))
+	workspace, teams, _, err := loadCurrentWorkspaceAndTeamState(request.WorkingDir, externalIdentityHomeRoot(home))
 	if err != nil && !os.IsNotExist(err) {
 		return creationAuthority{}, err
 	}
@@ -108,7 +132,7 @@ func resolveAgentCreation(workingDir, apiKey, awebURL, requestedTeam string, fou
 			if err != nil {
 				return creationAuthority{}, err
 			}
-			key, err := loadOptionalWorktreeSigningKey(workingDir)
+			key, err := loadOptionalWorktreeSigningKey(request.WorkingDir)
 			if err != nil {
 				return creationAuthority{}, err
 			}
