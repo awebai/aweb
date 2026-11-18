@@ -678,6 +678,11 @@ func readOptionalRecordedProfileRef(homeDir string) (recordedProfileRef, error) 
 	if err := json.Unmarshal(data, &ref); err != nil {
 		return ref, fmt.Errorf("parse %s: %w", refPath, err)
 	}
+	for _, rel := range ref.ManagedSet {
+		if err := blueprint.ValidateHomePath(rel); err != nil {
+			return ref, err
+		}
+	}
 	return ref, nil
 }
 

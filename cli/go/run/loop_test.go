@@ -416,8 +416,9 @@ func TestLoopInterruptedProviderDoesNotFinalizeDelivery(t *testing.T) {
 	}
 }
 
-func TestLoopPropagatesPostDeliveryFailure(t *testing.T) {
-	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &bytes.Buffer{})
+func TestLoopReportsPostDeliveryFailureWithoutStopping(t *testing.T) {
+	var output bytes.Buffer
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone}}, &output)
 	loop.Runner = func(_ context.Context, _ string, _ []string, onLine func(string), _ any) error {
 		onLine("ignored")
 		return nil
@@ -430,8 +431,8 @@ func TestLoopPropagatesPostDeliveryFailure(t *testing.T) {
 	}}}
 
 	err := loop.Run(context.Background(), LoopOptions{MaxRuns: 1})
-	if err == nil || !strings.Contains(err.Error(), "mark read failed") {
-		t.Fatalf("Run error=%v, want post-delivery failure", err)
+	if err != nil || !strings.Contains(output.String(), "mark read failed") {
+		t.Fatalf("Run error=%v, want successful run with visible acknowledgement warning", err)
 	}
 }
 
@@ -2548,7 +2549,7 @@ drainOutput:
 
 func TestLoopRetriesAcknowledgementWithoutRerunningDeliveredPrompt(t *testing.T) {
 	var out bytes.Buffer
-	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone, SessionID: "session"}}, &out)
+	loop := NewLoop(fakeProvider{event: &Event{Type: EventDone, Session: "session"}}, &out)
 	runs, acks := 0, 0
 	loop.Runner = func(_ context.Context, _ string, _ []string, onLine func(string), _ any) error {
 		runs++

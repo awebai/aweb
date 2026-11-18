@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -242,27 +243,22 @@ func withLibraryPayloadFileSHA(files []blueprint.LibraryProfilePayloadFile) []bl
 	return out
 }
 
+// Fixture generation follows the wire contract without materializing a home or
+// asking the consumer to accept an absent expected digest.
 func testLibraryProfilePayloadDigest(t *testing.T, files []blueprint.LibraryProfilePayloadFile) string {
 	t.Helper()
-	version := "0.1.0"
-	for _, file := range files {
-		if file.Path == "profile.yaml" && strings.Contains(file.ContentUTF8, "version: 0.2.0") {
-			version = "0.2.0"
-		}
+	ordered := append([]blueprint.LibraryProfilePayloadFile{}, files...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Path < ordered[j].Path })
+	payloadFiles := make([]map[string]any, 0, len(ordered))
+	for _, file := range ordered {
+		payloadFiles = append(payloadFiles, map[string]any{"path": file.Path, "content_utf8": file.ContentUTF8, "sha256": file.SHA256})
 	}
-	result, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
-		TargetDir:        t.TempDir(),
-		BlueprintRef:     "aweb.engineering",
-		BlueprintVersion: "0.1.0",
-		ProfileRef:       "coordinator",
-		ProfileVersion:   version,
-		RuntimeKind:      "local-shell",
-		Files:            files,
-	})
+	canonical, err := awid.CanonicalJSONValue(map[string]any{"schema": "aweb.blueprint.profile-payload.v1", "files": payloadFiles})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return result.ProfileDigest
+	digest := sha256.Sum256([]byte(canonical))
+	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
 func writeLibraryManifestPluginForTest(t *testing.T, home, origin string) {

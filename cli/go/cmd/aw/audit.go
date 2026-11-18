@@ -160,6 +160,15 @@ func auditVerifySummary(report logschain.BundleReport) string {
 	} else {
 		b.WriteString("The bundle is NOT intact.\n")
 	}
+	if len(report.AttestedEpochs) == 0 {
+		b.WriteString("attested: none. Supply a receipt or checkpoint signed by an accepted key to attest an epoch.\n")
+	} else {
+		epochs := make([]string, 0, len(report.AttestedEpochs))
+		for _, epoch := range report.AttestedEpochs {
+			epochs = append(epochs, fmt.Sprint(epoch))
+		}
+		fmt.Fprintf(&b, "attested: epochs %s (accepted receipt or checkpoint).\n", strings.Join(epochs, ", "))
+	}
 	unanchored := false
 	for _, epoch := range report.Epochs {
 		state := "intact"

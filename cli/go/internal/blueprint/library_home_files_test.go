@@ -218,3 +218,25 @@ func TestWriteLibraryHomeFilesRejectsNonProfileDestinationsBeforeAnyWrite(t *tes
 		})
 	}
 }
+
+func TestWriteLibraryHomeFilesRejectsCredentialLinkBeforeAnyWrite(t *testing.T) {
+	target := t.TempDir()
+	_, err := WriteLibraryHomeFiles(target, []LibraryHomeFile{
+		{Path: "AGENTS.md", Kind: "file", ContentUTF8: "first"},
+		{Path: ".claude/skills/unsafe", Kind: "symlink", Target: "../../.aw"},
+	}, true)
+	if err == nil || !strings.Contains(err.Error(), "Use the runtime projection target") {
+		t.Fatalf("credential link accepted or unactionable error: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(target, "AGENTS.md")); !os.IsNotExist(err) {
+		t.Fatal("partial profile write")
+	}
+}
+
+func TestLibraryProfilePayloadRequiresNetworkDigest(t *testing.T) {
+	files := withPayloadFileSHA([]LibraryProfilePayloadFile{{Path: "profile.yaml", ContentUTF8: "id: profile\nversion: 1\n"}})
+	_, _, err := validateLibraryProfilePayload(ValidateLibraryProfilePayloadOptions{ProfileRef: "profile", ProfileVersion: "1", Files: files})
+	if err == nil || !strings.Contains(err.Error(), "Fetch the profile again") {
+		t.Fatalf("missing digest accepted or unactionable refusal: %v", err)
+	}
+}

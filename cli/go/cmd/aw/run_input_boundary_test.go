@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/chat"
 )
 
 func TestChatWakeWithholdsUnverifiedContent(t *testing.T) {
@@ -41,7 +42,7 @@ func TestChatWakeKeepsVerifiedContent(t *testing.T) {
 // server. The client computes Unverified for the unsigned response itself.
 func TestMailWakeRetainsUnsignedWarning(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{MessageID: "message", ConversationID: "conv", FromAlias: "sender", Subject: "ATTACK_SUBJECT", Body: "ATTACK_BODY"}}})
+		writeRunTestJSON(t, w, awid.InboxResponse{Messages: []awid.InboxMessage{{MessageID: "message", ConversationID: "conv", FromAlias: "sender", Subject: "ATTACK_SUBJECT", Body: "ATTACK_BODY"}}})
 	}))
 	defer server.Close()
 	result, err := resolveMailWake(context.Background(), mustWebClient(t, server.URL), awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "message"})
@@ -62,7 +63,7 @@ func TestChatWakeNeverUsesUnsignedPendingPreview(t *testing.T) {
 			http.Error(w, "history unavailable", 503)
 			return
 		}
-		json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{{SessionID: "session", LastFrom: "sender", LastMessage: "ATTACK_PREVIEW", UnreadCount: 1}}})
+		writeRunTestJSON(t, w, awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{{SessionID: "session", LastFrom: "sender", LastMessage: "ATTACK_PREVIEW", UnreadCount: 1}}})
 	}))
 	defer server.Close()
 	result, err := resolveChatWake(context.Background(), mustWebClient(t, server.URL), awid.AgentEvent{Type: awid.AgentEventActionableChat, SessionID: "session"})
@@ -83,7 +84,7 @@ func TestMailWakeFetchesExactIDBeyondDefaultPage(t *testing.T) {
 		if r.URL.Query().Get("message_id") == "target" {
 			messages = []awid.InboxMessage{{MessageID: "target", FromAlias: "sender", Body: "TARGET_BODY"}}
 		}
-		json.NewEncoder(w).Encode(awid.InboxResponse{Messages: messages})
+		writeRunTestJSON(t, w, awid.InboxResponse{Messages: messages})
 	}))
 	defer server.Close()
 	result, err := resolveMailWake(context.Background(), mustWebClient(t, server.URL), awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "target"})
@@ -92,5 +93,62 @@ func TestMailWakeFetchesExactIDBeyondDefaultPage(t *testing.T) {
 	}
 	if result.Skip || !strings.Contains(result.CycleContext, "TARGET_BODY") {
 		t.Fatalf("message outside first page stranded: %+v", result)
+	}
+}
+
+func TestRunMessageContextPreservesUnsignedAndStaleWarnings(t *testing.T) {
+	for _, status := range []awid.VerificationStatus{awid.Unverified, awid.VerificationStale, "", "future-status"} {
+		presentation := (runMessageInput{Kind: runMailMessage, Status: status, MessageID: "message", ClaimedSender: "claimed sender", Subject: "subject", Body: "body"}).presentation()
+		text := presentation.Context
+		if presentation.Disposition != runContentPresented || !strings.Contains(text, "subject") || !strings.Contains(text, "body") || !strings.HasPrefix(text, "Sender") {
+			t.Fatalf("warning-presentation boundary changed for %q: %s", status, text)
+		}
+	}
+}
+
+func TestRunChatReceiptsFollowSelectedDirectory(t *testing.T) {
+	t.Setenv(chat.DeliveredIDsPathEnv, "")
+	first, selected := t.TempDir(), t.TempDir()
+	if err := chat.SaveDeliveredIDsForDir(first, []string{"only-first"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := chat.SaveDeliveredIDsForDir(selected, []string{"already-delivered"}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeRunTestJSON(t, w, awid.ChatHistoryResponse{Messages: []awid.ChatMessage{
+				{MessageID: "already-delivered", FromAgent: "sender", Body: "OLD"},
+				{MessageID: "only-first", FromAgent: "sender", Body: "NEW"},
+			}})
+			return
+		}
+		writeRunTestJSON(t, w, awid.ChatMarkReadResponse{Success: true})
+	}))
+	defer server.Close()
+	resolver := newRunWakeValidator(mustWebClient(t, server.URL), runWakeOptions{SelfAlias: "self", WorkingDir: selected})
+	result, err := resolver(context.Background(), awid.AgentEvent{Type: awid.AgentEventActionableChat, SessionID: "session", MessageID: "only-first", UnreadCount: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(result.CycleContext, "OLD") || !strings.Contains(result.CycleContext, "NEW") {
+		t.Fatalf("wrong directory receipts: %+v", result)
+	}
+	if err := result.AfterDelivery(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := chat.LoadDeliveredIDsForDir(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ids["only-first"]; !ok {
+		t.Fatalf("receipt not stored in --dir: %v", ids)
+	}
+}
+
+func writeRunTestJSON(t *testing.T, writer http.ResponseWriter, payload any) {
+	t.Helper()
+	if err := json.NewEncoder(writer).Encode(payload); err != nil {
+		t.Errorf("write test response: %v", err)
 	}
 }

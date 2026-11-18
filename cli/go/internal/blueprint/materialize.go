@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/internal/agentdocs"
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"gopkg.in/yaml.v3"
 )
@@ -68,10 +69,25 @@ func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error
 	if runtimeKind == "" {
 		runtimeKind = "claude-code"
 	}
-	return materializeLoadedProfile(bp, opts.ProfileID, opts.TargetDir, opts.Force, runtimeKind, materializeProvenance{SourceBlueprint: true})
+	return materializeLoadedProfile(loadedProfileOptions{Blueprint: bp, ProfileID: opts.ProfileID, TargetDir: opts.TargetDir, Overwrite: opts.Force, RuntimeKind: runtimeKind, Provenance: materializeProvenance{SourceBlueprint: true}})
 }
 
-func materializeLoadedProfile(bp *Blueprint, profileID, targetDir string, force bool, runtimeKind string, provenance materializeProvenance) (*MaterializeResult, error) {
+type loadedProfileOptions struct {
+	Blueprint   *Blueprint
+	ProfileID   string
+	TargetDir   string
+	Overwrite   bool
+	RuntimeKind string
+	Provenance  materializeProvenance
+}
+
+func materializeLoadedProfile(options loadedProfileOptions) (*MaterializeResult, error) {
+	bp := options.Blueprint
+	profileID := options.ProfileID
+	targetDir := options.TargetDir
+	force := options.Overwrite
+	runtimeKind := options.RuntimeKind
+	provenance := options.Provenance
 	runtimeKind = strings.TrimSpace(runtimeKind)
 	if runtimeKind == "" {
 		runtimeKind = "claude-code"
@@ -88,7 +104,11 @@ func materializeLoadedProfile(bp *Blueprint, profileID, targetDir string, force 
 	if err != nil {
 		return nil, err
 	}
-	if err := preflightMaterializeWrites(absTarget, ops, force); err != nil {
+	policy := preserveExistingProfileFiles
+	if force {
+		policy = replaceExistingProfileFiles
+	}
+	if err := (materializeWritePlan{TargetRoot: absTarget, Operations: ops, CollisionPolicy: policy}).preflight(); err != nil {
 		return nil, err
 	}
 	written, err := writeMaterializedFiles(absTarget, ops)
@@ -381,7 +401,7 @@ func ValidateLibraryProfilePayloadDigest(opts ValidateLibraryProfilePayloadOptio
 	if err := validateRequiredString("profile_version", opts.ProfileVersion); err != nil {
 		return "", err
 	}
-	_, digest, err := validateLibraryProfilePayload(opts.ProfileRef, opts.ProfileVersion, opts.ProfileDigest, opts.Files)
+	_, digest, err := validateLibraryProfilePayload(ValidateLibraryProfilePayloadOptions{ProfileRef: opts.ProfileRef, ProfileVersion: opts.ProfileVersion, ProfileDigest: opts.ProfileDigest, Files: opts.Files})
 	return digest, err
 }
 
@@ -404,7 +424,7 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err := validateRequiredString("profile_version", opts.ProfileVersion); err != nil {
 		return nil, err
 	}
-	files, _, err := validateLibraryProfilePayload(opts.ProfileRef, opts.ProfileVersion, opts.ProfileDigest, opts.Files)
+	files, _, err := validateLibraryProfilePayload(ValidateLibraryProfilePayloadOptions{ProfileRef: opts.ProfileRef, ProfileVersion: opts.ProfileVersion, ProfileDigest: opts.ProfileDigest, Files: opts.Files})
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +474,7 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	// not leak the synthetic one-profile wrapper digest into the home pin. Shelf
 	// and local callers that have a real upstream blueprint digest pass it here.
 	bp.Source.Digest = strings.TrimSpace(opts.BlueprintDigest)
-	result, err := materializeLoadedProfile(bp, opts.ProfileRef, opts.TargetDir, opts.Force, opts.RuntimeKind, materializeProvenance{SourceBlueprint: hasSourceBlueprint, LibraryURL: opts.LibraryURL})
+	result, err := materializeLoadedProfile(loadedProfileOptions{Blueprint: bp, ProfileID: opts.ProfileRef, TargetDir: opts.TargetDir, Overwrite: opts.Force, RuntimeKind: opts.RuntimeKind, Provenance: materializeProvenance{SourceBlueprint: hasSourceBlueprint, LibraryURL: opts.LibraryURL}})
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +519,14 @@ func undeclaredLibraryProfileAssetWarnings(bp *Blueprint, profile Profile) []str
 	return warnings
 }
 
-func validateLibraryProfilePayload(profileRef, profileVersion, profileDigest string, files []LibraryProfilePayloadFile) ([]LibraryProfilePayloadFile, string, error) {
+// validateLibraryProfilePayload implements docs/blueprint-materialization-contract.md:168-176.
+// Network payload structure and hashes are checked before any target write.
+func validateLibraryProfilePayload(options ValidateLibraryProfilePayloadOptions) ([]LibraryProfilePayloadFile, string, error) {
+	profileRef := options.ProfileRef
+	profileVersion := options.ProfileVersion
+	profileDigest := options.ProfileDigest
+	files := options.Files
+
 	validated, err := validateLibraryProfilePayloadStructure(profileRef, profileVersion, files)
 	if err != nil {
 		return nil, "", err
@@ -508,7 +535,10 @@ func validateLibraryProfilePayload(profileRef, profileVersion, profileDigest str
 	if err != nil {
 		return nil, "", err
 	}
-	if strings.TrimSpace(profileDigest) != "" && strings.TrimSpace(profileDigest) != digest {
+	if strings.TrimSpace(profileDigest) == "" {
+		return nil, "", fmt.Errorf("library profile response is missing its digest. Fetch the profile again from a Library that supplies a profile digest")
+	}
+	if strings.TrimSpace(profileDigest) != digest {
 		return nil, "", fmt.Errorf("library profile payload digest mismatch: fetched files digest %s, expected %s", digest, strings.TrimSpace(profileDigest))
 	}
 	return validated, digest, nil
@@ -615,6 +645,29 @@ func writeLibraryProfilePayloadFiles(root, profileDir string, files []LibraryPro
 }
 
 func WriteLibraryHomeFiles(targetDir string, files []LibraryHomeFile, force bool) ([]string, error) {
+	policy := preserveExistingProfileFiles
+	if force {
+		policy = replaceExistingProfileFiles
+	}
+	return writeLibraryHomeFiles(libraryHomeWriteOptions{TargetDir: targetDir, Files: files, CollisionPolicy: policy})
+}
+
+type materializeCollisionPolicy uint8
+
+const (
+	preserveExistingProfileFiles materializeCollisionPolicy = iota
+	replaceExistingProfileFiles
+)
+
+type libraryHomeWriteOptions struct {
+	TargetDir       string
+	Files           []LibraryHomeFile
+	CollisionPolicy materializeCollisionPolicy
+}
+
+func writeLibraryHomeFiles(options libraryHomeWriteOptions) ([]string, error) {
+	targetDir, files := options.TargetDir, options.Files
+
 	if strings.TrimSpace(targetDir) == "" {
 		return nil, fmt.Errorf("target directory is required")
 	}
@@ -624,18 +677,18 @@ func WriteLibraryHomeFiles(targetDir string, files []LibraryHomeFile, force bool
 	}
 	ops := make([]materializeWriteOp, 0, len(files))
 	for _, file := range files {
-		rel := filepath.ToSlash(strings.TrimSpace(file.Path))
+		rel := file.Path
 		kind := strings.TrimSpace(file.Kind)
 		switch kind {
-		case "file":
+		case string(opFile):
 			ops = append(ops, materializeWriteOp{Kind: opFile, Rel: rel, Data: []byte(file.ContentUTF8)})
-		case "symlink":
+		case string(opSymlink):
 			ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: rel, LinkTarget: filepath.ToSlash(strings.TrimSpace(file.Target))})
 		default:
-			return nil, fmt.Errorf("unsupported materialized home file kind %q for %s", file.Kind, rel)
+			return nil, fmt.Errorf("unsupported materialized home file kind %q for %s. Use file or a documented runtime symlink", file.Kind, rel)
 		}
 	}
-	if err := preflightMaterializeWrites(absTarget, ops, force); err != nil {
+	if err := (materializeWritePlan{TargetRoot: absTarget, Operations: ops, CollisionPolicy: options.CollisionPolicy}).preflight(); err != nil {
 		return nil, err
 	}
 	return writeMaterializedFiles(absTarget, ops)
@@ -669,7 +722,14 @@ func materializeCopyOp(sourceRoot, sourceRel, destRel string) (materializeWriteO
 	return materializeWriteOp{Kind: opFile, Rel: filepath.ToSlash(destRel), Data: data}, nil
 }
 
-func preflightMaterializeWrites(targetRoot string, ops []materializeWriteOp, force bool) error {
+type materializeWritePlan struct {
+	TargetRoot      string
+	Operations      []materializeWriteOp
+	CollisionPolicy materializeCollisionPolicy
+}
+
+func (plan materializeWritePlan) preflight() error {
+	targetRoot, ops := plan.TargetRoot, plan.Operations
 	if err := ensureMaterializeTargetRoot(targetRoot); err != nil {
 		return err
 	}
@@ -680,7 +740,13 @@ func preflightMaterializeWrites(targetRoot string, ops []materializeWriteOp, for
 			return fmt.Errorf("duplicate materialized destination %s", rel)
 		}
 		seen[rel] = true
-		if err := validateMaterializeDestination(targetRoot, op, force); err != nil {
+		if err := ValidateHomePath(op.Rel); err != nil {
+			return err
+		}
+		if err := validateMaterializeDestination(targetRoot, op, plan.CollisionPolicy); err != nil {
+			return err
+		}
+		if err := validateHomeOp(op); err != nil {
 			return err
 		}
 	}
@@ -698,7 +764,7 @@ func ensureMaterializeTargetRoot(targetRoot string) error {
 	return pathpreflight.PreflightDir(clean, "target directory", pathpreflight.AllowTempAmbientSymlinkPrefix())
 }
 
-func validateMaterializeDestination(targetRoot string, op materializeWriteOp, force bool) error {
+func validateMaterializeDestination(targetRoot string, op materializeWriteOp, policy materializeCollisionPolicy) error {
 	rel := filepath.ToSlash(op.Rel)
 	if err := validateRelativePath("destination", rel); err != nil {
 		return err
@@ -723,7 +789,7 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, fo
 		if err := pathpreflight.PreflightFile(path, rel, pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 			return err
 		}
-		if _, err := os.Lstat(path); err == nil && !force {
+		if _, err := os.Lstat(path); err == nil && policy == preserveExistingProfileFiles {
 			return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
 		} else if err != nil && !os.IsNotExist(err) {
 			return err
@@ -741,12 +807,12 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, fo
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		if force {
+		if policy == replaceExistingProfileFiles {
 			return nil
 		}
 		return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
 	}
-	if force && info.IsDir() {
+	if policy == replaceExistingProfileFiles && info.IsDir() {
 		legacy, err := isLegacyClaudeSkillFileLinkDir(path, op)
 		if err != nil {
 			return err
@@ -856,7 +922,7 @@ func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]stri
 					return nil, err
 				}
 			}
-			if err := os.WriteFile(path, data, 0o644); err != nil {
+			if err := atomicfile.Write(path, data, 0o644); err != nil {
 				return nil, err
 			}
 		}

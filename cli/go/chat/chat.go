@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -1646,7 +1647,14 @@ func OpenConfirmed(ctx context.Context, client *awid.Client, targetAlias string,
 		return result, nil
 	}
 
-	filteredMessages := FilterDeliveredMessages(messagesResp.Messages)
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	filteredMessages, err := FilterDeliveredMessagesForDir(workingDir, messagesResp.Messages)
+	if err != nil {
+		return nil, err
+	}
 	result.Messages = buildMessages(filteredMessages)
 
 	if ids := DeliveredMessageIDs(messagesResp.Messages); len(ids) > 0 {

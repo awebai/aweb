@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -126,25 +127,36 @@ func DeliveredMessageIDs(messages []awid.ChatMessage) []string {
 	return ids
 }
 
+// FilterDeliveredMessages retains the released best-effort, process-directory
+// API. Deprecated: use FilterDeliveredMessagesForDir to handle receipt errors.
 func FilterDeliveredMessages(messages []awid.ChatMessage) []awid.ChatMessage {
-	if len(messages) == 0 {
-		return nil
-	}
-	delivered, err := LoadDeliveredIDs()
-	if err != nil || len(delivered) == 0 {
+	wd, err := os.Getwd()
+	if err != nil {
 		return messages
+	}
+	filtered, err := FilterDeliveredMessagesForDir(wd, messages)
+	if err != nil {
+		return messages
+	}
+	return filtered
+}
+
+// FilterDeliveredMessagesForDir binds suppression to the selected workspace and
+// reports unreadable state rather than treating it as an empty receipt store.
+// docs/receiving-events.md:174 defines per-workspace suppression.
+func FilterDeliveredMessagesForDir(startDir string, messages []awid.ChatMessage) ([]awid.ChatMessage, error) {
+	delivered, err := LoadDeliveredIDsForDir(startDir)
+	if err != nil {
+		return nil, fmt.Errorf("read chat delivery receipts: %w. Repair or remove %s before retrying", err, deliveredIDsPath(startDir))
 	}
 	filtered := make([]awid.ChatMessage, 0, len(messages))
 	for _, msg := range messages {
-		id := strings.TrimSpace(msg.MessageID)
-		if id != "" {
-			if _, ok := delivered[id]; ok {
-				continue
-			}
+		if _, ok := delivered[strings.TrimSpace(msg.MessageID)]; ok {
+			continue
 		}
 		filtered = append(filtered, msg)
 	}
-	return filtered
+	return filtered, nil
 }
 
 func loadDeliveredIDTimes(path string, now time.Time) (map[string]time.Time, error) {

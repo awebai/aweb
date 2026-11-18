@@ -71,7 +71,7 @@ func TestMaterializeManagedSetUsesDeclarationAndPerSkillPathOrder(t *testing.T) 
 
 	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
 		TargetDir: target, ProfileRef: "builder", ProfileVersion: "0.1.0",
-		RuntimeKind: "claude-code", Files: files,
+		RuntimeKind: "claude-code", Files: files, ProfileDigest: mustPayloadDigest(t, files),
 	})
 	if err != nil {
 		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
@@ -111,7 +111,7 @@ func TestMaterializeLibraryProfilePayloadWarnsForShelfAssetsOutsideDeclaration(t
 	})
 
 	result, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
-		TargetDir: target, ProfileRef: "reviewer", ProfileVersion: "0.1.5", RuntimeKind: "pi", Files: files,
+		TargetDir: target, ProfileRef: "reviewer", ProfileVersion: "0.1.5", RuntimeKind: "pi", Files: files, ProfileDigest: mustPayloadDigest(t, files),
 	})
 	if err != nil {
 		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
@@ -134,7 +134,7 @@ func TestMaterializeLibraryProfilePayloadWarnsForShelfAssetsOutsideDeclaration(t
 
 func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) {
 	target := t.TempDir()
-	_, err := MaterializeLibraryProfilePayload(MaterializeLibraryProfilePayloadOptions{
+	opts := MaterializeLibraryProfilePayloadOptions{
 		TargetDir:      target,
 		ProfileRef:     "reviewer",
 		ProfileVersion: "0.2.0",
@@ -143,7 +143,9 @@ func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) 
 			{Path: "profile.yaml", ContentUTF8: "id: reviewer\nname: Reviewer\nversion: 0.2.0\nmission: >\n  Give independent, fresh-eyes review before merge,\n  with blocking and non-blocking findings.\naccepted_work:\n  - >\n    reviewing a developer diff\n    against acceptance criteria\ninstructions: instructions.md\nruntime_assumptions: [local shell]\nmemory_policy:\n  mode: reviewed-learning\n  proposal_target: library\n"},
 			{Path: "instructions.md", ContentUTF8: "Review changes carefully.\n"},
 		}),
-	})
+	}
+	opts.ProfileDigest = mustPayloadDigest(t, opts.Files)
+	_, err := MaterializeLibraryProfilePayload(opts)
 	if err != nil {
 		t.Fatalf("MaterializeLibraryProfilePayload: %v", err)
 	}
@@ -352,4 +354,13 @@ func TestLibraryProfilePayloadDigestOfPathWithLineSeparatorsIsStable(t *testing.
 	if want := "sha256:ac56d1908616e5e0e350e9d927f9106537fafaf5dde16a6269c14b91119a21d6"; digest != want {
 		t.Fatalf("digest = %s, want %s", digest, want)
 	}
+}
+
+func mustPayloadDigest(t *testing.T, files []LibraryProfilePayloadFile) string {
+	t.Helper()
+	digest, err := libraryProfilePayloadDigest(files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest
 }

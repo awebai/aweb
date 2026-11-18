@@ -79,25 +79,9 @@ func testProfileYAML(profileRef, scope, version string) string {
 	return body
 }
 
-// testLibraryProfilePayloadDigest in library_profile_test.go pins the version to
-// 0.1.0 (or 0.2.0 by sniffing the body), and materialize cross-checks profile.yaml
-// against the version it is given - so a fixture on any other version needs its own
-// digest computed at that version.
 func testShelfPayloadDigest(t *testing.T, version string, files []blueprint.LibraryProfilePayloadFile) string {
 	t.Helper()
-	result, err := blueprint.MaterializeLibraryProfilePayload(blueprint.MaterializeLibraryProfilePayloadOptions{
-		TargetDir:        t.TempDir(),
-		BlueprintRef:     "aweb.team",
-		BlueprintVersion: "0.1.0",
-		ProfileRef:       "coordinator",
-		ProfileVersion:   version,
-		RuntimeKind:      "local-shell",
-		Files:            files,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return result.ProfileDigest
+	return testLibraryProfilePayloadDigest(t, files)
 }
 
 // shelfStub serves get-shelf-profile for one profile_ref and counts what was asked
