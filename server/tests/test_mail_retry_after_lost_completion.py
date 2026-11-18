@@ -244,6 +244,20 @@ async def test_exact_mail_retries_after_301_second_completion_fault_deliver_once
                 env.client, env, {**payload, "body": "not the signed body"}
             )
             assert malformed.status_code == 422, malformed.text
+            changed_fields = json.loads(payload["signed_payload"])
+            changed_fields["body"] = "different signed content under the old message ID"
+            changed_bytes = canonical_json_bytes(changed_fields)
+            changed = await send_signed_mail(
+                env.client,
+                env,
+                {
+                    **payload,
+                    "body": changed_fields["body"],
+                    "signed_payload": changed_bytes.decode(),
+                    "signature": sign_message(env.actors["alice"].sk, changed_bytes),
+                },
+            )
+            assert changed.status_code == 422, changed.text
 
         assert (
             await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}"),
