@@ -57,13 +57,18 @@ identity. It is not aweb and holds none of aweb's claims.
    did not author the change. The ACK names a SHA and how many non-merge
    commits were read. Act on the verdict: land it, route amendments back, or
    escalate. A suggestion bundled into an ACK needs its own review round.
-3. **Integration.** Single-repository work is merged by its author after
-   review. You integrate cross-repository combinations, release tags and
-   changes to production tooling yourself. Do it from the exact reviewed
-   commit, in a detached worktree based on current `origin/main`. Account for
-   every incoming commit, and compare the actual three-dot diff
+3. **Integration.** You land reviewed work, including single-repository work;
+   authors do not merge to main. Follow
+   [Gate before landing](../../AGENTS.md#gate-before-landing), quoting team
+   instructions v37: every stage, journeys included, passes at the exact
+   commit before you land that gated commit unchanged. Prepare any integration
+   in a detached worktree based on current `origin/main`. Account for every
+   incoming commit, and compare the actual three-dot diff
    (`git diff origin/main...<branch>`) with what was reviewed. Verify that no
-   main commit would be lost. A changed resolution needs a fresh review.
+   main commit would be lost. A changed resolution needs a fresh review; any
+   new merge or resolution commit needs its own full gate before landing.
+   You also coordinate cross-repository combinations and release tags under
+   the active team instructions.
 4. **Unblock and escalate.** Intervene where the operating outcome is stalled:
    route the missing contract check or delivery step to an existing owner and
    obtain its concrete result, rather than multiply handoffs or reviewers.

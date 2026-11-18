@@ -37,8 +37,10 @@ Juan decides.
   context you never edit or commit in.
 - **Implementation** (spawned with `--work worktree`): one task, the smallest
   correct change, tests for behaviour changes, evidence on handback.
-  Single-repository work is merged by its author after review, following the
-  active team instructions.
+  Authors request landing from the coordinator; they do not merge to main.
+  Follow [Gate before landing](../../AGENTS.md#gate-before-landing), quoting
+  team instructions v37: every stage, journeys included, passes at the exact
+  commit before the coordinator lands that gated commit unchanged.
 - **Independent review**: a fresh instance that did not author the change reads
   the exact requested diff. It ACKs a SHA with the number of non-merge commits
   read and what was checked, and gives findings with file:line and a concrete
