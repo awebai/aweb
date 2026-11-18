@@ -334,7 +334,7 @@ same display name.
 | Service projection | `aw workspace connect` / `POST /v1/connect` | Same explicit authority boundary, easier orchestration API. |
 | Wake | Snapshot/diff SSE and maintained runtime adapters | Durable server cursor/resume only after a reviewed protocol exists. |
 | Fetch/reply | Exact mail, conversation, and chat commands/APIs | Stable SDK operations preserving ids and verification metadata. |
-| Retirement | Stale local-identity workspace cleanup plus authority-dependent team removal and independent `agent-status`; global archive/replace is a separate owner-authorized flow | One reconciled lifecycle operation without taking runtime ownership. |
+| Retirement | Local-identity workspace cleanup (immediate for self, stale-only for peers) plus authority-dependent team removal and independent `agent-status`; global archive/replace is a separate owner-authorized flow | One reconciled lifecycle operation without taking runtime ownership. |
 
 Do not write code against the target column as though it already ships.
 
