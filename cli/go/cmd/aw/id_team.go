@@ -2303,7 +2303,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		}
 		_, refusal := verifyInviteMembership(ctx, prior.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: prior.DIDKey}, prior.ForHuman, opts.Registry, opts.TXTResolver)
 		if awid.IDCertificateErrorCode(refusal) == "human_mismatch" {
-			if err := discardHostedInviteAttempt(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root)); err != nil {
+			if err := discardHostedInviteAttempt(recoveryPath); err != nil {
 				return nil, errors.Join(refusal, err)
 			}
 			prior = nil
@@ -2324,7 +2324,17 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		// be definitively refused locally, but a server answer is ambiguous.
 		localMismatch := awid.IDCertificateErrorCode(resultErr) == "human_mismatch"
 		if creation.ResponseJSON == "" && !submittedBefore && (knownUnsubmitted || localMismatch) {
-			resultErr = releaseRefusedHostedInvite(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root), resultErr)
+			var released bool
+			resultErr, released = releaseRefusedHostedInvite(recoveryPath, resultErr)
+			if released && awid.RefusalCode(resultErr) == "alias_taken" {
+				resultErr = &plainRefusal{text: nameTakenText(alias, creation.TeamID, "--name") + " Your invite is still valid.", err: resultErr}
+			}
+		}
+		if status, ok := awid.HTTPStatusCode(resultErr); ok && status >= 400 && status < 500 {
+			if _, err := os.Stat(recoveryPath); err == nil {
+				domain, name, _ := awid.ParseTeamID(creation.TeamID)
+				resultErr = fmt.Errorf("%w; the earlier attempt may have succeeded. State is kept in %s. Check with the hosting service whether this agent is a member. If it is, obtain its certificate ID and run aw --identity-home %s id team fetch-cert --namespace %s --team %s --cert-id <certificate-id>. If it is not, with no join running remove %s before using a correct invite", resultErr, recoveryPath, shellQuote(home.Root), domain, name, recoveryPath)
+			}
 		}
 	}()
 	if opts.ParentHome != "" {

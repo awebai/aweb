@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Hosted invite acceptance releases a first definitive invalid, expired,
+  revoked, exhausted or taken-name refusal so the same identity can retry.
+  A name conflict keeps the invite valid and says to choose another name.
+  Earlier uncertain submissions retain their state and reconciliation guidance.
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep

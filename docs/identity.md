@@ -234,10 +234,16 @@ A conditioned join requires current registry evidence: a revoked or replaced
 person refuses, and unavailable status refuses with `evidence_unavailable`.
 There is no fallback to admission without this check.
 
-A definitive hosted human-condition refusal releases the pending join when no
-earlier submission is uncertain. The identity, key and chain remain available
-for a correct invite. An interrupted attempt or unavailable evidence keeps the
-original invite and selection for resumption.
+A definitive first hosted refusal releases the pending join when no earlier
+submission is uncertain: invalid, expired, revoked or exhausted invites, a
+taken name, or a human-condition mismatch. A taken-name refusal says the invite
+is still valid and can be retried with another `--name`. Invalid or spent
+invites need a new invite. The identity, key and chain remain available; an
+acceptance-created key retains its never-joined marker until success. An
+interrupted attempt or unavailable evidence keeps the original invite and
+selection for resumption. A later refusal cannot release an earlier uncertain
+submission; its error names the saved state and certificate-fetch command for
+reconciliation.
 If a first submission timed out and its retry then returned 409, first confirm
 with the hosting service that the first attempt did not apply, then, with no
 join running, remove only `<identity-home>/hosted-invite-creation.json` (normally

@@ -58,6 +58,25 @@ func completeLocalHostedInvite(ctx context.Context, invite *awconfig.TeamInvite,
 
 // Only the recipe's explicit, retained local-agent home can make this transition.
 func pendingHostedExchangeTarget(cmd *cobra.Command, home awconfig.IdentityHome) (bool, error) {
+	if home.Source == awconfig.IdentityHomeFlag && cmd == teamFetchCertCmd && humanFlag == "" {
+		state, err := loadHostedInviteCreation(filepath.Join(home.Root, hostedInviteRecoveryFile))
+		if err != nil || state == nil {
+			return false, err
+		}
+		if awid.BuildTeamID(teamFetchCertNamespace, teamFetchCertTeam) != state.TeamID || teamFetchCertID == "" {
+			return false, nil
+		}
+		for _, name := range []string{"grant.yaml", "teams.yaml", "workspace.yaml"} {
+			if _, err := os.Stat(filepath.Join(home.Root, name)); err == nil {
+				return false, nil
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return false, err
+			}
+		}
+		key, err := awid.LoadSigningKey(filepath.Join(home.Root, "signing.key"))
+		return err == nil && awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) == state.DIDKey, err
+	}
+
 	if home.Source != awconfig.IdentityHomeFlag || (cmd != idParentRequestCmd && cmd != idParentImportCmd) || humanFlag != "" {
 		return false, nil
 	}
@@ -304,27 +323,40 @@ func pendingHostedInviteRequester(opts idParentOptions) (*requester, error) {
 	return &requester{id: state.DIDKey, didKey: state.DIDKey, domain: domain, kind: "agent", dir: home.Root, expectedParent: expectedParent, signer: func(string) awid.IDCertificateSigner { return awid.KeySigner(key) }}, nil
 }
 
-// A condition refusal grants no membership. It releases the operation selection,
-// never the identity, signed ancestry, or a retained successful Cloud answer.
-func releaseRefusedHostedInvite(recoveryPath, markerPath string, refusal error) error {
-	definitive := awid.IDCertificateErrorCode(refusal) == "human_mismatch"
-	status, hasStatus := awid.HTTPStatusCode(refusal)
-	if hasStatus && status == http.StatusConflict && awid.RefusalCode(refusal) == "human_condition_mismatch" {
-		definitive = true
+// Only the reviewed pre-effect status/reason pairs release a new attempt.
+// A response about this invocation never disproves an earlier uncertain one.
+func hostedInviteDefinitiveRefusal(refusal error) bool {
+	if awid.IDCertificateErrorCode(refusal) == "human_mismatch" {
+		return true
 	}
-	if !definitive {
-		return refusal
+	status, ok := awid.HTTPStatusCode(refusal)
+	if !ok {
+		return false
 	}
-	if err := discardHostedInviteAttempt(recoveryPath, markerPath); err != nil {
-		return errors.Join(refusal, err)
+	switch awid.RefusalCode(refusal) {
+	case "invite_invalid":
+		return status == http.StatusUnauthorized
+	case "invite_expired", "invite_revoked":
+		return status == http.StatusGone
+	case "invite_exhausted", "alias_taken", "human_condition_mismatch":
+		return status == http.StatusConflict
 	}
-	return refusal
+	return false
 }
 
-func discardHostedInviteAttempt(recoveryPath, markerPath string) error {
-	if err := removeHostedAcceptPendingMarker(markerPath); err != nil {
-		return fmt.Errorf("release refused invite marker: %w", err)
+func releaseRefusedHostedInvite(recoveryPath string, refusal error) (error, bool) {
+	if !hostedInviteDefinitiveRefusal(refusal) {
+		return refusal, false
 	}
+	if err := discardHostedInviteAttempt(recoveryPath); err != nil {
+		return errors.Join(refusal, err), false
+	}
+	return refusal, true
+}
+
+func discardHostedInviteAttempt(recoveryPath string) error {
+	// Preserve the marker: this key was minted by acceptance and has never
+	// joined. A new invite may reuse it; successful acceptance clears it.
 	if err := os.Remove(recoveryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("release refused invite recovery: %w", err)
 	}
