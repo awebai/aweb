@@ -61,6 +61,27 @@ class UserPathEventFraming(unittest.TestCase):
                 journey.read_completed_events(path), [{"type": "awakening"}]
             )
 
+    def test_failure_cleanup_releases_complete_events_and_keeps_original_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "events.jsonl"
+            path.write_bytes(
+                b'{"type":"awakening","meta":{"message_id":"completed"}}\n'
+                b'{"type":"awakening","meta":'
+            )
+            lane = journey.Lane.__new__(journey.Lane)
+            lane.actors = {"receiver": {"events": path}}
+            lane.failures = []
+            lane.outcomes = []
+            lane.version = "1.0.0"
+
+            def fail_case():
+                raise AssertionError("original journey assertion")
+
+            lane.run_case("head/failed-case", fail_case)
+            self.assertEqual(lane.failures[0]["error"], "original journey assertion")
+            self.assertEqual(lane.outcomes[0]["status"], "FAILED")
+            self.assertTrue(Path(str(path) + ".release-completed").is_file())
+
     def test_partial_utf8_in_pending_record_does_not_hide_complete_events(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "events.jsonl"
