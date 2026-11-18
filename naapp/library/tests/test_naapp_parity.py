@@ -48,9 +48,8 @@ def _golden(name: str) -> str:
 
 
 def test_landing_is_byte_identical() -> None:
-    assert (
-        render_landing_page(public_origin=_ORIGIN, blueprints=_LANDING_BLUEPRINTS)
-        == _golden("landing.html")
+    assert render_landing_page(public_origin=_ORIGIN, blueprints=_LANDING_BLUEPRINTS) == _golden(
+        "landing.html"
     )
 
 

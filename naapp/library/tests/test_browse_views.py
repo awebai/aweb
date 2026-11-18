@@ -113,7 +113,7 @@ print("ok")
     assert "<script" not in html
     assert "onload" not in html
     assert "data:text/html" not in html
-    assert "href=\"javascript:" not in html
+    assert 'href="javascript:' not in html
     assert "href=javascript:" not in html
     assert "[bad](javascript:alert(1))" in html  # markdown-it leaves it inert text
     assert "<a>raw bad</a>" in html
@@ -170,7 +170,13 @@ def test_blueprint_roster_joins_recommendations_to_profiles() -> None:
                 {"profile_ref": "developer", "name": "Developer", "mission": "Ship code."},
             ],
             "recommendations": [
-                {"id": "coordinator", "default_count": 1, "min": 1, "max": 1, "runtime_hints": ["pi"]},
+                {
+                    "id": "coordinator",
+                    "default_count": 1,
+                    "min": 1,
+                    "max": 1,
+                    "runtime_hints": ["pi"],
+                },
                 {
                     "id": "developer",
                     "default_count": 2,
@@ -229,7 +235,11 @@ def test_browse_routes_call_view_builders_and_renderers(monkeypatch: pytest.Monk
 
     async def skill_view(db, *, blueprint_ref, profile_ref, skill_name):
         calls.append(("skill_view", (blueprint_ref, profile_ref, skill_name)))
-        return {"blueprint_ref": blueprint_ref, "profile_ref": profile_ref, "skill_name": skill_name}
+        return {
+            "blueprint_ref": blueprint_ref,
+            "profile_ref": profile_ref,
+            "skill_name": skill_name,
+        }
 
     monkeypatch.setattr(library_api.browse_views, "catalog_view", catalog_view)
     monkeypatch.setattr(library_api.browse_views, "blueprint_view", blueprint_view)
@@ -238,7 +248,9 @@ def test_browse_routes_call_view_builders_and_renderers(monkeypatch: pytest.Monk
     monkeypatch.setattr(
         library_api.browse,
         "render_catalog_page",
-        lambda *, public_origin, blueprints: f"catalog:{public_origin}:{blueprints[0]['blueprint_ref']}",
+        lambda *, public_origin, blueprints: (
+            f"catalog:{public_origin}:{blueprints[0]['blueprint_ref']}"
+        ),
     )
     monkeypatch.setattr(
         library_api.browse,

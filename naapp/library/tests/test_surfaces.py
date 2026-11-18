@@ -26,7 +26,10 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     # Native Agentic App framing: core aw onboarding plus opt-in shelf verbs.
     assert "Native Agentic App" in response.text
     assert "aw team admin add alice@aweb.team/developer=claude-code" in response.text
-    assert "claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in response.text
+    assert (
+        "claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace"
+        in response.text
+    )
     assert "pi install npm:@awebai/pi@latest" in response.text
     assert "aw agent start" not in response.text
     assert "aw run" not in response.text
@@ -51,7 +54,10 @@ def test_llms_txt_is_complete_operator_guide() -> None:
     assert "claude plugin marketplace add awebai/claude-plugins" in text
     assert "claude plugin install aweb-channel@awebai-marketplace" in text
     assert "cd agents/instances/alice" in text
-    assert "claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in text
+    assert (
+        "claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace"
+        in text
+    )
     # Permission mode is independent of channel delivery.
     assert "Channel delivery works in any permission mode, including auto and plan." in text
     assert "--dangerously-skip-permissions" not in text
@@ -59,7 +65,10 @@ def test_llms_txt_is_complete_operator_guide() -> None:
     assert "\npi\n" in text
     assert "aw agent start" not in text
     assert "aw run" not in text
-    assert "AWEB_API_KEY=<key> AWEB_URL=<url> aw team admin add alice@aweb.team/developer --runtime claude-code" in text
+    assert (
+        "AWEB_API_KEY=<key> AWEB_URL=<url> aw team admin add alice@aweb.team/developer --runtime claude-code"
+        in text
+    )
     assert "aw team add" not in text
     assert "--blueprint" in text
     assert "AWEB_BLUEPRINT" in text
@@ -130,7 +139,10 @@ def test_landing_is_one_getting_started_zero_to_self_improving_team() -> None:
         "aw library approve --proposal_id &lt;id&gt;",
         "aw team admin refresh alice",
     ]
-    positions = [html.index(f"<pre>{c}</pre>") if f"<pre>{c}</pre>" in html else html.index(c) for c in ordered]
+    positions = [
+        html.index(f"<pre>{c}</pre>") if f"<pre>{c}</pre>" in html else html.index(c)
+        for c in ordered
+    ]
     assert positions == sorted(positions), "get-started commands are out of order"
     # aw team admin up appears twice: start (step 3) and the idempotent reconcile (last step).
     assert html.count("<pre>aw team admin up</pre>") == 2
@@ -221,7 +233,9 @@ def test_landing_catalog_teaser_absent_when_catalog_empty() -> None:
 
     html = render_landing_page(public_origin="https://library.aweb.ai", blueprints=[])
     assert 'id="catalog"' not in html
-    assert "Where teams of AI agents choose, keep and improve" in html  # the rest of the page renders
+    assert (
+        "Where teams of AI agents choose, keep and improve" in html
+    )  # the rest of the page renders
 
 
 class _FakeLibraryDatabase:
@@ -245,7 +259,9 @@ def test_landing_route_teaser_degrades_when_catalog_read_fails(monkeypatch) -> N
     monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
     monkeypatch.setattr(library_api.browse_views, "catalog_view", broken_catalog_view)
 
-    with TestClient(library_api.create_app(Settings(public_origin="https://library.aweb.ai"))) as client:
+    with TestClient(
+        library_api.create_app(Settings(public_origin="https://library.aweb.ai"))
+    ) as client:
         response = client.get("/")
 
     assert response.status_code == 200
@@ -271,7 +287,9 @@ def test_landing_route_teaser_renders_catalog_read_success(monkeypatch) -> None:
     monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
     monkeypatch.setattr(library_api.browse_views, "catalog_view", fake_catalog_view)
 
-    with TestClient(library_api.create_app(Settings(public_origin="https://library.aweb.ai"))) as client:
+    with TestClient(
+        library_api.create_app(Settings(public_origin="https://library.aweb.ai"))
+    ) as client:
         response = client.get("/")
 
     assert response.status_code == 200

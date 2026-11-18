@@ -590,11 +590,7 @@ def _proposal_asset_digests(files: list[dict[str, str]]) -> dict[str, str]:
     digests = profile_asset_digests(files)
     by_path = {entry["path"]: entry for entry in files}
     profile_doc = yaml.safe_load(by_path["profile.yaml"]["content_utf8"]) or {}
-    proposal_digests = {
-        path: digests[f"file:{path}"]
-        for path in by_path
-        if path != "profile.yaml"
-    }
+    proposal_digests = {path: digests[f"file:{path}"] for path in by_path if path != "profile.yaml"}
     proposal_digests.update(
         {
             f"profile.yaml#{field}": digests[f"field:{field}"]
