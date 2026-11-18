@@ -73,6 +73,7 @@ the service, rather than becoming a universal CLI vocabulary.
 | `controller_key_missing` | The required controller key is unavailable here; use the installation or key-holder command in the message. |
 | `team_name_taken` | The registry pins this team to another controller; restore that key or choose another team name. |
 | `grant_not_found` | The selected team has no such grant; run grant list in that team and identity home. |
+| `certificate_persistence_incomplete` | Registry issuance succeeded but its recipient copy could not be saved; retain the key and fetch the exact certificate named in the recovery command. |
 | `team_server_record_missing` | No signed service record is published for this team; its controller must register the service. |
 | `invalid_alias`, `invalid_team_id`, `invalid_team_server_url` | Correct the input using the validation command's remedy. |
 
@@ -136,7 +137,10 @@ controller enrollment. It makes no network request. `status` and `code` are
 represent a used legacy invite. An established consumed record exits nonzero;
 it is never reported as successfully cancelled. A linked child invitation is
 voided, or its missing/already-issued disposition is reported. Consumption
-retains a secret-free record and its original lifetime metadata.
+retains a secret-free record and its original lifetime metadata as soon as native
+registry issuance succeeds, before later recipient writes. A failed recipient
+write therefore leaves a used invite and an active certificate, with a recovery
+command for that exact certificate.
 
 Cancellation does not revoke an issued certificate. `next_step` names
 `aw id team remove-member` for that separate controller-authorized operation.

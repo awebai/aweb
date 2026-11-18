@@ -199,6 +199,24 @@ func recordConsumedTeamInvite(id string) error {
 	return nil
 }
 
+type issuedInvitePersistenceFailure struct {
+	Cause       error
+	Invite      *awconfig.TeamInvite
+	Certificate *awid.TeamCertificate
+	RegistryURL string
+}
+
+// An issued certificate outlives a failed recipient write. Recovery fetches that
+// exact certificate with the retained member key (docs/awid-sot.md:128-132).
+func issuedInvitePersistenceRefusal(failure issuedInvitePersistenceFailure) error {
+	recovery := formatShellCommand([]string{
+		"aw", "id", "team", "fetch-cert", "--namespace", failure.Invite.Domain,
+		"--team", failure.Invite.TeamName, "--cert-id", failure.Certificate.CertificateID,
+		"--registry", failure.RegistryURL,
+	})
+	return withErrorCode("certificate_persistence_incomplete", fmt.Errorf("membership certificate %s was issued but could not be saved: %w; retain the recipient key, repair its certificate path, and run `%s` from the same identity home", failure.Certificate.CertificateID, failure.Cause, recovery))
+}
+
 func closeTeamInviteLock(lock io.Closer) {
 	if err := lock.Close(); err != nil {
 		fmt.Fprintf(os.Stderr, "close local invite lock: %v\n", err)

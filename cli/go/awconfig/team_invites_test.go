@@ -242,7 +242,7 @@ func TestGenerateInviteSecret(t *testing.T) {
 func TestConsumeTeamInviteRetainsSecretFreeProvenance(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	created := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
-	invite := &TeamInvite{InviteID: "consumption-test", Domain: "example.com", TeamName: "one", IdentityScope: "local", Secret: "bearer-secret", CreatedAt: created.Format(time.RFC3339), RegistryURL: "https://registry.example.com", AwebURL: "https://service.example.com"}
+	invite := &TeamInvite{InviteID: "consumption-test", Domain: "example.com", TeamName: "one", IdentityScope: "local", Secret: "bearer-secret", CreatedAt: created.Format(time.RFC3339), ExpiresAt: created.Add(24 * time.Hour).Format(time.RFC3339), RegistryURL: "https://registry.example.com", AwebURL: "https://service.example.com"}
 	if err := SaveTeamInvite(invite); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestConsumeTeamInviteRetainsSecretFreeProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if saved.Secret != "" || saved.ConsumedAt != created.Add(time.Minute).Format(time.RFC3339) || saved.CreatedAt != invite.CreatedAt || saved.RegistryURL != invite.RegistryURL || saved.AwebURL != invite.AwebURL {
+	if saved.Secret != "" || saved.ConsumedAt != created.Add(time.Minute).Format(time.RFC3339) || saved.CreatedAt != invite.CreatedAt || saved.ExpiresAt != invite.ExpiresAt || saved.RegistryURL != invite.RegistryURL || saved.AwebURL != invite.AwebURL {
 		t.Fatal("consumption lost provenance or retained bearer authority")
 	}
 	if err := ConsumeTeamInvite(ConsumeTeamInviteInput{InviteID: invite.InviteID, Now: created.Add(time.Hour)}); err != nil {

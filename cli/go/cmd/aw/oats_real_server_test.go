@@ -123,7 +123,8 @@ func TestOATSRealIssuedInviteRemainsUsedWhenRecipientPersistenceFails(t *testing
 	if err := os.MkdirAll(certificatePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := acceptTeamInviteWithDetails(filepath.Dir(child), created.Token, teamAcceptInviteOptions{IdentityHome: child, Name: "recipient", Scope: awid.IdentityModeLocal}); err == nil {
+	_, acceptErr := acceptTeamInviteWithDetails(filepath.Dir(child), created.Token, teamAcceptInviteOptions{IdentityHome: child, Name: "recipient", Scope: awid.IdentityModeLocal})
+	if acceptErr == nil {
 		t.Fatal("accept unexpectedly persisted over the blocked certificate path")
 	}
 	member, err := world.Registry.ResolveTeamMember(world.Context, world.Stack.RegistryURL, world.Domain, "backend", "recipient", world.TeamKey)
@@ -133,6 +134,9 @@ func TestOATSRealIssuedInviteRemainsUsedWhenRecipientPersistenceFails(t *testing
 	out, err := world.runInIdentityHome(source.Home, "id", "team", "revoke-invite", "--invite-id", created.InviteID)
 	if err == nil || !strings.Contains(out, "invite_already_used") {
 		t.Fatalf("issued membership was described as an unused cancellation: %v\n%s", err, out)
+	}
+	if errorCodeOf(acceptErr) != "certificate_persistence_incomplete" || !strings.Contains(acceptErr.Error(), member.CertificateID) || !strings.Contains(acceptErr.Error(), "repair its certificate path, and run `aw id team fetch-cert") {
+		t.Fatalf("issued certificate has no exact recovery action: %v", acceptErr)
 	}
 	status, err := world.Registry.GetTeamCertificateStatus(world.Context, world.Stack.RegistryURL, world.Domain, "backend", member.CertificateID)
 	if err != nil || status.Status != "active" {

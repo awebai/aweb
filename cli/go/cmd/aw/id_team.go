@@ -2098,8 +2098,8 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
 		registerErr := fmt.Errorf("register certificate at registry: %w", err)
 		if isAliasConflict(err) {
-			// The invite is deleted only after a successful accept, so it
-			// still works with another name.
+			// A refused registration does not consume the invite, so it still
+			// works with another name.
 			registerErr = &plainRefusal{text: nameTakenText(plan.Name, teamID, "--name") + " Your invite is still valid.", err: err}
 		}
 		return nil, rollbackDefaultAddressClaimAfterCertificateFailure(
@@ -2110,10 +2110,15 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 			registerErr,
 		)
 	}
+	// Registry issuance consumes enrollment even if a later recipient write
+	// fails. Keep that fact before attempting to persist the recipient copy.
+	if err := recordConsumedTeamInvite(invite.InviteID); err != nil {
+		return nil, err
+	}
 
 	certPath, err := saveAcceptedTeamCertificate(workingDir, opts.IdentityHome, teamID, cert)
 	if err != nil {
-		return nil, err
+		return nil, issuedInvitePersistenceRefusal(issuedInvitePersistenceFailure{Cause: err, Invite: invite, Certificate: cert, RegistryURL: registryURL})
 	}
 
 	if issueID {
@@ -2125,10 +2130,6 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 			return nil, err
 		}
 	}
-	if err := recordConsumedTeamInvite(invite.InviteID); err != nil {
-		return nil, err
-	}
-
 	consumedInviteParent(token, opts.ParentHome)
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
