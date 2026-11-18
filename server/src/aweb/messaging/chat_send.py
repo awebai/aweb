@@ -41,18 +41,9 @@ from aweb.hooks import fire_mutation_callback
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, participant_dids
 from aweb.messaging.address_auth import (
     identity_recipient,
-    local_recipient_for_address_binding,
     local_recipient_for_own_route,
-    local_recipient_visible_to_auth,
-    namespace_uses_home_registry,
-    refuse_same_origin_nonresident,
-    requires_registry_address_binding,
-    verified_signed_payload_json,
 )
 from aweb.messaging.alias_targets import (
-    AmbiguousLocalAddressError,
-    get_agent_by_namespace_alias,
-    namespace_exists,
     resolve_alias_target,
     team_exists,
 )
@@ -74,6 +65,8 @@ from aweb.messaging.encryption_custody import require_non_custodial_recipients
 from aweb.messaging.mail_routing import _require_live_mail_participant
 from aweb.messaging.messages import authorize_message_delivery, policy_rows_for_participant
 from aweb.messaging.participants import messaging_participant_by_alias, messaging_participants_by_aliases
+from aweb.messaging.recipient_bindings import signed_recipient_matches
+from aweb.messaging.recipients import resolve_address_recipient
 from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.signatures import (
@@ -438,27 +431,7 @@ def _validate_signed_chat_payload(
             cleaned = sorted(value for value in values if value)
             if cleaned:
                 allowed_to_values.add(",".join(cleaned))
-    signed_to = str(payload.get("to") or "").strip()
-    if signed_to and signed_to not in allowed_to_values:
-        raise HTTPException(status_code=422, detail="signed_payload recipient must match the chat target")
-    allowed_to_dids = {
-        value
-        for row in recipient_rows
-        for value in (
-            str(row.get("did") or "").strip(),
-            str(row.get("did_aw") or "").strip(),
-            str(row.get("did_key") or "").strip(),
-        )
-        if value
-    }
-    signed_to_did = str(payload.get("to_did") or "").strip()
-    if signed_to_did and (len(recipient_rows) != 1 or signed_to_did not in allowed_to_dids):
-        raise HTTPException(status_code=422, detail="signed_payload recipient must match the chat target")
-    allowed_to_stable_ids = {
-        value for row in recipient_rows for value in (str(row.get("did_aw") or "").strip(),) if value
-    }
-    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
-    if signed_to_stable_id and (len(recipient_rows) != 1 or signed_to_stable_id not in allowed_to_stable_ids):
+    if not signed_recipient_matches(payload, recipients=recipient_rows, allowed_to=allowed_to_values):
         raise HTTPException(status_code=422, detail="signed_payload recipient must match the chat target")
     if payload.get("body") != body:
         raise HTTPException(status_code=422, detail="signed_payload body must match the chat message")
@@ -822,44 +795,6 @@ def _is_stale_delivery_origin_status(status_code: int) -> bool:
     return status_code in {404, 410, 421}
 
 
-async def _local_agent_by_address(db, *, domain: str, name: str) -> dict[str, Any] | None:
-    try:
-        return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
-    except AmbiguousLocalAddressError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-def _signed_payload_address_binding(
-    payload: dict[str, Any] | None,
-    *,
-    address: str,
-) -> dict[str, str] | None:
-    if not isinstance(payload, dict) or payload.get("type") != "chat":
-        return None
-    signed_to = str(payload.get("to") or "").strip()
-    if signed_to and signed_to != address:
-        return None
-    signed_to_did = str(payload.get("to_did") or "").strip()
-    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
-    if not signed_to_did and not signed_to_stable_id:
-        return None
-    return {"did_key": signed_to_did, "did_aw": signed_to_stable_id}
-
-
-def _row_matches_signed_address_binding(row: dict[str, Any], binding: dict[str, str] | None) -> bool:
-    if binding is None:
-        return False
-    row_stable_id = str(row.get("did_aw") or "").strip()
-    row_current_did = str(row.get("did_key") or row.get("did") or "").strip()
-    bound_stable_id = str(binding.get("did_aw") or "").strip()
-    bound_current_did = str(binding.get("did_key") or "").strip()
-    if bound_stable_id and bound_stable_id != row_stable_id:
-        return False
-    if bound_current_did and bound_current_did not in {row_stable_id, row_current_did}:
-        return False
-    return bool(bound_stable_id or bound_current_did)
-
-
 async def resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
     for did in actor_dids:
         if not did:
@@ -921,7 +856,6 @@ async def _resolve_named_recipients(
 ) -> list[dict[str, Any]]:
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
-    actor_did_set = set(actor_dids)
     sender_address = _sender_address(auth)
     resolved: dict[str, dict[str, Any]] = {}
 
@@ -962,116 +896,11 @@ async def _resolve_named_recipients(
         resolved[did] = identity_recipient(row)
 
     for address in to_addresses:
-        if "/" not in address:
-            raise HTTPException(status_code=422, detail="to_addresses entries must be domain/name")
-        domain, name = address.split("/", 1)
-        local_candidate = await _local_agent_by_address(db, domain=domain, name=name)
-        if local_candidate is not None:
-            binding = _signed_payload_address_binding(
-                verified_signed_payload_json(
-                    signed_payload=signed_payload,
-                    signature=signature,
-                    did_key=auth.did_key,
-                ),
-                address=address,
-            )
-            signed_binding = _row_matches_signed_address_binding(local_candidate, binding)
-            needs_current_binding = requires_registry_address_binding(local_candidate) and binding is not None and not signed_binding
-            if signed_binding or (local_recipient_visible_to_auth(local_candidate, auth) and not needs_current_binding):
-                target_did = str(
-                    local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
-                ).strip()
-                if target_did:
-                    local_recipient = identity_recipient(local_candidate, address)
-                    local_recipient["requires_local_address_authority"] = True
-                    resolved[target_did] = local_recipient
-                    continue
-
-        resolution = None
-        strict_authority = runtime.federation_authority
-        home_namespace = await namespace_uses_home_registry(db, registry_client, domain)
-        if home_namespace:
-            try:
-                resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-            except AWID_DEPENDENCY_ERRORS as exc:
-                logger.warning("Chat home address lookup unavailable for %s", address, exc_info=True)
-                raise FederationAuthorityError("sender_registry_unavailable") from exc
-        elif strict_authority is not None:
-            try:
-                resolution = await strict_authority.resolve_contact(
-                    address,
-                    source_ip=source,
-                )
-            except FederationAuthorityError as exc:
-                if exc.reason != "recipient_identity_not_found":
-                    raise
-        elif registry_client is not None:
-            resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-        if resolution is not None and resolution.did_aw:
-            row = await local_recipient_for_address_binding(db, resolution, address)
-            if row is None:
-                delivery = getattr(resolution, "delivery", None)
-                delivery_origin = (
-                    getattr(resolution, "delivery_origin", None)
-                    or getattr(delivery, "origin", "")
-                    or ""
-                )
-                refuse_same_origin_nonresident(
-                    str(delivery_origin), origins=runtime.public_origins,
-                )
-                row = {
-                    "agent_id": None,
-                    "team_id": None,
-                    "alias": name,
-                    "address": address,
-                    "did_aw": resolution.did_aw.strip(),
-                    "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
-                    "delivery_origin": str(delivery_origin).strip(),
-                    "authority_controller_did": str(
-                        getattr(resolution, "controller_did", "") or ""
-                    ).strip(),
-                    "external": True,
-                    "_authority_route_current": home_namespace or strict_authority is not None,
-                }
-            else:
-                row["authority_controller_did"] = str(
-                    getattr(resolution, "controller_did", "") or ""
-                ).strip()
-            resolved[resolution.did_aw] = row
-            continue
-
-        row = await _local_agent_by_address(db, domain=domain, name=name)
-        if row is None:
-            if await namespace_exists(db, domain):
-                raise FederationAuthorityError("recipient_identity_not_found")
-            if registry_client is None:
-                raise awid_registry_not_configured_exception(operation="AWID chat address target lookup")
-            raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
-        if registry_client is not None and requires_registry_address_binding(row):
-            binding = _signed_payload_address_binding(
-                verified_signed_payload_json(
-                    signed_payload=signed_payload,
-                    signature=signature,
-                    did_key=auth.did_key,
-                ),
-                address=address,
-            )
-            if not (
-                local_recipient_visible_to_auth(row, auth)
-                or _row_matches_signed_address_binding(row, binding)
-            ):
-                raise HTTPException(status_code=404, detail=f"Recipient address not found: {address}")
-        row = identity_recipient(row, address)
-        target_did = (row.get("did_aw") or row.get("did_key") or "").strip()
-        if not target_did:
-            raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")
-        resolved[target_did] = row
-
-    if not resolved:
-        raise HTTPException(status_code=422, detail="Must provide to_aliases, to_dids, or to_addresses")
-
-    if any(_target_did_refs(row) & actor_did_set for row in resolved.values()):
-        raise HTTPException(status_code=400, detail="Self-chat is not supported")
+        row = await resolve_address_recipient(
+            db, auth, runtime, address=address, source=source, kind="chat",
+            signed_payload=signed_payload, signature=signature,
+        )
+        resolved[str(row.get("did_aw") or row.get("did_key") or "").strip()] = row
 
     await require_agent_chat(db, list(resolved.values()), registry_client=registry_client)
     for row in resolved.values():

@@ -17,7 +17,6 @@ from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
 from aweb.agent_wake import agent_wake_scope
 from aweb.attachment_service import refuse_remote_attachments
-from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS, awid_registry_not_configured_exception
 from aweb.db import TransactionInfra
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -36,19 +35,11 @@ from aweb.identity_auth_deps import MessagingAuth, auth_dids, participant_dids
 from aweb.identity_binding import observe_current_identity_binding
 from aweb.messaging.address_auth import (
     identity_recipient,
-    local_recipient_for_address_binding,
     local_recipient_for_own_route,
-    local_recipient_visible_to_auth,
-    namespace_uses_home_registry,
-    refuse_same_origin_nonresident,
-    requires_registry_address_binding,
     verified_signed_payload_json,
 )
 from aweb.messaging.alias_targets import (
-    AmbiguousLocalAddressError,
     derive_team_address,
-    get_agent_by_namespace_alias,
-    namespace_exists,
     resolve_alias_target,
     team_exists,
 )
@@ -77,6 +68,8 @@ from aweb.messaging.messages import (
 )
 from aweb.messaging.participant_succession import predecessor_target_for_mail
 from aweb.messaging.participants import messaging_participant_by_alias
+from aweb.messaging.recipient_bindings import signed_recipient_matches
+from aweb.messaging.recipients import resolve_address_recipient
 from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.signatures import (
@@ -181,17 +174,7 @@ def _validate_signed_mail_payload(
         )
         if value
     }
-    signed_to = str(payload.get("to") or "").strip()
-    if signed_to and signed_to not in allowed_to_values:
-        raise HTTPException(status_code=422, detail="signed_payload recipient must match the mail recipient")
-    signed_to_did = str(payload.get("to_did") or "").strip()
-    if signed_to_did and signed_to_did not in {
-        str(recipient_stable_id).strip(),
-        str(recipient_current_did).strip(),
-    }:
-        raise HTTPException(status_code=422, detail="signed_payload recipient must match the mail recipient")
-    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
-    if signed_to_stable_id and signed_to_stable_id != str(recipient_stable_id).strip():
+    if not signed_recipient_matches(payload, recipients=[recipient or {}], allowed_to=allowed_to_values):
         raise HTTPException(status_code=422, detail="signed_payload recipient must match the mail recipient")
     if (payload.get("priority") or "normal") != priority:
         raise HTTPException(status_code=422, detail="signed_payload priority must match the mail message")
@@ -974,29 +957,6 @@ async def _resolve_message_alias(db, auth: MessagingAuth, raw_alias: str, regist
                                               selected_team_id=auth.team_id, registry_client=registry_client)
 
 
-def _external_recipient_from_address(address: str, resolution) -> dict:
-    _, name = address.split("/", 1)
-    delivery = getattr(resolution, "delivery", None)
-    delivery_origin = (
-        getattr(resolution, "delivery_origin", None)
-        or getattr(delivery, "origin", "")
-        or ""
-    )
-    return {
-        "agent_id": None,
-        "team_id": None,
-        "alias": name,
-        "address": address,
-        "did_aw": resolution.did_aw.strip(),
-        "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
-        "delivery_origin": str(delivery_origin).strip(),
-        "authority_controller_did": str(
-            getattr(resolution, "controller_did", "") or ""
-        ).strip(),
-        "external": True,
-    }
-
-
 def _raise_bare_did_first_contact_unsupported() -> None:
     raise HTTPException(
         status_code=422,
@@ -1017,86 +977,12 @@ def _recipient_conversation_address(recipient: dict | None, payload: SendMessage
     ) or None
 
 
-async def _local_recipient_from_address(db, *, domain: str, name: str) -> dict | None:
-    try:
-        return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
-    except AmbiguousLocalAddressError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
 def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
     if left is None or right is None:
         return False
     left_did = str(left.get("did_aw") or left.get("did_key") or "").strip()
     right_did = str(right.get("did_aw") or right.get("did_key") or "").strip()
     return bool(left_did and right_did and left_did == right_did)
-
-
-def _signed_payload_matches_address_binding(
-    payload: dict | None,
-    *,
-    address: str,
-    recipient: dict,
-) -> bool:
-    if not isinstance(payload, dict) or payload.get("type") != "mail":
-        return False
-    signed_to = str(payload.get("to") or "").strip()
-    if signed_to and signed_to != address:
-        return False
-    recipient_stable_id = str(recipient.get("did_aw") or "").strip()
-    recipient_current_did = str(recipient.get("did_key") or "").strip()
-    signed_to_did = str(payload.get("to_did") or "").strip()
-    signed_to_stable_id = str(payload.get("to_stable_id") or "").strip()
-    if not signed_to_did and not signed_to_stable_id:
-        return False
-    if signed_to_did and signed_to_did not in {recipient_stable_id, recipient_current_did}:
-        return False
-    if signed_to_stable_id and signed_to_stable_id != recipient_stable_id:
-        return False
-    return bool(recipient_stable_id or recipient_current_did)
-
-
-async def _bound_recipient_from_address(
-    db,
-    *,
-    registry_client,
-    auth: MessagingAuth,
-    address: str,
-    expected_recipient: dict | None = None,
-    signed_payload: str | None = None,
-    signature: str | None = None,
-) -> dict | None:
-    if "/" not in address:
-        raise HTTPException(status_code=422, detail="to_address must be domain/name")
-    domain, name = address.split("/", 1)
-    if registry_client is not None:
-        resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-        if resolved is not None and resolved.did_aw:
-            bound_recipient = await resolve_agent_by_did(db, resolved.did_aw)
-            if bound_recipient is not None:
-                return bound_recipient
-    local_recipient = await _local_recipient_from_address(db, domain=domain, name=name)
-    if requires_registry_address_binding(local_recipient):
-        if local_recipient_visible_to_auth(local_recipient, auth):
-            return local_recipient
-        if registry_client is None:
-            return local_recipient
-        if (
-            expected_recipient is not None
-            and _recipient_identity_matches(local_recipient, expected_recipient)
-            and _signed_payload_matches_address_binding(
-                verified_signed_payload_json(
-                    signed_payload=signed_payload,
-                    signature=signature,
-                    did_key=auth.did_key,
-                ),
-                address=address,
-                recipient=local_recipient,
-            )
-        ):
-            return local_recipient
-        raise HTTPException(status_code=404, detail="Recipient address not found")
-    return local_recipient
 
 
 @dataclass(frozen=True)
@@ -1216,20 +1102,6 @@ async def resolve_mail_target(
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), registry_client=registry_client)
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_stable_id recipient")
-        if payload.to_address is not None and payload.to_address.strip():
-            address = payload.to_address.strip()
-            bound_recipient = await _bound_recipient_from_address(
-                db,
-                registry_client=registry_client,
-                auth=auth,
-                address=address,
-                expected_recipient=recipient,
-                signed_payload=payload.signed_payload,
-                signature=payload.signature,
-            )
-            if not _recipient_identity_matches(bound_recipient, recipient):
-                raise HTTPException(status_code=422, detail="to_address must match the to_stable_id recipient")
-            recipient = identity_recipient(recipient, address)
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
     elif payload.to_address is None and payload.to_did is not None:
@@ -1248,20 +1120,6 @@ async def resolve_mail_target(
         if payload.to_agent_id is not None and payload.to_agent_id.strip():
             if payload.to_agent_id.strip() != str(recipient["agent_id"]):
                 raise HTTPException(status_code=422, detail="to_agent_id must match the to_did recipient")
-        if payload.to_address is not None and payload.to_address.strip():
-            address = payload.to_address.strip()
-            bound_recipient = await _bound_recipient_from_address(
-                db,
-                registry_client=registry_client,
-                auth=auth,
-                address=address,
-                expected_recipient=recipient,
-                signed_payload=payload.signed_payload,
-                signature=payload.signature,
-            )
-            if not _recipient_identity_matches(bound_recipient, recipient):
-                raise HTTPException(status_code=422, detail="to_address must match the to_did recipient")
-            recipient = identity_recipient(recipient, address)
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did).strip()
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
@@ -1269,99 +1127,11 @@ async def resolve_mail_target(
         address = payload.to_address.strip()
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
-        domain, name = address.split("/", 1)
-        local_candidate = await _local_recipient_from_address(db, domain=domain, name=name)
-        if local_candidate is not None:
-            signed = verified_signed_payload_json(
-                signed_payload=payload.signed_payload, signature=payload.signature, did_key=auth.did_key,
-            )
-            signed_binding = _signed_payload_matches_address_binding(
-                signed, address=address, recipient=local_candidate,
-            )
-            # Preserve already admitted local sends. A signed current-key claim
-            # that contradicts the projection must instead use registry evidence.
-            needs_current_binding = (
-                requires_registry_address_binding(local_candidate) and signed is not None
-                and bool(signed.get("to_did") or signed.get("to_stable_id")) and not signed_binding
-            )
-            if signed_binding or (local_recipient_visible_to_auth(local_candidate, auth) and not needs_current_binding):
-                recipient_did = str(
-                    local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
-                ).strip()
-                recipient = identity_recipient(local_candidate, address)
-                recipient["requires_local_address_authority"] = True
-
-        strict_authority = runtime.federation_authority
-        home_namespace = recipient is None and await namespace_uses_home_registry(db, registry_client, domain)
-        if home_namespace:
-            try:
-                resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-            except AWID_DEPENDENCY_ERRORS as exc:
-                logging.getLogger(__name__).warning("Mail home address lookup unavailable for %s", address, exc_info=True)
-                raise FederationAuthorityError("sender_registry_unavailable") from exc
-            if resolved is not None and resolved.did_aw:
-                recipient_did = resolved.did_aw
-                recipient = await local_recipient_for_address_binding(db, resolved, address)
-                if recipient is None:
-                    recipient = _external_recipient_from_address(address, resolved)
-        elif recipient is None and strict_authority is not None:
-            try:
-                resolved = await strict_authority.resolve_contact(
-                    address,
-                    source_ip=source,
-                )
-            except FederationAuthorityError as exc:
-                if exc.reason != "recipient_identity_not_found":
-                    raise
-                resolved = None
-            if resolved is not None and resolved.did_aw:
-                recipient_did = resolved.did_aw
-                recipient = await local_recipient_for_address_binding(db, resolved, address)
-                if recipient is None:
-                    recipient = _external_recipient_from_address(address, resolved)
-                else:
-                    recipient["authority_controller_did"] = str(
-                        getattr(resolved, "controller_did", "") or ""
-                    ).strip()
-        elif recipient is None and registry_client is not None:
-            resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
-            if resolved is not None and resolved.did_aw:
-                recipient_did = resolved.did_aw
-                recipient = await local_recipient_for_address_binding(db, resolved, address)
-                if recipient is None:
-                    recipient = _external_recipient_from_address(address, resolved)
-
-        if recipient is not None and recipient.get("external"):
-            refuse_same_origin_nonresident(
-                recipient["delivery_origin"], origins=runtime.public_origins,
-            )
-
-        if recipient is None:
-            recipient = await _local_recipient_from_address(db, domain=domain, name=name)
-            if recipient is None:
-                if await namespace_exists(db, domain):
-                    raise FederationAuthorityError("recipient_identity_not_found")
-                if registry_client is None:
-                    raise awid_registry_not_configured_exception(operation="AWID mail recipient address lookup")
-                raise HTTPException(status_code=404, detail="Recipient address not found")
-            if registry_client is not None and requires_registry_address_binding(recipient):
-                if not (
-                    local_recipient_visible_to_auth(recipient, auth)
-                    or _signed_payload_matches_address_binding(
-                        verified_signed_payload_json(
-                            signed_payload=payload.signed_payload,
-                            signature=payload.signature,
-                            did_key=auth.did_key,
-                        ),
-                        address=address,
-                        recipient=recipient,
-                    )
-                ):
-                    raise HTTPException(status_code=404, detail="Recipient address not found")
-            recipient = identity_recipient(recipient, address)
-            recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
-            if not recipient_did:
-                raise HTTPException(status_code=404, detail="Recipient agent not found")
+        recipient = await resolve_address_recipient(
+            db, auth, runtime, address=address, source=source, kind="mail",
+            signed_payload=payload.signed_payload, signature=payload.signature,
+        )
+        recipient_did = str(recipient.get("did_aw") or recipient.get("did_key") or "").strip()
         if payload.to_alias is not None and payload.to_alias.strip():
             if recipient.get("external"):
                 if payload.to_alias.strip() != recipient["alias"]:

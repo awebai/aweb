@@ -22,7 +22,8 @@ async def test_inbound_policy_uses_all_current_active_memberships(
     aweb_cloud_db, transport, selected_shared, active_sender,
 ):
     manager = aweb_cloud_db.aweb_db
-    key = lambda: did_from_public_key(bytes(SigningKey.generate().verify_key))
+    def key():
+        return did_from_public_key(bytes(SigningKey.generate().verify_key))
     sender_key, recipient_key, team_key = key(), key(), key()
     sender_did, recipient_did = stable_id_from_did_key(sender_key), stable_id_from_did_key(recipient_key)
     teams = [f"policy-{uuid4().hex[:10]}:example.test" for _ in range(2)]

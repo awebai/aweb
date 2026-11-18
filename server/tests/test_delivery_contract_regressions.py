@@ -1,3 +1,4 @@
+# ruff: noqa: F811 -- pytest imports the real shared fixture by name.
 """Delivery boundaries through the real apps, keys, registry and databases."""
 
 import json

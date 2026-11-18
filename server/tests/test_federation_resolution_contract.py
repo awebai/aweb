@@ -1,3 +1,4 @@
+# ruff: noqa: F811 -- pytest imports the real shared fixture by name.
 """Federation resolution against real registry HTTP and PostgreSQL budgets."""
 
 import json
