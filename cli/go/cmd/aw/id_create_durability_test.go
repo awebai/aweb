@@ -22,16 +22,16 @@ func TestIDCreatePersistsKeyBeforeClaimAndResumesSameIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	controllerDID := awid.ComputeDIDKey(pub)
-	if err := awconfig.SaveControllerKey("example.com", controller); err != nil {
+	if err := awconfig.SaveControllerKey("acme.com", controller); err != nil {
 		t.Fatal(err)
 	}
 	claims := 0
 	var claimedDID string
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/v1/namespaces/example.com":
-			json.NewEncoder(w).Encode(map[string]any{"domain": "example.com", "controller_did": controllerDID})
-		case "/v1/namespaces/example.com/addresses/claims":
+		case "/v1/namespaces/acme.com":
+			json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "controller_did": controllerDID})
+		case "/v1/namespaces/acme.com/addresses/claims":
 			claims++
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -61,9 +61,12 @@ func TestIDCreatePersistsKeyBeforeClaimAndResumesSameIdentity(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	opts := idCreateOptions{Name: "alice", Domain: "example.com", RegistryURL: server.URL, SkipDNSVerify: true, TXTResolver: staticTXTResolver{"_awid.example.com": {idCreateDNSRecordValue(controllerDID, "")}}}
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
+	opts := idCreateOptions{Name: "alice", Domain: "acme.com", RegistryURL: server.URL, SkipDNSVerify: true, TXTResolver: staticTXTResolver{"_awid.acme.com": {idCreateDNSRecordValue(controllerDID, "")}}}
 	if _, err := executeIDCreate(root, opts); err == nil {
 		t.Fatal("lost result reported success")
+	} else if claims == 0 {
+		t.Fatalf("failed before the registry boundary: %v", err)
 	}
 	keyPath := filepath.Join(root, ".aw", "signing.key")
 	original, err := os.ReadFile(keyPath)
