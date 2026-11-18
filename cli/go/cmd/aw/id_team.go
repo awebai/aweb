@@ -186,6 +186,10 @@ type teamListItem struct {
 	IdentityScope string `json:"identity_scope,omitempty"`
 	IssuedAt      string `json:"issued_at,omitempty"`
 	Active        bool   `json:"active"`
+	RegistryURL   string `json:"registry_url"`
+	AwebURL       string `json:"aweb_url"`
+	CertificateID string `json:"certificate_id"`
+	WorkspaceID   string `json:"workspace_id"`
 }
 
 type teamListOutput struct {
@@ -665,6 +669,7 @@ func init() {
 
 	identityCmd.AddCommand(teamCmd)
 
+	bindTeamSelector(certShowCmd)
 	certCmd.AddCommand(certShowCmd)
 	identityCmd.AddCommand(certCmd)
 }
@@ -1447,16 +1452,40 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	workspacePath, err := awconfig.IdentityHomePath(home, "workspace.yaml")
+	if err != nil {
+		return err
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read workspace binding: %w; repair the selected home's workspace.yaml before listing its bindings", err)
+	}
+
 	items := make([]teamListItem, 0, len(teamState.Memberships))
 	for _, membership := range teamState.Memberships {
 		item := teamListItem{
-			TeamID: strings.TrimSpace(membership.TeamID),
-			Alias:  strings.TrimSpace(membership.Alias),
-			Active: strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(teamState.ActiveTeam)),
+			TeamID:      strings.TrimSpace(membership.TeamID),
+			Alias:       strings.TrimSpace(membership.Alias),
+			Active:      strings.EqualFold(strings.TrimSpace(membership.TeamID), strings.TrimSpace(teamState.ActiveTeam)),
+			RegistryURL: strings.TrimSpace(membership.RegistryURL),
+			AwebURL:     strings.TrimSpace(membership.AwebURL),
 		}
-		if cert, err := loadTeamCertificateAt(workingDir, externalIdentityHomeRoot(home), membership.TeamID); err == nil && cert != nil {
+		cert, err := loadTeamCertificateAt(workingDir, externalIdentityHomeRoot(home), membership.TeamID)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read certificate for %s: %w; restore that team's certificate before listing its membership", membership.TeamID, err)
+		}
+		if cert != nil {
 			item.IdentityScope = awid.NormalizeIdentityScope(cert.IdentityScope)
 			item.IssuedAt = strings.TrimSpace(cert.IssuedAt)
+			item.CertificateID = strings.TrimSpace(cert.CertificateID)
+		}
+		if workspace != nil {
+			if bound := workspace.Membership(membership.TeamID); bound != nil {
+				item.WorkspaceID = strings.TrimSpace(bound.WorkspaceID)
+				if item.AwebURL == "" {
+					item.AwebURL = strings.TrimSpace(workspace.AwebURL)
+				}
+			}
 		}
 		items = append(items, item)
 	}
@@ -2859,17 +2888,17 @@ func isAwebHostedNamespace(domain string) bool {
 
 func teamKeyLoadError(teamID, domain string, err error) error {
 	if isAwebHostedNamespace(domain) {
-		return fmt.Errorf(
+		return withErrorCode(codeControllerKeyMissing, fmt.Errorf(
 			"local team controller key for %s was not found: %w\n\nThis looks like an aweb.ai hosted namespace. Hosted teams keep the team controller key in cloud, so this raw AWID command cannot sign the add-member operation locally. Use the hosted dashboard Add existing agent action for hosted teams. Use `aw id team add-member` only for BYOIDT/BYOD teams where you hold ~/.awid/team-keys/<namespace>/<team>.key",
 			teamID,
 			err,
-		)
+		))
 	}
-	return fmt.Errorf(
+	return withErrorCode(codeControllerKeyMissing, fmt.Errorf(
 		"local team controller key for %s was not found: %w (this command is for BYOIDT/BYOD teams where you hold ~/.awid/team-keys/<namespace>/<team>.key; hosted aweb.ai teams should use the dashboard Add existing agent action)",
 		teamID,
 		err,
-	)
+	))
 }
 
 func resolveTeamAddMemberScope(cmd *cobra.Command) (string, error) {
@@ -4157,6 +4186,20 @@ func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, strin
 
 	if home.External() {
 		return nil, "", fmt.Errorf("load selected identity home %s: %w", home.Root, stateErr)
+	}
+	if stateErr != nil && !errors.Is(stateErr, os.ErrNotExist) {
+		return nil, "", stateErr
+	}
+	if selectedTeamID := strings.TrimSpace(teamFlag); selectedTeamID != "" {
+		certPath, err := awconfig.TeamCertificatePathFromIdentityHome(home.Root, selectedTeamID)
+		if err != nil {
+			return nil, "", err
+		}
+		cert, err := awid.LoadTeamCertificate(certPath)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", fmt.Errorf("no local certificate for team %s; join that team or select an installed team with --team", selectedTeamID)
+		}
+		return cert, certPath, err
 	}
 	stored, err := awconfig.ListTeamCertificates(workingDir)
 	if err != nil {

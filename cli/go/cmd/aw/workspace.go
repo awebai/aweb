@@ -99,7 +99,7 @@ type workspaceStatusOutput struct {
 	Workspace          aweb.WorkspaceInfo                `json:"workspace"`
 	ContextKind        string                            `json:"context_kind"`
 	Locks              []aweb.ReservationView            `json:"locks,omitempty"`
-	Team               []aweb.WorkspaceInfo              `json:"team,omitempty"`
+	Team               []aweb.WorkspaceInfo              `json:"team"`
 	TeamHasMore        bool                              `json:"team_has_more"`
 	TeamLimit          int                               `json:"team_limit"`
 	TeamLocks          map[string][]aweb.ReservationView `json:"team_locks,omitempty"`

@@ -72,7 +72,6 @@ var checkCmd = &cobra.Command{
 		"This is the everyday setup diagnostic entrypoint. It runs the same checks as\n" +
 		"`aw doctor` and is safe to run before asking a teammate or support for help.",
 	Args: cobra.RangeArgs(0, 1),
-	RunE: runDoctorAllCommand,
 }
 
 var doctorSupportBundleCmd = &cobra.Command{
@@ -188,6 +187,7 @@ type doctorRedaction struct {
 
 func init() {
 	bindDoctorCommandFlags(doctorCmd)
+	checkCmd.RunE = runDoctorAllCommand
 	bindDoctorCommandFlags(checkCmd)
 
 	for _, category := range []string{"local", "identity", "workspace", "team", "registry", "messaging"} {
@@ -262,7 +262,10 @@ func runDoctorCommand(cmd *cobra.Command, opts doctorRunOptions) error {
 	if err := validateDoctorModeFlags(); err != nil {
 		return err
 	}
-	workingDir, _ := os.Getwd()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	home, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return err
@@ -270,6 +273,9 @@ func runDoctorCommand(cmd *cobra.Command, opts doctorRunOptions) error {
 	opts.IdentityHome = externalIdentityHomeRoot(home)
 	out := buildDoctorOutput(opts)
 	printOutput(out, formatDoctorOutput)
+	if cmd == checkCmd && opts.Mode == doctorModeOnline && out.Status == doctorStatusFail {
+		return withErrorCode("check_failed", fmt.Errorf("Checks failed; follow the next_step for each failed check and rerun aw check --online."))
+	}
 	return nil
 }
 

@@ -46,7 +46,7 @@ func TestOfflineCommandsAreExactAndIdentityHomeNeutral(t *testing.T) {
 	}
 }
 
-func TestInitExternalIdentityHomeAllowedOnlyForWorkspaceTeam(t *testing.T) {
+func TestInitExternalIdentityHomeRefusesUnsupportedOutcomes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -69,7 +69,6 @@ func TestInitExternalIdentityHomeAllowedOnlyForWorkspaceTeam(t *testing.T) {
 	}{
 		{name: "hosted-new-account", args: []string{"init", "--new-account", "--username", "alice", "--name", "alice"}},
 		{name: "self-hosted-new-team", args: []string{"init", "--new-team", "--name", "alice"}},
-		{name: "join-from", args: []string{"init", "--join-from", filepath.Join(root, "source")}},
 		{name: "admission-team-id", args: []string{"init", "--admission-team-id", "team:example.com"}},
 		{name: "api-key", args: []string{"init", "--new-account", "--username", "alice", "--name", "alice"}, env: []string{"AWEB_API_KEY=secret"}},
 	} {
