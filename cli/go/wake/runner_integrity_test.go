@@ -108,7 +108,7 @@ func TestRunnerRefusesSharedWritableCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = NewChannelCoreRunner(store).bundlePath()
-	if err == nil || !strings.Contains(err.Error(), "Choose a private --state-dir owned by your user and retry aw wake.") {
+	if err == nil || !strings.Contains(err.Error(), "then retry aw wake.") {
 		t.Fatalf("missing actionable unsafe cache refusal: %v", err)
 	}
 }

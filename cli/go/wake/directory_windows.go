@@ -2,5 +2,6 @@
 
 package wake
 
-// Access to the Windows profile/state directory is governed by its ACL.
-func checkWakeDirectory(path string) error { return nil }
+// Access to Windows state and executable-cache directories is governed by ACLs.
+func warnWakeDirectory(path string)               {}
+func checkRunnerCacheDirectory(path string) error { return nil }

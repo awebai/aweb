@@ -755,16 +755,16 @@ func (c *ChannelCoreChild) setError(err error) {
 	c.mu.Unlock()
 }
 
-// bundlePath implements docs/wake-runner-integrity.md:3-10.
+// bundlePath implements docs/wake-runner-integrity.md:3-18.
 func (r *ChannelCoreRunner) bundlePath() (string, error) {
-	if err := checkWakeDirectory(r.store.Dir()); err != nil {
+	if err := checkRunnerCacheDirectory(r.store.Dir()); err != nil {
 		return "", err
 	}
 	root := filepath.Join(r.store.Dir(), "channel-core")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
 	}
-	if err := checkWakeDirectory(root); err != nil {
+	if err := checkRunnerCacheDirectory(root); err != nil {
 		return "", err
 	}
 	// A released older aw trusts this marker. Invalidate it before repairing
