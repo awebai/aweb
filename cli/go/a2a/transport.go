@@ -25,7 +25,7 @@ func ValidateCredentialURL(raw string) error {
 	if ip := net.ParseIP(u.Hostname()); u.Scheme == "http" && ip != nil && ip.IsLoopback() {
 		return nil
 	}
-	return fmt.Errorf("A2A credentials require HTTPS. Configure an HTTPS endpoint; HTTP is supported only on a literal loopback address for local development.")
+	return fmt.Errorf("A2A credentials require HTTPS. Configure an HTTPS endpoint, or use http://127.0.0.1 for local development instead of http://localhost.")
 }
 
 type OriginPair struct {

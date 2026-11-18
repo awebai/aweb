@@ -24,6 +24,12 @@ func TestManagedSecretsRequireSecureDestinations(t *testing.T) {
 		if err := validateManagedURL(managedURL{Field: "config_url", Value: raw}); err == nil || !strings.Contains(err.Error(), "HTTPS") {
 			t.Fatalf("unsafe managed destination %q accepted: %v", raw, err)
 		}
+		if strings.HasPrefix(raw, "http://localhost") {
+			err := validateManagedURL(managedURL{Field: "config_url", Value: raw})
+			if err == nil || !strings.Contains(err.Error(), "http://127.0.0.1") {
+				t.Fatalf("localhost refusal must name the usable loopback URL: %v", err)
+			}
+		}
 	}
 	for _, raw := range []string{"https://control.example/config", "http://127.0.0.1:8080/config", "http://[::1]:8080/config"} {
 		if err := validateManagedURL(managedURL{Field: "config_url", Value: raw}); err != nil {

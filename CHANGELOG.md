@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- The A2A gateway no longer returns a public route's task when given only its
+  task ID. Callers must send the task token returned by `SendMessage` in
+  `X-A2A-Task-Token`; task IDs are identifiers rather than authorization.
+- A2A credentials and managed-provider tokens require HTTPS, with HTTP allowed
+  on literal loopback IP addresses for local development. Use
+  `http://127.0.0.1` instead of `http://localhost` for those local endpoints.
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
