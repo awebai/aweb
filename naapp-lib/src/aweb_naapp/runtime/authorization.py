@@ -258,6 +258,51 @@ def _is_canonical_target(request: Request, raw_path: str) -> bool:
     return decoded in (scope_path, root_path + scope_path)
 
 
+async def _current_grant(
+    grants: GrantSource, *, principal: Principal, tool: DeclaredTool, monotonic: MonotonicClock
+) -> Grant:
+    """The team's fresh installation grant for this request, or the refusal."""
+    try:
+        grant = await grants.grant_for(principal.team_id, certificate_id=principal.certificate_id)
+    except TeamServerNotAllowed as refused:
+        logger.warning(
+            "Refused %s for team %s: its server %s is not allowed",
+            tool.name,
+            principal.team_id,
+            refused.server_url,
+        )
+        # Not transient, so not a 503: only the team's controller can fix it
+        # (docs/design/app-team-server-api.md §1, trust chain step 4).
+        raise _refuse(
+            403,
+            "team_server_not_allowed",
+            f"This team's coordination server, {refused.server_url}, is not an address this app "
+            "may reach. The team's controller must publish a public https address with "
+            "`aw id team set-server` before this app can serve the team.",
+        ) from None
+    except GrantUnavailable:
+        logger.exception("Grant authority unavailable for team %s", principal.team_id)
+        raise _refuse(
+            503, "authority_unavailable", "The app's installation grant cannot be verified"
+        ) from None
+    if grant is None:
+        logger.warning("Refused %s for team %s: app not installed", tool.name, principal.team_id)
+        raise _refuse(403, "scope_denied", "The team has not granted this app any scopes")
+    if grant.team_id != principal.team_id:
+        logger.error(
+            "Grant source returned team %s's grant for team %s", grant.team_id, principal.team_id
+        )
+        raise _refuse(
+            503, "authority_unavailable", "The app's installation grant cannot be verified"
+        )
+    if grant.fresh_until <= monotonic():
+        logger.warning(
+            "Refused %s for team %s: installation grant is stale", tool.name, principal.team_id
+        )
+        raise _refuse(503, "authority_unavailable", "The app's installation grant is not fresh")
+    return grant
+
+
 async def authorize_request(
     request: Request,
     *,
@@ -299,44 +344,7 @@ async def authorize_request(
         )
         raise _refuse(403, "tool_context_denied", "This operation is not available to this caller")
 
-    try:
-        grant = await grants.grant_for(principal.team_id, certificate_id=principal.certificate_id)
-    except TeamServerNotAllowed as refused:
-        logger.warning(
-            "Refused %s for team %s: its server %s is not allowed",
-            tool.name,
-            principal.team_id,
-            refused.server_url,
-        )
-        # Not transient, so not a 503: only the team's controller can fix it
-        # (docs/design/app-team-server-api.md §1, trust chain step 4).
-        raise _refuse(
-            403,
-            "team_server_not_allowed",
-            f"This team's coordination server, {refused.server_url}, is not an address this app "
-            "may reach. The team's controller must publish a public https address with "
-            "`aw id team set-server` before this app can serve the team.",
-        ) from None
-    except GrantUnavailable:
-        logger.exception("Grant authority unavailable for team %s", principal.team_id)
-        raise _refuse(
-            503, "authority_unavailable", "The app's installation grant cannot be verified"
-        ) from None
-    if grant is None:
-        logger.warning("Refused %s for team %s: app not installed", tool.name, principal.team_id)
-        raise _refuse(403, "scope_denied", "The team has not granted this app any scopes")
-    if grant.team_id != principal.team_id:
-        logger.error(
-            "Grant source returned team %s's grant for team %s", grant.team_id, principal.team_id
-        )
-        raise _refuse(
-            503, "authority_unavailable", "The app's installation grant cannot be verified"
-        )
-    if grant.fresh_until <= monotonic():
-        logger.warning(
-            "Refused %s for team %s: installation grant is stale", tool.name, principal.team_id
-        )
-        raise _refuse(503, "authority_unavailable", "The app's installation grant is not fresh")
+    grant = await _current_grant(grants, principal=principal, tool=tool, monotonic=monotonic)
     # Data-only admission observation: a complete, authenticated request can
     # now be attributed to an installation even if scope/policy refuses it.
     # This callback grants no authority and performs no effect or DB write.

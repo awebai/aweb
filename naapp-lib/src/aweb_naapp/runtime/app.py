@@ -253,44 +253,8 @@ class NaappRuntime:
             transport=team_server_transport,
         )
         self._installation_fence: InstallationFence | None = None
-        self._installation_grants = None
-        if self.manifest.app_keys_for(APP_GRANT_READ):
-            key = load_app_key(settings, self.manifest, APP_GRANT_READ)
-            self._installation_grants = TeamGrantSource(
-                identity=AppIdentity(
-                    app_id=self.manifest.app_id,
-                    origin=self.manifest.document["app"]["origin"],
-                    digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest(),
-                    manifest_digests=tuple(
-                        (version, "sha256:" + hashlib.sha256(data).hexdigest())
-                        for version, data in sorted(self._manifest_variants.items())
-                    ),
-                ),
-                signer=AppCredentialSigner(
-                    app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ
-                ),
-                discovery=self.team_server_directory(),
-                reach=team_server_reach,
-            )
-        hook_key = (
-            load_app_key(settings, self._manifest, HOOK_RESOLVE)
-            if self._manifest.app_keys_for(HOOK_RESOLVE)
-            else None
-        )
-        self._hook_resolver = (
-            HookResolver(
-                directory=self._team_server_directory,
-                signer=AppCredentialSigner(
-                    app_id=self._manifest.app_id,
-                    key=hook_key,
-                    purpose=HOOK_RESOLVE,
-                ),
-                app_origin=self._manifest.document["app"]["origin"],
-                reach=team_server_reach,
-            )
-            if hook_key is not None
-            else None
-        )
+        self._installation_grants = self._installation_grant_source(settings, team_server_reach)
+        self._hook_resolver = self._hook_resolution(settings, team_server_reach)
         self._hooks = RuntimeHooks.from_settings(
             settings,
             self._manifest,
@@ -301,6 +265,47 @@ class NaappRuntime:
         )
         # Each authorized() guard, with the action_kind it was given.
         self._guards: dict[Callable[..., object], ActionKind | None] = {}
+
+    def _installation_grant_source(
+        self, settings: NaappSettings, reach: TeamServerReach
+    ) -> TeamGrantSource | None:
+        """The grant reader for the served manifest's bytes, when it declares a grant-read key."""
+        if not self.manifest.app_keys_for(APP_GRANT_READ):
+            return None
+        key = load_app_key(settings, self.manifest, APP_GRANT_READ)
+        return TeamGrantSource(
+            identity=AppIdentity(
+                app_id=self.manifest.app_id,
+                origin=self.manifest.document["app"]["origin"],
+                digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest(),
+                manifest_digests=tuple(
+                    (version, "sha256:" + hashlib.sha256(data).hexdigest())
+                    for version, data in sorted(self._manifest_variants.items())
+                ),
+            ),
+            signer=AppCredentialSigner(
+                app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ
+            ),
+            discovery=self.team_server_directory(),
+            reach=reach,
+        )
+
+    def _hook_resolution(
+        self, settings: NaappSettings, reach: TeamServerReach
+    ) -> HookResolver | None:
+        """The hook resolver, when the served manifest declares a hook-resolve key."""
+        if not self._manifest.app_keys_for(HOOK_RESOLVE):
+            return None
+        return HookResolver(
+            directory=self._team_server_directory,
+            signer=AppCredentialSigner(
+                app_id=self._manifest.app_id,
+                key=load_app_key(settings, self._manifest, HOOK_RESOLVE),
+                purpose=HOOK_RESOLVE,
+            ),
+            app_origin=self._manifest.document["app"]["origin"],
+            reach=reach,
+        )
 
     @property
     def manifest_bytes(self) -> bytes:
