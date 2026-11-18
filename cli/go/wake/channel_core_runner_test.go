@@ -43,9 +43,6 @@ func TestChannelCoreRunnerReportsMissingSystemNode(t *testing.T) {
 }
 
 func TestBundledGrantMailReadOnlyUsesManualAckAndDeliveryStore(t *testing.T) {
-	if _, err := os.Stat("channel_core_runner_bundle.mjs"); err != nil {
-		t.Skipf("bundle unavailable: %v", err)
-	}
 	root := t.TempDir()
 	store, err := NewStore(filepath.Join(root, "state"))
 	if err != nil {
@@ -121,9 +118,6 @@ func TestBundledGrantMailReadOnlyUsesManualAckAndDeliveryStore(t *testing.T) {
 }
 
 func TestBundledSafetyInspectFailureRetriesOnNormalDeliveryPath(t *testing.T) {
-	if _, err := os.Stat("channel_core_runner_bundle.mjs"); err != nil {
-		t.Skipf("bundle unavailable: %v", err)
-	}
 	root := t.TempDir()
 	store, err := NewStore(filepath.Join(root, "state"))
 	if err != nil {

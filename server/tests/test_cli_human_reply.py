@@ -21,7 +21,7 @@ import pytest
 from awid.did import stable_id_from_did_key
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message, verify_signature, VerifyResult
-from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers
+from test_messages_http import _make_certificate, _signed_team_headers
 from aweb.e2ee_messages import decrypt_e2ee_message, encrypt_e2ee_mail, generate_x25519_keypair
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 
@@ -101,13 +101,7 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         }))
     else:
         assert not (identity_home / "identity.yaml").exists()
-    team_sk, _, team_did = _make_keypair()
-    await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
-    await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
-    # The team has always had this key: its members were accepted under it.
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2", team_did, TEAM,
-    )
+    team_sk, team_did = env.team_sk, env.team_did
     cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
                              member_did_aw=agent["stable_id"], member_address=agent["address"])
     # Match the CLI wire format: absent optional local fields, not empty strings.

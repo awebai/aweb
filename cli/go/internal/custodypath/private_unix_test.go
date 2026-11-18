@@ -83,33 +83,26 @@ func TestPrivateRuntimeDirectory(t *testing.T) {
 	}
 }
 
-type foreignOwnerInfo struct{ os.FileInfo }
-
-func (f foreignOwnerInfo) Sys() any { return &syscall.Stat_t{Uid: uint32(os.Geteuid() + 1)} }
 func TestRuntimeRejectsRealForeignOwner(t *testing.T) {
-	if os.Geteuid() != 0 {
-		t.Skip("requires root to assign a distinct uid; exercised in the Linux test container")
+	// A normal gate user can inspect the root-owned filesystem root. Root uses
+	// its own disposable directory, changing only that directory's ownership.
+	dir := string(os.PathSeparator)
+	if os.Geteuid() == 0 {
+		dir = t.TempDir()
+		if err := os.Chown(dir, 65534, 65534); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chown(dir, 0, 0)
 	}
-	dir := t.TempDir()
-	if err := os.Chown(dir, 65534, 65534); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chown(dir, 0, 0)
 	info, err := os.Stat(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ownerOnly(info); err == nil {
-		t.Fatal("real foreign owner accepted")
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid == uint32(os.Geteuid()) {
+		t.Fatal("foreign-owner fixture is not owned by another uid")
 	}
-}
-
-func TestRuntimeRejectsForeignOwner(t *testing.T) {
-	info, err := os.Stat(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ownerOnly(foreignOwnerInfo{info}); err == nil {
-		t.Fatal("foreign owner accepted")
+	if err := ownerOnly(info); err == nil || err.Error() != "custody path is not owned by the current user" {
+		t.Fatalf("real foreign owner was not refused for ownership: %v", err)
 	}
 }

@@ -28,7 +28,7 @@ from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from test_cli_human_reply import _pem
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
-from test_messages_http import _make_certificate, _make_keypair
+from test_messages_http import _make_certificate
 
 
 @asynccontextmanager
@@ -88,11 +88,7 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
     env = privacy_app
     binary = Path(os.environ["AW_TEST_CLI_BINARY"])
     actor = env.actors["bob"]
-    team_sk, _, team_did = _make_keypair()
-    await env.db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE team_id=$2", team_did, TEAM)
-    await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE name=$2", team_did, TEAM.split(":", 1)[0])
-    # The team has always had this key: its members were accepted under it.
-    await env.db.execute("UPDATE {{tables.agents}} SET accepted_team_did_key=$1 WHERE team_id=$2", team_did, TEAM)
+    team_sk, team_did = env.team_sk, env.team_did
     cert = _make_certificate(team_sk, team_did, actor.did, team_id=TEAM, alias="bob", identity_scope="local")
     for field in ("signature", "member_did_aw", "member_address"):
         cert.pop(field)

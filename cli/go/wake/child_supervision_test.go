@@ -73,7 +73,7 @@ func TestChildGracefulStopDrainsFinalStatus(t *testing.T) {
 func TestBundledFatalExitsWithStdinStillOpen(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Skip("node unavailable")
+		t.Fatalf("node unavailable: %v; install Node to run the bundled child supervision test", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

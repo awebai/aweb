@@ -12,7 +12,7 @@ from awid.did import stable_id_from_did_key
 from awid.signing import canonical_json_bytes, sign_message
 from test_cli_human_reply import _cli, _pem
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
-from test_messages_http import _make_keypair, _make_certificate
+from test_messages_http import _make_certificate
 
 
 @pytest.mark.usefixtures("source_cli_binary")
@@ -22,11 +22,7 @@ from test_messages_http import _make_keypair, _make_certificate
 async def test_cli_preserves_explicit_address_with_signed_alias(privacy_app, tmp_path, kind, sender_address):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
-    team_sk, _, team_did = _make_keypair()
-    await env.db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE team_id=$2", team_did, TEAM)
-    await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE name=$2", team_did, TEAM.split(":", 1)[0])
-    # The team has always had this key: its members were accepted under it.
-    await env.db.execute("UPDATE {{tables.agents}} SET accepted_team_did_key=$1 WHERE team_id=$2", team_did, TEAM)
+    team_sk, team_did = env.team_sk, env.team_did
     homes = {}
     for name in ("alice", "bob"):
         actor = env.actors[name]

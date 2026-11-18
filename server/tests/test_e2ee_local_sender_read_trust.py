@@ -117,13 +117,7 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
             "did": agent["did"], "stable_id": agent["stable_id"], "address": agent["address"],
             "custody": "self", "identity_scope": "global", "created_at": now.isoformat(),
         }))
-    team_sk, _, team_did = _make_keypair()
-    await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
-    await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
-    # The team has always had this key: its members were accepted under it.
-    await env.db.execute(
-        "UPDATE {{tables.agents}} SET accepted_team_did_key = $1 WHERE team_id = $2", team_did, TEAM,
-    )
+    team_sk, team_did = env.team_sk, env.team_did
     cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
                              member_did_aw=agent["stable_id"], member_address=agent["address"])
     cert.pop("signature")
