@@ -8,8 +8,12 @@ import socket
 import httpx
 import pytest
 from redis.asyncio import Redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
+from awid.did import did_from_public_key, generate_keypair
 from awid.ratelimit import RedisFixedWindowRateLimiter
+from awid.registry import RegistryClient
 from awid_service.main import create_app
 
 
@@ -28,6 +32,7 @@ async def test_real_redis_connection_failure_keeps_bounded_reads_and_reports_deg
             port=port,
             socket_connect_timeout=0.2,
             socket_timeout=0.2,
+            retry=Retry(NoBackoff(), 0),
         ) as redis:
             limiter = RedisFixedWindowRateLimiter(redis=redis)
             app = create_app(db_infra=awid_db_infra, redis=redis, rate_limiter=limiter)
@@ -37,14 +42,19 @@ async def test_real_redis_connection_failure_keeps_bounded_reads_and_reports_deg
                     transport=httpx.ASGITransport(app=app),
                     base_url="http://registry.test",
                 ) as client:
-                    # A valid, absent identity still gets the ordinary 404,
-                    # with working per-IP rate-limit response headers.
+                    # Register through the real client during the outage;
+                    # positive reads retain the normal rate-limit headers.
+                    seed, public_key = generate_keypair()
+                    did_key = did_from_public_key(public_key)
+                    async with RegistryClient(
+                        registry_url="http://registry.test",
+                        transport=httpx.ASGITransport(app=app),
+                    ) as registry:
+                        mapping = await registry.register_did(did_key, seed)
                     reset = None
                     served = 0
                     for _ in range(122):
-                        response = await client.get(
-                            "/v1/namespaces/not-present.example"
-                        )
+                        response = await client.get(f"/v1/did/{mapping.did_aw}/key")
                         next_reset = response.headers.get("X-RateLimit-Reset")
                         assert next_reset is not None, response.text
                         if next_reset != reset:
@@ -54,7 +64,8 @@ async def test_real_redis_connection_failure_keeps_bounded_reads_and_reports_deg
                             assert response.headers["X-RateLimit-Remaining"] == "0"
                             assert "Retry-After" in response.headers
                             break
-                        assert response.status_code == 404, response.text
+                        assert response.status_code == 200, response.text
+                        assert response.json()["current_did_key"] == did_key
                         served += 1
                         assert (
                             int(response.headers["X-RateLimit-Remaining"])
