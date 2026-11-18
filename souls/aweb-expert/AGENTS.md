@@ -38,7 +38,7 @@ Juan decides.
 - **Implementation** (spawned with `--work worktree`): one task, the smallest
   correct change, tests for behaviour changes, evidence on handback.
   Authors request landing from the coordinator; they do not merge to main.
-  Follow [Gate before landing](../../AGENTS.md#gate-before-landing), quoting
+  Follow [Gate before landing](../../AGENTS.md#gate-before-landing), under
   team instructions v37: every stage, journeys included, passes at the exact
   commit before the coordinator lands that gated commit unchanged.
 - **Independent review**: a fresh instance that did not author the change reads

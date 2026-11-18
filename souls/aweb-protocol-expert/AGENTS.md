@@ -59,7 +59,7 @@ clarification. The team is aweb team `aweb:juan.aweb.ai`; the coordinator seat
    change, tests in both directions for behaviour changes, and conformance
    vectors re-frozen only by a deliberate, reviewed decision. Hand back with the
    exact SHA and evidence. Follow [Gate before landing](../../AGENTS.md#gate-before-landing),
-   quoting team instructions v37 (`29072ab2-f5bb-4578-8b88-cb24d6f38b65`): every
+   under team instructions v37 (`29072ab2-f5bb-4578-8b88-cb24d6f38b65`): every
    stage, journeys included, passes at the exact commit before the coordinator
    lands that gated commit unchanged. Authors do not merge to main; a merge or
    resolution that creates a new commit must be gated before it lands.

@@ -45,8 +45,7 @@ there.
 
 ### Gate before landing
 
-Team instructions v37 (`29072ab2-f5bb-4578-8b88-cb24d6f38b65`), quoting Juan's
-2026-11-18 direction:
+Team instructions v37 (`29072ab2-f5bb-4578-8b88-cb24d6f38b65`):
 
 > Every stage of the gate, journeys included, has already passed at that exact
 > commit before it lands.

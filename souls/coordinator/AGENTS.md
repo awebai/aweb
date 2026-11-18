@@ -59,7 +59,7 @@ identity. It is not aweb and holds none of aweb's claims.
    escalate. A suggestion bundled into an ACK needs its own review round.
 3. **Integration.** You land reviewed work, including single-repository work;
    authors do not merge to main. Follow
-   [Gate before landing](../../AGENTS.md#gate-before-landing), quoting team
+   [Gate before landing](../../AGENTS.md#gate-before-landing), under team
    instructions v37: every stage, journeys included, passes at the exact
    commit before you land that gated commit unchanged. Prepare any integration
    in a detached worktree based on current `origin/main`. Account for every

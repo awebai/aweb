@@ -19,7 +19,7 @@ branch assigned to you.
 
 Get an independent review ACK, publish the exact branch head, and request
 landing from the coordinator. Authors do not merge to main. Follow
-[Gate before landing](../AGENTS.md#gate-before-landing), which quotes team
+[Gate before landing](../AGENTS.md#gate-before-landing), under team
 instructions v37 (`29072ab2-f5bb-4578-8b88-cb24d6f38b65`): every stage, journeys
 included, passes at the exact commit before landing, and that gated commit lands
 unchanged. Integrate current main before qualifying the final candidate; a new
