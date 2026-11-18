@@ -2,21 +2,21 @@
 
 import json
 import os
-from pathlib import Path
 import stat
 import subprocess
 import tarfile
 import tempfile
 import unittest
+from pathlib import Path
 
 from adcl6_first_path import (
     AUDIENCE,
     ORG,
+    archive_running_tree,
     assert_approval_display,
     assert_approval_target,
     assert_outside_verdict,
     save,
-    archive_running_tree,
 )
 
 

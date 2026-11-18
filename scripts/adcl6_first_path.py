@@ -13,21 +13,22 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import aclosing, asynccontextmanager
-from dataclasses import dataclass
-from enum import StrEnum
 import hashlib
 import importlib.metadata
 import json
 import os
 import re
 import shutil
-from pathlib import Path
 import subprocess
 import tarfile
 import time
-import tomllib
+from contextlib import aclosing, asynccontextmanager
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
 from urllib.parse import quote
+
+import tomllib
 
 APPROVAL = "8fb07631144622cf72eee721c1dd8c9b40e40697"
 ORG = "org.adcl6.test"
@@ -1039,10 +1040,10 @@ async def browsers():
 async def driver():
     import dns.asyncresolver
     import httpx
-    from awid.registry import RegistryClient, DIDKeyNotFoundError
     from approval_service.canonical import parse
     from approval_service.encoding import decode
     from approval_service.seams import make_needs_human
+    from awid.registry import DIDKeyNotFoundError, RegistryClient
 
     work = Path("/work")
     runtime = work / "browser-home" / "keyring-runtime"
