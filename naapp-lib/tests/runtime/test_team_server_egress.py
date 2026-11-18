@@ -15,6 +15,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
 
 import httpx
@@ -196,11 +197,21 @@ async def private_name(host: str) -> AsyncIterator[Egress]:
         dns.close()
 
 
-@pytest.mark.parametrize("address", ["private", "loopback"])
+class InternalAddress(StrEnum):
+    """Where an https team-server name resolves, inside the app's own network."""
+
+    PRIVATE = "private"  # this host's own private address
+    LOOPBACK = "loopback"
+
+    def host(self) -> str:
+        return local_address() if self is InternalAddress.PRIVATE else "127.0.0.1"
+
+
+@pytest.mark.parametrize("address", list(InternalAddress))
 async def test_an_https_name_resolving_to_an_internal_address_is_refused(
-    tmp_path, registry, test_db_factory, address
+    tmp_path, registry, test_db_factory, address: InternalAddress
 ):
-    host = local_address() if address == "private" else "127.0.0.1"
+    host = address.host()
     async with listener(host) as (port, connections), private_name(host) as egress:
         member = await _member_of_team_serving_at(registry, f"https://{PRIVATE_NAME}:{port}/x")
         runtime = _runtime(

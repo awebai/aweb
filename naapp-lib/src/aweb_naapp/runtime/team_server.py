@@ -198,7 +198,7 @@ class TeamServerRefused(Exception):
     ``reason`` the egress rule that refused it.
     """
 
-    def __init__(self, server_url: str, reason: str) -> None:
+    def __init__(self, *, server_url: str, reason: str) -> None:
         super().__init__(f"{server_url}: {reason}")
         self.server_url = server_url
         self.reason = reason
@@ -310,7 +310,7 @@ class TeamServerReach:
                 server.team_id,
                 refused,
             )
-            raise TeamServerRefused(server.server_url, str(refused)) from refused
+            raise TeamServerRefused(server_url=server.server_url, reason=str(refused)) from refused
         except (EgressNotSent, EgressOutcomeUnknown) as exc:
             raise TeamServerUnreachable(str(exc)) from exc
         return TeamServerAnswer(response.status, response.body, response.truncated)
