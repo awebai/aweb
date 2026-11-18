@@ -1783,12 +1783,17 @@ issued_at, expires_at
   bytes, and its test checks them against B2's real mint.
 - **Agent headers.** `broker.headers` is the ordered list of
   `{"name", "value"}` objects for every header the agent supplied that the
-  broker sends, in both forms: the name lowercased, the value exactly as sent,
-  in submitted order, with repeated names kept. It is `[]` when the agent
-  supplied none, never omitted. It holds only headers that passed §7.4, so a
-  credential-shaped value never reaches the frozen bytes. A named operation's
-  fixed headers are covered by `operation_digest`; the headers the secret's
-  kind injects and the headers the broker sets are never in it.
+  broker sends, in both forms: the name lowercased, the value exactly as sent
+  (leading whitespace trimmed, nothing else changed), in submitted order. A
+  repeated name is refused, so the order is the only thing the list adds over
+  a set. It is `[]` when the agent supplied none, never omitted. The §7.4 checks
+  run before the request is frozen, so a refused or credential-shaped value
+  never reaches the frozen bytes. A named operation's fixed headers are covered
+  by `operation_digest`; the headers the secret's kind injects and the headers
+  the broker sets are never in it.
+- **Other versions.** The console renders only this version. An approval frozen
+  under another version is refused, not shown without its header values; the
+  requester submits a new `request_id` for a fresh approval.
 
 - **Evidence.** B3 binds the assertion to the request hash. secrets keeps B2's
   `auth_evidence_ref` and puts the hash of the evidence in the hook event
