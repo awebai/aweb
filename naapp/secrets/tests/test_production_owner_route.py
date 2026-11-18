@@ -8,9 +8,18 @@ from tests.test_production_bootstrap import root as root
 @pytest.mark.parametrize("origin", ["public_origin", "console_origin"])
 @pytest.mark.parametrize("known_team", [True, False])
 async def test_retired_owner_route_never_refreshes_an_anonymous_callers_team(
-    root, origin, known_team
+    root, origin, known_team, monkeypatch
 ):
     service, client, configured, member, installed, _, transport, _ = root
+    registry_reads = []
+    registry_transport = client.owner_fixture_registry.transport
+    handle = registry_transport.handle_async_request
+
+    async def observed(request):
+        registry_reads.append(request.url.path)
+        return await handle(request)
+
+    monkeypatch.setattr(registry_transport, "handle_async_request", observed)
     before = len(transport.calls)
     response = await client.post(
         getattr(configured, origin)
@@ -25,6 +34,7 @@ async def test_retired_owner_route_never_refreshes_an_anonymous_callers_team(
             "signature": "invalid",
         },
     )
+    assert registry_reads == [], "anonymous retired route fetched registry authority"
     assert len(transport.calls) == before, "anonymous retired route refreshed team authority"
     assert response.status_code == 404, "the retired owner route must not be mounted"
     assert await service.runtime.db().fetch_value("SELECT count(*) FROM installation_fences") == 0
