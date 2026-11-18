@@ -105,14 +105,18 @@ async def team(real_stack):
     clock = Clock()
 
     async def resolver_for(
-        app: dict, *, refresh_timeout: float = 5.0, directory_ttl: int | None = None
+        app: dict,
+        *,
+        refresh_timeout: float = 5.0,
+        directory_ttl: int | None = None,
+        internal_origins: frozenset[str] = frozenset({AWEB_URL}),
     ) -> HookResolver:
         key = await _key(db, app, kid=f"resolve-{app['app_id']}", purposes=[HOOK_RESOLVE])
         return HookResolver(
             directory=real_stack.directory(clock=clock, ttl_seconds=directory_ttl),
             signer=AppCredentialSigner(app_id=app["app_id"], key=key, purpose=HOOK_RESOLVE),
             app_origin=app["origin"],
-            reach=real_stack.team_server_reach(),
+            reach=real_stack.team_server_reach(internal_origins=internal_origins),
             refresh_timeout=refresh_timeout,
             monotonic=clock,
             clock=lambda: clock.wall,
@@ -281,10 +285,14 @@ async def test_a_moved_install_fails_closed_not_empty(team):
 async def test_a_changed_team_server_record_is_followed_even_while_an_answer_is_fresh(team):
     # Discovery refreshes sooner than the answer expires, so the moved record
     # is seen while the old server's answer is still fresh: it must not be reused.
-    resolver = await team["resolver_for"](SECRETS, directory_ttl=10)
+    # The operator runs both servers, so the stack's transport carries both.
+    moved = "https://aweb.moved.example"
+    resolver = await team["resolver_for"](
+        SECRETS, directory_ttl=10, internal_origins=frozenset({AWEB_URL, moved})
+    )
     await resolver.registrations(TEAM, *HOOK)
     await team["stack"].publish_server(
-        TEAM, team["team_key"], server_url="https://aweb.moved.example",
+        TEAM, team["team_key"], server_url=moved,
         issued_at=datetime.now(UTC).replace(microsecond=0) + timedelta(seconds=1),
     )
     team["clock"].now += seconds_to_ns(11)

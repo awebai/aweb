@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -275,6 +276,24 @@ async def test_a_redirect_from_a_listed_origin_is_not_followed(
         "http://127.0.0.1:8000/x/v1/apps/self/grant"
     ]
     assert response.status_code >= 400
+
+
+def test_listed_origins_are_logged_once_at_startup(tmp_path, registry, caplog):
+    with caplog.at_level(logging.WARNING, logger="aweb_naapp.runtime.team_server"):
+        _runtime(
+            tmp_path, registry,
+            team_server_internal_origins=["http://127.0.0.1:8000", "https://Coord.Egress.Example"],
+        )
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "http://127.0.0.1:8000" in warnings[0].getMessage()
+    assert "https://coord.egress.example" in warnings[0].getMessage()
+
+
+def test_no_startup_warning_when_no_origin_is_listed(tmp_path, registry, caplog):
+    with caplog.at_level(logging.WARNING, logger="aweb_naapp.runtime.team_server"):
+        _runtime(tmp_path, registry)
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
 
 def test_a_well_formed_listed_origin_is_accepted(tmp_path, registry):

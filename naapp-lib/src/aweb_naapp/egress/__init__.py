@@ -30,6 +30,7 @@ from .urls import (
     canonical_url,
     check_destination,
     match_destination,
+    operator_origin,
     parse_destination,
 )
 
@@ -57,5 +58,6 @@ __all__ = [
     "check_headers",
     "check_injected",
     "match_destination",
+    "operator_origin",
     "parse_destination",
 ]

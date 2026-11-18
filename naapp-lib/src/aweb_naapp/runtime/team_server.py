@@ -12,10 +12,9 @@ refreshed, the result is unavailable; an expired answer is never reused.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -28,8 +27,21 @@ from awid.team_ids import parse_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from fastapi import HTTPException
 
-from aweb_naapp.egress import Bounds, Egress, EgressNotSent, EgressOutcomeUnknown, canonical_url
+from aweb_naapp.egress import (
+    AddressPolicy,
+    Bounds,
+    Destination,
+    DnsResolver,
+    Egress,
+    EgressNotSent,
+    EgressOutcomeUnknown,
+    EgressRefused,
+    HeaderRules,
+    canonical_url,
+    operator_origin,
+)
 from aweb_naapp.egress.send import CONNECT_TIMEOUT_SECONDS, TOTAL_TIMEOUT_SECONDS
+from aweb_naapp.runtime.app_credentials import AppCredentialSigner
 from aweb_naapp.runtime.clock import MonotonicClock, seconds_to_ns
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 
@@ -175,6 +187,19 @@ class TeamServerDirectory:
         return body.get("record"), body.get("signature")
 
 
+class TeamServerRefused(Exception):
+    """The team's published server is not a destination this app may reach.
+
+    Nothing was sent. ``server_url`` is the address the team published and
+    ``reason`` the egress rule that refused it.
+    """
+
+    def __init__(self, server_url: str, reason: str) -> None:
+        super().__init__(f"{server_url}: {reason}")
+        self.server_url = server_url
+        self.reason = reason
+
+
 class TeamServerUnreachable(Exception):
     """The team's server could not be reached, or did not answer in time."""
 
@@ -188,73 +213,132 @@ class TeamServerAnswer:
     truncated: bool
 
 
-Sign = Callable[[str], Mapping[str, str]]
-
-
 class TeamServerReach:
-    """How the app sends its signed reads to a team's coordination server.
+    """How the app sends its reads to a team's coordination server
+    (docs/design/app-team-server-api.md §1, trust chain step 4, "Use").
 
     The server's address comes from the team's own signed record, so the team
-    chooses it.
+    chooses it. A read goes through the egress guard: https only, every
+    address the name resolves to checked, the connection pinned to a checked
+    address, redirects returned rather than followed. The one exception is a
+    server whose origin the operator listed in ``internal_origins``: the
+    operator's own server, reached directly with redirects off. ``transport``
+    carries only those direct reads.
     """
 
     def __init__(
         self,
         *,
-        egress: Egress,
+        egress: Egress | None = None,
+        internal_origins: frozenset[str] = frozenset(),
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        self._egress = egress
+        """``egress`` defaults to the public policy with the system resolver."""
+        self._egress = egress or Egress(
+            addresses=AddressPolicy(), resolver=DnsResolver(), user_agent="aweb-naapp/team-server"
+        )
+        self._internal_origins = frozenset(operator_origin(origin) for origin in internal_origins)
         self._transport = transport
+        if self._internal_origins:
+            # Visible in every deployment's log: production lists none.
+            logger.warning(
+                "Team servers reached directly, outside the egress guard: %s",
+                ", ".join(sorted(self._internal_origins)),
+            )
 
     async def get(
-        self, server: TeamServer, path: str, *, sign: Sign | None, max_bytes: int, timeout: float
+        self,
+        server: TeamServer,
+        path: str,
+        *,
+        signer: AppCredentialSigner | None,
+        max_bytes: int,
+        timeout: float,
     ) -> TeamServerAnswer:
-        """GET ``path`` under the server's URL; ``sign`` gives the headers for the exact URL sent."""
+        """GET ``path`` under the server's URL, signed by ``signer`` for the
+        server's team over the exact URL sent; ``None`` sends a public read."""
         url = f"{server.server_url}{path}"
-        if self._transport is None and url.startswith("https://"):
-            return await self._resolved(url, sign, max_bytes, timeout)
-        return await self._direct(url, sign, max_bytes, timeout)
+        read = _Read(server=server, signer=signer, max_bytes=max_bytes, timeout=timeout)
+        if self._is_internal(server):
+            return await self._direct(url, read)
+        return await self._guarded(url, read)
 
-    async def _resolved(
-        self, url: str, sign: Sign | None, max_bytes: int, timeout: float
-    ) -> TeamServerAnswer:
-        canonical = canonical_url(url)
-        target = str(canonical)
-        headers = list((sign(target) if sign is not None else {}).items())
-        bounds = Bounds(
-            connect_timeout=min(timeout, CONNECT_TIMEOUT_SECONDS),
-            total_timeout=min(timeout, TOTAL_TIMEOUT_SECONDS),
-            max_response_bytes=max_bytes,
-        )
-        loop = asyncio.get_running_loop()
+    def _is_internal(self, server: TeamServer) -> bool:
+        # An audience that is not an operator origin cannot equal a listed one.
         try:
-            addresses = await self._egress.resolver.resolve(canonical.host)
-            response = await self._egress._exchange(
-                "GET", canonical, addresses[0], headers, b"", bounds,
-                loop.time() + bounds.total_timeout,
+            return operator_origin(server.audience) in self._internal_origins
+        except EgressRefused:
+            return False
+
+    async def _guarded(self, url: str, read: _Read) -> TeamServerAnswer:
+        server = read.server
+        bounds = Bounds(
+            connect_timeout=min(read.timeout, CONNECT_TIMEOUT_SECONDS),
+            total_timeout=min(read.timeout, TOTAL_TIMEOUT_SECONDS),
+            max_response_bytes=read.max_bytes,
+        )
+        try:
+            canonical = canonical_url(url)
+            headers = list(read.headers(str(canonical)).items())
+            response = await self._egress.send(
+                "GET",
+                canonical,
+                Destination(
+                    host=canonical.host,
+                    path=canonical.path,
+                    methods=frozenset({"GET"}),
+                    port=canonical.port,
+                ),
+                # Every header is the app credential, injected; the read sends
+                # no caller headers for the credential detector to judge.
+                header_rules=HeaderRules(
+                    injected=[name for name, _ in headers],
+                    amz_allowed=(),
+                    is_credential=lambda value: False,
+                ),
+                injected=headers,
+                bounds=bounds,
             )
+        except EgressRefused as refused:
+            logger.warning(
+                "Team server %s for %s refused by egress: %s",
+                server.server_url, server.team_id, refused,
+            )
+            raise TeamServerRefused(server.server_url, str(refused)) from refused
         except (EgressNotSent, EgressOutcomeUnknown) as exc:
             raise TeamServerUnreachable(str(exc)) from exc
         return TeamServerAnswer(response.status, response.body, response.truncated)
 
-    async def _direct(
-        self, url: str, sign: Sign | None, max_bytes: int, timeout: float
-    ) -> TeamServerAnswer:
-        headers = dict(sign(url)) if sign is not None else {}
-        options: dict[str, Any] = {"timeout": timeout, "follow_redirects": False}
+    async def _direct(self, url: str, read: _Read) -> TeamServerAnswer:
+        options: dict[str, Any] = {"timeout": read.timeout, "follow_redirects": False}
         if self._transport is not None:
             options["transport"] = self._transport
         content = bytearray()
         truncated = False
         try:
             async with httpx.AsyncClient(**options) as client:
-                async with client.stream("GET", url, headers=headers) as response:
+                async with client.stream("GET", url, headers=read.headers(url)) as response:
                     async for chunk in response.aiter_bytes():
                         content.extend(chunk)
-                        if len(content) > max_bytes:
+                        if len(content) > read.max_bytes:
                             truncated = True
                             break
         except (httpx.HTTPError, httpx.InvalidURL) as exc:
             raise TeamServerUnreachable(str(exc) or type(exc).__name__) from exc
-        return TeamServerAnswer(response.status_code, bytes(content[:max_bytes]), truncated)
+        return TeamServerAnswer(response.status_code, bytes(content[: read.max_bytes]), truncated)
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Read:
+    """One read of a team server: who signs it and how long and large it may be."""
+
+    server: TeamServer
+    signer: AppCredentialSigner | None
+    max_bytes: int
+    timeout: float
+
+    def headers(self, target: str) -> dict[str, str]:
+        """The app credential over exactly ``target``, or none for a public read."""
+        if self.signer is None:
+            return {}
+        return self.signer.sign(method="GET", target=target, team_id=self.server.team_id).headers

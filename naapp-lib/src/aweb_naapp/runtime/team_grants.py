@@ -17,12 +17,13 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
-from aweb_naapp.runtime.authorization import Grant, GrantUnavailable
+from aweb_naapp.runtime.authorization import Grant, GrantUnavailable, TeamServerNotAllowed
 from aweb_naapp.runtime.clock import MonotonicClock
 from aweb_naapp.runtime.freshness import FreshnessCache, RefreshTimedOut
 from aweb_naapp.runtime.team_server import (
     TeamServerDirectory,
     TeamServerReach,
+    TeamServerRefused,
     TeamServerUnavailable,
     TeamServerUnreachable,
 )
@@ -120,6 +121,8 @@ class TeamGrantSource:
             raise GrantUnavailable(exc.code) from exc
         except (TimeoutError, RefreshTimedOut) as exc:
             raise GrantUnavailable("grant_refresh_timeout") from exc
+        except TeamServerRefused as exc:
+            raise TeamServerNotAllowed(exc.server_url) from exc
         except TeamServerUnreachable as exc:
             raise GrantUnavailable("grant_server_unreachable") from exc
         except (KeyError, TypeError, ValueError, RecursionError) as exc:
@@ -134,9 +137,7 @@ class TeamGrantSource:
             answer = await self._reach.get(
                 server,
                 "/v1/apps/self/grant",
-                sign=lambda target: self._signer.sign(
-                    method="GET", target=target, team_id=team_id
-                ).headers,
+                signer=self._signer,
                 max_bytes=MAX_ANSWER_BYTES,
                 timeout=self._timeout,
             )

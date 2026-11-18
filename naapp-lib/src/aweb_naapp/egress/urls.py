@@ -110,6 +110,40 @@ def canonical_url(url: str) -> CanonicalURL:
     )
 
 
+# The only hosts a plain-http operator origin may name: this machine's loopback.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def operator_origin(origin: str) -> str:
+    """An origin the operator configured, in canonical form, or a refusal.
+
+    An origin is a scheme, a host and a port, and nothing else: https on any
+    host, or plain http only on this machine's loopback (``127.0.0.1``,
+    ``[::1]``, ``localhost``). Its host and port are canonicalized as
+    :func:`canonical_url` canonicalizes them, and the scheme's default port is
+    left out, so two spellings of one origin compare equal.
+    """
+    scheme, sep, rest = origin.partition("://")
+    scheme = scheme.lower()
+    if not sep or scheme not in ("https", "http"):
+        raise _refuse("scheme")
+    if any(_is_space_or_control(char) or char == "\\" for char in rest):
+        raise _refuse("character")
+    if not rest or any(char in rest for char in "/?#"):
+        raise _refuse("origin", "an origin has no path, query or fragment")
+    if "@" in rest:
+        raise _refuse("userinfo")
+    host, ip, port = _authority(rest)
+    explicit_port = (rest.partition("]")[2] if rest.startswith("[") else rest).count(":") == 1
+    default_port = DEFAULT_PORT if scheme == "https" else 80
+    if not explicit_port:
+        port = default_port
+    if scheme == "http" and host not in LOOPBACK_HOSTS:
+        raise _refuse("scheme", "plain http is only for a loopback host")
+    authority = f"[{host}]" if isinstance(ip, IPv6Address) else host
+    return f"{scheme}://{authority}" + ("" if port == default_port else f":{port}")
+
+
 def _is_space_or_control(char: str) -> bool:
     return char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
 

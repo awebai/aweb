@@ -179,6 +179,7 @@ async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, re
         purge_ledger_database_url=ledger.config.get_dsn(),
         app_id=TEST_APP_ID, public_origin=ORIGIN, console_origin=CONSOLE,
         awid_registry_url=REGISTRY_URL, **awid_authority,
+        team_server_internal_origins=[coordination.server.url],
         app_key_files=write_key_files(tmp_path),
         **{"client_events_per_minute": 1, **overrides},
     )

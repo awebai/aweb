@@ -288,6 +288,9 @@ def test_an_app_event_key_without_an_origin_refuses_to_start(
         "http://core.example.test",
         "http://10.0.0.5:8000",
         "http://localhost.example.test",
+        "http://core.localhost",
+        "http://127.0.0.2:8000",
+        "https://core.example.test/prefix",
     ],
 )
 def test_an_invalid_app_events_origin_refuses_to_start(seed: str, origin: str) -> None:
@@ -302,7 +305,6 @@ def test_an_invalid_app_events_origin_refuses_to_start(seed: str, origin: str) -
         "http://127.0.0.1:8000",
         "http://[::1]:8000",
         "http://localhost:8000",
-        "http://core.localhost",
     ],
 )
 def test_https_or_loopback_http_app_events_origins_are_accepted(seed: str, origin: str) -> None:

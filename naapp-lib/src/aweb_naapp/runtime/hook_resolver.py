@@ -55,6 +55,7 @@ from aweb_naapp.runtime.team_server import (
     TeamServer,
     TeamServerDirectory,
     TeamServerReach,
+    TeamServerRefused,
     TeamServerUnavailable,
     TeamServerUnreachable,
 )
@@ -231,7 +232,7 @@ class HookResolver:
             team_id,
             (f"{kind}s", catalog_id, catalog_version, hook),
             path,
-            signed=True,
+            signer=self._signer,
             parse=lambda body: _list_answer(body, team_id, catalog_id, catalog_version, hook, kind),
         )
 
@@ -264,7 +265,7 @@ class HookResolver:
             team_id,
             key,
             f"/v1/apps/self/hooks/bindings?{query}",
-            signed=True,
+            signer=self._signer,
             parse=lambda body: _own_answer(
                 body,
                 team_id,
@@ -281,7 +282,7 @@ class HookResolver:
             team_id,
             ("producer-keys",),
             "/v1/hooks/producer-keys",
-            signed=False,
+            signer=None,
             parse=_producer_keys_answer,
         )
 
@@ -291,7 +292,7 @@ class HookResolver:
         selection: tuple[Any, ...],
         path: str,
         *,
-        signed: bool,
+        signer: AppCredentialSigner | None,
         parse: Callable[[dict[str, Any]], tuple[Any, ...]],
     ) -> Resolution[Any]:
         try:
@@ -307,7 +308,7 @@ class HookResolver:
         asked_at = self._clock()
 
         async def fetch() -> tuple[tuple[Any, ...], int]:
-            body = await self._get(server, team_id, path, signed=signed)
+            body = await self._get(server, path, signer=signer)
             try:
                 max_age = _max_age(body)
                 window = min(max_age, FRESHNESS_CEILING_SECONDS)
@@ -334,16 +335,19 @@ class HookResolver:
         )
 
     async def _get(
-        self, server: TeamServer, team_id: str, path: str, *, signed: bool
+        self, server: TeamServer, path: str, *, signer: AppCredentialSigner | None
     ) -> dict[str, Any]:
-        def sign(target: str) -> dict[str, str]:
-            return self._signer.sign(method="GET", target=target, team_id=team_id).headers
-
+        """GET ``path`` from the team's server, signed by ``signer`` (None: a public read)."""
         try:
             answer = await self._reach.get(
-                server, path, sign=sign if signed else None,
-                max_bytes=MAX_ANSWER_BYTES, timeout=REQUEST_TIMEOUT_SECONDS,
+                server,
+                path,
+                signer=signer,
+                max_bytes=MAX_ANSWER_BYTES,
+                timeout=REQUEST_TIMEOUT_SECONDS,
             )
+        except TeamServerRefused as exc:
+            raise HookResolutionUnavailable("team_server_not_allowed") from exc
         except TeamServerUnreachable as exc:
             raise HookResolutionUnavailable("server_unreachable") from exc
         if answer.truncated:

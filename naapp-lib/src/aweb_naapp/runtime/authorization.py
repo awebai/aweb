@@ -177,6 +177,14 @@ class GrantUnavailable(Exception):
     """The grant authority could not answer; the request must not be admitted."""
 
 
+class TeamServerNotAllowed(GrantUnavailable):
+    """The team's published server is not one this app may reach; nothing was sent."""
+
+    def __init__(self, server_url: str) -> None:
+        super().__init__("team_server_not_allowed")
+        self.server_url = server_url
+
+
 class GrantSource(Protocol):
     async def grant_for(self, team_id: str, certificate_id: str | None = None) -> Grant | None:
         """The team's current grant, ``None`` when the app is not installed.
@@ -265,6 +273,15 @@ async def authorize_request(
 
     try:
         grant = await grants.grant_for(principal.team_id, certificate_id=principal.certificate_id)
+    except TeamServerNotAllowed as refused:
+        logger.warning("Refused %s for team %s: its server %s is not allowed", tool.name, principal.team_id, refused.server_url)
+        raise _refuse(
+            503,
+            "team_server_not_allowed",
+            f"This team's coordination server, {refused.server_url}, is not an address this app "
+            "may reach. The team's controller can publish a public https address with "
+            "`aw id team set-server`.",
+        ) from None
     except GrantUnavailable:
         logger.exception("Grant authority unavailable for team %s", principal.team_id)
         raise _refuse(503, "authority_unavailable", "The app's installation grant cannot be verified") from None

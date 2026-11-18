@@ -9,7 +9,6 @@ from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, Member, did_key
 from fastapi import Depends, FastAPI, HTTPException
 from nacl.signing import SigningKey
 
-from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
 from aweb_naapp.runtime import team_auth
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, AppCredentialSigner
@@ -73,9 +72,7 @@ async def test_one_directory_can_be_wired_before_startup_and_resolves_real_awid(
             purpose=APP_GRANT_READ,
         ),
         discovery=directory,
-        reach=TeamServerReach(
-            egress=Egress(addresses=AddressPolicy(), resolver=DnsResolver(), user_agent="test")
-        ),
+        reach=TeamServerReach(),
     )
     # Registering guards must precede the existing lifespan route validation.
     guard = runtime.authorized(grants=source, policy=allow_all)

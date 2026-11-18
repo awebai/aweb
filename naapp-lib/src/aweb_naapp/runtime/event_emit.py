@@ -16,17 +16,16 @@ carry metadata only, never secrets.
 
 from __future__ import annotations
 
-import ipaddress
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
 from awid.signing import canonical_json_bytes
 from pgdbm.core import TransactionManager
 
+from aweb_naapp.egress import EgressRefused, operator_origin
 from aweb_naapp.manifest import Manifest
 from aweb_naapp.outbox import (
     Acked,
@@ -121,17 +120,6 @@ async def _resolve(event: StoredEvent) -> Sequence[Target]:
     return [_TARGET]
 
 
-def is_loopback_host(host: str) -> bool:
-    """Whether ``host`` is localhost, a ``.localhost`` name or a loopback IP."""
-    host = host.lower()
-    if host == "localhost" or host.endswith(".localhost"):
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
 class DrainOptions(TypedDict):
     channel: str
     resolver: Resolver
@@ -164,14 +152,13 @@ class AppEvents:
                     f"an app-event key is configured without {prefix}APP_EVENTS_ORIGIN"
                 )
             return cls(app_id=settings.app_id, origin=None, key=None, policy=policy)
-        parts = urlsplit(origin)
-        secure = parts.scheme == "https" or (
-            parts.scheme == "http" and is_loopback_host(parts.hostname or "")
-        )
-        if not parts.netloc or not secure:
+        try:
+            operator_origin(origin)
+        except EgressRefused:
             raise ValueError(
-                f"{prefix}APP_EVENTS_ORIGIN must be an https origin, or http on loopback"
-            )
+                f"{prefix}APP_EVENTS_ORIGIN must be an https origin, or an http origin on "
+                "127.0.0.1, [::1] or localhost"
+            ) from None
         key = load_app_key(settings, manifest, APP_EVENT)
         return cls(app_id=settings.app_id, origin=origin, key=key, policy=policy)
 

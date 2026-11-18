@@ -37,7 +37,7 @@ from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from enum import StrEnum
-from ipaddress import IPv4Network, IPv6Network
+from ipaddress import IPv4Network, IPv6Network, ip_address
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -55,7 +55,6 @@ from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
 from aweb_naapp.asset_responses import font_response, stylesheet_response
-from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
 from aweb_naapp.hooks.producer import HookProducer
 from aweb_naapp.hooks.resolver import TeamServerRegistrations
 from aweb_naapp.identity_assets import mount_identity_routes
@@ -93,7 +92,7 @@ from aweb_naapp.runtime.authorization import (
 )
 from aweb_naapp.runtime.awid_member_credentials import read_member_credentials
 from aweb_naapp.runtime.db import NaappDatabase, Store
-from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
+from aweb_naapp.runtime.event_emit import AppEvents
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
@@ -121,6 +120,7 @@ from aweb_naapp.skills import Skills
 if TYPE_CHECKING:
     from pgdbm.core import TransactionManager
 
+    from aweb_naapp.egress import Egress
     from aweb_naapp.runtime.owner_act_delivery import CheckedHumanRoleMember
 
 logger = logging.getLogger(__name__)
@@ -245,11 +245,8 @@ class NaappRuntime:
             team_cache=self._team_cache, transport=awid_transport,
         )
         team_server_reach = TeamServerReach(
-            egress=team_server_egress or Egress(
-                addresses=AddressPolicy(),
-                resolver=DnsResolver(),
-                user_agent="aweb-naapp/team-server",
-            ),
+            egress=team_server_egress,
+            internal_origins=settings.team_server_internal_origins,
             transport=team_server_transport,
         )
         self._installation_fence: InstallationFence | None = None
@@ -804,6 +801,18 @@ class NaappRuntime:
         )
 
 
+def _only_this_host_reaches(host: str) -> bool:
+    """Whether ``host`` names this machine alone: localhost, a ``.localhost``
+    name (RFC 6761 §6.3) or a loopback address."""
+    host = host.lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mapping[str, Any]) -> None:
     """A deployment others can reach must configure its own app id: serving the
     hosted one there would claim the hosted app's identity. Only the hosted
@@ -814,7 +823,7 @@ def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mappi
     if not isinstance(hosted.get("origin"), str):
         raise ManifestError("manifest_template_invalid", "a manifest template names the hosted app.origin")
     origin = settings.public_origin.rstrip("/")
-    if origin == hosted["origin"].rstrip("/") or is_loopback_host(urlsplit(origin).hostname or ""):
+    if origin == hosted["origin"].rstrip("/") or _only_this_host_reaches(urlsplit(origin).hostname or ""):
         return
     if settings.app_id == hosted.get("id"):
         prefix = settings.model_config.get("env_prefix", "")
