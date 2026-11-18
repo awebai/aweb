@@ -13,8 +13,6 @@ from types import SimpleNamespace
 import pytest
 from asyncpg import PostgresError
 from aweb_naapp import roles
-from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
-from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp_testing import did_key
 from aweb_naapp_testing.owner_acts import TeamOwner
 from awid.dns_verify import awid_txt_value
@@ -22,7 +20,11 @@ from awid.dns_verify import awid_txt_value
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.revisions import config_revision
 from tests.human_owner import b64, fixture_principal, holder_credential, human
-from tests.test_production_bootstrap import envelopes, mounted_owner_console
+from tests.test_production_bootstrap import (
+    envelopes,
+    mounted_owner_console,
+    mounted_owner_verifier,
+)
 from tests.test_production_bootstrap import root as root
 
 pytestmark = pytest.mark.parametrize("root", [{"manifest_version": 3}], indirect=True)
@@ -34,13 +36,7 @@ async def delivery(root, registry, *, act="human-role.designate", alias="alice",
     service, client, settings, member, installed, *_, dns = root
     world = getattr(client, "owner_delivery_fixture", None)
     if world is None:
-        console = mounted_owner_console(service)
-        verifier = OwnerActVerifier(
-            scope=settings.app_id,
-            audience=settings.console_origin,
-            acts=HUMAN_ROLE_ACTS,
-            team_key_for=console.verifier._team_key_for,
-        )
+        verifier = mounted_owner_verifier(service)
         world = client.owner_delivery_fixture = SimpleNamespace(
             owner=TeamOwner(member.team_key, verifier, member.team_id), registry=registry
         )

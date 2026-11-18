@@ -62,7 +62,7 @@ async def envelopes(db, team_id):
 
 
 @pytest.fixture
-async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
+async def root(test_db_factory, registry, tmp_path, request, monkeypatch, production_settings):
     member = Member(team_id="root:example.com", member_key=member_key("alice"))
     options = getattr(request, "param", {})
 
@@ -84,6 +84,7 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
                 update={
                     "public_origin": AUDIENCE,
                     "awid_service_token": SERVICE_TOKEN,
+                    **production_settings,
                 }
             )
             service_member = None
@@ -200,10 +201,8 @@ class EnrolledOwner:
     csrf_token: str
 
 
-def mounted_owner_console(service):
-    """Find the one original dependency through pinned FastAPI's lazy includes."""
-    import inspect
-
+def _mounted_owner_endpoint(service, path):
+    """Find an existing production endpoint through FastAPI's lazy includes."""
     from fastapi.routing import APIRoute, _IncludedRouter
 
     def original_routes(routes):
@@ -216,9 +215,27 @@ def mounted_owner_console(service):
     [route] = [
         route
         for route in original_routes(service.console_app.routes)
-        if route.path == "/installations/{installation_id}/owner-acts" and "POST" in route.methods
+        if route.path == path and "POST" in route.methods
     ]
-    return inspect.getclosurevars(route.endpoint).nonlocals["services"]
+    return route.endpoint
+
+
+def mounted_owner_console(service):
+    """The original console retained by its real 1Password ingress adapter."""
+    import inspect
+
+    endpoint = _mounted_owner_endpoint(
+        service, "/installations/{installation_id}/onepassword/references"
+    )
+    return inspect.getclosurevars(endpoint).nonlocals["services"].console
+
+
+def mounted_owner_verifier(service):
+    """The verifier used by actual shared owner-act HTTP delivery."""
+    import inspect
+
+    endpoint = _mounted_owner_endpoint(service, "/.well-known/aweb-owner-act")
+    return inspect.getclosurevars(endpoint).nonlocals["verifier"]
 
 
 async def enrolled_owner(root):
@@ -238,9 +255,8 @@ async def enrolled_owner(root):
     member.extra_cert_fields = {"member_did_aw": principal.principal_did}
     if fixture is None:
         admitted = await console.installation(installed["installation_id"], team_id=member.team_id)
-        owner = TeamOwner(
-            member.team_key, console.verifier, member.team_id, console.verifier._team_key_for
-        )
+        verifier = mounted_owner_verifier(service)
+        owner = TeamOwner(member.team_key, verifier, member.team_id, verifier._team_key_for)
         fixture = SimpleNamespace(
             db=console.db,
             console=console,
