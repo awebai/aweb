@@ -1057,7 +1057,7 @@ async def _resolve_named_recipients(
                 registry_client=runtime.registry_client,
             )
             if row is None:
-                raise HTTPException(status_code=404, detail=f"Unknown aliases: {alias}")
+                raise recipient_not_found(label=alias)
             target_rows.append(row)
         if local_aliases:
             local_rows = await messaging_participants_by_aliases(
@@ -1070,9 +1070,7 @@ async def _resolve_named_recipients(
             resolved_aliases = {row["alias"] for row in local_rows}
             missing = [alias for alias in local_aliases if alias not in resolved_aliases]
             if missing:
-                raise HTTPException(
-                    status_code=404, detail=f"Unknown aliases: {', '.join(missing)}"
-                )
+                raise recipient_not_found(label=", ".join(missing))
             target_rows.extend(local_rows)
         for row in target_rows:
             target_did = (row.get("did_aw") or row.get("did_key") or "").strip()

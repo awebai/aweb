@@ -19,6 +19,7 @@ class MessageTransport(StrEnum):
 
 class RecipientSelector(StrEnum):
     ALIAS = "alias"
+    QUALIFIED_ALIAS = "qualified-alias"
     AGENT_ID = "id"
     DID = "did"
     ADDRESS = "address"
@@ -30,6 +31,9 @@ async def _send(
     if kind is MessageTransport.MAIL:
         target = {
             RecipientSelector.ALIAS: {"to_alias": recipient[2]},
+            RecipientSelector.QUALIFIED_ALIAS: {
+                "to_alias": TEAM.split(":", 1)[0] + "~" + recipient[2]
+            },
             RecipientSelector.AGENT_ID: {"to_agent_id": agent_id},
             RecipientSelector.DID: {"to_did": recipient[1]},
             RecipientSelector.ADDRESS: {"to_address": f"example.test/{recipient[2]}"},
@@ -39,6 +43,9 @@ async def _send(
     else:
         target = {
             RecipientSelector.ALIAS: {"to_aliases": [recipient[2]]},
+            RecipientSelector.QUALIFIED_ALIAS: {
+                "to_aliases": [TEAM.split(":", 1)[0] + "~" + recipient[2]]
+            },
             RecipientSelector.DID: {"to_dids": [recipient[1]]},
             RecipientSelector.ADDRESS: {"to_addresses": [f"example.test/{recipient[2]}"]},
         }[selector]
@@ -55,10 +62,12 @@ async def _send(
     "kind,selector",
     [
         (MessageTransport.MAIL, RecipientSelector.ALIAS),
+        (MessageTransport.MAIL, RecipientSelector.QUALIFIED_ALIAS),
         (MessageTransport.MAIL, RecipientSelector.AGENT_ID),
         (MessageTransport.MAIL, RecipientSelector.DID),
         (MessageTransport.MAIL, RecipientSelector.ADDRESS),
         (MessageTransport.CHAT, RecipientSelector.ALIAS),
+        (MessageTransport.CHAT, RecipientSelector.QUALIFIED_ALIAS),
         (MessageTransport.CHAT, RecipientSelector.DID),
         (MessageTransport.CHAT, RecipientSelector.ADDRESS),
     ],
@@ -83,11 +92,10 @@ async def test_every_local_selector_requires_current_membership(pinning, kind, s
         env, sender=sender, recipient=recipient, agent_id=recipient_id, kind=kind, selector=selector
     )
     assert refused.status_code == 404, refused.text
-    if selector is not RecipientSelector.ALIAS:
-        assert (
-            "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
-            in refused.json()["detail"]
-        )
+    assert (
+        "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
+        in refused.json()["detail"]
+    )
 
     # A stored local participant keeps its literal key. Losing membership
     # does not retire that participant or create succession to a new key.
