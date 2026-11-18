@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-from aweb.grant_expiry import never_expires
+from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state
 from aweb.config import require_registered_certificates
 from aweb.member_team_key import grant_issuer_current, member_key_columns_sql
 from aweb.team_auth_deps import (
@@ -88,12 +88,15 @@ async def grant_terminal_reason(
     )
     if row is None or row["grant_did_key"] != grant.session_did_key:
         return "grant_revoked"
-    if row["revoked_at"] is not None:
+    lifetime_state = grant_lifetime_state(
+        issued_at=row.get("issued_at"),
+        expires_at=_as_utc(row["expires_at"]),
+        revoked_at=row["revoked_at"],
+        now=now,
+    )
+    if lifetime_state is GrantLifetimeState.REVOKED:
         return "grant_revoked"
-    if (
-        not never_expires(row.get("issued_at"), row["expires_at"])
-        and _as_utc(row["expires_at"]) <= now
-    ):
+    if lifetime_state is GrantLifetimeState.EXPIRED:
         return "grant_expired"
     if (
         str(row["agent_id"]) != str(identity.agent_id)

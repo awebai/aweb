@@ -8,21 +8,19 @@ from typing import Optional
 from fastapi import Request
 
 from aweb.config import require_registered_certificates
-from aweb.grant_expiry import never_expires
+from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state
 from aweb.member_team_key import grant_issuer_current
 from aweb.team_auth_deps import _get_registered_certificates, _get_revoked_certificates
 
 
-def grant_status(row, now: datetime) -> str:
+def grant_status(row, now: datetime) -> GrantLifetimeState:
     """A grant's own status: revoked, expired or active."""
-    if row["revoked_at"] is not None:
-        return "revoked"
-    if (
-        not never_expires(row.get("issued_at"), row["expires_at"])
-        and row["expires_at"] <= now
-    ):
-        return "expired"
-    return "active"
+    return grant_lifetime_state(
+        issued_at=row.get("issued_at"),
+        expires_at=row["expires_at"],
+        revoked_at=row["revoked_at"],
+        now=now,
+    )
 
 
 async def effective_grant_status(
@@ -30,7 +28,7 @@ async def effective_grant_status(
 ) -> tuple[str, Optional[str]]:
     """The grant's status after its subject and issuing certificate are checked."""
     status = grant_status(row, now)
-    if status != "active":
+    if status is not GrantLifetimeState.ACTIVE:
         return status, None
     if (
         row.get("subject_status") != "active"

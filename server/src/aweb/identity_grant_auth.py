@@ -22,7 +22,7 @@ from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
 from aweb.config import get_settings, require_registered_certificates
 from aweb.member_team_key import grant_issuer_current, member_key_columns_sql
-from aweb.grant_expiry import never_expires
+from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state, never_expires
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
@@ -201,11 +201,15 @@ async def _verify_identity_grant_row(
     )
     if row is None or row["grant_did_key"] != did_key:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
-    if row["revoked_at"] is not None:
+    lifetime_state = grant_lifetime_state(
+        issued_at=row.get("issued_at"),
+        expires_at=row["expires_at"],
+        revoked_at=row["revoked_at"],
+        now=datetime.now(UTC),
+    )
+    if lifetime_state is GrantLifetimeState.REVOKED:
         raise HTTPException(status_code=403, detail="grant revoked")
-    if not never_expires(row.get("issued_at"), row["expires_at"]) and row[
-        "expires_at"
-    ] <= datetime.now(UTC):
+    if lifetime_state is GrantLifetimeState.EXPIRED:
         raise HTTPException(status_code=403, detail="grant expired")
     if row["status"] != "active" or row["deleted_at"] is not None:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
