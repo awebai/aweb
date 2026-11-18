@@ -90,6 +90,18 @@ and a missing controlling terminal refuse this path.
 Ordinary human mail carries its ID chain and no saved enrollment or creation
 evidence. `aw id proof` exports that evidence separately.
 
+After an issuer or controller change, a registered person runs
+`aw id human refresh-binding --human ID --human-domain DOMAIN` to refresh their
+live approval binding. The command uses the remembered issuer, or an explicit
+`--issuer URL`, and carries the holder's own-person refresh packet with the
+shared `binding_refresh` HTTP authorization. It saves the new live binding only
+after the shared answer reader confirms that exact binding. The original
+`approval-binding.json`, enrollment session and historical proof evidence remain
+unchanged; `approval-live-binding.json` supplies subsequent approval operations.
+A retained `approval-binding-refresh.json` packet makes an interrupted submission
+replayable. Repeating the command completes that same update; it does not enroll
+another key or rewrite a historical statement.
+
 This initial path supports plaintext mail, not human encryption-key custody.
 Encrypted sends or replies refuse when that custody is unavailable; there is
 no silent plaintext fallback. Chat, arbitrary `id sign`, blueprint publication

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `aw id human refresh-binding` carries an own-person binding refresh after an
+  issuer or controller change. The checked live binding is saved separately;
+  original enrollment and historical evidence are preserved.
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep

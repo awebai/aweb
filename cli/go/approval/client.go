@@ -20,7 +20,9 @@ import (
 
 // Routes are the format-v1 transport paths; signing is owned by the shared
 // verifier. Corpus tests check the actual URL and signed packet together.
-var routes = map[string]string{"submit": "/v1/requests/submit", "poll": "/v1/requests/poll", "cancel": "/v1/requests/cancel", "enrollment_start": "/v1/enrollments/start", "enrollment_material": "/v1/enrollments/material", "enrollment_confirm": "/v1/enrollments/confirm", "enrollment_activate": "/v1/enrollments/activate"}
+const PurposeBindingRefresh = "binding_refresh"
+
+var routes = map[string]string{"submit": "/v1/requests/submit", "poll": "/v1/requests/poll", "cancel": "/v1/requests/cancel", "enrollment_start": "/v1/enrollments/start", "enrollment_material": "/v1/enrollments/material", "enrollment_confirm": "/v1/enrollments/confirm", "enrollment_activate": "/v1/enrollments/activate", PurposeBindingRefresh: "/v1/enrollment-bindings/refresh"}
 
 type Client struct {
 	Origin    string
