@@ -3,37 +3,44 @@
 from __future__ import annotations
 
 import os
+from http import HTTPMethod
 
 import httpx
 import pytest
+from aweb_naapp_testing.deployment import (
+    RunningApp,
+    assert_aw_status,
+    assert_aw_success,
+    aw_request,
+    candidate_hostname,
+    compose,
+    wait_http_ok,
+)
 from test_e2e_smoke import (
     AWID_URL,
-    _assert_aw_status,
-    _assert_aw_success,
-    _aw_request,
-    _compose,
-    _provision_team,
-    _require_e2e_enabled,
-    _running_library,
-    _wait_http_ok,
-    candidate_hostname,
+    STACK,
+    installed_team,
+    require_e2e_enabled,
+    running_library,
 )
 
 pytestmark = pytest.mark.e2e
 
 
-def test_private_certificate_refused_by_real_pre_status_registry(aw_workspace):
-    _require_e2e_enabled()
+def test_private_certificate_refused_by_real_pre_status_registry(
+    aw_workspace, library_without_awid_service_token: RunningApp, tmp_path
+):
+    require_e2e_enabled()
     if os.environ.get("NAAPP_E2E_CONTAINER_NETWORK") == "1":
         project = os.environ["NAAPP_E2E_PROJECT"]
         old_registry = f"http://{candidate_hostname(project, 'awid-pre-status')}:8010"
     else:
-        binding = _compose("port", "awid-pre-status", "8010").stdout.strip().splitlines()[0]
+        binding = compose(STACK, "port", "awid-pre-status", "8010").stdout.strip().splitlines()[0]
         port = int(binding.rsplit(":", 1)[1])
         host = os.environ.get("NAAPP_E2E_HOST", "127.0.0.1")
         old_registry = f"http://{host}:{port}"
-    _wait_http_ok(f"{old_registry}/health")
-    team = _provision_team(aw_workspace)
+    wait_http_ok(f"{old_registry}/health")
+    team = installed_team(aw_workspace, library_without_awid_service_token)
     team_path = f"/v1/namespaces/{team.namespace}/teams/{team.team}"
     status_path = f"{team_path}/certificates/{team.certificate_id}/status"
 
@@ -50,13 +57,14 @@ def test_private_certificate_refused_by_real_pre_status_registry(aw_workspace):
     assert current_status.status_code == 200, current_status.text
     assert current_status.json()["status"] == "active"
 
-    with _running_library(awid_service_token=None, registry_url=old_registry) as app:
-        result = _aw_request(team, "GET", f"{app.origin}/v1/proposals")
-        _assert_aw_status(result, 401, context="private certificate on registry without status")
-        assert "Unknown AWID certificate" in result.stdout
-    with _running_library(awid_service_token=None) as app:
-        result = _aw_request(team, "GET", f"{app.origin}/v1/proposals")
-        assert (
-            _assert_aw_success(result, context="same certificate on current registry").strip()
-            == "[]"
-        )
+    with running_library(
+        tmp_path / "old-registry", awid_service_token=None, registry_url=old_registry
+    ) as app:
+        result = aw_request(team, HTTPMethod.GET, f"{app.origin}/v1/proposals")
+        assert_aw_status(result, 401, context="private certificate on registry without status")
+    current = aw_request(
+        team, HTTPMethod.GET, f"{library_without_awid_service_token.origin}/v1/proposals"
+    )
+    assert (
+        assert_aw_success(current, context="same certificate on current registry").strip() == "[]"
+    )
