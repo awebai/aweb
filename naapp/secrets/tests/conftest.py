@@ -48,6 +48,12 @@ def passkey_origin():
 
 
 @pytest.fixture
+def production_settings():
+    """Operator settings supplied to the unmodified production composition."""
+    return {}
+
+
+@pytest.fixture
 def console_listener(console_tls):
     import socket
     from types import SimpleNamespace
