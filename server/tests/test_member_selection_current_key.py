@@ -85,7 +85,7 @@ async def test_every_local_selector_requires_current_membership(pinning, kind, s
     assert refused.status_code == 404, refused.text
     if selector is not RecipientSelector.ALIAS:
         assert (
-            "Ask the recipient to reconnect with a current team certificate."
+            "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
             in refused.json()["detail"]
         )
 
