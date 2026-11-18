@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """Seed the current aweb.team catalog blueprint into the Library e2e stack.
 
-Provisions a real AWID team against the stack's awid, then publishes the
-catalog blueprint into Library over real team-certificate auth - the same
-flow Library's own e2e suite exercises (_provision_team + _publish_blueprint),
-so the materializer runs against the real folded-block-scalar blueprint content.
+Provisions a real AWID team against the stack's awid, installs Library for it
+through the stack's coordination server, then publishes the catalog blueprint
+into Library over real team-certificate auth - the same flow Library's own e2e
+suite exercises, so the materializer runs against the real folded-block-scalar
+blueprint content.
 
-Talks to the stack only over its published host ports and the `aw` binary; it
-imports nothing from the library package. Run against a freshly-upped stack.
+Runs inside the stack's network (the journey runner), with the stack CA in
+SSL_CERT_FILE; it imports nothing from the library package. Run against a
+freshly-upped stack.
 
 Environment:
   AW_BIN                       path to the aw binary (default: aw on PATH)
-  LIBRARY_E2E_AWID_URL         awid base URL    (default: http://127.0.0.1:18010)
-  LIBRARY_E2E_LIBRARY_URL      library base URL (default: http://127.0.0.1:18765)
+  LIBRARY_E2E_PROJECT          the stack's compose project (its aweb container
+                               grants the seed team install-admin)
+  LIBRARY_E2E_AWEB_URL         the stack's coordination server URL
+  LIBRARY_E2E_AWID_URL         awid base URL
+  LIBRARY_E2E_LIBRARY_URL      library base URL
                                MUST equal Library's LIBRARY_PUBLIC_ORIGIN: it is
                                the team-auth audience the seed signs.
   LIBRARY_E2E_BLUEPRINT_SRC    blueprint source dir
@@ -33,8 +38,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 AW_BIN = os.environ.get("AW_BIN", "aw")
-AWID_URL = os.environ.get("LIBRARY_E2E_AWID_URL", "http://127.0.0.1:18010")
-LIBRARY_URL = os.environ.get("LIBRARY_E2E_LIBRARY_URL", "http://127.0.0.1:18765")
+AWID_URL = os.environ["LIBRARY_E2E_AWID_URL"]
+AWEB_URL = os.environ["LIBRARY_E2E_AWEB_URL"]
+LIBRARY_URL = os.environ["LIBRARY_E2E_LIBRARY_URL"]
+PROJECT = os.environ["LIBRARY_E2E_PROJECT"]
 BLUEPRINT_SRC = Path(
     os.environ.get("LIBRARY_E2E_BLUEPRINT_SRC", "../blueprints/team")
 ).resolve()
@@ -101,7 +108,7 @@ def _get_blueprints() -> list[dict]:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _provision_team(workspace: Path, env: dict[str, str]) -> None:
+def _provision_team(workspace: Path, env: dict[str, str]) -> tuple[str, str]:
     """Create an identity + team in awid and bind it into the workspace so that
     `aw id request --team-auth` produces a valid team certificate."""
     unique = uuid.uuid4().hex[:12]
@@ -140,6 +147,33 @@ updated_at: "{now}"
 """,
         encoding="utf-8",
     )
+    return namespace, team
+
+
+def _install_library(workspace: Path, env: dict[str, str], *, namespace: str, team: str) -> None:
+    """Install Library for the seed team as a team admin does: the stack's server
+    is the team's server, the member is an install admin there, and the real
+    `aw plugin install` approves the install. Library admits only installed teams."""
+    team_id = f"{team}:{namespace}"
+    _run_aw(workspace, env, "workspace", "connect", "--service", AWEB_URL, "--team", team_id)
+    _run_aw(workspace, env, "id", "team", "set-server", "--team", team, "--namespace",
+            namespace, "--url", AWEB_URL, "--registry", AWID_URL)
+    did_key = str(_run_aw(workspace, env, "id", "show")["did_key"])
+    aweb = subprocess.run(
+        ["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}",
+         "--filter", "label=com.docker.compose.service=aweb"],
+        text=True, capture_output=True, timeout=30, check=True,
+    ).stdout.split()
+    if len(aweb) != 1:
+        raise SystemExit(f"expected one aweb container in project {PROJECT}, found {aweb}")
+    grant = subprocess.run(
+        ["docker", "exec", aweb[0], "aweb", "install-admin", "grant", "--team-id", team_id,
+         "--principal-did", did_key, "--role", "owner"],
+        text=True, capture_output=True, timeout=60, check=False,
+    )
+    if grant.returncode != 0:
+        raise SystemExit(f"aweb install-admin grant failed\n{grant.stdout}\n{grant.stderr}")
+    _run_aw(workspace, env, "plugin", "install", LIBRARY_URL)
 
 
 def _publish(workspace: Path, env: dict[str, str], payload_file: Path) -> int:
@@ -208,7 +242,8 @@ def main() -> int:
             }
         )
 
-        _provision_team(workspace, env)
+        namespace, team = _provision_team(workspace, env)
+        _install_library(workspace, env, namespace=namespace, team=team)
 
         payload_file = tmpdir / "payload.json"
         payload_file.write_text(json.dumps(payload), encoding="utf-8")

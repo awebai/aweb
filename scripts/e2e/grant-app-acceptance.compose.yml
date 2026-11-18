@@ -45,7 +45,7 @@ services:
       aweb.acceptance: grant-app-tools
   library:
     network_mode: service:aweb
-    ports: !reset []
+    networks: !reset {}
     depends_on:
       aweb:
         condition: service_healthy

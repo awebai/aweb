@@ -36,7 +36,6 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}
-	installLibraryPlugin(t, home)
 	gitInit(t, repo)
 
 	env := append(os.Environ(),
@@ -80,6 +79,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 		"--agent", "reviewer@"+seededBlueprintRef+"/reviewer=pi"); err != nil {
 		t.Fatalf("aw team admin create --agent failed: %v\n%s", err, out)
 	}
+	installLibrary(t, repo, env, namespace, "eng")
 	coordinatorHome := filepath.Join(repo, "agents", "instances", "coordinator")
 	assertSingleCoordinationBlock(t, coordinatorHome, "fresh materialization")
 	if out, err := awInRepo("team", "admin", "adopt", "coordinator", "--home", coordinatorHome); err != nil {

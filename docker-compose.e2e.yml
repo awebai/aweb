@@ -10,6 +10,12 @@
 # Rate limiting is disabled and DNS verification skipped (like folio's
 # docker-compose.e2e.yml) so a freshly created test team works offline.
 # Postgres data lives on tmpfs, so `down -v` leaves no state behind.
+#
+# Nothing is published to the host. Journeys run inside this network
+# (scripts/e2e-library-stack.sh journey): the server fetches an app manifest
+# only over pinned HTTPS, so Library serves TLS at an in-network name with a
+# stack CA, and every team installs Library before it calls a member route.
+# The LIBRARY_E2E_*_HOST names are the scoped aliases the stack script sets.
 
 services:
   postgres:
@@ -18,8 +24,6 @@ services:
       POSTGRES_USER: aweb
       POSTGRES_PASSWORD: aweb
       POSTGRES_DB: aweb
-    ports:
-      - "${LIBRARY_E2E_POSTGRES_PORT:-55432}:5432"
     # Create the separate `library` database alongside `aweb` on first init.
     # With tmpfs every `up` is a fresh init, so this always runs.
     volumes:
@@ -55,9 +59,13 @@ services:
       AWID_RATE_LIMIT_DISABLED: "true"
       AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
       AWID_SKIP_DNS_VERIFY: "1"
-      AWID_PUBLIC_ORIGINS: http://awid:8010,${LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL:-http://127.0.0.1:18010}
-    ports:
-      - "${LIBRARY_E2E_AWID_PORT:-18010}:8010"
+      AWID_PUBLIC_ORIGINS: http://awid:8010,http://${LIBRARY_E2E_AWID_HOST:-awid}:8010
+      # Teams publish this stack's plain-http server as their team server.
+      APP_ENV: test
+      AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
+    networks:
+      default:
+        aliases: ["${LIBRARY_E2E_AWID_HOST:-awid}"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,19 +82,24 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
+    # The real HTTPS manifest fetcher, pinned to this stack's Library origin.
+    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://${LIBRARY_E2E_LIBRARY_HOST:-library-stack.test}:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "library-stack-test/1", "--port", "8000"]
+    volumes:
+      - fixture:/fixture:ro
+    networks:
+      default:
+        aliases: ["${LIBRARY_E2E_AWEB_HOST:-aweb}"]
     environment:
       AWEB_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/aweb
       AWEB_REDIS_URL: redis://redis:6379/0
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
-      AWEB_PUBLIC_ORIGIN: ${LIBRARY_E2E_AWEB_PUBLIC_ORIGIN:-http://127.0.0.1:18000}
+      AWEB_PUBLIC_ORIGIN: http://${LIBRARY_E2E_AWEB_HOST:-aweb}:8000
       APP_ENV: development
       AWEB_LOG_JSON: "false"
       AWID_REGISTRY_URL: http://awid:8010
       AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
-      AWID_PUBLIC_REGISTRY_URL: ${LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL:-http://127.0.0.1:18010}
-    ports:
-      - "${LIBRARY_E2E_AWEB_PORT:-18000}:8000"
+      AWID_PUBLIC_REGISTRY_URL: http://${LIBRARY_E2E_AWID_HOST:-awid}:8010
     depends_on:
       postgres:
         condition: service_healthy
@@ -109,14 +122,21 @@ services:
       LIBRARY_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/library
       LIBRARY_AWID_REGISTRY_URL: http://awid:8010
       LIBRARY_AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
-      # Clients sign the team-auth audience (aud) as scheme://host of the URL
-      # they POST to. The seed posts to this host:port, so the audience library
-      # enforces must match the seed's target origin exactly.
-      LIBRARY_PUBLIC_ORIGIN: ${LIBRARY_E2E_LIBRARY_PUBLIC_ORIGIN:-http://127.0.0.1:18765}
+      # Clients sign the team-auth audience (aud) as the origin they call, so
+      # this is the in-network TLS origin every journey uses.
+      LIBRARY_PUBLIC_ORIGIN: https://${LIBRARY_E2E_LIBRARY_HOST:-library-stack.test}:8765
       LIBRARY_AUTH_CACHE_TTL_SECONDS: "2"
+      LIBRARY_APP_KEY_FILES: '{"library:grant-read-1": "/fixture/library/grant-read.hex"}'
       PORT: "8765"
-    ports:
-      - "${LIBRARY_E2E_LIBRARY_PORT:-18765}:8765"
+    command: ["/app/.venv/bin/uvicorn", "library.api:app", "--host", "0.0.0.0", "--port", "8765", "--ssl-keyfile", "/fixture/tls/server.key", "--ssl-certfile", "/fixture/tls/server.pem"]
+    volumes:
+      - fixture:/fixture:ro
+      # Library's template published from this stack's origin, so it runs as
+      # app id "library" here (scripts/e2e/library_stack_prepare.py).
+      - library-source:/app/naapp/library/src/library
+    networks:
+      default:
+        aliases: ["${LIBRARY_E2E_LIBRARY_HOST:-library-stack.test}"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,8 +147,14 @@ services:
         - "CMD"
         - "python3"
         - "-c"
-        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8765/ready').status==200 else 1)"
+        - "import os,ssl,sys,urllib.request; origin=os.environ['LIBRARY_PUBLIC_ORIGIN']; sys.exit(0 if urllib.request.urlopen(origin + '/ready', context=ssl.create_default_context(cafile='/fixture/tls/ca.pem')).status==200 else 1)"
       interval: 2s
       timeout: 5s
       start_period: 5s
       retries: 30
+
+volumes:
+  fixture:
+    name: ${LIBRARY_E2E_PROJECT:-aweb-e2e-stack}-fixture
+  library-source:
+    name: ${LIBRARY_E2E_PROJECT:-aweb-e2e-stack}-library-source

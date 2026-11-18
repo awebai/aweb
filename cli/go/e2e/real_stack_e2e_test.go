@@ -29,18 +29,11 @@ import (
 	"github.com/awebai/aw/awconfig"
 )
 
-// envOr returns the environment value for key, or fallback if unset/empty.
-func envOr(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// Stack endpoints, defaulting to docker-compose.e2e.yml's published ports.
-func awebURL() string    { return envOr("AWEB_URL", "http://127.0.0.1:18000") }
-func awidURL() string    { return envOr("AWID_REGISTRY_URL", "http://127.0.0.1:18010") }
-func libraryURL() string { return envOr("LIBRARY_E2E_LIBRARY_URL", "http://127.0.0.1:18765") }
+// The stack's in-network endpoints, set by scripts/e2e-library-stack.sh
+// journey; requireE2E refuses to run without them.
+func awebURL() string    { return strings.TrimSpace(os.Getenv("AWEB_URL")) }
+func awidURL() string    { return strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL")) }
+func libraryURL() string { return strings.TrimSpace(os.Getenv("LIBRARY_E2E_LIBRARY_URL")) }
 
 const seededBlueprintRef = "aweb.team"
 
@@ -70,6 +63,11 @@ func requireE2E(t *testing.T) {
 	t.Helper()
 	if os.Getenv("AW_E2E") != "1" {
 		t.Skip("set AW_E2E=1 and bring up the stack (make -C cli e2e) to run real-stack e2e")
+	}
+	for _, name := range []string{"AWEB_URL", "AWID_REGISTRY_URL", "LIBRARY_E2E_LIBRARY_URL", "LIBRARY_E2E_PROJECT"} {
+		if strings.TrimSpace(os.Getenv(name)) == "" {
+			t.Fatalf("%s is unset: the suite runs inside the stack's network through make -C cli e2e", name)
+		}
 	}
 }
 
@@ -224,6 +222,7 @@ func (tm *e2eTeam) idRequest(method, url string) (body, stderr string, err error
 func TestRealStackTeamAuthReachesLibrary(t *testing.T) {
 	requireE2E(t)
 	tm := newThrowawayTeam(t)
+	installLibrary(t, tm.workspace, tm.env, tm.namespace, "default")
 
 	body, stderr, err := tm.idRequest("GET", libraryURL()+"/v1/proposals")
 	if err != nil {
@@ -363,5 +362,61 @@ func TestRealStackWorkspacePresenceAndLocksUseDistinctIdentifiers(t *testing.T) 
 		if listedAgent["agent_id"] != holderAgentID {
 			t.Fatalf("server lock holder %q != roster agent %v", holderAgentID, listedAgent["agent_id"])
 		}
+	}
+}
+
+// installLibrary installs the stack's Library for the team the workspace in dir
+// acts for, as a team admin does: the stack's server is published as the
+// team's server, the member becomes an install admin there, and the real
+// `aw plugin install` approves the install. Library admits a member request
+// only for a team that installed it.
+func installLibrary(t *testing.T, dir string, env []string, namespace, team string) {
+	t.Helper()
+	bin := awBinary(t)
+	run := func(args ...string) []byte {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("aw %s failed: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, stdout.String(), stderr.String())
+		}
+		return stdout.Bytes()
+	}
+	run("workspace", "connect", "--service", awebURL(), "--team", team+":"+namespace)
+	run("id", "team", "set-server", "--team", team, "--namespace", namespace, "--url", awebURL(), "--registry", awidURL())
+	var identity struct {
+		DIDKey string `json:"did_key"`
+	}
+	if err := json.Unmarshal(run("--json", "id", "show"), &identity); err != nil || identity.DIDKey == "" {
+		t.Fatalf("aw id show gave no did_key: %v", err)
+	}
+	grantInstallAdmin(t, team+":"+namespace, identity.DIDKey)
+	run("plugin", "install", libraryURL())
+}
+
+// grantInstallAdmin makes principalDID an install admin of teamID on the stack's
+// coordination server, through the operator command in its container.
+func grantInstallAdmin(t *testing.T, teamID, principalDID string) {
+	t.Helper()
+	project := strings.TrimSpace(os.Getenv("LIBRARY_E2E_PROJECT"))
+	if project == "" {
+		t.Fatal("LIBRARY_E2E_PROJECT names the stack's compose project; run through make -C cli e2e")
+	}
+	list := exec.Command("docker", "ps", "-q",
+		"--filter", "label=com.docker.compose.project="+project,
+		"--filter", "label=com.docker.compose.service=aweb")
+	out, err := list.Output()
+	container := strings.TrimSpace(string(out))
+	if err != nil || container == "" || strings.Contains(container, "\n") {
+		t.Fatalf("expected one aweb container in project %s, got %q (err %v)", project, container, err)
+	}
+	grant := exec.Command("docker", "exec", container, "aweb", "install-admin", "grant",
+		"--team-id", teamID, "--principal-did", principalDID, "--role", "owner")
+	if out, err := grant.CombinedOutput(); err != nil {
+		t.Fatalf("aweb install-admin grant failed: %v\n%s", err, out)
 	}
 }

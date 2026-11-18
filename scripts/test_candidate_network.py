@@ -194,8 +194,7 @@ class EndpointTests(unittest.TestCase):
     def test_every_shell_journey_selects_scoped_container_endpoints(self):
         # Evaluate the actual endpoint assignments, not duplicate mappings.
         paths = ['scripts/e2e-oss-user-journey.sh', 'scripts/e2e-a2a-gateway-docker.sh',
-                 'scripts/e2e-oss-federation.sh', 'scripts/e2e-library-stack.sh',
-                 'scripts/e2e-cross-registry-messaging.sh', 'cli/scripts/e2e.sh']
+                 'scripts/e2e-oss-federation.sh', 'scripts/e2e-cross-registry-messaging.sh']
         for path in paths:
             source = (ROOT / path).read_text()
             assignments = [line for line in source.splitlines()
@@ -222,6 +221,21 @@ class EndpointTests(unittest.TestCase):
                       CANDIDATE_RUNNER_NAME='')
         self.assertEqual(result.stdout.strip(), 'http://127.0.0.1:49151')
 
+    def test_the_library_stack_addresses_every_service_by_its_scoped_name_everywhere(self):
+        # Its journeys run only inside the network, gate or not, so the TLS name
+        # and the team-auth audiences are the scoped names in both cases.
+        source = (ROOT / 'scripts/e2e-library-stack.sh').read_text()
+        self.assertNotIn('journey_url', source)
+        for runner in ('probe', ''):
+            result = bash('source scripts/journey-network.sh\nPROJECT=proof\n'
+                          + '\n'.join(line for line in source.splitlines()
+                                      if line.startswith('export LIBRARY_E2E_') and '_HOST=' in line)
+                          + '\nprintf "%s %s %s" "$LIBRARY_E2E_AWID_HOST" "$LIBRARY_E2E_AWEB_HOST" "$LIBRARY_E2E_LIBRARY_HOST"',
+                          CANDIDATE_RUNNER_NAME=runner)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.split(),
+                             [network.hostname('proof', service) for service in ('awid', 'aweb', 'library')])
+
     def test_channel_does_not_reserve_ports_and_selects_both_service_names(self):
         source = (ROOT / 'channel/test/integration.test.ts').read_text()
         allocation = source[source.index('  const directNetwork ='):source.index('  const projectSeed =')]
@@ -242,19 +256,25 @@ class EndpointTests(unittest.TestCase):
                          [f'http://{network.hostname(project, "aweb")}:8000', f'http://{network.hostname(project, "awid")}:8010'])
 
     def test_naapp_database_and_registry_endpoints_are_direct(self):
-        for package in ('folio', 'library'):
-            path = ROOT / 'naapp' / package / 'tests/test_e2e_smoke.py'
+        # Library's stack is the shared aweb_naapp_testing.deployment one.
+        sources = {
+            'folio': (ROOT / 'naapp/folio/tests/test_e2e_smoke.py', {}),
+            'library': (ROOT / 'naapp-lib/testing/src/aweb_naapp_testing/deployment.py',
+                        {'project': 'library-e2e', 'database': 'library'}),
+        }
+        for package, (path, arguments) in sources.items():
             tree = ast.parse(path.read_text())
             definitions = [node for node in tree.body
                            if isinstance(node, (ast.ClassDef, ast.FunctionDef))
                            and node.name in ('E2EStack', 'e2e_stack', 'candidate_hostname')]
-            namespace = {'__file__': str(path), 'Path': Path, 'subprocess': subprocess, 'sys': sys}
+            namespace = {'__file__': str(path), 'Path': Path, 'subprocess': subprocess, 'sys': sys,
+                         'REPOSITORY_ROOT': ROOT, 'Mapping': dict}
             exec('from __future__ import annotations\nfrom dataclasses import dataclass\n'
                  + '\n'.join(ast.unparse(node) for node in definitions), namespace)
             for project in ('proof', 'aweb-candidate-08f4f622d1ec-780cad-naapp-library'):
                 stack = namespace['e2e_stack']({'NAAPP_E2E_PROJECT': project,
                                                'NAAPP_E2E_CONTAINER_NETWORK': '1',
-                                               'NAAPP_E2E_HOST': 'aweb-docker.test'})
+                                               'NAAPP_E2E_HOST': 'aweb-docker.test'}, **arguments)
                 self.assertEqual(stack.awid_url, f'http://{network.hostname(project, "awid")}:8010')
                 self.assertIn(f'{network.hostname(project, "postgres")}:5432', stack.postgres_url)
                 if package == 'folio':
@@ -266,10 +286,10 @@ class EndpointTests(unittest.TestCase):
                     # Execute the actual endpoint selection, stopping before HTTP.
                     boundary = next(i for i, node in enumerate(test.body)
                                     if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
-                                    and isinstance(node.value.func, ast.Name) and node.value.func.id == '_wait_http_ok')
+                                    and isinstance(node.value.func, ast.Name) and node.value.func.id == 'wait_http_ok')
                     namespace.update(os=SimpleNamespace(environ={'NAAPP_E2E_PROJECT': project,
                                                                  'NAAPP_E2E_CONTAINER_NETWORK': '1'}),
-                                     _require_e2e_enabled=lambda: None)
+                                     require_e2e_enabled=lambda: None)
                     exec(compile(ast.Module(body=test.body[:boundary], type_ignores=[]), str(old_path), 'exec'), namespace)
                     self.assertEqual(namespace['old_registry'],
                                      f'http://{network.hostname(project, "awid-pre-status")}:8010')
@@ -385,7 +405,7 @@ class ComposeConfigTests(unittest.TestCase):
         env = {**os.environ, 'FOLIO_WAKES_ORIGIN': 'https://folio-wakes.test:8765',
                'FOLIO_WAKES_APP_KEY_FILES': '{}', 'GRANT_APP_E2E_PROJECT': 'proof'}
         fixtures = [(['scripts/e2e/folio-wakes.compose.yml'], {'folio', 'client'}),
-                    (['docker-compose.e2e.yml', 'scripts/e2e/grant-app-acceptance.compose.yml'], {'client'})]
+                    (['docker-compose.e2e.yml', 'scripts/e2e/grant-app-acceptance.compose.yml'], {'library', 'client'})]
         for files, expected_shared in fixtures:
             with self.subTest(files=files), tempfile.TemporaryDirectory() as tmp:
                 args = [docker, 'compose', '-p', 'proof', '--project-directory', str(ROOT)]

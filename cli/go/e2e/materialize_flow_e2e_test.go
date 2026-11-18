@@ -24,13 +24,10 @@
 //     materialize` (the local compose, which shares the folded-scalar parsing);
 //   - .3.23 via `aw blueprint materialize` of a broken blueprint.
 //
-// Reaching Library needs the library plugin installed. The stack's Library
-// advertises its real origin (it serves the manifest origin from
-// LIBRARY_PUBLIC_ORIGIN - the aabq.20 Library-side fix), so a plain
-// `aw plugin install` passes the origin/fetch-URL self-consistency guard with
-// no origin rewrite. This helper runs with a host store and no resident home:
-// it installs discovery for the materialize tests, granting no team authority.
-// Real resident installation is exercised by the wakes journey.
+// Reaching Library's member routes needs the team to have installed Library:
+// installLibrary publishes the stack's server as the team's server and installs
+// Library there with the real `aw plugin install`, so these tests run with the
+// team authority Library checks on every member request.
 package e2e
 
 import (
@@ -41,38 +38,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// teamHome returns the HOME the throwaway team runs under (where its aw state,
-// including the library plugin, lives).
-func teamHome(t *testing.T, tm *e2eTeam) string {
-	t.Helper()
-	// The team env is os.Environ()+overrides, so HOME appears twice (the outer
-	// home, then the team's). The aw subprocess sees the last one win; match it.
-	home := ""
-	for _, kv := range tm.env {
-		if strings.HasPrefix(kv, "HOME=") {
-			home = strings.TrimPrefix(kv, "HOME=")
-		}
-	}
-	if home == "" {
-		t.Fatal("team env has no HOME")
-	}
-	return home
-}
-
-// installLibraryPlugin installs the library app against the live stack with the
-// real `aw plugin install <manifest-url>` - no fixture, no override. The stack's
-// Library advertises its real origin (aabq.20 Library side), so the origin guard
-// passes. This is the proper self-hosting path.
-func installLibraryPlugin(t *testing.T, home string) {
-	t.Helper()
-	bin := awBinary(t)
-	cmd := exec.Command(bin, "plugin", "install", libraryURL()+"/.well-known/aweb-app.json")
-	cmd.Env = append(os.Environ(), "HOME="+home, "NO_COLOR=1")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("aw plugin install failed: %v\n%s", err, string(out))
-	}
-}
 
 // library runs an installed-manifest library verb through the real binary and
 // returns stdout (the JSON response body). `--json` is a global flag and must
@@ -133,7 +98,7 @@ func realDir(t *testing.T, path string) string {
 func TestRealStackShelfAdoptIsIdempotent(t *testing.T) {
 	requireE2E(t)
 	tm := newThrowawayTeam(t)
-	installLibraryPlugin(t, teamHome(t, tm))
+	installLibrary(t, tm.workspace, tm.env, tm.namespace, "default")
 
 	first := tm.library(t, "import-to-shelf",
 		"--source_blueprint_ref", seededBlueprintRef, "--profile_ref", "reviewer")
@@ -181,7 +146,7 @@ const reviewerMissionText = "Give independent, fresh-eyes review of a change bef
 func TestRealStackFoldedScalarMissionMaterializes(t *testing.T) {
 	requireE2E(t)
 	tm := newThrowawayTeam(t)
-	installLibraryPlugin(t, teamHome(t, tm))
+	installLibrary(t, tm.workspace, tm.env, tm.namespace, "default")
 
 	// Library round-trip: the served profile carries the folded mission intact.
 	profile := tm.library(t, "get-profile",
