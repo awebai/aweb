@@ -16,6 +16,10 @@ class ServiceError(Exception):
         super().__init__(detail)
 
 
+class AuthenticationError(ServiceError):
+    status_code = 401
+
+
 class NotFoundError(ServiceError):
     status_code: int = 404
 
