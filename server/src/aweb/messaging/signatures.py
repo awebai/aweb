@@ -17,10 +17,16 @@ INVALID_MESSAGE_SIGNATURE = (
 )
 
 
-def require_verified_message_signature(*, signed_payload: str, signature: str, did_key: str) -> None:
+def require_verified_message_signature(
+    *, signed_payload: str, signature: str, did_key: str
+) -> None:
     """Authenticate the original message bytes under the transport's sender key."""
     try:
-        verify_did_key_signature(did_key=did_key, payload=signed_payload.encode("utf-8"), signature_b64=signature)
+        verify_did_key_signature(
+            did_key=did_key,
+            payload=signed_payload.encode("utf-8"),
+            signature_b64=signature,
+        )
     except ValueError as exc:
         logger.warning("message_signature_invalid")
         raise HTTPException(status_code=422, detail=INVALID_MESSAGE_SIGNATURE) from exc

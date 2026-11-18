@@ -26,11 +26,15 @@ def signed_recipient_matches(
     if signed_did:
         if len(recipients) != 1:
             return False
-        refs = {str(recipients[0].get(field) or "").strip() for field in ("did", "did_key", "did_aw")} - {""}
+        refs = {
+            str(recipients[0].get(field) or "").strip()
+            for field in ("did", "did_key", "did_aw")
+        } - {""}
         if signed_did not in refs:
             return False
     if signed_stable and (
-        len(recipients) != 1 or signed_stable != str(recipients[0].get("did_aw") or "").strip()
+        len(recipients) != 1
+        or signed_stable != str(recipients[0].get("did_aw") or "").strip()
     ):
         return False
     return True

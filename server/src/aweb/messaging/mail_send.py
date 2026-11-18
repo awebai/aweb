@@ -207,7 +207,9 @@ def _validate_signed_mail_payload(
     except MessageSignatureShapeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     require_verified_message_signature(
-        signed_payload=signed_payload, signature=signature, did_key=signer_did_key or from_did,
+        signed_payload=signed_payload,
+        signature=signature,
+        did_key=signer_did_key or from_did,
     )
 
 
@@ -1122,8 +1124,14 @@ async def resolve_mail_target(
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         recipient = await resolve_address_recipient(
-            db, auth, runtime, address=address, source=source, kind="mail",
-            signed_payload=payload.signed_payload, signature=payload.signature,
+            db,
+            auth,
+            runtime,
+            address=address,
+            source=source,
+            kind="mail",
+            signed_payload=payload.signed_payload,
+            signature=payload.signature,
         )
         recipient_did = str(recipient.get("did_aw") or recipient.get("did_key") or "").strip()
         if payload.to_alias is not None and payload.to_alias.strip():
@@ -1168,10 +1176,21 @@ async def resolve_mail_target(
     else:
         raise HTTPException(status_code=422, detail="Must provide to_did, to_address, to_agent_id, or to_alias")
 
-    if payload.to_agent_id and any(value is not None for value in (payload.to_address, payload.to_did, payload.to_stable_id)):
-        selected_member = await get_agent_by_id(db, agent_id=payload.to_agent_id, team_id=auth.team_id)
-        if recipient.get("external") or not _recipient_identity_matches(selected_member, recipient):
-            field = "to_address" if payload.to_address is not None else ("to_stable_id" if payload.to_stable_id is not None else "to_did")
+    if payload.to_agent_id and any(
+        value is not None
+        for value in (payload.to_address, payload.to_did, payload.to_stable_id)
+    ):
+        selected_member = await get_agent_by_id(
+            db, agent_id=payload.to_agent_id, team_id=auth.team_id
+        )
+        if recipient.get("external") or not _recipient_identity_matches(
+            selected_member, recipient
+        ):
+            field = (
+                "to_address"
+                if payload.to_address is not None
+                else ("to_stable_id" if payload.to_stable_id is not None else "to_did")
+            )
             raise HTTPException(
                 status_code=422,
                 detail=f"to_agent_id must match the {field} recipient. Check the recipient and try again.",

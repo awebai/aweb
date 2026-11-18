@@ -130,10 +130,15 @@ class FederationAuthorityCore:
         A sender claim is independently checked when supplied. Address discovery
         derives its claim only from the resolver's verified evidence.
         """
-        canonical = canonical_protocol_address(claim.canonical_address if claim is not None else address or "")
+        canonical = canonical_protocol_address(
+            claim.canonical_address if claim is not None else address or ""
+        )
 
         async def fetch(snapshot, *, bypass_cache=False):
-            kwargs = {"authority_generation": authority_generation, "checkpoint": snapshot}
+            kwargs = {
+                "authority_generation": authority_generation,
+                "checkpoint": snapshot,
+            }
             if bypass_cache:
                 kwargs["bypass_cache"] = True
             if discovered_authority is not None:
@@ -144,11 +149,17 @@ class FederationAuthorityCore:
 
         def evidence_claim(value):
             return claim or AuthorityClaim(
-                canonical_address=canonical, did_aw=value.did_aw,
-                current_did_key=value.current_did_key, delivery_origin=value.delivery_origin,
+                canonical_address=canonical,
+                did_aw=value.did_aw,
+                current_did_key=value.current_did_key,
+                delivery_origin=value.delivery_origin,
             )
 
-        snapshot = await self.repository.get_checkpoint(claim.did_aw) if claim is not None else None
+        snapshot = (
+            await self.repository.get_checkpoint(claim.did_aw)
+            if claim is not None
+            else None
+        )
         evidence = await fetch(snapshot)
         if claim is None:
             snapshot = await self.repository.get_checkpoint(evidence.did_aw)
@@ -156,7 +167,10 @@ class FederationAuthorityCore:
                 evidence = await fetch(snapshot, bypass_cache=True)
         try:
             token = await self.commit_verified_evidence(
-                evidence_claim(evidence), evidence, publishing_fence=publishing_fence, fences=fences,
+                evidence_claim(evidence),
+                evidence,
+                publishing_fence=publishing_fence,
+                fences=fences,
             )
         except FederationAuthorityError as exc:
             if exc.reason != "federation_authority_cas_conflict":
@@ -164,6 +178,9 @@ class FederationAuthorityCore:
             winner = await self.repository.get_checkpoint(evidence.did_aw)
             evidence = await fetch(winner, bypass_cache=True)
             token = await self.commit_verified_evidence(
-                evidence_claim(evidence), evidence, publishing_fence=publishing_fence, fences=fences,
+                evidence_claim(evidence),
+                evidence,
+                publishing_fence=publishing_fence,
+                fences=fences,
             )
         return CommittedAuthorityEvidence(token, evidence)

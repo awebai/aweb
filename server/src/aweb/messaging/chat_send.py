@@ -468,7 +468,9 @@ def _validate_signed_chat_payload(
     except MessageSignatureShapeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     require_verified_message_signature(
-        signed_payload=signed_payload, signature=signature, did_key=signer_did_key or from_did,
+        signed_payload=signed_payload,
+        signature=signature,
+        did_key=signer_did_key or from_did,
     )
 
 
@@ -897,8 +899,14 @@ async def _resolve_named_recipients(
 
     for address in to_addresses:
         row = await resolve_address_recipient(
-            db, auth, runtime, address=address, source=source, kind="chat",
-            signed_payload=signed_payload, signature=signature,
+            db,
+            auth,
+            runtime,
+            address=address,
+            source=source,
+            kind="chat",
+            signed_payload=signed_payload,
+            signature=signature,
         )
         resolved[str(row.get("did_aw") or row.get("did_key") or "").strip()] = row
 
