@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.mcp.server import create_mcp_app
 from identity_binding_support import register_global_identity
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers
@@ -80,3 +81,38 @@ async def test_plaintext_send_verifies_signature_before_any_effect(privacy_app, 
         assert response.json()["detail"] == "The message signature does not verify. Sign the message again with the authenticated sender's key and resend it."
         for table in ("messages", "conversations", "conversation_participants", "message_ingress_receipts"):
             assert await env.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+
+
+@pytest.mark.asyncio
+async def test_mounted_mcp_mail_reports_the_same_removed_sender_state(privacy_app):
+    env = privacy_app
+    sent = await _send(env, {"to_alias": "bob", "body": "before sender retirement"})
+    assert sent.status_code == 200, sent.text
+    await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", env.actors["alice"].id)
+    bob = env.actors["bob"]
+    headers = _signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate)
+    inbox = await env.client.get("/v1/messages/inbox", headers=headers)
+    assert inbox.status_code == 200, inbox.text
+    expected = inbox.json()["messages"][0]["sender_membership"]
+    assert expected["state"] == "inactive"
+    mcp = create_mcp_app(
+        db_infra=env.infra, redis=env.redis, registry_client=env.app.state.awid_registry_client,
+        public_origin=str(env.client.base_url).rstrip("/"),
+    )
+    env.app.mount("/sender-state-mcp", mcp)
+    await mcp.startup()
+    try:
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "check_mail", "arguments": {},
+        }}).encode()
+        response = await env.client.post("/sender-state-mcp/", content=body, headers={
+            **_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate, body),
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        })
+        assert response.status_code == 200, response.text
+        tool = response.json()["result"]
+        assert not tool.get("isError"), tool
+        messages = json.loads(tool["content"][0]["text"])["messages"]
+        assert messages[0]["sender_membership"] == expected
+    finally:
+        await mcp.shutdown()
