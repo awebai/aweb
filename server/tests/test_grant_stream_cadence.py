@@ -1,4 +1,5 @@
 """Real stream handlers with simulated time and DB/registry/Redis boundaries."""
+
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -34,9 +35,21 @@ def harness(monkeypatch):
     monkeypatch.setattr(events.asyncio, "sleep", sleep)
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "0")
     identity = TeamIdentity(
-        team_id="default:example.com", alias="alice", did_key="did:key:alice", did_aw="",
-        address="example.com/alice", agent_id=str(uuid4()), identity_scope="local", certificate_id="",
-        grant=GrantContext(str(uuid4()), "did:key:session", "cert", ("events.read", "chat.read", "mail.read"), start + timedelta(seconds=600)),
+        team_id="default:example.com",
+        alias="alice",
+        did_key="did:key:alice",
+        did_aw="",
+        address="example.com/alice",
+        agent_id=str(uuid4()),
+        identity_scope="local",
+        certificate_id="",
+        grant=GrantContext(
+            str(uuid4()),
+            "did:key:session",
+            "cert",
+            ("events.read", "chat.read", "mail.read"),
+            start + timedelta(seconds=600),
+        ),
     )
 
     class Registry:
@@ -54,7 +67,11 @@ def harness(monkeypatch):
             self.calls.append(clock.seconds)
             if self.fail_at is not None and clock.seconds >= self.fail_at:
                 raise httpx.ConnectError("registry unavailable")
-            return {"cert"} if self.revoke_at is not None and clock.seconds >= self.revoke_at else set()
+            return (
+                {"cert"}
+                if self.revoke_at is not None and clock.seconds >= self.revoke_at
+                else set()
+            )
 
     class DB:
         grant_reads = 0
@@ -68,18 +85,29 @@ def harness(monkeypatch):
         async def fetch_one(self, sql, *args):
             if "identity_session_grants" in sql:
                 self.grant_reads += 1
-                return dict(team_id=identity.team_id, grant_did_key=identity.grant.session_did_key,
-                            expires_at=identity.grant.expires_at, revoked_at=None,
-                            issued_by_certificate_id="cert", agent_id=identity.agent_id, status="active", deleted_at=None,
-                            # The subject is a member under its team's current key.
-                            certificate_id="cert", accepted_team_did_key="did:key:zTeam", current_team_did_key="did:key:zTeam")
+                return dict(
+                    team_id=identity.team_id,
+                    grant_did_key=identity.grant.session_did_key,
+                    expires_at=identity.grant.expires_at,
+                    revoked_at=None,
+                    issued_by_certificate_id="cert",
+                    agent_id=identity.agent_id,
+                    status="active",
+                    deleted_at=None,
+                    # The subject is a member under its team's current key.
+                    certificate_id="cert",
+                    accepted_team_did_key="did:key:zTeam",
+                    current_team_did_key="did:key:zTeam",
+                )
             if "chat_participants" in sql:
                 return {"did": identity.did_key}
             return {"did_key": identity.did_key, "did_aw": ""}
 
         async def fetch_all(self, sql, *args):
             if "SELECT p.did, p.alias, p.address" in sql:
-                return [dict(did=identity.did_key, alias="alice", address=identity.address)]
+                return [
+                    dict(did=identity.did_key, alias="alice", address=identity.address)
+                ]
             return []
 
         async def fetch_value(self, sql, *args):
@@ -118,19 +146,49 @@ def harness(monkeypatch):
     async def disconnected():
         return False
 
-    request = SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry)), is_disconnected=disconnected)
+    request = SimpleNamespace(
+        headers={},
+        app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry)),
+        is_disconnected=disconnected,
+    )
 
     async def open_stream(kind, expiry=600, duration=900):
-        auth = replace(identity, grant=replace(identity.grant, expires_at=start + timedelta(seconds=expiry)))
+        auth = replace(
+            identity,
+            grant=replace(identity.grant, expires_at=start + timedelta(seconds=expiry)),
+        )
         deadline = (start + timedelta(seconds=duration)).isoformat()
         if kind == "event":
-            return await events.event_stream(request, deadline=deadline, db=db, redis=None, identity=auth)
+            return await events.event_stream(
+                request, deadline=deadline, db=db, redis=None, identity=auth
+            )
         if kind == "chat":
-            return await chat.stream(request, session_id=str(uuid4()), deadline=deadline, after=None, after_seq=None, include=None, db=db, redis=None, auth=auth)
-        return await status.status_stream(request, workspace_id=str(uuid4()), repo=None, human_name=None,
-                                          limit=200, event_types=None, redis=redis, db_infra=db, identity=auth)
+            return await chat.stream(
+                request,
+                session_id=str(uuid4()),
+                deadline=deadline,
+                after=None,
+                after_seq=None,
+                include=None,
+                db=db,
+                redis=None,
+                auth=auth,
+            )
+        return await status.status_stream(
+            request,
+            workspace_id=str(uuid4()),
+            repo=None,
+            human_name=None,
+            limit=200,
+            event_types=None,
+            redis=redis,
+            db_infra=db,
+            identity=auth,
+        )
 
-    return SimpleNamespace(clock=clock, registry=registry, db=db, redis=redis, open=open_stream)
+    return SimpleNamespace(
+        clock=clock, registry=registry, db=db, redis=redis, open=open_stream
+    )
 
 
 async def collect(response):
@@ -198,7 +256,10 @@ async def test_chat_grant_reads_only_every_30_seconds(harness):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure,terminal", [("fail_at", "verification_unavailable"), ("revoke_at", "grant_issuer_revoked")])
+@pytest.mark.parametrize(
+    "failure,terminal",
+    [("fail_at", "verification_unavailable"), ("revoke_at", "grant_issuer_revoked")],
+)
 async def test_chat_recheck_failure_ends_cleanly(harness, failure, terminal, caplog):
     response = await harness.open("chat")
     setattr(harness.registry, failure, 1)
@@ -212,7 +273,9 @@ async def test_chat_recheck_failure_ends_cleanly(harness, failure, terminal, cap
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("registry_fails", [False, True])
-async def test_chat_checks_again_after_slow_message_fetch_before_emitting_body(harness, registry_fails):
+async def test_chat_checks_again_after_slow_message_fetch_before_emitting_body(
+    harness, registry_fails
+):
     original_fetch = harness.db.fetch_all
     delivered = False
 
@@ -221,12 +284,25 @@ async def test_chat_checks_again_after_slow_message_fetch_before_emitting_body(h
         if "FROM {{tables.chat_messages}}" in sql and not delivered:
             delivered = True
             harness.clock.seconds = 31
-            return [dict(
-                message_id=uuid4(), seq=1, from_alias="bob", from_address="example.com/bob",
-                from_did="", body="private content", content_mode="legacy_plaintext_v1",
-                message_version=1, encrypted_envelope=None, created_at=chat.datetime.now(timezone.utc),
-                sender_leaving=False, hang_on=False, reply_to=None, signature=None, signed_payload=None,
-            )]
+            return [
+                dict(
+                    message_id=uuid4(),
+                    seq=1,
+                    from_alias="bob",
+                    from_address="example.com/bob",
+                    from_did="",
+                    body="private content",
+                    content_mode="legacy_plaintext_v1",
+                    message_version=1,
+                    encrypted_envelope=None,
+                    created_at=chat.datetime.now(timezone.utc),
+                    sender_leaving=False,
+                    hang_on=False,
+                    reply_to=None,
+                    signature=None,
+                    signed_payload=None,
+                )
+            ]
         return await original_fetch(sql, *args)
 
     harness.db.fetch_all = fetch_all
