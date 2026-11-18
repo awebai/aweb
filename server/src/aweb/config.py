@@ -408,6 +408,25 @@ def _url_from_environment_or_file(variable: str, fallback: str, file_variable: s
     return url
 
 
+def get_presence_ttl_seconds() -> int:
+    """Read the shared heartbeat window (docs/aweb-sot.md:1199–1205).
+
+    Default is thirty minutes; deployments may configure the presence TTL.
+    """
+    presence_ttl_str = os.getenv("AWEB_PRESENCE_TTL_SECONDS", "1800")
+    try:
+        presence_ttl = int(presence_ttl_str)
+        if presence_ttl < 10:
+            raise ValueError("AWEB_PRESENCE_TTL_SECONDS must be at least 10")
+    except ValueError as e:
+        if "invalid literal" in str(e):
+            raise ValueError(
+                f"AWEB_PRESENCE_TTL_SECONDS must be a valid integer, got '{presence_ttl_str}'"
+            )
+        raise
+    return presence_ttl
+
+
 def get_settings() -> Settings:
     """
     Load settings from environment at call time.
@@ -439,17 +458,7 @@ def get_settings() -> Settings:
             raise ValueError(f"AWEB_PORT must be a valid integer, got '{port_str}'")
         raise
 
-    presence_ttl_str = os.getenv("AWEB_PRESENCE_TTL_SECONDS", "1800")
-    try:
-        presence_ttl = int(presence_ttl_str)
-        if presence_ttl < 10:
-            raise ValueError("AWEB_PRESENCE_TTL_SECONDS must be at least 10")
-    except ValueError as e:
-        if "invalid literal" in str(e):
-            raise ValueError(
-                f"AWEB_PRESENCE_TTL_SECONDS must be a valid integer, got '{presence_ttl_str}'"
-            )
-        raise
+    presence_ttl = get_presence_ttl_seconds()
 
     service_token = get_awid_service_token()
     member_keys = get_awid_member_signing_keys()
