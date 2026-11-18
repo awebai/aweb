@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 func TestOATSRealSingletonWorkspaceStatus(t *testing.T) {
@@ -94,6 +95,48 @@ func TestOATSRealTeamNameTakenPreservesThePrivateTeamBoundary(t *testing.T) {
 	registered, err := ensureLocalTeamRegistered(world.Context, world.Registry, world.Stack.RegistryURL, world.Domain, "backend", "Existing private team", world.NamespaceKey)
 	if err != nil || registered == nil {
 		t.Fatalf("existing controller cannot reuse its own team: %v", err)
+	}
+}
+
+func TestOATSRealIssuedInviteRemainsUsedWhenRecipientPersistenceFails(t *testing.T) {
+	world := newRealCommandWorld(t)
+	source := world.addLocalMember(t, "root")
+	t.Setenv("HOME", filepath.Dir(source.Home))
+	t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
+	createdJSON := world.requireCommand(t, source.Home, "team", "invite", "--team-id", world.TeamID)
+	var created teamInviteOutput
+	if err := json.Unmarshal([]byte(createdJSON), &created); err != nil {
+		t.Fatal(err)
+	}
+	child := filepath.Join(t.TempDir(), ".aw")
+	world.requireCommand(t, child, "id", "create", "--local")
+	certificatePath, err := awconfig.TeamCertificatePathFromIdentityHome(child, world.TeamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The registry write can finish while the subsequent local certificate
+	// rename fails. An actual directory at the destination reproduces that
+	// filesystem failure without replacing either the registry or the writer.
+	if err := os.MkdirAll(certificatePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := acceptTeamInviteWithDetails(filepath.Dir(child), created.Token, teamAcceptInviteOptions{IdentityHome: child, Name: "recipient", Scope: awid.IdentityModeLocal}); err == nil {
+		t.Fatal("accept unexpectedly persisted over the blocked certificate path")
+	}
+	member, err := world.Registry.ResolveTeamMember(world.Context, world.Stack.RegistryURL, world.Domain, "backend", "recipient", world.TeamKey)
+	if err != nil || member.CertificateID == "" {
+		t.Fatalf("test did not reach actual membership issuance: %#v; %v", member, err)
+	}
+	out, err := world.runInIdentityHome(source.Home, "id", "team", "revoke-invite", "--invite-id", created.InviteID)
+	if err == nil || !strings.Contains(out, "invite_already_used") {
+		t.Fatalf("issued membership was described as an unused cancellation: %v\n%s", err, out)
+	}
+	status, err := world.Registry.GetTeamCertificateStatus(world.Context, world.Stack.RegistryURL, world.Domain, "backend", member.CertificateID)
+	if err != nil || status.Status != "active" {
+		t.Fatalf("invite cancellation revoked the issued certificate: %#v; %v", status, err)
 	}
 }
 
