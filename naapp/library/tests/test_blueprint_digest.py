@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
+from aweb_naapp.manifest import canonical_bytes
 
-from library.aweb_manifest import canonical_bytes
 from library.digest import (
     BLUEPRINT_PAYLOAD_SCHEMA,
     blueprint_digest,

@@ -77,7 +77,6 @@
     "awid": "awid.team_certificate: decode_team_certificate, then verify_team_certificate_signature",
     "server": "aweb.team_auth.parse_and_verify_certificate, as the server calls it while require_registered_certificates is off: with no registered set",
     "naapp_runtime": "aweb_naapp.runtime.team_auth.authenticate_request, behind a correctly signed request",
-    "library": "library.auth.authenticate_request, behind a correctly signed request",
     "hooks": "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer, with the case's revoked and registered ids as the receiver's options"
   },
   "cases": [
@@ -96,7 +95,6 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "accepted",
-        "library": "accepted",
         "hooks": "accepted"
       }
     },
@@ -115,7 +113,6 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "accepted",
-        "library": "accepted",
         "hooks": "accepted"
       }
     },
@@ -134,7 +131,6 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "accepted",
-        "library": "accepted",
         "hooks": "accepted"
       }
     },
@@ -153,7 +149,6 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "accepted",
-        "library": "accepted",
         "hooks": "accepted"
       }
     },
@@ -172,7 +167,6 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "accepted",
-        "library": "accepted",
         "hooks": "accepted"
       }
     },
@@ -191,7 +185,6 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "accepted",
-        "library": "accepted",
         "hooks": "accepted"
       }
     },
@@ -210,7 +203,6 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "accepted",
-        "library": "accepted",
         "hooks": "accepted"
       }
     },
@@ -229,7 +221,6 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "accepted",
-        "library": "accepted",
         "hooks": "accepted"
       }
     },
@@ -250,7 +241,6 @@
         "awid": "malformed",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -271,7 +261,6 @@
         "awid": "malformed",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -292,7 +281,6 @@
         "awid": "malformed",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -313,7 +301,6 @@
         "awid": "malformed",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -334,7 +321,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -355,7 +341,6 @@
         "awid": "malformed",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -376,7 +361,6 @@
         "awid": "malformed",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -397,7 +381,6 @@
         "awid": "malformed",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -418,7 +401,6 @@
         "awid": "malformed",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -439,7 +421,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -460,7 +441,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -481,7 +461,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -503,7 +482,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -525,7 +503,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -547,7 +524,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -569,7 +545,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     },
@@ -591,7 +566,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_mismatch"
       }
     },
@@ -613,7 +587,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_mismatch"
       }
     },
@@ -635,7 +608,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_mismatch"
       }
     },
@@ -656,7 +628,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_mismatch"
       }
     },
@@ -678,7 +649,6 @@
         "awid": "missing_signature",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -699,7 +669,6 @@
         "awid": "bad_signature",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -720,7 +689,6 @@
         "awid": "bad_signature",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -743,7 +711,6 @@
         "awid": "accepted",
         "server": "refused",
         "naapp_runtime": "refused",
-        "library": "refused",
         "hooks": "certificate_invalid"
       }
     },
@@ -764,7 +731,6 @@
         "awid": "accepted",
         "server": "accepted",
         "naapp_runtime": "refused",
-        "library": "accepted",
         "hooks": "certificate_invalid"
       }
     }

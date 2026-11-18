@@ -1,19 +1,17 @@
-"""library's aweb-app.json manifest — the one declaration the aw CLI dispatcher
-and the hosted gateway interpret identically (frozen m1.1 schema). The committed
-``aweb-app.json`` is the byte-stable artifact served verbatim; this module is its
-authoring source. A test asserts the file equals ``canonical_bytes(MANIFEST)`` so
-the two never drift.
+"""library's manifest template, shared by the aw CLI and the hosted gateway.
 
-Only cert-authed team operations are declared as verbs. Library's public catalog
-reads (blueprints / profiles) are unauthenticated discovery endpoints, not
-dispatcher verbs. Library emits no events at v0, so there is no events catalog or
-event_emitters entry yet.
+The committed ``aweb-app.json`` is the canonical bytes of ``MANIFEST`` and
+declares the grant-read kid. NaappRuntime fills the deployment's app.id, origin
+and public keys from settings, validates the filled document and serves its
+exact bytes at the discovery URLs.
+
+Library's public catalog reads are declared with ``auth: none``; every other
+tool is a member operation the runtime admits only for an installation that
+granted its scopes.
 """
 
 from __future__ import annotations
 
-import copy
-import json
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +19,7 @@ MANIFEST_PATH = Path(__file__).resolve().parent / "aweb-app.json"
 DEFAULT_PUBLIC_ORIGIN = "https://library.aweb.ai"
 
 MANIFEST: dict[str, Any] = {
-    "manifest_version": 1,
+    "manifest_version": 2,
     "app": {
         "id": "library",
         "version": "0.1.0",
@@ -477,38 +475,7 @@ MANIFEST: dict[str, Any] = {
             "mutation": True,
         },
     ],
+    "app_keys": [
+        {"kid": "library:grant-read-1", "purposes": ["app-grant-read"]},
+    ],
 }
-
-
-def canonical_bytes(obj: Any) -> bytes:
-    """Canonical JSON bytes: sorted keys, no insignificant whitespace, UTF-8.
-
-    Matches the awid signing CanonicalJSON convention so the committed manifest and
-    any consumer's serialization are byte-identical.
-    """
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-        "utf-8"
-    )
-
-
-def manifest_for_origin(public_origin: str) -> dict[str, Any]:
-    """Return the manifest with ``app.origin`` set for this deployment origin."""
-    manifest = copy.deepcopy(MANIFEST)
-    manifest["app"]["origin"] = public_origin.rstrip("/")
-    return manifest
-
-
-def read_manifest_bytes(public_origin: str | None = None) -> bytes:
-    """Return byte-stable manifest bytes for the requested public origin.
-
-    The hosted origin serves the committed bytes verbatim; self-hosted origins get
-    the same canonical manifest with only ``app.origin`` changed to their origin.
-    """
-    if public_origin is None or public_origin.rstrip("/") == DEFAULT_PUBLIC_ORIGIN:
-        return MANIFEST_PATH.read_bytes()
-    return canonical_bytes(manifest_for_origin(public_origin))
-
-
-def write_manifest_file() -> None:
-    """Regenerate the committed canonical manifest file from the hosted-origin MANIFEST."""
-    MANIFEST_PATH.write_bytes(canonical_bytes(MANIFEST))

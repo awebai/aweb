@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 
 import library.api as library_api
 from library import browse_views
-from library.config import Settings
 
 _PROFILE = {
     "blueprint_ref": "aweb.team",
@@ -197,28 +196,9 @@ def test_blueprint_roster_joins_recommendations_to_profiles() -> None:
     assert roster[1]["mission"] == "Ship code."
 
 
-class _FakeDB:
-    pass
-
-
-def _app_with_db_override() -> object:
-    app = library_api.create_app(Settings(public_origin="https://library.aweb.ai"))
-
-    def walk(dependant) -> None:
-        for sub in dependant.dependencies:
-            walk(sub)
-        call = dependant.call
-        if getattr(call, "__name__", "") == "db":
-            app.dependency_overrides[call] = lambda: _FakeDB()
-
-    for route in app.routes:
-        dependant = getattr(route, "dependant", None)
-        if dependant is not None:
-            walk(dependant)
-    return app
-
-
-def test_browse_routes_call_view_builders_and_renderers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_browse_routes_call_view_builders_and_renderers(
+    monkeypatch: pytest.MonkeyPatch, library_client: TestClient
+) -> None:
     calls: list[tuple[str, object]] = []
 
     async def catalog_view(db):
@@ -268,7 +248,7 @@ def test_browse_routes_call_view_builders_and_renderers(monkeypatch: pytest.Monk
         lambda *, public_origin, skill: f"skill:{skill['skill_name']}",
     )
 
-    client = TestClient(_app_with_db_override())
+    client = library_client
     responses = [
         client.get("/blueprints"),
         client.get("/blueprints/aweb.team"),
@@ -289,10 +269,12 @@ def test_browse_routes_call_view_builders_and_renderers(monkeypatch: pytest.Monk
     ]
 
 
-def test_browse_unknown_ref_returns_404(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_browse_unknown_ref_returns_404(
+    monkeypatch: pytest.MonkeyPatch, library_client: TestClient
+) -> None:
     async def missing_blueprint(db, *, blueprint_ref):
         raise HTTPException(status_code=404, detail="Blueprint not found")
 
     monkeypatch.setattr(library_api.browse_views, "blueprint_view", missing_blueprint)
-    response = TestClient(_app_with_db_override()).get("/blueprints/missing")
+    response = library_client.get("/blueprints/missing")
     assert response.status_code == 404

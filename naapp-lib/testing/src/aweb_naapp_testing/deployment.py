@@ -561,7 +561,7 @@ def running_app(
                     setup_error = exc
                     raise
                 manifest = httpx.get(
-                    f"{proxy_origin}/.well-known/aweb-app.json",
+                    f"{proxy_origin}/aweb-app.json",
                     timeout=10.0,
                     verify=ssl.create_default_context(cafile=str(ca_file)) if ca_file else True,
                 )

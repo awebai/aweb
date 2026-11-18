@@ -271,23 +271,6 @@ NAAPP_RUNTIME_TODAY = {
 }
 
 
-# What the library's own verifier answers today for each case.
-LIBRARY_TODAY = {
-    **NAAPP_RUNTIME_TODAY,
-    "oversized_header": "accepted",
-    "version_2": "accepted",
-    "version_string": "accepted",
-    "version_true": "accepted",
-    "version_absent": "accepted",
-    "alias_not_a_string": "accepted",
-    "unregistered": "accepted",
-    "signature_url_safe_alphabet": "accepted",
-    "control_character_in_a_string": "accepted",
-    "number_not_an_integer": "accepted",
-    "negative_zero": "accepted",
-    "not_a_number_constant": "accepted",
-}
-
 # What the hook delivery receiver answers today: acceptance, or its refusal code.
 # It first compares the certificate's team, member key and certificate id with
 # the delivery's producer (certificate_mismatch), where the others compare the
@@ -362,7 +345,6 @@ def document() -> str:
                 "require_registered_certificates is off: with no registered set"
             ),
             "naapp_runtime": "aweb_naapp.runtime.team_auth.authenticate_request, behind a correctly signed request",
-            "library": "library.auth.authenticate_request, behind a correctly signed request",
             "hooks": (
                 "aweb_naapp.hooks.delivery: the client certificate of a delivery from the case's signer, "
                 "with the case's revoked and registered ids as the receiver's options"
@@ -374,7 +356,6 @@ def document() -> str:
                 "today": {
                     **case["today"],
                     "naapp_runtime": NAAPP_RUNTIME_TODAY[case["name"]],
-                    "library": LIBRARY_TODAY[case["name"]],
                     "hooks": HOOKS_TODAY[case["name"]],
                 },
             }

@@ -6,16 +6,13 @@ import json
 import re
 from urllib.parse import quote
 
+from aweb_naapp.manifest import CATALOG_PATH, LEGACY_MANIFEST_PATH, canonical_bytes
+from aweb_naapp.runtime.app import MANIFEST_V2_PATH
 from fastapi.testclient import TestClient
+from manifest_config import served_manifest
 
 import library.api as library_api
-from library.aweb_manifest import (
-    MANIFEST,
-    MANIFEST_PATH,
-    canonical_bytes,
-    manifest_for_origin,
-    read_manifest_bytes,
-)
+from library.aweb_manifest import MANIFEST, MANIFEST_PATH
 from library.config import Settings
 
 _METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
@@ -82,8 +79,8 @@ def _manifest_errors(m: dict) -> list[str]:
     """Encode the frozen m1.1 schema rules as checks."""
     errors: list[str] = []
 
-    if m.get("manifest_version") != 1:
-        errors.append("manifest_version must be 1")
+    if m.get("manifest_version") != 2:
+        errors.append("manifest_version must be 2")
 
     app = m.get("app")
     if not isinstance(app, dict):
@@ -225,14 +222,13 @@ def test_committed_manifest_is_canonical_and_matches_source() -> None:
     committed = MANIFEST_PATH.read_bytes()
     assert committed == canonical_bytes(MANIFEST)
     assert committed == canonical_bytes(json.loads(committed))
-    assert read_manifest_bytes() == committed
 
 
-def test_manifest_conforms_to_m1_1_schema() -> None:
+def test_manifest_conforms_to_v2_schema() -> None:
     assert _manifest_errors(MANIFEST) == []
     assert _manifest_errors(json.loads(MANIFEST_PATH.read_bytes())) == []
 
-    assert MANIFEST["manifest_version"] == 1
+    assert MANIFEST["manifest_version"] == 2
     assert MANIFEST["app"]["id"] == "library"
     assert MANIFEST["app"]["origin"] == "https://library.aweb.ai"
 
@@ -256,6 +252,11 @@ def test_manifest_conforms_to_m1_1_schema() -> None:
     # library emits no events at v0.
     assert "events" not in MANIFEST
     assert "event_emitters" not in MANIFEST
+
+
+def test_manifest_declares_the_installation_grant_read_key() -> None:
+    # The template declares the kid; deployment configuration supplies its key.
+    assert MANIFEST["app_keys"] == [{"kid": "library:grant-read-1", "purposes": ["app-grant-read"]}]
 
 
 def test_conformance_validator_rejects_host_injecting_paths() -> None:
@@ -341,33 +342,35 @@ def test_interpreted_spec_import_to_shelf() -> None:
     assert spec["mutation"] is True
 
 
-def test_manifest_bytes_are_stable_per_origin() -> None:
-    committed = MANIFEST_PATH.read_bytes()
-    assert read_manifest_bytes("https://library.aweb.ai") == committed
-    custom = read_manifest_bytes("http://self-hosted.test:8765/")
-    assert custom == canonical_bytes(manifest_for_origin("http://self-hosted.test:8765/"))
-    assert json.loads(custom)["app"]["origin"] == "http://self-hosted.test:8765"
-    assert read_manifest_bytes("http://self-hosted.test:8765") == custom
-
-
-def test_manifest_served_at_both_paths_as_raw_committed_bytes_for_hosted_origin() -> None:
-    committed = MANIFEST_PATH.read_bytes()
+def test_manifest_served_at_both_paths_as_the_filled_hosted_document() -> None:
+    expected = canonical_bytes(served_manifest("https://library.aweb.ai"))
     client = _client()
-    for route in ("/.well-known/aweb-app.json", "/aweb-app.json"):
+    for route in (MANIFEST_V2_PATH, "/aweb-app.json"):
         response = client.get(route)
         assert response.status_code == 200, (route, response.text)
         assert response.headers["content-type"].startswith("application/json")
         assert response.headers["x-content-type-options"] == "nosniff"
-        assert response.content == committed
-        assert hashlib.sha256(response.content).hexdigest() == hashlib.sha256(committed).hexdigest()
+        assert response.content == expected
+        assert hashlib.sha256(response.content).hexdigest() == hashlib.sha256(expected).hexdigest()
 
 
 def test_manifest_served_with_configured_self_hosted_origin() -> None:
     origin = "http://127.0.0.1:9876"
     client = TestClient(library_api.create_app(Settings(public_origin=origin)))
-    expected = canonical_bytes(manifest_for_origin(origin))
-    for route in ("/.well-known/aweb-app.json", "/aweb-app.json"):
+    expected = canonical_bytes(served_manifest(origin))
+    for route in (MANIFEST_V2_PATH, "/aweb-app.json"):
         response = client.get(route)
         assert response.status_code == 200, (route, response.text)
         assert response.content == expected
         assert json.loads(response.content)["app"]["origin"] == origin
+
+
+def test_a_v2_manifest_is_discovered_through_its_catalog_not_the_legacy_path() -> None:
+    client = _client()
+    catalog = client.get(CATALOG_PATH)
+    assert catalog.status_code == 200
+    (variant,) = catalog.json()["variants"]
+    served = client.get(variant["url"]).content
+    assert variant["manifest_version"] == 2
+    assert variant["digest"] == "sha256:" + hashlib.sha256(served).hexdigest()
+    assert client.get(LEGACY_MANIFEST_PATH).status_code == 404

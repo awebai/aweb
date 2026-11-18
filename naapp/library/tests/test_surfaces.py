@@ -238,39 +238,29 @@ def test_landing_catalog_teaser_absent_when_catalog_empty() -> None:
     )  # the rest of the page renders
 
 
-class _FakeLibraryDatabase:
-    def __init__(self, _settings: Settings) -> None:
-        self.db = object()
-
-    async def connect(self) -> None:
-        pass
-
-    async def disconnect(self) -> None:
-        pass
-
-
-def test_landing_route_teaser_degrades_when_catalog_read_fails(monkeypatch) -> None:
+def test_landing_route_teaser_degrades_when_catalog_read_fails(
+    monkeypatch, library_client: TestClient, caplog
+) -> None:
     """Route-level guard: with a DB present but the catalog read failing, the front
     door stays up and omits only the best-effort catalog teaser."""
 
     async def broken_catalog_view(_db):
         raise RuntimeError("catalog unavailable")
 
-    monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
     monkeypatch.setattr(library_api.browse_views, "catalog_view", broken_catalog_view)
 
-    with TestClient(
-        library_api.create_app(Settings(public_origin="https://library.aweb.ai"))
-    ) as client:
-        response = client.get("/")
+    response = library_client.get("/")
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
     assert 'id="catalog"' not in response.text
     assert "Where teams of AI agents choose, keep and improve" in response.text
+    assert "landing catalog read failed" in caplog.text
 
 
-def test_landing_route_teaser_renders_catalog_read_success(monkeypatch) -> None:
+def test_landing_route_teaser_renders_catalog_read_success(
+    monkeypatch, library_client: TestClient
+) -> None:
     """Route-level success counterpart: catalog summaries from the live-read path
     are passed into the teaser renderer."""
 
@@ -284,13 +274,9 @@ def test_landing_route_teaser_renders_catalog_read_success(monkeypatch) -> None:
             }
         ]
 
-    monkeypatch.setattr(library_api, "LibraryDatabase", _FakeLibraryDatabase)
     monkeypatch.setattr(library_api.browse_views, "catalog_view", fake_catalog_view)
 
-    with TestClient(
-        library_api.create_app(Settings(public_origin="https://library.aweb.ai"))
-    ) as client:
-        response = client.get("/")
+    response = library_client.get("/")
 
     assert response.status_code == 200
     assert 'id="catalog"' in response.text
@@ -396,7 +382,7 @@ def test_skills_surface_serves_index_and_individual_skills() -> None:
 def test_static_skills_match_served_skills() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     on_disk = sorted(p.parent.name for p in (repo_root / "skills").glob("*/SKILL.md"))
-    assert surfaces.skill_names() == on_disk
+    assert surfaces.SKILLS.names() == on_disk
     assert "team-cert-verification" in on_disk
 
 

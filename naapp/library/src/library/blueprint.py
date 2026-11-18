@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import yaml
+from aweb_naapp.manifest import canonical_bytes
 
-from library.aweb_manifest import canonical_bytes
 from library.digest import BLUEPRINT_PAYLOAD_SCHEMA, PROFILE_PAYLOAD_SCHEMA, payload_digest
 
 # Profile.yaml fields that are treated as asset-scoped parts. ``id`` is the stable
