@@ -173,3 +173,21 @@ The image runs as UID 1001. Its state volume's `state` child is created by
 The application receives no state mount. The test component path exercises
 real DNS, AWID, PostgreSQL and Redis; its software authenticator is not evidence
 of a physical key or completion of the separate Chromium/service journey.
+
+### Refreshing a current issuer binding
+
+An active person uses their own current identity key to request
+`POST /v1/enrollments/{person}/refresh-binding` with
+`{"previous_binding_commitment":"sha256:..."}`. The existing covering identity
+headers and checked ID chain authenticate the request. The holder verifies its
+current namespace authority, signs the same stored credential declarations and
+returns the versioned approval-service refresh packet. It keeps its original
+binding, statement and confirmation receipt. This endpoint does not register
+keys or replace a lost key. The person's client presents the packet to the same
+approval service and keeps its successful live binding apart from saved evidence.
+
+The approval service atomically checks the previous live commitment, retains old
+binding versions, and records the authenticated person key and both bindings and
+issuers. Its operator reads that record with `awsign audit-binding-refreshes`.
+Refusals include the next step; changing the person's identity key or credential
+set requires the documented enrollment/recovery procedure instead.

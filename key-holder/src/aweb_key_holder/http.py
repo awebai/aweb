@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from jsonschema import ValidationError
 
 from .auth import authenticate
+from .binding_refresh import HolderBindingRefresher, REFRESH_ADVICE, RefreshFailure
 from .keys import HUMAN_APPROVAL_MESSAGES, Refused
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ def create_app(holder):
     async def refused(_request, error):
         code = error.code
         if code in {
+            RefreshFailure.REQUEST_INVALID,
             "request_invalid",
             "identity_key_mismatch",
             "registration_count_mismatch",
@@ -56,6 +58,7 @@ def create_app(holder):
         }:
             status = 503
         elif code in {
+            RefreshFailure.ENROLLMENT_CHANGED,
             "state_changed",
             "enrollment_changed",
             "person_already_exists",
@@ -70,6 +73,7 @@ def create_app(holder):
         elif code == "enrollment_unknown":
             status = 404
         elif code in {
+            RefreshFailure.PERSON_REQUIRED,
             "approver_not_active",
             "person_retired",
             "target_is_approver",
@@ -81,6 +85,8 @@ def create_app(holder):
         else:
             status = 401
         body = {"error": {"code": code}}
+        if code in REFRESH_ADVICE:
+            body["error"]["message"] = REFRESH_ADVICE[code]
         if code in HUMAN_APPROVAL_MESSAGES:
             body["error"]["message"] = HUMAN_APPROVAL_MESSAGES[code]
         if code == "enrollment_replacement_unavailable":
@@ -175,5 +181,12 @@ def create_app(holder):
             raise Refused("request_invalid")
         result = await holder.activate(person, caller=caller, chain=chain)
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+    @app.post("/v1/enrollments/{person}/refresh-binding")
+    async def refresh_binding(person: str, request: Request):
+        caller, value, chain = await input_for(request)
+        return await HolderBindingRefresher(holder=holder).packet(
+            person=person, caller=caller, body=value, chain=chain
+        )
 
     return app
