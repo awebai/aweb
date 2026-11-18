@@ -772,6 +772,12 @@ finite notification streams keep their current behavior. Custody's authoritative
 status cache remains bounded to 30 seconds. Registry revocation freshness remains
 subject to the registry client's existing cache policy.
 
+A grant stays tied to the certificate that issued it. When another certificate
+becomes current for the same member, the old grant ends even if the member and
+team keys are unchanged. Ask the issuer for a new grant. For an OATS seat, enable
+renewal on launch and restart the seat so it receives a new delegation from the
+resident's current certificate.
+
 ## User-data signatures
 
 `aw id sign` injects its timestamp into the caller's JSON object, canonicalizes
