@@ -335,17 +335,34 @@ def test_an_interrupt_while_the_last_read_drains_the_child_kills_and_reaps_it(tm
     # sleeps holds the final drain; an interrupt there must still end it.
     import signal
     import threading
+    import time
 
-    command = emits(tmp_path, "drain", TWO, "time.sleep(600)")
+    written = tmp_path / "written"
+    command = emits(tmp_path, "drain", TWO, f"open({str(written)!r}, 'w').close()\ntime.sleep(120)")
     children = []
 
     def read():
-        children.append(agent_state.Decrypted(command, 600))
+        children.append(agent_state.Decrypted(command, 60))
         return children[-1]
 
-    threading.Timer(1.0, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
-    with pytest.raises(KeyboardInterrupt):
-        agent_state.read_whole(read, lambda tar: list(tar))
+    # A process started in the background may inherit SIGINT ignored: this
+    # test installs Python's own handler, so the interrupt is raised here.
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        # The interrupt comes once the child has written its whole archive:
+        # the read of it has begun, and the drain is what is left.
+        def interrupt():
+            deadline = time.monotonic() + 30
+            while not written.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            time.sleep(0.2)
+            os.kill(os.getpid(), signal.SIGINT)
+
+        threading.Thread(target=interrupt, daemon=True).start()
+        with pytest.raises(KeyboardInterrupt):
+            agent_state.read_whole(read, lambda tar: list(tar))
+    finally:
+        signal.signal(signal.SIGINT, previous)
     assert children[0].process.returncode is not None
 
 

@@ -271,9 +271,14 @@ class Child:
         self.command = command
         self.expired = False
         self.process = subprocess.Popen(command, **popen)
-        self.timer = threading.Timer(deadline, self.expire)
-        self.timer.daemon = True
-        self.timer.start()
+        try:
+            self.timer = threading.Timer(deadline, self.expire)
+            self.timer.daemon = True
+            self.timer.start()
+        except BaseException:
+            self.process.kill()
+            self.process.wait()
+            raise
 
     def expire(self) -> None:
         self.expired = True
