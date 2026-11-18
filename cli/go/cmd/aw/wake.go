@@ -356,29 +356,7 @@ var wakeResumeCmd = &cobra.Command{
 var wakeStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Report per-home broker lifecycle, readiness, and delivery status",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		store, err := wakeStore()
-		if err != nil {
-			return err
-		}
-		var status wake.Status
-		resp, callErr := wake.Call(store.SocketPath(), wake.ControlRequest{Op: wake.OpStatus})
-		switch {
-		case callErr == nil && resp.Status != nil:
-			status = *resp.Status
-		case callErr != nil && errors.Is(callErr, wake.ErrDaemonDown):
-			status, err = wake.StatusFromStore(store, wakeMaxStreams)
-			if err != nil {
-				return err
-			}
-		case callErr != nil:
-			return callErr
-		}
-		// Only the daemon's own report counts; an older daemon stays unknown.
-		status.ClassifyDaemonVersion()
-		printOutput(status, formatWakeStatus)
-		return nil
-	},
+	RunE:  runWakeStatus,
 }
 
 func wakeSetPaused(cmd *cobra.Command, home string, paused bool) error {

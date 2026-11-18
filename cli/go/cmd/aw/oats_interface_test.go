@@ -388,3 +388,28 @@ func TestOATSValidationUsesPublishedCLIWithoutIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestOATSWakeReadinessReportsUnavailableControlWithoutClaimingReadiness(t *testing.T) {
+	t.Parallel()
+	bin, dir := buildDoctorBinary(t)
+	cmd := exec.Command(bin, "wake", "status", "--home", dir, "--min-daemon-version", "1.36.13", "--json")
+	cmd.Dir = dir
+	cmd.Env = append(testCommandEnv(dir), "AW_NO_UPDATE_CHECK=1", "AWEB_IDENTITY_HOME=", "AW_WAKE_STATE_DIR="+filepath.Join(dir, "broker"))
+	var stdout, stderr strings.Builder
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("wake status: %v\n%s\n%s", err, stdout.String(), stderr.String())
+	}
+	var result struct {
+		Readiness struct {
+			Ready bool   `json:"ready"`
+			Code  string `json:"code"`
+		} `json:"readiness"`
+	}
+	if err := json.Unmarshal([]byte(stdout.String()), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Readiness.Ready || result.Readiness.Code != "daemon_unavailable" {
+		t.Fatalf("unavailable control readiness: %s", stdout.String())
+	}
+}
