@@ -37,7 +37,7 @@ singleton workspace.
 check fails. `aw doctor` remains a report command. `aw init --join-from SOURCE
 --join-team T --identity-home FRESH --name NAME` performs the invite and join in
 one process without returning its token. FRESH must be explicitly selected and
-empty; an inherited identity home is never an implicit creation destination.
+free of existing identity credentials or workspace bindings; an inherited identity home is never an implicit creation destination.
 
 ## Validation
 
@@ -72,6 +72,7 @@ the service, rather than becoming a universal CLI vocabulary.
 | `outcome_unknown` | A write may have applied; inspect the recorded operation before retrying. |
 | `controller_key_missing` | The required controller key is unavailable here; use the installation or key-holder command in the message. |
 | `team_name_taken` | The registry pins this team to another controller; restore that key or choose another team name. |
+| `grant_not_found` | The selected team has no such grant; run grant list in that team and identity home. |
 | `team_server_record_missing` | No signed service record is published for this team; its controller must register the service. |
 | `invalid_alias`, `invalid_team_id`, `invalid_team_server_url` | Correct the input using the validation command's remedy. |
 
@@ -82,10 +83,11 @@ Its current refusals include `service_url_mismatch` (select the team's service),
 `invalid_controller_signature`, and
 `invalid_controller_timestamp` (repair controller selection, key or signing
 time), and `validation_error` (correct the request). Consumers may give unknown
-codes a generic remedy while displaying the code. Older service versions may
-also return `awid_team_missing_controller`; preserve that code and repair the
-controller configuration. The AWID registry's separate
-owner-published catalogue is [the federation error reference](federation-error-reference.md).
+codes a generic remedy while displaying the code. Consumers may also encounter
+`awid_team_missing_controller`; preserve that code and repair the controller
+configuration. Federated mail/chat errors have a separate
+[owner-published reference](federation-error-reference.md); they are not the team
+registry or service-registration vocabulary.
 
 ## Wake readiness
 
