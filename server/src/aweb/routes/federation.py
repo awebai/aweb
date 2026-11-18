@@ -87,9 +87,7 @@ def _validate_stored_current_keys(
     )
 
 
-async def _stored_route_participants(
-    db, envelope: FederationEnvelope
-) -> dict[str, dict] | None:
+async def _stored_route_participants(db, envelope: FederationEnvelope) -> dict[str, dict] | None:
     if not envelope.conversation_id:
         return None
     manager = db.get_manager("aweb")
@@ -103,10 +101,7 @@ async def _stored_route_participants(
     )
     if conversation is None:
         return None
-    if (
-        conversation["conversation_type"] != envelope.type
-        or conversation["status"] != "active"
-    ):
+    if conversation["conversation_type"] != envelope.type or conversation["status"] != "active":
         raise FederationAuthorityError("federation_conversation_invalid")
     rows = await manager.fetch_all(
         """
@@ -160,23 +155,21 @@ async def _resolve_target_identity(
     # Refresh failed route facts once, retaining cached successful validation.
     for fresh in (False, True):
         try:
-            resolve = registry_client.resolve_address_fresh if fresh else registry_client.resolve_address
+            resolve = (
+                registry_client.resolve_address_fresh if fresh else registry_client.resolve_address
+            )
             resolved = await resolve(domain, name)
         except AWID_DEPENDENCY_ERRORS as exc:
             logger.warning(
                 "AWID registry dependency failed for federation target identity resolution",
                 exc_info=True,
             )
-            raise FederationAuthorityError(
-                "federation_authority_coordination_unavailable"
-            ) from exc
+            raise FederationAuthorityError("federation_authority_coordination_unavailable") from exc
         except Exception as exc:
             logger.exception(
                 "Unexpected AWID registry dependency error for federation target identity resolution"
             )
-            raise FederationAuthorityError(
-                "federation_authority_coordination_unavailable"
-            ) from exc
+            raise FederationAuthorityError("federation_authority_coordination_unavailable") from exc
         try:
             _validate_target_identity(resolved, envelope)
         except FederationAuthorityError:
@@ -219,9 +212,7 @@ async def _established_replay_receipt(
             UUID(envelope.message_id),
         )
     except Exception as exc:
-        raise FederationAuthorityError(
-            "federation_authority_coordination_unavailable"
-        ) from exc
+        raise FederationAuthorityError("federation_authority_coordination_unavailable") from exc
     if row is None:
         return None
     if (
@@ -239,9 +230,7 @@ async def _established_replay_receipt(
         if isinstance(result, str):
             result = json.loads(result)
     except (TypeError, ValueError) as exc:
-        raise FederationAuthorityError(
-            "federation_message_replay_conflict"
-        ) from exc
+        raise FederationAuthorityError("federation_message_replay_conflict") from exc
     if not isinstance(metadata, dict) or not isinstance(result, dict):
         raise FederationAuthorityError("federation_message_replay_conflict")
     return {"metadata": metadata, "result": result}
@@ -268,9 +257,7 @@ def _stable_envelope_error(exc: FederationEnvelopeError) -> FederationAuthorityE
     return FederationAuthorityError("federation_envelope_invalid")
 
 
-def _stable_error_response(
-    request: Request, error: FederationAuthorityError
-) -> JSONResponse:
+def _stable_error_response(request: Request, error: FederationAuthorityError) -> JSONResponse:
     correlation_id = request.headers.get("X-Correlation-ID") or str(uuid4())
     headers = {"Retry-After": "1"} if error.retry_after_required else None
     return JSONResponse(
@@ -283,9 +270,7 @@ def _stable_error_response(
 async def _local_envelope_recipient(db, *, envelope: FederationEnvelope) -> dict:
     recipient = await resolve_agent_by_did(db, envelope.target_did_aw)
     if recipient is None:
-        recipient = await resolve_agent_by_did(
-            db, envelope.target_current_did_key
-        )
+        recipient = await resolve_agent_by_did(db, envelope.target_current_did_key)
     if recipient is None:
         raise FederationAuthorityError("recipient_identity_not_found")
     if (
@@ -325,9 +310,7 @@ async def receive_federated_message(
         if envelope.target_delivery_origin not in _public_origins(request):
             raise FederationAuthorityError("target_route_mismatch")
 
-        ingress_envelope_hash = federation_envelope_hash(
-            envelope, payload.signature
-        )
+        ingress_envelope_hash = federation_envelope_hash(envelope, payload.signature)
         established_replay = await _established_replay_receipt(
             db,
             envelope=envelope,
@@ -338,11 +321,8 @@ async def receive_federated_message(
             envelope = envelope.model_copy(
                 update={
                     "sender_address": metadata.get("sender_address"),
-                    "sender_delivery_origin": metadata.get(
-                        "sender_delivery_origin"
-                    ),
-                    "target_address": metadata.get("target_address")
-                    or envelope.target_address,
+                    "sender_delivery_origin": metadata.get("sender_delivery_origin"),
+                    "target_address": metadata.get("target_address") or envelope.target_address,
                 }
             )
             stored_participants = None
@@ -351,9 +331,7 @@ async def receive_federated_message(
         if established_replay is not None:
             stored_route_snapshot = None
         stored_participants = (
-            stored_route_snapshot["conversation"]
-            if stored_route_snapshot is not None
-            else None
+            stored_route_snapshot["conversation"] if stored_route_snapshot is not None else None
         )
         stored_route = stored_route_snapshot is not None
         sender_participant = (
@@ -363,9 +341,7 @@ async def receive_federated_message(
         )
         if stored_participants is not None:
             target_participant = stored_participants[envelope.target_did_aw]
-            stored_target_address = str(
-                target_participant.get("address") or ""
-            ).strip()
+            stored_target_address = str(target_participant.get("address") or "").strip()
             if not stored_target_address:
                 raise FederationAuthorityError("recipient_route_missing")
             if envelope.target_address not in {
@@ -373,26 +349,21 @@ async def receive_federated_message(
                 envelope.target_did_aw,
             }:
                 raise FederationAuthorityError("recipient_route_mismatch")
-            envelope = envelope.model_copy(
-                update={"target_address": stored_target_address}
-            )
+            envelope = envelope.model_copy(update={"target_address": stored_target_address})
         authority_token = None
         if envelope.sender_did_aw.startswith("did:aw:"):
-            sender_address = envelope.sender_address or str(
-                (sender_participant or {}).get("address") or ""
-            ).strip()
+            sender_address = (
+                envelope.sender_address
+                or str((sender_participant or {}).get("address") or "").strip()
+            )
             if not sender_address:
                 raise FederationAuthorityError("sender_address_required")
             sender_origin = envelope.sender_delivery_origin
             if sender_origin is None and sender_participant is not None:
-                sender_origin = str(
-                    sender_participant.get("delivery_origin") or ""
-                ).strip() or None
+                sender_origin = str(sender_participant.get("delivery_origin") or "").strip() or None
             authority = getattr(request.app.state, "federation_authority", None)
             if authority is None:
-                raise FederationAuthorityError(
-                    "federation_authority_coordination_unavailable"
-                )
+                raise FederationAuthorityError("federation_authority_coordination_unavailable")
             authorized = await authority.authorize(
                 AuthorityClaim(
                     canonical_address=sender_address,
@@ -402,17 +373,14 @@ async def receive_federated_message(
                 ),
                 source_ip=ClientIdentity(
                     trusted_header=os.getenv("AWEB_CLIENT_ADDRESS_HEADER", "").strip() or None,
-                ).of(request) or "unknown",
+                ).of(request)
+                or "unknown",
             )
             authority_token = getattr(authorized, "token", authorized)
             envelope = envelope.model_copy(
                 update={
-                    "sender_address": getattr(
-                        authorized, "canonical_address", sender_address
-                    ),
-                    "sender_delivery_origin": getattr(
-                        authorized, "delivery_origin", sender_origin
-                    ),
+                    "sender_address": getattr(authorized, "canonical_address", sender_address),
+                    "sender_delivery_origin": getattr(authorized, "delivery_origin", sender_origin),
                 }
             )
         else:
@@ -432,9 +400,7 @@ async def receive_federated_message(
                         raise FederationAuthorityError("local_sender_route_mismatch")
                 envelope = envelope.model_copy(
                     update={
-                        "sender_address": str(
-                            sender_participant.get("address") or ""
-                        ).strip()
+                        "sender_address": str(sender_participant.get("address") or "").strip()
                         or None,
                         "sender_delivery_origin": str(
                             sender_participant.get("delivery_origin") or ""
@@ -446,17 +412,23 @@ async def receive_federated_message(
         # The preserved sender signature and Phase-A authority above establish
         # the author. Bind the adjacent proof to that author, not this server.
         if _is_local_did_key(envelope.sender_did_aw):
-            binding = await verify_identity_binding(request, did_key=envelope.sender_current_did_key)
+            binding = await verify_identity_binding(
+                request, did_key=envelope.sender_current_did_key
+            )
             await authenticate_id_chain(request, binding)
         else:
             async with authority.received_registry_client(
-                authority_token, envelope.sender_current_did_key,
+                authority_token,
+                envelope.sender_current_did_key,
                 getattr(request.app.state, "redis", None),
             ) as foreign_registry:
                 binding = await verify_identity_binding(
-                    request, did_key=envelope.sender_current_did_key,
-                    did_aw=envelope.sender_did_aw, address=envelope.sender_address or "",
-                    fresh=True, registry_client=foreign_registry,
+                    request,
+                    did_key=envelope.sender_current_did_key,
+                    did_aw=envelope.sender_did_aw,
+                    address=envelope.sender_address or "",
+                    fresh=True,
+                    registry_client=foreign_registry,
                 )
                 await authenticate_id_chain(request, binding, registry_client=foreign_registry)
 

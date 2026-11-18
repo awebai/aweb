@@ -37,10 +37,18 @@ async def _send(env, sender, recipient, agent_id, *, kind, selector):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("kind,selector", [
-    ("mail", "alias"), ("mail", "id"), ("mail", "did"), ("mail", "address"),
-    ("chat", "alias"), ("chat", "did"), ("chat", "address"),
-])
+@pytest.mark.parametrize(
+    "kind,selector",
+    [
+        ("mail", "alias"),
+        ("mail", "id"),
+        ("mail", "did"),
+        ("mail", "address"),
+        ("chat", "alias"),
+        ("chat", "did"),
+        ("chat", "address"),
+    ],
+)
 async def test_every_local_selector_requires_current_membership(pinning, kind, selector):
     env = pinning
     sender, recipient = _new_member("selectsender"), _new_member("selectrecipient")
@@ -52,11 +60,17 @@ async def test_every_local_selector_requires_current_membership(pinning, kind, s
     assert before.status_code == 200, before.text
 
     next_sk, next_did = await _change_key(env)
-    assert (await _connect(env, sender, _certificate(next_sk, next_did, sender, "sender-after"))).status_code == 200
+    assert (
+        await _connect(env, sender, _certificate(next_sk, next_did, sender, "sender-after"))
+    ).status_code == 200
     refused = await _send(env, sender, recipient, recipient_id, kind=kind, selector=selector)
     assert refused.status_code == 404, refused.text
 
-    assert (await _connect(env, recipient, _certificate(next_sk, next_did, recipient, "recipient-after"))).status_code == 200
+    assert (
+        await _connect(
+            env, recipient, _certificate(next_sk, next_did, recipient, "recipient-after")
+        )
+    ).status_code == 200
     after = await _send(env, sender, recipient, recipient_id, kind=kind, selector=selector)
     assert after.status_code == 200, after.text
 
@@ -64,10 +78,15 @@ async def test_every_local_selector_requires_current_membership(pinning, kind, s
 def _proxy_headers(actor_id):
     key_id = str(uuid4())
     return {
-        "X-Team-ID": TEAM, "X-API-Key": key_id, "X-AWEB-Actor-ID": actor_id,
+        "X-Team-ID": TEAM,
+        "X-API-Key": key_id,
+        "X-AWEB-Actor-ID": actor_id,
         "X-AWEB-Auth": build_internal_auth_header_value(
-            secret="r2-disposable-proxy-secret", team_id=TEAM, principal_type="k",
-            principal_id=key_id, actor_id=actor_id,
+            secret="r2-disposable-proxy-secret",
+            team_id=TEAM,
+            principal_type="k",
+            principal_id=key_id,
+            actor_id=actor_id,
         ),
     }
 
@@ -78,7 +97,9 @@ async def test_trusted_proxy_does_not_restore_superseded_actor(pinning, monkeypa
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "true")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "r2-disposable-proxy-secret")
     member = _new_member("proxyactor")
-    assert (await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "proxy-before"))).status_code == 200
+    assert (
+        await _connect(env, member, _certificate(env.team_sk, env.team_did, member, "proxy-before"))
+    ).status_code == 200
     actor_id = str((await _row(env, member))["agent_id"])
     headers = _proxy_headers(actor_id)
     path = f"/v1/apps/installed?team_id={TEAM}"
@@ -88,8 +109,13 @@ async def test_trusted_proxy_does_not_restore_superseded_actor(pinning, monkeypa
     next_sk, next_did = await _change_key(env)
     refused = await env.client.get(path, headers=headers)
     assert refused.status_code == 403, refused.text
-    assert refused.json()["detail"] == "Team membership is no longer current. Reconnect with a certificate issued under the team's current key."
+    assert (
+        refused.json()["detail"]
+        == "Team membership is no longer current. Reconnect with a certificate issued under the team's current key."
+    )
 
-    assert (await _connect(env, member, _certificate(next_sk, next_did, member, "proxy-after"))).status_code == 200
+    assert (
+        await _connect(env, member, _certificate(next_sk, next_did, member, "proxy-after"))
+    ).status_code == 200
     after = await env.client.get(path, headers=headers)
     assert after.status_code == 200, after.text

@@ -75,9 +75,7 @@ async def _room_actor(db):
 async def room_read(db, *, after=None, limit=50):
     auth, actor = await _room_actor(db)
     return json.dumps(
-        await present_room(
-            db, auth.request, await read_room(db, actor, after=after, limit=limit)
-        )
+        await present_room(db, auth.request, await read_room(db, actor, after=after, limit=limit))
     )
 
 
@@ -98,9 +96,7 @@ async def room_pending(db):
     return json.dumps(await pending_room_notices(db, actor))
 
 
-async def room_post(
-    db, *, hosted_signer=None, subject="", body="", e2ee=False, signed_post=None
-):
+async def room_post(db, *, hosted_signer=None, subject="", body="", e2ee=False, signed_post=None):
     if e2ee:
         raise HTTPException(422, "room_e2ee_unsupported")
     auth, actor = await _room_actor(db)
@@ -109,9 +105,7 @@ async def room_post(
         payload = RoomPost.model_validate(signed_post)
     else:
         if not auth.trusted_proxy:
-            raise HTTPException(
-                403, "Provide an identity-signed post, or use aw room post"
-            )
+            raise HTTPException(403, "Provide an identity-signed post, or use aw room post")
         room = await room_metadata(db, actor)
         signed = {
             "type": "chat",

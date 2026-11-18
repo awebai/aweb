@@ -21,10 +21,12 @@ class ParticipantRetiredError(ValidationError):
     status_code = 410
 
     def __init__(self, alias: str, team: str):
-        super().__init__({
-            "code": "participant_retired",
-            "message": f"{alias} has moved; start a new mail to {alias} in {team}",
-        })
+        super().__init__(
+            {
+                "code": "participant_retired",
+                "message": f"{alias} has moved; start a new mail to {alias} in {team}",
+            }
+        )
 
 
 async def _require_live_mail_participant(
@@ -72,7 +74,7 @@ def participant_delivery_origin(participant: dict) -> str:
     transport_hint = str(participant.get("transport_hint") or "").strip()
     for prefix in ("federation:", "federated:"):
         if transport_hint.startswith(prefix):
-            return transport_hint[len(prefix):].strip()
+            return transport_hint[len(prefix) :].strip()
     return ""
 
 
@@ -102,8 +104,10 @@ async def recipient_for_conversation_participant(db, participant: dict) -> dict:
         return recipient
     if did.startswith("did:key:") and not participant_delivery_origin(participant):
         alias = str(participant.get("alias") or did)
-        raise ValidationError(f'Conversation recipient "{alias}" has been retired and is unreachable. '
-                              'Start a new conversation with an active recipient.')
+        raise ValidationError(
+            f'Conversation recipient "{alias}" has been retired and is unreachable. '
+            "Start a new conversation with an active recipient."
+        )
     return participant_recipient({**participant, "agent_id": None})
 
 
@@ -125,7 +129,9 @@ async def remote_recipient_from_participant(registry_client, participant: dict) 
                 "external": True,
             }
         raise ValidationError("Remote mail recipient has no stored routable identity")
-    current_did = str(participant.get("current_did_key") or participant.get("did_key") or "").strip()
+    current_did = str(
+        participant.get("current_did_key") or participant.get("did_key") or ""
+    ).strip()
     if not current_did:
         raise ValidationError("Remote mail recipient stored route is missing current did:key")
     if not current_did.startswith("did:key:"):
@@ -163,9 +169,7 @@ async def mail_continuation_context(
     participants = await list_conversation_participants(db, conversation_id=conversation_id)
     sender_participant_did = auth_context["participant"]["did"]
     recipients = [
-        participant
-        for participant in participants
-        if participant["did"] != sender_participant_did
+        participant for participant in participants if participant["did"] != sender_participant_did
     ]
     if len(recipients) == 0 and len(participants) == 1:
         # Defensive self-loopback for a malformed historical conversation.
@@ -189,7 +193,8 @@ async def mail_continuation_context(
 
 
 async def explicit_mail_target_matches_participant(
-    db, participant: dict,
+    db,
+    participant: dict,
     *,
     to_agent_id: str | None = None,
     to_alias: str | None = None,
@@ -225,6 +230,8 @@ async def explicit_mail_target_matches_participant(
         # extra binding while the conversation participant stores the stable
         # did:aw. Accept that only when another stable participant field has
         # already identified the recorded recipient.
-        checks.append(did_matches or stable_id_matches or address_matches or selected_identity_matches)
+        checks.append(
+            did_matches or stable_id_matches or address_matches or selected_identity_matches
+        )
 
     return bool(checks) and all(checks)

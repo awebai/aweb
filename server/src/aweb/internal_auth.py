@@ -94,7 +94,9 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
             "AWEB_INTERNAL_AUTH_SECRET",
             path,
         )
-        raise HTTPException(status_code=500, detail="Internal proxy authentication is misconfigured")
+        raise HTTPException(
+            status_code=500, detail="Internal proxy authentication is misconfigured"
+        )
 
     internal_auth = request.headers.get(INTERNAL_AUTH_HEADER)
     if not internal_auth:
@@ -177,6 +179,10 @@ async def resolve_internal_actor(aweb_db, internal: InternalAuthContext):
     )
     if row is None:
         return None
-    if row["team_id"] != internal["team_id"] or row["status"] != "active" or row["deleted_at"] is not None:
+    if (
+        row["team_id"] != internal["team_id"]
+        or row["status"] != "active"
+        or row["deleted_at"] is not None
+    ):
         raise HTTPException(status_code=403, detail="Agent not connected")
     return row

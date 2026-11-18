@@ -27,7 +27,9 @@ from aweb.service_errors import (
 )
 
 logger = logging.getLogger(__name__)
-ROOM_DISCLOSURE = "Team room posts are readable by the service operator and all current and future team members."
+ROOM_DISCLOSURE = (
+    "Team room posts are readable by the service operator and all current and future team members."
+)
 ROOM_POLICY = {
     "confidentiality": "server_readable",
     "history_visibility": "current_and_future_members",
@@ -184,15 +186,9 @@ def _after(cursor, room_id, team_id):
         if not cursor or len(cursor) > 1024:
             raise ValueError()
         value = json.loads(
-            base64.b64decode(
-                cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True
-            )
+            base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
         )
-        if (
-            not isinstance(value, list)
-            or len(value) != 3
-            or value[:2] != [str(room_id), team_id]
-        ):
+        if not isinstance(value, list) or len(value) != 3 or value[:2] != [str(room_id), team_id]:
             raise ValueError()
         if type(value[2]) is not int or value[2] < 1:
             raise ValueError()
@@ -229,9 +225,7 @@ async def read_room(db, actor, *, after=None, limit=50):
             "messages": [_post_dict(row, actor.team_id) for row in rows],
             "has_more": more,
             "next_cursor": (
-                _cursor(room["room_id"], actor.team_id, rows[-1]["sequence"])
-                if more
-                else None
+                _cursor(room["room_id"], actor.team_id, rows[-1]["sequence"]) if more else None
             ),
         }
 
@@ -281,8 +275,7 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
         post.signing_key_id != actor.did_key
         or signed.from_did != actor.did_key
         or signed.from_stable_id != (actor.did_aw or "")
-        or signed.from_label
-        not in {actor.alias, actor.address, actor.did_key, actor.did_aw}
+        or signed.from_label not in {actor.alias, actor.address, actor.did_key, actor.did_aw}
         or signed.to != "team-room:" + actor.team_id
         or signed.conversation_id != str(post.room_id)
     ):
@@ -316,12 +309,8 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
                 raise ValueError()
             enforce_message_timestamp_skew(timestamp)
         except (ValueError, FederationEnvelopeError) as exc:
-            logger.warning(
-                "Room post timestamp is invalid or outside the shared skew bound"
-            )
-            raise ValidationError(
-                "Invalid room post timestamp or outside accepted skew"
-            ) from exc
+            logger.warning("Room post timestamp is invalid or outside the shared skew bound")
+            raise ValidationError("Invalid room post timestamp or outside accepted skew") from exc
         row = await tx.fetch_one(
             """
             INSERT INTO {{tables.room_messages}}

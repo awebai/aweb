@@ -35,13 +35,17 @@ def resolve_alias_target(auth_team_id: str | None, raw_alias: str, *, field: str
     if "~" not in alias:
         return AliasTarget(team_id=str(auth_team_id).strip(), alias=alias)
     if alias.count("~") != 1:
-        raise HTTPException(status_code=422, detail=f"{field} team~alias must include exactly one '~'")
+        raise HTTPException(
+            status_code=422, detail=f"{field} team~alias must include exactly one '~'"
+        )
 
     team_name, alias_part = alias.split("~", 1)
     team_name = team_name.strip()
     alias_part = alias_part.strip()
     if not team_name or not alias_part:
-        raise HTTPException(status_code=422, detail=f"{field} team~alias must include both team and alias")
+        raise HTTPException(
+            status_code=422, detail=f"{field} team~alias must include both team and alias"
+        )
 
     try:
         sender_domain, _ = parse_team_id(str(auth_team_id).strip())
@@ -65,7 +69,9 @@ def validate_alias_selector(raw_alias: str, *, field: str) -> str:
     if not team_name or not alias_part:
         raise ValueError(f"{field} team~alias must include both team and alias")
     if len(team_name) > MAX_ALIAS_PART_LENGTH or len(alias_part) > MAX_ALIAS_PART_LENGTH:
-        raise ValueError(f"{field} team and alias must be at most {MAX_ALIAS_PART_LENGTH} characters")
+        raise ValueError(
+            f"{field} team and alias must be at most {MAX_ALIAS_PART_LENGTH} characters"
+        )
     return alias
 
 
@@ -134,9 +140,12 @@ async def get_agent_by_namespace_alias(db, *, namespace: str, alias: str) -> dic
             identities = {(row["did_aw"], row["did_key"]) for row in rows}
             if len(identities) == 1:
                 from aweb.messaging.address_auth import identity_recipient
+
                 return identity_recipient(rows[0], f"{namespace}/{alias}")
             # Membership labels cannot disambiguate global identities or keys.
             # The caller must obtain the authoritative address binding instead.
             return None
-        raise AmbiguousLocalAddressError(f"Address {namespace}/{alias} matches multiple local agents")
+        raise AmbiguousLocalAddressError(
+            f"Address {namespace}/{alias} matches multiple local agents"
+        )
     return None if not rows else dict(rows[0])

@@ -26,7 +26,13 @@ from aweb.inbound_modes import (
     normalize_inbound_mode,
 )
 from aweb.messaging.contacts import has_exact_active_identity_contact, normalize_owner_dids
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
+from aweb.service_errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ServiceError,
+    ValidationError,
+)
 
 MessagePriority = Literal["low", "normal", "high", "urgent"]
 
@@ -195,7 +201,9 @@ async def _has_verified_same_team_membership(
     sender_verified_team_id: str | None,
     sender_verified_dids: list[str] | tuple[str, ...] | None,
 ) -> bool:
-    recipient_team_ids = await _active_team_ids_for_identity(db, _identity_dids_from_agent(recipient_agent))
+    recipient_team_ids = await _active_team_ids_for_identity(
+        db, _identity_dids_from_agent(recipient_agent)
+    )
     if not recipient_team_ids:
         return False
 
@@ -203,7 +211,9 @@ async def _has_verified_same_team_membership(
     verified_team = str(sender_verified_team_id or "").strip()
     if verified_team:
         sender_team_ids.add(verified_team)
-    sender_team_ids.update(await _active_team_ids_for_identity(db, _normalize_dids(sender_verified_dids)))
+    sender_team_ids.update(
+        await _active_team_ids_for_identity(db, _normalize_dids(sender_verified_dids))
+    )
 
     return bool(sender_team_ids & recipient_team_ids)
 
@@ -271,7 +281,9 @@ async def authorize_message_delivery(
             return
         if mode == INBOUND_MODE_CONTACTS_ONLY:
             raise ForbiddenError("Recipient only accepts messages from exact active contacts")
-        raise ForbiddenError("Recipient only accepts messages from verified team members or exact active contacts")
+        raise ForbiddenError(
+            "Recipient only accepts messages from verified team members or exact active contacts"
+        )
 
     if stored_route_continuation:
         return
@@ -308,13 +320,19 @@ async def admit_message_delivery(
     stored_route_continuation: bool,
 ) -> None:
     """The recipient's delivery policy for this sender; raises when it refuses."""
-    if recipient.get("external") and not (stored_route_continuation and not recipient.get("delivery_origin")):
+    if recipient.get("external") and not (
+        stored_route_continuation and not recipient.get("delivery_origin")
+    ):
         return
     policies = [recipient]
     if stored_route_continuation:
-        policies = await policy_rows_for_participant(db, {
-            "agent_id": to_agent_id or recipient.get("agent_id"), "did": recipient_did,
-        })
+        policies = await policy_rows_for_participant(
+            db,
+            {
+                "agent_id": to_agent_id or recipient.get("agent_id"),
+                "did": recipient_did,
+            },
+        )
         if not policies:
             # Mail has one recipient; absence is not a policy denial and
             # must not create a local delivery to a retired projection.
@@ -400,14 +418,20 @@ async def deliver_message(
         message_id = uuid_mod.uuid4()
         known_new = True
 
-    conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id") if conversation_id else None
+    conversation_uuid = (
+        _parse_uuid(conversation_id, field_name="conversation_id") if conversation_id else None
+    )
     from_uuid = _parse_uuid(from_agent_id, field_name="from_agent_id") if from_agent_id else None
-    to_uuid = _parse_uuid(to_agent_id, field_name="to_agent_id") if to_agent_id else (
-        UUID(str(recipient["agent_id"])) if recipient.get("agent_id") else None
+    to_uuid = (
+        _parse_uuid(to_agent_id, field_name="to_agent_id")
+        if to_agent_id
+        else (UUID(str(recipient["agent_id"])) if recipient.get("agent_id") else None)
     )
     from_alias_value = (from_alias or sender_address or sender_did).strip()
     from_address_value = (sender_address or "").strip() or None
-    to_alias_value = (to_alias or recipient.get("alias") or recipient.get("address") or recipient_did).strip()
+    to_alias_value = (
+        to_alias or recipient.get("alias") or recipient.get("address") or recipient_did
+    ).strip()
     if content_mode == "encrypted_v2":
         subject = ""
         body = ""
@@ -424,14 +448,18 @@ async def deliver_message(
     aweb_db = db.get_manager("aweb")
     # known_new: the caller looked this message_id up in this request and
     # found no row, so the same lookup is not repeated here.
-    existing = None if known_new else await aweb_db.fetch_one(
-        """
+    existing = (
+        None
+        if known_new
+        else await aweb_db.fetch_one(
+            """
         SELECT message_id, created_at, content_mode, signed_envelope_hash,
                from_did, signed_payload
         FROM {{tables.messages}}
         WHERE message_id = $1
         """,
-        message_id,
+            message_id,
+        )
     )
     if content_mode == "encrypted_v2":
         signed_envelope_hash = str(encrypted_metadata.get("signed_envelope_hash") or "").strip()
@@ -486,9 +514,15 @@ async def deliver_message(
         conversation_uuid,
         message_version,
         content_mode,
-        json.dumps(encrypted_envelope, sort_keys=True, separators=(",", ":")) if encrypted_envelope is not None else None,
+        json.dumps(encrypted_envelope, sort_keys=True, separators=(",", ":"))
+        if encrypted_envelope is not None
+        else None,
         encrypted_metadata.get("encrypted_ciphertext"),
-        json.dumps(encrypted_metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")) if encrypted_metadata.get("encrypted_key_wraps") is not None else None,
+        json.dumps(
+            encrypted_metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")
+        )
+        if encrypted_metadata.get("encrypted_key_wraps") is not None
+        else None,
         encrypted_metadata.get("encrypted_ciphertext_hash"),
         encrypted_metadata.get("encrypted_ciphertext_size"),
         encrypted_metadata.get("encrypted_key_wraps_hash"),

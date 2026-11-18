@@ -62,7 +62,10 @@ class MessagingAuth:
 
 def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
     dids: list[str] = []
-    for value in ((getattr(identity, "did_aw", None) or "").strip(), (getattr(identity, "did_key", None) or "").strip()):
+    for value in (
+        (getattr(identity, "did_aw", None) or "").strip(),
+        (getattr(identity, "did_key", None) or "").strip(),
+    ):
         if value and value not in dids:
             dids.append(value)
     return dids
@@ -96,16 +99,21 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     did_aw = (request.headers.get(IDENTITY_DID_AW_HEADER) or "").strip()
     try:
         envelope = identity_auth_signature_payload(
-            request, did_aw=did_aw, timestamp=timestamp,
+            request,
+            did_aw=did_aw,
+            timestamp=timestamp,
             body_sha256=_get_body_sha256(request),
             allowed_audiences=_team_auth_allowed_audiences(request)
-            if request.headers.get("X-AWEB-Signed-Payload") else [],
+            if request.headers.get("X-AWEB-Signed-Payload")
+            else [],
         )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     try:
         verify_did_key_signature(
-            did_key=did_key, payload=envelope.canonical_payload, signature_b64=signature_b64,
+            did_key=did_key,
+            payload=envelope.canonical_payload,
+            signature_b64=signature_b64,
         )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature") from exc
@@ -121,7 +129,9 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw)
     except HTTPException as exc:
         if exc.status_code == 403:
-            raise HTTPException(status_code=401, detail="did:aw does not match Authorization did:key") from exc
+            raise HTTPException(
+                status_code=401, detail="did:aw does not match Authorization did:key"
+            ) from exc
         raise
 
     key_binding = binding
@@ -138,7 +148,9 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         if addresses:
             first = addresses[0]
             address = f"{first.domain}/{first.name}"
-            binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw, address=address)
+            binding = await verify_identity_binding(
+                request, did_key=did_key, did_aw=did_aw, address=address
+            )
             outcome = AddressResolution("verified")
     request.state.identity_address_resolution = outcome
 
@@ -146,7 +158,9 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     binding_db = db if db is not None else getattr(request.app.state, "db", None)
     if binding_db is not None and outcome.state != "unknown":
         await refresh_projection_binding(
-            _aweb_db(binding_db), agent_id=None, did_key=did_key,
+            _aweb_db(binding_db),
+            agent_id=None,
+            did_key=did_key,
             binding=key_binding if key_binding.fresh_observation else binding,
         )
     if envelope.version == 1:
@@ -167,7 +181,9 @@ async def lookup_identity_agent_context(
     rows = await aweb_db.fetch_all(
         """
         SELECT a.agent_id, a.team_id, a.alias, a.did_key, a.did_aw, a.address, a.did_aw_verified_key,
-               a.identity_scope, a.certificate_id, """ + member_key_columns_sql("a") + """
+               a.identity_scope, a.certificate_id, """
+        + member_key_columns_sql("a")
+        + """
         FROM {{tables.agents}} AS a
         WHERE a.deleted_at IS NULL
           AND a.did_key = $1
@@ -177,27 +193,37 @@ async def lookup_identity_agent_context(
     )
     if not rows:
         return None
-    outcome = getattr(request.state, "identity_address_resolution", None) if request is not None else None
+    outcome = (
+        getattr(request.state, "identity_address_resolution", None) if request is not None else None
+    )
     if outcome is not None and outcome.state == "unknown":
         # Key possession/current DID binding was authenticated above. During an
         # address outage, retain previously verified projections, including
         # verified-empty; never mint a marker from a key-only observation.
         request.state.identity_address_resolution = outcome.with_stored_bindings(
-            rows, did_key=did_key, did_aw=did_aw_value,
+            rows,
+            did_key=did_key,
+            did_aw=did_aw_value,
         )
     elif request is not None:
         for row in rows:
             binding = await verify_identity_binding(
-                request, did_key=did_key, did_aw=row.get("did_aw") or "",
+                request,
+                did_key=did_key,
+                did_aw=row.get("did_aw") or "",
                 address=row.get("address") or "",
             )
-            await refresh_projection_binding(aweb_db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
+            await refresh_projection_binding(
+                aweb_db, agent_id=row["agent_id"], did_key=did_key, binding=binding
+            )
         rows = [{**dict(row), "did_aw_verified_key": did_key} for row in rows]
     rows = [verified_projection(row) for row in rows]
     if len(rows) > 1:
         if allow_ambiguous_global_identity and did_aw_value:
             return None
-        raise HTTPException(status_code=409, detail="Authenticated DID matches multiple active local agents")
+        raise HTTPException(
+            status_code=409, detail="Authenticated DID matches multiple active local agents"
+        )
     return dict(rows[0])
 
 
@@ -323,8 +349,11 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
     return MessagingAuth(
         did_key=identity.did_key,
         did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
-        address=(outcome.stored_address if outcome.state == "unknown"
-                 else identity.address or ((row or {}).get("address") or None)),
+        address=(
+            outcome.stored_address
+            if outcome.state == "unknown"
+            else identity.address or ((row or {}).get("address") or None)
+        ),
         team_id=(row or {}).get("team_id") or None,
         alias=(row or {}).get("alias") or None,
         agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
