@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 import pytest
-from test_e2e_asset_capabilities import _member_read
+from test_e2e_asset_capabilities import _member_read, _served
 from test_e2e_present import _mint_present
 from test_e2e_smoke import (
     AWWorkspace,
@@ -107,7 +107,9 @@ def test_image_asset_upload_embed_render_and_team_scoped_sanitizer(
     presented = _mint_present(folio, team_a, slug="deck")
     page = httpx.get(presented["url"], timeout=10.0)
     assert page.status_code == 200, page.text
-    assert f'src="{presented["url"]}/assets/{asset_a["asset_id"]}"' in page.text
+    image_url = f"{presented['url']}/assets/{asset_a['asset_id']}"
+    assert f'src="{image_url}"' in page.text
+    assert _served(httpx.get(image_url, timeout=10.0), _ONE_BY_ONE_PNG_BYTES)
     assert "safe chart" in page.text
     assert "example.com" not in page.text
     assert "data:image" not in page.text

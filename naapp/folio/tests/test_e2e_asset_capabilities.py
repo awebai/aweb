@@ -96,7 +96,14 @@ def _rendered_srcs(page: httpx.Response, pattern: re.Pattern[str]) -> list[str]:
 
 
 def _served(response: httpx.Response, payload: bytes) -> bool:
-    return response.status_code == 200 and response.content == payload
+    """The image's own bytes, as private user content of the uploaded type."""
+    return (
+        response.status_code == 200
+        and response.content == payload
+        and response.headers.get("content-type", "").startswith("image/png")
+        and response.headers.get("x-content-type-options") == "nosniff"
+        and response.headers.get("cache-control") == "no-store"
+    )
 
 
 def _refused(response: httpx.Response, payload: bytes) -> bool:

@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
-from test_e2e_asset_capabilities import _member_read
+from test_e2e_asset_capabilities import _member_read, _served
 from test_e2e_present import _mint_present
 from test_e2e_smoke import (
     AWWorkspace,
@@ -159,7 +159,9 @@ def test_theme_wraps_present_page_and_body_team_cannot_cross_scope(
     assert "</style><script" not in themed_page.text.lower()
     assert "&lt;/style&gt;&lt;script&gt;alert(3)&lt;/script&gt;" in themed_page.text
     assert "&lt;img src=x onerror=alert(4)&gt;" in themed_page.text
-    assert f'src="{themed["url"]}/assets/{theme["logo_asset_id"]}"' in themed_page.text
+    logo_on_page = f"{themed['url']}/assets/{theme['logo_asset_id']}"
+    assert f'src="{logo_on_page}"' in themed_page.text
+    assert _served(httpx.get(logo_on_page, timeout=10.0), base64.b64decode(_ONE_BY_ONE_PNG))
     assert "<table>" in themed_page.text
 
     b_theme = _put_theme(
