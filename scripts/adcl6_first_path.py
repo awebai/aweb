@@ -166,14 +166,17 @@ def archive_running_tree(root: Path, archive: Path) -> str:
     return source_sha
 
 
-def prepare(args) -> None:
-    runtime = args.runtime.resolve()
-    build = runtime / "build"
-    build.mkdir(mode=0o700)
-    extract(args.approval_archive, APPROVAL, build / "approval")
+@dataclass(frozen=True, kw_only=True)
+class PreparedProductSource:
+    commit: str
+    go_tree: str
+
+
+def stage_product_source(
+    *, root: Path, runtime: Path, build: Path, architecture: str
+) -> PreparedProductSource:
     # Build aw and holder from this clean checkout, including the landing merge.
     # Only compiled artifacts/wheels enter the application image.
-    root = Path(__file__).resolve().parents[1]
     archive = runtime / "source.tar"
     source_sha = archive_running_tree(root, archive)
     extract(
@@ -187,7 +190,7 @@ def prepare(args) -> None:
     env = dict(
         os.environ,
         GOOS="linux",
-        GOARCH=args.architecture,
+        GOARCH=architecture,
         CGO_ENABLED="0",
         GOWORK="off",
     )
@@ -206,6 +209,19 @@ def prepare(args) -> None:
         check=True,
     )
     shutil.rmtree(product)
+    return PreparedProductSource(commit=source_sha, go_tree=go_tree)
+
+
+def prepare(args) -> None:
+    runtime = args.runtime.resolve()
+    build = runtime / "build"
+    build.mkdir(mode=0o700)
+    extract(args.approval_archive, APPROVAL, build / "approval")
+    root = Path(__file__).resolve().parents[1]
+    product_source = stage_product_source(
+        root=root, runtime=runtime, build=build, architecture=args.architecture
+    )
+    source_sha, go_tree = product_source.commit, product_source.go_tree
     (build / "journey.py").write_bytes(Path(__file__).read_bytes())
     (build / "Dockerfile").write_bytes(
         (root / "scripts/adcl6-first-path.Dockerfile").read_bytes()
