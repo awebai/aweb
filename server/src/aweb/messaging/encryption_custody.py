@@ -87,7 +87,9 @@ async def require_non_custodial_recipients(
             """SELECT agent_id FROM {{tables.agents}}
                WHERE deleted_at IS NULL AND did_key=$1
                  AND ($2::text='' OR (did_aw=$2 AND did_aw_verified_key=did_key))
-               ORDER BY agent_id""", did, stable_id,
+               ORDER BY agent_id""",
+            did,
+            stable_id,
         )
         for row in rows:
             if await _verified_hosted_key(

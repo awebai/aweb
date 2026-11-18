@@ -53,7 +53,8 @@ async def require_agent_chat(db, recipients: list[dict], *, registry_client=None
                  AND {human_predicate_sql()}
                  AND ((did_aw=$1 AND did_aw_verified_key=did_key)
                       OR did_key=$1)
-               LIMIT 1""", did,
+               LIMIT 1""",
+            did,
         )
         if human:
             humans.append(recipient_label(row))

@@ -370,7 +370,9 @@ async def _authorize_policy(
             SELECT a.agent_id FROM {{tables.agents}} AS a
             WHERE a.team_id = $1 AND a.deleted_at IS NULL
               AND ((a.did_aw = $2 AND a.did_aw_verified_key = a.did_key) OR a.did_key = $2)
-              AND """ + member_key_current_sql("a") + """
+              AND """
+            + member_key_current_sql("a")
+            + """
             LIMIT 1
             FOR SHARE OF a
             """,

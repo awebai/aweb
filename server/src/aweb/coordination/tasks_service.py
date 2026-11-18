@@ -177,7 +177,8 @@ async def answer_task_on(
         """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
            FROM {{tables.agents}} WHERE agent_id = $1 AND team_id = $2
              AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
-        UUID(actor.agent_id), team_id,
+        UUID(actor.agent_id),
+        team_id,
     )
     if (actor.team_id != team_id or not member or member["principal_did"] != principal
             or not actor.certificate_id or member["certificate_id"] != actor.certificate_id):
@@ -586,7 +587,9 @@ async def _resolve_assignee_on(manager, *, team_id: str, assignee_ref: str) -> t
                OR ($2::uuid IS NULL AND alias = $3))
         FOR SHARE
         """,
-        team_id, agent_id, assignee_ref.strip(),
+        team_id,
+        agent_id,
+        assignee_ref.strip(),
     )
     if not row:
         raise ValidationError("Assignee agent not found in this team")
@@ -1372,7 +1375,8 @@ async def update_task(
                        FROM {{tables.agents}}
                        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
                        FOR SHARE""",
-                    team_id, actor_alias,
+                    team_id,
+                    actor_alias,
                 )
                 if current["app_request"] is not None and (not claimant or claimant["principal_did"] != current["assignee_did"]):
                     raise ForbiddenError("target_mismatch")

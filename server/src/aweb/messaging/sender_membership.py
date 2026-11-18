@@ -33,10 +33,15 @@ async def sender_memberships(
     ids = [UUID(agent) for team, agent in keys if team and agent]
     if not ids:
         return result
-    members = member_rows if member_rows is not None else await db.get_manager("aweb").fetch_all(
-        "SELECT a.agent_id, a.team_id, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw, "
-        "a.status, a.deleted_at, a.certificate_id, " + member_key_columns_sql("a") + " "
-        "FROM {{tables.agents}} AS a WHERE a.agent_id = ANY($1::uuid[])", ids,
+    members = (
+        member_rows
+        if member_rows is not None
+        else await db.get_manager("aweb").fetch_all(
+            "SELECT a.agent_id, a.team_id, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw, "
+            "a.status, a.deleted_at, a.certificate_id, " + member_key_columns_sql("a") + " "
+            "FROM {{tables.agents}} AS a WHERE a.agent_id = ANY($1::uuid[])",
+            ids,
+        )
     )
     team_certificates: dict[str, list[str]] = {}
     for member in members:

@@ -108,7 +108,9 @@ async def resolve_team_identity(
     # same request passes it as cert_info["agent_row"]; it is used only for the
     # exact (team_id, did_key) this certificate verified.
     row = cert_info.get("agent_row")
-    if not (isinstance(row, dict) and row.get("team_id") == team_id and row.get("did_key") == did_key):
+    if not (
+        isinstance(row, dict) and row.get("team_id") == team_id and row.get("did_key") == did_key
+    ):
         row = await db.fetch_one(
             """
             SELECT agent_id, certificate_id, accepted_team_did_key, did_aw, address FROM {{tables.agents}}

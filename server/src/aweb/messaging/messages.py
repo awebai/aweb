@@ -116,7 +116,8 @@ async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
         FROM {{tables.agents}} WHERE deleted_at IS NULL
           AND (did_key=$1 OR did_aw=$1)
         ORDER BY agent_id
-        """, did,
+        """,
+        did,
     )
     # All raw-claim matches must pass policy; none selects a recipient or route.
     return [dict(row) for row in rows]
@@ -172,7 +173,9 @@ async def _active_team_ids_for_identity(db, dids: list[str]) -> set[str]:
         FROM {{tables.agents}} AS a
         WHERE a.deleted_at IS NULL
           AND ((a.did_aw = ANY($1::text[]) AND a.did_aw_verified_key = a.did_key) OR a.did_key = ANY($1::text[]))
-          AND """ + member_key_current_sql("a") + """
+          AND """
+        + member_key_current_sql("a")
+        + """
         """,
         dids,
     )
