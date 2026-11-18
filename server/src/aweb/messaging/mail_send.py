@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.member_team_key import recipient_not_found
+
 import json
 import logging
 from dataclasses import dataclass
@@ -1198,7 +1200,7 @@ async def resolve_mail_target(
         if recipient is None:
             if recipient_did.startswith("did:aw:"):
                 _raise_bare_did_first_contact_unsupported()
-            raise HTTPException(status_code=404, detail="Recipient agent not found")
+            raise recipient_not_found()
         if payload.to_did is not None and payload.to_did.strip():
             bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
             if not _recipient_identity_matches(bound_recipient, recipient):
@@ -1234,7 +1236,7 @@ async def resolve_mail_target(
         if recipient is None:
             if requested_recipient_did.startswith("did:aw:"):
                 _raise_bare_did_first_contact_unsupported()
-            raise HTTPException(status_code=404, detail="Recipient agent not found")
+            raise recipient_not_found()
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), registry_client=registry_client)
             if not _recipient_identity_matches(bound_recipient, recipient):
@@ -1355,7 +1357,7 @@ async def resolve_mail_target(
             recipient = identity_recipient(recipient, address)
             recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
             if not recipient_did:
-                raise HTTPException(status_code=404, detail="Recipient agent not found")
+                raise recipient_not_found()
         if payload.to_alias is not None and payload.to_alias.strip():
             if recipient.get("external"):
                 if payload.to_alias.strip() != recipient["alias"]:
@@ -1384,7 +1386,7 @@ async def resolve_mail_target(
             db, team_id=auth.team_id, agent_id=to_agent_id,
         ) if auth.team_id else await get_agent_by_id(db, agent_id=to_agent_id)
         if recipient is None:
-            raise HTTPException(status_code=404, detail="Recipient agent not found")
+            raise recipient_not_found()
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), registry_client=registry_client)
             if not _recipient_identity_matches(bound_recipient, recipient):
@@ -1394,7 +1396,7 @@ async def resolve_mail_target(
     elif payload.to_alias is not None:
         recipient = await _resolve_message_alias(db, auth, payload.to_alias, registry_client=registry_client)
         if recipient is None:
-            raise HTTPException(status_code=404, detail="Recipient agent not found")
+            raise recipient_not_found()
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or "").strip()
         to_agent_id = str(recipient["agent_id"])
         to_alias = recipient["alias"]

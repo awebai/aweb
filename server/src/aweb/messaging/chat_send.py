@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.member_team_key import recipient_not_found
+
 import json
 import logging
 import uuid as uuid_mod
@@ -953,7 +955,7 @@ async def _resolve_named_recipients(
         if row is None and did.startswith("did:aw:"):
             _raise_bare_did_chat_first_contact_unsupported()
         if row is None:
-            raise HTTPException(status_code=404, detail=f"Recipient agent not found: {did}")
+            raise recipient_not_found(label=did)
         resolved[did] = identity_recipient(row)
 
     for address in to_addresses:
@@ -1059,7 +1061,7 @@ async def _resolve_named_recipients(
         row = identity_recipient(row, address)
         target_did = (row.get("did_aw") or row.get("did_key") or "").strip()
         if not target_did:
-            raise HTTPException(status_code=404, detail=f"Recipient agent not found: {address}")
+            raise recipient_not_found(label=address)
         resolved[target_did] = row
 
     if not resolved:
