@@ -1,9 +1,9 @@
 """The primitive guard covers source boundaries, not call counts."""
 
 import importlib.util
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 
 from fixture_repo import init_fixture_repo
 
@@ -37,8 +37,8 @@ class PrimitiveGuardTests(unittest.TestCase):
         self.assertEqual(
             [],
             self.check(
-                "awid/src/awid/id_certificates.py",
-                "from nacl.signing import VerifyKey\ndef verify_ed25519(k,p,s): VerifyKey(k).verify(p,s)\n",
+                "awid/src/awid/signature_wire.py",
+                "from nacl.signing import VerifyKey\ndef verify_bytes(k,p,s): VerifyKey(k).verify(p,s)\n",
             ),
         )
         self.assertEqual(

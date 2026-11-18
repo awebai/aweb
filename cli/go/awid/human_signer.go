@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/awebai/aw/signaturewire"
 	"golang.org/x/term"
 )
 
@@ -65,7 +66,7 @@ func HumanSigner(store HumanKeyStore, id, description string, prompt PassphraseP
 			return "", nil, err
 		}
 		defer wipe(key)
-		return ComputeDIDKey(key.Public().(ed25519.PublicKey)), ed25519.Sign(key, payload), nil
+		return ComputeDIDKey(key.Public().(ed25519.PublicKey)), signaturewire.SignBytes(key, payload), nil
 	}
 }
 

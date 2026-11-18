@@ -28,7 +28,7 @@ type inventory struct {
 }
 type siteKey struct{ File, Symbol string }
 
-const strictModule = "cli/go/awid/id_certificates.go"
+const strictModule = "cli/go/signaturewire/signature.go"
 
 func excluded(file string) bool {
 	return strings.HasSuffix(file, "_test.go") || strings.Contains("/"+file, "/testdata/") || file == "cli/go/internal/identityinventory/main.go"
@@ -190,10 +190,8 @@ func checkPrimitiveUses(observed map[siteKey]map[string]bool, legacy []legacyFil
 		}
 	}
 	for key := range observed {
-		// idStrictVerify is the one shared strict verifier for certificates,
-		// requests and covering envelopes; idCertificatePrimePoint is its
-		// point check.
-		shared := key.File == strictModule && (key.Symbol == "idStrictVerify" || key.Symbol == "idCertificatePrimePoint")
+		// Raw signing, verification and profile checks live in signaturewire.
+		shared := key.File == strictModule && (key.Symbol == "Verify" || key.Symbol == "SignBytes" || key.Symbol == "PrimePoint" || key.Symbol == "ValidIDSignatureShape")
 		if !shared && !files[key.File] {
 			errors = append(errors, "raw Go crypto must use the shared verifier: "+fmt.Sprint(key))
 		}

@@ -127,11 +127,10 @@ export function checkPrimitiveUses(observed,legacy) {
  }
  for(const entry of observed)for(const callee of Object.keys(entry.calls)) {
   if(!rawUse(callee))continue;
-  const codec=entry.file==='channel-core/src/identity/id_certificates.ts';
+  const codec=entry.file==='channel-core/src/identity/signature_wire.ts';
   const name=normalized(callee);
-  if(codec && entry.symbol==='idEd25519Verify')continue;
-  if(entry.file==='channel-core/src/identity/did.ts' && entry.symbol==='primeSubgroupPoint')continue;
-  if(codec && entry.symbol==='<module>' && ['@noble/ed25519.etc.sha512Sync','@noble/ed25519.etc.concatBytes','@noble/ed25519.CURVE.n'].includes(name))continue;
+  if(codec && ['verifyBytes','signBytes','primeSubgroupPoint','canonicalPoint'].includes(entry.symbol))continue;
+  if(codec && entry.symbol==='<module>' && ['@noble/ed25519.etc.sha512Sync','@noble/ed25519.etc.concatBytes'].includes(name))continue;
   if(files.has(entry.file))continue;
   errors.push(`raw TS crypto must use the shared verifier: ${entry.file}:${entry.symbol}: ${callee}`);
  }

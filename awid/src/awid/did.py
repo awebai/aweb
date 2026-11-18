@@ -6,8 +6,9 @@ import base64
 import hashlib
 
 import base58 as b58
-from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.signing import SigningKey
+
+from awid.signature_wire import prime_point
 
 _MULTICODEC_ED25519 = b"\xed\x01"
 _MULTICODEC_LEN = len(_MULTICODEC_ED25519)
@@ -52,9 +53,7 @@ def strict_ed25519_point(public_key: bytes) -> bool:
     Small-order, non-canonical and mixed-order points are refused: a
     mixed-order key can make signatures that plain verification accepts.
     """
-    return len(public_key) == _ED25519_KEY_LEN and bool(
-        crypto_core_ed25519_is_valid_point(public_key)
-    )
+    return prime_point(public_key)
 
 
 def public_key_from_did(did: str) -> bytes:

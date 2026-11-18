@@ -2,13 +2,14 @@ package awid
 
 import (
 	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // The team-key-signed AWID records behind principal attestation
@@ -77,7 +78,7 @@ func SignAttestationRecord(teamKey ed25519.PrivateKey, record map[string]any) (s
 	if err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(teamKey, signingBytes)), nil
+	return signaturewire.SignURL(teamKey, signingBytes), nil
 }
 
 func attestationVersionIsOne(value any) bool {
@@ -180,8 +181,8 @@ func ValidateAttestationRecord(record map[string]any) error {
 // decodeAttestationSignature accepts only the one unpadded base64url encoding
 // of a 64-byte Ed25519 signature.
 func decodeAttestationSignature(signature string) ([]byte, error) {
-	raw, err := base64.RawURLEncoding.Strict().DecodeString(signature)
-	if err != nil || base64.RawURLEncoding.EncodeToString(raw) != signature || len(raw) != ed25519.SignatureSize {
+	raw, err := signaturewire.DecodeCanonicalURL(signature)
+	if err != nil || len(raw) != ed25519.SignatureSize {
 		return nil, fmt.Errorf("signature must be one unpadded base64url Ed25519 signature")
 	}
 	return raw, nil
@@ -208,7 +209,7 @@ func VerifyAttestationRecord(record map[string]any, signature, teamDIDKey string
 	if err != nil {
 		return attestationRecordRefusal("record cannot be canonicalized")
 	}
-	if !ed25519.Verify(publicKey, signingBytes, raw) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: publicKey, Payload: signingBytes, Signature: raw}) {
 		return attestationRecordRefusal("signature does not verify against the team key")
 	}
 	return nil

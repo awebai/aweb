@@ -9,8 +9,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from nacl.signing import SigningKey
-
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes
 from awid.team_certificate import (
@@ -18,6 +16,7 @@ from awid.team_certificate import (
     decode_team_certificate,
     verify_team_certificate_signature,
 )
+from nacl.signing import SigningKey
 
 TEAM_KEY = SigningKey(bytes(range(32)))
 TEAM_DID_KEY = did_from_public_key(bytes(TEAM_KEY.verify_key))
@@ -156,3 +155,48 @@ def test_a_team_key_of_the_wrong_type_is_an_invalid_team_key() -> None:
     with pytest.raises(TeamCertificateError) as refused:
         verify_team_certificate_signature(certificate(), None)  # type: ignore[arg-type]
     assert refused.value.reason == "invalid_team_key"
+
+
+def test_checked_certificate_retains_immutable_artifact_and_fingerprint(monkeypatch):
+    import hashlib
+
+    from awid import team_certificate
+
+    issued = certificate(extra={"nested": ["original"]})
+    checked = team_certificate.verify_team_certificate_claims(
+        header(issued),
+        subject_did_key=issued["member_did_key"],
+        team_did_key=TEAM_DID_KEY,
+    )
+    assert checked.canonical_artifact == canonical_json_bytes(issued)
+    assert (
+        checked.fingerprint == hashlib.sha256(canonical_json_bytes(issued)).hexdigest()
+    )
+    assert checked.team_did_key == TEAM_DID_KEY
+    with pytest.raises(TypeError):
+        checked.claims["alias"] = "changed"
+    with pytest.raises(TypeError):
+        checked.claims["extra"]["nested"][0] = "changed"
+
+    def unexpected_crypto(*args, **kwargs):
+        raise AssertionError("evidence re-ran cryptographic verification")
+
+    # The first phase used a real signature. Standing consumes the already
+    # verified immutable artifact and cannot perform a second crypto check.
+    monkeypatch.setattr(
+        team_certificate, "verify_team_certificate_signature", unexpected_crypto
+    )
+    with pytest.raises(TeamCertificateError) as refusal:
+        team_certificate.check_team_certificate_evidence(
+            checked,
+            revoked_certificate_ids={issued["certificate_id"]},
+            registered_certificate_ids=None,
+        )
+    assert refusal.value.reason == "revoked"
+    result = team_certificate.check_team_certificate_evidence(
+        checked,
+        revoked_certificate_ids=set(),
+        registered_certificate_ids={issued["certificate_id"]},
+    )
+    result["extra"]["nested"][0] = "detached copy"
+    assert checked.claims["extra"]["nested"] == ("original",)

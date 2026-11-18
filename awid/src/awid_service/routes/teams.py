@@ -5,14 +5,41 @@ from __future__ import annotations
 import base64
 import json
 import re
-import secrets
 from datetime import datetime, timezone
 from typing import Literal
 
 import asyncpg
+from awid.contract import normalize_identity_scope
+from awid.controller_request import (
+    PATH_SIGNED_READ_EVENT,
+    ControllerAuthRoute,
+    record_accepted_auth,
+    verified_controller_proof,
+    verify_controller_json_request,
+)
+from awid.did import public_key_from_did
+from awid.dns_auth import (
+    enforce_timestamp_skew,
+    parse_didkey_auth,
+    require_timestamp,
+)
+from awid.dns_auth import validate_did_key as _validate_did_key
+from awid.pagination import encode_cursor, validate_pagination_params
+from awid.ratelimit import (
+    AWID_SERVICE_TOKEN_HEADER,
+    rate_limit_dep,
+    trusted_service_token_matches,
+)
+from awid.signing import (
+    VerifyResult,
+    canonical_json_bytes,
+    verify_signature_with_public_key,
+)
+from awid.team_ids import build_team_id
+from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pgdbm.errors import QueryError
 from fastapi.exceptions import RequestValidationError
+from pgdbm.errors import QueryError
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -22,39 +49,14 @@ from pydantic import (
     model_validator,
 )
 
-
-from awid_service.deps import get_db
-from awid.contract import normalize_identity_scope
-from awid.pagination import encode_cursor, validate_pagination_params
-from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, rate_limit_dep
-from awid.dns_auth import validate_did_key as _validate_did_key
-from awid.dns_auth import (
-    enforce_timestamp_skew,
-    parse_didkey_auth,
-    require_timestamp,
-)
-from awid.did import public_key_from_did
-from awid.signing import (
-    VerifyResult,
-    canonical_json_bytes,
-    verify_signature_with_public_key,
-)
-from awid.team_ids import build_team_id
-from awid.team_server_record import TeamServerRecordError, verify_team_server_record
-from awid_service.delivery_origin import validate_delivery_origin
-from awid.controller_request import (
-    PATH_SIGNED_READ_EVENT,
-    ControllerAuthRoute,
-    record_accepted_auth,
-    verified_controller_proof,
-    verify_controller_json_request,
-)
 from awid_service.attestation_rotation import (
     ResignedRecords,
     SignedRecord,
     apply_resigned_records,
     record_member_records,
 )
+from awid_service.delivery_origin import validate_delivery_origin
+from awid_service.deps import get_db
 
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
@@ -411,11 +413,7 @@ def _presents_trusted_service_token(request: Request) -> bool:
     """
     expected = getattr(request.app.state, "awid_service_token", None)
     presented = (request.headers.get(AWID_SERVICE_TOKEN_HEADER) or "").strip()
-    return bool(
-        expected
-        and presented
-        and secrets.compare_digest(expected.encode("utf-8"), presented.encode("utf-8"))
-    )
+    return trusted_service_token_matches(expected, presented)
 
 
 async def _require_team_read_access(

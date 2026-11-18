@@ -25,6 +25,7 @@ from awid.federation_errors import FederationAuthorityError
 from awid.id_tree_requests import CONTROLLER_REQUEST_TYPE
 from awid.signing import verify_did_key_signature
 from awid.team_ids import parse_team_id
+from awid.utc_timestamps import ZonedTimestampProfile, parse_zoned_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -74,12 +75,11 @@ def _parse_timestamp(value: Any) -> datetime:
     if not isinstance(value, str):
         raise TeamKeyActError("malformed", "timestamp")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_zoned_timestamp(
+            value, profile=ZonedTimestampProfile.SIGNED_TEAM_KEY_ACT
+        )
     except ValueError as exc:
         raise TeamKeyActError("malformed", "timestamp") from exc
-    if parsed.tzinfo is None:
-        raise TeamKeyActError("malformed", "timestamp")
-    return parsed
 
 
 def verify_team_key_act(

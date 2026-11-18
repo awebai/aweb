@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import binascii
 import hashlib
 import json
@@ -14,6 +13,7 @@ from typing import Mapping, Sequence
 from awid.did import public_key_from_did, stable_id_from_did_key, validate_stable_id
 from awid.federation_errors import FederationAuthorityError
 from awid.log import identity_state_hash, log_entry_payload
+from awid.signature_wire import Base64Profile, decode_base64
 from awid.signing import verify_did_key_signature
 
 MAX_SAFE_SEQUENCE = 2**53 - 1
@@ -80,9 +80,7 @@ def _verify_signature(
     if not isinstance(signature, str) or not signature or "=" in signature:
         raise _invalid(did_aw=did_aw, seq=seq)
     try:
-        decoded = base64.b64decode(
-            signature + "=" * (-len(signature) % 4), validate=True
-        )
+        decoded = decode_base64(signature, profile=Base64Profile.UNPADDED_STANDARD)
     except (binascii.Error, ValueError) as exc:
         raise _invalid(did_aw=did_aw, seq=seq) from exc
     if len(decoded) != 64:

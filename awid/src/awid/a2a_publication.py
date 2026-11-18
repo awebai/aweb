@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from awid.atomic_claim import canonical_registry_origin, normalize_claim_custody
 from awid.did import validate_stable_id
+from awid.signature_wire import Base64Profile, decode_base64
 from awid.signing import canonical_json_bytes
 from awid.utc_timestamps import parse_utc_seconds
 
@@ -123,7 +124,7 @@ def decode_raw_standard_b64(value: str, *, field_name: str) -> bytes:
     if "=" in value:
         raise ValueError(f"{field_name} must be standard base64 without padding")
     try:
-        return base64.b64decode(value + "=" * (-len(value) % 4), validate=True)
+        return decode_base64(value, profile=Base64Profile.UNPADDED_STANDARD)
     except Exception as exc:
         raise ValueError(
             f"{field_name} must be standard base64 without padding"

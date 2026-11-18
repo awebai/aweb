@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/awebai/aw/internal/custodypath"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/internal/custodypath"
+	"github.com/awebai/aw/signaturewire"
 )
 
 // CustodyError keeps a stable refusal code separate from recovery guidance.
@@ -245,7 +247,7 @@ func SignCustodyProof(key ed25519.PrivateKey, req *PlainMessageSignRequest) erro
 	if err != nil {
 		return err
 	}
-	sig := ed25519.Sign(key, []byte(canonical))
+	sig := signaturewire.SignBytes(key, []byte(canonical))
 	req.Signature = base64.RawStdEncoding.EncodeToString(sig)
 	return nil
 }
@@ -272,11 +274,11 @@ func VerifyCustodyProof(req *PlainMessageSignRequest) error {
 	if err != nil {
 		return err
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(req.Signature))
+	sig, err := signaturewire.DecodeStd(strings.TrimSpace(req.Signature))
 	if err != nil {
 		return fmt.Errorf("bad_signature")
 	}
-	if !ed25519.Verify(pub, []byte(canonical), sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: pub, Payload: []byte(canonical), Signature: sig}) {
 		return fmt.Errorf("bad_signature")
 	}
 	return nil
@@ -404,7 +406,7 @@ func signCustodyProofFields(key ed25519.PrivateKey, version int, operation strin
 	if err != nil {
 		return err
 	}
-	*signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(canonical)))
+	*signature = signaturewire.SignStd(key, []byte(canonical))
 	return nil
 }
 
@@ -424,11 +426,11 @@ func verifyCustodyProofFields(version int, operation string, fields map[string]s
 	if err != nil {
 		return err
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(signature))
+	sig, err := signaturewire.DecodeStd(strings.TrimSpace(signature))
 	if err != nil {
 		return fmt.Errorf("bad_signature")
 	}
-	if !ed25519.Verify(pub, []byte(canonical), sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: pub, Payload: []byte(canonical), Signature: sig}) {
 		return fmt.Errorf("bad_signature")
 	}
 	return nil

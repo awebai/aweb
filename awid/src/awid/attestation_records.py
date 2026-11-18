@@ -16,9 +16,16 @@ from datetime import datetime
 from typing import Any
 
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey, VerifyKey
+from nacl.signing import SigningKey
 
 from awid.did import public_key_from_did
+from awid.signature_wire import (
+    Base64Profile,
+    NoncanonicalBase64,
+    decode_base64,
+    sign_bytes,
+    verify_bytes,
+)
 from awid.signing import canonical_json_bytes
 from awid.team_ids import parse_team_id
 from awid.utc_timestamps import parse_utc_seconds
@@ -62,25 +69,28 @@ def _from_b64url(value: str, error: type[ValueError]) -> bytes:
     if not isinstance(value, str) or not _B64URL.fullmatch(value):
         raise error("invalid base64url")
     try:
-        decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+        return decode_base64(value, profile=Base64Profile.CANONICAL_URL)
+    except NoncanonicalBase64 as exc:
+        raise error("non-canonical base64url") from exc
     except (binascii.Error, ValueError) as exc:
         raise error("invalid base64url") from exc
-    if _b64url(decoded) != value:
-        raise error("non-canonical base64url")
-    return decoded
 
 
 def sign_record(signing_key: bytes, payload: dict[str, Any]) -> str:
     """Sign a record or attestation payload; returns base64url without padding."""
-    return _b64url(SigningKey(signing_key).sign(signing_bytes(payload)).signature)
+    return _b64url(
+        sign_bytes(key=SigningKey(signing_key), payload=signing_bytes(payload))
+    )
 
 
 def _verify(
     did_key: str, payload: dict[str, Any], signature: bytes, error: type[ValueError]
 ) -> None:
     try:
-        VerifyKey(public_key_from_did(did_key)).verify(
-            signing_bytes(payload), signature
+        verify_bytes(
+            key=public_key_from_did(did_key),
+            payload=signing_bytes(payload),
+            signature=signature,
         )
     except (BadSignatureError, ValueError) as exc:
         raise error("signature does not verify") from exc
@@ -304,7 +314,7 @@ def _strict_object(raw: bytes) -> dict[str, Any]:
 def encode_attestation_header(issuer_key: bytes, payload: dict[str, Any]) -> str:
     """Build the header value ``base64url(payload).base64url(signature)``."""
     validate_attestation(payload)
-    signature = SigningKey(issuer_key).sign(signing_bytes(payload)).signature
+    signature = sign_bytes(key=SigningKey(issuer_key), payload=signing_bytes(payload))
     return f"{_b64url(canonical_json_bytes(payload))}.{_b64url(signature)}"
 
 

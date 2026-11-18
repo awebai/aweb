@@ -8,7 +8,6 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from urllib.parse import quote
 
 from fastapi import HTTPException, Request
 from fastapi.routing import APIRoute
@@ -21,6 +20,7 @@ from awid.dns_auth import (
 )
 from awid.id_tree_requests import CONTROLLER_REQUEST_TYPE
 from awid.log import canonical_server_origin
+from awid.request_auth import raw_request_target as raw_controller_request_target
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
 CONTROLLER_OPERATIONS = frozenset(
@@ -121,22 +121,6 @@ def verified_controller_proof(request: Request) -> ControllerProof:
     if not isinstance(proof, ControllerProof):
         raise RuntimeError("no verified controller proof for this request")
     return proof
-
-
-def raw_controller_request_target(request: Request) -> str:
-    raw = request.scope.get("raw_path")
-    path = (
-        raw.decode("ascii")
-        if isinstance(raw, bytes)
-        else quote(request.scope.get("path", "/"), safe="/%")
-    )
-    root = quote(str(request.scope.get("root_path") or "").rstrip("/"), safe="/%")
-    if root and path != root and not path.startswith(root + "/"):
-        path = root + ("/" if not path.startswith("/") else "") + path
-    query = request.scope.get("query_string", b"")
-    if query:
-        path += "?" + (query.decode("ascii") if isinstance(query, bytes) else query)
-    return path
 
 
 async def verify_controller_json_request(

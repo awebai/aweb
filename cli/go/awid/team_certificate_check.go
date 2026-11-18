@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // MaxTeamCertificateHeaderBytes bounds the transport header. A real
@@ -238,7 +240,7 @@ func verifyTeamCertificateObjectSignature(certificate map[string]any, teamDIDKey
 	if err != nil {
 		return &TeamCertificateError{Reason: "bad_signature"}
 	}
-	signature, err := base64.RawStdEncoding.DecodeString(certificate["signature"].(string))
+	signature, err := signaturewire.DecodeStd(certificate["signature"].(string))
 	if err != nil || idStrictVerify(teamDIDKey, signature, func() ([]byte, error) { return []byte(payload), nil }) != nil {
 		return &TeamCertificateError{Reason: "bad_signature"}
 	}

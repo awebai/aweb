@@ -11,20 +11,24 @@ import binascii
 import hashlib
 import inspect
 import json
-import re
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Awaitable, Callable
 
-from nacl.bindings import crypto_core_ed25519_is_valid_point
 from nacl.exceptions import BadSignatureError
-from nacl.signing import VerifyKey
 
 from awid.did import public_key_from_did, validate_stable_id
-from awid.utc_timestamps import parse_utc_seconds
-from awid.identity_log_verify import verify_identity_log
 from awid.federation_errors import FederationAuthorityError
+from awid.identity_log_verify import verify_identity_log
+from awid.signature_wire import (
+    Base64Profile,
+    Ed25519Profile,
+    decode_base64,
+    verify_bytes,
+)
+from awid.utc_timestamps import parse_utc_seconds
 
 ID_CERTIFICATE_PREFIX = b"aweb.id-certificate/1\n"
 ID_CHAIN_MAX_DEPTH = 8
@@ -36,7 +40,6 @@ _FIELDS = frozenset(
 _LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
 _B64URL = re.compile(r"[A-Za-z0-9_-]+")
 _BASE58 = re.compile(r"[1-9A-HJ-NP-Za-km-z]+")
-_ED25519_ORDER = 2**252 + 27742317777372353535851937790883648493
 _STATUS_FRESH_SECONDS = 60
 
 
@@ -181,13 +184,9 @@ def _decode_b64(value: Any) -> bytes:
     if not isinstance(value, str) or not _B64URL.fullmatch(value):
         raise IDCertificateError("invalid_encoding")
     try:
-        decoded = base64.b64decode(
-            value + "=" * (-len(value) % 4), altchars=b"-_", validate=True
-        )
+        decoded = decode_base64(value, profile=Base64Profile.CANONICAL_URL)
     except (ValueError, binascii.Error) as exc:
         raise IDCertificateError("invalid_encoding") from exc
-    if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode() != value:
-        raise IDCertificateError("invalid_encoding")
     return decoded
 
 
@@ -217,16 +216,13 @@ def verify_ed25519(did_key: str, message: bytes, signature: bytes) -> None:
         raise IDCertificateError("invalid_shape")
     if not isinstance(signature, bytes) or len(signature) != 64:
         raise IDCertificateError("invalid_signature")
-    # This profile requires canonical, nonidentity prime-subgroup R and S<L.
-    # Library verification alone can accept a mixed-order A for some messages.
-    # Redundant with tested PyNaCl/libsodium; kept to pin the profile.
-    if (
-        not crypto_core_ed25519_is_valid_point(signature[:32])
-        or int.from_bytes(signature[32:], "little") >= _ED25519_ORDER
-    ):
-        raise IDCertificateError("invalid_signature")
     try:
-        VerifyKey(public_key_from_did(did_key)).verify(message, signature)
+        verify_bytes(
+            key=public_key_from_did(did_key),
+            payload=message,
+            signature=signature,
+            profile=Ed25519Profile.ID_CERTIFICATE,
+        )
     except (BadSignatureError, ValueError, TypeError) as exc:
         raise IDCertificateError("invalid_signature") from exc
 

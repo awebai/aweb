@@ -9,24 +9,23 @@ import inspect
 import ipaddress
 import json
 import logging
-from json import loads as json_loads
 import time
 from collections.abc import Mapping
 from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from json import loads as json_loads
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
 from uuid import UUID, uuid4
-
-from awid import revocation_cache
 
 import httpx
 from nacl.signing import SigningKey
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from awid import revocation_cache
 from awid.contract import normalize_identity_scope
 from awid.did import did_key_from_signing_key
 from awid.dns_verify import DomainVerifier
@@ -63,17 +62,25 @@ from awid.registry_auth import RegistryRequestAuth, path_signature_headers
 from awid.registry_paths import address_segment
 from awid.registry_transport import RegistryOverrideTransport
 from awid.registry_types import (
-    is_address_not_found,
-    is_team_not_found,
-    RegistryError as RegistryError,
-    RegistryThrottled as RegistryThrottled,
     DIDKeyNotFoundError as DIDKeyNotFoundError,
+)
+from awid.registry_types import (
     IDTreeEnrollment as IDTreeEnrollment,
 )
+from awid.registry_types import (
+    RegistryError as RegistryError,
+)
+from awid.registry_types import (
+    RegistryThrottled as RegistryThrottled,
+)
+from awid.registry_types import (
+    is_address_not_found,
+    is_team_not_found,
+)
+from awid.signature_wire import sign_bytes
 from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
-from awid.utc_timestamps import parse_utc_seconds
 from awid.team_ids import build_team_id
-
+from awid.utc_timestamps import parse_utc_seconds
 
 DomainRegistryResolver = Callable[[str], Awaitable[str]]
 # Signs exactly the bytes it is given and answers with its did:key and the raw
@@ -790,10 +797,10 @@ class RegistryClient:
             ControllerRequestUncertain,
             ControllerSigningContext,
             ControllerSigningError,
+            atomic_claim_body,
             checked_controller_signature,
             controller_http_plan,
             signature_roles,
-            atomic_claim_body,
         )
 
         if type(request) is not ControllerRequest:
@@ -896,9 +903,9 @@ class RegistryClient:
         )
 
         def local(context):
-            return descriptor.did_key, SigningKey(controller_signing_key).sign(
-                context.signing_bytes()
-            ).signature
+            return descriptor.did_key, sign_bytes(
+                key=SigningKey(controller_signing_key), payload=context.signing_bytes()
+            )
 
         return await self.controller_request(
             request, controllers={"controller": descriptor}, signer=local
@@ -937,9 +944,10 @@ class RegistryClient:
         )
 
         def local(context):
-            return descriptor.did_key, SigningKey(
-                namespace_controller_signing_key
-            ).sign(context.signing_bytes()).signature
+            return descriptor.did_key, sign_bytes(
+                key=SigningKey(namespace_controller_signing_key),
+                payload=context.signing_bytes(),
+            )
 
         return await self.controller_request(
             request, controllers={"controller": descriptor}, signer=local
@@ -1141,7 +1149,7 @@ class RegistryClient:
             raise ValueError("signing_key must match did_key for DID registration")
 
         def signer(payload: bytes) -> tuple[str, bytes]:
-            return did_key, SigningKey(signing_key).sign(payload).signature
+            return did_key, sign_bytes(key=SigningKey(signing_key), payload=payload)
 
         entry = initial_registration_entry(did_key, timestamp=_utc_timestamp())
         await self._register_initial_did(entry, signer)

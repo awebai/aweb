@@ -221,10 +221,6 @@
         "reason": "Registry request signing derives the current public key; ID-tree signer answers are checked by the shared strict verifier."
       },
       {
-        "file": "awid/src/awid/signing.py",
-        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
-      },
-      {
         "file": "awid/src/awid_service/testing.py",
         "reason": "Existing reusable real-service test support signs synthetic fixture identities."
       },
@@ -237,120 +233,12 @@
         "reason": "Released local key configuration and SHA-512 wiring for existing message signatures."
       },
       {
-        "file": "channel-core/src/identity/registry.ts",
-        "reason": "Released registry signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "channel-core/src/identity/signing.ts",
-        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
-      },
-      {
-        "file": "channel-core/src/identity/trust.ts",
-        "reason": "Released trust signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awconfig/controllers.go",
-        "reason": "Released controllers signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awconfig/team_keys.go",
-        "reason": "Released team keys signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/a2a_publication.go",
-        "reason": "Released a2a publication signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/app_task_authorization.go",
-        "reason": "Released app task authorization signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/atomic_address_claim.go",
-        "reason": "Released atomic address claim signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
         "file": "cli/go/awid/attestation_records.go",
         "reason": "Released member-attestation signatures retain their existing verification contract."
       },
       {
-        "file": "cli/go/awid/certificate.go",
-        "reason": "Released team-membership certificate signatures are separate from ID-parent certificates."
-      },
-      {
-        "file": "cli/go/awid/client.go",
-        "reason": "Released client signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/custody.go",
-        "reason": "Released custody signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/e2ee_keys.go",
-        "reason": "Released e2ee keys signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/e2ee_messages.go",
-        "reason": "Released e2ee messages signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/human_channels_presence.go",
-        "reason": "Released human channels presence signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/human_signer.go",
-        "reason": "Human key custody: the human key, decrypted for one signature after its passphrase prompt, signs exactly the bytes it is given; ID-certificate verification uses the shared verifier."
-      },
-      {
         "file": "cli/go/awid/keys.go",
         "reason": "Shared key generation and seed loading for existing custody; key creation alone does not issue an ID certificate."
-      },
-      {
-        "file": "cli/go/awid/onboarding_bootstrap_redeem.go",
-        "reason": "Released onboarding bootstrap redeem signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/onboarding_claim_human.go",
-        "reason": "Released onboarding claim human signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/onboarding_cli_signup.go",
-        "reason": "Released onboarding cli signup signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/onboarding_didkey_signing.go",
-        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/owneract.go",
-        "reason": "Released controller-signed owner-act family; controller authority stays distinct from identity ancestry."
-      },
-      {
-        "file": "cli/go/awid/registry_client.go",
-        "reason": "Released registry client signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/registry_namespace.go",
-        "reason": "Released registry namespace signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/rotate.go",
-        "reason": "Released rotate signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/signing.go",
-        "reason": "Released message signatures retain their existing verification contract; ID certificates use the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/stable_identity.go",
-        "reason": "Released stable identity signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/awid/team_server.go",
-        "reason": "Released team server signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/cmd/aw/activity_hook.go",
-        "reason": "Released CLI activity hook signing/key custody; retains its existing signed family."
       },
       {
         "file": "cli/go/cmd/aw/agent_status.go",
@@ -359,26 +247,6 @@
       {
         "file": "cli/go/cmd/aw/id_create_hosted.go",
         "reason": "Released CLI id create hosted signing/key custody; retains its existing signed family."
-      },
-      {
-        "file": "cli/go/cmd/aw/id_team.go",
-        "reason": "Released CLI id team signing/key custody; retains its existing signed family."
-      },
-      {
-        "file": "cli/go/cmd/aw/team_ensure.go",
-        "reason": "Released CLI team ensure signing/key custody; retains its existing signed family."
-      },
-      {
-        "file": "cli/go/cmd/aw/team_replace_key.go",
-        "reason": "Released CLI team replace key signing/key custody; retains its existing signed family."
-      },
-      {
-        "file": "cli/go/hookevent/delivery.go",
-        "reason": "Released delivery signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
-        "file": "cli/go/hookevent/envelope.go",
-        "reason": "Released envelope signing/key custody; ID-certificate verification uses the shared verifier."
       },
       {
         "file": "cli/tests/request_auth_v2_driver.go",
@@ -395,10 +263,6 @@
       {
         "file": "naapp-lib/src/aweb_naapp/hooks/envelope.py",
         "reason": "Released naapp envelope signing/key custody; separate from ID-certificate verification."
-      },
-      {
-        "file": "naapp-lib/src/aweb_naapp/hooks/owner_act.py",
-        "reason": "Released controller-signed owner-act family; controller authority stays distinct from identity ancestry."
       },
       {
         "file": "naapp-lib/src/aweb_naapp/hooks/producer.py",

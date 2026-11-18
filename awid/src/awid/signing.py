@@ -6,11 +6,28 @@ import base64
 import binascii
 import enum
 import json
+import logging
+from itertools import count
 
 from nacl.exceptions import BadSignatureError
-from nacl.signing import SigningKey, VerifyKey
 
-from awid.did import public_key_from_did, strict_ed25519_point
+from awid.did import public_key_from_did
+from awid.signature_wire import decode_legacy_signature, sign_bytes, verify_bytes
+
+logger = logging.getLogger(__name__)
+_noncanonical_signature_counts = count(1)
+
+
+def _record_signature_spelling(signature: str, raw: bytes) -> None:
+    if signature == base64.b64encode(raw).rstrip(b"=").decode("ascii"):
+        return
+    value = next(_noncanonical_signature_counts)
+    logger.info(
+        "event=awid_noncanonical_signature_accepted value=%d",
+        value,
+        extra={"event": "awid_noncanonical_signature_accepted", "value": value},
+    )
+
 
 SIGNED_FIELDS = frozenset(
     {
@@ -77,14 +94,15 @@ def load_signing_key_pem(pem: bytes) -> bytes:
 
 
 def sign_message(private_key: bytes, payload: bytes) -> str:
-    signing_key = SigningKey(private_key)
-    signed = signing_key.sign(payload)
-    return base64.b64encode(signed.signature).rstrip(b"=").decode("ascii")
+    return (
+        base64.b64encode(sign_bytes(key=private_key, payload=payload))
+        .rstrip(b"=")
+        .decode("ascii")
+    )
 
 
 def _decode_signature(signature_b64: str) -> bytes:
-    padded = signature_b64 + "=" * (-len(signature_b64) % 4)
-    return base64.urlsafe_b64decode(padded)
+    return decode_legacy_signature(signature_b64)
 
 
 def verify_signature_with_public_key(
@@ -92,17 +110,14 @@ def verify_signature_with_public_key(
 ) -> VerifyResult:
     if not signature_b64:
         return VerifyResult.UNVERIFIED
-    if not strict_ed25519_point(public_key):
-        return VerifyResult.FAILED
-
     try:
         sig_bytes = _decode_signature(signature_b64)
     except Exception:
         return VerifyResult.FAILED
 
     try:
-        verify_key = VerifyKey(public_key)
-        verify_key.verify(payload, sig_bytes)
+        verify_bytes(key=public_key, payload=payload, signature=sig_bytes)
+        _record_signature_spelling(signature_b64, sig_bytes)
         return VerifyResult.VERIFIED
     except BadSignatureError:
         return VerifyResult.FAILED

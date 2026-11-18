@@ -8,12 +8,11 @@ Identity creation coverage is documentation, not a call-count catalog.
 from __future__ import annotations
 
 import ast
-from collections import defaultdict
 import json
-from pathlib import Path, PurePosixPath
 import subprocess
 import sys
-
+from collections import defaultdict
+from pathlib import Path, PurePosixPath
 
 # Everything tracked (and new nonignored source awaiting git add) is scanned.
 # This checker is the only reviewed script exclusion: it contains the literal
@@ -25,8 +24,9 @@ PRIMITIVE_MODULES = (
     "cryptography.hazmat.primitives.asymmetric.ed25519.",
 )
 SHARED_SITES = {
-    ("awid/src/awid/id_certificates.py", "verify_ed25519"),
-    ("awid/src/awid/did.py", "strict_ed25519_point"),
+    ("awid/src/awid/signature_wire.py", "verify_bytes"),
+    ("awid/src/awid/signature_wire.py", "sign_bytes"),
+    ("awid/src/awid/signature_wire.py", "prime_point"),
     ("awid/src/awid/did.py", "generate_keypair"),
     ("awid/src/awid/did.py", "did_key_from_signing_key"),
 }

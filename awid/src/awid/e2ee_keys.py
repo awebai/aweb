@@ -15,9 +15,10 @@ from typing import Any
 
 from nacl.signing import SigningKey
 
-from awid.did import did_from_public_key
-from awid.did import public_key_from_did
+from awid.did import did_from_public_key, public_key_from_did
+from awid.signature_wire import Base64Profile, decode_base64
 from awid.signing import canonical_json_bytes, sign_message, verify_did_key_signature
+from awid.utc_timestamps import parse_zoned_timestamp
 
 ENCRYPTION_KEY_ASSERTION_OPERATION = "publish_encryption_key"
 ENCRYPTION_KEY_ASSERTION_VERSION = "aweb-e2ee-key-v1"
@@ -30,9 +31,8 @@ def decode_raw_standard_b64(value: str, *, field_name: str) -> bytes:
     value = (value or "").strip()
     if not value:
         raise ValueError(f"{field_name} must not be empty")
-    padded = value + "=" * (-len(value) % 4)
     try:
-        return base64.b64decode(padded, validate=True)
+        return decode_base64(value, profile=Base64Profile.PADDED_STANDARD)
     except Exception as exc:
         raise ValueError(
             f"{field_name} must be RFC4648 standard base64 without padding"
@@ -57,16 +57,12 @@ def encryption_key_id(encryption_public_key_b64: str) -> str:
 
 
 def parse_contract_time(value: str, *, field_name: str) -> datetime:
-    raw = (value or "").strip()
-    if raw.endswith("Z"):
-        raw = raw[:-1] + "+00:00"
     try:
-        parsed = datetime.fromisoformat(raw)
-    except Exception as exc:
+        return parse_zoned_timestamp(value or "")
+    except ValueError as exc:
+        if "timezone" in str(exc):
+            raise ValueError(f"{field_name} must include timezone") from exc
         raise ValueError(f"{field_name} must be RFC3339") from exc
-    if parsed.tzinfo is None:
-        raise ValueError(f"{field_name} must include timezone")
-    return parsed.astimezone(timezone.utc)
 
 
 def encryption_assertion_payload(assertion: dict[str, Any]) -> dict[str, Any]:

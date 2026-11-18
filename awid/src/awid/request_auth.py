@@ -3,17 +3,26 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any, Iterable
 from urllib.parse import quote
 
 from fastapi import Request
 
+from awid.did import did_key_from_signing_key
 from awid.log import canonical_server_origin
-from awid.signing import canonical_json_bytes
+from awid.signature_wire import Base64Profile, decode_base64
+from awid.signing import canonical_json_bytes, sign_message
 
 TEAM_AUTH_ENVELOPE_V2 = 2
+
+
+class RequestAuthProfile(Enum):
+    SERVER_COMPATIBILITY = auto()
+    NAAPP_V2 = auto()
 
 
 @dataclass(frozen=True)
@@ -35,10 +44,18 @@ def compact_team_auth_payload(
     )
 
 
-def decode_signed_payload_header(value: str) -> bytes:
+def decode_signed_payload_header(
+    value: str, *, profile: RequestAuthProfile = RequestAuthProfile.SERVER_COMPATIBILITY
+) -> bytes:
+    """Decode the consumer's released wire profile without inventing a cutoff."""
+    encoding = (
+        Base64Profile.UNPADDED_URL
+        if profile is RequestAuthProfile.NAAPP_V2
+        else Base64Profile.LEGACY_PYTHON_SIGNATURE
+    )
     try:
-        return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
-    except Exception as exc:
+        return decode_base64(value, profile=encoding)
+    except (ValueError, TypeError) as exc:
         raise ValueError("invalid X-AWEB-Signed-Payload header") from exc
 
 
@@ -54,8 +71,12 @@ def raw_request_target(request: Request) -> str:
         )
 
     root_path = str(request.scope.get("root_path") or "")
-    if root_path and not path.startswith(root_path):
-        encoded_root = quote(root_path.rstrip("/"), safe="/%")
+    encoded_root = quote(root_path.rstrip("/"), safe="/%")
+    if (
+        encoded_root
+        and path != encoded_root
+        and not path.startswith(encoded_root + "/")
+    ):
         path = encoded_root + (path if path.startswith("/") else f"/{path}")
 
     if not path.startswith("/"):
@@ -88,6 +109,7 @@ def team_auth_signature_payload(
     timestamp: str,
     body_sha256: str,
     allowed_audiences: Iterable[str],
+    profile: RequestAuthProfile = RequestAuthProfile.SERVER_COMPATIBILITY,
 ) -> TeamAuthEnvelope:
     return _request_auth_signature_payload(
         request,
@@ -95,6 +117,7 @@ def team_auth_signature_payload(
         timestamp=timestamp,
         body_sha256=body_sha256,
         allowed_audiences=allowed_audiences,
+        profile=profile,
     )
 
 
@@ -123,11 +146,14 @@ def _request_auth_signature_payload(
     timestamp: str,
     body_sha256: str,
     allowed_audiences: Iterable[str],
+    profile: RequestAuthProfile = RequestAuthProfile.SERVER_COMPATIBILITY,
 ) -> TeamAuthEnvelope:
     signed_payload_header = str(
         request.headers.get("X-AWEB-Signed-Payload") or ""
     ).strip()
     if not signed_payload_header:
+        if profile is RequestAuthProfile.NAAPP_V2:
+            raise ValueError("missing X-AWEB-Signed-Payload header")
         canonical = canonical_json_bytes(
             {
                 **claims,
@@ -137,7 +163,7 @@ def _request_auth_signature_payload(
         )
         return TeamAuthEnvelope(version=1, canonical_payload=canonical, payload={})
 
-    canonical = decode_signed_payload_header(signed_payload_header)
+    canonical = decode_signed_payload_header(signed_payload_header, profile=profile)
     try:
         payload = json.loads(canonical)
     except Exception as exc:
@@ -148,7 +174,9 @@ def _request_auth_signature_payload(
         raise ValueError("invalid X-AWEB-Signed-Payload header")
 
     if payload.get("type") == "aweb.awid-controller-request":
-        raise ValueError("wrong request envelope type")
+        raise ValueError(
+            "wrong request envelope type: sign a team-auth v2 request for this service instead of an AWID controller request."
+        )
 
     if payload.get("v") != TEAM_AUTH_ENVELOPE_V2:
         raise ValueError("unsupported team-auth envelope version")
@@ -179,3 +207,42 @@ def _request_auth_signature_payload(
     return TeamAuthEnvelope(
         version=TEAM_AUTH_ENVELOPE_V2, canonical_payload=canonical, payload=payload
     )
+
+
+def team_auth_request_headers(
+    *,
+    signing_key: bytes,
+    team_id: str,
+    audience: str,
+    method: str,
+    path: str,
+    body: bytes = b"",
+    timestamp: str,
+) -> dict[str, str]:
+    """Sign one explicit external request with the relying-party v2 purpose.
+
+    Audience is configured by the caller, never inferred from request headers.
+    No legacy retry is performed. Certificate presentation is the caller's job.
+    """
+    if not path.startswith("/") or "#" in path:
+        raise ValueError(
+            "Provide the external raw path and query, starting with / and without a fragment."
+        )
+    payload = canonical_json_bytes(
+        {
+            "v": TEAM_AUTH_ENVELOPE_V2,
+            "aud": canonical_server_origin(audience),
+            "method": method.upper(),
+            "path": path,
+            "body_sha256": hashlib.sha256(body).hexdigest(),
+            "team_id": team_id,
+            "timestamp": timestamp,
+        }
+    )
+    return {
+        "Authorization": f"DIDKey {did_key_from_signing_key(signing_key)} {sign_message(signing_key, payload)}",
+        "X-AWEB-Timestamp": timestamp,
+        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(payload)
+        .rstrip(b"=")
+        .decode("ascii"),
+    }

@@ -1,11 +1,11 @@
+import { signBytes as signEd25519, verifyBytes } from "./signature_wire.js";
 import * as ed from "@noble/ed25519";
-import { sha512 } from "@noble/hashes/sha2.js";
 import { extractPublicKey } from "./did.js";
 import { decodeRawStdBase64 } from "./base64.js";
-import { compareByCodePoint } from "./canonical.js";
+import { canonicalStringObject } from "./canonical.js";
 
 // @noble/ed25519 v2 requires setting the hash function
-ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
+
 
 export interface MessageEnvelope {
   from: string;
@@ -56,54 +56,11 @@ export function canonicalJSON(env: MessageEnvelope): string {
   if (env.message_id) fields.push(["message_id", env.message_id]);
   if (env.to_stable_id) fields.push(["to_stable_id", env.to_stable_id]);
 
-  fields.sort((a, b) => compareByCodePoint(a[0], b[0]));
-
-  let result = "{";
-  for (let i = 0; i < fields.length; i++) {
-    if (i > 0) result += ",";
-    result += '"' + fields[i][0] + '":"' + escapeJSON(fields[i][1]) + '"';
-  }
-  result += "}";
-  return result;
+  return canonicalStringObject(fields);
 }
 
 /** JSON-escape a string value, matching Go's writeEscapedString exactly. */
-function escapeJSON(s: string): string {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0)!;
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "\t":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 0x20) {
-          result += "\\u" + code.toString(16).padStart(4, "0");
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
-}
+
 
 function b64Encode(bytes: Uint8Array): string {
   // Build binary string without spread to avoid stack overflow on large inputs
@@ -125,7 +82,7 @@ function b64Decode(s: string): Uint8Array {
 
 /** Sign bytes with an Ed25519 seed. Returns raw standard base64 (no padding). */
 export function signBytes(seed: Uint8Array, bytes: Uint8Array): string {
-  return b64Encode(ed.sign(bytes, seed));
+  return b64Encode(signEd25519({message: bytes, seed}));
 }
 
 /** Sign a message envelope. Returns base64 signature (no padding). */
@@ -169,11 +126,7 @@ export async function verifyMessage(
   try {
     const sigBytes = b64Decode(env.signature);
     const payload = canonicalJSON(env);
-    const valid = ed.verify(
-      sigBytes,
-      new TextEncoder().encode(payload),
-      publicKey,
-    );
+    const valid = verifyBytes({signature: sigBytes, message: new TextEncoder().encode(payload), publicKey: publicKey});
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -211,11 +164,7 @@ export async function verifySignedPayload(
 
   try {
     const sigBytes = b64Decode(signatureB64);
-    const valid = ed.verify(
-      sigBytes,
-      new TextEncoder().encode(signedPayload),
-      publicKey,
-    );
+    const valid = verifyBytes({signature: sigBytes, message: new TextEncoder().encode(signedPayload), publicKey: publicKey});
     return valid ? "verified" : "failed";
   } catch {
     return "failed";

@@ -1064,3 +1064,14 @@ derivation; they are never message/provenance fields. Author projections test
 exact session/subject/signer binding and external/untrusted guest assurance.
 They assume independently verified signer facts and do not authorize membership
 or activate managed chat. See [P3 readiness](../human-channels-participants.md).
+
+## Signature primitive profiles
+
+`signature-primitives-v1.json` is the common exact-byte verification and strict
+URL-codec vector for Go, Python and TypeScript; the standalone Secrets runner
+consumes its codec cases and the existing Unicode canonical-JSON vector. It pins
+released Python spelling differences without narrowing them. R13 rulings
+`2c74f907-fee7-496f-bba7-1dadbaefee37` and
+`beb23450-5400-473e-9651-0e25bfb649f9` authorize mixed-order-R refusal in TypeScript
+and small-order-R refusal in Go, respectively. The file names the deliberate
+profile changes. See [the primitive contract](../signature-primitives.md).

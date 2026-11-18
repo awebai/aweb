@@ -45,6 +45,32 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("awid/tests/test_signature_primitive_vectors.py"): _consumer(
+        {
+            "signature-primitives-v1.json",
+            "message-signing-v1.json",
+            "canonical-json-v1.json",
+        },
+        'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
+    ),
+    PurePosixPath("cli/go/awid/signature_primitive_vectors_test.go"): _consumer(
+        "signature-primitives-v1.json",
+        '"docs", "vectors", "signature-primitives-v1.json"',
+    ),
+    PurePosixPath("channel-core/test/signature_primitive_vectors.test.ts"): _consumer(
+        {"signature-primitives-v1.json", "message-signing-v1.json"},
+        '"../../docs/vectors/signature-primitives-v1.json"',
+    ),
+    PurePosixPath(
+        "naapp/secrets/runner/tests/test_shared_wire_primitives.py"
+    ): _consumer(
+        {
+            "signature-primitives-v1.json",
+            "canonical-json-v1.json",
+            "message-signing-v1.json",
+        },
+        'Path(__file__).resolve().parents[4] / "docs" / "vectors"',
+    ),
     PurePosixPath("cli/go/cmd/aw/id_human_add_test.go"): _consumer(
         "id-certificates-v1.json",
         '"../../../../docs/vectors/id-certificates-v1.json"',
