@@ -129,6 +129,40 @@ The settings change and the first deploy of a commit with this Dockerfile go tog
 4. Verify the new deploy with `make prod-verify` and an authenticated read, which
    exercises team-certificate verification through the in-repo awid.
 
+## Installation grant key cutover
+
+Library admits a member request only for a team that installed Library and granted
+the operation's scopes. It reads that grant from the team's server with its own
+app key, so this build needs a setting it did not need before:
+
+| Setting | Value |
+| --- | --- |
+| `LIBRARY_APP_KEY_FILES` | JSON map with one entry, `{"library:grant-read-1": "<path>"}`. The file is owner-readable and holds the 32-byte seed as 64 hex characters. A missing or unreadable key refuses startup. |
+| `LIBRARY_APP_ID` | `library` in production (the default). It is stable for the deployment's lifetime: changing it orphans every installed grant. A deployment at any other non-loopback origin must set its own id; startup refuses the hosted id there. |
+| `LIBRARY_PUBLIC_ORIGIN` | `https://library.aweb.ai`, unchanged. |
+| `LIBRARY_DB_SCHEMA` | `public` (the default). Library's tables and its applied-migrations record are in the schema the role's search path resolved to before this build; keep this setting naming that schema. |
+
+The other `LIBRARY_` settings keep their names and limits. Library now reads them
+through the shared naapp settings, and observes (does not yet require) the did:aw
+current-key check.
+
+The manifest is version 2. Install by origin: discovery follows
+`/.well-known/aweb-app-versions.json` to `/manifests/v2.json`, and `/aweb-app.json`
+serves the same filled bytes. `/.well-known/aweb-app.json` is no longer served.
+The grant-read key changes the manifest digest, so the deploy is followed by
+re-pinning **every existing team installation** (`aw plugin update library` or the
+install API). Until a team's installation is re-pinned, or for a team that never
+installed Library, its members are refused with 403 on every member route; their
+shelf data stays in place and is readable again once the team installs or
+re-pins. Public catalog reads need no installation.
+
+`/health` and `/ready` now check the database and answer 503 when it cannot be
+read; `/health` also reports the event outbox's oldest undelivered age. `/live`
+checks nothing and always answers 200.
+
+These are separately authorized operator actions; a code landing provisions no key,
+changes no Render setting and re-pins no installation.
+
 ## Required release record
 
 Before requesting production approval, record all of the following:
