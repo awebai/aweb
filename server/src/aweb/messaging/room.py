@@ -5,19 +5,22 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from aweb.identity_address import require_address_evidence
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError as ModelError
-from awid.signing import verify_did_key_signature, verify_signature, VerifyResult
+from awid.signing import VerifyResult, verify_did_key_signature, verify_signature
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ValidationError as ModelError
+
 from aweb.agent_wake import record_agent_wake, team_room_wake_key
 from aweb.federation.envelope import (
-    enforce_message_timestamp_skew,
     FederationEnvelopeError,
+    enforce_message_timestamp_skew,
 )
 from aweb.id_chain_auth import stored_id_chain
+from aweb.identity_address import require_address_evidence
+from aweb.member_team_key import CURRENT_MEMBERSHIP_REQUIRED_DETAIL, current_member_sql
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.service_errors import (
     ConflictError,
@@ -75,10 +78,10 @@ async def _active_member(tx, actor):
     # Lock the member while doing this operation, so an inactive/deleted row
     # cannot retain access through a previously authenticated context.
     row = await tx.fetch_one(
-        """
-        SELECT agent_id FROM {{tables.agents}}
-        WHERE agent_id=$1 AND team_id=$2 AND did_key=$3
-          AND status='active' AND deleted_at IS NULL FOR SHARE
+        f"""
+        SELECT a.agent_id FROM {{{{tables.agents}}}} a
+        WHERE a.agent_id=$1 AND a.team_id=$2 AND a.did_key=$3
+          AND {current_member_sql("a")} FOR SHARE OF a
     """,
         UUID(actor.agent_id),
         actor.team_id,
@@ -86,7 +89,7 @@ async def _active_member(tx, actor):
     )
     if not row:
         logger.warning("Room access refused: actor is not an active team member")
-        raise ForbiddenError("Room requires current team membership")
+        raise ForbiddenError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
 
 
 async def _ensure_room(tx, team_id):

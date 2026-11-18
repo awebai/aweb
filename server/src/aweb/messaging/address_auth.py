@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Mapping
 from types import SimpleNamespace
+from typing import Any, Mapping
 
 from awid.federation_errors import FederationAuthorityError
-from awid.registry import RegistryError
-from fastapi import HTTPException
 from awid.log import canonical_server_origin
+from awid.registry import RegistryError
 from awid.signing import verify_did_key_signature
-from aweb.identity_binding import observe_current_identity_binding
+from fastapi import HTTPException
+
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.federation.errors import RecipientNotResidentError
 from aweb.federation.origins import is_own_origin
+from aweb.identity_binding import observe_current_identity_binding
 from aweb.messaging.alias_targets import namespace_exists
 from aweb.messaging.runtime import MessagingRuntime
 
@@ -102,9 +103,9 @@ async def local_recipient_for_own_route(
     else:
         # A did:key return route is already an established participant; this
         # does not create bare-key first-contact authority.
-        from aweb.messaging.messages import resolve_agent_by_did
+        from aweb.member_team_key import read_participant_identity_projection
 
-        recipient = await resolve_agent_by_did(db, did)
+        recipient = await read_participant_identity_projection(db, participant_did=did)
     if recipient is None:
         refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
     if did.startswith("did:aw:"):

@@ -1,17 +1,15 @@
 from __future__ import annotations
 
-from aweb.identity_binding import (
-    IdentityProjectionField,
-    verified_identity_field_sql,
-    verified_key_sql,
-)
-
 from dataclasses import dataclass
 from typing import Any
 
 from awid.team_ids import build_team_id, parse_team_id
 from fastapi import HTTPException
 
+from aweb.member_team_key import (
+    current_member_projections,
+    messaging_identity_projection,
+)
 
 MAX_ALIAS_PART_LENGTH = 64
 
@@ -117,24 +115,11 @@ def derive_team_address(team_id: str | None, alias: str | None) -> str:
 
 
 async def get_agent_by_namespace_alias(db, *, namespace: str, alias: str) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        f"""
-        SELECT a.agent_id, a.team_id, a.alias, a.did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent="a")} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS, agent="a")} AS address,
-               a.identity_scope, (NULLIF(a.did_aw,'') IS NOT NULL) AS has_global_claim,
-               a.did_aw AS policy_did_aw, a.inbound_mode, a.status, a.deleted_at
-        FROM {{{{tables.agents}}}} a
-        JOIN {{{{tables.teams}}}} t ON t.team_id = a.team_id
-        WHERE t.namespace = $1
-          AND a.alias = $2
-          AND a.deleted_at IS NULL
-          AND ((NULLIF(a.did_aw, '') IS NULL AND NULLIF(a.address, '') IS NULL)
-               OR {verified_key_sql("a")})
-        ORDER BY a.created_at DESC
-        """,
-        str(namespace or "").strip(),
-        str(alias or "").strip(),
-    )
+    rows = [
+        messaging_identity_projection(row)
+        for row in await current_member_projections(db, namespace=namespace, aliases=[alias])
+        if (not row["did_aw"] and not row["address"]) or row.verified_identity().get("did_aw")
+    ]
     if len(rows) > 1:
         if all(row.get("did_aw") for row in rows):
             identities = {(row["did_aw"], row["did_key"]) for row in rows}

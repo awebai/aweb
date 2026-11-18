@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from aweb.member_team_key import recipient_not_found
-
 import json
 import logging
 from dataclasses import dataclass
@@ -12,14 +10,17 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import asyncpg
+from awid.federation_errors import FederationAuthorityError
+from awid.registry import RegistryError
 from fastapi import HTTPException
 from pgdbm.errors import QueryError
 
-from awid.federation_errors import FederationAuthorityError
-from awid.registry import RegistryError
 from aweb.agent_wake import agent_wake_scope
 from aweb.attachment_service import refuse_remote_attachments
-from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS, awid_registry_not_configured_exception
+from aweb.awid_error_handling import (
+    AWID_DEPENDENCY_ERRORS,
+    awid_registry_not_configured_exception,
+)
 from aweb.db import TransactionInfra
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -32,10 +33,12 @@ from aweb.federation.envelope import (
     enforce_message_timestamp_skew,
     verify_federation_envelope,
 )
+from aweb.federation.errors import LocalRecipientNotFoundError
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_callback
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, participant_dids
 from aweb.identity_binding import observe_current_identity_binding
+from aweb.member_team_key import recipient_not_found
 from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_address_binding,
@@ -79,6 +82,8 @@ from aweb.messaging.messages import (
     deliver_message,
     get_agent_by_id,
     resolve_agent_by_did,
+)
+from aweb.messaging.messages import (
     utc_iso as _utc_iso,
 )
 from aweb.messaging.participant_succession import predecessor_target_for_mail
@@ -1159,7 +1164,7 @@ async def _bound_recipient_from_address(
     if registry_client is not None:
         resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
         if resolved is not None and resolved.did_aw:
-            bound_recipient = await resolve_agent_by_did(db, resolved.did_aw)
+            bound_recipient = await local_recipient_for_address_binding(db, resolved, address)
             if bound_recipient is not None:
                 return bound_recipient
     local_recipient = await _local_recipient_from_address(db, domain=domain, name=name)
@@ -1479,7 +1484,7 @@ async def resolve_mail_target(
             recipient = await _local_recipient_from_address(db, domain=domain, name=name)
             if recipient is None:
                 if await namespace_exists(db, domain):
-                    raise FederationAuthorityError("recipient_identity_not_found")
+                    raise LocalRecipientNotFoundError()
                 if registry_client is None:
                     raise awid_registry_not_configured_exception(
                         operation="AWID mail recipient address lookup"

@@ -20,13 +20,28 @@ class RecipientNotResidentError(FederationAuthorityError):
         super().__init__("recipient_identity_not_found")
 
 
+class LocalRecipientNotFoundError(FederationAuthorityError):
+    """A local namespace has no selectable current-member recipient."""
+
+    @property
+    def detail(self) -> str:
+        from aweb.member_team_key import RECIPIENT_RECONNECT_DETAIL
+
+        return "Recipient not found. Check the address. " + RECIPIENT_RECONNECT_DETAIL
+
+    def __init__(self) -> None:
+        super().__init__("recipient_identity_not_found")
+
+
 def authority_error_body(
     error: FederationAuthorityError,
     *,
     correlation_id: str,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
-        "detail": error.detail if isinstance(error, RecipientNotResidentError) else error.reason,
+        "detail": error.detail
+        if isinstance(error, (RecipientNotResidentError, LocalRecipientNotFoundError))
+        else error.reason,
         "reason": error.reason,
         "retryable": error.retryable,
         "correlation_id": correlation_id,

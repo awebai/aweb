@@ -1,33 +1,39 @@
 from __future__ import annotations
 
-from aweb.identity_binding import (
-    IdentityProjectionField,
-    verified_identity_field_sql,
-    verified_key_sql,
-)
-
-from aweb.human_kind import human_predicate_sql
-
-from aweb.human_channels.contract import ContractError
-from aweb.human_channels.participants import require_native_participant_input
-from aweb.service_errors import ValidationError
-
-from aweb.agent_wake import agent_wake_scope, record_did_wakes
-from aweb.attachment_service import attachment_transaction
-
+import json
 import logging
 import uuid as uuid_mod
 from datetime import datetime, timezone
-import json
 from typing import Any
 from uuid import UUID
 
 import asyncpg
 from pgdbm.errors import QueryError
 
-from aweb.service_errors import ConflictError, NotFoundError, ServiceError
+from aweb.agent_wake import agent_wake_scope, record_did_wakes
+from aweb.attachment_service import attachment_transaction
+from aweb.human_channels.contract import ContractError
+from aweb.human_channels.participants import require_native_participant_input
 from aweb.messaging.conversations import (
     find_active_one_to_one_conversation_between,
+)
+from aweb.messaging.messages import (
+    get_agent_by_alias as get_agent_by_alias,
+)
+from aweb.messaging.messages import (
+    get_agent_by_id as get_agent_by_id,
+)
+from aweb.messaging.messages import (
+    get_agents_by_aliases as get_agents_by_aliases,
+)
+from aweb.messaging.messages import (
+    resolve_agent_by_did as resolve_agent_by_did,
+)
+from aweb.service_errors import (
+    ConflictError,
+    NotFoundError,
+    ServiceError,
+    ValidationError,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,80 +111,6 @@ async def wake_chat_session_participants(aweb_db, publisher, *, session_id: UUID
             await record_chat_session_wakes(aweb_db, session_id=session_id)
     except Exception:
         logger.warning("Chat session wake failed for %s", session_id, exc_info=True)
-
-
-async def get_agent_by_id(
-    db, *, agent_id: str, team_id: str | None = None
-) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    if team_id is None:
-        row = await aweb_db.fetch_one(
-            f"""
-            SELECT agent_id, team_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-            FROM {{{{tables.agents}}}}
-            WHERE agent_id = $1 AND deleted_at IS NULL
-            """,
-            _uuid_or_none(agent_id),
-        )
-    else:
-        row = await aweb_db.fetch_one(
-            f"""
-            SELECT agent_id, team_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-            FROM {{{{tables.agents}}}}
-            WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
-            """,
-            _uuid_or_none(agent_id),
-            team_id,
-        )
-    return None if not row else dict(row)
-
-
-async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        f"""
-        SELECT agent_id, team_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-          AND NOT {human_predicate_sql()}
-        """,
-        team_id,
-        alias,
-    )
-    return None if not row else dict(row)
-
-
-async def get_agents_by_aliases(db, *, team_id: str, aliases: list[str]) -> list[dict[str, Any]]:
-    if not aliases:
-        return []
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        f"""
-        SELECT agent_id, team_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
-          AND NOT {human_predicate_sql()}
-        """,
-        team_id,
-        aliases,
-    )
-    return [dict(row) for row in rows]
-
-
-async def resolve_agent_by_did(db, did: str) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        f"""
-        SELECT agent_id, team_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-        FROM {{{{tables.agents}}}}
-        WHERE deleted_at IS NULL
-          AND ((did_aw = $1 AND {verified_key_sql()}) OR did_key = $1)
-        ORDER BY CASE WHEN did_aw = $1 THEN 0 ELSE 1 END, created_at DESC
-        LIMIT 1
-        """,
-        did,
-    )
-    return None if not row else dict(row)
 
 
 async def find_session_between(

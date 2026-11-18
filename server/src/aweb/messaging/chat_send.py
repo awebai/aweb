@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from aweb.member_team_key import recipient_not_found
-
 import json
 import logging
 import uuid as uuid_mod
@@ -14,18 +12,17 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import asyncpg.exceptions
-from fastapi import HTTPException
-from aweb.identity_address import require_address_evidence
-
 from awid.federation_errors import FederationAuthorityError
+from fastapi import HTTPException
+
 from aweb.agent_wake import agent_wake_scope
 from aweb.attachment_service import attachment_retry, refuse_remote_attachments
-from aweb.db import TransactionInfra
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
+from aweb.db import TransactionInfra
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
     encrypted_message_storage_metadata,
@@ -38,9 +35,15 @@ from aweb.federation.envelope import (
     enforce_message_timestamp_skew,
     verify_federation_envelope,
 )
+from aweb.federation.errors import LocalRecipientNotFoundError
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_callback
+from aweb.identity_address import require_address_evidence
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, participant_dids
+from aweb.member_team_key import (
+    read_participant_identity_projection,
+    recipient_not_found,
+)
 from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_address_binding,
@@ -74,7 +77,10 @@ from aweb.messaging.contacts import (
 from aweb.messaging.conversations import close_conversation
 from aweb.messaging.encryption_custody import require_non_custodial_recipients
 from aweb.messaging.mail_routing import _require_live_mail_participant
-from aweb.messaging.messages import authorize_message_delivery, policy_rows_for_participant
+from aweb.messaging.messages import (
+    authorize_message_delivery,
+    policy_rows_for_participant,
+)
 from aweb.messaging.participants import (
     messaging_participant_by_alias,
     messaging_participants_by_aliases,
@@ -86,7 +92,12 @@ from aweb.messaging.signatures import (
     validate_ed25519_message_signature,
 )
 from aweb.messaging.verification import require_conversation_not_legacy_bound
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from aweb.service_errors import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 
 if TYPE_CHECKING:
     from aweb.routes.chat import CreateSessionRequest, SendMessageRequest
@@ -1169,7 +1180,7 @@ async def _resolve_named_recipients(
         row = await _local_agent_by_address(db, domain=domain, name=name)
         if row is None:
             if await namespace_exists(db, domain):
-                raise FederationAuthorityError("recipient_identity_not_found")
+                raise LocalRecipientNotFoundError()
             if registry_client is None:
                 raise awid_registry_not_configured_exception(
                     operation="AWID chat address target lookup"
@@ -1255,7 +1266,9 @@ async def _resolve_session_recipient_rows(
     recipient_rows: list[dict[str, Any]] = []
     for row in rows:
         participant = dict(row)
-        resolved = await resolve_agent_by_did(db, participant.get("did") or "")
+        resolved = await read_participant_identity_projection(
+            db, participant_did=participant.get("did") or ""
+        )
         if resolved is not None:
             resolved = identity_recipient(resolved, str(participant.get("address") or ""))
         policy_rows = await policy_rows_for_participant(db, participant)

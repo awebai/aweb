@@ -12,15 +12,18 @@ from aweb.auth_context import GrantContext
 from aweb.auth_metrics import count_legacy_request_auth
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
+from aweb.id_chain_auth import authenticate_id_chain
+from aweb.identity_address import AddressResolution
 from aweb.identity_binding import (
     IdentityBinding,
     refresh_projection_binding,
     verified_projection,
     verify_identity_binding,
 )
-from aweb.identity_address import AddressResolution
-from aweb.id_chain_auth import authenticate_id_chain
-from aweb.member_team_key import member_key_columns_sql, member_key_current
+from aweb.member_team_key import (
+    current_member,
+    member_projection_columns_sql,
+)
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
@@ -180,9 +183,8 @@ async def lookup_identity_agent_context(
     aweb_db = _aweb_db(db)
     rows = await aweb_db.fetch_all(
         """
-        SELECT a.agent_id, a.team_id, a.alias, a.did_key, a.did_aw, a.address, a.did_aw_verified_key,
-               a.identity_scope, a.certificate_id, """
-        + member_key_columns_sql("a")
+        SELECT """
+        + member_projection_columns_sql("a")
         + """
         FROM {{tables.agents}} AS a
         WHERE a.deleted_at IS NULL
@@ -261,7 +263,7 @@ async def current_membership(registry_client, row: dict | None) -> dict | None:
     certificate_id = (row.get("certificate_id") or "").strip()
     if not team_id:
         return row
-    if not member_key_current(row):
+    if not current_member(row):
         logger.warning(
             "identity-auth team context stripped: alias %r in %s was accepted under "
             "a team key that is not the team's current key",

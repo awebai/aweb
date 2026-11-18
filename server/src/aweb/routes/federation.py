@@ -5,12 +5,12 @@ import logging
 import os
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import JSONResponse
-
+from aweb_naapp.client_identity import ClientIdentity
 from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
-from aweb_naapp.client_identity import ClientIdentity
+from awid.registry import Address
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 
 from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
@@ -28,11 +28,11 @@ from aweb.federation.envelope import (
     verify_federation_envelope,
 )
 from aweb.federation.errors import authority_error_body
-from aweb.messaging.messages import resolve_agent_by_did
-from aweb.identity_binding import verify_identity_binding
-from aweb.id_chain_auth import authenticate_id_chain
-
 from aweb.federation.origins import public_origins as _public_origins
+from aweb.id_chain_auth import authenticate_id_chain
+from aweb.identity_binding import verify_identity_binding
+from aweb.member_team_key import read_participant_identity_projection
+from aweb.messaging.address_auth import local_recipient_for_address_binding
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +147,7 @@ async def _resolve_target_identity(
     envelope: FederationEnvelope,
     *,
     stored_route_continuation: bool,
-) -> None:
+) -> Address | None:
     if stored_route_continuation:
         return
     domain, name = _split_address(envelope.target_address)
@@ -176,7 +176,7 @@ async def _resolve_target_identity(
             if fresh:
                 raise
         else:
-            return
+            return resolved
 
 
 def _validate_target_identity(resolved, envelope: FederationEnvelope) -> None:
@@ -267,10 +267,22 @@ def _stable_error_response(request: Request, error: FederationAuthorityError) ->
     )
 
 
-async def _local_envelope_recipient(db, *, envelope: FederationEnvelope) -> dict:
-    recipient = await resolve_agent_by_did(db, envelope.target_did_aw)
-    if recipient is None:
-        recipient = await resolve_agent_by_did(db, envelope.target_current_did_key)
+async def _local_envelope_recipient(
+    db, *, envelope: FederationEnvelope, address_binding: Address | None
+) -> dict:
+    """Residence for a validated address or an already-authorized participant.
+
+    identity-messaging-contract.md:272-277 makes exact-DID residence
+    independent of team membership. Neither read grants a team actor.
+    """
+    if address_binding is not None:
+        recipient = await local_recipient_for_address_binding(
+            db, address_binding, envelope.target_address
+        )
+    else:
+        recipient = await read_participant_identity_projection(
+            db, participant_did=envelope.target_did_aw
+        )
     if recipient is None:
         raise FederationAuthorityError("recipient_identity_not_found")
     if (
@@ -445,12 +457,14 @@ async def receive_federated_message(
                 )
             return result
 
-        await _resolve_target_identity(
+        address_binding = await _resolve_target_identity(
             registry_client,
             envelope,
             stored_route_continuation=stored_route,
         )
-        recipient = await _local_envelope_recipient(db, envelope=envelope)
+        recipient = await _local_envelope_recipient(
+            db, envelope=envelope, address_binding=address_binding
+        )
         if _is_local_did_key(envelope.target_did_aw) and not stored_route:
             raise FederationAuthorityError("local_recipient_route_missing")
         with agent_wake_scope(agent_wake_publisher(request.app.state)):

@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from aweb.identity_binding import verified_key_sql
-
-from aweb.human_kind import is_verified_human
-
 from dataclasses import dataclass
 from typing import Iterable
 
+from aweb.human_kind import is_verified_human
+from aweb.identity_binding import verified_key_sql
+from aweb.member_team_key import read_participant_identity_projection
 from aweb.messaging.address_auth import identity_recipient
 from aweb.messaging.conversations import (
     list_conversation_participants,
     require_active_conversation_participant,
 )
-from aweb.messaging.messages import get_agent_by_id, resolve_agent_by_did
+from aweb.messaging.messages import get_agent_by_id
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import ValidationError
 
@@ -97,7 +96,7 @@ def participant_recipient(participant: dict) -> dict:
 
 async def recipient_for_conversation_participant(db, participant: dict) -> dict:
     did = str(participant.get("did") or "").strip()
-    local = await resolve_agent_by_did(db, did)
+    local = await read_participant_identity_projection(db, participant_did=did)
     if local is not None:
         recipient = identity_recipient(local, str(participant.get("address") or "").strip())
         recipient["alias"] = participant.get("alias") or did
