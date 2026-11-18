@@ -2,12 +2,12 @@ package wake
 
 import (
 	"bufio"
+	"bytes"
 	"context"
-	"crypto/sha256"
 	"embed"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"os"
@@ -18,6 +18,7 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/atomicfile"
 )
 
 //go:embed channel_core_runner_bundle.mjs
@@ -25,30 +26,31 @@ var channelCoreRunnerFS embed.FS
 var wakePipe = os.Pipe
 
 type ChannelCoreStatus struct {
-	NodePath         string            `json:"node_path,omitempty"`
-	BundlePath       string            `json:"bundle_path,omitempty"`
-	LastError        string            `json:"last_error,omitempty"`
-	LastRunAt        time.Time         `json:"last_run_at,omitempty"`
-	LastSuccessAt    time.Time         `json:"last_success_at,omitempty"`
-	LastInputAt      time.Time         `json:"last_input_at,omitempty"`
-	AmbientQueued    int               `json:"ambient_queued"`
-	AmbientDropped   int               `json:"ambient_dropped"`
-	Evicted          int               `json:"evicted_events"`
-	BindingErrors    map[string]string `json:"binding_errors,omitempty"`
-	Generation       int               `json:"generation,omitempty"`
-	Paused           bool              `json:"paused,omitempty"`
-	ReadinessState   string            `json:"readiness_state,omitempty"`
-	ReadinessError   string            `json:"readiness_error,omitempty"`
-	ReadinessPaused  bool              `json:"readiness_paused,omitempty"`
-	ReadinessWaiting string            `json:"readiness_waiting,omitempty"`
-	RestartCount     int               `json:"restart_count"`
-	LastExit         string            `json:"last_exit,omitempty"`
-	NextRetryAt      time.Time         `json:"next_retry_at,omitempty"`
-	TraceStage       string            `json:"trace_stage,omitempty"`
-	TraceBindingID   string            `json:"trace_binding_id,omitempty"`
-	TraceMessageID   string            `json:"trace_message_id,omitempty"`
-	TraceSessionID   string            `json:"trace_session_id,omitempty"`
-	Running          bool              `json:"running"`
+	InvalidOutputLines uint64            `json:"invalid_output_lines,omitempty"`
+	NodePath           string            `json:"node_path,omitempty"`
+	BundlePath         string            `json:"bundle_path,omitempty"`
+	LastError          string            `json:"last_error,omitempty"`
+	LastRunAt          time.Time         `json:"last_run_at,omitempty"`
+	LastSuccessAt      time.Time         `json:"last_success_at,omitempty"`
+	LastInputAt        time.Time         `json:"last_input_at,omitempty"`
+	AmbientQueued      int               `json:"ambient_queued"`
+	AmbientDropped     int               `json:"ambient_dropped"`
+	Evicted            int               `json:"evicted_events"`
+	BindingErrors      map[string]string `json:"binding_errors,omitempty"`
+	Generation         int               `json:"generation,omitempty"`
+	Paused             bool              `json:"paused,omitempty"`
+	ReadinessState     string            `json:"readiness_state,omitempty"`
+	ReadinessError     string            `json:"readiness_error,omitempty"`
+	ReadinessPaused    bool              `json:"readiness_paused,omitempty"`
+	ReadinessWaiting   string            `json:"readiness_waiting,omitempty"`
+	RestartCount       int               `json:"restart_count"`
+	LastExit           string            `json:"last_exit,omitempty"`
+	NextRetryAt        time.Time         `json:"next_retry_at,omitempty"`
+	TraceStage         string            `json:"trace_stage,omitempty"`
+	TraceBindingID     string            `json:"trace_binding_id,omitempty"`
+	TraceMessageID     string            `json:"trace_message_id,omitempty"`
+	TraceSessionID     string            `json:"trace_session_id,omitempty"`
+	Running            bool              `json:"running"`
 }
 
 type ChannelCoreRunner struct{ store *Store }
@@ -425,7 +427,7 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 	}()
 	doneRead := make(chan struct{})
 	fatal := make(chan error, 1)
-	go c.readStatus(pipes.stdoutReader, doneRead, fatal)
+	go c.readStatus(pipes.stdoutReader, doneRead, childStatusOptions{Fatal: fatal})
 	doneStderr := make(chan struct{})
 	go func() { defer close(doneStderr); c.readStderr(pipes.stderrReader) }()
 	waitCh := make(chan error, 1)
@@ -497,20 +499,27 @@ func (c *ChannelCoreChild) initLine() initLine {
 	return initLine{Type: "init", Home: c.reg.Home, OatsBin: c.cfg.OatsBin, AWCommand: c.cfg.AWCommand, Paused: paused, Bindings: bindings}
 }
 
-func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}, fatalChannels ...chan<- error) {
+type childStatusOptions struct{ Fatal chan<- error }
+
+func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}, options childStatusOptions) {
 	defer close(done)
 	c.readChildLines(r, func(data []byte) {
 		var line childStatusLine
 		if err := json.Unmarshal(data, &line); err != nil {
+			// Count malformed protocol output without retaining possibly sensitive text
+			// or interrupting delivery of the next well-formed child status.
+			c.mu.Lock()
+			c.st.InvalidOutputLines++
+			c.mu.Unlock()
 			return
 		}
-		if line.Fatal && len(fatalChannels) > 0 {
+		if line.Fatal && options.Fatal != nil {
 			detail := line.LastError
 			if detail == "" {
 				detail = "channel-core child reported fatal"
 			}
 			select {
-			case fatalChannels[0] <- errors.New(detail):
+			case options.Fatal <- errors.New(detail):
 			default:
 			}
 		}
@@ -746,26 +755,36 @@ func (c *ChannelCoreChild) setError(err error) {
 	c.mu.Unlock()
 }
 
+// bundlePath implements docs/wake-runner-integrity.md:3-10.
 func (r *ChannelCoreRunner) bundlePath() (string, error) {
+	if err := checkWakeDirectory(r.store.Dir()); err != nil {
+		return "", err
+	}
 	root := filepath.Join(r.store.Dir(), "channel-core")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
+	}
+	if err := checkWakeDirectory(root); err != nil {
+		return "", err
+	}
+	// A released older aw trusts this marker. Invalidate it before repairing
+	// bytes so a later downgrade cannot mistake this bundle for the older one.
+	if err := os.Remove(filepath.Join(root, "runner.sha256")); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("invalidating legacy runner cache: %w. Check the wake state directory permissions and retry aw wake.", err)
 	}
 	path := filepath.Join(root, "runner.mjs")
 	content, err := channelCoreRunnerFS.ReadFile("channel_core_runner_bundle.mjs")
 	if err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(content)
-	stamp := filepath.Join(root, "runner.sha256")
-	want := hex.EncodeToString(sum[:])
-	if got, err := os.ReadFile(stamp); err == nil && strings.TrimSpace(string(got)) == want {
-		return path, nil
+	// The embedded bytes authorize the runner, not a separately mutable stamp.
+	info, statErr := os.Lstat(path)
+	if statErr == nil && info.Mode().IsRegular() {
+		if got, err := os.ReadFile(path); err == nil && bytes.Equal(got, content) {
+			return path, nil
+		}
 	}
-	if err := os.WriteFile(path, content, 0o600); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(stamp, []byte(want+"\n"), 0o600); err != nil {
+	if err := atomicfile.Write(path, content, 0o600); err != nil {
 		return "", err
 	}
 	return path, nil
