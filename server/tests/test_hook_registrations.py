@@ -40,13 +40,29 @@ from tests.installation_fixtures import seed_hook_installation
 
 TEAM = "backend:producer.example"
 HOOK = "post-secret-use-hook"
-LOGS = {"app_id": "logs", "origin": "https://logs.example", "digest": "sha256:" + "1" * 64}
-SECRETS = {"app_id": "secrets", "origin": "https://secrets.example", "digest": "sha256:" + "2" * 64}
+LOGS = {
+    "app_id": "logs",
+    "origin": "https://logs.example",
+    "digest": "sha256:" + "1" * 64,
+}
+SECRETS = {
+    "app_id": "secrets",
+    "origin": "https://secrets.example",
+    "digest": "sha256:" + "2" * 64,
+}
 INGEST = HookBindingDeclaration(
-    kind=REGISTRATION, catalog_id="aweb.hooks", catalog_version=1, hook=HOOK,
-    tool="ingest", method="POST", path="/hooks/ingest", scopes=("logs:ingest",),
+    kind=REGISTRATION,
+    catalog_id="aweb.hooks",
+    catalog_version=1,
+    hook=HOOK,
+    tool="ingest",
+    method="POST",
+    path="/hooks/ingest",
+    scopes=("logs:ingest",),
 )
-SECRET_USE = HookBindingDeclaration(kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook=HOOK)
+SECRET_USE = HookBindingDeclaration(
+    kind=PRODUCTION, catalog_id="aweb.hooks", catalog_version=1, hook=HOOK
+)
 SECRET_USE_PAYLOAD = {
     "action": "refused",
     "op_kind": "broker",
@@ -79,8 +95,14 @@ async def _install(db, app: dict, installation_id: str, declarations) -> dict:
     await seed_hook_installation(db, app, team_id=TEAM, installation_id=installation_id)
     async with db.transaction() as tx:
         written = await write_pending_bindings(
-            tx, team_id=TEAM, app_id=app["app_id"], origin=app["origin"], digest=app["digest"],
-            installation_id=installation_id, generation=1, declarations=list(declarations),
+            tx,
+            team_id=TEAM,
+            app_id=app["app_id"],
+            origin=app["origin"],
+            digest=app["digest"],
+            installation_id=installation_id,
+            generation=1,
+            declarations=list(declarations),
         )
     return {binding.kind: binding for binding in written}
 
@@ -92,7 +114,10 @@ async def _activate(db, binding_id: UUID, *, active_from: datetime) -> None:
         SET state = 'active', activated_at = $2, active_from = $3, activation_act_sha256 = $4
         WHERE binding_id = $1
         """,
-        binding_id, active_from - timedelta(seconds=60), active_from, "ab" * 32,
+        binding_id,
+        active_from - timedelta(seconds=60),
+        active_from,
+        "ab" * 32,
     )
 
 
@@ -103,7 +128,9 @@ async def _revoke(db, binding_id: UUID, *, at: datetime) -> None:
         SET state = 'revoked', revoked_at = $2, ended_by = 'owner_act', revocation_act_sha256 = $3
         WHERE binding_id = $1
         """,
-        binding_id, at, "cd" * 32,
+        binding_id,
+        at,
+        "cd" * 32,
     )
 
 
@@ -115,8 +142,14 @@ async def team(real_stack):
     clock = Clock()
     logs = await _install(db, LOGS, "inst-logs", [INGEST])
     secrets = await _install(db, SECRETS, "inst-secrets", [SECRET_USE])
-    await _activate(db, logs[REGISTRATION].binding_id, active_from=clock.wall - timedelta(minutes=5))
-    await _activate(db, secrets[PRODUCTION].binding_id, active_from=clock.wall - timedelta(minutes=5))
+    await _activate(
+        db, logs[REGISTRATION].binding_id, active_from=clock.wall - timedelta(minutes=5)
+    )
+    await _activate(
+        db,
+        secrets[PRODUCTION].binding_id,
+        active_from=clock.wall - timedelta(minutes=5),
+    )
     signing_key = SigningKey.generate()
     did_key = did_from_public_key(bytes(signing_key.verify_key))
     await db.execute(
@@ -124,7 +157,13 @@ async def team(real_stack):
         INSERT INTO {{tables.team_app_keys}} (team_id, app_id, origin, digest, key_id, did_key, purposes)
         VALUES ($1, $2, $3, $4, $5, $6, $7::TEXT[])
         """,
-        TEAM, "secrets", SECRETS["origin"], SECRETS["digest"], "resolve-secrets", did_key, [HOOK_RESOLVE],
+        TEAM,
+        "secrets",
+        SECRETS["origin"],
+        SECRETS["digest"],
+        "resolve-secrets",
+        did_key,
+        [HOOK_RESOLVE],
     )
     resolver = HookResolver(
         directory=real_stack.directory(clock=clock),
@@ -151,7 +190,9 @@ async def team(real_stack):
 async def outbox_db(test_db_factory):
     # The isolated gate pins the role's default search_path to pg_catalog.
     # Give this app-local outbox its own schema rather than relying on public.
-    database = await test_db_factory.create_db(suffix="producer_outbox", schema="producer_outbox")
+    database = await test_db_factory.create_db(
+        suffix="producer_outbox", schema="producer_outbox"
+    )
     await apply_outbox_migrations(database)
     yield database
 
@@ -188,8 +229,15 @@ async def _enqueue(outbox_db, team) -> UUID:
 
 def _stored(occurred_at: datetime) -> StoredEvent:
     return StoredEvent(
-        event_id=UUID(int=1), team_id=TEAM, kind=HOOK, occurred_at=occurred_at, payload=b"",
-        signature="", critical=True, producer={}, channel=HOOKS_CHANNEL,
+        event_id=UUID(int=1),
+        team_id=TEAM,
+        kind=HOOK,
+        occurred_at=occurred_at,
+        payload=b"",
+        signature="",
+        critical=True,
+        producer={},
+        channel=HOOKS_CHANNEL,
     )
 
 
@@ -203,18 +251,25 @@ async def test_the_view_lists_the_activated_registration_with_its_endpoint(team)
     [registration] = view.registrations
     assert registration.binding_id == str(team["registration"].binding_id)
     assert (registration.origin, registration.method, registration.path) == (
-        LOGS["origin"], "POST", "/hooks/ingest",
+        LOGS["origin"],
+        "POST",
+        "/hooks/ingest",
     )
 
 
 @pytest.mark.asyncio
 async def test_a_fresh_view_lets_an_audit_critical_effect_through(team, outbox_db):
     await _enqueue(outbox_db, team)
-    assert await outbox_db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 1
+    assert (
+        await outbox_db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
+        == 1
+    )
 
 
 @pytest.mark.asyncio
-async def test_an_expired_view_refuses_the_effect_when_the_server_cannot_refresh_it(team, outbox_db):
+async def test_an_expired_view_refuses_the_effect_when_the_server_cannot_refresh_it(
+    team, outbox_db
+):
     await team["registrations"].view(TEAM, HOOK)
     team["clock"].advance(61)
     team["stack"].aweb.down = True
@@ -222,7 +277,10 @@ async def test_an_expired_view_refuses_the_effect_when_the_server_cannot_refresh
     with pytest.raises(Refused) as refused:
         await _enqueue(outbox_db, team)
     assert refused.value.code == "audit_target_unavailable"
-    assert await outbox_db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}") == 0
+    assert (
+        await outbox_db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -233,8 +291,14 @@ async def test_a_view_held_past_its_window_no_longer_counts(team, outbox_db):
     with pytest.raises(Refused) as refused:
         async with outbox_db.transaction() as tx:
             await _producer(clock).enqueue(
-                tx, hook=HOOK, team_id=TEAM, payload=SECRET_USE_PAYLOAD, actor=SYSTEM,
-                occurred_at=clock.wall, result_status="denied", view=view,
+                tx,
+                hook=HOOK,
+                team_id=TEAM,
+                payload=SECRET_USE_PAYLOAD,
+                actor=SYSTEM,
+                occurred_at=clock.wall,
+                result_status="denied",
+                view=view,
             )
     assert refused.value.code == "audit_target_unavailable"
 
@@ -243,7 +307,9 @@ async def test_a_view_held_past_its_window_no_longer_counts(team, outbox_db):
 async def test_a_revoked_binding_drops_out_within_the_bound(team):
     resolve = hook_targets(team["registrations"], clock=lambda: team["clock"].wall)
     before = await resolve(_stored(team["clock"].wall))
-    assert [target.id for target in before or []] == [str(team["registration"].binding_id)]
+    assert [target.id for target in before or []] == [
+        str(team["registration"].binding_id)
+    ]
     await _revoke(team["db"], team["registration"].binding_id, at=team["clock"].wall)
     team["clock"].advance(61)
     after = await resolve(_stored(team["clock"].wall))
