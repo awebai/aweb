@@ -15,7 +15,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field
 
-from awid.team_ids import parse_team_id
+from aweb.team_admission import admit_team
 from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db
 from aweb.human_kind import IdentityKindObservation
@@ -66,26 +66,6 @@ class AliasConflictError(ValueError):
     def __init__(self, message: str, *, code: str) -> None:
         super().__init__(message)
         self.code = code
-
-
-async def _ensure_team(
-    db: AsyncDatabaseManager,
-    team_id: str,
-    team_did_key: str,
-) -> None:
-    """Create the team row if it doesn't exist."""
-    namespace, team_name = parse_team_id(team_id)
-    await db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (team_id) DO NOTHING
-        """,
-        team_id,
-        namespace,
-        team_name,
-        team_did_key,
-    )
 
 
 async def _ensure_agent(
@@ -428,7 +408,7 @@ async def connect_agent(
     agent_type = "human" if human_verified_key else ("agent" if agent_type == "human" else agent_type)
 
     async with db.transaction() as tx:
-        await _ensure_team(tx, team_id, team_did_key)
+        await admit_team(db=tx, team_id=team_id, team_did_key=team_did_key)
 
         agent_id = await _ensure_agent(
             tx,

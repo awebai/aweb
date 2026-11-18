@@ -6,6 +6,20 @@ server-table writes. These are in-process Python APIs. They do not establish
 authority on their own; the caller supplies the already verified identity and
 authorization required by the corresponding public protocol.
 
+## First team admission
+
+`aweb.team_admission.admit_team(*, db, team_id, team_did_key)` returns `True`
+only when it inserts the native team row, and `False` when the admission
+already exists. The namespace and team name come from the canonical team ID.
+It leaves every existing identity field, key pin and accepted-act timestamp
+unchanged. `connect_agent` calls this same owner inside its transaction.
+
+This storage operation performs no registry lookup or authority verification.
+Later pin movement stays with `AdmittedTeamKeys` and the
+[team-key pin contract](trust-model.md#team-key-pins-approved-2026-11-12),
+including its explicitly staged enforcement-off behavior. Invalid team IDs
+give the caller an actionable canonical-format error.
+
 ## Migration application and readiness
 
 `aweb.migrations.native_migration_modules()` returns an ordered tuple of frozen

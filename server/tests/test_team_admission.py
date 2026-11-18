@@ -13,6 +13,15 @@ def _key():
 
 
 @pytest.mark.asyncio
+async def test_invalid_team_id_is_actionable_before_storage():
+    from aweb.team_admission import admit_team
+
+    with pytest.raises(ValueError) as refused:
+        await admit_team(db=None, team_id="not-a-canonical-team", team_did_key=_key())
+    assert str(refused.value) == "Invalid team ID. Use a canonical <team>:<namespace> team ID, then retry."
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("enforce", ["false", "true"])
 async def test_admission_preserves_existing_pin_and_identity(aweb_cloud_db, monkeypatch, enforce):
     from aweb.team_admission import admit_team
@@ -23,14 +32,14 @@ async def test_admission_preserves_existing_pin_and_identity(aweb_cloud_db, monk
     original_key, served_key = _key(), _key()
     act_at = datetime(2026, 11, 12, tzinfo=timezone.utc)
 
-    await admit_team(db=db, team_id=team_id, team_did_key=original_key)
+    assert await admit_team(db=db, team_id=team_id, team_did_key=original_key)
     # A prior authorized movement is already committed. Admission must leave
     # both parts of that pin intact; it cannot impersonate another rotation.
     await db.execute(
         "UPDATE {{tables.teams}} SET team_key_act_at=$2 WHERE team_id=$1",
         team_id, act_at,
     )
-    await admit_team(db=db, team_id=team_id, team_did_key=served_key)
+    assert not await admit_team(db=db, team_id=team_id, team_did_key=served_key)
 
     row = await db.fetch_one(
         "SELECT namespace, team_name, team_did_key, team_key_act_at "
