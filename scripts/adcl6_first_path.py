@@ -15,6 +15,7 @@ import argparse
 import asyncio
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
+from enum import StrEnum
 import hashlib
 import importlib.metadata
 import json
@@ -704,6 +705,44 @@ class Person:
         )
 
 
+class BindingRefreshState(StrEnum):
+    ACTIVE = "active"
+
+
+async def refresh_enrolled_person(*, subject: Person, work: Path) -> None:
+    """Exercise aw's live-B carrier and preserve every historical artifact byte.
+
+    The component's registry test covers actual controller continuity. This
+    product-command neighbor exercises re-signing under unchanged valid custody
+    and then the journey approves its next act with that saved live binding.
+    """
+    from approval_service.seams import commitment
+
+    historical = {
+        name: (subject.record_dir / name).read_bytes()
+        for name in (
+            "approval-binding.json",
+            "approval-evidence.json",
+            "enrollment-session.json",
+        )
+    }
+    response = await subject.aw("id", "human", "refresh-binding", "--json")
+    assert response["state"] == BindingRefreshState.ACTIVE
+    assert response["person"] == subject.identity
+    live_path = subject.record_dir / "approval-live-binding.json"
+    binding = json.loads(live_path.read_bytes())
+    assert live_path.stat().st_mode & 0o777 == 0o600
+    assert response["binding_commitment"] == commitment("binding_commitment", binding)
+    assert binding["binding"]["person"] == subject.identity
+    assert binding["binding"]["identity_key"] == subject.key
+    original = json.loads(historical["approval-binding.json"])
+    assert binding["binding"]["credentials"] == original["binding"]["credentials"]
+    for name, before in historical.items():
+        assert (subject.record_dir / name).read_bytes() == before, name
+    assert not (subject.record_dir / "approval-binding-refresh.json").exists()
+    save(work / (subject.name + "-binding-refresh.json"), response)
+
+
 async def deployment_policy(section):
     """Operator edits the one deployment file; the product renders its policy."""
     path = Path("/work/deployment.yaml")
@@ -1308,6 +1347,10 @@ async def driver():
                     first.activation["evidence"]["evidence"]["kind"]
                     == "human_enrolled_later"
                 )
+            async with phase(
+                "aw refresh-binding preserves history before the next human approval"
+            ):
+                await refresh_enrolled_person(subject=first, work=work)
             async with phase(
                 "plain outsider aw verify reports later approval evidence without creation"
             ):
