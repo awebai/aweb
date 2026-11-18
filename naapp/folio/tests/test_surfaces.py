@@ -178,7 +178,10 @@ def test_seo_meta_social_card_and_design_assets() -> None:
     assert '<link rel="canonical" href="https://folio.aweb.ai/">' in text
     assert '<meta property="og:title"' in text
     assert '<meta name="twitter:card" content="summary_large_image">' in text
-    assert '<meta property="og:image" content="https://folio.aweb.ai/brand/field-v1/folio-card.png">' in text
+    assert (
+        '<meta property="og:image" content="https://folio.aweb.ai/brand/field-v1/folio-card.png">'
+        in text
+    )
     # The social card image is served as a real PNG.
     og = client.get("/og-card.png")
     assert og.status_code == 200
@@ -187,7 +190,7 @@ def test_seo_meta_social_card_and_design_assets() -> None:
 
     css = client.get("/css/aweb.css")
     assert css.status_code == 200
-    assert '/fonts/Archivo-Latin-Variable.woff2' in css.text
+    assert "/fonts/Archivo-Latin-Variable.woff2" in css.text
     font = client.get("/fonts/Archivo-Latin-Variable.woff2")
     assert font.status_code == 200
     assert font.headers["content-type"] == "font/woff2"
@@ -284,11 +287,13 @@ def test_linked_manifest_paths_serve_filled_bytes() -> None:
     assert catalog.json() == {
         "catalog_version": 1,
         "app_id": "folio",
-        "variants": [{
-            "manifest_version": 2,
-            "url": "/manifests/v2.json",
-            "digest": "sha256:" + hashlib.sha256(expected).hexdigest(),
-        }],
+        "variants": [
+            {
+                "manifest_version": 2,
+                "url": "/manifests/v2.json",
+                "digest": "sha256:" + hashlib.sha256(expected).hexdigest(),
+            }
+        ],
     }
     assert client.get("/.well-known/aweb-app.json").status_code == 404
     # Guard against drift: the surfaces actually link /aweb-app.json.
@@ -327,7 +332,15 @@ def test_skills_surface_serves_index_and_individual_skills() -> None:
 
 def test_served_skills_do_not_reference_removed_python_cli() -> None:
     client = _client()
-    forbidden = ("folio create", "folio version", "folio upload", "folio theme", "folio show", "folio revoke", "aw-folio")
+    forbidden = (
+        "folio create",
+        "folio version",
+        "folio upload",
+        "folio theme",
+        "folio show",
+        "folio revoke",
+        "aw-folio",
+    )
     for name in surfaces.SKILLS.names():
         response = client.get(f"/skills/{name}/SKILL.md")
         assert response.status_code == 200
