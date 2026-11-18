@@ -285,6 +285,17 @@ _JWT_SECRET = "test-dashboard-secret-at-least-32bytes!"
 
 
 class TestDashboardJWT:
+    def test_signed_jwt_without_expiry_is_rejected_with_recovery(self):
+        from aweb.team_auth import verify_dashboard_token
+
+        token = jwt.encode({
+            "user_id": "user-123", "team_ids": ["backend:acme.com"],
+        }, _JWT_SECRET, algorithm="HS256")
+
+        with pytest.raises(ValueError) as refused:
+            verify_dashboard_token(token, _JWT_SECRET, required_team="backend:acme.com")
+        assert str(refused.value) == "Dashboard token is missing its expiry. Ask the dashboard service to issue a new expiring token."
+
     def test_valid_jwt(self):
         from aweb.team_auth import verify_dashboard_token
 
