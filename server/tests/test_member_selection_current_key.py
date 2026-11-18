@@ -9,7 +9,7 @@ from aweb.internal_auth import build_internal_auth_header_value
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_member_team_key import _certificate, _change_key, _connect, _new_member, _row
 from test_messages_http import _signed_identity_headers
-from test_team_key_pinning import pinning  # noqa: F401
+from test_team_key_pinning import pinning as pinning
 
 
 class MessageTransport(StrEnum):

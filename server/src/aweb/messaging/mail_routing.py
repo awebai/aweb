@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable
+from uuid import UUID
 
 from aweb.human_kind import is_verified_human
 from aweb.identity_binding import verified_key_sql
@@ -213,7 +214,12 @@ async def explicit_mail_target_matches_participant(
     address_matches = False
 
     if to_agent_id is not None and str(to_agent_id).strip():
-        selected_id = str(to_agent_id).strip()
+        try:
+            selected_id = str(UUID(str(to_agent_id).strip()))
+        except (ValueError, TypeError, AttributeError) as error:
+            raise ValidationError(
+                "Recipient reference is invalid. Use the agent ID recorded on this conversation."
+            ) from error
         if str(participant.get("agent_id") or "") == selected_id:
             # This is a consistency check against the already-authorized
             # participant, not a new member selector or routing authority.
