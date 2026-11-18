@@ -2140,9 +2140,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 			return nil, err
 		}
 	}
-	if err := awconfig.DeleteTeamInvite(invite.InviteID); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", invite.InviteID, err)
-	}
+	removeConsumedTeamInvite(invite.InviteID)
 
 	consumedInviteParent(token, opts.ParentHome)
 	return &acceptedTeamInvite{
@@ -2569,9 +2567,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 	if localLink != nil {
-		if err := awconfig.DeleteTeamInvite(localLink.InviteID); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", localLink.InviteID, err)
-		}
+		removeConsumedTeamInvite(localLink.InviteID)
 	}
 	consumedInviteParent(token, opts.ParentHome)
 	return &acceptedTeamInvite{
