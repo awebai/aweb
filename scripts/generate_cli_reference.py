@@ -18,7 +18,9 @@ class RootCoverageError(RuntimeError):
 
 def cli_environment() -> dict[str, str]:
     """Reference generation must not select the runner's aweb identity or policy."""
-    return {key: value for key, value in os.environ.items() if not key.startswith("AWEB_")}
+    return {
+        key: value for key, value in os.environ.items() if not key.startswith("AWEB_")
+    }
 
 
 def run_help(binary: Path, path: Sequence[str]) -> str:
