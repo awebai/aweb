@@ -125,6 +125,7 @@ type idCreatePlan struct {
 }
 
 type preparedIDCreate struct {
+	Retained      bool
 	Plan          *idCreatePlan
 	IdentityKey   ed25519.PrivateKey
 	ControllerKey ed25519.PrivateKey
@@ -199,7 +200,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		if err != nil {
 			return idCreateOutput{}, err
 		}
-		if fileExists(identityPath) {
+		if fileExists(identityPath) && !fileExists(standaloneCreateRecoveryPath(identityPath)) {
 			name, err := normalizeIDCreateName(opts.Name)
 			if err != nil {
 				return idCreateOutput{}, err
@@ -245,10 +246,14 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		}
 	}
 
+	if err := persistStandaloneCreate(prepared, opts); err != nil {
+		return idCreateOutput{}, err
+	}
+
 	registryStatus := "registered"
 	registryErr := ""
 	if err := ensureStandaloneRegistryRegistration(ctx, registry, plan, prepared.ControllerKey, prepared.IdentityKey); err != nil {
-		return idCreateOutput{}, idCreateAtomicClaimError(plan, err)
+		return idCreateOutput{}, fmt.Errorf("%w; original key and creation plan retained in %s; retry the same command", idCreateAtomicClaimError(plan, err), standaloneCreateRecoveryPath(plan.IdentityPath))
 	}
 
 	if err := awconfig.SaveWorktreeIdentityTo(plan.IdentityPath, &awconfig.WorktreeIdentity{
@@ -263,7 +268,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 	}); err != nil {
 		return idCreateOutput{}, err
 	}
-	if err := awid.SaveSigningKey(plan.SigningKeyPath, prepared.IdentityKey); err != nil {
+	if err := os.Remove(standaloneCreateRecoveryPath(plan.IdentityPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return idCreateOutput{}, err
 	}
 
@@ -382,6 +387,13 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 		if err != nil {
 			return nil, err
 		}
+	}
+	retained, err := loadStandaloneCreateRecovery(identityPath, signingKeyPath, workspacePath, name, domain, opts)
+	if err != nil {
+		return nil, err
+	}
+	if retained != nil {
+		return retained, nil
 	}
 	if err := ensureStandaloneIdentityTarget(identityPath, signingKeyPath, workspacePath); err != nil {
 		return nil, err

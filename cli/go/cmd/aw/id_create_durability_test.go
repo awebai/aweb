@@ -76,6 +76,9 @@ func TestIDCreatePersistsKeyBeforeClaimAndResumesSameIdentity(t *testing.T) {
 	if info, err := os.Stat(keyPath); err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("key permissions: %v %v", info, err)
 	}
+	if info, err := os.Stat(filepath.Join(root, ".aw", "id-create.json")); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("recovery permissions: %v %v", info, err)
+	}
 	before := claims
 	wrong := opts
 	wrong.Name = "bob"

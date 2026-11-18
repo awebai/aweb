@@ -119,6 +119,17 @@ func registerHumanChain(ctx context.Context, human *humanParticipation, chain ma
 	}
 	registry := newAWIDRegistryClient(nil, resolver)
 	registry.DefaultRegistryURL = registryURL
+	// Authenticate the issuer before asking the person to sign or making any
+	// registration write. A pending global leaf is allowed at this boundary;
+	// full committed-chain verification still follows registration below.
+	subject := awid.IDChainSubject{ID: record.StableID, DIDKey: record.DIDKey}
+	certificates := chain["certificates"].([]any)
+	leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+	expected := map[string]any{"id": record.StableID, "domain": record.Domain, "kind": "human", "parent": leaf["parent"]}
+	before := idStatusAt(registry, resolver, registryURL).IDChainEvidence(ctx, chain, subject, record.Domain)
+	if _, err := awid.ImportIDCertificateChain(expected, chain, before, record.Domain); err != nil {
+		return idHumanInitOutput{}, fmt.Errorf("issued human certificate issuer refused before registration: %w", err)
+	}
 	signer := func(description string) awid.IDCertificateSigner {
 		return func(payload []byte) (string, []byte, error) { return human.sign(payload, description) }
 	}

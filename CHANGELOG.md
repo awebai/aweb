@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Addressed `aw id create` saves its private key before registry writes and
+  resumes an uncertain claim with that same key and selection. Human certificate
+  registration checks the current issuing authority before asking the person
+  to sign or registering anything.
+
 - New agents use their creator's signed invitation instead of a stored
   workspace API key. Explicit person setup keys retain the API path; missing
   or unknown server key-kind metadata keeps older-server behavior.
