@@ -685,7 +685,7 @@ class Holder:
                 if not applied:
                     raise
         caller.check_time()
-        if trust.issuer != root.did_key:
+        if trust.namespace_issuer != root.did_key:
             raise Refused("issuer_changed")
         with self.store._connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
