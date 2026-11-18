@@ -73,10 +73,10 @@ func TestOATSRealServiceRegisterPreservesCode(t *testing.T) {
 		t.Fatal("server must refuse an expired registration timestamp")
 	}
 	envelope := errorEnvelope(err, err.Error())
-	if envelope.Error.Code != "invalid_controller_timestamp" || envelope.Error.HTTPStatus != 400 {
+	if envelope.Error.Code != "invalid_controller_timestamp" || envelope.Error.HTTPStatus != 422 {
 		t.Fatalf("lost service code: %#v; %v", envelope, err)
 	}
-	if !strings.Contains(err.Error(), "service register: http 400:") {
+	if !strings.Contains(err.Error(), "service register: http 422:") {
 		t.Fatalf("changed registration refusal sentence: %v", err)
 	}
 }
