@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/awebai/aw/internal/custodypath"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +13,8 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/custodypath"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -505,13 +506,16 @@ func runGrantRevoke(cmd *cobra.Command, args []string) error {
 	if grantID == "" {
 		return usageError("grant id is required")
 	}
-	client, err := resolveClient()
+	client, selection, err := resolveClientSelection()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	if err := client.RevokeIdentityGrant(ctx, grantID); err != nil {
+		if status, isHTTP := awid.HTTPStatusCode(err); isHTTP && status == http.StatusNotFound && awid.DescribeError(err).Detail == "grant not found" {
+			return grantNotFoundInTeam(grantLookup{grantID: grantID, teamID: selection.TeamID}, err)
+		}
 		return err
 	}
 	printOutput(map[string]string{"status": "revoked", "grant_id": grantID}, func(any) string {
@@ -528,7 +532,7 @@ func runGrantShow(cmd *cobra.Command, args []string) error {
 	if grantID == "" {
 		return usageError("grant id is required")
 	}
-	client, err := resolveClient()
+	client, selection, err := resolveClientSelection()
 	if err != nil {
 		return err
 	}
@@ -544,7 +548,23 @@ func runGrantShow(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("identity grant not found: %s", grantID)
+	return grantNotFoundInTeam(grantLookup{grantID: grantID, teamID: selection.TeamID}, nil)
+}
+
+type grantLookup struct {
+	grantID string
+	teamID  string
+}
+
+type grantRefusalCode string
+
+const grantNotFound grantRefusalCode = "grant_not_found"
+
+// grantNotFoundInTeam preserves the selected-team boundary documented in
+// docs/aweb-sot.md:346 and supplies a recovery action in that same team.
+func grantNotFoundInTeam(lookup grantLookup, cause error) error {
+	text := fmt.Sprintf("Grant %s was not found in team %s. Run `aw --team %s id grant list` with the same identity home to choose a grant ID.", termtext.Line(lookup.grantID), termtext.Line(lookup.teamID), termtext.Line(lookup.teamID))
+	return withErrorCode(string(grantNotFound), &plainRefusal{text: text, err: cause, jsonMessage: text})
 }
 
 func formatIdentityGrant(v any) string {

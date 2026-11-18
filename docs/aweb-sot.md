@@ -343,6 +343,13 @@ X-AWEB-Signed-Payload: <optional base64url canonical JSON for team-auth v2>
 X-AWEB-DID-AW: <optional did:aw; global identity-only auth only>
 ```
 
+A missing grant in the selected team, or a missing or expired session lease,
+is a resource-not-found result. Clients preserve that refusal rather than
+claiming the server version is unsupported. Only the router's missing-endpoint
+answer (`{"detail":"Not Found"}`) supports the minimum-server diagnostic; that
+diagnostic ends with an action to upgrade the server or select the intended
+service URL.
+
 Team-certificate routes accept two signed envelopes:
 
 - **Compact v1 compatibility:** canonical JSON of `{team_id, timestamp,

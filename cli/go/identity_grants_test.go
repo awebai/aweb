@@ -18,7 +18,7 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func TestIdentityGrant404RequiresServer1272(t *testing.T) {
+func TestMissingIdentityGrantEndpointRequiresServer1272(t *testing.T) {
 	tests := []struct {
 		name       string
 		wantMethod string
@@ -63,7 +63,11 @@ func TestIdentityGrant404RequiresServer1272(t *testing.T) {
 
 				gotMethod = r.Method
 				gotPath = r.URL.Path
-				http.Error(w, "route absent", http.StatusNotFound)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusNotFound)
+				if _, err := w.Write([]byte(`{"detail":"Not Found"}`)); err != nil {
+					t.Error(err)
+				}
 			}))
 			t.Cleanup(server.Close)
 
@@ -74,6 +78,9 @@ func TestIdentityGrant404RequiresServer1272(t *testing.T) {
 			err = tt.invoke(context.Background(), client)
 			if err == nil || !strings.Contains(err.Error(), "identity grants require aweb server 1.27.2 or later") {
 				t.Fatalf("error=%v, want minimum-server diagnostic", err)
+			}
+			if !strings.HasSuffix(err.Error(), "Upgrade the server or select the intended service URL.") {
+				t.Fatalf("missing actionable unsupported-endpoint recovery: %v", err)
 			}
 			if gotMethod != tt.wantMethod || gotPath != tt.wantPath {
 				t.Fatalf("request=(%s %s), want (%s %s)", gotMethod, gotPath, tt.wantMethod, tt.wantPath)
