@@ -184,7 +184,10 @@ func validateInitOutcomeFlags() error {
 		if len(outcomes) == 0 && !initBYOD && initDomain == "" && initUsername == "" {
 			wd, _ := os.Getwd()
 			creator, err := resolveAgentCreation(wd, "", "", "", false)
-			if err == nil && (creator.Mode == "invitation" || creator.Mode == "controller") {
+			if err != nil {
+				return err
+			}
+			if creator.Mode == "invitation" || creator.Mode == "controller" {
 				return nil
 			}
 		}

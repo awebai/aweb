@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,70 +15,6 @@ import (
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
 )
-
-func TestTeamAddAPIKeyBootstrapRequiresActuallyMissingTeamState(t *testing.T) {
-	resetTeamHumanCreateGlobals(t)
-	root := t.TempDir()
-	t.Setenv(initAPIKeyEnvVar, "aw_sk_clean_bootstrap")
-
-	if _, _, _, _, err := resolveTeamInviteTarget(root); !errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
-		t.Fatalf("clean directory error=%v, want explicit no-active-team classification", err)
-	}
-	bootstrap, err := shouldUseAPIKeyBootstrapForTeamAdd(root)
-	if err != nil {
-		t.Fatalf("shouldUseAPIKeyBootstrapForTeamAdd: %v", err)
-	}
-	if !bootstrap {
-		t.Fatal("clean directory with API key should use bootstrap")
-	}
-}
-
-func TestTeamAddAPIKeyBootstrapDoesNotSwallowInvalidTeamState(t *testing.T) {
-	resetTeamHumanCreateGlobals(t)
-	root := t.TempDir()
-	t.Setenv(initAPIKeyEnvVar, "aw_sk_must_not_hide_error")
-	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".aw", "teams.yaml"), []byte("active_team: [\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, _, _, _, err := resolveTeamInviteTarget(root); err == nil || errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
-		t.Fatalf("invalid team state error=%v, must not classify as no active team", err)
-	}
-	bootstrap, err := shouldUseAPIKeyBootstrapForTeamAdd(root)
-	if err == nil {
-		t.Fatal("invalid team state was silently treated as no active team")
-	}
-	if bootstrap {
-		t.Fatal("invalid team state must not enable API-key bootstrap")
-	}
-}
-
-func TestTeamAddAmbientAPIKeyKeepsActiveTeamAuthority(t *testing.T) {
-	resetTeamHumanCreateGlobals(t)
-	root := t.TempDir()
-	t.Setenv(initAPIKeyEnvVar, "aw_sk_forgotten_export")
-	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
-		ActiveTeam: "active:acme.com",
-		Memberships: []awconfig.TeamMembership{{
-			TeamID:   "active:acme.com",
-			Alias:    "captain",
-			CertPath: ".aw/team-certs/active.pem",
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	bootstrap, err := shouldUseAPIKeyBootstrapForTeamAdd(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bootstrap {
-		t.Fatal("ambient API key overrode aw team admin add active-team authority")
-	}
-}
 
 func TestTeamExtendAmbientAPIKeyUsesActiveTeamAssertion(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)

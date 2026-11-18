@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -488,6 +490,10 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 
 	creation, err := resolveAgentCreation(workingDir, resolveInitAPIKey(), sourceServerURL, teamID, false)
 	if err != nil {
+		var refusal *apiKeyTeamReadError
+		if errors.As(err, &refusal) && refusal.status == http.StatusUnauthorized {
+			return fmt.Errorf("The supplied API key is invalid, expired or revoked (HTTP 401). Unset AWEB_API_KEY to use this workspace's signed invitation, or supply a current setup key.")
+		}
 		return err
 	}
 	printCreationAuthority(creation)

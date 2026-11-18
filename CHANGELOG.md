@@ -8,6 +8,9 @@
   `aw team admin create` with an agent's key now stops and explains how to
   found a team. Extend names its sole discovered creator and asks the operator
   to choose when several agent homes qualify; directory order never decides.
+- `aw workspace add-worktree` now honors a supplied `AWEB_API_KEY`; an
+  expired key left in the shell stops creation instead of using the workspace.
+  The refusal explains that unsetting it restores the signed invitation path.
 - Membership-only joins say that an existing identity keeps its parentage;
   global invite condition selection requires authoritative enrollment evidence.
 

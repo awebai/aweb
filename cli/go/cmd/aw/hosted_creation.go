@@ -324,14 +324,24 @@ func readAPIKeyCreationTeam(ctx context.Context, baseURL, apiKey string) (*apiKe
 // apiKeyTeamReadRefusal says what is likely wrong when a service does not
 // answer the API key's team read: a 404 is a service older than this aw; a
 // 401 or 403 is a key that is not current or an older service.
+type apiKeyTeamReadError struct {
+	status  int
+	message string
+}
+
+func (e *apiKeyTeamReadError) Error() string { return e.message }
+
 func apiKeyTeamReadRefusal(base string, status int) error {
+	var message string
 	switch status {
 	case http.StatusNotFound:
-		return fmt.Errorf("The aweb service at %s does not support creating agents with an API key; it is older than this aw. Use an aweb service that does, or an older aw.", base)
+		message = fmt.Sprintf("The aweb service at %s does not support creating agents with an API key; it is older than this aw. Use an aweb service that does, or an older aw.", base)
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("The aweb service at %s refused this API key's team read (HTTP %d). Check that AWEB_API_KEY is current; if it is, the service may be older than this aw and not support creating agents with an API key.", base, status)
+		message = fmt.Sprintf("The aweb service at %s refused this API key's team read (HTTP %d). Check that AWEB_API_KEY is current; if it is, the service may be older than this aw and not support creating agents with an API key.", base, status)
+	default:
+		message = fmt.Sprintf("selected API-key team unavailable (HTTP %d)", status)
 	}
-	return fmt.Errorf("selected API-key team unavailable (HTTP %d)", status)
+	return &apiKeyTeamReadError{status: status, message: message}
 }
 
 // readHostedCreationResponse keeps the constructor transport at the creation

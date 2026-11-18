@@ -1396,19 +1396,6 @@ func teamHumanAddRosterCollisionError(agents []awid.AgentView, specs []teamAgent
 	return nil
 }
 
-func shouldUseAPIKeyBootstrapForTeamAdd(wd string) (bool, error) {
-	if strings.TrimSpace(resolveInitAPIKey()) == "" {
-		return false, nil
-	}
-	if _, _, _, _, err := resolveTeamInviteTarget(wd); err == nil {
-		return false, nil
-	} else if errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
-		return true, nil
-	} else {
-		return false, err
-	}
-}
-
 func bootstrapTeamHumanAddAgentWithAPIKey(homeDir string, plan teamHumanAddedAgent, apiKey string) (*acceptedTeamInvite, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
