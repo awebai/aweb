@@ -177,10 +177,10 @@ async def _mount_mcp_app(
 async def start_agent_wakes(app: FastAPI, redis: Redis) -> None:
     """Start the process's agent wake publisher and subscriber on ``app.state``.
 
-    Both lifespans call this. A host that mounts the app as a sub-application,
-    whose lifespan never runs, must call it at mount (and ``stop_agent_wakes``
-    at shutdown); without it, writes publish no wakes and streams fall back to
-    their 15 s reconcile from Postgres.
+    The shared native resource owner calls this for both lifespans and the
+    public embedded context. Legacy hosts managing a mounted app manually
+    must pair this with ``stop_agent_wakes`` at shutdown; without it, writes
+    publish no wakes and streams fall back to their 15 s reconcile.
     """
     app.state.agent_wake_publisher = AgentWakePublisher(redis)
     app.state.agent_wake_hub = AgentWakeHub(redis)
@@ -334,6 +334,9 @@ def create_app(
 
     Library mode requires both db_infra and redis to be provided.
     Standalone mode requires neither (will create its own).
+    A mounted child must have its lifespan run explicitly, or use the public
+    aweb.embedding.embedded_aweb context. Mounting alone does not start native
+    resources or its MCP session manager.
 
     Examples:
         Standalone mode (simple deployment)::
@@ -356,7 +359,10 @@ def create_app(
             coordination_app = create_app(db_infra=db_infra, redis=redis)
 
             # Mount under your main app
-            main_app.mount("/coordination", coordination_app)
+            # Keep this context open for the host's serving lifetime.
+            async with coordination_app.router.lifespan_context(coordination_app):
+                main_app.mount("/coordination", coordination_app)
+                # Serve main_app while this context remains open.
     """
     # Validate mode consistency
     if (db_infra is None) != (redis is None):

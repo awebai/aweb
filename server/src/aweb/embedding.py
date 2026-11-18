@@ -7,7 +7,7 @@ owner borrows those clients and starts/closes only native serving resources.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -139,7 +139,7 @@ async def start_native_resources(
     *, api_app: FastAPI, db_infra: DatabaseInfrastructure, redis: Redis,
     registry_client: RegistryClient, mcp_factory: MCPFactory,
     outbox_recovery: OutboxRecoveryOwnership, on_mutation=None, rate_limiter=None,
-):
+) -> AsyncIterator[EmbeddedResources]:
     """Shared native owner; caller retains DB, Redis and registry lifecycles."""
     from aweb.api import _validate_awid_registry_client, start_agent_wakes, stop_agent_wakes
 
@@ -212,7 +212,7 @@ async def embedded_aweb(
     *, db_infra: DatabaseInfrastructure, redis: Redis, registry_client: RegistryClient,
     public_origin: str, mcp_factory: MCPFactory, outbox_recovery: OutboxRecoveryOwnership,
     on_mutation=None, rate_limiter=None, attachment_backend=None,
-):
+) -> AsyncIterator[EmbeddedResources]:
     """Create/start native API and the actual host-supplied extended MCP app.
 
     Mount the yielded handles under host wrappers/paths and verify those actual
