@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 func TestCreationAuthorityDecision(t *testing.T) {
@@ -170,5 +171,76 @@ func TestTeamHumanCreateExistingFoundingPathIgnoresAmbientWorkspaceKey(t *testin
 	}
 	if after := fileDigestsForTest(t, filepath.Join(dir, ".aw")); !reflect.DeepEqual(before, after) {
 		t.Fatal("founding refusal changed existing identity")
+	}
+}
+
+func TestInitCreatorPreflightReturnsConcreteStateError(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	source := t.TempDir()
+	writeWorkspaceBindingForTest(t, source, workspaceBinding("http://127.0.0.1:1", "dev:example.com", "source", "workspace-source"))
+	_, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(source, ".aw", "signing.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	old := activeIdentityHome
+	t.Cleanup(func() { activeIdentityHome = old })
+	activeIdentityHome = awconfig.IdentityHome{Root: filepath.Join(source, ".aw"), Source: awconfig.IdentityHomeFlag}
+	t.Chdir(t.TempDir())
+	err = validateInitOutcomeFlags()
+	if err == nil || err.Error() != "workspace signing key does not match its team certificate" {
+		t.Fatalf("preflight hid state error: %v", err)
+	}
+}
+
+func TestAddWorktreeExpiredSuppliedKeyExplainsWorkspaceFallback(t *testing.T) {
+	const want = "The supplied API key is invalid, expired or revoked (HTTP 401). Unset AWEB_API_KEY to use this workspace's signed invitation, or supply a current setup key."
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/roles/active":
+			json.NewEncoder(w).Encode(map[string]any{"roles": map[string]any{"developer": map[string]any{"title": "Developer"}}})
+		case "/api/v1/teams/current":
+			http.Error(w, "API key expired", 401)
+		default:
+			t.Errorf("unexpected preflight request %s", r.URL.Path)
+			http.Error(w, "unexpected", 500)
+		}
+	}))
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repo, 0700); err != nil {
+		t.Fatal(err)
+	}
+	initGitRepoWithOriginAndCommit(t, repo, "https://example.com/repo.git")
+	writeWorkspaceBindingForTest(t, repo, workspaceBinding(server.URL, "dev:example.com", "source", "workspace-source"))
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, context.Background(), bin)
+	command := exec.Command(bin, "workspace", "add-worktree", "developer")
+	command.Dir = repo
+	command.Env = append(testCommandEnv(t.TempDir()), "AWEB_API_KEY=expired-key-fixture")
+	raw, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(raw), want) {
+		t.Fatalf("error=%v output=%s", err, raw)
+	}
+	if entries, err := os.ReadDir(filepath.Dir(repo)); err != nil || len(entries) != 1 {
+		t.Fatalf("worktree created before key refusal: %v %v", entries, err)
+	}
+}
+
+func TestCreationWorkspaceKeyDoesNotHideMalformedSource(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".aw"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".aw", "teams.yaml"), []byte("active_team: ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"team_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "dev:example.com", "api_key_kind": "workspace"})
+	}))
+	if _, err := resolveAgentCreation(root, "aw_sk_workspace", server.URL, "", false); err == nil {
+		t.Fatal("malformed source enabled API bootstrap")
 	}
 }
