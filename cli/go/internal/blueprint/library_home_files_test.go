@@ -200,3 +200,21 @@ func TestWriteLibraryHomeFilesRejectsSymlinkTargetThroughExistingSymlinkWithoutP
 		t.Fatalf("partial symlink write occurred, stat err=%v", statErr)
 	}
 }
+
+func TestWriteLibraryHomeFilesRejectsNonProfileDestinationsBeforeAnyWrite(t *testing.T) {
+	for _, path := range []string{".aw/signing.key", ".aw/context", ".claude/settings.json", ".git/config", "work/source.go", ".AW/signing.key", "skills/x/.git/config", ".aw/profile/../context"} {
+		t.Run(path, func(t *testing.T) {
+			target := t.TempDir()
+			_, err := WriteLibraryHomeFiles(target, []LibraryHomeFile{{Path: "AGENTS.md", Kind: "file", ContentUTF8: "first"}, {Path: path, Kind: "file", ContentUTF8: "attack"}}, true)
+			if err == nil {
+				t.Fatalf("Library wrote protected path %s", path)
+			}
+			if !strings.Contains(err.Error(), "Use a profile destination") {
+				t.Fatalf("missing actionable refusal: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(target, "AGENTS.md")); !os.IsNotExist(err) {
+				t.Fatalf("partial write: %v", err)
+			}
+		})
+	}
+}
