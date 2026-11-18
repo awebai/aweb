@@ -54,7 +54,7 @@ type MailBridgeConfig struct {
 }
 
 // RequiresVerifiedReplies implements the explicit requirement's precedence over
-// the local override (docs/a2a.md:948-951). The safe zero-value requires it.
+// the local override (docs/a2a.md:959-961). The safe zero-value requires it.
 func (config MailBridgeConfig) RequiresVerifiedReplies() bool {
 	return config.RequireVerifiedReplies || !config.AllowUnverifiedLocalReply
 }
@@ -75,21 +75,23 @@ type MailBridge struct {
 }
 
 type mailBridgeThread struct {
-	TaskID         string
-	ContextID      string
-	RequestID      string
-	RouteID        string
-	TargetAddress  string
-	TargetDID      string
-	TargetStableID string
-	CallerScope    string
-	ConversationID string
-	MessageID      string
-	SeenMessages   map[string]bool
-	CreatedAt      time.Time
-	ReplyDeadline  time.Time
-	PollContext    context.Context
-	StopPolling    context.CancelFunc
+	TaskID           string
+	ContextID        string
+	RequestID        string
+	RouteID          string
+	TargetAddress    string
+	TargetDID        string
+	TargetStableID   string
+	CallerScope      string
+	ConversationID   string
+	MessageID        string
+	SeenMessages     map[string]bool
+	CreatedAt        time.Time
+	ReplyDeadline    time.Time
+	PollContext      context.Context
+	StopPolling      context.CancelFunc
+	RetentionContext context.Context
+	StopRetention    context.CancelFunc
 }
 
 type a2aTaskEnvelope struct {
@@ -153,6 +155,49 @@ func (b *MailBridge) gatewayIdentitySnapshot() string {
 	return b.gatewayIdentity
 }
 
+// ValidateTarget shares the pre-send rule with startup validation. Managed
+// providers enforce target addressability in their own configuration authority.
+func (b *MailBridge) ValidateTarget(ctx context.Context, address string) error {
+	_, err := b.resolveTargetIdentity(ctx, address)
+	return err
+}
+
+// resolveTargetIdentity implements docs/a2a.md:943-952: a public route cannot
+// expose a local identity, even through an alias. Resolve through aw mail's
+// authority before signing; provider receipts carry the same signed binding.
+func (b *MailBridge) resolveTargetIdentity(ctx context.Context, address string) (recipientIdentity, error) {
+	if resolver, ok := b.client.(recipientIdentityResolver); ok {
+		identity, err := resolver.ResolveIdentity(ctx, address)
+		if err != nil {
+			return recipientIdentity{}, fmt.Errorf("Resolve the A2A target before sending: %w. Check the route address and registry, then retry.", err)
+		}
+		if identity == nil || identity.DID == "" {
+			return recipientIdentity{}, errors.New("A2A target has no resolved signing identity. Check its registry binding, then retry.")
+		}
+		if err := requirePublicA2ATarget(identity); err != nil {
+			return recipientIdentity{}, err
+		}
+		return recipientIdentity{DID: identity.DID, StableID: identity.StableID}, nil
+	}
+	if b.requireVerifiedReplies {
+		provider, ok := b.client.(recipientIdentityProvider)
+		if !ok || !provider.ProvidesRecipientIdentity() {
+			return recipientIdentity{}, errors.New("A2A provider cannot bind the reply identity. Upgrade the provider to support recipient_identity_v1 before sending.")
+		}
+	}
+	return recipientIdentity{}, nil
+}
+
+// requirePublicA2ATarget enforces public addressability on the resolved
+// identity, never on an alias or submitted address alone (docs/a2a.md:943-949).
+func requirePublicA2ATarget(identity *awid.ResolvedIdentity) error {
+	_, addressErr := awid.CanonicalFederationAddress(identity.Address)
+	if identity.IdentityScope == awid.IdentityModeLocal || !strings.HasPrefix(identity.StableID, "did:aw:") || addressErr != nil {
+		return errors.New("An A2A route needs an agent with a public address, and local agents can't be reached from outside their team. Choose a global agent's public address for this route.")
+	}
+	return nil
+}
+
 func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 	start := time.Now()
 	gatewayIdentity := b.gatewayIdentitySnapshot()
@@ -177,30 +222,17 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 		ContentMode: awid.ContentModeLegacyPlaintextV1,
 		Priority:    awid.PriorityNormal,
 	}
-	// docs/a2a.md:573-578: bind the target before the durable send. Local
-	// transports use aw mail's resolver; providers advertise this capability
-	// at configuration time and return the exact identity their mail signed.
-	if resolver, ok := b.client.(recipientIdentityResolver); ok {
-		identity, err := resolver.ResolveIdentity(ctx, task.Address)
-		if err != nil {
-			return fmt.Errorf("Resolve the A2A target before sending: %w. Check the route address and registry, then retry.", err)
-		}
-		if identity == nil || identity.DID == "" {
-			return errors.New("A2A target has no resolved signing identity. Check its registry binding, then retry.")
-		}
-		req.ToDID, req.ToStableID = identity.DID, identity.StableID
-	} else if b.requireVerifiedReplies {
-		provider, ok := b.client.(recipientIdentityProvider)
-		if !ok || !provider.ProvidesRecipientIdentity() {
-			return errors.New("A2A provider cannot bind the reply identity. Upgrade the provider to support recipient_identity_v1 before sending.")
-		}
+	recipient, err := b.resolveTargetIdentity(ctx, task.Address)
+	if err != nil {
+		return err
 	}
+	req.ToDID, req.ToStableID = recipient.DID, recipient.StableID
 	resp, err := b.sendForRoute(ctx, task.RouteID, task.Address, req)
 	if err != nil {
 		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "send_failed", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		return err
 	}
-	recipient := recipientFromSend(req, resp)
+	recipient = recipientFromSend(req, resp)
 	thread := &mailBridgeThread{
 		TaskID:         task.TaskID,
 		ContextID:      task.ContextID,
@@ -220,12 +252,13 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "missing_conversation_id", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		return errors.New("mail bridge send response missing conversation_id")
 	}
-	thread.PollContext, thread.StopPolling = context.WithDeadline(context.Background(), thread.ReplyDeadline)
+	thread.RetentionContext, thread.StopRetention = context.WithDeadline(context.Background(), replyDeadline(thread.CreatedAt, task.TaskTTL, 0))
+	thread.PollContext, thread.StopPolling = context.WithDeadline(thread.RetentionContext, thread.ReplyDeadline)
 	b.mu.Lock()
 	b.threads[task.TaskID] = thread
 	shouldPoll := b.applier != nil
 	b.mu.Unlock()
-	context.AfterFunc(thread.PollContext, func() { b.finishThread(task.TaskID) })
+	context.AfterFunc(thread.RetentionContext, func() { b.finishThread(task.TaskID) })
 	b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "ok", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 	if shouldPoll {
 		go b.pollTaskReplies(task.TaskID)
@@ -411,6 +444,9 @@ func (b *MailBridge) finishThread(taskID string) {
 	if thread != nil && thread.StopPolling != nil {
 		thread.StopPolling()
 	}
+	if thread != nil && thread.StopRetention != nil {
+		thread.StopRetention()
+	}
 }
 
 func (b *MailBridge) pollTaskReplies(taskID string) {
@@ -418,7 +454,7 @@ func (b *MailBridge) pollTaskReplies(taskID string) {
 	if thread == nil || thread.ConversationID == "" {
 		return
 	}
-	defer b.finishThread(taskID)
+	defer thread.StopPolling()
 	for {
 		if thread.PollContext.Err() != nil {
 			return
@@ -501,7 +537,7 @@ func (b *MailBridge) recordAudit(event AuditEvent) {
 }
 
 // recipientFromSend preserves the bound outgoing identity, or the provider's
-// exact signed recipient (docs/a2a.md:941-946).
+// exact signed recipient (docs/a2a.md:951-956).
 func recipientFromSend(req *awid.SendMessageRequest, resp *awid.SendMessageResponse) recipientIdentity {
 	if req.ToDID != "" {
 		return recipientIdentity{DID: req.ToDID, StableID: req.ToStableID}
@@ -510,7 +546,7 @@ func recipientFromSend(req *awid.SendMessageRequest, resp *awid.SendMessageRespo
 }
 
 // matchesSender applies the recorded target binding after mail verification
-// (docs/a2a.md:953-956).
+// (docs/a2a.md:963-967).
 func (thread *mailBridgeThread) matchesSender(msg awid.InboxMessage) bool {
 	if thread.TargetStableID != "" {
 		return msg.FromStableID == thread.TargetStableID
@@ -563,7 +599,7 @@ type ReplyParseInput struct {
 	AllowQuestionReply bool
 }
 
-// ParseA2AReplyWithOptions owns bridge reply parsing (docs/a2a.md:958-960).
+// ParseA2AReplyWithOptions owns bridge reply parsing (docs/a2a.md:968-970).
 // ParseA2AReply retains the published Go entry point and delegates here.
 func ParseA2AReplyWithOptions(input ReplyParseInput) (BridgeReply, bool, error) {
 	block, found := extractFence(fenceInput{Body: input.Body, Label: "a2a-reply"})
@@ -612,7 +648,7 @@ func ParseA2AReplyWithOptions(input ReplyParseInput) (BridgeReply, bool, error) 
 type fenceInput struct{ Body, Label string }
 
 // extractFence selects one standalone fence without treating quoted or nested
-// customer text as reply instructions (docs/a2a.md:958-960).
+// customer text as reply instructions (docs/a2a.md:968-970).
 func extractFence(input fenceInput) (string, bool) {
 	var marker byte
 	var width int

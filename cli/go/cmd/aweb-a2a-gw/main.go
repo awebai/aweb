@@ -79,6 +79,11 @@ func run(args []string, stdout, _ *os.File) error {
 	if *checkOnly {
 		return json.NewEncoder(stdout).Encode(gateway.Diagnostics())
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := gateway.ValidateTargets(ctx); err != nil {
+		return err
+	}
 	server := gatewayHTTPServer(listen, runtimeHandler(gateway, cfg))
 	return server.ListenAndServe()
 }
@@ -175,7 +180,7 @@ func runManagedGateway(base fileConfig, listen string) error {
 	return server.ListenAndServe()
 }
 
-// gatewayHTTPServer bounds request lifetimes (docs/a2a.md:978-979).
+// gatewayHTTPServer bounds request lifetimes (docs/a2a.md:988-989).
 func gatewayHTTPServer(listen string, handler http.Handler) *http.Server {
 	return &http.Server{Addr: listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute}
 }
@@ -900,7 +905,7 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 	return nil
 }
 
-// docs/a2a.md:945-951 requires a capability decision
+// docs/a2a.md:954-961 requires a capability decision
 // before accepting tasks. Explicit unverified routes remain interoperable.
 func validateManagedReplyIdentity(cfg *fileConfig, payload managedRuntimeConfigPayload) error {
 	if !requiresVerifiedReplies(*cfg) || slices.Contains(payload.Capabilities, recipientIdentityV1) {

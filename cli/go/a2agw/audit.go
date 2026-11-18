@@ -15,6 +15,7 @@ type AuditOutcome string
 
 const (
 	AuditOK      AuditOutcome = "ok"
+	AuditError   AuditOutcome = "error"
 	AuditDenied  AuditOutcome = "denied"
 	AuditIgnored AuditOutcome = "ignored"
 )

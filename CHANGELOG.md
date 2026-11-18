@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A2A routes require an agent with a public address. Native gateway startup
+  refuses local identities, including team aliases that resolve to one, before
+  opening its listener. The same check runs before each native bridge send;
+  `-check` continues to validate configuration offline.
+
 - The A2A gateway no longer returns a public route's task when given only its
   task ID. Callers must send the task token returned by `SendMessage` in
   `X-A2A-Task-Token`; task IDs are identifiers rather than authorization.

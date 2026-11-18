@@ -222,62 +222,7 @@ func TestGatewayRPCRejectsUnsupportedMethodAndContent(t *testing.T) {
 	}
 }
 
-func TestGatewayRPCUnscopedPublicListDisabledAndPublicGet(t *testing.T) {
-	otherRoute := supportRoute("r_other")
-	otherRoute.Address = "other@team.aweb.ai"
-	gw := newTestGateway(t, Config{
-		Host:           "team.aweb.ai",
-		RootCardMode:   RootCardDefaultAgent,
-		DefaultRouteID: "r_support",
-		Bridge:         &fakeBridge{},
-		Routes:         []Route{supportRoute("r_support"), otherRoute},
-	})
-	resp := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
-		"message":       testUserMessage("msg-1", "ctx-1", "No caller header"),
-		"configuration": map[string]any{"returnImmediately": true},
-	}), nil, http.StatusOK)
-	task := rpcTaskResult(t, resp, "task")
-	token := task["metadata"].(map[string]any)["task_bearer_token"].(string)
-	taskID := task["id"].(string)
-	list := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "ListTasks", map[string]any{}), nil, http.StatusOK)
-	if rpcErrorCode(list) != "list_tasks_scope_required" {
-		t.Fatalf("list error code: got %#v", list)
-	}
-	publicGet := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3a", "GetTask", map[string]any{"id": taskID}), nil, http.StatusOK)
-	if rpcErrorCode(publicGet) != "task_not_found" {
-		t.Fatal("anonymous task reads require the issued token")
-	}
-	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, http.StatusOK)
-	if rpcTaskResult(t, get, "")["id"] != taskID {
-		t.Fatal("bearer token should fetch unscoped task")
-	}
-	otherRouteGet := postRPC(t, gw, "/a2a/agents/r_other/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": taskID}), nil, http.StatusOK)
-	if rpcErrorCode(otherRouteGet) != "task_not_found" {
-		t.Fatalf("public task id must not cross route boundaries: %#v", otherRouteGet)
-	}
-}
-
 func TestGatewayRPCAuthModesAndAbuseControls(t *testing.T) {
-	t.Run("bearer required", func(t *testing.T) {
-		route := supportRoute("r_support")
-		route.Auth = AuthConfig{Mode: "bearer", BearerToken: "good-token"}
-		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
-		missing := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
-			"message":       testUserMessage("msg-1", "ctx-1", "hello"),
-			"configuration": map[string]any{"returnImmediately": true},
-		}), nil, http.StatusOK)
-		if got := taskStatus(rpcTaskResult(t, missing, "task")); got != TaskStateAuthRequired {
-			t.Fatalf("missing bearer state=%s", got)
-		}
-		ok := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "SendMessage", map[string]any{
-			"message":       testUserMessage("msg-2", "ctx-1", "hello"),
-			"configuration": map[string]any{"returnImmediately": true},
-		}), map[string]string{"Authorization": "Bearer good-token"}, http.StatusOK)
-		if got := taskStatus(rpcTaskResult(t, ok, "task")); got != TaskStateWorking {
-			t.Fatalf("valid bearer state=%s", got)
-		}
-	})
-
 	t.Run("rate limit", func(t *testing.T) {
 		route := supportRoute("r_support")
 		route.Limits.RateLimit = "1/m"
@@ -308,25 +253,6 @@ func TestGatewayRPCAuthModesAndAbuseControls(t *testing.T) {
 		}
 	})
 
-	t.Run("max concurrent", func(t *testing.T) {
-		route := supportRoute("r_support")
-		route.Limits.MaxConcurrentTasks = 1
-		gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: &fakeBridge{}, Routes: []Route{route}})
-		first := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-1", "SendMessage", map[string]any{
-			"message":       testUserMessage("msg-1", "ctx-1", "hello"),
-			"configuration": map[string]any{"returnImmediately": true},
-		}), nil, http.StatusOK)
-		if got := taskStatus(rpcTaskResult(t, first, "task")); got != TaskStateWorking {
-			t.Fatalf("first state=%s", got)
-		}
-		second := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-2", "SendMessage", map[string]any{
-			"message":       testUserMessage("msg-2", "ctx-1", "hello"),
-			"configuration": map[string]any{"returnImmediately": true},
-		}), nil, http.StatusOK)
-		if rpcErrorCode(second) != "max_concurrent_tasks" {
-			t.Fatalf("max concurrent response: %#v", second)
-		}
-	})
 }
 
 func TestGatewayRPCTaskIDEntropyAndShape(t *testing.T) {

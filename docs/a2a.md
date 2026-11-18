@@ -936,10 +936,20 @@ response shape but creates no stored task and issues no task bearer token. A
 public route still issues an opaque token on successful send; task IDs alone
 never authorize reads or cancellation. Configured concurrent-task limits are
 atomic per route. Expiry removes stored records, and completion, cancellation,
-and reply deadlines stop bridge polling and remove its thread state.
+and task expiry stop bridge polling and remove its thread state. A shorter
+poll timeout stops automatic polling while retaining the live task's
+conversation binding for a later cancellation or reply until task expiry.
 
-Before a local bridge sends, it resolves the recipient through aw mail's
-identity resolver and sends to that exact DID and stable ID. A plaintext Go send receipt
+A route needs a global agent with a public address. A local identity is not an
+A2A target: local agents cannot be reached from outside their team. A gateway
+resolves the target to its identity at configuration or startup and refuses a
+local identity, including one reached through another address or alias. A local
+agent's ability to receive a reply in a conversation it initiated does not grant
+a public A2A entry point. Native `-check` remains an offline configuration check;
+normal startup validates enabled targets before opening the listener.
+
+Before a native bridge sends, it resolves the recipient through aw mail's
+identity resolver, requires a public target, and sends to that exact DID and stable ID. A plaintext Go send receipt
 includes additive `recipient_did` and `recipient_stable_id` fields containing the
 exact signed recipient claims. A managed provider advertises
 `capabilities: ["recipient_identity_v1"]` in its runtime configuration and

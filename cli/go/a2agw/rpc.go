@@ -211,6 +211,7 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route Route, raw json.RawM
 		if errors.Is(err, errBridgeNotConfigured) {
 			return nil, jsonRPCError(-32000, "aweb bridge not configured", requestID, map[string]any{"code": "bridge_not_configured"})
 		}
+		log.Printf("aweb-a2a-gw: bridge send failed request=%s task=%s: %v", requestID, record.ID, err)
 		g.tasks.failTask(record.ID, "A2A gateway failed to send the durable bridge message.")
 		return nil, jsonRPCError(-32000, "bridge send failed", requestID, map[string]any{"detail": err.Error()})
 	}
@@ -319,7 +320,7 @@ func textFromMessage(message A2AMessage) string {
 
 func authRequired(route Route, caller callerScope) bool {
 	mode := normalizedAuthMode(route.Auth.Mode)
-	if mode == "" || mode == "none" {
+	if mode == "" || mode == AuthModeNone {
 		return false
 	}
 	return caller.Value == "" || strings.HasPrefix(caller.Value, "anonymous:")
@@ -333,14 +334,14 @@ type callerScope struct {
 func callerScopeFromRequest(r *http.Request, route Route) callerScope {
 	token := strings.TrimSpace(r.Header.Get("X-A2A-Task-Token"))
 	switch normalizedAuthMode(route.Auth.Mode) {
-	case "", "none":
+	case "", AuthModeNone:
 		return callerScope{Value: "anonymous:unscoped", TaskToken: token}
-	case "static_api_key":
+	case AuthModeStaticAPIKey:
 		key := strings.TrimSpace(r.Header.Get("X-A2A-API-Key"))
 		if key != "" && route.Auth.StaticAPIKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(route.Auth.StaticAPIKey)) == 1 {
 			return callerScope{Value: "auth:" + auditHash("static_api_key:"+key), TaskToken: token}
 		}
-	case "bearer":
+	case AuthModeBearer:
 		auth := strings.TrimSpace(r.Header.Get("Authorization"))
 		const prefix = "Bearer "
 		if strings.HasPrefix(auth, prefix) {
@@ -353,8 +354,8 @@ func callerScopeFromRequest(r *http.Request, route Route) callerScope {
 	return callerScope{TaskToken: token}
 }
 
-func normalizedAuthMode(mode string) string {
-	return strings.ToLower(strings.TrimSpace(mode))
+func normalizedAuthMode(mode string) AuthMode {
+	return AuthMode(strings.ToLower(strings.TrimSpace(mode)))
 }
 
 func (g *Gateway) rateLimitAllows(route Route, caller callerScope) bool {

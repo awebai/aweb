@@ -1,6 +1,7 @@
 package a2agw
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -68,6 +69,14 @@ type RouterCard struct {
 	Skills             []a2a.Skill
 }
 
+type AuthMode string
+
+const (
+	AuthModeNone         AuthMode = "none"
+	AuthModeStaticAPIKey AuthMode = "static_api_key"
+	AuthModeBearer       AuthMode = "bearer"
+)
+
 type AuthConfig struct {
 	Mode         string
 	StaticAPIKey string
@@ -127,6 +136,28 @@ type RouteDiagnostic struct {
 	RateLimit        string `json:"rate_limit,omitempty"`
 	AWIDRequired     bool   `json:"awid_required"`
 	VerificationTier string `json:"verification_tier"`
+}
+
+type targetValidator interface {
+	ValidateTarget(context.Context, string) error
+}
+
+// ValidateTargets resolves enabled native targets before the listener opens
+// (docs/a2a.md:943-949). Disabled routes do not expose an inbound entry point.
+func (g *Gateway) ValidateTargets(ctx context.Context) error {
+	validator, ok := g.bridge.(targetValidator)
+	if !ok {
+		return nil
+	}
+	for _, route := range g.config.Routes {
+		if route.Disabled {
+			continue
+		}
+		if err := validator.ValidateTarget(ctx, route.Address); err != nil {
+			return fmt.Errorf("route %q: %w", route.RouteID, err)
+		}
+	}
+	return nil
 }
 
 func New(config Config) (*Gateway, error) {
@@ -283,12 +314,12 @@ func (g *Gateway) AcceptNewTasksUntil() time.Time {
 
 func validateRouteRuntimeConfig(route Route) error {
 	switch normalizedAuthMode(route.Auth.Mode) {
-	case "", "none":
-	case "static_api_key":
+	case "", AuthModeNone:
+	case AuthModeStaticAPIKey:
 		if strings.TrimSpace(route.Auth.StaticAPIKey) == "" && !route.Disabled {
 			return fmt.Errorf("route %s: static_api_key mode requires Auth.StaticAPIKey", route.RouteID)
 		}
-	case "bearer":
+	case AuthModeBearer:
 		if strings.TrimSpace(route.Auth.BearerToken) == "" && !route.Disabled {
 			return fmt.Errorf("route %s: bearer mode requires Auth.BearerToken", route.RouteID)
 		}
