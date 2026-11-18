@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -75,7 +78,7 @@ var introspectCmd = &cobra.Command{
 				out.InboundModeLabel = inboundModeLabel(inbound.InboundMode)
 				out.InboundConfigurable = &configurable
 			} else if err != nil && !isInboundModeUnsupportedError(err) {
-				out.InboundModeError = err.Error()
+				out.InboundModeError = formatInboundModeError(err)
 			}
 		}
 		printOutput(out, formatIntrospect)
@@ -85,9 +88,13 @@ var introspectCmd = &cobra.Command{
 
 func isInboundModeUnsupportedError(err error) bool {
 	if code, ok := awid.HTTPStatusCode(err); ok {
-		return code == 404 || code == 405
+		return aweb.IsMissingEndpointError(err) || code == http.StatusMethodNotAllowed
 	}
 	return false
+}
+
+func formatInboundModeError(err error) string {
+	return fmt.Sprintf("%v. Run `aw workspace status` with the same identity home to check the selected team and service.", err)
 }
 
 func init() {

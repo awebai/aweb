@@ -22,16 +22,23 @@ var (
 // docs/aweb-sot.md:346: a resource miss is preserved; only the router's missing-endpoint
 // answer supports a minimum-server diagnostic.
 func missingEndpointDiagnostic(err error, feature serverFeature) error {
+	if !IsMissingEndpointError(err) {
+		return err
+	}
+	return fmt.Errorf("%s require aweb server %s or later: %w. Upgrade the server or select the intended service URL.", feature.name, feature.minimumVersion, err)
+}
+
+// IsMissingEndpointError distinguishes the router's missing-endpoint answer from
+// a resource miss, as required by docs/aweb-sot.md:346. A status alone is not
+// evidence that the server lacks a feature.
+func IsMissingEndpointError(err error) bool {
 	status, isHTTP := awid.HTTPStatusCode(err)
 	if !isHTTP || status != http.StatusNotFound {
-		return err
+		return false
 	}
 	body, hasBody := awid.HTTPErrorBody(err)
 	var answer struct {
 		Detail string `json:"detail"`
 	}
-	if !hasBody || json.Unmarshal([]byte(body), &answer) != nil || answer.Detail != "Not Found" {
-		return err
-	}
-	return fmt.Errorf("%s require aweb server %s or later: %w. Upgrade the server or select the intended service URL.", feature.name, feature.minimumVersion, err)
+	return hasBody && json.Unmarshal([]byte(body), &answer) == nil && answer.Detail == "Not Found"
 }
