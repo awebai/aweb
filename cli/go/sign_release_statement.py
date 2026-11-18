@@ -93,7 +93,7 @@ def main():
         )
         return 0
     except (Exception, KeyboardInterrupt) as error:
-        # docs/release-key-setup.md:172-175: one failed command stops the ceremony.
+        # docs/release-key-setup.md:183-186: one failed command stops the ceremony.
         # This CLI boundary also handles SDK/import/PIN errors without retries.
         context = (
             f"statement {args.statement} on device {args.serial}, PIV slot 9c"
@@ -103,7 +103,7 @@ def main():
         reason = str(error) or "operation cancelled"
         print(f"Cannot sign {context}: {reason}.", file=sys.stderr)
         print(
-            "Stop and ask sign-verify or Antares to review this error before retrying. "
+            "Stop and get this error reviewed by the release maintainer before retrying. "
             "Do not guess PINs, regenerate keys or change device configuration.",
             file=sys.stderr,
         )

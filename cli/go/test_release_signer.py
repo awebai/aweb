@@ -10,7 +10,7 @@ import unittest
 
 SIGNER = Path(__file__).resolve().parent / "sign_release_statement.py"
 RECOVERY = (
-    "Stop and ask sign-verify or Antares to review this error before retrying. "
+    "Stop and get this error reviewed by the release maintainer before retrying. "
     "Do not guess PINs, regenerate keys or change device configuration."
 )
 

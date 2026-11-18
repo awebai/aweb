@@ -4,9 +4,9 @@
 These steps address only PIV; they leave FIDO2, OpenPGP and the existing OpenPGP
 key and touch policy alone. There is no device or applet reset in this procedure.
 
-Review draft for sign-verify and Antares. Do not provision the active or successor
-device until they approve the commands and the third-device proof passes.
-Goal 1: protect supported installation by authenticating the executable publisher.
+Before provisioning the active or successor device, the release maintainer and
+a second reviewer must approve these commands and accept the third-device proof.
+This procedure authenticates the publisher of executable releases.
 
 ## Mac tools and signing format
 
@@ -36,7 +36,7 @@ can be uninstalled and PATH restored. Reviewed formula versions on 2026-11-18:
 [ykman 5.9.2](https://formulae.brew.sh/formula/ykman) and
 [openssl@3 3.5.9](https://formulae.brew.sh/formula/openssl@3).
 Homebrew does not promise a frozen version for these install names. If the
-reported versions differ, have sign-verify read that tool version before device
+reported versions differ, have a second reviewer read that tool version before device
 writes. Use the repository's existing Go and Python 3 setup for the proof.
 
 From the reviewed repository root, prepare local paths:
@@ -100,6 +100,16 @@ from the certificate list. If any key metadata appears, or PIV credentials are
 not defaults, stop and reconcile that device before proceeding. An empty slot's
 inspection may exit with an error; that is expected only for the explicit
 no-key result, not a connection or authorization error.
+
+With the factory retry limits used here, three consecutive wrong PIV PIN tries
+block the PIN; three wrong PUK tries separately block the PUK. A working PUK can
+unblock the PIN. A blocked PUK cannot be unblocked, even with the management key.
+A working PIN remains usable, but if the PIN is also blocked, recovery requires a
+PIV applet reset. That destroys every PIV slot key, including a release key on
+that device, and leaves FIDO2 and OpenPGP untouched. Stop for review after an
+error rather than using up the remaining tries. This procedure changes no retry
+limits and includes no reset command.
+[Yubico explains these retry and recovery rules](https://docs.yubico.com/yesdk/users-manual/application-piv/pin-puk-mgmt-key.html#blocking).
 
 Change all three PIV defaults before generating a signing key:
 
@@ -168,11 +178,33 @@ the signing operation itself cannot be undone, but publishes nothing.
 Required result: Go accepts the original, Go refuses the tampered manifest,
 shell accepts the original, shell refuses the tampered manifest with retry
 guidance. Save these four PASS lines, the exact source SHA/tool versions, the
-statement, signature, public key and both manifest files for sign-verify/Antares.
+statement, signature, public key and both manifest files for the release maintainer
+and a second reviewer.
 Do not record secrets or enable traffic/debug logging. If any step fails, stop
 and send the error for review; no active/successor provisioning or pin publication
 follows a failed proof. Do not guess PINs, regenerate keys or change device
 configuration to work around a refusal.
+
+### After the proof
+
+The proof device retains a disposable private key in PIV slot 9c and its PIV
+PIN, PUK and management key are no longer defaults. It is not a blank spare.
+After the release maintainer and a second reviewer accept the saved proof
+material, the device owner may permanently remove only that proof key. Connect
+only the proof device and check its serial against `AW_PROOF_SERIAL`, then run:
+
+```sh
+ykman --device "$AW_PROOF_SERIAL" piv keys delete 9c
+```
+
+This requires the proof device's management key at the hidden prompt and a
+physical touch, because management-key authentication was configured with
+`--touch`. It irreversibly deletes the private key in PIV slot 9c; there is no
+undo. Saved signatures still verify with the exported public key. The command
+does not restore PIV credentials to defaults, alter other slots, or affect FIDO2
+or OpenPGP, so the device still is not a blank spare afterwards. Retain its
+nondefault credentials if you intend to reuse its PIV applet.
+[The versioned CLI source authenticates before deleting the selected key](https://github.com/Yubico/yubikey-manager/blob/5.9.2/ykman/_cli/piv.py#L948-L961).
 
 ## Device 2: active release key
 
