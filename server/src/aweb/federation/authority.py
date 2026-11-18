@@ -5,7 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from awid.external_authority import RegistryAuthority, canonical_protocol_address, compare_claim_to_evidence
+from awid.external_authority import (
+    RegistryAuthority,
+    canonical_protocol_address,
+    compare_claim_to_evidence,
+)
 from awid.external_registry import ExternalAuthorityEvidence, StrictExternalRegistry
 from awid.federation_errors import FederationAuthorityError, FederationErrorSpec
 
@@ -16,7 +20,11 @@ from .authority_state import (
     CheckpointCandidate,
 )
 from .authority_work import AuthorityLease
-from .lookup_policy import AUTHORITY_CAS_CONFLICT, SENDER_IDENTITY_NOT_FOUND, EvidenceCacheUse
+from .lookup_policy import (
+    AUTHORITY_CAS_CONFLICT,
+    SENDER_IDENTITY_NOT_FOUND,
+    EvidenceCacheUse,
+)
 
 
 @dataclass(frozen=True)
@@ -34,7 +42,9 @@ class CommittedAuthorityEvidence:
 
 
 class FederationAuthorityCore:
-    def __init__(self, repository: AuthorityRepository, *, reuse_seconds: int = 60) -> None:
+    def __init__(
+        self, repository: AuthorityRepository, *, reuse_seconds: int = 60
+    ) -> None:
         if not 1 <= reuse_seconds <= 60:
             raise ValueError("authority reuse must be between 1 and 60 seconds")
         self.repository = repository
@@ -84,7 +94,9 @@ class FederationAuthorityCore:
         )
         if snapshot is None:
             checkpoint_revision = 1
-        elif verified.seq == snapshot.seq and verified.entry_hash == snapshot.entry_hash:
+        elif (
+            verified.seq == snapshot.seq and verified.entry_hash == snapshot.entry_hash
+        ):
             checkpoint_revision = snapshot.revision
         else:
             checkpoint_revision = snapshot.revision + 1
@@ -137,7 +149,9 @@ class FederationAuthorityCore:
             claim.canonical_address if claim is not None else address or ""
         )
 
-        async def fetch_authority_evidence(snapshot, *, cache_use: EvidenceCacheUse = EvidenceCacheUse.NORMAL):
+        async def fetch_authority_evidence(
+            snapshot, *, cache_use: EvidenceCacheUse = EvidenceCacheUse.NORMAL
+        ):
             kwargs = {
                 "authority_generation": authority_generation,
                 "checkpoint": snapshot,
@@ -167,7 +181,9 @@ class FederationAuthorityCore:
         if claim is None:
             snapshot = await self.repository.get_checkpoint(evidence.did_aw)
             if snapshot is not None:
-                evidence = await fetch_authority_evidence(snapshot, cache_use=EvidenceCacheUse.BYPASS)
+                evidence = await fetch_authority_evidence(
+                    snapshot, cache_use=EvidenceCacheUse.BYPASS
+                )
         try:
             token = await self.commit_verified_evidence(
                 claim_for_evidence(evidence),
@@ -179,7 +195,9 @@ class FederationAuthorityCore:
             if exc.reason != AUTHORITY_CAS_CONFLICT.reason:
                 raise
             winner = await self.repository.get_checkpoint(evidence.did_aw)
-            evidence = await fetch_authority_evidence(winner, cache_use=EvidenceCacheUse.BYPASS)
+            evidence = await fetch_authority_evidence(
+                winner, cache_use=EvidenceCacheUse.BYPASS
+            )
             token = await self.commit_verified_evidence(
                 claim_for_evidence(evidence),
                 evidence,

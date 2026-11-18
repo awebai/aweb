@@ -29,7 +29,9 @@ def signed_recipient_matches(
         return False
     signed_did = str(payload.get("to_did") or "").strip()
     signed_stable = str(payload.get("to_stable_id") or "").strip()
-    if use is RecipientBindingUse.ADDRESS_VISIBILITY and not (signed_did or signed_stable):
+    if use is RecipientBindingUse.ADDRESS_VISIBILITY and not (
+        signed_did or signed_stable
+    ):
         return False
     if signed_did:
         if len(recipients) != 1:

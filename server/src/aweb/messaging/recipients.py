@@ -26,7 +26,10 @@ from aweb.messaging.alias_targets import (
     namespace_exists,
 )
 from aweb.messaging.kinds import MessageKind
-from aweb.messaging.recipient_bindings import RecipientBindingUse, signed_recipient_matches
+from aweb.messaging.recipient_bindings import (
+    RecipientBindingUse,
+    signed_recipient_matches,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +51,10 @@ def _signature_binds_recipient_address(
         isinstance(signed, dict)
         and signed.get("type") == kind
         and signed_recipient_matches(
-            signed, recipients=[recipient], allowed_to={address}, use=RecipientBindingUse.ADDRESS_VISIBILITY
+            signed,
+            recipients=[recipient],
+            allowed_to={address},
+            use=RecipientBindingUse.ADDRESS_VISIBILITY,
         )
     )
 

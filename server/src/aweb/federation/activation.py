@@ -32,7 +32,11 @@ from .lookup_policy import (
 )
 from .authority_state import AuthorityRepository, AuthoritySecurityToken
 from .authority_work import AuthorityLease, AuthorityWorkRepository, AuthorityWorkResult
-from .transport import PRIVATE_DELIVERY_ORIGINS_SETTING, AddressCheckedTransport, private_delivery_origins
+from .transport import (
+    PRIVATE_DELIVERY_ORIGINS_SETTING,
+    AddressCheckedTransport,
+    private_delivery_origins,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -111,7 +115,8 @@ class FederationAuthorityActivation:
     async def _publish_failure(
         self,
         error: FederationAuthorityError,
-        *, leases: tuple[AuthorityLease | None, ...],
+        *,
+        leases: tuple[AuthorityLease | None, ...],
     ) -> None:
         evidence = {
             "reason": error.reason,
@@ -130,17 +135,18 @@ class FederationAuthorityActivation:
                 )
                 await self.work.release_lease(lease)
             except Exception:
-                logger.warning("federation_authority_failure_publication_failed", exc_info=True)
+                logger.warning(
+                    "federation_authority_failure_publication_failed", exc_info=True
+                )
 
     async def _contact_from_result(
         self,
         canonical_address: str,
         result: AuthorityWorkResult | None,
-        *, lookup: AuthorityLookupPolicy = CONTACT_LOOKUP,
+        *,
+        lookup: AuthorityLookupPolicy = CONTACT_LOOKUP,
     ) -> ResolvedContactIdentity | None:
-        self._raise_published_failure(
-            result, lookup=lookup
-        )
+        self._raise_published_failure(result, lookup=lookup)
         if result is None or result.status != AuthorityResultState.VERIFIED:
             return None
         evidence = result.evidence
@@ -171,12 +177,21 @@ class FederationAuthorityActivation:
         )
 
     async def authorize(
-        self, claim: AuthorityClaim, *, source_ip: str,
+        self,
+        claim: AuthorityClaim,
+        *,
+        source_ip: str,
     ) -> AuthorizedFederationSender:
-        cached = await self.core.authorize_from_shared_cohort(claim) if claim.delivery_origin else None
+        cached = (
+            await self.core.authorize_from_shared_cohort(claim)
+            if claim.delivery_origin
+            else None
+        )
         if cached is not None:
             return AuthorizedFederationSender(
-                token=cached, canonical_address=cached.canonical_address, delivery_origin=claim.delivery_origin
+                token=cached,
+                canonical_address=cached.canonical_address,
+                delivery_origin=claim.delivery_origin,
             )
         resolved = await self._resolve_address(
             claim.canonical_address,
@@ -193,7 +208,9 @@ class FederationAuthorityActivation:
             )
         if claim.delivery_origin and resolved.delivery_origin != claim.delivery_origin:
             raise FederationAuthorityError("sender_route_mismatch", did_aw=claim.did_aw)
-        return AuthorizedFederationSender(resolved.token, resolved.canonical_address, resolved.delivery_origin)
+        return AuthorizedFederationSender(
+            resolved.token, resolved.canonical_address, resolved.delivery_origin
+        )
 
     async def resolve_contact(
         self, address: str, *, source_ip: str
@@ -221,18 +238,29 @@ class FederationAuthorityActivation:
             ("source_ip", source_ip or "unknown"),
             ("domain", domain),
         ):
-            await self.work.consume_token(bucket_kind=bucket_kind, bucket_key=bucket_key, burst=5, refill_per_minute=30)
+            await self.work.consume_token(
+                bucket_kind=bucket_kind,
+                bucket_key=bucket_key,
+                burst=5,
+                refill_per_minute=30,
+            )
         await self.work.acquire_permits(
-            owner_id=owner_id, scopes=(("global", "external-reads", 32), ("domain", domain, 2)), ttl_seconds=10,
+            owner_id=owner_id,
+            scopes=(("global", "external-reads", 32), ("domain", domain, 2)),
+            ttl_seconds=10,
         )
         try:
             discovery_key = "discovery:" + canonical
-            discovery = await self.work.acquire_lease(discovery_key, owner_id=owner_id, ttl_seconds=10)
+            discovery = await self.work.acquire_lease(
+                discovery_key, owner_id=owner_id, ttl_seconds=10
+            )
             if not discovery.acquired:
                 result = await self.work.wait_for_result(
                     discovery_key, deadline_seconds=5
                 )
-                resolved = await self._contact_from_result(canonical, result, lookup=lookup)
+                resolved = await self._contact_from_result(
+                    canonical, result, lookup=lookup
+                )
                 if resolved is None:
                     raise FederationAuthorityError(lookup.busy.reason)
                 return resolved
@@ -249,12 +277,16 @@ class FederationAuthorityActivation:
                 ttl_seconds=10,
             )
             evidence_key = f"origin:{authority.registry_origin}:address:{canonical}"
-            evidence_lease = await self.work.acquire_lease(evidence_key, owner_id=owner_id, ttl_seconds=10)
+            evidence_lease = await self.work.acquire_lease(
+                evidence_key, owner_id=owner_id, ttl_seconds=10
+            )
             if not evidence_lease.acquired:
                 result = await self.work.wait_for_result(
                     evidence_key, deadline_seconds=5
                 )
-                resolved = await self._contact_from_result(canonical, result, lookup=lookup)
+                resolved = await self._contact_from_result(
+                    canonical, result, lookup=lookup
+                )
                 if resolved is None:
                     raise FederationAuthorityError(lookup.busy.reason)
                 return resolved
@@ -280,9 +312,17 @@ class FederationAuthorityActivation:
                 "delivery_origin": evidence.delivery_origin,
             }
             published = await self.work.publish_result(
-                evidence_lease, status=AuthorityResultState.VERIFIED, evidence=result, ttl_seconds=60
+                evidence_lease,
+                status=AuthorityResultState.VERIFIED,
+                evidence=result,
+                ttl_seconds=60,
             )
-            await self.work.publish_result(discovery, status=AuthorityResultState.VERIFIED, evidence=result, ttl_seconds=60)
+            await self.work.publish_result(
+                discovery,
+                status=AuthorityResultState.VERIFIED,
+                evidence=result,
+                ttl_seconds=60,
+            )
             result_published = True
             resolved = await self._contact_from_result(
                 canonical, published, lookup=lookup
@@ -301,13 +341,16 @@ class FederationAuthorityActivation:
 
     def received_registry_client(self, token, did_key, redis):
         from .id_tree_registry import received_registry_client
+
         return received_registry_client(self, token, did_key, redis)
 
     async def aclose(self) -> None:
         await self.resolver.aclose()
 
 
-def build_federation_authority_activation(db, *, public_origin: str) -> FederationAuthorityActivation:
+def build_federation_authority_activation(
+    db, *, public_origin: str
+) -> FederationAuthorityActivation:
     manager = db.get_manager("aweb")
     repository = AuthorityRepository(manager)
     work = AuthorityWorkRepository(manager)
@@ -352,7 +395,8 @@ def build_federation_authority_activation(db, *, public_origin: str) -> Federati
             ),
         )
     private_origins = private_delivery_origins(
-        os.getenv(PRIVATE_DELIVERY_ORIGINS_SETTING, ""), origin_context=origin_context,
+        os.getenv(PRIVATE_DELIVERY_ORIGINS_SETTING, ""),
+        origin_context=origin_context,
     )
     reuse_seconds = int(os.getenv("AWEB_FEDERATION_AUTHORITY_REUSE_SECONDS", "60"))
     return FederationAuthorityActivation(
