@@ -113,12 +113,14 @@ async def test_owner_can_settle_an_uncertain_production_broker_effect_and_unbloc
         root, f"https://{server.host}:{server.port}/effect", server.host, server.port
     )
     assert first.status_code == 200 and first.json()["state"] == "outcome_unknown"
+    assert first.json()["reconcile_ref"] == first.json()["request_ref"]
     assert len(server.seen) == 1, "the upstream must actually have received the original request"
     path, original = first.request.url.path, json.loads(first.request.content)
     blocked = await member_request(root, path, {**original, "request_id": uuid4().hex})
     assert blocked.status_code == 409 and blocked.json()["code"] == "reconciliation_pending"
     assert len(server.seen) == 1
     await settle(root, first.json()["request_ref"])
+    assert blocked.json()["next_step"] == {"action": "owner_reconcile", "path": "/activity"}
     assert len(server.seen) == 1, "settlement must not send the uncertain operation again"
     events = await envelopes(service.runtime.db(), member.team_id)
     assert any(event["payload"].get("action") == "reconciled" for event in events)
@@ -160,6 +162,7 @@ async def test_owner_can_settle_a_swept_production_run_and_request_a_fresh_appro
     blocked = await member_request(root, pending.path, {**original, "request_id": uuid4().hex})
     assert blocked.status_code == 409 and blocked.json()["code"] == "reconciliation_pending"
     await settle(root, ref)
+    assert blocked.json()["next_step"] == {"action": "owner_reconcile", "path": "/activity"}
     assert await db.fetch_value("SELECT count(*) FROM run_deliveries") == 1
     fresh = await member_request(root, pending.path, {**original, "request_id": uuid4().hex})
     assert fresh.status_code == 202 and fresh.json()["state"] == "awaiting_approval"

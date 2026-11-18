@@ -162,13 +162,15 @@ async def test_changed_sdk_item_refuses_the_observing_attempt_and_only_a_fresh_r
             content=b"{}",
             headers=runner_headers(runner, configured.public_origin, "/runner/v1/claim"),
         )
-        assert claim.status_code != 200, "the original run must not receive the new version"
+        assert claim.status_code == 503
+        assert claim.json() == {"detail": {"code": "runner_unavailable"}}
         status_path = "/v1/status/" + admitted.json()["request_ref"]
         first = await client.get(
             configured.public_origin + status_path,
             headers=member.headers(aud=configured.public_origin, method="GET", path=status_path),
         )
     assert first.json()["state"] == "refused" and first.json()["code"] == "secret_version_changed"
+    assert first.json()["next_step"] == {"action": "start_new_request"}
     assert (
         await db.fetch_value(
             "SELECT active_version FROM secrets WHERE secret_id=$1", record.secret_id
