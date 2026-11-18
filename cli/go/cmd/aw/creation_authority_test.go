@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -148,5 +149,26 @@ func TestTeamExtendNeverChoosesCreatorByDirectoryOrder(t *testing.T) {
 			t.Fatalf("wrote a child before choosing creator: %v", err)
 		}
 
+	}
+}
+
+func TestTeamHumanCreateExistingFoundingPathIgnoresAmbientWorkspaceKey(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	dir := whoIdentity(t, loadWhoVectors(t), false, true)
+	t.Chdir(dir)
+	reads := 0
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reads++
+		http.Error(w, "API path must not replace founding authority", 500)
+	}))
+	t.Setenv("AWEB_API_KEY", "aw_sk_workspace")
+	t.Setenv("AWEB_URL", server.URL)
+	before := fileDigestsForTest(t, filepath.Join(dir, ".aw"))
+	err := runTeamHumanCreate(nil, []string{"newteam"})
+	if err == nil || !strings.Contains(err.Error(), "hosted-managed for namespace example.com") || reads != 0 {
+		t.Fatalf("existing namespace founding replaced by API: reads=%d err=%v", reads, err)
+	}
+	if after := fileDigestsForTest(t, filepath.Join(dir, ".aw")); !reflect.DeepEqual(before, after) {
+		t.Fatal("founding refusal changed existing identity")
 	}
 }
