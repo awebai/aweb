@@ -71,3 +71,20 @@ func TestHumanRegisterChecksCurrentIssuerBeforePersonSigns(t *testing.T) {
 		})
 	}
 }
+
+func TestHumanRegisterRefusesChainWithoutCertificates(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
+	v := loadWhoVectors(t)
+	registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("malformed chain reached registry: %s %s", r.Method, r.URL.Path)
+		http.Error(w, "unexpected", 500)
+	}))
+	origin := strings.Replace(registry.URL, "127.0.0.1", "registry.example", 1)
+	t.Setenv("AWID_REGISTRY_URL", origin)
+	serveRosterTXT(t, idCreateDNSRecordValue(v.Keys["root"].DIDKey, origin))
+	human := &humanParticipation{record: &awconfig.HumanRecord{StableID: v.Keys["alice"].DIDAW, DIDKey: v.Keys["alice"].DIDKey, Domain: "example.com", RegistryURL: origin, State: awconfig.HumanPrepared}}
+	_, err := registerHumanChain(context.Background(), human, map[string]any{"v": 1, "type": "aweb.id-chain"}, origin)
+	if err == nil || err.Error() != "issued human certificate is malformed" {
+		t.Fatalf("malformed chain error=%v", err)
+	}
+}
