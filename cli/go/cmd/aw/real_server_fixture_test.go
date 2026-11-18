@@ -21,7 +21,12 @@ type commandStack struct {
 	ServerURL   string `json:"server_url"`
 }
 
-func realCommandStack(t *testing.T, ctx context.Context, domain, controller string) commandStack {
+type commandStackAuthority struct {
+	Domain        string
+	ControllerDID string
+}
+
+func realCommandStack(t *testing.T, ctx context.Context, authority commandStackAuthority) commandStack {
 	t.Helper()
 	script, err := filepath.Abs("../../../../scripts/test-egress/aweb_fixture.py")
 	if err != nil {
@@ -29,7 +34,7 @@ func realCommandStack(t *testing.T, ctx context.Context, domain, controller stri
 	}
 	project := filepath.Join(awTestBinary.sourceDir, "../../server")
 	command := exec.CommandContext(ctx, "uv", "run", "--offline", "--frozen", "--project", project, "python", script)
-	command.Env = append(append([]string{}, awTestBinary.env...), "AW_COMMAND_DOMAIN="+domain, "AW_COMMAND_CONTROLLER="+controller)
+	command.Env = append(append([]string{}, awTestBinary.env...), "AW_COMMAND_DOMAIN="+authority.Domain, "AW_COMMAND_CONTROLLER="+authority.ControllerDID)
 	command.Stderr = os.Stderr
 	input, err := command.StdinPipe()
 	if err != nil {
@@ -43,7 +48,9 @@ func realCommandStack(t *testing.T, ctx context.Context, domain, controller stri
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_ = input.Close()
+		if err := input.Close(); err != nil {
+			t.Errorf("close command stack input: %v", err)
+		}
 		if err := command.Wait(); err != nil {
 			t.Errorf("real command stack: %v", err)
 		}
@@ -59,96 +66,127 @@ func realCommandStack(t *testing.T, ctx context.Context, domain, controller stri
 	return stack
 }
 
-func TestRealServerMailChatAndUnregisteredCertificate(t *testing.T) {
+// realCommandWorld owns setup through the same writers installed clients use.
+// R11c: docs/identity.md:97 and docs/identity-messaging-contract.md:434.
+type realCommandWorld struct {
+	Context      context.Context
+	Binary       string
+	Stack        commandStack
+	Domain       string
+	TeamID       string
+	NamespaceKey ed25519.PrivateKey
+	TeamKey      ed25519.PrivateKey
+	Registry     *awid.RegistryClient
+}
+
+type commandMember struct {
+	Home        string
+	Certificate *awid.TeamCertificate
+}
+
+func newRealCommandWorld(t *testing.T) *realCommandWorld {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	t.Cleanup(cancel)
-	bin := filepath.Join(t.TempDir(), "aw")
-	buildAwBinary(t, ctx, bin)
-	domain, namespaceKey, teamKey := "commands.test", newKey(t), newKey(t)
-	stack := realCommandStack(t, ctx, domain, didOf(namespaceKey))
-	registry := trustedClient(t, stack.RegistryURL, nil)
-	if _, err := registry.RegisterNamespaceAt(ctx, stack.RegistryURL, domain, didOf(namespaceKey), namespaceKey); err != nil {
+	world := &realCommandWorld{
+		Context: ctx, Binary: filepath.Join(t.TempDir(), "aw"),
+		Domain: "commands.test", NamespaceKey: newKey(t), TeamKey: newKey(t),
+	}
+	buildAwBinary(t, ctx, world.Binary)
+	world.Stack = realCommandStack(t, ctx, commandStackAuthority{Domain: world.Domain, ControllerDID: didOf(world.NamespaceKey)})
+	world.Registry = trustedClient(t, world.Stack.RegistryURL, nil)
+	if _, err := world.Registry.RegisterNamespaceAt(ctx, world.Stack.RegistryURL, world.Domain, didOf(world.NamespaceKey), world.NamespaceKey); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.CreateTeam(ctx, stack.RegistryURL, domain, "backend", "Command tests", didOf(teamKey), namespaceKey); err != nil {
+	if _, err := world.Registry.CreateTeam(ctx, world.Stack.RegistryURL, world.Domain, "backend", "Command tests", didOf(world.TeamKey), world.NamespaceKey); err != nil {
 		t.Fatal(err)
 	}
-	teamID := awid.BuildTeamID(domain, "backend")
-	target, err := resolveTeamRegistrationEndpoint(stack.ServerURL)
+	world.TeamID = awid.BuildTeamID(world.Domain, "backend")
+	target, err := resolveTeamRegistrationEndpoint(world.Stack.ServerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := executeTeamRegisterWithTarget(ctx, teamKey, teamID, target, false, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if _, err := executeTeamRegisterWithTarget(ctx, world.TeamKey, world.TeamID, target, false, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
-	run := func(home string, args ...string) (string, error) {
-		t.Helper()
-		command := exec.CommandContext(ctx, bin, append([]string{"--identity-home", home, "--json"}, args...)...)
-		command.Dir = filepath.Dir(home)
-		command.Env = append(idCreateCommandEnv(filepath.Dir(home)), "AWID_REGISTRY_URL="+stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
-		out, err := command.CombinedOutput()
-		return string(out), err
+	return world
+}
+
+func (world *realCommandWorld) runInIdentityHome(home string, args ...string) (string, error) {
+	command := exec.CommandContext(world.Context, world.Binary, append([]string{"--identity-home", home, "--json"}, args...)...)
+	command.Dir = filepath.Dir(home)
+	command.Env = append(idCreateCommandEnv(filepath.Dir(home)), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
+	out, err := command.CombinedOutput()
+	return string(out), err
+}
+
+func (world *realCommandWorld) requireCommand(t *testing.T, home string, args ...string) string {
+	t.Helper()
+	out, err := world.runInIdentityHome(home, args...)
+	if err != nil {
+		t.Fatalf("aw %v: %v\n%s", args, err, out)
 	}
-	mustRun := func(home string, args ...string) string {
-		t.Helper()
-		out, err := run(home, args...)
-		if err != nil {
-			t.Fatalf("aw %v: %v\n%s", args, err, out)
-		}
-		return out
+	return out
+}
+
+func (world *realCommandWorld) addLocalMember(t *testing.T, alias string) commandMember {
+	t.Helper()
+	home := filepath.Join(t.TempDir(), ".aw")
+	world.requireCommand(t, home, "id", "create", "--local")
+	key, err := awid.LoadSigningKey(filepath.Join(home, "signing.key"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	add := func(alias string) (string, *awid.TeamCertificate) {
-		t.Helper()
-		home := filepath.Join(t.TempDir(), ".aw")
-		mustRun(home, "id", "create", "--local")
-		key, err := awid.LoadSigningKey(filepath.Join(home, "signing.key"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-			Team: teamID, MemberDIDKey: awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), Alias: alias, IdentityScope: "local",
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := registry.RegisterCertificate(ctx, stack.RegistryURL, domain, "backend", cert, teamKey); err != nil {
-			t.Fatal(err)
-		}
-		mustRun(home, "id", "team", "install-cert", "--certificate", certificateFile(t, cert), "--registry", stack.RegistryURL)
-		mustRun(home, "service", "init", "--service", stack.ServerURL, "--team", teamID)
-		return home, cert
+	public, ok := key.Public().(ed25519.PublicKey)
+	if !ok {
+		t.Fatal("loaded signing key did not produce an Ed25519 public key")
 	}
-	alice, certificate := add("alice")
-	bob, _ := add("bob")
-	mustRun(alice, "mail", "send", "--to", "bob", "--subject", "real-server-mail", "--body", "mail from the real binary")
-	if inbox := mustRun(bob, "mail", "inbox"); !strings.Contains(inbox, "real-server-mail") || !strings.Contains(inbox, "mail from the real binary") {
-		t.Fatalf("real server did not deliver mail: %s", inbox)
-	}
-	mustRun(alice, "chat", "send-and-leave", "bob", "chat from the real binary", "--start-conversation")
-	if pending := mustRun(bob, "chat", "pending"); !strings.Contains(pending, "chat from the real binary") {
-		t.Fatalf("real server did not deliver chat: %s", pending)
-	}
-	// Same real key/team/alias, but no registry registration for this certificate.
-	// This is an older client's unanchored credential, not forged registry state.
-	unregistered, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team: teamID, MemberDIDKey: certificate.MemberDIDKey, Alias: certificate.Alias, IdentityScope: "local",
+	certificate, err := awid.SignTeamCertificate(world.TeamKey, awid.TeamCertificateFields{
+		Team: world.TeamID, MemberDIDKey: awid.ComputeDIDKey(public), Alias: alias, IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(alice, teamID, unregistered); err != nil {
+	if err := world.Registry.RegisterCertificate(world.Context, world.Stack.RegistryURL, world.Domain, "backend", certificate, world.TeamKey); err != nil {
 		t.Fatal(err)
 	}
-	out, err := run(alice, "mail", "send", "--to", "bob", "--subject", "must-not-arrive", "--body", "unregistered")
+	world.requireCommand(t, home, "id", "team", "install-cert", "--certificate", certificateFile(t, certificate), "--registry", world.Stack.RegistryURL)
+	world.requireCommand(t, home, "service", "init", "--service", world.Stack.ServerURL, "--team", world.TeamID)
+	return commandMember{Home: home, Certificate: certificate}
+}
+
+func TestRealServerMailChatAndUnregisteredCertificate(t *testing.T) {
+	world := newRealCommandWorld(t)
+	alice, bob := world.addLocalMember(t, "alice"), world.addLocalMember(t, "bob")
+	world.requireCommand(t, alice.Home, "mail", "send", "--to", "bob", "--subject", "real-server-mail", "--body", "mail from the real binary")
+	if inbox := world.requireCommand(t, bob.Home, "mail", "inbox"); !strings.Contains(inbox, "real-server-mail") || !strings.Contains(inbox, "mail from the real binary") {
+		t.Fatalf("real server did not deliver mail: %s", inbox)
+	}
+	world.requireCommand(t, alice.Home, "chat", "send-and-leave", "bob", "chat from the real binary", "--start-conversation")
+	if pending := world.requireCommand(t, bob.Home, "chat", "pending"); !strings.Contains(pending, "chat from the real binary") {
+		t.Fatalf("real server did not deliver chat: %s", pending)
+	}
+	// Same real key/team/alias, but no registry registration for this certificate.
+	// This is an older client's unanchored credential, not forged registry state.
+	unregistered, err := awid.SignTeamCertificate(world.TeamKey, awid.TeamCertificateFields{
+		Team: world.TeamID, MemberDIDKey: alice.Certificate.MemberDIDKey, Alias: alice.Certificate.Alias, IdentityScope: awid.IdentityModeLocal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(alice.Home, world.TeamID, unregistered); err != nil {
+		t.Fatal(err)
+	}
+	out, err := world.runInIdentityHome(alice.Home, "mail", "send", "--to", "bob", "--subject", "must-not-arrive", "--body", "unregistered")
 	var refused cliErrorEnvelope
 	if err == nil || json.Unmarshal([]byte(out), &refused) != nil || refused.Error.Code != "http_error" || refused.Error.HTTPStatus != 401 || refused.Error.Detail != "unregistered" {
 		t.Fatalf("unregistered certificate did not get its own HTTP 401 refusal: %v\n%s", err, out)
 	}
-	if inbox := mustRun(bob, "mail", "inbox"); strings.Contains(inbox, "must-not-arrive") {
+	if inbox := world.requireCommand(t, bob.Home, "mail", "inbox"); strings.Contains(inbox, "must-not-arrive") {
 		t.Fatalf("unregistered sender delivered mail: %s", inbox)
 	}
-	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(alice, teamID, certificate); err != nil {
+	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(alice.Home, world.TeamID, alice.Certificate); err != nil {
 		t.Fatal(err)
 	}
-	mustRun(alice, "mail", "send", "--to", "bob", "--subject", "still-valid", "--body", "registered sender remains usable")
+	world.requireCommand(t, alice.Home, "mail", "send", "--to", "bob", "--subject", "still-valid", "--body", "registered sender remains usable")
 }
