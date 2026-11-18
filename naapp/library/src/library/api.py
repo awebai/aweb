@@ -1,5 +1,5 @@
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -187,55 +187,6 @@ def create_app(
     async def reference_route() -> HTMLResponse:
         return HTMLResponse(render_reference_page(public_origin=resolved.public_origin))
 
-    @app.get("/blueprints", response_class=HTMLResponse)
-    async def browse_catalog_route(
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-    ) -> HTMLResponse:
-        blueprints = await browse_views.catalog_view(database)
-        return HTMLResponse(
-            browse.render_catalog_page(public_origin=resolved.public_origin, blueprints=blueprints)
-        )
-
-    @app.get("/blueprints/{blueprint_id}", response_class=HTMLResponse)
-    async def browse_blueprint_route(
-        blueprint_id: str,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-    ) -> HTMLResponse:
-        blueprint = await browse_views.blueprint_view(database, blueprint_ref=blueprint_id)
-        return HTMLResponse(
-            browse.render_blueprint_page(public_origin=resolved.public_origin, blueprint=blueprint)
-        )
-
-    @app.get("/blueprints/{blueprint_id}/profiles/{profile_id}", response_class=HTMLResponse)
-    async def browse_profile_route(
-        blueprint_id: str,
-        profile_id: str,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-    ) -> HTMLResponse:
-        profile = await browse_views.profile_view(
-            database, blueprint_ref=blueprint_id, profile_ref=profile_id
-        )
-        return HTMLResponse(
-            browse.render_profile_page(public_origin=resolved.public_origin, profile=profile)
-        )
-
-    @app.get(
-        "/blueprints/{blueprint_id}/profiles/{profile_id}/skills/{skill_name}",
-        response_class=HTMLResponse,
-    )
-    async def browse_skill_route(
-        blueprint_id: str,
-        profile_id: str,
-        skill_name: str,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-    ) -> HTMLResponse:
-        skill = await browse_views.skill_view(
-            database, blueprint_ref=blueprint_id, profile_ref=profile_id, skill_name=skill_name
-        )
-        return HTMLResponse(
-            browse.render_skill_page(public_origin=resolved.public_origin, skill=skill)
-        )
-
     @app.get("/robots.txt", response_class=PlainTextResponse)
     async def robots_route() -> PlainTextResponse:
         return PlainTextResponse(robots_txt(), headers={"X-Content-Type-Options": "nosniff"})
@@ -281,6 +232,68 @@ def create_app(
             payload["deployment"] = deployment_identity
         return payload
 
+    _mount_browse_routes(app, db=db, public_origin=resolved.public_origin)
+    _mount_catalog_routes(app, db=db)
+    _mount_member_routes(app, principal=principal, db=db)
+
+    return app
+
+
+def _mount_browse_routes(
+    app: FastAPI, *, db: Callable[..., AsyncDatabaseManager], public_origin: str
+) -> None:
+    """The public HTML pages that browse the blueprint catalog."""
+
+    @app.get("/blueprints", response_class=HTMLResponse)
+    async def browse_catalog_route(
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        blueprints = await browse_views.catalog_view(database)
+        return HTMLResponse(
+            browse.render_catalog_page(public_origin=public_origin, blueprints=blueprints)
+        )
+
+    @app.get("/blueprints/{blueprint_id}", response_class=HTMLResponse)
+    async def browse_blueprint_route(
+        blueprint_id: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        blueprint = await browse_views.blueprint_view(database, blueprint_ref=blueprint_id)
+        return HTMLResponse(
+            browse.render_blueprint_page(public_origin=public_origin, blueprint=blueprint)
+        )
+
+    @app.get("/blueprints/{blueprint_id}/profiles/{profile_id}", response_class=HTMLResponse)
+    async def browse_profile_route(
+        blueprint_id: str,
+        profile_id: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        profile = await browse_views.profile_view(
+            database, blueprint_ref=blueprint_id, profile_ref=profile_id
+        )
+        return HTMLResponse(
+            browse.render_profile_page(public_origin=public_origin, profile=profile)
+        )
+
+    @app.get(
+        "/blueprints/{blueprint_id}/profiles/{profile_id}/skills/{skill_name}",
+        response_class=HTMLResponse,
+    )
+    async def browse_skill_route(
+        blueprint_id: str,
+        profile_id: str,
+        skill_name: str,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> HTMLResponse:
+        skill = await browse_views.skill_view(
+            database, blueprint_ref=blueprint_id, profile_ref=profile_id, skill_name=skill_name
+        )
+        return HTMLResponse(browse.render_skill_page(public_origin=public_origin, skill=skill))
+
+
+def _mount_catalog_routes(app: FastAPI, *, db: Callable[..., AsyncDatabaseManager]) -> None:
+    """The public JSON catalog: blueprints and their profiles, readable by anyone."""
     # --- Public catalog: blueprints are always public; ?tags filter -------------------
 
     @app.get("/v1/blueprints")
@@ -307,6 +320,14 @@ def create_app(
             database, blueprint_ref=blueprint_id, profile_ref=profile_id
         )
 
+
+def _mount_member_routes(
+    app: FastAPI,
+    *,
+    principal: Callable[..., Awaitable[Principal]],
+    db: Callable[..., AsyncDatabaseManager],
+) -> None:
+    """The team-scoped routes, each admitted by ``principal``."""
     # --- Team shelf reads (private; cert-gated) -----------------------------------
 
     @app.get("/v1/shelf")
@@ -533,8 +554,6 @@ def create_app(
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> dict:
         return await reject_proposal(database, principal=actor, proposal_id=proposal_id)
-
-    return app
 
 
 app = create_app()
