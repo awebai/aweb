@@ -128,9 +128,12 @@ Mail and chat are fetched from durable messages before entering the prompt.
 When verification is `failed` or `identity_mismatch`, the launcher withholds
 the body and subject. It presents the claimed sender, the verification failure,
 and an `aw mail show --message-id ...` or `aw chat history --session-id ...`
-command for a deliberate read. Claimed sender labels from any message or event
-field are terminal-escaped, capped at 320 runes and quoted as data at this
-presentation boundary. These withheld messages remain unread.
+command for a deliberate read. A claimed sender from any message or event field
+is shown only when it is a valid alias, domain/name address, `did:key` or
+`did:aw`, using the existing identifier validators. Other labels become the
+fixed phrase "a sender whose name is not a valid identifier", with none of the
+original text. Identifier grammar bounds the label's length. These withheld
+messages remain unread.
 
 Unsigned, stale, missing and unknown verification results keep a warning next
 to the content. A warning does not establish authorship; retry verification
