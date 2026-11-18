@@ -8,7 +8,6 @@ is never accepted for another, even when one physical key serves several.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -22,6 +21,7 @@ from awid.signing import canonical_json_bytes, verify_did_key_signature
 
 from aweb.app_registry import get_active_app_emit_key, get_active_app_key, validate_team_id
 from aweb.config import get_settings
+from aweb.request_body import request_body_sha256
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
 APP_CREDENTIAL_VERSION = 1
@@ -143,9 +143,7 @@ async def verify_app_credential(request: Request, db, purpose: str, *, installat
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is None:
-        body_sha256 = hashlib.sha256(getattr(request.state, "cached_body", b"") or b"").hexdigest()
+    body_sha256 = request_body_sha256(request)
 
     try:
         canonical = decode_signed_payload_header(str(request.headers.get("X-AWEB-Signed-Payload") or "").strip())

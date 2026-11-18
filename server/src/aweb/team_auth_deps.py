@@ -41,6 +41,7 @@ from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_sc
 from aweb.identity_address import AddressResolution
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_key_pins import pinned_team_key_for_request
+from aweb.request_body import request_body_sha256
 from aweb.team_auth_envelope import team_auth_signature_payload
 
 logger = logging.getLogger(__name__)
@@ -223,10 +224,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     # Verify Ed25519 signature over the team-auth request envelope.
     # Legacy clients sign compact v1: {team_id, timestamp, body_sha256}.
     # Current clients sign request-bound v2 in X-AWEB-Signed-Payload.
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is None:
-        import hashlib as _hashlib
-        body_sha256 = _hashlib.sha256(b"").hexdigest()
+    body_sha256 = request_body_sha256(request)
     allowed_audiences = (
         _team_auth_allowed_audiences(request)
         if str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()

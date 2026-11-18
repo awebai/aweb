@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 from dataclasses import dataclass, field
 
@@ -30,6 +29,7 @@ from aweb.team_auth_deps import (
     revoked_certificates,
 )
 from aweb.team_auth_envelope import identity_auth_signature_payload
+from aweb.request_body import request_body_sha256
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +77,6 @@ def participant_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
     return auth_dids(identity)[:1]
 
 
-def _get_body_sha256(request: Request) -> str:
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is not None:
-        return body_sha256
-    return hashlib.sha256(b"").hexdigest()
-
-
 async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     auth_header = request.headers.get("Authorization")
     if not auth_header:
@@ -97,7 +90,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     try:
         envelope = identity_auth_signature_payload(
             request, did_aw=did_aw, timestamp=timestamp,
-            body_sha256=_get_body_sha256(request),
+            body_sha256=request_body_sha256(request),
             allowed_audiences=_team_auth_allowed_audiences(request)
             if request.headers.get("X-AWEB-Signed-Payload") else [],
         )

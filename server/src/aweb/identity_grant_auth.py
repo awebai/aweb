@@ -32,6 +32,7 @@ from aweb.team_auth_deps import (
     _get_registered_certificates,
     _get_revoked_certificates,
 )
+from aweb.request_body import request_body_sha256
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
 GRANT_AUTH_SCHEME = "AWEB-Grant "
@@ -114,10 +115,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is None:
-        import hashlib as _hashlib
-        body_sha256 = _hashlib.sha256(getattr(request.state, "cached_body", b"") or b"").hexdigest()
+    body_sha256 = request_body_sha256(request)
 
     try:
         canonical = decode_signed_payload_header(str(request.headers.get("X-AWEB-Signed-Payload") or "").strip())

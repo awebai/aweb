@@ -5,7 +5,7 @@ SQL provisions identities only. No authentication, resolver or delivery mocks.
 from __future__ import annotations
 
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -19,11 +19,12 @@ from test_messages_http import _encode_certificate, _make_certificate, _signed_t
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("channel", ["mail", "chat"])
-async def test_mounted_mcp_send_to_saved_contact(privacy_app, monkeypatch, channel):
+@pytest.mark.parametrize("reassigned", [False, True])
+async def test_mounted_mcp_send_to_saved_contact(privacy_app, monkeypatch, channel, reassigned):
     env = privacy_app
     alice, bob = env.actors["alice"], env.actors["bob"]
     async with registry_listener(env) as (registry, registry_origin):
-        for name, actor in (("alice", alice), ("bob", bob)):
+        for name, actor in env.actors.items():
             address = f"example.test/{name}"
             stable = await register_global_identity(env, actor, address)
             await env.db.execute(
@@ -69,16 +70,43 @@ async def test_mounted_mcp_send_to_saved_contact(privacy_app, monkeypatch, chann
                 tool = result["result"]
                 assert not tool.get("isError"), tool
                 value = json.loads(tool["content"][0]["text"])
-                assert "error" not in value, value
                 return value
 
             added = await call("add_contact", address="example.test/bob")
+            assert "error" not in added, added
+            if reassigned:
+                # A valid registry reassignment leaves an old local projection
+                # in another team. Contact lookup and send must not resolve the
+                # same name under different visibility rules and change identity.
+                other_team = f"contact-{uuid4().hex[:12]}:example.test"
+                await env.db.execute(
+                    "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
+                    "VALUES ($1, 'example.test', $2, $3)",
+                    other_team, other_team.split(":", 1)[0], env.team_did,
+                )
+                await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1 WHERE agent_id=$2", other_team, bob.id)
+                carol_did = await env.db.fetch_value(
+                    "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1", env.actors["carol"].id,
+                )
+                await registry.reassign_address("example.test", "bob", carol_did, env.team_sk)
+                refused = await call(
+                    "send_message_to_contact", contact_id=added["contact_id"],
+                    channel=channel, message="must not change identity", subject="saved contact",
+                )
+                assert refused == {
+                    "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+                    "reason": "contact_identity_binding_required",
+                }
+                for table in ("messages", "chat_messages"):
+                    assert await env.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
+                return
             conversation = None
             for message in ("first contact send", "another contact send"):
                 sent = await call(
                     "send_message_to_contact", contact_id=added["contact_id"],
                     channel=channel, message=message, subject="saved contact",
                 )
+                assert "error" not in sent, sent
                 current = sent.get("conversation_id") or sent.get("session_id")
                 assert current
                 if conversation is not None:

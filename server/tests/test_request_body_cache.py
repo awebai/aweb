@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+from datetime import datetime, timezone
 
 import pytest
 from fastapi import FastAPI, HTTPException, Request
@@ -12,8 +14,48 @@ from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from aweb.api import RequestBodyCacheMiddleware, create_app
+from aweb.identity_auth_deps import resolve_identity_auth
+from awid.did import did_from_public_key
+from awid.signing import canonical_json_bytes, sign_message
+from nacl.signing import SigningKey
 
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cached_only", [False, True])
+@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("body", [b"", b'{"text":"signed bytes"}'])
+async def test_identity_request_auth_binds_cached_bytes(cached_only, version, body):
+    """An embedding host's byte cache and the full middleware bind the same body."""
+    app = FastAPI()
+    app.state.public_origin = "https://body.example"
+    if not cached_only:
+        app.add_middleware(RequestBodyCacheMiddleware)
+
+    @app.post("/authenticate")
+    async def authenticate(request: Request):
+        if cached_only:
+            request.state.cached_body = await request.body()
+        identity = await resolve_identity_auth(request)
+        return {"did_key": identity.did_key}
+
+    key = SigningKey.generate()
+    did = did_from_public_key(bytes(key.verify_key))
+    timestamp = datetime.now(timezone.utc).isoformat()
+    payload = {"did_aw": "", "timestamp": timestamp, "body_sha256": hashlib.sha256(body).hexdigest()}
+    if version == 2:
+        payload.update(v=2, aud=app.state.public_origin, method="POST", path="/authenticate")
+    canonical = canonical_json_bytes(payload)
+    headers = {"Authorization": f"DIDKey {did} {sign_message(bytes(key), canonical)}", "X-AWEB-Timestamp": timestamp}
+    if version == 2:
+        headers["X-AWEB-Signed-Payload"] = base64.urlsafe_b64encode(canonical).rstrip(b"=").decode()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=app.state.public_origin) as client:
+        accepted = await client.post("/authenticate", content=body, headers=headers)
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json() == {"did_key": did}
+        changed = await client.post("/authenticate", content=body + b" ", headers=headers)
+        assert changed.status_code == 401, changed.text
 
 
 class Note(BaseModel):
