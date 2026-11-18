@@ -211,3 +211,36 @@ async def test_room_rechecks_current_membership_after_request_authentication(pin
     ).status_code == 200
     after = await room_metadata(env.infra, actor)
     assert after["room_id"] == before["room_id"]
+
+
+@pytest.mark.asyncio
+async def test_public_native_actor_lock_requires_current_member_under_real_rotation(pinning):
+    from aweb.human_channels.authority import NativeMessagingSubject, lock_native_actors
+    from aweb.human_channels.contract import ContractError
+
+    env = pinning
+    member = _new_member("nativeactor")
+    certificate = _certificate(env.team_sk, env.team_did, member, "native-before")
+    assert (await _connect(env, member, certificate)).status_code == 200
+    # The public SDK receives exact actor facts produced by real admission;
+    # no host authority hook or authenticated context is substituted here.
+    member_row = await _row(env, member)
+    subject = NativeMessagingSubject(member[1], member[1], str(member_row["agent_id"]), TEAM)
+
+    async def read_locked():
+        async with env.db.transaction() as transaction:
+            return await lock_native_actors(env.infra, transaction.connection, (subject,))
+
+    assert await read_locked() == (subject,)
+    next_sk, next_did = await _change_key(env)
+    with pytest.raises(ContractError) as refused:
+        await read_locked()
+    assert refused.value.code == "forbidden"
+    assert refused.value.field == (
+        "Team membership is no longer current. "
+        "Reconnect with a certificate issued under the team's current key."
+    )
+    assert (
+        await _connect(env, member, _certificate(next_sk, next_did, member, "native-after"))
+    ).status_code == 200
+    assert await read_locked() == (subject,)

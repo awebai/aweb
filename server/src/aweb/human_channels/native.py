@@ -7,10 +7,6 @@ Managed membership/export/federation remain separately negotiated capabilities.
 
 from __future__ import annotations
 
-from aweb.identity_binding import verified_key_sql
-
-from aweb.human_kind import is_verified_human
-
 import hashlib
 import json
 import logging
@@ -26,12 +22,23 @@ from fastapi import HTTPException
 
 from aweb.attachment_service import prepare_attachment_send
 from aweb.db import TransactionInfra
-from aweb.identity_auth_deps import auth_dids, participant_dids
-from aweb.identity_binding import verified_projection
+from aweb.human_kind import is_verified_human
 from aweb.identity_address import require_address_evidence
+from aweb.identity_auth_deps import auth_dids, participant_dids
 from aweb.inbound_modes import effective_inbound_mode
+from aweb.member_team_key import (
+    CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+    current_member,
+    current_member_projections,
+    lock_member_projections,
+    messaging_identity_projection,
+)
 from aweb.messaging.chat import ensure_session, send_in_session
-from aweb.messaging.chat_policy import HumanChatRefused, recipient_label, require_agent_chat
+from aweb.messaging.chat_policy import (
+    HumanChatRefused,
+    recipient_label,
+    require_agent_chat,
+)
 from aweb.messaging.conversations import create_conversation, get_conversation
 from aweb.messaging.messages import authorize_message_delivery, deliver_message
 
@@ -135,27 +142,25 @@ class NativeMessagingService:
         )
 
     async def _row(self, *, principal=None, actor_id=None, team_id=None):
-        rows = await self.db.get_manager("aweb").fetch_all(
-            f"""SELECT agent_id, team_id, alias, did_key, did_aw, address,
-                      did_aw_verified_key, identity_scope,
-                      (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
-                      did_aw AS policy_did_aw,
-                      status, deleted_at, certificate_id, agent_type, human_verified_key, inbound_mode
-               FROM {{{{tables.agents}}}}
-               WHERE deleted_at IS NULL
-                 AND ($1::uuid IS NULL OR agent_id=$1)
-                 AND ($2::text IS NULL OR (did_aw=$2 AND {verified_key_sql()}) OR did_key=$2)
-                 AND ($3::text IS NULL OR team_id=$3)""",
-            UUID(actor_id) if actor_id else None,
-            principal,
-            team_id,
+        try:
+            selected_actor = UUID(actor_id) if actor_id else None
+        except (ValueError, TypeError, AttributeError) as error:
+            raise ContractError(
+                "invalid", "Actor ID is invalid. Select a current team member."
+            ) from error
+        rows = await current_member_projections(
+            self.db,
+            agent_id=selected_actor,
+            dids=[principal] if principal else None,
+            team_id=team_id,
         )
         if len(rows) != 1:
-            raise ContractError("not_found" if not rows else "forbidden", "exact local actor")
-        row = verified_projection(rows[0])
-        if row["status"] != "active":
-            raise ContractError("forbidden", "inactive actor")
-        return row
+            raise ContractError(
+                "not_found" if not rows else "forbidden",
+                "The actor is not an unambiguous current team member. "
+                "Select the intended team and reconnect with a current team certificate.",
+            )
+        return messaging_identity_projection(rows[0])
 
     async def _authority_call(self, method, *args):
         try:
@@ -665,19 +670,19 @@ class NativeMessagingUnitOfWork:
             _snapshot(self.claim, "IngressKey"),
             self.transaction,
         )
-        rows = await self.manager.fetch_all(
-            "SELECT * FROM {{tables.agents}} WHERE agent_id=ANY($1::uuid[]) ORDER BY agent_id FOR UPDATE",
-            sorted({retained.author["agent_id"], retained.recipient["agent_id"]}, key=str),
+        rows = await lock_member_projections(
+            self.manager,
+            agent_ids=[retained.author["agent_id"], retained.recipient["agent_id"]],
         )
-        by_id = {str(row["agent_id"]): verified_projection(row) for row in rows}
+        by_id = {str(row["agent_id"]): messaging_identity_projection(row) for row in rows}
         if value["kind"] == "chat":
             current_recipient = by_id.get(str(retained.recipient["agent_id"]))
             if current_recipient and is_verified_human(current_recipient):
                 raise HumanChatRefused(recipient_label(current_recipient))
         for old in (retained.author, retained.recipient):
             row = by_id.get(str(old["agent_id"]))
-            if row is None or row["status"] != "active" or row.get("deleted_at") is not None:
-                raise ContractError("forbidden", "inactive actor")
+            if not current_member(row):
+                raise ContractError("forbidden", CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
             if any(
                 row.get(k) != old.get(k)
                 for k in (

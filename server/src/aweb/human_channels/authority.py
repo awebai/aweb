@@ -14,7 +14,11 @@ from uuid import UUID
 
 from pgdbm import TransactionManager
 
-from aweb.identity_binding import verified_projection
+from aweb.member_team_key import (
+    CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+    current_member,
+    lock_member_projections,
+)
 
 from .contract import ContractError, ContractRecord
 
@@ -74,18 +78,14 @@ async def lock_native_actors(
         except ValueError as error:
             raise ContractError("invalid", "actor ID") from error
     manager = TransactionManager(transaction, db.get_manager("aweb"))
-    rows = await manager.fetch_all(
-        """SELECT agent_id, team_id, did_key, did_aw, did_aw_verified_key, status, deleted_at
-           FROM {{tables.agents}} WHERE agent_id=ANY($1::uuid[])
-           ORDER BY agent_id FOR UPDATE""",
-        sorted(set(actor_ids)),
-    )
-    by_id = {row["agent_id"]: verified_projection(row) for row in rows}
+    rows = await lock_member_projections(manager, agent_ids=actor_ids)
+    by_id = {row["agent_id"]: row for row in rows}
     facts = []
     for subject, actor_id in zip(subjects, actor_ids):
         row = by_id.get(actor_id)
-        if row is None or row["status"] != "active" or row["deleted_at"] is not None:
-            raise ContractError("forbidden", "inactive actor")
+        if not current_member(row):
+            raise ContractError("forbidden", CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+        row = row.verified_identity()
         current = NativeMessagingSubject(
             row["did_aw"] or row["did_key"], row["did_key"], str(row["agent_id"]), row["team_id"]
         )

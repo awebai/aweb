@@ -182,6 +182,27 @@ async def read_member_projection(
     return MemberProjection.from_row(row) if row is not None else None
 
 
+async def lock_member_projections(tx, *, agent_ids: list[UUID]) -> list[MemberProjection]:
+    """Read complete native actor facts under caller-owned row locks.
+
+    Actor-ID ordering preserves the public embedding transaction contract.
+    Callers apply current_member and compare their retained identity facts;
+    these row locks do not grant a team or participant identity.
+    """
+    if not agent_ids:
+        return []
+    rows = await tx.fetch_all(
+        "SELECT "
+        + member_projection_columns_sql("a")
+        + """
+        FROM {{tables.agents}} a WHERE a.agent_id=ANY($1::uuid[])
+        ORDER BY a.agent_id FOR UPDATE OF a
+        """,
+        sorted(set(agent_ids)),
+    )
+    return [MemberProjection.from_row(row) for row in rows]
+
+
 def current_team_key_sql(agent: str) -> str:
     """SQL for the current key of the team of the agents row aliased ``agent``."""
     return f"(SELECT team_did_key FROM {{{{tables.teams}}}} WHERE team_id = {agent}.team_id)"
