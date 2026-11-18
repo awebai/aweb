@@ -7,9 +7,10 @@ import pytest
 from aweb_naapp_testing.webauthn import b64url, from_b64url
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-from .test_webauthn import CHALLENGE, RP, assertion_options, enrolled
 
 from aweb_naapp.runtime.passkeys import WebAuthnRefused, verify_assertion
+
+from .test_webauthn import CHALLENGE, RP, assertion_options, enrolled
 
 
 @pytest.mark.parametrize(
