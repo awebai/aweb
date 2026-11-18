@@ -62,7 +62,7 @@ async def envelopes(db, team_id):
 
 
 @pytest.fixture
-async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
+async def root(test_db_factory, registry, tmp_path, request, monkeypatch, production_settings):
     member = Member(team_id="root:example.com", member_key=member_key("alice"))
     options = getattr(request, "param", {})
 
@@ -84,6 +84,7 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch):
                 update={
                     "public_origin": AUDIENCE,
                     "awid_service_token": SERVICE_TOKEN,
+                    **production_settings,
                 }
             )
             service_member = None
