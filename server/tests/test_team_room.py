@@ -106,7 +106,18 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
     assert exact.json() == item
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.messages}}") == 0
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.chat_messages}}") == 0
-    assert env.dispatched == []  # Room notices use no legacy mutation fan-out.
+    assert len(env.dispatched) == 1
+    event, context = env.dispatched[0]
+    assert event == "room.message_sent"
+    assert context["team_id"] == TEAM
+    assert context["from_agent_id"] == str(env.actors["alice"].id)
+    assert context["message_id"] == item["message_id"]
+    assert context["room_id"] == room["room_id"]
+    # Retrying the same post does not charge or notify a second send.
+    retried = await post(env, room, payload=payload)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["message_id"] == item["message_id"]
+    assert len(env.dispatched) == 1
 
 
 @pytest.mark.asyncio
