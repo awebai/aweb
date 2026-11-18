@@ -82,14 +82,15 @@ LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id"
   || refuse "source checkout is dirty or has untracked files"
 [[ "$(git -C "$ROOT" rev-parse HEAD)" == "$SOURCE_SHA" ]] \
   || refuse "source checkout HEAD differs from selected SHA"
-# Focused pre-landing proof uses the same stages and ledger. Release candidates
-# always request the complete list and retain the origin/main requirement.
+# A normal branch gate runs every stage before landing. Tag creation separately
+# enforces origin/main ancestry in release_candidate.py.
 STAGES="${AWEB_CANDIDATE_STAGES:-}"
-REQUESTED="${STAGES:-checks user-paths unit artifacts integration}"
-if [[ -z "$STAGES" ]]; then
-  git -C "$ROOT" fetch --quiet origin main
-  git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
-    || refuse "source SHA is not on the synchronized origin/main history"
+stage_owner="$ROOT/scripts/vm-gate/vm_gate/aweb_stages.py"
+REQUESTED="$(python3 "$stage_owner" "${STAGES:-all}")" || exit 2
+selection_coverage="$(python3 "$stage_owner" --coverage "$REQUESTED")" || exit 2
+printf 'gate: %s stage selection for commit %s: %s\n' "$selection_coverage" "$SOURCE_SHA" "$REQUESTED"
+if [[ "$selection_coverage" == partial ]]; then
+  printf 'gate: focused run only; run make candidate-gate without AWEB_CANDIDATE_STAGES before landing.\n'
 fi
 [[ -d "$LIBRARY_E2E_BLUEPRINT_SRC" ]] || refuse "blueprint input is missing"
 CLI_VERSION="${CLI_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" aw-v)}"
@@ -101,7 +102,7 @@ A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_ve
 TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
 LEDGER="${AWEB_GATE_LEDGER:-$HOME/.cache/aweb-oss/candidate-gate-ledger.tsv}"
 external_inputs="CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY_VERSION"$'\n'
-# The same tree must be requalified when the released client changes. Resolve
+# The same commit must be requalified when the released client changes. Resolve
 # latest exactly once here, for every stage selection. Focused and full callers
 # must share a key so the full gate can reuse their completed stages.
 resolve_started=$SECONDS
@@ -148,7 +149,7 @@ gate_setting AWEB_CANDIDATE_REDIS_PIDS 256
 gate_setting AWEB_CANDIDATE_SIBLING_CPUS 2
 gate_setting AWEB_CANDIDATE_SIBLING_MEMORY 4g
 gate_setting AWEB_CANDIDATE_SIBLING_PIDS 1024
-KEY="$TREE-$(printf '%s' "$external_inputs" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+KEY="$SOURCE_SHA-$(printf '%s' "$external_inputs" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
 LEDGER_LOGS="${AWEB_GATE_LOG_DIR:-$(dirname "$LEDGER")/gate-logs}"
 # The runner uses the host UID without requiring a container passwd entry.
 # Owner is a ledger label, so its numeric UID is sufficient in that case.
@@ -169,15 +170,14 @@ recorded() {
 }
 failed="$(awk -F'\t' -v key="$KEY" '$1 == key && $3 == "failed"' "$LEDGER" | tail -1)"
 if [[ -n "$failed" ]]; then
-  printf 'gate: tree %s already FAILED %s (log %s).\n' "$TREE" "$(cut -f2 <<<"$failed")" "$(cut -f6 <<<"$failed")" >&2
+  printf 'gate: commit %s already FAILED %s (log %s).\n' "$SOURCE_SHA" "$(cut -f2 <<<"$failed")" "$(cut -f6 <<<"$failed")" >&2
   printf '%s\n' "Fix the code and gate the changed tree. For infrastructure failures only, the coordinator removes the failed ledger line and uses GATE_RERUN_REASON='<reason>'." >&2
   exit 1
 fi
 pending=""
 for stage in $REQUESTED; do
-  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
   if [[ "$(recorded "$stage" | cut -f3)" == passed ]]; then
-    printf 'gate: tree %s already passed %s; original log %s\n' "$TREE" "$stage" "$(recorded "$stage" | cut -f6)"
+    printf 'gate: commit %s already passed %s; original log %s\n' "$SOURCE_SHA" "$stage" "$(recorded "$stage" | cut -f6)"
     if [[ "$stage" == user-paths ]]; then
       # Reusing the proof must not hide its coverage gap in an otherwise green gate.
       grep -E 'NOT COVERED: pending aweb-actu$|^incomplete: human paths not covered$' "$(recorded "$stage" | cut -f6)" || true
@@ -187,7 +187,7 @@ for stage in $REQUESTED; do
   fi
 done
 if [[ -z "$pending" ]]; then
-  printf 'gate: tree %s passed %s; no stages run\n' "$TREE" "$REQUESTED"
+  printf 'gate: commit %s passed %s; no stages run\n' "$SOURCE_SHA" "$REQUESTED"
   exit 0
 fi
 

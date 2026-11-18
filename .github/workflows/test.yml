@@ -1,14 +1,8 @@
 name: Test suite
 
-# `make test` on every pull request. This is the PR-time signal that the
-# deleted comprehensive hosted gate used to provide as a side effect of running
-# on pull requests too - at the cost of a ~120-minute job with a 54%
-# cancellation rate, most of whose expensive half the focused workflows already
-# cover (cli-e2e, federation-e2e and library-ci each run their Docker journey
-# on pull requests). The complete proof runs locally in Docker through
-# `make release-candidate TAGS='...'` before any publication tag exists.
-#
-# No Docker journeys: `make test` contains none, which is what makes this cheap.
+# Fast PR feedback, not landing qualification. Every landing separately runs
+# all stages of `make candidate-gate` on its exact commit, including journeys.
+# The complete Docker gate is independent of GitHub Actions.
 
 on:
   pull_request:

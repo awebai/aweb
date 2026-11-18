@@ -19,7 +19,8 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
 fi
 
 log_dir="${CANDIDATE_LOG_DIR:?CANDIDATE_LOG_DIR is required}"
-stages="${1:-checks user-paths unit artifacts integration}"
+stage_owner="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/vm-gate/vm_gate/aweb_stages.py"
+stages="$(python3 "$stage_owner" "${1:-all}")" || exit 2
 checks() {
   cat "$log_dir/host-published-port.log"
   run check-generated-copies
@@ -99,7 +100,6 @@ node_ready=0
 cli_ready=0
 : > "$log_dir/summary.tsv"
 for stage in $stages; do
-  case "$stage" in checks|user-paths|unit|artifacts|integration) ;; *) echo "unknown candidate stage: $stage" >&2; exit 2;; esac
   case "$stage" in
     artifacts|integration)
       if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; node_ready=1; fi ;;

@@ -17,6 +17,10 @@ class AwebAdapterTests(unittest.TestCase):
 
     def test_subset_uses_existing_selector_and_focused_command_is_unchanged(self):
         self.assertEqual(
+            command(stages="all"),
+            "AWEB_CANDIDATE_STAGES='" + ALL + "' make candidate-gate",
+        )
+        self.assertEqual(
             command(stages="artifacts integration"),
             "AWEB_CANDIDATE_STAGES='artifacts integration' make candidate-gate",
         )

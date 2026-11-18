@@ -33,7 +33,7 @@ STAGES = "checks user-paths unit artifacts integration"
 # use real tools and services, never a replacement runner.
 REAL_RECIPES = frozenset({
     "test-shipping", "_candidate-node-deps", "build", "_candidate-unit-suites",
-    "_candidate-artifact-server", "freshness", "e2e-naapp", "cli-e2e",
+    "_candidate-artifact-server", "freshness", "e2e-naapp", "cli-e2e", "e2e-user-paths",
 })
 
 
@@ -74,9 +74,10 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
         repo = Path(temporary)
         for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh",
-                     "candidate-host-pressure.py", "candidate-network.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
+                     "candidate-host-pressure.py", "candidate-network.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py",
+                     "vm-gate/vm_gate/aweb_stages.py"):
             destination = repo / "scripts" / name
-            destination.parent.mkdir(exist_ok=True)
+            destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
         (repo / "candidate-gate/bin").mkdir(parents=True)
         shutil.copy2(ROOT / "candidate-gate/bin/docker", repo / "candidate-gate/bin/docker")
@@ -105,6 +106,8 @@ _candidate-node-deps:
 \t@echo node >> "$$CANDIDATE_LOG_DIR/setup.log"
 build:
 \t@echo cli >> "$$CANDIDATE_LOG_DIR/setup.log"
+e2e-user-paths:
+\t@python3 -c 'import hashlib,json,os,pathlib; raw=pathlib.Path(os.environ["USER_PATHS_LATEST_METADATA"]).read_bytes(); digest=hashlib.sha256(raw).hexdigest(); assert digest == os.environ["USER_PATHS_LATEST_SHA256"]; metadata=json.loads(raw); assert metadata["version"]; print("runner frozen released input:", digest, metadata["version"])'
 _candidate-unit-suites:
 \t@test "$$(psql -h "$$TEST_DB_HOST" -U postgres -d postgres -Atc 'SELECT 6 * 7')" = 42
 _candidate-artifact-server:
@@ -166,10 +169,24 @@ candidate-gate:
         rows = ledger.read_text().splitlines()
         assert len(rows) == len(STAGES.split()) and {row.split("\t")[1] for row in rows} == set(STAGES.split())
         assert all(row.split("\t")[2] == "passed" for row in rows)
+        user_path_log = Path(next(row.split("\t")[5] for row in rows
+                                  if row.split("\t")[1] == "user-paths"))
+        assert "runner frozen released input:" in user_path_log.read_text()
         assert "no stages run" in invoke("same-tree-direct", *gate)
-        # New commit metadata with the identical tree does not invalidate proof.
+        # A different commit cannot inherit this commit's qualification, even
+        # when its tree is identical. The branch need not already be on main.
+        previous_sha = checked(repo, "git", "rev-parse", "HEAD")
+        checked(repo, "git", "checkout", "-qb", "candidate")
         checked(repo, "git", "commit", "--allow-empty", "-qm", "same tree new commit")
-        assert "no stages run" in invoke("same-tree-commit", "make", "candidate-gate")
+        candidate_sha = checked(repo, "git", "rev-parse", "HEAD")
+        assert "no stages run" not in invoke("same-tree-commit", "make", "candidate-gate")
+        rows = ledger.read_text().splitlines()
+        for sha in (previous_sha, candidate_sha):
+            executed = [row.split("\t") for row in rows if row.split("\t")[3] == sha]
+            assert {row[1] for row in executed} == set(STAGES.split())
+            assert all(row[2] == "passed" for row in executed)
+        # Tag creation still requires the commit to have landed on main.
+        checked(repo, "git", "branch", "-f", "main", candidate_sha)
         refused_final = invoke("final-without-rc", sys.executable, "scripts/release_candidate.py",
                                "aw-v1.2.3", stages="checks", success=False)
         assert "final requires a prior RC" in refused_final
@@ -204,8 +221,8 @@ candidate-gate:
         for row in ledger.read_text().splitlines():
             assert Path(row.split("\t")[5]).is_file()
         assert all("candidate gate cleanup PASSED" in (evidence / f"{name}.log").read_text()
-                   for name in ("first-checks", "missing-only", "version-input", "changed-tree", "failed-tree"))
-    print("PASS: real Docker stages, missing-only execution, make/direct/RC reuse, changed tree/version, failed-tree refusal")
+                   for name in ("first-checks", "missing-only", "same-tree-commit", "version-input", "changed-tree", "failed-tree"))
+    print("PASS: real Docker stages, full unlanded branch, exact-commit make/direct/RC reuse, changed tree/version, failed-tree refusal")
 
 
 if __name__ == "__main__":

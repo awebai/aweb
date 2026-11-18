@@ -180,15 +180,24 @@ to that run, and retains its evidence under the integration log directory's
 they create and remove their own bounded builder when none is supplied.
 
 `make candidate-gate`, direct `scripts/candidate-docker-gate.sh` calls and the
-release command use that same ledger. The key includes the source tree,
+release command use that same ledger. The key includes the exact source commit,
 effective CLI/A2A versions, external Library/blueprint revisions, and non-default
-resource settings. Commit metadata, stage selection and log paths do not create
-another key. `AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
+resource settings. A different commit requires its own evidence, even when its
+tree is unchanged. Stage selection and log paths do not create another key.
+`AWEB_GATE_LEDGER` and `AWEB_GATE_LOG_DIR` relocate the ledger and
 retained logs; all callers must share them.
 
-For focused pre-landing checks, use `AWEB_CANDIDATE_STAGES='checks unit' make
-candidate-gate`. Release candidates always require all five stages, even if that
-environment variable is set. Passes are reused across callers with equal inputs.
+Before every landing, run `make candidate-gate` at the exact clean branch
+commit. The default selects **all five stages**, journeys included, through the
+normal wrapper; the branch need not already be on main. The stage selection is
+owned by `scripts/vm-gate/vm_gate/aweb_stages.py`, used by the wrapper, suite and
+VM adapter. `AWEB_CANDIDATE_STAGES=all` explicitly selects the same complete run.
+
+`AWEB_CANDIDATE_STAGES='checks unit' make candidate-gate` remains available for
+focused development. It prints **partial** and is not landing qualification.
+Release candidates always require all five stages, even if that environment
+variable is set, and still require main ancestry before creating tags. Passes
+are reused only across callers at the same commit with equal inputs.
 A recorded failure blocks every stage for those inputs: fix the code and gate
 the changed tree. For infrastructure failures only, the coordinator removes the
 failed ledger line and supplies `GATE_RERUN_REASON='<reason>'`; the next recorded
