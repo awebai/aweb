@@ -427,7 +427,7 @@ class ProductionRequest:
     credential: str
 
 
-async def approval_request(root, kind):
+async def approval_request(root, kind, *, agent_headers=(), operation=None, params=None):
     """Seed confirmed metadata, then mint through the actual signed root tool.
 
     Configuration is fixture state; B1, admission, B2 association/audit and TLS
@@ -437,8 +437,18 @@ async def approval_request(root, kind):
     installation_id = installed["installation_id"]
     holder = await enrolled_owner(root)
     body, device = holder.body, holder.device
+    operations = (
+        []
+        if operation is None
+        else [{"operation_id": operation.operation_id, "digest": operation.digest}]
+    )
     policy = Policy.from_body(
-        {**POLICY_BODY, "approvers": ["owner:" + member.extra_cert_fields["member_did_aw"]]}
+        {
+            **POLICY_BODY,
+            "approvers": ["owner:" + member.extra_cert_fields["member_did_aw"]],
+            "operations": operations,
+            "open_request": operation is None,
+        }
     )
     db = service.runtime.db()
     custody = Custody(LocalKeyFileProvider(configured.custody_key_file), db)
@@ -455,6 +465,8 @@ async def approval_request(root, kind):
         await records.create_secret(
             tx, installation_id, member.team_id, SecretRecord.from_after(SECRET)
         )
+        if operation is not None:
+            await records.create_operation(tx, installation_id, member.team_id, operation)
         version = await custody.sealer.ingest(
             tx,
             installation_id=installation_id,
@@ -476,8 +488,8 @@ async def approval_request(root, kind):
                     "secret_id": SECRET["secret_id"],
                     "subject": {"principal": member.extra_cert_fields["member_did_aw"]},
                     "capability": "use" if kind == "use" else "run",
-                    "operations": [],
-                    "open_request": kind == "use",
+                    "operations": operations,
+                    "open_request": kind == "use" and operation is None,
                     "jobs": [] if kind == "use" else [{"job_id": job.job_id, "digest": job.digest}],
                     "policy_digest": policy.digest,
                 }
@@ -499,7 +511,9 @@ async def approval_request(root, kind):
                         "path": "/v1/**",
                         "methods": ["POST"],
                         "query_rules": {},
-                        "header_allow": ["content-type"],
+                        "header_allow": sorted(
+                            {"content-type", *(name.lower() for name, _ in agent_headers)}
+                        ),
                         "network": "public",
                         "cidr": None,
                     },
@@ -540,6 +554,14 @@ async def approval_request(root, kind):
         if kind == "use"
         else {"runner": runner_id, "params": {"database": "orders"}}
     )
+    if operation is not None:
+        request = {
+            "request_id": request["request_id"],
+            "operation": operation.operation_id,
+            "params": params or {},
+        }
+    if agent_headers:
+        request["headers"] = [name + ": " + value for name, value in agent_headers]
     raw = json.dumps(request).encode()
     reply = await client.post(
         AUDIENCE + path,
