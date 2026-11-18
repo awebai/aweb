@@ -1,4 +1,6 @@
 """Read-time delivery-team membership, independent of message claims."""
+
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
 from typing import Literal
 from uuid import UUID
 
@@ -37,8 +39,9 @@ async def sender_memberships(
         member_rows
         if member_rows is not None
         else await db.get_manager("aweb").fetch_all(
-            "SELECT a.agent_id, a.team_id, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw, "
-            "a.status, a.deleted_at, a.certificate_id, " + member_key_columns_sql("a") + " "
+            f"""SELECT a.agent_id, a.team_id, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent="a")} AS did_aw, a.status, a.deleted_at, a.certificate_id, """
+            + member_key_columns_sql("a")
+            + " "
             "FROM {{tables.agents}} AS a WHERE a.agent_id = ANY($1::uuid[])",
             ids,
         )

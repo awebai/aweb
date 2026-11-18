@@ -7,6 +7,8 @@ Managed membership/export/federation remain separately negotiated capabilities.
 
 from __future__ import annotations
 
+from aweb.identity_binding import verified_key_sql
+
 from aweb.human_kind import is_verified_human
 
 import hashlib
@@ -134,15 +136,15 @@ class NativeMessagingService:
 
     async def _row(self, *, principal=None, actor_id=None, team_id=None):
         rows = await self.db.get_manager("aweb").fetch_all(
-            """SELECT agent_id, team_id, alias, did_key, did_aw, address,
+            f"""SELECT agent_id, team_id, alias, did_key, did_aw, address,
                       did_aw_verified_key, identity_scope,
                       (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
                       did_aw AS policy_did_aw,
                       status, deleted_at, certificate_id, agent_type, human_verified_key, inbound_mode
-               FROM {{tables.agents}}
+               FROM {{{{tables.agents}}}}
                WHERE deleted_at IS NULL
                  AND ($1::uuid IS NULL OR agent_id=$1)
-                 AND ($2::text IS NULL OR (did_aw=$2 AND did_aw_verified_key=did_key) OR did_key=$2)
+                 AND ($2::text IS NULL OR (did_aw=$2 AND {verified_key_sql()}) OR did_key=$2)
                  AND ($3::text IS NULL OR team_id=$3)""",
             UUID(actor_id) if actor_id else None,
             principal,

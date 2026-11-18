@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.identity_binding import verified_key_sql
+
 import json
 import logging
 from datetime import datetime, timezone
@@ -84,9 +86,9 @@ async def require_non_custodial_recipients(
         # optional actor projection cannot select it or suppress this check.
         stable_id = str(recipient.get("did_aw") or "").strip()
         rows = await db.get_manager("aweb").fetch_all(
-            """SELECT agent_id FROM {{tables.agents}}
+            f"""SELECT agent_id FROM {{{{tables.agents}}}}
                WHERE deleted_at IS NULL AND did_key=$1
-                 AND ($2::text='' OR (did_aw=$2 AND did_aw_verified_key=did_key))
+                 AND ($2::text='' OR (did_aw=$2 AND {verified_key_sql()}))
                ORDER BY agent_id""",
             did,
             stable_id,

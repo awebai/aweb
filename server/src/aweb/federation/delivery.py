@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from aweb.identity_binding import (
+    IdentityProjectionField,
+    verified_identity_field_sql,
+    verified_key_sql,
+)
+
 from aweb.human_kind import is_verified_human
 from aweb.member_team_key import member_key_current_sql
 
@@ -265,10 +271,10 @@ async def _lock_current_recipient(
         except ForbiddenError as exc:
             raise FederationAuthorityError("recipient_policy_rejected") from exc
     row = await tx.fetch_one(
-        """
-        SELECT agent_id, team_id, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, alias,
+        f"""
+        SELECT agent_id, team_id, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, alias,
                inbound_mode, agent_type, human_verified_key, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw
-        FROM {{tables.agents}}
+        FROM {{{{tables.agents}}}}
         WHERE agent_id = $1 AND deleted_at IS NULL
         FOR SHARE
         """,
@@ -366,10 +372,10 @@ async def _authorize_policy(
     recipient_team = str(recipient.get("team_id") or "").strip()
     if recipient_team and not (recipient_global and mode == "contacts_only"):
         same_team = await tx.fetch_one(
-            """
-            SELECT a.agent_id FROM {{tables.agents}} AS a
+            f"""
+            SELECT a.agent_id FROM {{{{tables.agents}}}} AS a
             WHERE a.team_id = $1 AND a.deleted_at IS NULL
-              AND ((a.did_aw = $2 AND a.did_aw_verified_key = a.did_key) OR a.did_key = $2)
+              AND ((a.did_aw = $2 AND {verified_key_sql("a")}) OR a.did_key = $2)
               AND """
             + member_key_current_sql("a")
             + """

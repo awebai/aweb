@@ -143,6 +143,29 @@ async def get_task_answer_on(tx, *, team_id: str, task_id: UUID, answer_key: str
     return _answer_receipt(row, current_question_rev=task["question_rev"], cancelled=task["cancellation"] is not None)
 
 
+async def _read_answer_member_principal_on(tx, *, agent_id: str, team_id: str):
+    """Read the answer actor under the existing shared member lock."""
+    return await tx.fetch_one(
+        """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
+           FROM {{tables.agents}} WHERE agent_id = $1 AND team_id = $2
+             AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
+        UUID(agent_id),
+        team_id,
+    )
+
+
+async def _read_claimant_principal_on(tx, *, team_id: str, alias: str):
+    """Read a claim's principal under the existing shared member lock."""
+    return await tx.fetch_one(
+        """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
+           FROM {{tables.agents}}
+           WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+           FOR SHARE""",
+        team_id,
+        alias,
+    )
+
+
 async def answer_task_on(
     tx, *, team_id: str, task_id: UUID, actor: TeamIdentity,
     expected_task_rev: int, answer_key: str, answer_sha256: str,
@@ -173,12 +196,10 @@ async def answer_task_on(
         from aweb.app_registry import get_installation_on
         installation = await get_installation_on(tx, team_id=team_id, app_id=source["app_id"], for_update=True)
     principal = actor.did_aw or actor.did_key
-    member = await tx.fetch_one(
-        """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
-           FROM {{tables.agents}} WHERE agent_id = $1 AND team_id = $2
-             AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
-        UUID(actor.agent_id),
-        team_id,
+    member = await _read_answer_member_principal_on(
+        tx,
+        agent_id=actor.agent_id,
+        team_id=team_id,
     )
     if (actor.team_id != team_id or not member or member["principal_did"] != principal
             or not actor.certificate_id or member["certificate_id"] != actor.certificate_id):
@@ -1370,13 +1391,10 @@ async def update_task(
                 sets.append(f"assignee_alias = ${idx}")
                 params.append(actor_alias)
                 idx += 1
-                claimant = await tx.fetch_one(
-                    """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
-                       FROM {{tables.agents}}
-                       WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-                       FOR SHARE""",
-                    team_id,
-                    actor_alias,
+                claimant = await _read_claimant_principal_on(
+                    tx,
+                    team_id=team_id,
+                    alias=actor_alias,
                 )
                 if current["app_request"] is not None and (not claimant or claimant["principal_did"] != current["assignee_did"]):
                     raise ForbiddenError("target_mismatch")

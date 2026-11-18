@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.identity_binding import verified_key_sql
+
 from aweb.human_kind import is_verified_human
 
 from dataclasses import dataclass
@@ -30,8 +32,8 @@ async def _require_live_mail_participant(
 ) -> None:
     did = participant["did"]
     rows = await db.get_manager("aweb").fetch_all(
-        """SELECT agent_id, agent_type, human_verified_key, did_key, alias, team_id, deleted_at FROM {{tables.agents}}
-           WHERE COALESCE(CASE WHEN did_aw_verified_key=did_key THEN NULLIF(did_aw,'') END, did_key)=$1
+        f"""SELECT agent_id, agent_type, human_verified_key, did_key, alias, team_id, deleted_at FROM {{{{tables.agents}}}}
+           WHERE COALESCE(CASE WHEN {verified_key_sql()} THEN NULLIF(did_aw,'') END, did_key)=$1
            ORDER BY team_id, agent_id""",
         did,
     )

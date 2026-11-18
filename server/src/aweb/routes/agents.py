@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 
 import json
@@ -402,8 +404,8 @@ async def list_agents(
                ctx.repo
         FROM {{{{tables.agents}}}} a
         CROSS JOIN LATERAL (
-            SELECT CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw,
-                   CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address
+            SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent="a")} AS did_aw,
+                   {verified_identity_field_sql(IdentityProjectionField.ADDRESS, agent="a")} AS address
         ) projected
         LEFT JOIN LATERAL (
             SELECT encryption_key_id, encryption_public_key, algorithm,

@@ -6,6 +6,8 @@ actor, never a newly invented global address or membership in another team.
 
 from __future__ import annotations
 
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from aweb.human_kind import is_verified_human
 
 from aweb.identity_auth_deps import current_membership
@@ -23,9 +25,9 @@ async def messaging_participants_by_aliases(
     if not aliases:
         return []
     rows = await db.get_manager("aweb").fetch_all(
-        """SELECT agent_id, team_id, alias, did_key,
-                  CASE WHEN did_aw_verified_key=did_key THEN did_aw END AS did_aw,
-                  CASE WHEN did_aw_verified_key=did_key THEN address END AS address,
+        f"""SELECT agent_id, team_id, alias, did_key,
+                  {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw,
+                  {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address,
                   (NULLIF(did_aw,'') IS NOT NULL) AS has_global_claim,
                   did_aw AS policy_did_aw,
                   inbound_mode, status, deleted_at, agent_type, human_verified_key, certificate_id,

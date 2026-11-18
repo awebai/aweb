@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from aweb.agent_wake import agent_wake_publisher
 from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
@@ -537,7 +539,7 @@ async def get_inbox(
                m.from_did, m.to_did, m.signature, m.signed_payload, m.id_chain, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope,
                sender.agent_id AS sender_agent_id, sender.team_id AS sender_team_id,
-               CASE WHEN sender.did_aw_verified_key = sender.did_key THEN sender.did_aw END AS sender_did_aw,
+               {verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent="sender")} AS sender_did_aw,
                sender.did_key AS sender_did_key, sender.alias AS sender_alias,
                sender.identity_scope AS sender_identity_scope, sender.address AS sender_address,
                sender.status AS sender_status, sender.deleted_at AS sender_deleted_at,
