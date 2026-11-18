@@ -108,7 +108,13 @@ def verify_team_key_act(record: Any, *, domain: str, name: str, team_did_key: st
         verify_did_key_signature(did_key=signer, payload=raw, signature_b64=signature)
     except ValueError as exc:
         raise TeamKeyActError("bad_signature") from exc
-    return TeamKeyAct(domain=domain, name=name, team_did_key=team_did_key, signer_did_key=signer, signed_at=signed_at)
+    return TeamKeyAct(
+        domain=domain,
+        name=name,
+        team_did_key=team_did_key,
+        signer_did_key=signer,
+        signed_at=signed_at,
+    )
 
 
 async def dns_namespace_controller(domain: str, resolver: TXTOutcomeResolver) -> str:
@@ -250,7 +256,12 @@ async def pinned_team_key(
         if record is None:
             raise TeamKeyActError("no_act")
         act = await verify_team_key_change(
-            record, domain=domain, name=name, team_did_key=served_key, pinned_at=pin.act_at, resolver=resolver,
+            record,
+            domain=domain,
+            name=name,
+            team_did_key=served_key,
+            pinned_at=pin.act_at,
+            resolver=resolver,
         )
     except TeamKeyActError as exc:
         if exc.reason == "key_mismatch":
@@ -259,7 +270,10 @@ async def pinned_team_key(
             # moves the pin in either mode.
             logger.warning(
                 "team_key_pin_kept team=%s pinned=%s served=%s reason=%s",
-                team_id, pin.team_did_key, served_key, exc.reason,
+                team_id,
+                pin.team_did_key,
+                served_key,
+                exc.reason,
             )
             return pin.team_did_key
         _mismatch(team_id, pin.team_did_key, served_key, exc.reason, enforce=enforce)
@@ -273,7 +287,11 @@ async def pinned_team_key(
         return await _move_without_act(team_id, pins, pinned, served_key, "pin_moved")
     logger.warning(
         "team key pin for %s moved from %s to %s by the namespace controller act signed %s by %s",
-        team_id, pin.team_did_key, served_key, act.signed_at.isoformat(), act.signer_did_key,
+        team_id,
+        pin.team_did_key,
+        served_key,
+        act.signed_at.isoformat(),
+        act.signer_did_key,
     )
     return served_key
 
@@ -282,19 +300,28 @@ def _mismatch(team_id: str, pinned: str, served: str, reason: str, *, enforce: b
     """Log the one ``team_key_pin_mismatch`` line; refuse when enforcing."""
     logger.warning(
         "team_key_pin_mismatch team=%s pinned=%s served=%s reason=%s enforced=%s",
-        team_id, pinned, served, reason, "true" if enforce else "false",
+        team_id,
+        pinned,
+        served,
+        reason,
+        "true" if enforce else "false",
     )
     if enforce:
         raise TeamKeyUnverified(team_id, reason)
 
 
-async def _move_without_act(team_id: str, pins: TeamKeyPinStore, pin: TeamKeyPin, served: str, reason: str) -> str:
+async def _move_without_act(
+    team_id: str, pins: TeamKeyPinStore, pin: TeamKeyPin, served: str, reason: str
+) -> str:
     """Before enforcement, the tolerated ``served`` key becomes the pin, so the
     key a member was verified under is the team's current key on this server.
     The time of the last accepted act is kept: no act moved it."""
     if await pins.move(team_id, expected=pin, new=TeamKeyPin(served, pin.act_at)):
         logger.warning(
             "team_key_pin_moved_without_act team=%s from=%s to=%s reason=%s",
-            team_id, pin.team_did_key, served, reason,
+            team_id,
+            pin.team_did_key,
+            served,
+            reason,
         )
     return served

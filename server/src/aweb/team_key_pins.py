@@ -21,7 +21,12 @@ from fastapi import HTTPException, Request
 
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.team_ids import parse_team_id
-from awid.team_key_acts import TeamKeyMemo, TeamKeyPin, TeamKeyUnverified, pinned_team_key as pin_team_key
+from awid.team_key_acts import (
+    TeamKeyMemo,
+    TeamKeyPin,
+    TeamKeyUnverified,
+    pinned_team_key as pin_team_key,
+)
 
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS, awid_dependency_http_exception
 from aweb.config import enforce_team_key_pins
@@ -50,7 +55,8 @@ class AdmittedTeamKeys:
 
     async def pin(self, team_id: str) -> TeamKeyPin | None:
         row = await self._db.fetch_one(
-            "SELECT team_did_key, team_key_act_at FROM {{tables.teams}} WHERE team_id = $1", team_id,
+            "SELECT team_did_key, team_key_act_at FROM {{tables.teams}} WHERE team_id = $1",
+            team_id,
         )
         return None if row is None else TeamKeyPin(row["team_did_key"], row["team_key_act_at"])
 
@@ -67,7 +73,11 @@ class AdmittedTeamKeys:
               AND team_key_act_at IS NOT DISTINCT FROM $5
             RETURNING team_id
             """,
-            team_id, new.team_did_key, new.act_at, expected.team_did_key, expected.act_at,
+            team_id,
+            new.team_did_key,
+            new.act_at,
+            expected.team_did_key,
+            expected.act_at,
         )
         return moved is not None
 
@@ -84,7 +94,12 @@ def team_key_unverified_exception() -> HTTPException:
 
 
 async def pinned_team_key(
-    *, db: Any, registry_client: Any, txt_resolver: Any, team_id: str, served_key: str,
+    *,
+    db: Any,
+    registry_client: Any,
+    txt_resolver: Any,
+    team_id: str,
+    served_key: str,
 ) -> str:
     """``served_key`` when it is the admitted key or an act moves the pin to it;
     otherwise ``team_key_pin_mismatch`` is logged and, while
@@ -101,7 +116,11 @@ async def pinned_team_key(
 
 
 async def pinned_team_key_for_request(
-    request: Request, team_id: str, served_key: str, *, db: Any = None,
+    request: Request,
+    team_id: str,
+    served_key: str,
+    *,
+    db: Any = None,
 ) -> str:
     """``pinned_team_key`` with ``db`` (the request's aweb database manager,
     else the app's), the app's registry and its DNS resolver; an unverified
@@ -127,7 +146,9 @@ async def pinned_team_key_for_request(
     except TeamKeyUnverified:
         raise team_key_unverified_exception() from None
     except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning("AWID registry dependency failed for the team key act of %s", team_id, exc_info=True)
+        logger.warning(
+            "AWID registry dependency failed for the team key act of %s", team_id, exc_info=True
+        )
         raise awid_dependency_http_exception(exc, operation="AWID team key act read") from exc
     memo.put(team_id, served_key, key)
     return key

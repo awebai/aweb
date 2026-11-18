@@ -29,16 +29,27 @@ async def _register(env, team_sk):
         "awid_team_id": TEAM,
         "service_url": SERVICE,
         "dry_run": False,
-        "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "timestamp": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
     }
-    body["controller_signature"] = sign_message(team_sk, canonical_json_bytes({
-        "operation": "team_service_register", **{k: body[k] for k in ("awid_team_id", "service_url", "dry_run", "timestamp")},
-    }))
+    body["controller_signature"] = sign_message(
+        team_sk,
+        canonical_json_bytes(
+            {
+                "operation": "team_service_register",
+                **{k: body[k] for k in ("awid_team_id", "service_url", "dry_run", "timestamp")},
+            }
+        ),
+    )
     return await env.client.post("/api/v1/teams/service-register", json=body)
 
 
 async def _held_key(env):
-    return await env.db.fetch_value("SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1", TEAM)
+    return await env.db.fetch_value(
+        "SELECT team_did_key FROM {{tables.teams}} WHERE team_id = $1", TEAM
+    )
 
 
 @pytest.fixture

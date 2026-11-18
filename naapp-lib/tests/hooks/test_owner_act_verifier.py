@@ -214,7 +214,9 @@ async def test_a_rotated_team_key_stops_verifying(db, registry, team_key) -> Non
     assert await effects(db) == 2
 
 
-async def test_a_registry_substituted_team_key_cannot_sign_owner_acts(db, registry, team_key) -> None:
+async def test_a_registry_substituted_team_key_cannot_sign_owner_acts(
+    db, registry, team_key
+) -> None:
     verify = verifier(registry)
     await apply_effect(db, verify, *owner_act(team_key, issued=datetime.now(UTC)))
     substituted = SigningKey.generate()
