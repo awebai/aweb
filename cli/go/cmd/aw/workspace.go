@@ -310,7 +310,7 @@ func loadCurrentWorkspaceAndTeamState(workingDir, identityHome string) (*awconfi
 // workspaceDeleteRefusal refuses a delete through an external identity home.
 // Its alias-release reason is also its --json error code.
 func workspaceDeleteRefusal(selection *awconfig.Selection, reason string) error {
-	return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
+	return withErrorCode(reason, usageError("refusing aw workspace delete through external identity home for principal %s; only own local retirement is supported for an external identity home (reason: %s). Select that local member's own retained identity home, or ask its team controller for team-authorized removal.", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), reason))
 }
 
 func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
