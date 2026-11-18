@@ -32,14 +32,14 @@ func parseRouteAuthPolicy(route Route) (routeAuthPolicy, error) {
 	case AuthModeNone:
 	case AuthModeStaticAPIKey:
 		if strings.TrimSpace(policy.StaticAPIKey) == "" && !route.Disabled {
-			return routeAuthPolicy{}, fmt.Errorf("route %s: static_api_key mode requires Auth.StaticAPIKey", route.RouteID)
+			return routeAuthPolicy{}, fmt.Errorf("route %s: static_api_key mode requires Auth.StaticAPIKey. Configure the route's API key or disable the route, then retry.", route.RouteID)
 		}
 	case AuthModeBearer:
 		if strings.TrimSpace(policy.BearerToken) == "" && !route.Disabled {
-			return routeAuthPolicy{}, fmt.Errorf("route %s: bearer mode requires Auth.BearerToken", route.RouteID)
+			return routeAuthPolicy{}, fmt.Errorf("route %s: bearer mode requires Auth.BearerToken. Configure the route's bearer token or disable the route, then retry.", route.RouteID)
 		}
 	default:
-		return routeAuthPolicy{}, fmt.Errorf("route %s: unsupported auth mode %q", route.RouteID, route.Auth.Mode)
+		return routeAuthPolicy{}, fmt.Errorf("route %s: unsupported auth mode %q. Set the route auth mode to none, static_api_key, or bearer, then retry.", route.RouteID, route.Auth.Mode)
 	}
 	return policy, nil
 }

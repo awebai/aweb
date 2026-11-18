@@ -143,16 +143,23 @@ func TestGatewayRejectsInvalidRouteRuntimeConfig(t *testing.T) {
 		{
 			name: "static api key requires secret",
 			edit: func(route *Route) {
-				route.Auth = AuthConfig{Mode: "static_api_key"}
+				route.Auth = AuthConfig{Mode: string(AuthModeStaticAPIKey)}
 			},
-			want: "StaticAPIKey",
+			want: "StaticAPIKey. Configure the route's API key or disable the route, then retry.",
 		},
 		{
 			name: "bearer requires token",
 			edit: func(route *Route) {
-				route.Auth = AuthConfig{Mode: "bearer"}
+				route.Auth = AuthConfig{Mode: string(AuthModeBearer)}
 			},
-			want: "BearerToken",
+			want: "BearerToken. Configure the route's bearer token or disable the route, then retry.",
+		},
+		{
+			name: "unsupported auth mode lists supported modes",
+			edit: func(route *Route) {
+				route.Auth.Mode = "unsupported"
+			},
+			want: "Set the route auth mode to none, static_api_key, or bearer, then retry.",
 		},
 		{
 			name: "rate limit syntax",
