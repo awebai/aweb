@@ -973,11 +973,17 @@ def _row_matches_signed_address_binding(
 
 
 async def resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
+    """Return an actual member actor, never an identity-only projection.
+
+    identity-messaging-contract.md:96-116 keeps DID participant reads valid
+    without actor authority. A missing actor ID must remain NULL, not the
+    string "None" passed to participant storage as an invented UUID.
+    """
     for did in actor_dids:
         if not did:
             continue
         actor_agent = await resolve_agent_by_did(db, did)
-        if actor_agent is not None:
+        if actor_agent is not None and actor_agent.get("agent_id") is not None:
             return actor_agent
     return None
 

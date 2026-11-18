@@ -108,6 +108,11 @@ async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app,
             headers=_signed_identity_headers(actor.sk, actor.did, stable),
         )
         assert inbox.status_code == 200, inbox.text
+        pending = await env.client.get(
+            "/v1/chat/pending",
+            headers=_signed_identity_headers(actor.sk, actor.did, stable),
+        )
+        assert pending.status_code == 200, pending.text
         await _mount_mcp_app(env.app, env.infra, env.redis, registry)
         try:
             for team_id, certificate in certificates.items():
