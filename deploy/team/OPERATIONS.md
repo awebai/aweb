@@ -129,8 +129,10 @@ stopped, and stops it again afterwards. The set holds:
 
 - `databases/<name>.dump`: `pg_dump -Fc` of every database, and
   `databases/server-version`;
-- `archives/<key>.tar`: the secrets directory, without the agents' harness login, and the agents' state and work, regular files and
-  directories only, owners and modes kept;
+- `archives/<key>.tar`: the secrets directory, without the agents' harness login, and the agents' state and work:
+  regular files, directories, hard links and symbolic links that stay inside the directory (an OATS home's
+  `CLAUDE.md -> AGENTS.md`), with numeric owners and modes kept. Sockets and FIFOs are left out and reported; a
+  device file, or a link that is absolute or resolves outside the directory, refuses the backup;
 - `files/<key>`: every file `deployment.yaml` names;
 - `manifest.json`: the source revision, every image digest, the PostgreSQL
   version, and the SHA-256 and recorded path of every part. It holds no value.
@@ -180,7 +182,8 @@ of **disposable lab data** to rehearse the mechanics, never a team's. It checks
 every part against the manifest's digests and takes every target path from the
 `deployment.yaml` given, not from the backup. It refuses before writing
 anything if a target exists, a parent is reached through a symbolic link, an
-archive holds anything but regular files and directories, or any of the
+archive holds anything but regular files, directories and links, a member
+under a link, or a link that resolves outside it, or any of the
 bundle's containers or volumes exists. It restores the files and archives,
 starts PostgreSQL alone (whose first start creates the roles and databases from
 the restored secrets) and restores each dump, then leaves the bundle stopped.

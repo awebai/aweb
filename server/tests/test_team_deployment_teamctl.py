@@ -160,7 +160,7 @@ def test_backup_leaves_the_agents_harness_login_out_of_the_secrets_archive(tmp_p
     path = deployment(tmp_path, config)
     result = run(tmp_path, "backup", path, str(tmp_path / "backup"), command=TEAMCTL, docker_ok=True)
     assert result.returncode == 0, result.stderr
-    archived = [call for call in calls(tmp_path) if "tarfile" in call and "/source:ro" in call]
+    archived = [call for call in calls(tmp_path) if "/state_archive.py pack" in call and "/source:ro" in call]
     assert len(archived) == 1 and "./agents" in archived[0].split(), archived
 
 

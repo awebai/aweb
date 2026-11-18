@@ -116,7 +116,8 @@ def pack(source: Path, archive: Path, left_out: list[str] | None = None) -> list
 
     try:
         with tarfile.open(archive, "w", format=tarfile.PAX_FORMAT) as tar:
-            # tarfile cannot represent a socket: it is reported before add sees it.
+            # tarfile cannot represent a socket and skips it unseen: it is
+            # reported here, so that it is not left out silently.
             for directory, dirs, files in os.walk(source, followlinks=False):
                 for name in (*dirs, *files):
                     path = Path(directory) / name
@@ -124,7 +125,6 @@ def pack(source: Path, archive: Path, left_out: list[str] | None = None) -> list
                         relative = "./" + str(path.relative_to(source))
                         if not any(relative == out or relative.startswith(out + "/") for out in left_out):
                             findings.append(f"{relative}: a socket, left out")
-                        left_out.append(relative)
             tar.add(source, arcname=".", recursive=True, filter=kept)
         with tarfile.open(archive) as tar:
             check(tar.getmembers())
@@ -164,7 +164,7 @@ def main(argv: list[str]) -> int:
     except Refused as refused:
         print(f"teamctl: {refused}", file=sys.stderr)
         return 1
-    print(__doc__.split("\n\n")[1], file=sys.stderr)
+    print((__doc__ or "").split("\n\n")[1], file=sys.stderr)
     return 2
 
 

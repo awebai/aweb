@@ -935,52 +935,30 @@ for kind, key, value in walk(config):
 PY
 }
 
-# A directory as a tar archive with numeric owners and modes, read as root by
-# the server image's Python with no network; anything but a regular file or
-# a directory is refused. A member named after the archive's path ("./x/y")
-# is left out with everything under it. The archive belongs to the operator,
-# mode 0400.
+# A directory as a tar archive with numeric owners, modes and symbolic links,
+# read as root by the server image's Python with no network
+# (deploy/team/state_archive.py): sockets and FIFOs are left out and reported;
+# a device file, or a link it could not restore, refuses and leaves no
+# archive. A member named after the archive's path ("./x/y") is left out with
+# everything under it. The archive belongs to the operator, mode 0400.
 archive() {
   local source="$1" out="$2"
   shift 2
   docker run --rm --user 0 --network none -v "$source:/source:ro" -v "$(dirname "$out"):/out" \
-    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
-import os, sys, tarfile
-out, uid, gid, *left_out = sys.argv[1:]
-
-def regular(info):
-    if any(info.name == name or info.name.startswith(name + "/") for name in left_out):
-        return None
-    if not (info.isreg() or info.isdir()):
-        raise SystemExit(f"teamctl: {info.name} is not a regular file or a directory")
-    return info
-
-with tarfile.open(out, "w") as tar:
-    tar.add("/source", arcname=".", filter=regular)
-os.chown(out, int(uid), int(gid))
-os.chmod(out, 0o400)
-' "/out/$(basename "$out")" "$(id -u)" "$(id -g)" "$@" </dev/null
+    -v "$TEAM_DIR/state_archive.py:/state_archive.py:ro" --entrypoint python "$(env_value AWEB_IMAGE)" \
+    /state_archive.py pack /source "/out/$(basename "$out")" "$(id -u)" "$(id -g)" "$@" </dev/null
 }
 
-# An archive back into a directory that does not exist yet, owners and modes
-# kept; a member that is not a regular file or a directory, or whose name is
-# absolute or climbs out, refuses the whole archive before anything is written.
+# An archive back into a directory that does not exist yet, owners, modes and
+# links kept. Every member is checked before anything is written: a path
+# outside the archive, a member under a link, a link that resolves outside
+# it, or a member that is not a regular file, a directory or a link refuses
+# the whole archive (deploy/team/state_archive.py).
 unarchive() {
   local archive="$1" destination="$2"
   docker run --rm --user 0 --network none -v "$archive:/archive.tar:ro" -v "$(dirname "$destination"):/parent" \
-    --entrypoint python "$(env_value AWEB_IMAGE)" -c '
-import os, sys, tarfile
-from pathlib import PurePosixPath
-destination = sys.argv[1]
-with tarfile.open("/archive.tar") as tar:
-    members = tar.getmembers()
-    for member in members:
-        parts = PurePosixPath(member.name).parts
-        if not (member.isreg() or member.isdir()) or member.name.startswith("/") or ".." in parts:
-            raise SystemExit(f"teamctl: the archive holds {member.name!r}, which is not restored")
-    os.mkdir(destination, 0o700)
-    tar.extractall(destination, members=members, numeric_owner=True, filter="tar")
-' "/parent/$(basename "$destination")" </dev/null
+    -v "$TEAM_DIR/state_archive.py:/state_archive.py:ro" --entrypoint python "$(env_value AWEB_IMAGE)" \
+    /state_archive.py unpack /archive.tar "/parent/$(basename "$destination")" </dev/null
 }
 
 psql_postgres() {
