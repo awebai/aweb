@@ -447,6 +447,37 @@ def _workspace_delete_refusal_detail(
     }
 
 
+def _workspace_cleanup_cutoff(
+    *, identity: TeamIdentity, workspace: dict, workspace_id: str
+) -> datetime | None:
+    """Allow self cleanup immediately; foreign cleanup requires stale presence.
+
+    Implements docs/aweb-sot.md:1199–1205 and the self-retirement distinction
+    at :236–248. Identity-scope eligibility is checked by the caller.
+    """
+    requesting_agent_id = str(getattr(identity, "agent_id", "") or "").strip()
+    is_self_delete = (
+        requesting_agent_id != ""
+        and workspace.get("agent_id") is not None
+        and str(workspace["agent_id"]) == requesting_agent_id
+    )
+    last_seen_at = workspace.get("last_seen_at")
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DEFAULT_PRESENCE_TTL_SECONDS)
+    if not is_self_delete and last_seen_at is not None and last_seen_at > stale_cutoff:
+        raise HTTPException(
+            status_code=409,
+            detail=_workspace_delete_refusal_detail(
+                code="local_workspace_still_active",
+                workspace_id=workspace_id,
+                identity_id=workspace.get("agent_id"),
+                identity_scope=str(workspace.get("agent_identity_scope") or "").strip(),
+                recommended_next_step="Wait until presence is stale before deleting a local workspace.",
+            ),
+        )
+
+    return None if is_self_delete else stale_cutoff
+
+
 @router.delete("/{workspace_id}", response_model=DeleteWorkspaceResponse)
 async def delete_workspace(
     workspace_id: str = Path(..., description="Workspace ID to delete"),
@@ -584,38 +615,9 @@ async def delete_workspace(
             ),
         )
 
-    # A workspace acting on ITSELF may delete itself at any time; anyone else may
-    # only delete a stale one, so a live teammate cannot be removed out from under
-    # its session. The presence TTL exists for that second case and has no work to
-    # do in the first: an agent retiring itself knows its own session is over, and
-    # nothing is learned by making it wait 30 minutes for its own heartbeat to go
-    # stale. Without this, a retiring instance-lifetime member is refused
-    # `local_workspace_still_active` for the whole TTL, which is not prompt
-    # retirement (aweb-aaqg).
-    #
-    # The cloud overlay in aweb-saas (`aweb_cloud/embedded/workspaces.py`,
-    # coordination_delete_workspace) already draws exactly this distinction. This
-    # brings self-hosted to the same rule rather than leaving two deployments
-    # disagreeing about whether an agent may retire itself promptly.
-    requesting_agent_id = str(getattr(identity, "agent_id", "") or "").strip()
-    is_self_delete = (
-        requesting_agent_id != ""
-        and existing.get("agent_id") is not None
-        and str(existing["agent_id"]) == requesting_agent_id
+    stale_cutoff = _workspace_cleanup_cutoff(
+        identity=identity, workspace=existing, workspace_id=validated_id
     )
-    last_seen_at = existing.get("last_seen_at")
-    stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DEFAULT_PRESENCE_TTL_SECONDS)
-    if not is_self_delete and last_seen_at is not None and last_seen_at > stale_cutoff:
-        raise HTTPException(
-            status_code=409,
-            detail=_workspace_delete_refusal_detail(
-                code="local_workspace_still_active",
-                workspace_id=validated_id,
-                identity_id=existing.get("agent_id"),
-                identity_scope=agent_identity_scope,
-                recommended_next_step="Wait until presence is stale before deleting a local workspace.",
-            ),
-        )
 
     deleted_at = datetime.now(timezone.utc)
     cascade_result = await apply_lifecycle_cascade(
@@ -635,10 +637,7 @@ async def delete_workspace(
             target_workspace_ids=(validated_id,),
             workspace_scope="explicit",
             require_identity_scope="local",
-            # Must track the gate above. The cascade enforces the same staleness
-            # precondition independently, so leaving it set here would re-refuse a
-            # self-delete that the gate just allowed - the 409 would simply move.
-            stale_before=None if is_self_delete else stale_cutoff,
+            stale_before=stale_cutoff,
             deleted_at=deleted_at,
             mark_local_agent_deleted=True,
         ),

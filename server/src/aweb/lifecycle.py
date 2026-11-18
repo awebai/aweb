@@ -487,6 +487,23 @@ def _agent_precondition_errors(
     return []
 
 
+@dataclass(frozen=True)
+class _LifecycleTargets:
+    workspaces: list[dict]
+    errors: list[LifecycleError]
+
+
+async def _load_lifecycle_targets(db, *, request: LifecycleCascadeRequest) -> _LifecycleTargets:
+    """Resolve targets and enforce lifecycle scope and staleness preconditions.
+
+    Both dry-run and mutation enforce docs/aweb-sot.md:1199–1205.
+    """
+    agent = await _load_target_agent(db, request)
+    workspaces = await _load_target_workspaces(db, request)
+    errors = _agent_precondition_errors(request, agent) + _precondition_errors(request, workspaces)
+    return _LifecycleTargets(workspaces=workspaces, errors=errors)
+
+
 async def _plan_claim_count(db, workspace_ids: list[str]) -> int:
     if not workspace_ids:
         return 0
@@ -795,11 +812,9 @@ async def plan_lifecycle_cascade(db, request: LifecycleCascadeRequest) -> Lifecy
     if errors:
         return _error_result(request, errors)
 
-    agent = await _load_target_agent(db, request)
-    workspaces = await _load_target_workspaces(db, request)
-    precondition_errors = _agent_precondition_errors(request, agent) + _precondition_errors(
-        request, workspaces
-    )
+    targets = await _load_lifecycle_targets(db, request=request)
+    workspaces = targets.workspaces
+    precondition_errors = targets.errors
     workspace_changes = _workspace_changes(workspaces, status="planned")
     workspace_ids = [str(workspace["workspace_id"]) for workspace in workspaces]
     agent_ids = _target_agent_ids(request, workspaces)
@@ -1244,11 +1259,9 @@ async def apply_lifecycle_cascade(
     identity_archived = False
 
     async with db.transaction() as tx:
-        agent = await _load_target_agent(tx, request)
-        workspaces = await _load_target_workspaces(tx, request)
-        precondition_errors = _agent_precondition_errors(request, agent) + _precondition_errors(
-            request, workspaces
-        )
+        targets = await _load_lifecycle_targets(tx, request=request)
+        workspaces = targets.workspaces
+        precondition_errors = targets.errors
         workspace_changes = _workspace_changes(workspaces, status="planned")
         workspace_ids = [str(workspace["workspace_id"]) for workspace in workspaces]
         agent_ids = _target_agent_ids(request, workspaces)
