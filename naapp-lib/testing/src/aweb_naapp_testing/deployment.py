@@ -32,6 +32,8 @@ from typing import Any
 
 import httpx
 import pytest
+from awid.signing import load_signing_key_pem
+from nacl.signing import SigningKey
 
 from aweb_naapp_testing.network import local_address, make_certificates
 
@@ -475,12 +477,12 @@ def provision_team(
     )
 
 
-def team_key_file(team: E2ETeam) -> Path:
+def team_signing_key(team: E2ETeam) -> SigningKey:
     """The team controller key ``aw id team create`` stored for ``team``."""
     home = Path(team.workspace.env["HOME"])
     found = sorted(home.rglob(f"team-keys/{team.namespace}/{team.team}.key"))
     assert len(found) == 1, f"expected one team key for {team.team_id} under {home}, found {found}"
-    return found[0]
+    return SigningKey(load_signing_key_pem(found[0].read_bytes()))
 
 
 @contextmanager

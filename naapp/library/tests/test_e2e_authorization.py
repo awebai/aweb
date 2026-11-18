@@ -20,7 +20,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-from aweb_naapp.signing_key import read_signing_key_file
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.deployment import (
     AWWorkspace,
@@ -36,7 +35,7 @@ from aweb_naapp_testing.deployment import (
     provision_team,
     running_app,
     running_coordination_server,
-    team_key_file,
+    team_signing_key,
     uninstall_app,
     wait_http_ok,
 )
@@ -207,7 +206,7 @@ def test_a_team_signed_certificate_the_registry_never_published_is_unauthenticat
     # Signed by the team's real controller key, never registered at AWID.
     unpublished = Member(
         team_id=team.team_id,
-        team_key=read_signing_key_file(team_key_file(team)),
+        team_key=team_signing_key(team),
         certificate_id=str(uuid.uuid4()),
         alias="unpublished",
     )
