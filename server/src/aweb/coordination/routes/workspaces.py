@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid as uuid_module
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
@@ -21,7 +21,6 @@ from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_va
 from awid.pagination import encode_cursor, validate_pagination_params
 from ...grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness
 from ...presence import (
-    DEFAULT_PRESENCE_TTL_SECONDS,
     clear_workspace_presence,
     get_workspace_ids_by_team_id,
     list_agent_presences,
@@ -29,6 +28,7 @@ from ...presence import (
     update_agent_presence,
 )
 from ...redis_client import get_redis
+from ...workspace_activity import workspace_stale_cutoff
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from ...lifecycle import (
     LifecycleActor,
@@ -447,35 +447,15 @@ def _workspace_delete_refusal_detail(
     }
 
 
-def _workspace_cleanup_cutoff(
-    *, identity: TeamIdentity, workspace: dict, workspace_id: str
-) -> datetime | None:
-    """Allow self cleanup immediately; foreign cleanup requires stale presence.
+def _workspace_cleanup_cutoff(*, identity: TeamIdentity, workspace: dict) -> datetime | None:
+    """Self cleanup is immediate; the cascade checks foreign-workspace activity.
 
-    Implements docs/aweb-sot.md:1199–1205 and the self-retirement distinction
-    at :236–248. Identity-scope eligibility is checked by the caller.
+    Implements docs/aweb-sot.md:1199–1205 and self retirement at :236–248.
     """
     requesting_agent_id = str(getattr(identity, "agent_id", "") or "").strip()
-    is_self_delete = (
-        requesting_agent_id != ""
-        and workspace.get("agent_id") is not None
-        and str(workspace["agent_id"]) == requesting_agent_id
-    )
-    last_seen_at = workspace.get("last_seen_at")
-    stale_cutoff = datetime.now(timezone.utc) - timedelta(seconds=DEFAULT_PRESENCE_TTL_SECONDS)
-    if not is_self_delete and last_seen_at is not None and last_seen_at > stale_cutoff:
-        raise HTTPException(
-            status_code=409,
-            detail=_workspace_delete_refusal_detail(
-                code="local_workspace_still_active",
-                workspace_id=workspace_id,
-                identity_id=workspace.get("agent_id"),
-                identity_scope=str(workspace.get("agent_identity_scope") or "").strip(),
-                recommended_next_step="Wait until presence is stale before deleting a local workspace.",
-            ),
-        )
-
-    return None if is_self_delete else stale_cutoff
+    if requesting_agent_id and str(workspace.get("agent_id")) == requesting_agent_id:
+        return None
+    return workspace_stale_cutoff(now=datetime.now(timezone.utc))
 
 
 @router.delete("/{workspace_id}", response_model=DeleteWorkspaceResponse)
@@ -615,9 +595,7 @@ async def delete_workspace(
             ),
         )
 
-    stale_cutoff = _workspace_cleanup_cutoff(
-        identity=identity, workspace=existing, workspace_id=validated_id
-    )
+    stale_cutoff = _workspace_cleanup_cutoff(identity=identity, workspace=existing)
 
     deleted_at = datetime.now(timezone.utc)
     cascade_result = await apply_lifecycle_cascade(

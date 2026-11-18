@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from aweb.config import get_presence_ttl_seconds
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 
 import json
 
 from aweb.mcp.tools._common import require_team_context
 from aweb.presence import (
-    DEFAULT_PRESENCE_TTL_SECONDS,
     list_agent_presences_by_workspace_ids,
     update_agent_presence,
 )
@@ -76,14 +76,15 @@ async def heartbeat(db_infra, redis) -> str:
 
     row = await aweb_db.fetch_one(
         """
-        SELECT a.alias, w.workspace_id
+        UPDATE {{tables.workspaces}} w
+        SET last_seen_at = NOW(), updated_at = NOW()
         FROM {{tables.agents}} a
-        JOIN {{tables.workspaces}} w
-          ON w.team_id = a.team_id
-         AND w.agent_id = a.agent_id
-         AND w.alias = a.alias
-         AND w.deleted_at IS NULL
-        WHERE a.agent_id = $1 AND a.team_id = $2 AND a.deleted_at IS NULL
+        WHERE w.team_id = a.team_id
+          AND w.agent_id = a.agent_id
+          AND w.alias = a.alias
+          AND w.deleted_at IS NULL
+          AND a.agent_id = $1 AND a.team_id = $2 AND a.deleted_at IS NULL
+        RETURNING a.alias, w.workspace_id
         """,
         auth.agent_id,
         auth.team_id,
@@ -91,7 +92,7 @@ async def heartbeat(db_infra, redis) -> str:
     if not row:
         return json.dumps({"error": "Agent not found"})
 
-    ttl = DEFAULT_PRESENCE_TTL_SECONDS
+    ttl = get_presence_ttl_seconds()
     last_seen = await update_agent_presence(
         redis,
         workspace_id=str(row["workspace_id"]),

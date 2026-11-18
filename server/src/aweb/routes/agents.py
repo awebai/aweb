@@ -23,12 +23,14 @@ from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db, get_redis
-from aweb.grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness, valid_grant_liveness_by_workspace
+from aweb.grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.auth_context import GRANT_SCOPE_ANY
 from aweb.team_auth_deps import TeamIdentity, _resolve_team_key, get_team_identity, team_identity_with_grant_scope
 
-from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
+from ..presence import update_agent_presence
+from aweb.config import get_presence_ttl_seconds
+from aweb.workspace_activity import PresenceStatus, workspace_activity_by_id, workspace_stale_cutoff
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
 
@@ -448,38 +450,28 @@ async def list_agents(
 
     context_by_agent = {str(r["agent_id"]): r for r in rows if r["workspace_id"] is not None}
 
-    # Presence is keyed by workspace_id, not agent_id.
-    workspace_ids = [str(r["workspace_id"]) for r in context_by_agent.values()]
-    presences = (
-        await list_agent_presences_by_workspace_ids(redis, workspace_ids)
-        if redis and workspace_ids
-        else []
+    activity_by_id = await workspace_activity_by_id(
+        aweb_db,
+        redis,
+        workspace_ids=[str(row["workspace_id"]) for row in context_by_agent.values()],
     )
-    presence_by_id = {str(p.get("workspace_id")): p for p in presences if p.get("workspace_id")}
-    grant_liveness_by_id = await valid_grant_liveness_by_workspace(aweb_db, workspace_ids)
+    stale_cutoff = workspace_stale_cutoff(now=datetime.now(timezone.utc))
 
     agents: list[AgentView] = []
     for r in rows:
         agent_id = str(r["agent_id"])
         ctx = context_by_agent.get(agent_id)
-        presence = presence_by_id.get(str(ctx["workspace_id"])) if ctx else None
-
-        status = "offline"
+        activity = activity_by_id.get(str(ctx["workspace_id"])) if ctx else None
+        presence = activity.presence if activity else None
+        online = activity is not None and activity.is_newer_than(cutoff=stale_cutoff)
+        status = PresenceStatus.OFFLINE
         last_seen = None
-        online = False
         role = (ctx.get("ws_role") if ctx else None) or (r.get("role") or None)
-
+        if online:
+            status = (presence.get("status") if presence else None) or PresenceStatus.ACTIVE
+            last_seen = activity.last_seen_at.astimezone(timezone.utc).isoformat()
         if presence:
-            online = True
-            status = presence.get("status") or "active"
-            last_seen = presence.get("last_seen") or None
             role = presence.get("role") or role
-        elif ctx:
-            grant_liveness = grant_liveness_by_id.get(str(ctx["workspace_id"]))
-            if grant_liveness:
-                online = True
-                status = "active"
-                last_seen = grant_liveness["last_seen_at"].astimezone(timezone.utc).isoformat()
 
         agents.append(
             AgentView(
@@ -614,7 +606,7 @@ async def heartbeat(
     if workspace is None:
         raise HTTPException(status_code=409, detail="Agent has no active workspace")
 
-    ttl_seconds = 1800
+    ttl_seconds = get_presence_ttl_seconds()
     last_seen = await update_agent_presence(
         redis,
         workspace_id=str(workspace["workspace_id"]),

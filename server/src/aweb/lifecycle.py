@@ -30,6 +30,7 @@ from .identity_scope import normalize_identity_scope
 from .agent_wake import did_wake_key, send_agent_wakes
 from .messaging.waiting import unregister_waiting_strict
 from .presence import clear_workspace_presence
+from .workspace_activity import WorkspaceActivityRefusal, workspace_activity_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -443,19 +444,6 @@ def _precondition_errors(
                     target=workspace_id,
                 )
             )
-        last_seen_at = workspace.get("last_seen_at")
-        if (
-            request.stale_before is not None
-            and last_seen_at is not None
-            and last_seen_at > request.stale_before
-        ):
-            errors.append(
-                LifecycleError(
-                    code="local_workspace_still_active",
-                    message="Workspace presence is not stale enough for lifecycle cleanup.",
-                    target=workspace_id,
-                )
-            )
     return errors
 
 
@@ -493,7 +481,9 @@ class _LifecycleTargets:
     errors: list[LifecycleError]
 
 
-async def _load_lifecycle_targets(db, *, request: LifecycleCascadeRequest) -> _LifecycleTargets:
+async def _load_lifecycle_targets(
+    db, *, request: LifecycleCascadeRequest, redis: Redis | None
+) -> _LifecycleTargets:
     """Resolve targets and enforce lifecycle scope and staleness preconditions.
 
     Both dry-run and mutation enforce docs/aweb-sot.md:1199–1205.
@@ -501,6 +491,19 @@ async def _load_lifecycle_targets(db, *, request: LifecycleCascadeRequest) -> _L
     agent = await _load_target_agent(db, request)
     workspaces = await _load_target_workspaces(db, request)
     errors = _agent_precondition_errors(request, agent) + _precondition_errors(request, workspaces)
+    if request.stale_before is not None:
+        activity = await workspace_activity_by_id(
+            db, redis, workspace_ids=[str(row["workspace_id"]) for row in workspaces]
+        )
+        for workspace_id, observation in activity.items():
+            if observation.is_newer_than(cutoff=request.stale_before):
+                errors.append(
+                    LifecycleError(
+                        code=WorkspaceActivityRefusal.STILL_ACTIVE,
+                        message="Workspace activity is not stale enough for lifecycle cleanup.",
+                        target=workspace_id,
+                    )
+                )
     return _LifecycleTargets(workspaces=workspaces, errors=errors)
 
 
@@ -801,7 +804,9 @@ def _workspace_changes(
     )
 
 
-async def plan_lifecycle_cascade(db, request: LifecycleCascadeRequest) -> LifecycleCascadeResult:
+async def plan_lifecycle_cascade(
+    db, request: LifecycleCascadeRequest, *, redis: Redis | None = None
+) -> LifecycleCascadeResult:
     """Return planned coordination lifecycle effects without mutating state.
 
     The result always reports ``dry_run=True`` because this entry point is a
@@ -812,7 +817,7 @@ async def plan_lifecycle_cascade(db, request: LifecycleCascadeRequest) -> Lifecy
     if errors:
         return _error_result(request, errors)
 
-    targets = await _load_lifecycle_targets(db, request=request)
+    targets = await _load_lifecycle_targets(db, request=request, redis=redis)
     workspaces = targets.workspaces
     precondition_errors = targets.errors
     workspace_changes = _workspace_changes(workspaces, status="planned")
@@ -1241,7 +1246,7 @@ async def apply_lifecycle_cascade(
     An empty target workspace set is an intentional idempotent no-op.
     """
     if request.dry_run:
-        return await plan_lifecycle_cascade(db, request)
+        return await plan_lifecycle_cascade(db, request, redis=redis)
 
     errors = _validate_request(request)
     if errors:
@@ -1259,7 +1264,7 @@ async def apply_lifecycle_cascade(
     identity_archived = False
 
     async with db.transaction() as tx:
-        targets = await _load_lifecycle_targets(tx, request=request)
+        targets = await _load_lifecycle_targets(tx, request=request, redis=redis)
         workspaces = targets.workspaces
         precondition_errors = targets.errors
         workspace_changes = _workspace_changes(workspaces, status="planned")

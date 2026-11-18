@@ -1199,9 +1199,15 @@ metadata.
 `DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone local
 workspace and its bound agent row, plus releases any task claims held by
 the workspace. It returns `409` if the bound agent is global
-(global identities outlive workspaces) or if `last_seen_at` is
-within the 30-minute presence TTL and the workspace is not yet
-considered gone. The caller must present a team certificate for the same
+(global identities outlive workspaces), or when another member targets a
+workspace whose activity is within the presence TTL (30 minutes by default,
+configured by `AWEB_PRESENCE_TTL_SECONDS`). Activity is the newest workspace
+`last_seen_at`, Redis heartbeat timestamp, or currently valid grant-liveness
+timestamp. The lifecycle planner, cascade and agent list use the same activity
+owner. First connect and MCP heartbeats record `last_seen_at`; grant heartbeats
+keep their separate liveness records and do not overwrite shared metadata.
+Expired, revoked or stale grants do not keep a workspace live. Self cleanup
+remains immediate. The caller must present a team certificate for the same
 `team_id` as the target workspace.
 
 Lifecycle Redis effects are driven by `lifecycle_side_effect_outbox`, not by
