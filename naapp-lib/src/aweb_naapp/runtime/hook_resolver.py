@@ -43,8 +43,6 @@ from typing import Any
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
-import httpx
-
 from aweb_naapp.runtime.app_credentials import HOOK_RESOLVE, AppCredentialSigner
 from aweb_naapp.runtime.clock import MonotonicClock
 from aweb_naapp.runtime.freshness import (
@@ -53,7 +51,13 @@ from aweb_naapp.runtime.freshness import (
     FreshnessCache,
     RefreshTimedOut,
 )
-from aweb_naapp.runtime.team_server import TeamServer, TeamServerDirectory, TeamServerUnavailable
+from aweb_naapp.runtime.team_server import (
+    TeamServer,
+    TeamServerDirectory,
+    TeamServerReach,
+    TeamServerUnavailable,
+    TeamServerUnreachable,
+)
 
 HOOK_BINDING_REQUIRED = "hook_binding_required"
 HOOK_KEY_PURPOSES = frozenset({"hook-event", "hook-delivery"})
@@ -185,7 +189,7 @@ class HookResolver:
         directory: TeamServerDirectory,
         signer: AppCredentialSigner,
         app_origin: str,
-        transport: httpx.AsyncBaseTransport | None = None,
+        reach: TeamServerReach,
         refresh_timeout: float = DEFAULT_REFRESH_TIMEOUT_SECONDS,
         monotonic: MonotonicClock = time.monotonic_ns,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -197,7 +201,7 @@ class HookResolver:
         self._directory = directory
         self._signer = signer
         self._app_origin = app_origin
-        self._transport = transport
+        self._reach = reach
         self._clock = clock
         self._cache: FreshnessCache[tuple[Any, ...], tuple[Any, ...]] = FreshnessCache(
             refresh_timeout=refresh_timeout, monotonic=monotonic
@@ -332,23 +336,23 @@ class HookResolver:
     async def _get(
         self, server: TeamServer, team_id: str, path: str, *, signed: bool
     ) -> dict[str, Any]:
-        url = f"{server.server_url}{path}"
-        headers = (
-            self._signer.sign(method="GET", target=url, team_id=team_id).headers if signed else {}
-        )
-        options: dict[str, Any] = {"timeout": REQUEST_TIMEOUT_SECONDS, "follow_redirects": False}
-        if self._transport is not None:
-            options["transport"] = self._transport
+        def sign(target: str) -> dict[str, str]:
+            return self._signer.sign(method="GET", target=target, team_id=team_id).headers
+
         try:
-            async with httpx.AsyncClient(**options) as client:
-                async with client.stream("GET", url, headers=headers) as response:
-                    content = await _bounded_body(response)
-        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+            answer = await self._reach.get(
+                server, path, sign=sign if signed else None,
+                max_bytes=MAX_ANSWER_BYTES, timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+        except TeamServerUnreachable as exc:
             raise HookResolutionUnavailable("server_unreachable") from exc
-        if response.status_code == 403 and _detail(content) == HOOK_BINDING_REQUIRED:
+        if answer.truncated:
+            raise HookResolutionUnavailable("answer_too_large")
+        content = answer.body
+        if answer.status == 403 and _detail(content) == HOOK_BINDING_REQUIRED:
             raise HookBindingRequired()
-        if response.status_code != 200:
-            raise HookResolutionUnavailable(f"server_status_{response.status_code}")
+        if answer.status != 200:
+            raise HookResolutionUnavailable(f"server_status_{answer.status}")
         try:
             body = json.loads(content)
         except ValueError as exc:
@@ -356,16 +360,6 @@ class HookResolver:
         if not isinstance(body, dict):
             raise HookResolutionUnavailable("answer_malformed")
         return body
-
-
-async def _bounded_body(response: httpx.Response) -> bytes:
-    """The response body, refused unread past MAX_ANSWER_BYTES."""
-    content = bytearray()
-    async for chunk in response.aiter_bytes():
-        content += chunk
-        if len(content) > MAX_ANSWER_BYTES:
-            raise HookResolutionUnavailable("answer_too_large")
-    return bytes(content)
 
 
 def _detail(content: bytes) -> object:

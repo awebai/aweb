@@ -55,6 +55,7 @@ from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
 from aweb_naapp.asset_responses import font_response, stylesheet_response
+from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
 from aweb_naapp.hooks.producer import HookProducer
 from aweb_naapp.hooks.resolver import TeamServerRegistrations
 from aweb_naapp.identity_assets import mount_identity_routes
@@ -114,13 +115,12 @@ from aweb_naapp.runtime.team_auth import (
 )
 from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from aweb_naapp.runtime.team_key_pins import DatabaseTeamKeyPins
-from aweb_naapp.runtime.team_server import TeamServerDirectory
+from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerReach
 from aweb_naapp.skills import Skills
 
 if TYPE_CHECKING:
     from pgdbm.core import TransactionManager
 
-    from aweb_naapp.egress import Egress
     from aweb_naapp.runtime.owner_act_delivery import CheckedHumanRoleMember
 
 logger = logging.getLogger(__name__)
@@ -171,6 +171,7 @@ class NaappRuntime:
         awid_txt_resolver: TXTOutcomeResolver | None = None,
         awid_domain_verifier: DomainVerifier | None = None,
         team_server_transport: httpx.AsyncBaseTransport | None = None,
+        team_server_egress: Egress | None = None,
         stores: Sequence[Store] = (),
         hook_egress: Egress | None = None,
         hook_internal_cidr: IPv4Network | IPv6Network | None = None,
@@ -243,6 +244,14 @@ class NaappRuntime:
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache, transport=awid_transport,
         )
+        team_server_reach = TeamServerReach(
+            egress=team_server_egress or Egress(
+                addresses=AddressPolicy(),
+                resolver=DnsResolver(),
+                user_agent="aweb-naapp/team-server",
+            ),
+            transport=team_server_transport,
+        )
         self._installation_fence: InstallationFence | None = None
         self._installation_grants = None
         if self.manifest.app_keys_for(APP_GRANT_READ):
@@ -256,7 +265,7 @@ class NaappRuntime:
                         for version, data in sorted(self._manifest_variants.items())
                     )),
                 signer=AppCredentialSigner(app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ),
-                discovery=self.team_server_directory(), transport=team_server_transport,
+                discovery=self.team_server_directory(), reach=team_server_reach,
             )
         hook_key = (
             load_app_key(settings, self._manifest, HOOK_RESOLVE)
@@ -269,7 +278,7 @@ class NaappRuntime:
                     app_id=self._manifest.app_id, key=hook_key, purpose=HOOK_RESOLVE,
                 ),
                 app_origin=self._manifest.document["app"]["origin"],
-                transport=team_server_transport,
+                reach=team_server_reach,
             ) if hook_key is not None else None
         )
         self._hooks = RuntimeHooks.from_settings(

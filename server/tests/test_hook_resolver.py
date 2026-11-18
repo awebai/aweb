@@ -112,7 +112,7 @@ async def team(real_stack):
             directory=real_stack.directory(clock=clock, ttl_seconds=directory_ttl),
             signer=AppCredentialSigner(app_id=app["app_id"], key=key, purpose=HOOK_RESOLVE),
             app_origin=app["origin"],
-            transport=real_stack.aweb,
+            reach=real_stack.team_server_reach(),
             refresh_timeout=refresh_timeout,
             monotonic=clock,
             clock=lambda: clock.wall,

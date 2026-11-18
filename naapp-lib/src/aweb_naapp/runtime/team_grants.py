@@ -16,13 +16,16 @@ import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 
-import httpx
-
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ, AppCredentialSigner
 from aweb_naapp.runtime.authorization import Grant, GrantUnavailable
 from aweb_naapp.runtime.clock import MonotonicClock
 from aweb_naapp.runtime.freshness import FreshnessCache, RefreshTimedOut
-from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerUnavailable
+from aweb_naapp.runtime.team_server import (
+    TeamServerDirectory,
+    TeamServerReach,
+    TeamServerUnavailable,
+    TeamServerUnreachable,
+)
 
 MAX_ANSWER_BYTES = 1 << 20
 MISSING_KEY_MAX_AGE_SECONDS = 5
@@ -73,8 +76,8 @@ class TeamGrantSource:
         identity: AppIdentity,
         signer: AppCredentialSigner,
         discovery: TeamServerDirectory,
+        reach: TeamServerReach,
         timeout: float = 5.0,
-        transport: httpx.AsyncBaseTransport | None = None,
         monotonic: MonotonicClock = time.monotonic_ns,
     ) -> None:
         if signer.purpose != APP_GRANT_READ:
@@ -85,7 +88,7 @@ class TeamGrantSource:
         self._signer = signer
         self._directory = discovery
         self._timeout = timeout
-        self._transport = transport
+        self._reach = reach
         self._monotonic = monotonic
         self._cache: FreshnessCache[tuple[str, ...], GrantStatus | None] = FreshnessCache(
             refresh_timeout=timeout,
@@ -117,7 +120,7 @@ class TeamGrantSource:
             raise GrantUnavailable(exc.code) from exc
         except (TimeoutError, RefreshTimedOut) as exc:
             raise GrantUnavailable("grant_refresh_timeout") from exc
-        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        except TeamServerUnreachable as exc:
             raise GrantUnavailable("grant_server_unreachable") from exc
         except (KeyError, TypeError, ValueError, RecursionError) as exc:
             raise GrantUnavailable("grant_answer_malformed") from exc
@@ -128,21 +131,20 @@ class TeamGrantSource:
         key = (team_id, server.server_url, server.audience, server.team_did_key)
 
         async def fetch() -> tuple[GrantStatus | None, int]:
-            url = f"{server.server_url}/v1/apps/self/grant"
-            headers = self._signer.sign(method="GET", target=url, team_id=team_id).headers
-            async with httpx.AsyncClient(
-                transport=self._transport,
+            answer = await self._reach.get(
+                server,
+                "/v1/apps/self/grant",
+                sign=lambda target: self._signer.sign(
+                    method="GET", target=target, team_id=team_id
+                ).headers,
+                max_bytes=MAX_ANSWER_BYTES,
                 timeout=self._timeout,
-                follow_redirects=False,
-            ) as client:
-                async with client.stream("GET", url, headers=headers) as response:
-                    content = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        content.extend(chunk)
-                        if len(content) > MAX_ANSWER_BYTES:
-                            raise GrantUnavailable("grant_answer_too_large")
-            if response.status_code != 200:
-                if response.status_code == 403:
+            )
+            if answer.truncated:
+                raise GrantUnavailable("grant_answer_too_large")
+            content = answer.body
+            if answer.status != 200:
+                if answer.status == 403:
                     try:
                         denial = json.loads(content)
                     except ValueError:
@@ -154,7 +156,7 @@ class TeamGrantSource:
                             # A denial grants no use and carries no installation identity.
                             # Let a new install become usable promptly on retry.
                             return None, MISSING_KEY_MAX_AGE_SECONDS
-                raise GrantUnavailable(f"grant_server_status_{response.status_code}")
+                raise GrantUnavailable(f"grant_server_status_{answer.status}")
             body = json.loads(content)
             status = self._parse(body, team_id)
             return status, status.max_age_seconds

@@ -12,11 +12,13 @@ refreshed, the result is unavailable; an expired answer is never reused.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -26,6 +28,8 @@ from awid.team_ids import parse_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from fastapi import HTTPException
 
+from aweb_naapp.egress import Bounds, Egress, EgressNotSent, EgressOutcomeUnknown, canonical_url
+from aweb_naapp.egress.send import CONNECT_TIMEOUT_SECONDS, TOTAL_TIMEOUT_SECONDS
 from aweb_naapp.runtime.clock import MonotonicClock, seconds_to_ns
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 
@@ -169,3 +173,88 @@ class TeamServerDirectory:
         if not isinstance(body, dict):
             raise TeamServerUnavailable("team_server_record_invalid")
         return body.get("record"), body.get("signature")
+
+
+class TeamServerUnreachable(Exception):
+    """The team's server could not be reached, or did not answer in time."""
+
+
+@dataclass(frozen=True)
+class TeamServerAnswer:
+    """A team server's answer, cut at the caller's bound (``truncated``)."""
+
+    status: int
+    body: bytes
+    truncated: bool
+
+
+Sign = Callable[[str], Mapping[str, str]]
+
+
+class TeamServerReach:
+    """How the app sends its signed reads to a team's coordination server.
+
+    The server's address comes from the team's own signed record, so the team
+    chooses it.
+    """
+
+    def __init__(
+        self,
+        *,
+        egress: Egress,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._egress = egress
+        self._transport = transport
+
+    async def get(
+        self, server: TeamServer, path: str, *, sign: Sign | None, max_bytes: int, timeout: float
+    ) -> TeamServerAnswer:
+        """GET ``path`` under the server's URL; ``sign`` gives the headers for the exact URL sent."""
+        url = f"{server.server_url}{path}"
+        if self._transport is None and url.startswith("https://"):
+            return await self._resolved(url, sign, max_bytes, timeout)
+        return await self._direct(url, sign, max_bytes, timeout)
+
+    async def _resolved(
+        self, url: str, sign: Sign | None, max_bytes: int, timeout: float
+    ) -> TeamServerAnswer:
+        canonical = canonical_url(url)
+        target = str(canonical)
+        headers = list((sign(target) if sign is not None else {}).items())
+        bounds = Bounds(
+            connect_timeout=min(timeout, CONNECT_TIMEOUT_SECONDS),
+            total_timeout=min(timeout, TOTAL_TIMEOUT_SECONDS),
+            max_response_bytes=max_bytes,
+        )
+        loop = asyncio.get_running_loop()
+        try:
+            addresses = await self._egress.resolver.resolve(canonical.host)
+            response = await self._egress._exchange(
+                "GET", canonical, addresses[0], headers, b"", bounds,
+                loop.time() + bounds.total_timeout,
+            )
+        except (EgressNotSent, EgressOutcomeUnknown) as exc:
+            raise TeamServerUnreachable(str(exc)) from exc
+        return TeamServerAnswer(response.status, response.body, response.truncated)
+
+    async def _direct(
+        self, url: str, sign: Sign | None, max_bytes: int, timeout: float
+    ) -> TeamServerAnswer:
+        headers = dict(sign(url)) if sign is not None else {}
+        options: dict[str, Any] = {"timeout": timeout, "follow_redirects": False}
+        if self._transport is not None:
+            options["transport"] = self._transport
+        content = bytearray()
+        truncated = False
+        try:
+            async with httpx.AsyncClient(**options) as client:
+                async with client.stream("GET", url, headers=headers) as response:
+                    async for chunk in response.aiter_bytes():
+                        content.extend(chunk)
+                        if len(content) > max_bytes:
+                            truncated = True
+                            break
+        except (httpx.HTTPError, httpx.InvalidURL) as exc:
+            raise TeamServerUnreachable(str(exc) or type(exc).__name__) from exc
+        return TeamServerAnswer(response.status_code, bytes(content[:max_bytes]), truncated)

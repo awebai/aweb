@@ -76,7 +76,7 @@ async def installed(real_stack, team_controller):
         identity=IDENTITY,
         signer=signer,
         discovery=real_stack.directory(clock=clock),
-        transport=real_stack.aweb,
+        reach=real_stack.team_server_reach(),
         monotonic=clock,
     )
     return real_stack, source, clock, signer
@@ -267,7 +267,7 @@ async def test_bounded_timeout_covers_discovery_and_read(installed):
         identity=IDENTITY,
         signer=signer,
         discovery=stack.directory(clock=clock),
-        transport=stack.aweb,
+        reach=stack.team_server_reach(),
         monotonic=clock,
         timeout=0.02,
     )
@@ -390,7 +390,10 @@ async def test_another_purpose_is_refused_at_construction(installed, purpose):
     stack, _, _, signer = installed
     other = AppCredentialSigner(app_id=IDENTITY.app_id, key=signer._key, purpose=purpose)
     with pytest.raises(ValueError):
-        TeamGrantSource(identity=IDENTITY, signer=other, discovery=stack.directory())
+        TeamGrantSource(
+            identity=IDENTITY, signer=other, discovery=stack.directory(),
+            reach=stack.team_server_reach(),
+        )
     assert not stack.aweb.calls
 
 
@@ -419,7 +422,7 @@ async def test_server_move_discards_cached_grant_and_signs_the_mount_prefix(inst
         identity=IDENTITY,
         signer=signer,
         discovery=stack.directory(clock=clock, ttl_seconds=0),
-        transport=stack.aweb,
+        reach=stack.team_server_reach(),
         monotonic=clock,
     )
     assert await source.grant_for(TEAM) is not None

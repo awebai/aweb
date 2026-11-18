@@ -37,7 +37,8 @@ from awid.did import did_from_public_key
 from aweb.routes.app_hooks import router as app_hooks_router
 from aweb.routes.apps import router as apps_router
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
-from aweb_naapp.runtime.team_server import TeamServerDirectory
+from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
+from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerReach
 from tests.test_app_events_http import _build_events_app, _seed_team_and_agent
 
 REGISTRY_URL = "https://registry.example"
@@ -126,6 +127,13 @@ class RealStack:
             options["ttl_seconds"] = ttl_seconds
         return TeamServerDirectory(
             team_cache=team_cache, transport=self.awid, registry_override=no_registry_override, **options
+        )
+
+    def team_server_reach(self) -> TeamServerReach:
+        """Reads of the stack's aweb, carried by its in-process transport."""
+        return TeamServerReach(
+            egress=Egress(addresses=AddressPolicy(), resolver=DnsResolver(), user_agent="real-stack"),
+            transport=self.aweb,
         )
 
 

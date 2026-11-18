@@ -134,7 +134,7 @@ async def team(real_stack):
             purpose=HOOK_RESOLVE,
         ),
         app_origin=SECRETS["origin"],
-        transport=real_stack.aweb,
+        reach=real_stack.team_server_reach(),
         monotonic=clock,
         clock=lambda: clock.wall,
     )
