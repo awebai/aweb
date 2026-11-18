@@ -706,6 +706,10 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `room_post_notices`
 - `local_human_successions`
 - `conversation_participant_successions`
+- `message_retention_coverage`
+- `message_retention_parties`
+- `message_retention_interests`
+- `message_retention_previews`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 Migration `046_local_human_succession` adds:
