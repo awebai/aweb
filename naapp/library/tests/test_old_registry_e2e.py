@@ -14,6 +14,7 @@ from aweb_naapp_testing.deployment import (
     aw_request,
     candidate_hostname,
     compose,
+    configure_app_client,
     wait_http_ok,
 )
 from test_e2e_smoke import (
@@ -60,6 +61,7 @@ def test_private_certificate_refused_by_real_pre_status_registry(
     with running_library(
         tmp_path / "old-registry", awid_service_token=None, registry_url=old_registry
     ) as app:
+        configure_app_client(team.workspace, app)
         result = aw_request(team, HTTPMethod.GET, f"{app.origin}/v1/proposals")
         assert_aw_status(result, 401, context="private certificate on registry without status")
     current = aw_request(

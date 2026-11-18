@@ -682,9 +682,12 @@ def running_coordination_server(
 
 
 def configure_app_client(workspace: AWWorkspace, app: RunningApp) -> None:
-    """Lets ``workspace``'s aw reach the app's disposable TLS origin."""
+    """Lets ``workspace``'s aw reach the app's disposable TLS origin, and every
+    other running app's: it trusts the process's bundle of their CAs."""
     assert app.ca_file is not None
-    workspace.env["SSL_CERT_FILE"] = str(app.ca_file)
+    bundle = Path(os.environ["SSL_CERT_FILE"])
+    assert app.ca_file.read_bytes() in bundle.read_bytes(), f"{bundle} lacks {app.ca_file}"
+    workspace.env["SSL_CERT_FILE"] = str(bundle)
     workspace.env["GODEBUG"] = "x509sslcertoverrideplatform=1"
     for variable in ("NO_PROXY", "no_proxy"):
         workspace.env[variable] = os.environ.get(variable, "")
