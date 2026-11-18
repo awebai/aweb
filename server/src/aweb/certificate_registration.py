@@ -121,7 +121,7 @@ def record_certificate_registration(
 ) -> RegistrationDecision:
     """Count usable would-refuse facts once per request/certificate/disposition.
 
-    No team, certificate ID, key, signature or raw target enters the registry.
+    No team, certificate ID, key, signature or raw target becomes a metric label.
     Collection is independent of enforcement; unavailable measurement cannot
     turn NOT_REQUIRED into a refusal (Antares2c74f907).
     """
