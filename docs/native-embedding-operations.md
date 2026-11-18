@@ -90,3 +90,18 @@ those of the signed assertion; no publication-intent bypass is needed. See
 [assertion expiry and renewal](e2e-messaging-contract.md#assertion-expiry-and-renewal).
 The host may include publication in its own native transaction so public
 assertion and private custody bookkeeping fail together.
+
+## Authored-mail existence
+
+`aweb.messaging.mail_attribution.has_authored_mail(*, db, auth)` returns a
+boolean from one native `SELECT EXISTS`. The caller authenticates and authorizes
+the read first, then supplies its scoped native manager/transaction and
+`MessagingAuth`. The operation uses only `participant_dids(auth)` with the
+same native readable-mail and authored-identity predicates as ordinary reads.
+
+Current signing-key evidence applies only inside a thread containing the
+canonical participant. Predecessor attribution additionally requires both the
+thread's succession receipt and its native predecessor-to-participant mapping.
+Neither unrelated threads nor a predecessor's unthreaded mail gain authority.
+The operation reads no bodies or custody material and propagates database
+failures. It does not replace display/decryption or grant history access.
