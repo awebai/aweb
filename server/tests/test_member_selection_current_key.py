@@ -103,6 +103,7 @@ async def test_every_local_selector_requires_current_membership(pinning, kind, s
         path = "/v1/messages"
         payload = {
             "conversation_id": before.json()["conversation_id"],
+            "to_agent_id": recipient_id,
             "subject": "continuation",
             "body": "existing participant",
         }

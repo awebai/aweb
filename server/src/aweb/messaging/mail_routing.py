@@ -5,13 +5,15 @@ from typing import Iterable
 
 from aweb.human_kind import is_verified_human
 from aweb.identity_binding import verified_key_sql
-from aweb.member_team_key import read_participant_identity_projection
+from aweb.member_team_key import (
+    read_member_projection,
+    read_participant_identity_projection,
+)
 from aweb.messaging.address_auth import identity_recipient
 from aweb.messaging.conversations import (
     list_conversation_participants,
     require_active_conversation_participant,
 )
-from aweb.messaging.messages import get_agent_by_id
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import ValidationError
 
@@ -211,10 +213,20 @@ async def explicit_mail_target_matches_participant(
     address_matches = False
 
     if to_agent_id is not None and str(to_agent_id).strip():
-        selected = await get_agent_by_id(db, agent_id=str(to_agent_id).strip())
-        selected_did = str((selected or {}).get("did_aw") or (selected or {}).get("did_key") or "")
-        selected_identity_matches = selected_did == participant_did
-        checks.append(selected_identity_matches)
+        selected_id = str(to_agent_id).strip()
+        if str(participant.get("agent_id") or "") == selected_id:
+            # This is a consistency check against the already-authorized
+            # participant, not a new member selector or routing authority.
+            checks.append(True)
+        else:
+            selected = await read_member_projection(db.get_manager("aweb"), agent_id=selected_id)
+            projected = (
+                selected.verified_identity()
+                if selected is not None and selected["deleted_at"] is None
+                else {}
+            )
+            selected_did = str(projected.get("did_aw") or projected.get("did_key") or "")
+            checks.append(selected_did == participant_did)
     if to_alias is not None and str(to_alias).strip():
         checks.append(participant_alias == str(to_alias).strip())
     if to_stable_id is not None and str(to_stable_id).strip():
