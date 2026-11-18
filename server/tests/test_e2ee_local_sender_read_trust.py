@@ -38,7 +38,17 @@ from test_messages_http import _make_keypair, _make_certificate, _signed_team_he
 
 
 @asynccontextmanager
-async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retired, *, human=False, cross_team=False, plaintext=False):
+async def _local_sender_mail(
+    env,
+    tmp_path,
+    global_resident,
+    grant,
+    sender_retired,
+    *,
+    human=False,
+    cross_team=False,
+    plaintext=False,
+):
     """Deliver one local-sender E2EE mail to bob; yield bob's real CLI context
     and the registry it resolves through."""
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
@@ -49,77 +59,161 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
         sender_team_sk, _, sender_team_did = _make_keypair()
         await env.db.execute(
             "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ($1, 'sender.test', $2, $3)",
-            sender_team, sender_team.split(":", 1)[0], sender_team_did)
+            sender_team,
+            sender_team.split(":", 1)[0],
+            sender_team_did,
+        )
         await env.registry_db.execute(
             "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ('sender.test', $1, $2, 'public')",
-            sender_team.split(":", 1)[0], sender_team_did)
-        await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1, certificate_id='privacy-alice', "
-                             "accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = $1) WHERE agent_id=$2",
-                             sender_team, env.actors["alice"].id)
-        await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$1 WHERE workspace_id=$2",
-                             sender_team, env.actors["alice"].workspace)
+            sender_team.split(":", 1)[0],
+            sender_team_did,
+        )
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET team_id=$1, certificate_id='privacy-alice', "
+            "accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = $1) WHERE agent_id=$2",
+            sender_team,
+            env.actors["alice"].id,
+        )
+        await env.db.execute(
+            "UPDATE {{tables.workspaces}} SET team_id=$1 WHERE workspace_id=$2",
+            sender_team,
+            env.actors["alice"].workspace,
+        )
     identities = {}
     for name in ("alice", "bob"):
         actor = env.actors[name]
         private, public = generate_x25519_keypair()
         address = "example.test/bob" if global_resident and name == "bob" else ""
-        stable_id = stable_id_from_did_key(actor.did) if address or (human and name == "alice") else ""
+        stable_id = (
+            stable_id_from_did_key(actor.did)
+            if address or (human and name == "alice")
+            else ""
+        )
         if stable_id:
             assert await register_global_identity(env, actor, address) == stable_id
             # The registered recipient is ready for stable/address delivery
             # before its first authenticated read, as after the operator pass.
-            await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2, did_aw_verified_key=did_key WHERE agent_id = $3",
-                                 stable_id, address, actor.id)
+            await env.db.execute(
+                "UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2, did_aw_verified_key=did_key WHERE agent_id = $3",
+                stable_id,
+                address,
+                actor.id,
+            )
         assertion = build_encryption_key_assertion(
-            signing_key=actor.sk, identity_did=actor.did, identity_stable_id=stable_id,
-            encryption_public_key=public, custody="hosted_custodial" if human and name == "alice" else "self", now=now,
+            signing_key=actor.sk,
+            identity_did=actor.did,
+            identity_stable_id=stable_id,
+            encryption_public_key=public,
+            custody="hosted_custodial" if human and name == "alice" else "self",
+            now=now,
         )
-        identities[name] = dict(address=address, did=actor.did, stable_id=stable_id, team_id=sender_team if name == "alice" else TEAM,
-                                signing_key=actor.sk, private_key=private, encryption_key=assertion)
+        identities[name] = dict(
+            address=address,
+            did=actor.did,
+            stable_id=stable_id,
+            team_id=sender_team if name == "alice" else TEAM,
+            signing_key=actor.sk,
+            private_key=private,
+            encryption_key=assertion,
+        )
     sender, agent = identities["alice"], identities["bob"]
     if human:
-        await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key, certificate_id='privacy-alice', "
-                             "accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1",
-                             env.actors["alice"].id)
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key, certificate_id='privacy-alice', "
+            "accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$1",
+            env.actors["alice"].id,
+        )
     message_id, conversation_id = str(uuid4()), str(uuid4())
-    source = encrypt_e2ee_mail(sender=sender, recipients=[agent], subject="Local encrypted",
-                              body="local sender private text", message_id=message_id,
-                              conversation_id=conversation_id, created_at=now)
+    source = encrypt_e2ee_mail(
+        sender=sender,
+        recipients=[agent],
+        subject="Local encrypted",
+        body="local sender private text",
+        message_id=message_id,
+        conversation_id=conversation_id,
+        created_at=now,
+    )
     assert not source["from"].get("address")
     assert bool(source["from"].get("stable_id")) == human
     if plaintext:
-        payload = canonical_json_bytes(dict(
-            type="mail", from_did=sender["did"], to_did=agent["did"], to_stable_id=agent["stable_id"],
-            subject="Local encrypted", body="local sender private text", message_id=message_id,
-            conversation_id=conversation_id, timestamp=now.isoformat(),
-            **{"from": sender_team.split(":", 1)[1] + "/alice", "to": agent["address"]},
-        ))
-        body = dict(to_did=agent["did"], to_address=agent["address"], subject="Local encrypted",
-                    body="local sender private text", message_id=message_id, conversation_id=conversation_id,
-                    timestamp=now.isoformat(), from_did=sender["did"], to_stable_id=agent["stable_id"],
-                    signature=sign_message(sender["signing_key"], payload), signed_payload=payload.decode())
+        payload = canonical_json_bytes(
+            dict(
+                type="mail",
+                from_did=sender["did"],
+                to_did=agent["did"],
+                to_stable_id=agent["stable_id"],
+                subject="Local encrypted",
+                body="local sender private text",
+                message_id=message_id,
+                conversation_id=conversation_id,
+                timestamp=now.isoformat(),
+                **{
+                    "from": sender_team.split(":", 1)[1] + "/alice",
+                    "to": agent["address"],
+                },
+            )
+        )
+        body = dict(
+            to_did=agent["did"],
+            to_address=agent["address"],
+            subject="Local encrypted",
+            body="local sender private text",
+            message_id=message_id,
+            conversation_id=conversation_id,
+            timestamp=now.isoformat(),
+            from_did=sender["did"],
+            to_stable_id=agent["stable_id"],
+            signature=sign_message(sender["signing_key"], payload),
+            signed_payload=payload.decode(),
+        )
     else:
-        body = dict(to_did=agent["did"], message_id=message_id, conversation_id=conversation_id,
-                    content_mode="encrypted_v2", message_version=2, encrypted_envelope=source)
+        body = dict(
+            to_did=agent["did"],
+            message_id=message_id,
+            conversation_id=conversation_id,
+            content_mode="encrypted_v2",
+            message_version=2,
+            encrypted_envelope=source,
+        )
     sent = await _request(env, "alice", "POST", "/v1/messages", body)
     assert sent.status_code == 200, sent.text
     if sender_retired:
         # Team lifecycle removal of a local member after it sent.
-        await env.db.execute("UPDATE {{tables.workspaces}} SET deleted_at = NOW() WHERE workspace_id = $1",
-                             env.actors["alice"].workspace)
-        await env.db.execute("UPDATE {{tables.agents}} SET deleted_at = NOW(), status = 'deleted' WHERE agent_id = $1",
-                             env.actors["alice"].id)
+        await env.db.execute(
+            "UPDATE {{tables.workspaces}} SET deleted_at = NOW() WHERE workspace_id = $1",
+            env.actors["alice"].workspace,
+        )
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET deleted_at = NOW(), status = 'deleted' WHERE agent_id = $1",
+            env.actors["alice"].id,
+        )
 
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)
     if global_resident:
-        (identity_home / "identity.yaml").write_text(json.dumps({
-            "did": agent["did"], "stable_id": agent["stable_id"], "address": agent["address"],
-            "custody": "self", "identity_scope": "global", "created_at": now.isoformat(),
-        }))
+        (identity_home / "identity.yaml").write_text(
+            json.dumps(
+                {
+                    "did": agent["did"],
+                    "stable_id": agent["stable_id"],
+                    "address": agent["address"],
+                    "custody": "self",
+                    "identity_scope": "global",
+                    "created_at": now.isoformat(),
+                }
+            )
+        )
     team_sk, team_did = env.team_sk, env.team_did
-    cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
-                             member_did_aw=agent["stable_id"], member_address=agent["address"])
+    cert = _make_certificate(
+        team_sk,
+        team_did,
+        agent["did"],
+        team_id=TEAM,
+        alias="bob",
+        identity_scope="global" if global_resident else "local",
+        member_did_aw=agent["stable_id"],
+        member_address=agent["address"],
+    )
     cert.pop("signature")
     if not global_resident:
         for field in ("member_did_aw", "member_address"):
@@ -130,36 +224,78 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
     (identity_home / cert_path).write_text(json.dumps(cert))
     (identity_home / cert_path).chmod(0o600)
     membership = {"team_id": TEAM, "alias": "bob", "cert_path": cert_path}
-    (identity_home / "teams.yaml").write_text(json.dumps({"active_team": TEAM, "memberships": [membership]}))
-    (identity_home / "workspace.yaml").write_text(json.dumps({
-        "aweb_url": str(env.client.base_url), "memberships": [{**membership, "workspace_id": str(env.actors["bob"].workspace)}],
-    }))
+    (identity_home / "teams.yaml").write_text(
+        json.dumps({"active_team": TEAM, "memberships": [membership]})
+    )
+    (identity_home / "workspace.yaml").write_text(
+        json.dumps(
+            {
+                "aweb_url": str(env.client.base_url),
+                "memberships": [
+                    {**membership, "workspace_id": str(env.actors["bob"].workspace)}
+                ],
+            }
+        )
+    )
     _pem(identity_home / "signing.key", "ED25519 PRIVATE KEY", agent["signing_key"])
     _pem(identity_home / "encryption.key", "X25519 PRIVATE KEY", agent["private_key"])
     assertion = agent["encryption_key"]
     (identity_home / "assertion.json").write_text(json.dumps(assertion))
-    (identity_home / "encryption.yaml").write_text(json.dumps({
-        "active_key_id": assertion["encryption_key_id"], "keys": [{
-            "key_id": assertion["encryption_key_id"], "public_key": assertion["encryption_public_key"],
-            "private_key_path": "encryption.key", "assertion_path": "assertion.json",
-            **{key: assertion[key] for key in ("created_at", "not_before", "expires_at")},
-            "published_at": now.isoformat(),
-        }],
-    }))
+    (identity_home / "encryption.yaml").write_text(
+        json.dumps(
+            {
+                "active_key_id": assertion["encryption_key_id"],
+                "keys": [
+                    {
+                        "key_id": assertion["encryption_key_id"],
+                        "public_key": assertion["encryption_public_key"],
+                        "private_key_path": "encryption.key",
+                        "assertion_path": "assertion.json",
+                        **{
+                            key: assertion[key]
+                            for key in ("created_at", "not_before", "expires_at")
+                        },
+                        "published_at": now.isoformat(),
+                    }
+                ],
+            }
+        )
+    )
     binary = Path(os.environ["AW_TEST_CLI_BINARY"])
-    child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
-    child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
-                     HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"))
+    child_env = {
+        k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))
+    }
+    child_env.update(
+        AWEB_IDENTITY_HOME=str(identity_home),
+        AWEB_URL=str(env.client.base_url),
+        HOME=str(tmp_path),
+        XDG_CONFIG_HOME=str(tmp_path / "config"),
+    )
     registry = SimpleNamespace(url="", responses=[], address_lookup_status=None)
 
     async def recorded_registry(scope, receive, send):
         async def record(event):
             if event["type"] == "http.response.start":
-                user_agent = dict(scope.get("headers") or []).get(b"user-agent", b"").decode()
-                registry.responses.append((scope["method"], scope["path"], event["status"], user_agent))
+                user_agent = (
+                    dict(scope.get("headers") or []).get(b"user-agent", b"").decode()
+                )
+                registry.responses.append(
+                    (scope["method"], scope["path"], event["status"], user_agent)
+                )
             await send(event)
-        if registry.address_lookup_status and scope["type"] == "http" and "/addresses/" in scope["path"]:
-            await record({"type": "http.response.start", "status": registry.address_lookup_status, "headers": []})
+
+        if (
+            registry.address_lookup_status
+            and scope["type"] == "http"
+            and "/addresses/" in scope["path"]
+        ):
+            await record(
+                {
+                    "type": "http.response.start",
+                    "status": registry.address_lookup_status,
+                    "headers": [],
+                }
+            )
             await send({"type": "http.response.body", "body": b"registry unavailable"})
             return
         await env.registry_app(scope, receive, record)
@@ -167,8 +303,22 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
     async with _registry_http(recorded_registry) as (registry_url, _):
         registry.url = registry_url
         child_env["AWID_REGISTRY_URL"] = registry_url
-        async with _reply_context(binary, tmp_path, child_env, grant, agent["address"], ttl="never" if cross_team else "5m") as (command_dir, command_env):
-            yield message_id, conversation_id, binary, command_dir, command_env, registry
+        async with _reply_context(
+            binary,
+            tmp_path,
+            child_env,
+            grant,
+            agent["address"],
+            ttl="never" if cross_team else "5m",
+        ) as (command_dir, command_env):
+            yield (
+                message_id,
+                conversation_id,
+                binary,
+                command_dir,
+                command_env,
+                registry,
+            )
 
 
 @pytest.mark.usefixtures("source_cli_binary")

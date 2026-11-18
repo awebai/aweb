@@ -631,25 +631,38 @@ async def test_atomic_claim_stale_timestamp_fails_before_writes(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("offset", [-301, -300, 0, 300, 301])
-async def test_atomic_claim_timestamp_window_at_real_admission(client, awid_db_infra, controller_identity, monkeypatch, offset):
+async def test_atomic_claim_timestamp_window_at_real_admission(
+    client, awid_db_infra, controller_identity, monkeypatch, offset
+):
     signing_key, controller = controller_identity
     await _register_namespace(client, signing_key, controller)
     now = datetime.fromisoformat(_TS.replace("Z", "+00:00"))
     monkeypatch.setattr(dns_auth, "_utc_now", lambda: now)
     key, public = generate_keypair()
     body = _claim_body(
-        identity_signing_key=key, identity_did_key=did_from_public_key(public),
+        identity_signing_key=key,
+        identity_did_key=did_from_public_key(public),
         controller_signing_key=signing_key,
         timestamp=(now + timedelta(seconds=offset)).isoformat().replace("+00:00", "Z"),
     )
-    response = await client.post("/v1/namespaces/example.com/addresses/claims", json=body)
+    response = await client.post(
+        "/v1/namespaces/example.com/addresses/claims", json=body
+    )
     if abs(offset) > 300:
         assert response.status_code == 401, response.text
         assert response.json()["detail"]["code"] == "timestamp_stale"
-        assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (0, 0, 0)
+        assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+            0,
+            0,
+            0,
+        )
     else:
         assert response.status_code == 200, response.text
-        assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (1, 1, 1)
+        assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
+            1,
+            1,
+            1,
+        )
 
 
 @pytest.mark.asyncio

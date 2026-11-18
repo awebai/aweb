@@ -29,9 +29,13 @@ class ControllerEnvelopeForm(Enum):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("form", list(ControllerEnvelopeForm), ids=["legacy", "covering"])
+@pytest.mark.parametrize(
+    "form", list(ControllerEnvelopeForm), ids=["legacy", "covering"]
+)
 @pytest.mark.parametrize("offset", [-301, -300, 0, 300, 301])
-async def test_controller_timestamp_window_at_real_admission(controller_app, monkeypatch, form, offset):
+async def test_controller_timestamp_window_at_real_admission(
+    controller_app, monkeypatch, form, offset
+):
     env = controller_app
     now = datetime.now(timezone.utc).replace(microsecond=0)
     monkeypatch.setattr(dns_auth, "_utc_now", lambda: now)
@@ -40,19 +44,35 @@ async def test_controller_timestamp_window_at_real_admission(controller_app, mon
     path = "/v1/namespaces/local/teams"
     timestamp = (now + timedelta(seconds=offset)).isoformat()
     signed = headers(
-        *env.controller, {"domain": "local", "operation": "create_team", "name": "clocked"},
-        "POST", path, content, covering=form is ControllerEnvelopeForm.COVERING,
+        *env.controller,
+        {"domain": "local", "operation": "create_team", "name": "clocked"},
+        "POST",
+        path,
+        content,
+        covering=form is ControllerEnvelopeForm.COVERING,
         overrides={"timestamp": timestamp},
     )
     signed["X-AWEB-Timestamp"] = timestamp
-    response = await env.client.post(path, content=content, headers={**signed, "Content-Type": "application/json"})
+    response = await env.client.post(
+        path, content=content, headers={**signed, "Content-Type": "application/json"}
+    )
     if abs(offset) > 300:
         assert response.status_code == 401, response.text
         assert response.json()["detail"] == "Timestamp outside allowed skew window"
-        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.teams}} WHERE name='clocked'") == 0
+        assert (
+            await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.teams}} WHERE name='clocked'"
+            )
+            == 0
+        )
     else:
         assert response.status_code == 200, response.text
-        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.teams}} WHERE name='clocked'") == 1
+        assert (
+            await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.teams}} WHERE name='clocked'"
+            )
+            == 1
+        )
 
 
 def legacy_counts(env):

@@ -146,11 +146,16 @@ async def test_registry_client_redirect_target_receives_no_request(status):
 
     def handler(request):
         requests.append((request.method, str(request.url)))
-        return Response(status, json={}, headers={"Location": "http://target.test/final"})
+        return Response(
+            status, json={}, headers={"Location": "http://target.test/final"}
+        )
 
-    async with aclosing(RegistryClient(
-        registry_url="http://registry.test", transport=MockTransport(handler),
-    )) as registry:
+    async with aclosing(
+        RegistryClient(
+            registry_url="http://registry.test",
+            transport=MockTransport(handler),
+        )
+    ) as registry:
         if status == 307:
             with pytest.raises(RegistryError) as refused:
                 await registry.health()

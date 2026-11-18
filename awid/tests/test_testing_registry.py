@@ -87,15 +87,28 @@ async def test_fixture_setup_creates_a_namespace_before_its_team(database_url) -
     team_key = SigningKey.generate()
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
-        async with httpx.AsyncClient(transport=registry.transport, base_url=REGISTRY_URL) as client:
+        async with httpx.AsyncClient(
+            transport=registry.transport, base_url=REGISTRY_URL
+        ) as client:
             namespace = await client.get("/v1/namespaces/example.com")
-        assert namespace.status_code == 200, "fixture team has no registered namespace authority"
-        writes = [(request.method, request.url.path) for request in registry.transport.calls if request.method == "POST"]
-        assert writes == [("POST", "/v1/namespaces"), ("POST", "/v1/namespaces/example.com/teams")]
+        assert namespace.status_code == 200, (
+            "fixture team has no registered namespace authority"
+        )
+        writes = [
+            (request.method, request.url.path)
+            for request in registry.transport.calls
+            if request.method == "POST"
+        ]
+        assert writes == [
+            ("POST", "/v1/namespaces"),
+            ("POST", "/v1/namespaces/example.com/teams"),
+        ]
 
 
 @pytest.mark.asyncio
-async def test_fixture_setup_stores_the_registered_signed_certificate(database_url) -> None:
+async def test_fixture_setup_stores_the_registered_signed_certificate(
+    database_url,
+) -> None:
     team_key, member_key = SigningKey.generate(), SigningKey.generate()
     certificate = _certificate(team_key, member_key, "cert-1")
     async with running_registry(database_url) as registry:
@@ -109,16 +122,28 @@ async def test_fixture_setup_stores_the_registered_signed_certificate(database_u
 
 
 @pytest.mark.asyncio
-async def test_fixture_setup_rejects_a_forged_certificate_without_writing(database_url) -> None:
+async def test_fixture_setup_rejects_a_forged_certificate_without_writing(
+    database_url,
+) -> None:
     team_key, member_key = SigningKey.generate(), SigningKey.generate()
     certificate = _certificate(team_key, member_key, "cert-forged")
-    certificate["signature"] = _certificate(SigningKey.generate(), member_key, "cert-forged")["signature"]
+    certificate["signature"] = _certificate(
+        SigningKey.generate(), member_key, "cert-forged"
+    )["signature"]
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
         with pytest.raises(RegistryError) as refused:
             await registry.add_certificate(certificate)
-        assert (refused.value.status_code, refused.value.detail) == (422, "certificate signature verification failed")
-        assert await registry.db.fetch_value("SELECT count(*) FROM {{tables.team_certificates}}") == 0
+        assert (refused.value.status_code, refused.value.detail) == (
+            422,
+            "certificate signature verification failed",
+        )
+        assert (
+            await registry.db.fetch_value(
+                "SELECT count(*) FROM {{tables.team_certificates}}"
+            )
+            == 0
+        )
 
 
 @pytest.mark.asyncio

@@ -80,7 +80,11 @@ class Member:
 
     def certificate(self) -> dict[str, Any]:
         """Issue the current scope shape (docs/identity.md:57-73)."""
-        scope = IdentityScope.GLOBAL if self.extra_cert_fields.get("member_did_aw") else IdentityScope.LOCAL
+        scope = (
+            IdentityScope.GLOBAL
+            if self.extra_cert_fields.get("member_did_aw")
+            else IdentityScope.LOCAL
+        )
         cert = {
             "version": 1,
             "certificate_id": self.certificate_id,
@@ -94,8 +98,19 @@ class Member:
         }
         name, domain = self.team_id.split(":", 1)
         context = ControllerSigningContext(
-            request=ControllerObjectRequest(operation="team_certificate_issue", domain=domain, parameters={"name": name, "certificate": cert}),
-            controller=ControllerDescriptor(scope=TEAM_CONTROLLER_SCOPE, domain=domain, did_key=self.team_did_key, key_reference="test-member", generation=0, team=name),
+            request=ControllerObjectRequest(
+                operation="team_certificate_issue",
+                domain=domain,
+                parameters={"name": name, "certificate": cert},
+            ),
+            controller=ControllerDescriptor(
+                scope=TEAM_CONTROLLER_SCOPE,
+                domain=domain,
+                did_key=self.team_did_key,
+                key_reference="test-member",
+                generation=0,
+                team=name,
+            ),
         )
         cert["signature"] = sign_message(bytes(self.team_key), context.signing_bytes())
         return cert

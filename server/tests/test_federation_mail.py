@@ -125,12 +125,16 @@ async def test_federation_redirect_target_receives_no_request(status):
 
     def handler(request):
         requests.append((request.method, str(request.url)))
-        return Response(status, json={}, headers={"Location": "https://target.test/final"})
+        return Response(
+            status, json={}, headers={"Location": "https://target.test/final"}
+        )
 
     async def deliver():
         return await deliver_federated_message(
-            delivery_origin="https://source.test", envelope=_envelope(),
-            signature="signature", transport=MockTransport(handler),
+            delivery_origin="https://source.test",
+            envelope=_envelope(),
+            signature="signature",
+            transport=MockTransport(handler),
         )
 
     if status == 307:

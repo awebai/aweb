@@ -1233,8 +1233,14 @@ def _team_identity_call_sites(source: str, path_label: str) -> list[tuple[str, s
     tree = ast.parse(source)
     names = {"get_team_identity"}
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("team_auth_deps"):
-            names.update(alias.asname or alias.name for alias in node.names if alias.name == "get_team_identity")
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith(
+            "team_auth_deps"
+        ):
+            names.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "get_team_identity"
+            )
     parents: dict[ast.AST, ast.AST] = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
@@ -1244,11 +1250,16 @@ def _team_identity_call_sites(source: str, path_label: str) -> list[tuple[str, s
         if not isinstance(node, ast.Call):
             continue
         direct = isinstance(node.func, ast.Name) and node.func.id in names
-        qualified = isinstance(node.func, ast.Attribute) and node.func.attr == "get_team_identity"
+        qualified = (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get_team_identity"
+        )
         if not (direct or qualified):
             continue
         parent = parents.get(node)
-        while parent is not None and not isinstance(parent, (ast.AsyncFunctionDef, ast.FunctionDef)):
+        while parent is not None and not isinstance(
+            parent, (ast.AsyncFunctionDef, ast.FunctionDef)
+        ):
             parent = parents.get(parent)
         rows.append((path_label, getattr(parent, "name", "<module>")))
     return sorted(rows)
@@ -1258,7 +1269,11 @@ def _direct_team_identity_calls() -> list[tuple[str, str]]:
     paths = sorted((REPO_ROOT / "server/src/aweb").rglob("*.py"))
     rows: list[tuple[str, str]] = []
     for path in paths:
-        rows.extend(_team_identity_call_sites(path.read_text(), str(path.relative_to(REPO_ROOT))))
+        rows.extend(
+            _team_identity_call_sites(
+                path.read_text(), str(path.relative_to(REPO_ROOT))
+            )
+        )
     return sorted(rows)
 
 
@@ -1363,20 +1378,28 @@ def test_direct_team_identity_inventory_sees_a_new_module(tmp_path, monkeypatch)
     # Populate the old scanner's directories too: absence of a formerly named
     # file must not be mistaken for detecting the new call.
     for path in (
-        "coordination/routes/tasks.py", "coordination/routes/workspaces.py",
-        "coordination/routes/team_roles.py", "coordination/routes/team_instructions.py",
-        "coordination/routes/repos.py", "routes/apps.py", "routes/connect.py",
-        "routes/events.py", "routes/hook_bindings.py",
+        "coordination/routes/tasks.py",
+        "coordination/routes/workspaces.py",
+        "coordination/routes/team_roles.py",
+        "coordination/routes/team_instructions.py",
+        "coordination/routes/repos.py",
+        "routes/apps.py",
+        "routes/connect.py",
+        "routes/events.py",
+        "routes/hook_bindings.py",
     ):
         source = tmp_path / "server/src/aweb" / path
         source.parent.mkdir(parents=True, exist_ok=True)
         source.write_text("")
     added = tmp_path / "server/src/aweb/routes/new_identity_consumer.py"
-    added.write_text("async def new_consumer(request, db):\n    return await get_team_identity(request, db)\n")
+    added.write_text(
+        "async def new_consumer(request, db):\n    return await get_team_identity(request, db)\n"
+    )
     monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
     assert _direct_team_identity_calls() == [
         ("server/src/aweb/routes/new_identity_consumer.py", "new_consumer"),
     ]
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("deadline_offset_ms", [100, 0, -100])
