@@ -6,6 +6,7 @@ uninstall/reinstall. These tests isolate persisted legacy decisions and races.
 
 import asyncio
 from datetime import timedelta
+from enum import StrEnum
 from uuid import uuid4
 
 import httpx
@@ -173,7 +174,14 @@ async def test_unavailable_g1_refuses_without_adopting_or_permanently_refusing_r
 _PNG = b"\x89PNG\r\n\x1a\n" + b"lock-wait"
 
 
-@pytest.mark.parametrize("served", ["page", "image"])
+class Served(StrEnum):
+    """What a read-only link serves: its page, or an image the page shows."""
+
+    PAGE = "page"
+    IMAGE = "image"
+
+
+@pytest.mark.parametrize("served", list(Served))
 async def test_link_that_expires_during_a_lock_wait_serves_nothing(
     present_world, client, monkeypatch, served
 ):
@@ -194,7 +202,7 @@ async def test_link_that_expires_during_a_lock_wait_serves_nothing(
     )
     link = await mint(present_world, editable=False)
     key = read_only_link_key(link["token"])
-    url = link["url"] if served == "page" else f"{link['url']}/assets/{asset_id}"
+    url = link["url"] if served is Served.PAGE else f"{link['url']}/assets/{asset_id}"
     assert (await client.get(url)).status_code == 200
 
     await db.execute(

@@ -1299,6 +1299,8 @@ def _editor_script(*, initial_json: str) -> str:
     // then marked as failed with what the person can do.
     const sessionImagePrefix = endpoint + '/assets/';
     const sessionImages = new Map();
+    // A marked image's state, as its data-folio-image attribute.
+    const ImageState = Object.freeze({{REFUSED: 'refused', RETRYING: 'retrying', FAILED: 'failed'}});
     const IMAGE_REFUSED = 'This image is not available to this editing session. It may have been removed.';
     const IMAGE_RETRYING = 'This image could not be loaded yet. Retrying.';
     const IMAGE_FAILED = 'This image could not be loaded. Reload the editor to try again.';
@@ -1337,7 +1339,7 @@ def _editor_script(*, initial_json: str) -> str:
         if (img.dataset.folioSource !== source) return;
         if (blobUrl === null) {{
           sessionImages.delete(path);
-          markImage(img, 'refused', IMAGE_REFUSED);
+          markImage(img, ImageState.REFUSED, IMAGE_REFUSED);
           return;
         }}
         delete img.dataset.folioImage;
@@ -1348,10 +1350,10 @@ def _editor_script(*, initial_json: str) -> str:
         sessionImages.delete(path);
         if (img.dataset.folioSource !== source) return;
         if (attempt >= IMAGE_RETRY_DELAYS_MS.length) {{
-          markImage(img, 'failed', IMAGE_FAILED);
+          markImage(img, ImageState.FAILED, IMAGE_FAILED);
           return;
         }}
-        markImage(img, 'retrying', IMAGE_RETRYING);
+        markImage(img, ImageState.RETRYING, IMAGE_RETRYING);
         setTimeout(() => {{
           if (img.isConnected && img.dataset.folioSource === source) showSessionImage(img, source, attempt + 1);
         }}, IMAGE_RETRY_DELAYS_MS[attempt]);
