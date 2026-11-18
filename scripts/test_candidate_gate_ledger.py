@@ -77,60 +77,50 @@ def checked(root: Path, *args: str):
     return result.stdout.strip()
 
 
-def main() -> None:
-    # Direct invocation needs the same immediate refusal as the make target.
-    preflight = run(ROOT, "bash", "scripts/candidate-docker-gate.sh", "--check-disk")
-    if preflight.returncode:
-        raise SystemExit(preflight.stdout + preflight.stderr)
-    evidence = Path(tempfile.mkdtemp(prefix="aweb-ledger-evidence.")).resolve()
-    print(f"Ledger integration evidence: {evidence}", flush=True)
-    with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
-        repo = Path(temporary)
-        for name in (
-            "candidate-docker-gate.sh",
-            "candidate-suite.sh",
-            "candidate-cleanup.sh",
-            "candidate-host-pressure.py",
-            "candidate-network.py",
-            "fetch_released_aw.py",
-            "next_tag_version.py",
-            "release_candidate.py",
-            "release_versions.py",
-            "vm-gate/vm_gate/aweb_stages.py",
-        ):
-            destination = repo / "scripts" / name
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / "scripts" / name, destination)
-        (repo / "candidate-gate/bin").mkdir(parents=True)
-        shutil.copy2(
-            ROOT / "candidate-gate/bin/docker", repo / "candidate-gate/bin/docker"
-        )
-        (repo / "candidate-gate/Dockerfile").write_text(
-            "FROM docker:27-cli\n"
-            "RUN apk add --no-cache bash git make python3 postgresql-client redis "
-            "&& ln -s /usr/local/bin/docker /usr/bin/docker\n"
-        )
-        (repo / "candidate-gate/proof.Dockerfile").write_text(
-            'FROM busybox:1.37\nRUN test "$((6*7))" = 42\n'
-        )
-        (repo / "naapp/library/test-vectors/blueprints/team").mkdir(parents=True)
-        (repo / "naapp/library/test-vectors/blueprints/team/proof").write_text(
-            "fixture\n"
-        )
-        shutil.copy2(ROOT / "docker-compose.e2e.yml", repo / "docker-compose.e2e.yml")
-        shutil.copytree(ROOT / "scripts/e2e/initdb", repo / "scripts/e2e/initdb")
-        # The real wrapper's host preflight must execute the real probe from
-        # this committed fixture checkout, just as it does for a candidate.
-        shutil.copy2(
-            ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
-            repo / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
-        )
-        (repo / "server").mkdir()
-        (repo / "server/pyproject.toml").write_text(
-            '[project]\nname="ledger-proof"\nversion="1.2.3"\n'
-        )
-        recipes = f".PHONY: candidate-gate {' '.join(SOURCE_CHECKS)}\n{' '.join(SOURCE_CHECKS)}:\n\t@git diff --exit-code\n"
-        recipes += """test-shipping:
+def prepare_committed_fixture(
+    *, repo: Path, evidence: Path
+) -> tuple[str, dict[str, str]]:
+    for name in (
+        "candidate-docker-gate.sh",
+        "candidate-suite.sh",
+        "candidate-cleanup.sh",
+        "candidate-host-pressure.py",
+        "candidate-network.py",
+        "fetch_released_aw.py",
+        "next_tag_version.py",
+        "release_candidate.py",
+        "release_versions.py",
+        "vm-gate/vm_gate/aweb_stages.py",
+    ):
+        destination = repo / "scripts" / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "scripts" / name, destination)
+    (repo / "candidate-gate/bin").mkdir(parents=True)
+    shutil.copy2(ROOT / "candidate-gate/bin/docker", repo / "candidate-gate/bin/docker")
+    (repo / "candidate-gate/Dockerfile").write_text(
+        "FROM docker:27-cli\n"
+        "RUN apk add --no-cache bash git make python3 postgresql-client redis "
+        "&& ln -s /usr/local/bin/docker /usr/bin/docker\n"
+    )
+    (repo / "candidate-gate/proof.Dockerfile").write_text(
+        'FROM busybox:1.37\nRUN test "$((6*7))" = 42\n'
+    )
+    (repo / "naapp/library/test-vectors/blueprints/team").mkdir(parents=True)
+    (repo / "naapp/library/test-vectors/blueprints/team/proof").write_text("fixture\n")
+    shutil.copy2(ROOT / "docker-compose.e2e.yml", repo / "docker-compose.e2e.yml")
+    shutil.copytree(ROOT / "scripts/e2e/initdb", repo / "scripts/e2e/initdb")
+    # The real wrapper's host preflight must execute the real probe from
+    # this committed fixture checkout, just as it does for a candidate.
+    shutil.copy2(
+        ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
+        repo / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
+    )
+    (repo / "server").mkdir()
+    (repo / "server/pyproject.toml").write_text(
+        '[project]\nname="ledger-proof"\nversion="1.2.3"\n'
+    )
+    recipes = f".PHONY: candidate-gate {' '.join(SOURCE_CHECKS)}\n{' '.join(SOURCE_CHECKS)}:\n\t@git diff --exit-code\n"
+    recipes += """test-shipping:
 \t@python3 -c 'assert 6 * 7 == 42'
 _candidate-node-deps:
 \t@echo node >> "$$CANDIDATE_LOG_DIR/setup.log"
@@ -157,29 +147,42 @@ e2e-naapp:
 candidate-gate:
 \tbash scripts/candidate-docker-gate.sh
 """
-        (repo / "Makefile").write_text(recipes)
-        init_fixture_repo(repo)
-        checked(repo, "git", "config", "user.name", "gate integration")
-        checked(repo, "git", "config", "user.email", "gate@example.test")
-        checked(repo, "git", "add", ".")
-        checked(repo, "git", "commit", "-qm", "small real gate stages")
-        checked(repo, "git", "remote", "add", "origin", str(repo))
-        env = {
-            key: value
-            for key, value in os.environ.items()
-            if key in {"AWEB_GATE_MIN_FREE_GB", "AWEB_GATE_RESERVE_GB"}
-            or not key.startswith(
-                ("AWEB_CANDIDATE_", "AWEB_GATE_", "CANDIDATE_", "GATE_", "LIBRARY_E2E_")
-            )
-        }
-        env.update(
-            AWEB_GATE_LEDGER=str(evidence / "ledger.tsv"),
-            AWEB_GATE_LOG_DIR=str(evidence / "logs"),
-            CLI_VERSION="1.2.3",
-            A2A_GATEWAY_VERSION="1.2.3",
-            AWEB_CANDIDATE_RUNNER_MEMORY="1g",
-            AWEB_CANDIDATE_BUILDER_MEMORY="1g",
+    (repo / "Makefile").write_text(recipes)
+    init_fixture_repo(repo)
+    checked(repo, "git", "config", "user.name", "gate integration")
+    checked(repo, "git", "config", "user.email", "gate@example.test")
+    checked(repo, "git", "add", ".")
+    checked(repo, "git", "commit", "-qm", "small real gate stages")
+    checked(repo, "git", "remote", "add", "origin", str(repo))
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"AWEB_GATE_MIN_FREE_GB", "AWEB_GATE_RESERVE_GB"}
+        or not key.startswith(
+            ("AWEB_CANDIDATE_", "AWEB_GATE_", "CANDIDATE_", "GATE_", "LIBRARY_E2E_")
         )
+    }
+    env.update(
+        AWEB_GATE_LEDGER=str(evidence / "ledger.tsv"),
+        AWEB_GATE_LOG_DIR=str(evidence / "logs"),
+        CLI_VERSION="1.2.3",
+        A2A_GATEWAY_VERSION="1.2.3",
+        AWEB_CANDIDATE_RUNNER_MEMORY="1g",
+        AWEB_CANDIDATE_BUILDER_MEMORY="1g",
+    )
+    return recipes, env
+
+
+def main() -> None:
+    # Direct invocation needs the same immediate refusal as the make target.
+    preflight = run(ROOT, "bash", "scripts/candidate-docker-gate.sh", "--check-disk")
+    if preflight.returncode:
+        raise SystemExit(preflight.stdout + preflight.stderr)
+    evidence = Path(tempfile.mkdtemp(prefix="aweb-ledger-evidence.")).resolve()
+    print(f"Ledger integration evidence: {evidence}", flush=True)
+    with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
+        repo = Path(temporary)
+        recipes, env = prepare_committed_fixture(repo=repo, evidence=evidence)
 
         def invoke(
             name: str, *args: str, stages: str | None = None, success: bool = True
