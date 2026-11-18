@@ -784,9 +784,7 @@ def _workspace_changes(
     )
 
 
-async def plan_lifecycle_cascade(
-    db, request: LifecycleCascadeRequest
-) -> LifecycleCascadeResult:
+async def plan_lifecycle_cascade(db, request: LifecycleCascadeRequest) -> LifecycleCascadeResult:
     """Return planned coordination lifecycle effects without mutating state.
 
     The result always reports ``dry_run=True`` because this entry point is a
@@ -799,9 +797,9 @@ async def plan_lifecycle_cascade(
 
     agent = await _load_target_agent(db, request)
     workspaces = await _load_target_workspaces(db, request)
-    precondition_errors = _agent_precondition_errors(
-        request, agent
-    ) + _precondition_errors(request, workspaces)
+    precondition_errors = _agent_precondition_errors(request, agent) + _precondition_errors(
+        request, workspaces
+    )
     workspace_changes = _workspace_changes(workspaces, status="planned")
     workspace_ids = [str(workspace["workspace_id"]) for workspace in workspaces]
     agent_ids = _target_agent_ids(request, workspaces)
@@ -1248,9 +1246,9 @@ async def apply_lifecycle_cascade(
     async with db.transaction() as tx:
         agent = await _load_target_agent(tx, request)
         workspaces = await _load_target_workspaces(tx, request)
-        precondition_errors = _agent_precondition_errors(
-            request, agent
-        ) + _precondition_errors(request, workspaces)
+        precondition_errors = _agent_precondition_errors(request, agent) + _precondition_errors(
+            request, workspaces
+        )
         workspace_changes = _workspace_changes(workspaces, status="planned")
         workspace_ids = [str(workspace["workspace_id"]) for workspace in workspaces]
         agent_ids = _target_agent_ids(request, workspaces)

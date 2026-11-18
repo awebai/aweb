@@ -69,7 +69,9 @@ async def heartbeat(db_infra, redis) -> str:
     """Send a heartbeat to maintain agent presence."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     aweb_db = db_infra.get_manager("aweb")
 
     row = await aweb_db.fetch_one(
