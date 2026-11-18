@@ -123,25 +123,52 @@ def operator_origin(origin: str) -> str:
     :func:`canonical_url` canonicalizes them, and the scheme's default port is
     left out, so two spellings of one origin compare equal.
     """
-    scheme, sep, rest = origin.partition("://")
+    canonical, path = _operator_url(origin)
+    if path is not None:
+        raise _refuse("origin", "an origin has no path")
+    return canonical
+
+
+def operator_base_url(url: str) -> str:
+    """A base URL the operator configured, in canonical form, or a refusal.
+
+    A base URL is an operator origin (see :func:`operator_origin`) optionally
+    followed by a path prefix, such as the mount point of a service the app
+    appends its own paths to. It has no query, fragment or userinfo, and a
+    trailing slash is dropped.
+    """
+    canonical, path = _operator_url(url)
+    return canonical + (path or "")
+
+
+def _operator_url(url: str) -> tuple[str, str | None]:
+    """The canonical origin of an operator URL, and its path prefix (None when it has no path)."""
+    scheme, sep, rest = url.partition("://")
     scheme = scheme.lower()
     if not sep or scheme not in ("https", "http"):
         raise _refuse("scheme")
     if any(_is_space_or_control(char) or char == "\\" for char in rest):
         raise _refuse("character")
-    if not rest or any(char in rest for char in "/?#"):
-        raise _refuse("origin", "an origin has no path, query or fragment")
-    if "@" in rest:
+    if any(char in rest for char in "?#"):
+        raise _refuse("origin", "an operator URL has no query or fragment")
+    authority_text, slash, path_text = rest.partition("/")
+    if not authority_text:
+        raise _refuse("host")
+    if "@" in authority_text:
         raise _refuse("userinfo")
-    host, ip, port = _authority(rest)
-    explicit_port = (rest.partition("]")[2] if rest.startswith("[") else rest).count(":") == 1
+    host, ip, port = _authority(authority_text)
+    explicit_port = (
+        authority_text.partition("]")[2] if authority_text.startswith("[") else authority_text
+    ).count(":") == 1
     default_port = DEFAULT_PORT if scheme == "https" else 80
     if not explicit_port:
         port = default_port
     if scheme == "http" and host not in LOOPBACK_HOSTS:
         raise _refuse("scheme", "plain http is only for a loopback host")
     authority = f"[{host}]" if isinstance(ip, IPv6Address) else host
-    return f"{scheme}://{authority}" + ("" if port == default_port else f":{port}")
+    origin = f"{scheme}://{authority}" + ("" if port == default_port else f":{port}")
+    path = _canonical_path(f"/{path_text}").rstrip("/") if slash else None
+    return origin, path
 
 
 def _is_space_or_control(char: str) -> bool:

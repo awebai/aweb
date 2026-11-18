@@ -25,7 +25,7 @@ import httpx
 from awid.signing import canonical_json_bytes
 from pgdbm.core import TransactionManager
 
-from aweb_naapp.egress import EgressRefused, operator_origin
+from aweb_naapp.egress import EgressRefused, operator_base_url
 from aweb_naapp.manifest import Manifest
 from aweb_naapp.outbox import (
     Acked,
@@ -153,11 +153,11 @@ class AppEvents:
                 )
             return cls(app_id=settings.app_id, origin=None, key=None, policy=policy)
         try:
-            operator_origin(origin)
+            operator_base_url(origin)
         except EgressRefused:
             raise ValueError(
-                f"{prefix}APP_EVENTS_ORIGIN must be an https origin, or an http origin on "
-                "127.0.0.1, [::1] or localhost"
+                f"{prefix}APP_EVENTS_ORIGIN must be an https base URL, or an http one on "
+                "127.0.0.1, [::1] or localhost, with no query, fragment or userinfo"
             ) from None
         key = load_app_key(settings, manifest, APP_EVENT)
         return cls(app_id=settings.app_id, origin=origin, key=key, policy=policy)

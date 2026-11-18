@@ -296,7 +296,10 @@ def test_an_app_event_key_without_an_origin_refuses_to_start(
         "http://localhost.example.test",
         "http://core.localhost",
         "http://127.0.0.2:8000",
-        "https://core.example.test/prefix",
+        "https://core.example.test/api?x=1",
+        "https://core.example.test/api#x",
+        "https://user@core.example.test/api",
+        "http://core.example.test/api",
     ],
 )
 def test_an_invalid_app_events_origin_refuses_to_start(seed: str, origin: str) -> None:
@@ -311,6 +314,9 @@ def test_an_invalid_app_events_origin_refuses_to_start(seed: str, origin: str) -
         "http://127.0.0.1:8000",
         "http://[::1]:8000",
         "http://localhost:8000",
+        "https://core.example.test/api",
+        "https://core.example.test/api/",
+        "http://127.0.0.1:8000/api",
     ],
 )
 def test_https_or_loopback_http_app_events_origins_are_accepted(seed: str, origin: str) -> None:
@@ -364,6 +370,21 @@ async def test_the_drain_delivers_the_signed_event(
     _assert_signed_for(headers, body, _did_key(seed))
     state = await db.fetch_value("SELECT state FROM {{tables.outbox_deliveries}}")
     assert state == "delivered"
+
+
+async def test_a_base_url_with_a_path_prefix_posts_under_that_prefix(
+    db: AsyncDatabaseManager, receiver: Receiver, seed: str
+) -> None:
+    # A core mounted under a prefix, as a hosted deployment serves it.
+    events = _app_events(seed, f"{receiver.origin}/api")
+    async with db.transaction() as tx:
+        await events.emit(tx, team_id=_TEAM, **_EVENT)
+    async with httpx.AsyncClient() as client:
+        result = await drain(db, **events.drain_options(client))
+    assert result.delivered == 1
+    [(path, headers, body)] = receiver.requests
+    assert path == "/api/v1/events/app"
+    assert _assert_signed_for(headers, body, _did_key(seed))["path"] == "/api/v1/events/app"
 
 
 async def test_app_events_drain_only_their_own_channel(
