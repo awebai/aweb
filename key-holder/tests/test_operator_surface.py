@@ -62,7 +62,7 @@ def test_controller_authorizer_and_privileged_completion_defaults_are_gone():
 
 
 def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
-    import socket
+    import re
     import time
 
     import httpx
@@ -72,9 +72,6 @@ def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
     KeyStore.create(state, organisation="example.test")
     manifest = tmp_path / "pin.json"
     manifest.write_text("{}")
-    with socket.socket() as reserved:
-        reserved.bind(("127.0.0.1", 0))
-        port = reserved.getsockname()[1]
     command = [
         sys.executable,
         "-m",
@@ -99,25 +96,35 @@ def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
         "--bind",
         "127.0.0.1",
         "--port",
-        str(port),
+        "0",
     ]
-    child = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    )
-    try:
-        deadline = time.monotonic() + 5
-        with httpx.Client(timeout=0.2, trust_env=False) as client:
-            while time.monotonic() < deadline and child.poll() is None:
-                try:
-                    response = client.get(f"http://127.0.0.1:{port}/")
-                    assert response.status_code == 404
-                    break
-                except httpx.TransportError:
-                    time.sleep(0.02)
-            else:
-                raise AssertionError("holder did not start with unavailable metadata")
-    finally:
-        child.terminate()
-        _, errors = child.communicate(timeout=10)
+    log_path = tmp_path / "holder.log"
+    with log_path.open("w") as log:
+        child = subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=log, text=True
+        )
+        try:
+            deadline = time.monotonic() + 5
+            with httpx.Client(timeout=0.2, trust_env=False) as client:
+                while time.monotonic() < deadline and child.poll() is None:
+                    listening = re.search(
+                        r"Uvicorn running on http://127\.0\.0\.1:(\d+)", log_path.read_text()
+                    )
+                    if listening is None:
+                        time.sleep(0.02)
+                        continue
+                    port = int(listening.group(1))
+                    try:
+                        response = client.get(f"http://127.0.0.1:{port}/")
+                        assert response.status_code == 404
+                        break
+                    except httpx.TransportError:
+                        time.sleep(0.02)
+                else:
+                    raise AssertionError("holder did not start with unavailable metadata")
+        finally:
+            child.terminate()
+            child.communicate(timeout=10)
+    errors = log_path.read_text()
     assert "metadata load failed" in errors
     assert "unrecognized arguments" not in errors

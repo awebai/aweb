@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -181,12 +181,6 @@ def _require_e2e_enabled() -> None:
         pytest.skip("set LIBRARY_E2E=1 or run `make e2e` to execute docker-backed e2e tests")
 
 
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 def _wait_http_ok(url: str, *, timeout_seconds: float = 30.0) -> None:
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
@@ -306,75 +300,78 @@ def _running_library(*, awid_service_token: str | None, registry_url: str = AWID
     _require_e2e_enabled()
     _wait_http_ok(f"{registry_url}/health")
 
-    backend_port = _free_port()
-    proxy_port = _free_port()
-    backend_origin = f"http://127.0.0.1:{backend_port}"
-    proxy_origin = f"http://127.0.0.1:{proxy_port}"
-    env = os.environ.copy()
-    for name in (
-        "RENDER_SERVICE_ID",
-        "RENDER_SERVICE_NAME",
-        "RENDER_EXTERNAL_HOSTNAME",
-        "RENDER_GIT_REPO_SLUG",
-        "RENDER_GIT_BRANCH",
-        "RENDER_GIT_COMMIT",
-        "LIBRARY_GIT_SHA",
-        "LIBRARY_AWID_SERVICE_TOKEN",
-    ):
-        env.pop(name, None)
-    if awid_service_token is not None:
-        env["LIBRARY_AWID_SERVICE_TOKEN"] = awid_service_token
-    env.update(
-        {
-            "RENDER_GIT_COMMIT": E2E_BUILD_SHA,
-            "LIBRARY_DATABASE_URL": POSTGRES_URL,
-            "LIBRARY_AWID_REGISTRY_URL": registry_url,
-            "LIBRARY_AUTH_CACHE_TTL_SECONDS": "2",
-            "LIBRARY_PUBLIC_ORIGIN": proxy_origin,
-        }
-    )
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "uvicorn",
-            "library.api:create_app",
-            "--factory",
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(backend_port),
-        ],
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    proxy = RecordingProxy(("127.0.0.1", proxy_port), backend_origin)
-    thread = threading.Thread(target=proxy.serve_forever, name="library-e2e-proxy", daemon=True)
-    thread.start()
-    try:
-        _wait_http_ok(f"{proxy_origin}/health")
-        yield RunningLibrary(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy)
-    finally:
-        proxy.shutdown()
-        proxy.server_close()
-        thread.join(timeout=5)
-        proc.terminate()
+    with ExitStack() as setup:
+        listener = setup.enter_context(socket.socket())
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        backend_port = listener.getsockname()[1]
+        backend_origin = f"http://127.0.0.1:{backend_port}"
+        proxy = setup.enter_context(RecordingProxy(("127.0.0.1", 0), backend_origin))
+        proxy_origin = f"http://127.0.0.1:{proxy.server_address[1]}"
+        env = os.environ.copy()
+        for name in (
+            "RENDER_SERVICE_ID",
+            "RENDER_SERVICE_NAME",
+            "RENDER_EXTERNAL_HOSTNAME",
+            "RENDER_GIT_REPO_SLUG",
+            "RENDER_GIT_BRANCH",
+            "RENDER_GIT_COMMIT",
+            "LIBRARY_GIT_SHA",
+            "LIBRARY_AWID_SERVICE_TOKEN",
+        ):
+            env.pop(name, None)
+        if awid_service_token is not None:
+            env["LIBRARY_AWID_SERVICE_TOKEN"] = awid_service_token
+        env.update(
+            {
+                "RENDER_GIT_COMMIT": E2E_BUILD_SHA,
+                "LIBRARY_DATABASE_URL": POSTGRES_URL,
+                "LIBRARY_AWID_REGISTRY_URL": registry_url,
+                "LIBRARY_AUTH_CACHE_TTL_SECONDS": "2",
+                "LIBRARY_PUBLIC_ORIGIN": proxy_origin,
+            }
+        )
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "library.api:create_app",
+                "--factory",
+                "--fd",
+                str(listener.fileno()),
+            ],
+            env=env,
+            pass_fds=(listener.fileno(),),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        listener.close()
+        thread = threading.Thread(target=proxy.serve_forever, name="library-e2e-proxy", daemon=True)
+        thread.start()
         try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=10)
-        failed = proc.returncode not in (0, -15, -9, None)
-        stdout = proc.stdout.read() if failed and proc.stdout else ""
-        stderr = proc.stderr.read() if failed and proc.stderr else ""
-        if proc.stdout:
-            proc.stdout.close()
-        if proc.stderr:
-            proc.stderr.close()
-        if failed:
-            raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
+            _wait_http_ok(f"{proxy_origin}/health")
+            yield RunningLibrary(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy)
+        finally:
+            proxy.shutdown()
+            proxy.server_close()
+            thread.join(timeout=5)
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+            failed = proc.returncode not in (0, -15, -9, None)
+            stdout = proc.stdout.read() if failed and proc.stdout else ""
+            stderr = proc.stderr.read() if failed and proc.stderr else ""
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
+            if failed:
+                raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
 
 
 @pytest.fixture(scope="session")
