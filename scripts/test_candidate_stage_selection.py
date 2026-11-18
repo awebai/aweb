@@ -24,14 +24,18 @@ class StageSelectionTests(unittest.TestCase):
     def test_explicit_subset_is_partial(self):
         result = subprocess.run(
             ["python3", str(OWNER), "--coverage", "checks unit"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "partial")
 
     def test_bad_selection_refuses_before_real_make_can_start(self):
         for selection in ("unit checks", "checks checks", "unknown", "all unit"):
-            with self.subTest(selection=selection), tempfile.TemporaryDirectory() as temp:
+            with (
+                self.subTest(selection=selection),
+                tempfile.TemporaryDirectory() as temp,
+            ):
                 root = Path(temp)
                 (root / "Makefile").write_text(
                     ".DEFAULT:\n\t@touch stage-started\n\t@exit 97\n"
@@ -40,7 +44,8 @@ class StageSelectionTests(unittest.TestCase):
                     ["bash", str(ROOT / "scripts/candidate-suite.sh"), selection],
                     cwd=root,
                     env=dict(os.environ, CANDIDATE_LOG_DIR=str(root)),
-                    capture_output=True, text=True,
+                    capture_output=True,
+                    text=True,
                 )
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn("Choose all or an ordered subset", result.stderr)
