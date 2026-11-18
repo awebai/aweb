@@ -111,7 +111,9 @@ async def _member_of_team_serving_at(registry, server_url: str) -> Member:
             environment.setenv("APP_ENV", "development")
             environment.setenv("AWID_ALLOW_INSECURE_DELIVERY_ORIGIN", "1")
         await registry.publish_team_server(
-            TEAM_ID, member.team_key, server_url=server_url,
+            TEAM_ID,
+            member.team_key,
+            server_url=server_url,
             issued_at=datetime.now(UTC) - timedelta(minutes=1),
         )
     return member
@@ -127,9 +129,10 @@ async def serving(runtime: NaappRuntime) -> AsyncIterator[httpx.AsyncClient]:
     async def create():
         return {}
 
-    async with app.router.lifespan_context(app), httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url=HOSTED_ORIGIN
-    ) as client:
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=HOSTED_ORIGIN) as client,
+    ):
         yield client
 
 
@@ -200,7 +203,9 @@ async def test_an_https_name_resolving_to_an_internal_address_is_refused(
     async with listener(host) as (port, connections), private_name(host) as egress:
         member = await _member_of_team_serving_at(registry, f"https://{PRIVATE_NAME}:{port}/x")
         runtime = _runtime(
-            tmp_path, registry, team_server_egress=egress,
+            tmp_path,
+            registry,
+            team_server_egress=egress,
             database_url=await _database_url(test_db_factory),
         )
         async with serving(runtime) as client:
@@ -230,7 +235,9 @@ async def test_an_injected_transport_does_not_reach_an_origin_the_operator_did_n
     transport = RecordingTransport()
     member = await _member_of_team_serving_at(registry, "http://127.0.0.1:9/x")
     runtime = _runtime(
-        tmp_path, registry, team_server_transport=transport,
+        tmp_path,
+        registry,
+        team_server_transport=transport,
         database_url=await _database_url(test_db_factory),
     )
     async with serving(runtime) as client:
@@ -248,7 +255,9 @@ async def test_an_operator_listed_loopback_origin_is_reached(tmp_path, registry,
         origin = f"http://127.0.0.1:{port}"
         member = await _member_of_team_serving_at(registry, f"{origin}/x")
         runtime = _runtime(
-            tmp_path, registry, team_server_internal_origins=[origin],
+            tmp_path,
+            registry,
+            team_server_internal_origins=[origin],
             database_url=await _database_url(test_db_factory),
         )
         async with serving(runtime) as client:
@@ -258,13 +267,12 @@ async def test_an_operator_listed_loopback_origin_is_reached(tmp_path, registry,
     assert _refusal_code(response) != REFUSED
 
 
-async def test_a_redirect_from_a_listed_origin_is_not_followed(
-    tmp_path, registry, test_db_factory
-):
+async def test_a_redirect_from_a_listed_origin_is_not_followed(tmp_path, registry, test_db_factory):
     transport = RecordingTransport(302, {"location": "http://127.0.0.1:9/elsewhere"})
     member = await _member_of_team_serving_at(registry, "http://127.0.0.1:8000/x")
     runtime = _runtime(
-        tmp_path, registry,
+        tmp_path,
+        registry,
         team_server_transport=transport,
         team_server_internal_origins=["http://127.0.0.1:8000"],
         database_url=await _database_url(test_db_factory),
@@ -281,7 +289,8 @@ async def test_a_redirect_from_a_listed_origin_is_not_followed(
 def test_listed_origins_are_logged_once_at_startup(tmp_path, registry, caplog):
     with caplog.at_level(logging.WARNING, logger="aweb_naapp.runtime.team_server"):
         _runtime(
-            tmp_path, registry,
+            tmp_path,
+            registry,
             team_server_internal_origins=["http://127.0.0.1:8000", "https://Coord.Egress.Example"],
         )
     warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
@@ -298,7 +307,8 @@ def test_no_startup_warning_when_no_origin_is_listed(tmp_path, registry, caplog)
 
 def test_a_well_formed_listed_origin_is_accepted(tmp_path, registry):
     runtime = _runtime(
-        tmp_path, registry,
+        tmp_path,
+        registry,
         team_server_internal_origins=["http://127.0.0.1:8000", "https://coord.egress.example"],
     )
     assert runtime.installation_grants() is not None

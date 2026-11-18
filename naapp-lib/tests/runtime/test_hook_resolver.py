@@ -38,14 +38,18 @@ def test_hook_resolution_signs_only_with_a_hook_resolve_key() -> None:
             reach=TeamServerReach(),
         )
     HookResolver(
-        directory=_directory(), signer=_signer(HOOK_RESOLVE), app_origin="https://logs.example",
+        directory=_directory(),
+        signer=_signer(HOOK_RESOLVE),
+        app_origin="https://logs.example",
         reach=TeamServerReach(),
     )
 
 
 async def test_own_bindings_are_selected_by_exactly_one_of_id_or_hook() -> None:
     resolver = HookResolver(
-        directory=_directory(), signer=_signer(HOOK_RESOLVE), app_origin="https://logs.example",
+        directory=_directory(),
+        signer=_signer(HOOK_RESOLVE),
+        app_origin="https://logs.example",
         reach=TeamServerReach(),
     )
     with pytest.raises(ValueError):

@@ -84,7 +84,8 @@ def _templates_overlap(a: DeclaredTool, b: DeclaredTool) -> bool:
     if a.method != b.method or len(a.segments) != len(b.segments):
         return False
     return all(
-        x == y or is_placeholder(x) or is_placeholder(y) for x, y in zip(a.segments, b.segments, strict=True)
+        x == y or is_placeholder(x) or is_placeholder(y)
+        for x, y in zip(a.segments, b.segments, strict=True)
     )
 
 
@@ -103,13 +104,23 @@ def _declared_tool(
     for segment in path.split("/"):
         if ("{" in segment or "}" in segment) and not is_placeholder(segment):
             raise ValueError(f"manifest tool {name!r} has a malformed path placeholder")
-    if not isinstance(scopes, list) or not scopes or not all(isinstance(s, str) and s for s in scopes):
+    if (
+        not isinstance(scopes, list)
+        or not scopes
+        or not all(isinstance(s, str) and s for s in scopes)
+    ):
         raise ValueError(f"manifest tool {name!r} must declare the scopes it requires")
     # The manifest reader trims the mode and reads an empty one as json.
     json_body = str((tool.get("body") or {}).get("mode") or "").strip() != "raw"
     return DeclaredTool(
-        name=name, method=method, path=path, scopes=frozenset(scopes), contexts=contexts,
-        invokes=invokes, answers=answers, json_body=json_body,
+        name=name,
+        method=method,
+        path=path,
+        scopes=frozenset(scopes),
+        contexts=contexts,
+        invokes=invokes,
+        answers=answers,
+        json_body=json_body,
     )
 
 
@@ -125,7 +136,9 @@ class DeclaredTools:
         for i, a in enumerate(tools):
             for b in tools[i + 1 :]:
                 if _templates_overlap(a, b):
-                    raise ValueError(f"manifest tools {a.name!r} and {b.name!r} match the same requests")
+                    raise ValueError(
+                        f"manifest tools {a.name!r} and {b.name!r} match the same requests"
+                    )
         self._tools = tuple(tools)
         self.manifest = manifest
 
@@ -141,16 +154,22 @@ class DeclaredTools:
         for name, tool in manifest.tools_by_name().items():
             contexts = manifest.tool_contexts(name)
             assert contexts is not None
-            tools.append(_declared_tool(
-                name, tool, contexts, invokes=name in invoke_tools, answers=name in answer_tools
-            ))
+            tools.append(
+                _declared_tool(
+                    name, tool, contexts, invokes=name in invoke_tools, answers=name in answer_tools
+                )
+            )
         return cls(tools, manifest)
 
     def match(self, method: str, raw_path: str) -> DeclaredTool | None:
         segments = raw_path.split("/")
         for tool in self._tools:
-            if tool.method == method and len(tool.segments) == len(segments) and all(
-                _segment_matches(t, r) for t, r in zip(tool.segments, segments, strict=True)
+            if (
+                tool.method == method
+                and len(tool.segments) == len(segments)
+                and all(
+                    _segment_matches(t, r) for t, r in zip(tool.segments, segments, strict=True)
+                )
             ):
                 return tool
         return None
@@ -204,7 +223,9 @@ ANSWER_KIND = "answer"
 
 
 class ActionKind(Protocol):
-    async def __call__(self, request: Request, principal: Principal, tool: DeclaredTool) -> str | None:
+    async def __call__(
+        self, request: Request, principal: Principal, tool: DeclaredTool
+    ) -> str | None:
         """The kind of the page action this request performs, resolved from the
         app's page action definitions, or ``None`` when it performs none or the
         action cannot be resolved."""
@@ -266,15 +287,27 @@ async def authorize_request(
     tool = tools.match(method, raw_path)
     if tool is None:
         logger.warning("Refused undeclared %s operation for team %s", method, principal.team_id)
-        raise _refuse(403, "operation_undeclared", "This operation is not declared by the app manifest")
+        raise _refuse(
+            403, "operation_undeclared", "This operation is not declared by the app manifest"
+        )
     if caller not in tool.contexts:
-        logger.warning("Refused %s for team %s: not available to %s callers", tool.name, principal.team_id, caller)
+        logger.warning(
+            "Refused %s for team %s: not available to %s callers",
+            tool.name,
+            principal.team_id,
+            caller,
+        )
         raise _refuse(403, "tool_context_denied", "This operation is not available to this caller")
 
     try:
         grant = await grants.grant_for(principal.team_id, certificate_id=principal.certificate_id)
     except TeamServerNotAllowed as refused:
-        logger.warning("Refused %s for team %s: its server %s is not allowed", tool.name, principal.team_id, refused.server_url)
+        logger.warning(
+            "Refused %s for team %s: its server %s is not allowed",
+            tool.name,
+            principal.team_id,
+            refused.server_url,
+        )
         raise _refuse(
             503,
             "team_server_not_allowed",
@@ -284,15 +317,23 @@ async def authorize_request(
         ) from None
     except GrantUnavailable:
         logger.exception("Grant authority unavailable for team %s", principal.team_id)
-        raise _refuse(503, "authority_unavailable", "The app's installation grant cannot be verified") from None
+        raise _refuse(
+            503, "authority_unavailable", "The app's installation grant cannot be verified"
+        ) from None
     if grant is None:
         logger.warning("Refused %s for team %s: app not installed", tool.name, principal.team_id)
         raise _refuse(403, "scope_denied", "The team has not granted this app any scopes")
     if grant.team_id != principal.team_id:
-        logger.error("Grant source returned team %s's grant for team %s", grant.team_id, principal.team_id)
-        raise _refuse(503, "authority_unavailable", "The app's installation grant cannot be verified")
+        logger.error(
+            "Grant source returned team %s's grant for team %s", grant.team_id, principal.team_id
+        )
+        raise _refuse(
+            503, "authority_unavailable", "The app's installation grant cannot be verified"
+        )
     if grant.fresh_until <= monotonic():
-        logger.warning("Refused %s for team %s: installation grant is stale", tool.name, principal.team_id)
+        logger.warning(
+            "Refused %s for team %s: installation grant is stale", tool.name, principal.team_id
+        )
         raise _refuse(503, "authority_unavailable", "The app's installation grant is not fresh")
     # Data-only admission observation: a complete, authenticated request can
     # now be attributed to an installation even if scope/policy refuses it.
@@ -302,20 +343,32 @@ async def authorize_request(
     if not tool.scopes <= grant.scopes:
         logger.warning(
             "Refused %s for team %s: missing scopes %s",
-            tool.name, principal.team_id, sorted(tool.scopes - grant.scopes),
+            tool.name,
+            principal.team_id,
+            sorted(tool.scopes - grant.scopes),
         )
-        raise _refuse(403, "scope_denied", "The team's grant does not include this operation's scopes")
+        raise _refuse(
+            403, "scope_denied", "The team's grant does not include this operation's scopes"
+        )
 
     await _refuse_answers(request, principal, tool, tools.manifest, action_kind)
 
     if not await policy(request, principal, tool):
-        logger.warning("Refused %s for %s in team %s by app policy", tool.name, principal.alias, principal.team_id)
+        logger.warning(
+            "Refused %s for %s in team %s by app policy",
+            tool.name,
+            principal.alias,
+            principal.team_id,
+        )
         raise _refuse(403, "action_denied", "The app's policy does not allow this action")
     return Authorization(principal=principal, tool=tool, grant=grant)
 
 
 async def _refuse_answers(
-    request: Request, principal: Principal, tool: DeclaredTool, manifest: Manifest,
+    request: Request,
+    principal: Principal,
+    tool: DeclaredTool,
+    manifest: Manifest,
     action_kind: ActionKind | None,
 ) -> None:
     """Refuse a request that would deliver an answer other than through a
@@ -331,12 +384,22 @@ async def _refuse_answers(
         try:
             manifest.check_answer_payload(tool.name, payload)
         except ManifestError as refused:
-            logger.warning("Refused %s for team %s: body carries an answer", tool.name, principal.team_id)
-            raise _refuse(403, refused.code, "Answers reach this app only through its answer tool") from None
+            logger.warning(
+                "Refused %s for team %s: body carries an answer", tool.name, principal.team_id
+            )
+            raise _refuse(
+                403, refused.code, "Answers reach this app only through its answer tool"
+            ) from None
     kind = None if action_kind is None else await action_kind(request, principal, tool)
     if kind == ANSWER_KIND:
         logger.warning("Refused %s for team %s: answer-kind action", tool.name, principal.team_id)
-        raise _refuse(403, "answer_action_refused", "Answers reach this app only through its answer tool")
+        raise _refuse(
+            403, "answer_action_refused", "Answers reach this app only through its answer tool"
+        )
     if kind is None and tool.invokes:
-        logger.warning("Refused %s for team %s: unresolved page action", tool.name, principal.team_id)
-        raise _refuse(403, "action_unresolved", "The page action this request performs cannot be resolved")
+        logger.warning(
+            "Refused %s for team %s: unresolved page action", tool.name, principal.team_id
+        )
+        raise _refuse(
+            403, "action_unresolved", "The page action this request performs cannot be resolved"
+        )

@@ -205,7 +205,9 @@ class NaappRuntime:
             v3["manifest_version"] = 3
             v3["owner_acts"] = {**copy.deepcopy(dict(owner_acts)), "origin": owner_acts_origin}
             self._manifest_bytes = fill_manifest(
-                v3, app_id=settings.app_id, origin=settings.public_origin,
+                v3,
+                app_id=settings.app_id,
+                origin=settings.public_origin,
                 did_keys=declared_did_keys(settings, v3),
             )
             self._manifest = load_manifest(self._manifest_bytes)
@@ -242,7 +244,8 @@ class NaappRuntime:
             enforce_team_key_pins=settings.enforce_team_key_pins,
         )
         self._team_server_directory = TeamServerDirectory(
-            team_cache=self._team_cache, transport=awid_transport,
+            team_cache=self._team_cache,
+            transport=awid_transport,
         )
         team_server_reach = TeamServerReach(
             egress=team_server_egress,
@@ -254,33 +257,46 @@ class NaappRuntime:
         if self.manifest.app_keys_for(APP_GRANT_READ):
             key = load_app_key(settings, self.manifest, APP_GRANT_READ)
             self._installation_grants = TeamGrantSource(
-                identity=AppIdentity(app_id=self.manifest.app_id,
+                identity=AppIdentity(
+                    app_id=self.manifest.app_id,
                     origin=self.manifest.document["app"]["origin"],
                     digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest(),
                     manifest_digests=tuple(
                         (version, "sha256:" + hashlib.sha256(data).hexdigest())
                         for version, data in sorted(self._manifest_variants.items())
-                    )),
-                signer=AppCredentialSigner(app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ),
-                discovery=self.team_server_directory(), reach=team_server_reach,
+                    ),
+                ),
+                signer=AppCredentialSigner(
+                    app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ
+                ),
+                discovery=self.team_server_directory(),
+                reach=team_server_reach,
             )
         hook_key = (
             load_app_key(settings, self._manifest, HOOK_RESOLVE)
-            if self._manifest.app_keys_for(HOOK_RESOLVE) else None
+            if self._manifest.app_keys_for(HOOK_RESOLVE)
+            else None
         )
         self._hook_resolver = (
             HookResolver(
                 directory=self._team_server_directory,
                 signer=AppCredentialSigner(
-                    app_id=self._manifest.app_id, key=hook_key, purpose=HOOK_RESOLVE,
+                    app_id=self._manifest.app_id,
+                    key=hook_key,
+                    purpose=HOOK_RESOLVE,
                 ),
                 app_origin=self._manifest.document["app"]["origin"],
                 reach=team_server_reach,
-            ) if hook_key is not None else None
+            )
+            if hook_key is not None
+            else None
         )
         self._hooks = RuntimeHooks.from_settings(
-            settings, self._manifest, resolver=self._hook_resolver,
-            egress=hook_egress, internal_cidr=hook_internal_cidr,
+            settings,
+            self._manifest,
+            resolver=self._hook_resolver,
+            egress=hook_egress,
+            internal_cidr=hook_internal_cidr,
             internal_origins=hook_internal_origins,
         )
         # Each authorized() guard, with the action_kind it was given.
@@ -345,7 +361,8 @@ class NaappRuntime:
         )
         hooks_drain = (
             asyncio.create_task(run_drain(database.db, stop=stop, **self._hooks.drain_options()))
-            if self._hooks.key is not None else None
+            if self._hooks.key is not None
+            else None
         )
         registry_client: RegistryClient | None = None
         try:
@@ -465,7 +482,9 @@ class NaappRuntime:
         """
         if self._installation_fence is None:
             self._installation_fence = InstallationFence(
-                self.db(), app_id=self.manifest.app_id, grants=self.installation_grants(),
+                self.db(),
+                app_id=self.manifest.app_id,
+                grants=self.installation_grants(),
             )
         return self._installation_fence
 
@@ -583,7 +602,11 @@ class NaappRuntime:
         return CheckedHumanRoleMember(certificate, proof)
 
     async def check_human_member(
-        self, team_id: str, *, principal: str, certificate: Mapping[str, Any],
+        self,
+        team_id: str,
+        *,
+        principal: str,
+        certificate: Mapping[str, Any],
         identity_client: RegistryClient | None = None,
     ) -> HumanMemberProof:
         """Current certificate/key and the exact subject's own human kind.
@@ -599,13 +622,19 @@ class NaappRuntime:
             identity_client = self._registry_client
         if identity_client is not None:
             return await observe_human_member(
-                self.team_cache(), identity_client, team_id=team_id,
-                principal=principal, certificate=certificate,
+                self.team_cache(),
+                identity_client,
+                team_id=team_id,
+                principal=principal,
+                certificate=certificate,
             )
         async with aclosing(self._new_registry_client()) as client:
             return await observe_human_member(
-                self.team_cache(), client, team_id=team_id,
-                principal=principal, certificate=certificate,
+                self.team_cache(),
+                client,
+                team_id=team_id,
+                principal=principal,
+                certificate=certificate,
             )
 
     async def principal(self, request: Request) -> Principal:
@@ -650,23 +679,38 @@ class NaappRuntime:
 
             def resolved(tool: DeclaredTool, grant: Grant) -> None:
                 nonlocal evidence
-                if self._hooks.manifest_request_key is not None and tool.name not in self._hooks.tool_effects:
+                if (
+                    self._hooks.manifest_request_key is not None
+                    and tool.name not in self._hooks.tool_effects
+                ):
                     evidence = prepare(
-                        request, key=self._hooks.manifest_request_key, app_id=self.manifest.app_id,
-                        principal=principal, tool=tool, grant=grant,
+                        request,
+                        key=self._hooks.manifest_request_key,
+                        app_id=self.manifest.app_id,
+                        principal=principal,
+                        tool=tool,
+                        grant=grant,
                     )
 
             try:
                 authorization = await authorize_request(
-                    request, principal=principal, caller=caller, tools=self.declared_tools,
-                    grants=grants, policy=policy, action_kind=action_kind,
+                    request,
+                    principal=principal,
+                    caller=caller,
+                    tools=self.declared_tools,
+                    grants=grants,
+                    policy=policy,
+                    action_kind=action_kind,
                     on_resolved=resolved,
                 )
             except HTTPException as refusal:
                 if evidence is not None:
                     async with self.db().transaction() as tx:
                         await self._hooks.record_manifest(
-                            tx, evidence, http_status=refusal.status_code, refused=True,
+                            tx,
+                            evidence,
+                            http_status=refusal.status_code,
+                            refused=True,
                         )
                 raise
             request.state.aweb_manifest_evidence = evidence
@@ -694,7 +738,10 @@ class NaappRuntime:
         mapped to a specific hook never fire this generic hook. Final live
         authority/fence checks remain the effect owner's responsibility.
         """
-        if self._hooks.manifest_request_key is None or authorization.tool.name in self._hooks.tool_effects:
+        if (
+            self._hooks.manifest_request_key is None
+            or authorization.tool.name in self._hooks.tool_effects
+        ):
             return None
         evidence = getattr(request.state, "aweb_manifest_evidence", None)
         if evidence is None or (
@@ -704,11 +751,17 @@ class NaappRuntime:
         ):
             raise RuntimeError("manifest recording needs this request's matched admission evidence")
         return await self._hooks.record_manifest(
-            tx, evidence, http_status=http_status, refused=refused,
-            resource_refs=resource_refs, result_ref=result_ref,
+            tx,
+            evidence,
+            http_status=http_status,
+            refused=refused,
+            resource_refs=resource_refs,
+            result_ref=result_ref,
         )
 
-    async def _attestation(self, request: Request, principal: Principal) -> tuple[VerifiedAttestation | None, str]:
+    async def _attestation(
+        self, request: Request, principal: Principal
+    ) -> tuple[VerifiedAttestation | None, str]:
         """The request's verified attestation and its caller context, or the refusal."""
         if self._attestation_records is None:
             raise RuntimeError("naapp attestation records are not initialized")
@@ -722,7 +775,10 @@ class NaappRuntime:
             status = 503 if refused.code == "authority_unavailable" else 403
             raise HTTPException(
                 status_code=status,
-                detail={"code": refused.code, "message": "The request's principal attestation is refused"},
+                detail={
+                    "code": refused.code,
+                    "message": "The request's principal attestation is refused",
+                },
             ) from None
 
     def check_authorized_routes(self, app: FastAPI) -> None:
@@ -761,7 +817,8 @@ class NaappRuntime:
                 for method in sorted(route.methods or ()):
                     tool = next(
                         (
-                            tool for tool in self.declared_tools
+                            tool
+                            for tool in self.declared_tools
                             if tool.method == method and _template(tool.segments) == template
                         ),
                         None,
@@ -813,7 +870,9 @@ def _only_this_host_reaches(host: str) -> bool:
         return False
 
 
-def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mapping[str, Any]) -> None:
+def _refuse_the_hosted_app_id_elsewhere(
+    settings: NaappSettings, template: Mapping[str, Any]
+) -> None:
     """A deployment others can reach must configure its own app id: serving the
     hosted one there would claim the hosted app's identity. Only the hosted
     origin and a loopback origin, which no other team can reach, may serve it."""
@@ -821,9 +880,13 @@ def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mappi
     if not isinstance(hosted, dict):
         return
     if not isinstance(hosted.get("origin"), str):
-        raise ManifestError("manifest_template_invalid", "a manifest template names the hosted app.origin")
+        raise ManifestError(
+            "manifest_template_invalid", "a manifest template names the hosted app.origin"
+        )
     origin = settings.public_origin.rstrip("/")
-    if origin == hosted["origin"].rstrip("/") or _only_this_host_reaches(urlsplit(origin).hostname or ""):
+    if origin == hosted["origin"].rstrip("/") or _only_this_host_reaches(
+        urlsplit(origin).hostname or ""
+    ):
         return
     if settings.app_id == hosted.get("id"):
         prefix = settings.model_config.get("env_prefix", "")
@@ -835,15 +898,20 @@ def _refuse_the_hosted_app_id_elsewhere(settings: NaappSettings, template: Mappi
 
 def _catalog_bytes(manifest: Manifest, variants: Mapping[int, bytes]) -> bytes:
     """The catalog pins every exact filled variant published by the runtime."""
-    return canonical_bytes({
-        "catalog_version": 1,
-        "app_id": manifest.app_id,
-        "variants": [{
-            "manifest_version": version,
-            "url": f"/manifests/v{version}.json",
-            "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
-        } for version, data in sorted(variants.items())],
-    })
+    return canonical_bytes(
+        {
+            "catalog_version": 1,
+            "app_id": manifest.app_id,
+            "variants": [
+                {
+                    "manifest_version": version,
+                    "url": f"/manifests/v{version}.json",
+                    "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+                }
+                for version, data in sorted(variants.items())
+            ],
+        }
+    )
 
 
 def _template(segments: Sequence[str]) -> tuple[str, ...]:
@@ -872,19 +940,26 @@ def mount_manifest_routes(app: FastAPI, *, runtime: NaappRuntime) -> None:
         )
 
     if catalog_bytes is None:
+
         @app.get(LEGACY_MANIFEST_PATH)
         async def well_known_manifest_route() -> Response:
             return await _manifest_response()
     else:
+
         @app.get(CATALOG_PATH)
         async def manifest_catalog_route() -> Response:
             return Response(content=catalog_bytes, media_type="application/json", headers=_NOSNIFF)
 
         @app.get(MANIFEST_V2_PATH)
         async def manifest_v2_route() -> Response:
-            return Response(content=runtime.manifest_variant_bytes(2), media_type="application/json", headers=_NOSNIFF)
+            return Response(
+                content=runtime.manifest_variant_bytes(2),
+                media_type="application/json",
+                headers=_NOSNIFF,
+            )
 
         if runtime.manifest.manifest_version == 3:
+
             @app.get(MANIFEST_V3_PATH)
             async def manifest_v3_route() -> Response:
                 return await _manifest_response()
@@ -953,7 +1028,9 @@ def mount_naapp_routes(
 
     app_fonts: dict[str, bytes] = {}
     if fonts_dir is not None:
-        app_fonts = {path.name: path.read_bytes() for path in fonts_dir.glob("*.woff2") if path.is_file()}
+        app_fonts = {
+            path.name: path.read_bytes() for path in fonts_dir.glob("*.woff2") if path.is_file()
+        }
 
     @app.get("/fonts/{font_name}")
     async def font_route(font_name: str) -> Response:

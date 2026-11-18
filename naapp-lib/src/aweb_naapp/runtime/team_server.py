@@ -120,7 +120,11 @@ class TeamServerDirectory:
         record, signature = await self._stored_record(domain, name)
         try:
             verified = verify_team_server_record(
-                record, signature, team_id=team_id, current_team_did_key=team_did_key, now=datetime.now(UTC)
+                record,
+                signature,
+                team_id=team_id,
+                current_team_did_key=team_did_key,
+                now=datetime.now(UTC),
             )
         except TeamServerRecordError as exc:
             logger.warning("Team server record for %s refused: %s", team_id, exc.code)
@@ -302,7 +306,9 @@ class TeamServerReach:
         except EgressRefused as refused:
             logger.warning(
                 "Team server %s for %s refused by egress: %s",
-                server.server_url, server.team_id, refused,
+                server.server_url,
+                server.team_id,
+                refused,
             )
             raise TeamServerRefused(server.server_url, str(refused)) from refused
         except (EgressNotSent, EgressOutcomeUnknown) as exc:
