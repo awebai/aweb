@@ -149,7 +149,8 @@ def _refusal_code(response: httpx.Response) -> str | None:
 
 
 def _assert_actionable_refusal(response: httpx.Response) -> None:
-    assert response.status_code >= 400
+    # Retrying cannot help: only the team's controller can change its server.
+    assert response.status_code == 403
     assert _refusal_code(response) == REFUSED
     message = response.json()["detail"]["message"]
     assert isinstance(message, str) and message

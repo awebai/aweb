@@ -308,12 +308,14 @@ async def authorize_request(
             principal.team_id,
             refused.server_url,
         )
+        # Not transient, so not a 503: only the team's controller can fix it
+        # (docs/design/app-team-server-api.md §1, trust chain step 4).
         raise _refuse(
-            503,
+            403,
             "team_server_not_allowed",
             f"This team's coordination server, {refused.server_url}, is not an address this app "
-            "may reach. The team's controller can publish a public https address with "
-            "`aw id team set-server`.",
+            "may reach. The team's controller must publish a public https address with "
+            "`aw id team set-server` before this app can serve the team.",
         ) from None
     except GrantUnavailable:
         logger.exception("Grant authority unavailable for team %s", principal.team_id)

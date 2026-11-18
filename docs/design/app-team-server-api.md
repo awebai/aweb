@@ -190,7 +190,10 @@ header, event or certificate.
    shared egress guard (`aweb_naapp.egress`): https only, every address the
    name resolves to checked against the egress address policy, and the
    connection pinned to a checked address. A server the guard refuses is
-   refused with `team_server_not_allowed`, and nothing is sent. The one
+   refused with 403 `team_server_not_allowed`, and nothing is sent. The
+   refusal is not transient, unlike 503 `authority_unavailable`: retrying
+   cannot help, and only the team's controller can fix it, by publishing a
+   public https address (`aw id team set-server`). The one
    exception is the operator's own server: an origin listed in
    `<PREFIX>TEAM_SERVER_INTERNAL_ORIGINS` (https, or http on `127.0.0.1`,
    `[::1]` or `localhost`; a malformed entry stops the app starting) is
