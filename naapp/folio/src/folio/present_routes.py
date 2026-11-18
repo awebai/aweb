@@ -1,7 +1,7 @@
 """The human-facing presentation routes: read-only pages, the editor and its session.
 
-Image bytes are served only under the capability that shows them (docs/sot.md,
-Images): a live read-only link at /present/<token>/assets/<uuid>, an edit
+Image bytes are served only under the capability that shows them (docs/sot.md
+§1, Images): a live read-only link at /present/<token>/assets/<uuid>, an edit
 session at /present/edit/<id>/assets/<uuid>. The Markdown reference
 /assets/<uuid> names an image; nothing serves it.
 """

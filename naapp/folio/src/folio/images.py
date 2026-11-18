@@ -7,7 +7,7 @@ from folio.repository import TeamImage
 
 
 def image_response(image: TeamImage) -> Response:
-    """Serve an image as private user content.
+    """Serve an image as private user content (docs/sot.md §1, Images).
 
     no-store keeps a revoked or uninstalled capability from living on in a cache;
     nosniff pins the browser to the uploaded, magic-checked content type.

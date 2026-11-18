@@ -1,4 +1,8 @@
-"""Folio stores a presentation-link secret only as its verifier (docs/sot.md §6).
+"""Folio stores a presentation-link secret only as its verifier.
+
+Rules implemented here: docs/sot.md §6 (an editable link's opener and session
+credential are stored only as SHA-256) and §7, Storage (a read-only link's row
+is keyed by its token's verifier).
 
 The verifier is naapp-lib's ``secret_verifier``, the SHA-256 of the secret's
 UTF-8 bytes, so a database read never yields a value that opens a link. A
