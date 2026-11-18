@@ -98,7 +98,7 @@ type apiKeyPartialInitState struct {
 	HumanName       string                `yaml:"human_name,omitempty"`
 	AgentType       string                `yaml:"agent_type,omitempty"`
 	// Reachability is a legacy partial-init field. It is accepted on read for
-	// one-release compatibility but ignored and never sent to cloud.
+	// compatibility with saved recovery state but ignored and never sent to cloud.
 	Reachability      string `yaml:"reachability,omitempty"`
 	APIKeyFingerprint string `yaml:"api_key_fingerprint"`
 	CreatedAt         string `yaml:"created_at"`

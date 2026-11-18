@@ -53,11 +53,11 @@ func decodeSingleJSON(data []byte, v any, disallowUnknown bool) error {
 // SupportedManifestVersions are the manifest contract versions this
 // interpreter accepts. Version 1 is tools-only; version 2 adds tool
 // invocation contexts, surfaces, usage, lifecycle, the hooks slot and
-// purpose-split app keys.
+// purpose-split app keys. Version 3 adds owner acts.
 var SupportedManifestVersions = []int{1, 2, 3}
 
-// Manifest is one app manifest of either supported version. The fields after
-// Events exist only in version 2; Validate refuses them in version 1.
+// Manifest is one supported app manifest. Validate enforces which fields are
+// available in each manifest version.
 type Manifest struct {
 	ManifestVersion int            `json:"manifest_version"`
 	App             App            `json:"app"`
@@ -214,7 +214,7 @@ type InterpretedRequest struct {
 	Mutation   bool              `json:"mutation"`
 }
 
-// Validate checks a manifest of either supported version. Its errors carry a
+// Validate checks a manifest of a supported version. Its errors carry a
 // stable code (see ErrorCode); messages are for people.
 func Validate(manifest Manifest, reservedNames map[string]bool) error {
 	switch manifest.ManifestVersion {

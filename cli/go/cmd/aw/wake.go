@@ -146,17 +146,17 @@ var wakeRegisterCmd = &cobra.Command{
 	Use:   "register",
 	Short: "Register an instance home with the wake broker",
 	Long: "Register an instance home with the wake broker.\n\n" +
-		"Called by the OATS spawn hook. --delivery must be session: the broker and a\n" +
-		"live native channel are two presentation surfaces on one identity, and running\n" +
-		"both doubles every wake. A registration stays pending until an inspect reports\n" +
-		"the instance present; pending errors are tolerated until the 30-minute expiry.\n\n" +
+		"Called by the OATS spawn hook. --runtime-delivery selects the primary receive\n" +
+		"surface; explicit receive identities keep broker attachments disjoint from\n" +
+		"native delivery. Legacy --delivery session selects external-session delivery.\n" +
+		"A registration stays pending while the runtime is unavailable; it does not expire.\n\n" +
 		"Exit 0 means the registration was written durably: over the daemon's socket\n" +
 		"when it is up, and straight to the state directory when it is not, so a hook\n" +
 		"never fails because the broker is restarting. It does not mean a broker is\n" +
 		"running: when none answered, register says so on stderr, and the instance is\n" +
 		"not woken until one starts. aw wake status reports whether a broker runs\n" +
 		"(daemon_running with --json). A non-zero exit means refused —\n" +
-		"a missing --delivery session, a relative path, or an unreadable identity home.\n\n" +
+		"invalid receive ownership, a relative path, or an unreadable identity home.\n\n" +
 		"--identity-home here names the instance's own identity home, and shadows the\n" +
 		"root flag of the same name for this command. Give the principal's home before\n" +
 		"the subcommand (aw --identity-home <principal> wake register ...) when you need\n" +
@@ -322,7 +322,7 @@ var wakeDeregisterCmd = &cobra.Command{
 			existed = true
 		}
 		// An unknown or already-retired home is not an error. The retire hook
-		// can run twice, or after an expiry already dropped the registration,
+		// can run twice, or after another explicit deregistration removed the home,
 		// and a non-zero exit there would fail a retirement that is complete.
 		if !existed {
 			fmt.Fprintf(cmd.OutOrStdout(), "no registration for %s; nothing to deregister\n", home)

@@ -743,9 +743,6 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 	}, true, nil
 }
 
-// resolveCertificateClient attempts to create a certificate-authenticated client.
-// Returns (nil, nil) if no team certificate exists. Returns an error only if the
-// certificate exists but is invalid.
 // loadSelectedTeamCertificate loads the selection's team certificate the way
 // certificate authentication does: through the workspace membership's stored
 // cert_path, which may name a legacy location.
@@ -784,6 +781,9 @@ func loadWorkspaceTeamCertificate(sel *awconfig.Selection, workspace *awconfig.W
 	return cert, nil
 }
 
+// resolveCertificateClient creates a client from the selected membership and
+// signing key. An unavailable workspace returns no client; certificate or key
+// loading errors are reported.
 func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Client, error) {
 	if sel == nil {
 		return nil, nil
