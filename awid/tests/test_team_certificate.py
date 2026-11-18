@@ -29,7 +29,9 @@ def certificate(**fields) -> dict:
         "certificate_id": "c_41",
         "team_id": "demo:example.com",
         "team_did_key": TEAM_DID_KEY,
-        "member_did_key": did_from_public_key(bytes(SigningKey(bytes(range(32, 64))).verify_key)),
+        "member_did_key": did_from_public_key(
+            bytes(SigningKey(bytes(range(32, 64))).verify_key)
+        ),
         "alias": "bond",
         "identity_scope": "local",
         "issued_at": "2026-10-01T09:00:00Z",
@@ -45,7 +47,9 @@ def header(cert: dict) -> str:
 
 
 def test_a_certificate_signed_by_the_team_key_verifies() -> None:
-    verify_team_certificate_signature(decode_team_certificate(header(certificate())), TEAM_DID_KEY)
+    verify_team_certificate_signature(
+        decode_team_certificate(header(certificate())), TEAM_DID_KEY
+    )
 
 
 @pytest.mark.parametrize(
@@ -94,7 +98,9 @@ def test_an_altered_certificate() -> None:
 
 def test_a_lone_surrogate_is_a_bad_signature_not_a_crash() -> None:
     cert = certificate()
-    encoded = base64.b64encode(json.dumps(cert).replace('"bond"', '"\\ud800"').encode()).decode()
+    encoded = base64.b64encode(
+        json.dumps(cert).replace('"bond"', '"\\ud800"').encode()
+    ).decode()
     decoded = decode_team_certificate(encoded)
     with pytest.raises(TeamCertificateError) as refused:
         verify_team_certificate_signature(decoded, TEAM_DID_KEY)
@@ -103,14 +109,25 @@ def test_a_lone_surrogate_is_a_bad_signature_not_a_crash() -> None:
 
 def test_the_helper_imports_only_identity_primitives() -> None:
     src = Path(__file__).resolve().parents[1] / "src"
-    heavy = ("fastapi", "starlette", "pydantic", "httpx", "pgdbm", "redis", "dns", "typer")
+    heavy = (
+        "fastapi",
+        "starlette",
+        "pydantic",
+        "httpx",
+        "pgdbm",
+        "redis",
+        "dns",
+        "typer",
+    )
     probe = (
         "import sys\n"
         f"sys.path.insert(0, {str(src)!r})\n"
         "import awid.team_certificate\n"
         f"print(','.join(m for m in {heavy!r} if m in sys.modules))\n"
     )
-    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
     assert result.stdout.strip() == ""
 
 
