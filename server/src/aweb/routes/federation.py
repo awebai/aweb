@@ -280,6 +280,22 @@ def _stable_error_response(
     )
 
 
+async def _local_envelope_recipient(db, *, envelope: FederationEnvelope) -> dict:
+    recipient = await resolve_agent_by_did(db, envelope.target_did_aw)
+    if recipient is None:
+        recipient = await resolve_agent_by_did(
+            db, envelope.target_current_did_key
+        )
+    if recipient is None:
+        raise FederationAuthorityError("recipient_identity_not_found")
+    if (
+        str(recipient.get("did_key") or "").strip()
+        and str(recipient.get("did_key")).strip() != envelope.target_current_did_key
+    ):
+        raise FederationAuthorityError("recipient_current_key_mismatch")
+    return recipient
+
+
 @router.post("/messages")
 async def receive_federated_message(
     request: Request,
@@ -289,9 +305,7 @@ async def receive_federated_message(
     try:
         registry_client = getattr(request.app.state, "awid_registry_client", None)
         if registry_client is None:
-            raise FederationAuthorityError(
-                "federation_authority_coordination_unavailable"
-            )
+            raise FederationAuthorityError("federation_authority_coordination_unavailable")
         try:
             envelope = verify_federation_envelope(
                 payload.envelope,
@@ -464,19 +478,7 @@ async def receive_federated_message(
             envelope,
             stored_route_continuation=stored_route,
         )
-        recipient = await resolve_agent_by_did(db, envelope.target_did_aw)
-        if recipient is None:
-            recipient = await resolve_agent_by_did(
-                db, envelope.target_current_did_key
-            )
-        if recipient is None:
-            raise FederationAuthorityError("recipient_identity_not_found")
-        if (
-            str(recipient.get("did_key") or "").strip()
-            and str(recipient.get("did_key")).strip()
-            != envelope.target_current_did_key
-        ):
-            raise FederationAuthorityError("recipient_current_key_mismatch")
+        recipient = await _local_envelope_recipient(db, envelope=envelope)
         if _is_local_did_key(envelope.target_did_aw) and not stored_route:
             raise FederationAuthorityError("local_recipient_route_missing")
         with agent_wake_scope(agent_wake_publisher(request.app.state)):
