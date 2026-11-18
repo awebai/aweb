@@ -1,9 +1,9 @@
 ---
 type: Lesson
 title: An exact-retry answer sits after validation, and a race loser rereads
-description: Answering an exact retry with the stored send is safe only after every check the ordinary path runs, right before the first effect; a concurrent identical send that loses on the unique key catches that violation, which fires only after the winner commits, and rereads. Test the race with a barrier after the lookup, not a plain gather.
+description: Answering an exact retry with the stored send is safe only after the signature, signed-field, recipient and current authorization checks the ordinary path runs, right before the first effect, but the new-send timestamp age window does not apply to it; a concurrent identical send that loses on the unique key catches that violation, which fires only after the winner commits, and rereads. Test the race with a barrier after the lookup, not a plain gather.
 tags: [lesson, idempotency, retries, concurrency, mail, testing]
-timestamp: 2026-11-04
+timestamp: 2026-11-18
 ---
 
 Adding idempotent retries to mail send, the first version answered an exact
@@ -16,13 +16,26 @@ test already covers the tampered input.
 # How to apply
 
 - **Place the stored-send answer after every validation the ordinary path
-  runs** (signature, recipient, delivery authorization), right before the
+  runs** (signature, recipient, delivery authorization), except the new-send
+  age window below, right before the
   first effect. It is one more step before the
   [point of no return](/aweb-protocol-expert/lessons/gate-before-the-point-of-no-return.md),
   never a gate in front of the others.
+- **The new-send age window is not one of those checks.** The same sender's
+  already-stored, identical signed payload is not a new timestamp
+  attestation, so it must not be refused only because its original
+  timestamp is now older than the skew window. A completion can be lost
+  after the real send commits; applying new-send age skew to the exact
+  retry makes recovery impossible once the window passes. The exemption is
+  narrow: signature verification, signed-field and recipient checks and
+  current delivery authorization still precede the stored answer, so a
+  sender cannot recover a result through a recipient path that is now
+  refused. A lookup may run early to establish exactness; an unchecked
+  early success answer is still wrong.
 - **Match narrowly.** Only the same sender with an identical signed payload
   (plaintext) or identical stored envelope (encrypted) is an exact retry;
-  anything else takes the ordinary path and conflicts. The rule for local mail
+  anything else, including changed content under a reused id, takes the
+  ordinary path, age window included, and conflicts. The rule for local mail
   is stated in `docs/mail-and-chat.md`.
 - **Resolve the concurrent loser by catching and rereading.** Two identical
   in-flight sends both pass the lookup. The loser fails on the conversation
@@ -47,4 +60,12 @@ source reported; on main (28a6e70f3, with the continuation admission check
 656c37505), tested by `server/tests/test_mail_send_retry.py`, and first
 released in server-v1.27.47.
 
+**Status of the age exemption (2026-11-18):** accepted by a delegated ruling
+relayed by the coordinator; source-reported, not verified. The source found
+the age check running before the stored lookup in both mail paths. A
+regression test that holds a real completion loss beyond the skew window is
+pushed but not yet run, and the server fix is pending; the rule is not
+runtime-proven.
+
 Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-db-access, 2026-11-04; notes/exact-retry-after-validation-and-race-loser.md.
+Evidence: OKF proposal from aweb-protocol-expert/aweb-protocol-expert-delivery, 2026-11-18; notes/exact-retry-age-is-not-a-new-attestation.md.
