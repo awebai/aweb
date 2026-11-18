@@ -43,7 +43,7 @@ resolver = dns.asyncresolver.Resolver(configure=False)
 resolver.nameservers = ['127.0.0.1']
 resolver.port = int(sys.argv[1])
 dns.asyncresolver.default_resolver = resolver
-uvicorn.run(create_app(), host='127.0.0.1', port=int(sys.argv[2]), log_level='warning')
+uvicorn.run(create_app(), fd=int(sys.argv[2]), log_level='warning')
 """
 
 
@@ -88,9 +88,10 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
     resolver.nameservers = ["127.0.0.1"]
     resolver.port = dns_port
     dns.asyncresolver.default_resolver = resolver
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
     origin = f"http://127.0.0.1:{port}"
     project = ROOT / (
         "awid"
@@ -129,12 +130,14 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
                 "-c",
                 SERVE,
                 str(dns_port),
-                str(port),
+                str(listener.fileno()),
                 registry_version,
                 env=env,
+                pass_fds=(listener.fileno(),),
                 stdout=output,
                 stderr=output,
             )
+            listener.close()
             async with httpx.AsyncClient(timeout=1) as http:
                 async with asyncio.timeout(45):
                     while True:
@@ -294,6 +297,7 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
             await run("namespace_reset", reset, new_controller_did=dids[2])
             assert await valid() is False
         finally:
+            listener.close()
             await sdk.aclose()
             if process and process.returncode is None:
                 process.terminate()

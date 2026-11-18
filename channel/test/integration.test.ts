@@ -737,6 +737,7 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     `AWEB_PUBLIC_ORIGIN=${awebURL}`,
     `AWEB_DISCOVERY_ORIGIN=${awebURL}`,
     `AWID_PUBLIC_REGISTRY_URL=${awidURL}`,
+    `AWID_PUBLIC_ORIGINS=${awidURL},http://awid:8010`,
     "AWID_LOG_JSON=true",
     "AWEB_LOG_JSON=true",
     "AWID_RATE_LIMIT_BACKEND=redis",
