@@ -296,15 +296,6 @@ async def receive_federated_message(
             envelope = verify_federation_envelope(
                 payload.envelope,
                 payload.signature,
-                expected={
-                    "type": payload.envelope.type,
-                    "target_address": payload.envelope.target_address,
-                    "target_did_aw": payload.envelope.target_did_aw,
-                    "target_current_did_key": payload.envelope.target_current_did_key,
-                    "target_delivery_origin": payload.envelope.target_delivery_origin,
-                    "message_id": payload.envelope.message_id,
-                    "conversation_id": payload.envelope.conversation_id,
-                },
             )
         except FederationEnvelopeError as exc:
             raise _stable_envelope_error(exc) from exc

@@ -38,7 +38,7 @@ async def test_mounted_mcp_send_to_saved_contact(privacy_app, monkeypatch, chann
             ))
         origin = str(env.client.base_url).rstrip("/")
         await env.registry_db.execute(
-            "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1", origin,
+            "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1, last_verified_at=clock_timestamp()", origin,
         )
         monkeypatch.setenv("APP_ENV", "development")
         monkeypatch.setenv("AWEB_FEDERATION_TEST", "1")

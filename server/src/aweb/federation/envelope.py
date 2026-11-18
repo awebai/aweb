@@ -205,6 +205,8 @@ def enforce_message_timestamp_skew(
 
 
 def _enforce_expected_fields(model: FederationEnvelope, expected: Mapping[str, Any | None]) -> None:
+    # Outbound senders supply independent intent. Ingress validates signed
+    # bindings here and the recipient's route/current identity at delivery.
     payload = model.model_dump(mode="json", exclude_none=True)
     for field, expected_value in expected.items():
         actual = payload.get(field)

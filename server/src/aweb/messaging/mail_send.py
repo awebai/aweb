@@ -1095,9 +1095,6 @@ async def resolve_mail_target(
             bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_did must match the to_stable_id recipient")
-        if payload.to_agent_id is not None and payload.to_agent_id.strip():
-            if payload.to_agent_id.strip() != str(recipient["agent_id"]):
-                raise HTTPException(status_code=422, detail="to_agent_id must match the to_stable_id recipient")
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), registry_client=registry_client)
             if not _recipient_identity_matches(bound_recipient, recipient):
@@ -1117,9 +1114,6 @@ async def resolve_mail_target(
             bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), registry_client=registry_client)
             if not _recipient_identity_matches(bound_recipient, recipient):
                 raise HTTPException(status_code=422, detail="to_alias must match the to_did recipient")
-        if payload.to_agent_id is not None and payload.to_agent_id.strip():
-            if payload.to_agent_id.strip() != str(recipient["agent_id"]):
-                raise HTTPException(status_code=422, detail="to_agent_id must match the to_did recipient")
         recipient_did = (recipient.get("did_aw") or recipient.get("did_key") or requested_recipient_did).strip()
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
@@ -1140,9 +1134,6 @@ async def resolve_mail_target(
                 bound_recipient = await _resolve_message_alias(db, auth, payload.to_alias.strip(), registry_client=registry_client)
                 if not _recipient_identity_matches(bound_recipient, recipient):
                     raise HTTPException(status_code=422, detail="to_alias must match the to_address recipient")
-        if payload.to_agent_id is not None and payload.to_agent_id.strip():
-            if recipient.get("external") or payload.to_agent_id.strip() != str(recipient["agent_id"]):
-                raise HTTPException(status_code=422, detail="to_agent_id must match the to_address recipient")
         if payload.to_stable_id is not None and payload.to_stable_id.strip():
             if payload.to_stable_id.strip() != str(recipient.get("did_aw") or "").strip():
                 raise HTTPException(status_code=422, detail="to_stable_id must match the to_address recipient")
@@ -1176,6 +1167,15 @@ async def resolve_mail_target(
         to_alias = recipient["alias"]
     else:
         raise HTTPException(status_code=422, detail="Must provide to_did, to_address, to_agent_id, or to_alias")
+
+    if payload.to_agent_id and any(value is not None for value in (payload.to_address, payload.to_did, payload.to_stable_id)):
+        selected_member = await get_agent_by_id(db, agent_id=payload.to_agent_id, team_id=auth.team_id)
+        if recipient.get("external") or not _recipient_identity_matches(selected_member, recipient):
+            field = "to_address" if payload.to_address is not None else ("to_stable_id" if payload.to_stable_id is not None else "to_did")
+            raise HTTPException(
+                status_code=422,
+                detail=f"to_agent_id must match the {field} recipient. Check the recipient and try again.",
+            )
 
     return MailTarget(
         recipient=recipient,
