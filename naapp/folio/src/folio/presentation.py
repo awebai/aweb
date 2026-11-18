@@ -11,6 +11,8 @@ from uuid import UUID
 import markdown
 import nh3
 
+from folio.models import AssetKind
+
 _ALLOWED_TAGS = {
     "a",
     "blockquote",
@@ -723,18 +725,18 @@ def render_presented_markdown(
     image_urls = {
         asset_id: embed["url"]
         for asset_id, embed in embeds.items()
-        if str(embed.get("kind") or "image") == "image" and embed.get("url")
+        if str(embed.get("kind") or AssetKind.IMAGE) == AssetKind.IMAGE and embed.get("url")
     }
     image_asset_ids = {
         asset_id
         for asset_id, embed in embeds.items()
-        if str(embed.get("kind") or "image") == "image"
+        if str(embed.get("kind") or AssetKind.IMAGE) == AssetKind.IMAGE
     }
     image_asset_ids.update(allowed_asset_ids or set())
     video_embeds = {
         asset_id: embed
         for asset_id, embed in embeds.items()
-        if str(embed.get("kind") or "") == "video"
+        if str(embed.get("kind") or "") == AssetKind.VIDEO
     }
     preprocessed_body, trusted_video_replacements = _replace_video_markdown(
         body,

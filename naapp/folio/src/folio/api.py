@@ -20,6 +20,7 @@ from folio.models import (
     DocumentResponse,
     DocumentSummary,
     DocumentVersion,
+    LinkKind,
     PresentationResponse,
     ThemeRequest,
     ThemeResponse,
@@ -226,7 +227,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             slug=payload.slug,
             version=payload.version,
             ttl_seconds=payload.ttl_seconds,
-            editable=payload.editable,
+            kind=LinkKind.EDITABLE if payload.editable else LinkKind.READ_ONLY,
         )
 
     @app.post("/v1/present/{token}/revoke")

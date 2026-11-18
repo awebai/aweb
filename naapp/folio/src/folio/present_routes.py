@@ -22,10 +22,12 @@ from folio.config import Settings
 from folio.images import image_response
 from folio.installation_access import presented_document, presented_image
 from folio.models import (
+    AssetKind,
     PresentationEditRequest,
     PresentationEditResponse,
     PresentationPreviewRequest,
     PresentationStateResponse,
+    StreamStatus,
 )
 from folio.presentation import (
     _editor_theme_css,
@@ -41,6 +43,9 @@ from folio.repository import (
     append_presented_version,
     get_team_image,
 )
+
+# The status a ready video's embed shows when its signed playback URL cannot be made.
+PLAYBACK_UNAVAILABLE = "unavailable"
 
 
 def mount_presentation_routes(
@@ -75,19 +80,19 @@ def mount_presentation_routes(
             if not isinstance(asset_id, UUID) or not isinstance(raw, dict):
                 continue
             kind = str(raw.get("kind") or "")
-            if kind == "image":
-                embeds[asset_id] = {"kind": "image", "url": image_url(asset_id)}
-            elif kind == "video":
-                status = str(raw.get("stream_status") or "pending_upload")
-                embed = {"kind": "video", "status": status}
+            if kind == AssetKind.IMAGE:
+                embeds[asset_id] = {"kind": AssetKind.IMAGE, "url": image_url(asset_id)}
+            elif kind == AssetKind.VIDEO:
+                status = str(raw.get("stream_status") or StreamStatus.PENDING_UPLOAD)
+                embed = {"kind": AssetKind.VIDEO, "status": status}
                 stream_uid = str(raw.get("stream_uid") or "").strip()
-                if status == "ready" and stream_uid:
+                if status == StreamStatus.READY and stream_uid:
                     try:
                         embed["iframe_url"] = stream_iframe_url(
                             settings=resolved, stream_uid=stream_uid
                         )
                     except HTTPException:
-                        embed["status"] = "unavailable"
+                        embed["status"] = PLAYBACK_UNAVAILABLE
                 embeds[asset_id] = embed
         return embeds
 

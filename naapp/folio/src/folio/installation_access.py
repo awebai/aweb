@@ -14,6 +14,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from folio.link_secrets import read_only_link_key
+from folio.models import AssetKind
 
 if TYPE_CHECKING:
     from folio.repository import TeamImage
@@ -186,7 +187,7 @@ def shown_image_ids(presented: dict) -> set[UUID]:
     shown = {
         asset_id
         for asset_id, asset in presented["allowed_assets"].items()
-        if asset["kind"] == "image"
+        if asset["kind"] == AssetKind.IMAGE
     }
     logo = (presented.get("theme") or {}).get("logo_asset_id")
     if logo is not None:

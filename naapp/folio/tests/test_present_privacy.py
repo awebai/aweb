@@ -20,6 +20,7 @@ from aweb_naapp.runtime.team_auth import MembershipProof, Principal
 from folio.api import create_app
 from folio.config import Settings
 from folio.link_secrets import read_only_link_key
+from folio.models import LinkKind
 from folio.repository import mint_presentation_link
 
 OWNER = Principal(
@@ -126,7 +127,7 @@ async def mint(world, *, editable=True, ttl_seconds=None):
         settings=settings,
         slug="draft",
         version=None,
-        editable=editable,
+        kind=LinkKind.EDITABLE if editable else LinkKind.READ_ONLY,
         ttl_seconds=ttl_seconds,
     )
 

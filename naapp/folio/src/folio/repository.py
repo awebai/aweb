@@ -19,6 +19,7 @@ from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload
 from folio.config import Settings
 from folio.event_emit import emit_doc_changed
 from folio.link_secrets import read_only_link_key, secret_digest
+from folio.models import LinkKind
 from folio.presentation import builtin_preset, sanitize_theme_tokens
 
 
@@ -251,7 +252,7 @@ async def mint_presentation_link(
     slug: str,
     version: int | None,
     ttl_seconds: int | None,
-    editable: bool = False,
+    kind: LinkKind = LinkKind.READ_ONLY,
 ) -> dict[str, Any]:
     selected = await db.fetch_one(
         """
@@ -278,23 +279,25 @@ async def mint_presentation_link(
     if exists is None:
         raise HTTPException(status_code=404, detail="Document version not found")
 
-    if editable and ttl_seconds is not None and ttl_seconds > 300:
+    if kind is LinkKind.EDITABLE and ttl_seconds is not None and ttl_seconds > 300:
         raise HTTPException(
             status_code=422, detail="Editable links expire after at most 300 seconds"
         )
-    if not editable and ttl_seconds is not None and ttl_seconds > settings.max_present_ttl_seconds:
+    if kind is LinkKind.READ_ONLY and ttl_seconds is not None and ttl_seconds > settings.max_present_ttl_seconds:
         raise HTTPException(
             status_code=422,
             detail=f"Read-only links expire after at most {settings.max_present_ttl_seconds} seconds",
         )
     requested_ttl = (
         (300 if ttl_seconds is None else ttl_seconds)
-        if editable
+        if kind is LinkKind.EDITABLE
         else (ttl_seconds or settings.default_present_ttl_seconds)
     )
     ttl = min(requested_ttl, settings.max_present_ttl_seconds)
-    opener = secrets.token_urlsafe(32) if editable else None
-    token = secrets.token_urlsafe(16) if editable else secrets.token_urlsafe(32)
+    opener = secrets.token_urlsafe(32) if kind is LinkKind.EDITABLE else None
+    token = (
+        secrets.token_urlsafe(16) if kind is LinkKind.EDITABLE else secrets.token_urlsafe(32)
+    )
     # Use the same database clock for expiry and the row's default created_at.
     # That makes the stored editable lifetime exactly bounded across hosts.
     minted = await db.fetch_one(
@@ -305,7 +308,7 @@ async def mint_presentation_link(
         VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING expires_at
         """,
-        token if editable else read_only_link_key(token),
+        token if kind is LinkKind.EDITABLE else read_only_link_key(token),
         document_id,
         version_number,
         ttl,
@@ -313,7 +316,7 @@ async def mint_presentation_link(
         principal.did_aw,
         principal.alias,
         principal.certificate_id,
-        editable,
+        kind is LinkKind.EDITABLE,
         secret_digest(opener) if opener else None,
         principal.team_did_key,
         installation_id,
@@ -323,7 +326,7 @@ async def mint_presentation_link(
         "token": token,
         "url": (
             f"{settings.public_origin.rstrip('/')}/present/edit/{token}#k={opener}"
-            if editable
+            if kind is LinkKind.EDITABLE
             else f"{settings.public_origin.rstrip('/')}/present/{token}"
         ),
         "expires_at": minted["expires_at"],

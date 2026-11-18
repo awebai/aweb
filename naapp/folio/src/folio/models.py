@@ -1,10 +1,36 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+class LinkKind(StrEnum):
+    """What a present link opens: a pinned read-only page (docs/sot.md §7) or one
+    document's editor (docs/sot.md §6)."""
+
+    READ_ONLY = "read_only"
+    EDITABLE = "editable"
+
+
+class AssetKind(StrEnum):
+    """An asset's stored kind (assets.kind)."""
+
+    IMAGE = "image"
+    VIDEO = "video"
+
+
+class StreamStatus(StrEnum):
+    """A video asset's Cloudflare Stream state (assets.stream_status)."""
+
+    PENDING_UPLOAD = "pending_upload"
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    READY = "ready"
+    ERROR = "error"
 
 
 class DeclarativeTemplateRequest(BaseModel):

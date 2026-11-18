@@ -13,6 +13,7 @@ from fastapi import Request
 from playwright.async_api import async_playwright, expect
 from test_present_privacy import OWNER, present_world
 
+from folio.models import LinkKind
 from folio.repository import mint_presentation_link
 
 __all__ = ["present_world"]
@@ -44,7 +45,7 @@ async def link(world, *, editable=False, version=None):
         settings=settings,
         slug="draft",
         version=version,
-        editable=editable,
+        kind=LinkKind.EDITABLE if editable else LinkKind.READ_ONLY,
         ttl_seconds=300,
     )
 
