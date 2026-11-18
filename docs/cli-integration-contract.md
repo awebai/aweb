@@ -128,7 +128,7 @@ as minting. They return `team_id`, `kind` (`hosted` or `controller`),
 `expiry_known`, and `expires_at`, without creating a token, secret, child invite,
 or identity key. An unknown expiry is an empty string; consumers display the
 returned expiry rather than infer a lifetime. Mint output includes `invite_id`
-and `expires_at`.
+and its known `expires_at`.
 
 `aw id team revoke-invite --invite-id ID --json` locally cancels an unused
 controller enrollment. It makes no network request. `status` and `code` are

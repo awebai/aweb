@@ -142,6 +142,10 @@ func TestOATSRealIssuedInviteRemainsUsedWhenRecipientPersistenceFails(t *testing
 	if err != nil || status.Status != "active" {
 		t.Fatalf("invite cancellation revoked the issued certificate: %#v; %v", status, err)
 	}
+	if err := os.Remove(certificatePath); err != nil {
+		t.Fatal(err)
+	}
+	world.requireCommand(t, child, "id", "team", "fetch-cert", "--namespace", world.Domain, "--team", "backend", "--cert-id", member.CertificateID, "--registry", world.Stack.RegistryURL)
 }
 
 func TestOATSRealControllerRetirement(t *testing.T) {
