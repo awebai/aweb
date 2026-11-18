@@ -174,3 +174,62 @@ retention operation accepts a SQL predicate or a table-name argument.
 The host reports the preview before requesting apply, rechecks its current
 ownership/plan policy and keeps automatic retention off until its operator
 separately enables it. A changed cutoff requires a new preview.
+
+## Native resource lifecycle
+
+`aweb.embedding.embedded_aweb(*, db_infra, redis, registry_client,
+public_origin, mcp_factory, outbox_recovery, on_mutation=None,
+rate_limiter=None, attachment_backend=None)` is an async context manager.
+It accepts initialized structural database infrastructure (`is_initialized`
+and `get_manager`), the host's Redis and configured registry clients, and a
+synchronous factory returning the host's actual extended `ManagedMCPApp`.
+These clients/pools remain host-owned and are never closed by this context.
+
+The required `outbox_recovery` is `OutboxRecoveryOwnership.HOST` or `NATIVE`.
+HOST starts no native recovery worker. NATIVE starts exactly one. The existing
+`create_app(host_runs_outbox_recovery=...)` boolean remains accepted as a
+compatibility adapter for standalone/library construction.
+
+The context checks the complete native migration inventory and configured
+registry, constructs one native federation authority and wake pair, then
+invokes `mcp_factory(resources)` and starts that exact app's session manager.
+It never substitutes a stock app for the factory's extended tools/custody.
+The supplied mutation callback, limiter and attachment backend remain host
+extensions. Standalone and ordinary library lifespans use the same native
+resource owner and retain ownership of clients they themselves created.
+
+The yielded `EmbeddedResources` holds `api_app`, `mcp_app`, `db_infra`,
+`redis`, `registry_client`, `federation_authority`, `agent_wake_publisher`,
+`agent_wake_hub`, `on_mutation` and typed `readiness`. Native state is installed
+once. `native_resources(app)` reads the one typed `app.state.native_resources`
+reference; a host may place that same reference on its root/wrappers rather
+than copying native fields. The factory receives it after wake/federation
+construction, so it can bind its actual extended app to those serving handles.
+
+Startup failures raise `EmbeddingStartupError` with named
+`ResourceStartupStage` and a safe actionable `NativeResourceReadiness` result;
+the actual cause is logged/chained. Partial startup and shutdown unwind native
+resources in reverse order. Readiness becomes unavailable when the native
+context closes or its MCP/wake/recovery resource stops. An unavailable native
+resource makes native `/ready` return 503 even if database/Redis still answer;
+requests cannot restart the closed context's outbox worker.
+
+Resource readiness does not establish mount readiness. The host mounts the
+actual yielded handles under its auth/policy wrappers, verifies those actual
+registrations and checks its additional dependencies before declaring the
+deployment ready. MCP can remain a separate `/mcp` mount. Root federation
+ingress can delegate the unchanged path to the same native API app:
+
+```python
+from starlette.routing import Route
+
+host.mount("/api", resources.api_app)
+host.mount("/mcp", resources.mcp_app)
+host.router.routes.append(
+    Route("/v1/federation/messages", resources.api_app, methods=["POST"])
+)
+```
+
+That route uses the same native receiver, exception handlers and federation
+authority as the API; it adds no second forwarding/validation implementation.
+Host wrappers must preserve the external signed request path.

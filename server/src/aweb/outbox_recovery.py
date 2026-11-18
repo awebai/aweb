@@ -67,6 +67,9 @@ def start_outbox_recovery(app: Any, *, interval_seconds: float | None = None) ->
 
 def ensure_outbox_recovery(app: Any) -> None:
     """Start the loop unless it runs, once the app has its database and Redis."""
+    resources = getattr(app.state, "native_resources", None)
+    if resources is not None and not resources.readiness.ready:
+        return
     task = getattr(app.state, "outbox_recovery_task", None)
     if task is not None and not task.done():
         return

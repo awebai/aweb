@@ -103,6 +103,10 @@ class ManagedMCPApp:
         self._started = asyncio.Event()
         self._shutdown = asyncio.Event()
 
+    @property
+    def is_running(self) -> bool:
+        return self._started.is_set() and self._runner_task is not None and not self._runner_task.done()
+
     async def startup(self) -> None:
         if self._runner_task is not None:
             return
