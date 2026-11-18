@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import pytest
 from awid.id_certificates import IDChainEvidence, IDCertificateError, request_disposition, status_cache_mode, status_request, verify_id_chain
+from awid.identity_observation import IdentityKind, IdentityKindObservation
 
 V = json.loads((Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json').read_text())
 
@@ -25,6 +26,17 @@ def test_final_identity_tree_verification_and_request_decision(case):
     bundle, subject, evidence, domain = inputs(case)
     result = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)
     assert result == case["expected"]
+    observation = IdentityKindObservation(
+        did_key=subject["did_key"],
+        did_aw=subject["id"] if subject["id"].startswith("did:aw:") else "",
+        result=result,
+    )
+    expected_kind = (
+        IdentityKind(case["expected"]["kind"])
+        if case["expected"]["identity_valid"] is True
+        else IdentityKind.UNKNOWN
+    )
+    assert observation.kind is expected_kind
     for human_required, key in [(False, "ordinary"), (True, "human_required")]:
         assert (
             request_disposition(
