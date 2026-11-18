@@ -39,7 +39,9 @@ class PresenceGrant:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("issuer", list(IssuerReacceptance))
-async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(pinning, issuer):
+async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
+    pinning, issuer
+):
     # docs/identity.md:741-744: delegation ends with its issuing certificate;
     # reconnecting the same identity does not resurrect an older delegation.
     env = pinning
@@ -67,7 +69,9 @@ async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
     heartbeat = await env.client.post(
         "/v1/agents/heartbeat",
         headers=grant.headers(
-            method="POST", path="/v1/agents/heartbeat", audience=env.app.state.public_origin
+            method="POST",
+            path="/v1/agents/heartbeat",
+            audience=env.app.state.public_origin,
         ),
     )
     assert heartbeat.status_code == 200, heartbeat.text
@@ -92,7 +96,9 @@ async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
     refused = await env.client.get(
         "/v1/messages/inbox",
         headers=grant.headers(
-            method="GET", path="/v1/messages/inbox", audience=env.app.state.public_origin
+            method="GET",
+            path="/v1/messages/inbox",
+            audience=env.app.state.public_origin,
         ),
     )
     assert refused.status_code == 403, refused.text
