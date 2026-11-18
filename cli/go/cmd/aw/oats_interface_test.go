@@ -352,3 +352,39 @@ func TestOATSJoinFromInviteFailureHasStableCodeAndOriginalSuffix(t *testing.T) {
 		t.Fatalf("invite refusal: %s\n%s", stdout.String(), stderr.String())
 	}
 }
+
+func TestOATSValidationUsesPublishedCLIWithoutIdentity(t *testing.T) {
+	t.Parallel()
+	bin, dir := buildDoctorBinary(t)
+	for _, test := range []struct{ kind, input, canonical, remedy string }{
+		{kind: "alias", input: " Worker-1 ", canonical: "Worker-1"},
+		{kind: "alias", input: "bad/name", remedy: "Use 1 to 64 letters, digits, underscores or hyphens, starting with a letter or digit."},
+		{kind: "team-id", input: "Backend:Example.COM", canonical: "backend:example.com"},
+		{kind: "team-id", input: "missing-colon", remedy: "Use a team ID in name:domain form."},
+		{kind: "team-server-url", input: "https://example.com/aw/api", canonical: "https://example.com/aw/api"},
+		{kind: "team-server-url", input: "http://example.com", remedy: "Use an HTTPS team server URL, or an allowed loopback URL for local use."},
+	} {
+		t.Run(test.kind+"/"+test.input, func(t *testing.T) {
+			cmd := exec.Command(bin, "validate", test.kind, test.input, "--json")
+			cmd.Dir = dir
+			cmd.Env = append(testCommandEnv(dir), "AWEB_IDENTITY_HOME="+filepath.Join(dir, "nonexistent-principal"), "AW_NO_UPDATE_CHECK=1")
+			var stdout, stderr strings.Builder
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			err := cmd.Run()
+			var result struct {
+				Valid     bool   `json:"valid"`
+				Canonical string `json:"canonical"`
+			}
+			if decodeErr := json.Unmarshal([]byte(stdout.String()), &result); decodeErr != nil {
+				t.Fatalf("validation JSON: %v\n%s\n%s", decodeErr, stdout.String(), stderr.String())
+			}
+			if test.remedy == "" {
+				if err != nil || !result.Valid || result.Canonical != test.canonical {
+					t.Fatalf("validation: %v\n%s\n%s", err, stdout.String(), stderr.String())
+				}
+			} else if err == nil || result.Valid || !strings.Contains(stderr.String(), test.remedy) {
+				t.Fatalf("invalid input remedy: %v\n%s\n%s", err, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
