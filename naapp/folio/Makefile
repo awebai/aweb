@@ -18,6 +18,11 @@ lint:
 
 e2e:
 	set -e; \
+	registry_origin="http://$${NAAPP_E2E_HOST:-127.0.0.1}:$${NAAPP_E2E_AWID_PORT:-18010}"; \
+	if [ "$${NAAPP_E2E_CONTAINER_NETWORK:-}" = 1 ]; then \
+		registry_origin="http://$$(python3 ../../scripts/candidate-network.py hostname "$(NAAPP_E2E_PROJECT)" awid):8010"; \
+	fi; \
+	export AWID_PUBLIC_ORIGINS="http://awid:8010,$$registry_origin"; \
 	cleanup() { \
 		status=$$?; trap - EXIT; \
 		docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans || status=1; \
