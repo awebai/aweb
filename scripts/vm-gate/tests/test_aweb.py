@@ -1,5 +1,5 @@
 import unittest
-from vm_gate.aweb import command
+from vm_gate.aweb import GateIntent, command
 from vm_gate.errors import Refused
 
 ALL = "checks user-paths unit artifacts integration"
@@ -11,7 +11,7 @@ class AwebAdapterTests(unittest.TestCase):
 
     def test_train_reproduces_mac_command_without_profile_override(self):
         self.assertEqual(
-            command(intent="train"),
+            command(intent=GateIntent.TRAIN),
             "AWEB_CANDIDATE_STAGES='" + ALL + "' make candidate-gate",
         )
 
@@ -33,11 +33,15 @@ class AwebAdapterTests(unittest.TestCase):
             with self.subTest(stages=stages), self.assertRaises(Refused):
                 command(stages=stages)
 
+    def test_unknown_intent_refuses_with_an_action(self):
+        with self.assertRaisesRegex(Refused, "Choose branch or train"):
+            command(intent="unknown")
+
     def test_train_cannot_be_a_partial_or_focused_gate(self):
         with self.assertRaises(Refused):
-            command(intent="train", stages="unit")
+            command(intent=GateIntent.TRAIN, stages="unit")
         with self.assertRaises(Refused):
-            command(intent="train", focused="true")
+            command(intent=GateIntent.TRAIN, focused="true")
 
 
 if __name__ == "__main__":

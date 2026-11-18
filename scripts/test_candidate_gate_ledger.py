@@ -12,9 +12,20 @@ import tempfile
 
 from contextlib import contextmanager
 import errno
+from enum import Enum
 import socket
 
 from fixture_repo import init_fixture_repo, run_fixture
+
+
+class ExpectedResult(Enum):
+    SUCCESS = "success"
+    FAILURE = "failure"
+
+
+class StageStatus(str, Enum):
+    PASSED = "passed"
+    FAILED = "failed"
 
 
 @contextmanager
@@ -185,16 +196,22 @@ def main() -> None:
         recipes, env = prepare_committed_fixture(repo=repo, evidence=evidence)
 
         def invoke(
-            name: str, *args: str, stages: str | None = None, success: bool = True
+            name: str,
+            *args: str,
+            stages: str | None = None,
+            expected: ExpectedResult = ExpectedResult.SUCCESS,
         ):
             settings = dict(env)
             if stages is not None:
                 settings["AWEB_CANDIDATE_STAGES"] = stages
             result = run(repo, *args, env=settings)
             (evidence / f"{name}.log").write_text(result.stdout + result.stderr)
-            assert (result.returncode == 0) == success, (
-                f"{name}: see {evidence}/{name}.log"
+            actual = (
+                ExpectedResult.SUCCESS
+                if result.returncode == 0
+                else ExpectedResult.FAILURE
             )
+            assert actual is expected, f"{name}: see {evidence}/{name}.log"
             return result.stdout + result.stderr
 
         gate = ("bash", "scripts/candidate-docker-gate.sh")
@@ -203,13 +220,16 @@ def main() -> None:
         # source is no longer an input, so naming one is refused, not ignored.
         env["LIBRARY_E2E_LIBRARY_CONTEXT"] = str(repo / "naapp/library")
         refused_library = invoke(
-            "library-context", *gate, stages="checks", success=False
+            "library-context", *gate, stages="checks", expected=ExpectedResult.FAILURE
         )
         assert "LIBRARY_E2E_LIBRARY_CONTEXT" in refused_library and not ledger.exists()
         del env["LIBRARY_E2E_LIBRARY_CONTEXT"]
         invoke("first-checks", *gate, stages="checks")
         rows = ledger.read_text().splitlines()
-        assert len(rows) == 1 and rows[0].split("\t")[1:3] == ["checks", "passed"]
+        assert len(rows) == 1 and rows[0].split("\t")[1:3] == [
+            "checks",
+            StageStatus.PASSED,
+        ]
         # Exercise the real gate allocation/runner environment and Library's
         # actual Compose Postgres service while its old host port is occupied.
         with held_library_default():
@@ -218,7 +238,7 @@ def main() -> None:
         assert len(rows) == len(STAGES.split()) and {
             row.split("\t")[1] for row in rows
         } == set(STAGES.split())
-        assert all(row.split("\t")[2] == "passed" for row in rows)
+        assert all(row.split("\t")[2] == StageStatus.PASSED for row in rows)
         user_path_log = Path(
             next(
                 row.split("\t")[5] for row in rows if row.split("\t")[1] == "user-paths"
@@ -239,7 +259,7 @@ def main() -> None:
         for sha in (previous_sha, candidate_sha):
             executed = [row.split("\t") for row in rows if row.split("\t")[3] == sha]
             assert {row[1] for row in executed} == set(STAGES.split())
-            assert all(row[2] == "passed" for row in executed)
+            assert all(row[2] == StageStatus.PASSED for row in executed)
         # Tag creation still requires the commit to have landed on main.
         checked(repo, "git", "branch", "-f", "main", candidate_sha)
         refused_final = invoke(
@@ -248,7 +268,7 @@ def main() -> None:
             "scripts/release_candidate.py",
             "aw-v1.2.3",
             stages="checks",
-            success=False,
+            expected=ExpectedResult.FAILURE,
         )
         assert "final requires a prior RC" in refused_final
         assert (
@@ -288,10 +308,15 @@ def main() -> None:
         assert len(ledger.read_text().splitlines()) == len(version_rows) + 1
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "6 * 7 == 43"))
         checked(repo, "git", "commit", "-qam", "real failing stage")
-        invoke("failed-tree", *gate, stages="checks", success=False)
+        invoke("failed-tree", *gate, stages="checks", expected=ExpectedResult.FAILURE)
         before = ledger.read_text()
-        assert before.splitlines()[-1].split("\t")[1:3] == ["checks", "failed"]
-        refused = invoke("refused-tree", *gate, stages="integration", success=False)
+        assert before.splitlines()[-1].split("\t")[1:3] == [
+            "checks",
+            StageStatus.FAILED,
+        ]
+        refused = invoke(
+            "refused-tree", *gate, stages="integration", expected=ExpectedResult.FAILURE
+        )
         assert "already FAILED checks" in refused and "GATE_RERUN_REASON" in refused
         assert ledger.read_text() == before
         # Every executed gate has real cleanup evidence; successful stage rows

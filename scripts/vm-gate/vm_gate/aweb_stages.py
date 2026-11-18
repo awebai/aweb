@@ -1,13 +1,33 @@
 """OSS gate stage selection shared by the runner, wrapper and VM adapter."""
 
 import argparse
+from enum import Enum
 import sys
 
 
-STAGES = ("checks", "user-paths", "unit", "artifacts", "integration")
+class Stage(str, Enum):
+    CHECKS = "checks"
+    USER_PATHS = "user-paths"
+    UNIT = "unit"
+    ARTIFACTS = "artifacts"
+    INTEGRATION = "integration"
 
 
-def select(value=None):
+class Coverage(str, Enum):
+    FULL = "full"
+    PARTIAL = "partial"
+
+
+class OutputFormat(Enum):
+    STAGES = "stages"
+    COVERAGE = "coverage"
+
+
+STAGES = tuple(Stage)
+
+
+def select_stages(value: str | None = None) -> tuple[Stage, ...]:
+    """docs/release.md:190–200: default to all; explicit subsets are partial."""
     if value is None or value == "all":
         return STAGES
     names = tuple(value.split())
@@ -17,24 +37,33 @@ def select(value=None):
             + " ".join(STAGES)
             + "."
         )
-    return names
+    return tuple(Stage(name) for name in names)
 
 
-def coverage(names):
-    return "full" if tuple(names) == STAGES else "partial"
+def selection_coverage(stages: tuple[Stage, ...]) -> Coverage:
+    return Coverage.FULL if stages == STAGES else Coverage.PARTIAL
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--coverage", action="store_true")
+    parser.add_argument(
+        "--coverage",
+        dest="output_format",
+        action="store_const",
+        const=OutputFormat.COVERAGE,
+        default=OutputFormat.STAGES,
+    )
     parser.add_argument("selection", nargs="?")
     args = parser.parse_args()
     try:
-        names = select(args.selection)
+        names = select_stages(args.selection)
     except ValueError as error:
         print(str(error), file=sys.stderr)
         return 2
-    print(coverage(names) if args.coverage else " ".join(names))
+    if args.output_format is OutputFormat.COVERAGE:
+        print(selection_coverage(names).value)
+    else:
+        print(" ".join(names))
     return 0
 
 
