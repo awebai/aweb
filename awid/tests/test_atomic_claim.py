@@ -13,7 +13,9 @@ from awid.atomic_claim import (
 
 
 def _vector() -> dict:
-    path = Path(__file__).parents[2] / "docs" / "vectors" / "atomic-address-claim-v1.json"
+    path = (
+        Path(__file__).parents[2] / "docs" / "vectors" / "atomic-address-claim-v1.json"
+    )
     return json.loads(path.read_text())
 
 
@@ -44,7 +46,9 @@ def test_atomic_address_claim_canonical_fixture():
     )
     assert identity_proof_hash == vector["identity_proof_hash"]
 
-    namespace_canonical = atomic_address_claim_namespace_canonical(fields, identity_proof_hash)
+    namespace_canonical = atomic_address_claim_namespace_canonical(
+        fields, identity_proof_hash
+    )
     assert namespace_canonical.decode() == vector["namespace_canonical"]
 
 

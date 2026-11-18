@@ -23,7 +23,9 @@ class TeamAuthEnvelope:
     payload: dict[str, Any]
 
 
-def compact_team_auth_payload(*, team_id: str, timestamp: str, body_sha256: str) -> bytes:
+def compact_team_auth_payload(
+    *, team_id: str, timestamp: str, body_sha256: str
+) -> bytes:
     return canonical_json_bytes(
         {
             "body_sha256": body_sha256,
@@ -47,7 +49,9 @@ def raw_request_target(request: Request) -> str:
     elif raw_path_value:
         path = str(raw_path_value)
     else:
-        path = quote(str(request.scope.get("path") or request.url.path or "/"), safe="/%")
+        path = quote(
+            str(request.scope.get("path") or request.url.path or "/"), safe="/%"
+        )
 
     root_path = str(request.scope.get("root_path") or "")
     if root_path and not path.startswith(root_path):
@@ -86,31 +90,51 @@ def team_auth_signature_payload(
     allowed_audiences: Iterable[str],
 ) -> TeamAuthEnvelope:
     return _request_auth_signature_payload(
-        request, claims={"team_id": team_id}, timestamp=timestamp,
-        body_sha256=body_sha256, allowed_audiences=allowed_audiences,
+        request,
+        claims={"team_id": team_id},
+        timestamp=timestamp,
+        body_sha256=body_sha256,
+        allowed_audiences=allowed_audiences,
     )
 
 
 def identity_auth_signature_payload(
-    request: Request, *, did_aw: str, timestamp: str, body_sha256: str,
+    request: Request,
+    *,
+    did_aw: str,
+    timestamp: str,
+    body_sha256: str,
     allowed_audiences: Iterable[str],
 ) -> TeamAuthEnvelope:
     """Identity possession only; this envelope confers no team membership."""
     return _request_auth_signature_payload(
-        request, claims={"did_aw": did_aw}, timestamp=timestamp,
-        body_sha256=body_sha256, allowed_audiences=allowed_audiences,
+        request,
+        claims={"did_aw": did_aw},
+        timestamp=timestamp,
+        body_sha256=body_sha256,
+        allowed_audiences=allowed_audiences,
     )
 
 
 def _request_auth_signature_payload(
-    request: Request, *, claims: dict[str, str], timestamp: str,
-    body_sha256: str, allowed_audiences: Iterable[str],
+    request: Request,
+    *,
+    claims: dict[str, str],
+    timestamp: str,
+    body_sha256: str,
+    allowed_audiences: Iterable[str],
 ) -> TeamAuthEnvelope:
-    signed_payload_header = str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()
+    signed_payload_header = str(
+        request.headers.get("X-AWEB-Signed-Payload") or ""
+    ).strip()
     if not signed_payload_header:
-        canonical = canonical_json_bytes({
-            **claims, "timestamp": timestamp, "body_sha256": body_sha256,
-        })
+        canonical = canonical_json_bytes(
+            {
+                **claims,
+                "timestamp": timestamp,
+                "body_sha256": body_sha256,
+            }
+        )
         return TeamAuthEnvelope(version=1, canonical_payload=canonical, payload={})
 
     canonical = decode_signed_payload_header(signed_payload_header)
@@ -152,4 +176,6 @@ def _request_auth_signature_payload(
     if canonical_aud not in audiences:
         raise ValueError("signed request payload audience is not allowed")
 
-    return TeamAuthEnvelope(version=TEAM_AUTH_ENVELOPE_V2, canonical_payload=canonical, payload=payload)
+    return TeamAuthEnvelope(
+        version=TEAM_AUTH_ENVELOPE_V2, canonical_payload=canonical, payload=payload
+    )

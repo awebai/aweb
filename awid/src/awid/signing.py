@@ -43,9 +43,9 @@ class VerifyResult(enum.Enum):
 
 
 def canonical_json_bytes(fields: dict) -> bytes:
-    return json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
-        "utf-8"
-    )
+    return json.dumps(
+        fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 def canonical_payload(fields: dict) -> bytes:
@@ -61,8 +61,11 @@ def load_signing_key_pem(pem: bytes) -> bytes:
     material never appears in an error message.
     """
     lines = pem.strip().splitlines()
-    if (len(lines) < 3 or lines[0] != b"-----BEGIN ED25519 PRIVATE KEY-----"
-            or lines[-1] != b"-----END ED25519 PRIVATE KEY-----"):
+    if (
+        len(lines) < 3
+        or lines[0] != b"-----BEGIN ED25519 PRIVATE KEY-----"
+        or lines[-1] != b"-----END ED25519 PRIVATE KEY-----"
+    ):
         raise ValueError("expected an ED25519 PRIVATE KEY PEM block")
     try:
         seed = base64.b64decode(b"".join(lines[1:-1]), validate=True)
@@ -107,7 +110,9 @@ def verify_signature_with_public_key(
         return VerifyResult.FAILED
 
 
-def verify_signature(did: str | None, payload: bytes, signature_b64: str | None) -> VerifyResult:
+def verify_signature(
+    did: str | None, payload: bytes, signature_b64: str | None
+) -> VerifyResult:
     if not did or not signature_b64:
         return VerifyResult.UNVERIFIED
 
@@ -122,7 +127,9 @@ def verify_signature(did: str | None, payload: bytes, signature_b64: str | None)
     return verify_signature_with_public_key(public_key, payload, signature_b64)
 
 
-def verify_did_key_signature(*, did_key: str, payload: bytes, signature_b64: str) -> None:
+def verify_did_key_signature(
+    *, did_key: str, payload: bytes, signature_b64: str
+) -> None:
     result = verify_signature(did_key, payload, signature_b64)
     if result != VerifyResult.VERIFIED:
         raise ValueError("invalid signature")

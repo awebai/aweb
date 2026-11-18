@@ -61,7 +61,9 @@ def normalize_claim_custody(value: str) -> str:
     raise ValueError("unsupported custody value")
 
 
-def normalize_atomic_address_claim_fields(fields: AtomicAddressClaimFields) -> AtomicAddressClaimFields:
+def normalize_atomic_address_claim_fields(
+    fields: AtomicAddressClaimFields,
+) -> AtomicAddressClaimFields:
     operation = (fields.operation or "").strip() or ATOMIC_ADDRESS_CLAIM_OPERATION
     if operation != ATOMIC_ADDRESS_CLAIM_OPERATION:
         raise ValueError(f"operation must be {ATOMIC_ADDRESS_CLAIM_OPERATION!r}")
@@ -86,7 +88,9 @@ def normalize_atomic_address_claim_fields(fields: AtomicAddressClaimFields) -> A
     identity_custody = normalize_claim_custody(fields.identity_custody)
     namespace_custody = normalize_claim_custody(fields.namespace_custody)
     if identity_custody == CUSTODY_HOSTED and namespace_custody == CUSTODY_SELF:
-        raise ValueError("hosted-custodial DID with self-custodial namespace is unsupported")
+        raise ValueError(
+            "hosted-custodial DID with self-custodial namespace is unsupported"
+        )
     timestamp = (fields.timestamp or "").strip()
     if not timestamp:
         raise ValueError("timestamp is required")

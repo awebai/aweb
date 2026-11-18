@@ -99,7 +99,10 @@ def _has_only_portable_values(value: Any) -> bool:
     number that is not an integer, and no control character below U+0020 in a
     string or a key. Encoders write those differently."""
     if isinstance(value, dict):
-        return all(_has_only_portable_values(k) and _has_only_portable_values(v) for k, v in value.items())
+        return all(
+            _has_only_portable_values(k) and _has_only_portable_values(v)
+            for k, v in value.items()
+        )
     if isinstance(value, list):
         return all(_has_only_portable_values(item) for item in value)
     if isinstance(value, str):
@@ -128,7 +131,9 @@ def decode_team_certificate(header: str) -> dict[str, Any]:
     return certificate
 
 
-def verify_team_certificate_signature(certificate: dict[str, Any], team_did_key: str) -> None:
+def verify_team_certificate_signature(
+    certificate: dict[str, Any], team_did_key: str
+) -> None:
     """Verify the certificate's signature, over its canonical JSON without the
     signature, under the team key ``team_did_key``."""
     signature = str(certificate.get("signature") or "")
@@ -138,14 +143,19 @@ def verify_team_certificate_signature(certificate: dict[str, Any], team_did_key:
         team_key = public_key_from_did(team_did_key)
     except Exception:
         raise TeamCertificateError("invalid_team_key") from None
-    unsigned = {name: value for name, value in certificate.items() if name != "signature"}
+    unsigned = {
+        name: value for name, value in certificate.items() if name != "signature"
+    }
     try:
         payload = canonical_json_bytes(unsigned)
     except (TypeError, ValueError):
         # A field that does not encode, such as a lone surrogate, can never
         # match what the team signed.
         raise TeamCertificateError("bad_signature") from None
-    if verify_signature_with_public_key(team_key, payload, signature) is not VerifyResult.VERIFIED:
+    if (
+        verify_signature_with_public_key(team_key, payload, signature)
+        is not VerifyResult.VERIFIED
+    ):
         raise TeamCertificateError("bad_signature")
 
 
@@ -200,7 +210,10 @@ def check_team_certificate(
     verify_team_certificate_signature(certificate, team_did_key)
     if certificate["certificate_id"] in revoked_certificate_ids:
         raise TeamCertificateError("revoked")
-    if registered_certificate_ids is not None and certificate["certificate_id"] not in registered_certificate_ids:
+    if (
+        registered_certificate_ids is not None
+        and certificate["certificate_id"] not in registered_certificate_ids
+    ):
         raise TeamCertificateError("unregistered")
     return certificate
 
