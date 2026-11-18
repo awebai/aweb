@@ -545,8 +545,9 @@ def test_the_fields_mcp_signs_for_a_first_mail_satisfy_the_send_validation(named
     from aweb.mcp.auth import AuthContext
     from aweb.mcp.tools.mail import _signed_mail_fields, _signed_recipient
 
+    sender_key, _, sender_did = _make_keypair()
     auth = AuthContext(team_id="ops:acme.com", agent_id=str(uuid4()), alias="pilot",
-                       did_key="did:key:zPilot", did_aw="did:aw:pilot", address="acme.com/pilot")
+                       did_key=sender_did, did_aw="did:aw:pilot", address="acme.com/pilot")
     message_id, conversation_id = str(uuid4()), str(uuid4())
     fields = _signed_mail_fields(
         auth, signed_from="pilot", to=_signed_recipient(named, recipient["alias"]),
@@ -556,12 +557,12 @@ def test_the_fields_mcp_signs_for_a_first_mail_satisfy_the_send_validation(named
     )
 
     _validate_signed_mail_payload(
-        signature=sign_message(_make_keypair()[0], b"shape only"),
+        signature=sign_message(sender_key, canonical_signed_payload(fields).encode()),
         signed_payload=canonical_signed_payload(fields), recipient=recipient,
         to_agent_id=None, to_alias=recipient["alias"],
         requested_to_alias=named if field == "to_alias" else None,
         from_alias="pilot", from_address="acme.com/pilot", from_stable_id="did:aw:pilot",
-        priority=priority, subject="status", body="hello", from_did="did:key:zPilot",
+        priority=priority, subject="status", body="hello", from_did=sender_did,
         message_id=message_id, timestamp="2026-11-10T12:00:00Z", conversation_id=conversation_id,
     )
 
@@ -570,8 +571,9 @@ def test_the_fields_mcp_signs_for_a_reply_satisfy_the_send_validation():
     from aweb.mcp.auth import AuthContext
     from aweb.mcp.tools.mail import _signed_mail_fields
 
+    sender_key, _, sender_did = _make_keypair()
     auth = AuthContext(team_id="ops:acme.com", agent_id=str(uuid4()), alias="pilot",
-                       did_key="did:key:zPilot", did_aw="did:aw:pilot", address="acme.com/pilot")
+                       did_key=sender_did, did_aw="did:aw:pilot", address="acme.com/pilot")
     message_id, conversation_id = str(uuid4()), str(uuid4())
     # A reply to a local participant names its stable identity and no current key.
     fields = _signed_mail_fields(
@@ -582,12 +584,12 @@ def test_the_fields_mcp_signs_for_a_reply_satisfy_the_send_validation():
     assert (fields["to"], fields["to_did"], fields["to_stable_id"]) == ("", "", "did:aw:bob")
 
     _validate_signed_mail_payload(
-        signature=sign_message(_make_keypair()[0], b"shape only"),
+        signature=sign_message(sender_key, canonical_signed_payload(fields).encode()),
         signed_payload=canonical_signed_payload(fields),
         recipient={"alias": "bob", "did_key": "did:key:zBob", "did_aw": "did:aw:bob", "address": "acme.com/bob"},
         to_agent_id=None, to_alias="bob", requested_to_alias=None,
         from_alias="pilot", from_address="acme.com/pilot", from_stable_id="did:aw:pilot",
-        priority="normal", subject="re", body="hello", from_did="did:key:zPilot",
+        priority="normal", subject="re", body="hello", from_did=sender_did,
         message_id=message_id, timestamp="2026-11-10T12:00:00Z", conversation_id=conversation_id,
     )
 

@@ -8,6 +8,7 @@ from identity_binding_support import seed_verified_bindings
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -585,7 +586,8 @@ def test_the_fields_mcp_signs_for_a_first_chat_satisfy_the_send_validation(
 ):
     from aweb.messaging.chat_send import _validate_signed_chat_payload
 
-    sender = _sender()
+    sender_key, _, sender_did = _make_keypair()
+    sender = replace(_sender(), did_key=sender_did)
     fields = _signed(
         sender, [row], named_alias=named_alias, signed_from=signed_from,
         wait_seconds=wait_seconds, leaving=leaving, hang_on=hang_on,
@@ -593,7 +595,7 @@ def test_the_fields_mcp_signs_for_a_first_chat_satisfy_the_send_validation(
 
     # The send validates a first chat with these arguments.
     _validate_signed_chat_payload(
-        signature=sign_message(_make_keypair()[0], b"shape only"),
+        signature=sign_message(sender_key, canonical_signed_payload(fields).encode()),
         signed_payload=canonical_signed_payload(fields),
         recipient_rows=[row],
         requested_to_aliases=[named_alias] if named_alias else [],
@@ -635,13 +637,14 @@ def test_the_fields_mcp_signs_for_a_message_in_a_session_satisfy_the_send_valida
 ):
     from aweb.messaging.chat_send import _validate_signed_chat_payload
 
-    sender = _sender()
+    sender_key, _, sender_did = _make_keypair()
+    sender = replace(_sender(), did_key=sender_did)
     fields = _signed(sender, rows, signed_from=signed_from, hang_on=hang_on, wait_seconds=wait_seconds)
     assert (fields["to"], fields["to_did"], fields.get("to_stable_id", "")) == recipient_fields
 
     # The send validates a message in a session with these arguments.
     _validate_signed_chat_payload(
-        signature=sign_message(_make_keypair()[0], b"shape only"),
+        signature=sign_message(sender_key, canonical_signed_payload(fields).encode()),
         signed_payload=canonical_signed_payload(fields),
         recipient_rows=rows,
         from_alias=sender.alias,
@@ -662,13 +665,14 @@ def test_the_fields_mcp_signs_for_a_message_in_a_session_satisfy_the_send_valida
 def test_a_signed_wait_the_message_does_not_carry_is_refused_by_the_send_validation():
     from aweb.messaging.chat_send import _validate_signed_chat_payload
 
-    sender = _sender()
+    sender_key, _, sender_did = _make_keypair()
+    sender = replace(_sender(), did_key=sender_did)
     rows = [_row("bob", did="did:aw:bob")]
     fields = _signed(sender, rows, wait_seconds=120)
 
     with pytest.raises(HTTPException) as refused:
         _validate_signed_chat_payload(
-            signature=sign_message(_make_keypair()[0], b"shape only"),
+            signature=sign_message(sender_key, canonical_signed_payload(fields).encode()),
             signed_payload=canonical_signed_payload(fields),
             recipient_rows=rows, from_alias=sender.alias, from_address=sender.address,
             from_stable_id=sender.did_aw, body="hello", from_did=sender.did_key,

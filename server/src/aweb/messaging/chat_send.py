@@ -79,6 +79,7 @@ from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.signatures import (
     MessageSignatureShapeError,
     validate_ed25519_message_signature,
+    require_verified_message_signature,
 )
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
@@ -390,6 +391,7 @@ def _validate_signed_chat_payload(
     conversation_id: str | None = None,
     sender_leaving: bool = False,
     hang_on: bool = False,
+    signer_did_key: str | None = None,
 ) -> None:
     if signed_payload is None:
         raise HTTPException(status_code=422, detail="signed_payload is required when signature is provided")
@@ -492,6 +494,9 @@ def _validate_signed_chat_payload(
         validate_ed25519_message_signature(signature)
     except MessageSignatureShapeError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    require_verified_message_signature(
+        signed_payload=signed_payload, signature=signature, did_key=signer_did_key or from_did,
+    )
 
 
 async def _record_successful_chat_contacts(
@@ -1470,6 +1475,7 @@ async def _send_to_named_recipients(
             if from_did not in set(auth_dids(auth)):
                 raise HTTPException(status_code=422, detail="from_did must match the authenticated sender")
             _validate_signed_chat_payload(
+                signer_did_key=auth.did_key,
                 signature=str(payload.signature),
                 signed_payload=payload.signed_payload,
                 recipient_rows=target_rows,
@@ -1612,6 +1618,7 @@ async def _send_to_named_recipients(
                 detail="message_id and timestamp are required when signature is provided",
             )
         _validate_signed_chat_payload(
+            signer_did_key=auth.did_key,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
             recipient_rows=target_rows,
@@ -1752,6 +1759,7 @@ async def _send_in_continued_session(
                 detail="message_id and timestamp are required when signature is provided",
             )
         _validate_signed_chat_payload(
+            signer_did_key=auth.did_key,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
             recipient_rows=recipient_rows,

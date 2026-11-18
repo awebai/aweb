@@ -129,6 +129,15 @@ For a send to a global address (`domain/name`):
    resolved recipient identity binding (`to`, `to_stable_id`, `to_did`).
 4. The aweb server authenticates the sender and validates that behavior-shaping
    outer fields match the signed payload.
+   Plaintext send admission also verifies the original signed bytes under the
+   authenticated sender's current signing key before storing any message or
+   conversation effects. Optional recipient claims remain optional for released
+   clients; supplied claims must match the resolved recipient. Stored rows can
+   predate this admission check. Readers independently verify their original
+   signature and report `failed` for an invalid signature or `unverified` when
+   signed bytes or a signature are absent; storage alone never establishes
+   `verified`. These checks preserve the original signed bytes and conversation
+   ID.
    A thread participant is the identity (`did:aw` for a global identity), not
    a per-team actor. The address selects that identity and its route, never a
    different address from a membership projection. `agent_id` is nullable
