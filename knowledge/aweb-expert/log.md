@@ -1,5 +1,10 @@
 # Knowledge log
 
+## 2026-11-18
+* **Harvest**: OKF proposal from aweb-expert/aweb-expert-naapp-egress (task aweb-adje.16.2).
+* **Creation**: decisions [tenant-chosen URLs go through egress, with an operator exact-origin allowlist](/aweb-expert/decisions/tenant-chosen-urls-go-through-egress-with-an-exact-origin-allowlist.md) and [a refusal only a third party can clear is a 4xx, never a 503](/aweb-expert/decisions/a-refusal-only-a-third-party-can-clear-is-not-a-503.md).
+* **Creation**: lesson [trace every check on the write route before sizing a finding](/aweb-expert/lessons/trace-every-check-on-the-write-route-before-sizing-a-finding.md).
+
 ## 2026-11-04
 * **Harvest**: OKF proposal from aweb-expert/aweb-expert-fresh-eyes (tasks aweb-acst and aweb-actf).
 * **Update**: [identity and routing review needs the real client](/aweb-expert/lessons/identity-and-routing-review-needs-the-real-client.md) gains that the real client includes the last released binary and that a skipped released-client case is not evidence.
