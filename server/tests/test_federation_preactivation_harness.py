@@ -1416,13 +1416,13 @@ async def test_two_registries_record_exact_dns_http_tls_and_share_side_cohorts(
                 delivery_origin=delivery,
             )
             try:
-                token = await workers[0].resolve_and_commit(
+                token = await workers[0].resolve_evidence_and_commit(
                     claim,
                     resolver,
                     authority_generation=generation,
                     publishing_fence=generation,
                 )
-                assert await workers[1].authorize_from_shared_cohort(claim) == token
+                assert await workers[1].authorize_from_shared_cohort(claim) == token.token
             finally:
                 await resolver.aclose()
 

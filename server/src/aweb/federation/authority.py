@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
-from awid.external_authority import canonical_protocol_address, compare_claim_to_evidence
+from awid.external_authority import RegistryAuthority, canonical_protocol_address, compare_claim_to_evidence
 from awid.external_registry import ExternalAuthorityEvidence, StrictExternalRegistry
 from awid.federation_errors import FederationAuthorityError
 
@@ -24,6 +24,12 @@ class AuthorityClaim:
     did_aw: str
     current_did_key: str
     delivery_origin: str
+
+
+@dataclass(frozen=True)
+class CommittedAuthorityEvidence:
+    token: AuthoritySecurityToken
+    evidence: ExternalAuthorityEvidence
 
 
 class FederationAuthorityCore:
@@ -107,42 +113,57 @@ class FederationAuthorityCore:
             fences=fences,
         )
 
-    async def resolve_and_commit(
+    async def resolve_evidence_and_commit(
         self,
-        claim: AuthorityClaim,
+        claim: AuthorityClaim | None,
         resolver: StrictExternalRegistry,
         *,
         authority_generation: int,
         publishing_fence: int,
         fences: Sequence[AuthorityLease] = (),
-    ) -> AuthoritySecurityToken:
-        snapshot = await self.repository.get_checkpoint(claim.did_aw)
-        evidence = await resolver.fetch_evidence(
-            claim.canonical_address,
-            authority_generation=authority_generation,
-            checkpoint=snapshot,
-        )
+        address: str | None = None,
+        discovered_authority: RegistryAuthority | None = None,
+        not_found_reason: str = "sender_identity_not_found",
+    ) -> CommittedAuthorityEvidence:
+        """Fetch current authority, commit it, and retry one checkpoint race.
+
+        A sender claim is independently checked when supplied. Address discovery
+        derives its claim only from the resolver's verified evidence.
+        """
+        canonical = canonical_protocol_address(claim.canonical_address if claim is not None else address or "")
+
+        async def fetch(snapshot, *, bypass_cache=False):
+            kwargs = {"authority_generation": authority_generation, "checkpoint": snapshot}
+            if bypass_cache:
+                kwargs["bypass_cache"] = True
+            if discovered_authority is not None:
+                kwargs["discovered_authority"] = discovered_authority
+            if not_found_reason != "sender_identity_not_found":
+                kwargs["not_found_reason"] = not_found_reason
+            return await resolver.fetch_evidence(canonical, **kwargs)
+
+        def evidence_claim(value):
+            return claim or AuthorityClaim(
+                canonical_address=canonical, did_aw=value.did_aw,
+                current_did_key=value.current_did_key, delivery_origin=value.delivery_origin,
+            )
+
+        snapshot = await self.repository.get_checkpoint(claim.did_aw) if claim is not None else None
+        evidence = await fetch(snapshot)
+        if claim is None:
+            snapshot = await self.repository.get_checkpoint(evidence.did_aw)
+            if snapshot is not None:
+                evidence = await fetch(snapshot, bypass_cache=True)
         try:
-            return await self.commit_verified_evidence(
-                claim,
-                evidence,
-                publishing_fence=publishing_fence,
-                fences=fences,
+            token = await self.commit_verified_evidence(
+                evidence_claim(evidence), evidence, publishing_fence=publishing_fence, fences=fences,
             )
         except FederationAuthorityError as exc:
             if exc.reason != "federation_authority_cas_conflict":
                 raise
-        # One controlled bypass re-fetches and re-verifies against the winner.
-        winner = await self.repository.get_checkpoint(claim.did_aw)
-        evidence = await resolver.fetch_evidence(
-            claim.canonical_address,
-            authority_generation=authority_generation,
-            checkpoint=winner,
-            bypass_cache=True,
-        )
-        return await self.commit_verified_evidence(
-            claim,
-            evidence,
-            publishing_fence=publishing_fence,
-            fences=fences,
-        )
+            winner = await self.repository.get_checkpoint(evidence.did_aw)
+            evidence = await fetch(winner, bypass_cache=True)
+            token = await self.commit_verified_evidence(
+                evidence_claim(evidence), evidence, publishing_fence=publishing_fence, fences=fences,
+            )
+        return CommittedAuthorityEvidence(token, evidence)

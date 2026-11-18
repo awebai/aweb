@@ -438,7 +438,7 @@ async def test_work_fence_vectors_execute_against_postgresql(case: dict, aweb_cl
                 return evidence()
 
         repository = TrackingRepository()
-        await FederationAuthorityCore(repository).resolve_and_commit(
+        await FederationAuthorityCore(repository).resolve_evidence_and_commit(
             claim(), Resolver(), authority_generation=1, publishing_fence=1
         )
         assert expected == {"open_transaction": False, "checked_out_connection": False}
@@ -678,7 +678,7 @@ async def test_evidence_reuse_vectors(case: dict, aweb_cloud_db) -> None:
 
         racing = RacingRepository()
         resolver = Resolver()
-        await FederationAuthorityCore(racing).resolve_and_commit(
+        await FederationAuthorityCore(racing).resolve_evidence_and_commit(
             claim(), resolver, authority_generation=3, publishing_fence=1
         )
         assert sum(item.get("bypass_cache", False) for item in resolver.calls) == expected["performed_bypasses"]
@@ -766,10 +766,10 @@ async def test_cas_conflict_reloads_winner_and_uses_one_bypass() -> None:
     repository = RacingRepository()
     resolver = Resolver()
     core = FederationAuthorityCore(repository)
-    token = await core.resolve_and_commit(
+    token = await core.resolve_evidence_and_commit(
         claim(), resolver, authority_generation=3, publishing_fence=9
     )
-    assert token.cohort_generation == 3
+    assert token.token.cohort_generation == 3
     assert resolver.calls == [(3, None, False), (3, winner, True)]
     assert repository.commits == 2
 

@@ -384,6 +384,8 @@ async def test_shared_not_found_result_uses_current_lookup_role(published_reason
         if contact:
             await activation._contact_from_result("juan.aweb.ai/missing", result)
         else:
-            await activation._authorize_from_result(None, result)
+            await activation._contact_from_result(
+                "juan.aweb.ai/missing", result, not_found_reason="sender_identity_not_found",
+            )
     expected_reason = "recipient_identity_not_found" if contact else "sender_identity_not_found"
     assert raised.value.reason == expected_reason

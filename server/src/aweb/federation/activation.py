@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass
 from functools import cached_property
 from uuid import uuid4
@@ -23,6 +24,9 @@ from .authority import AuthorityClaim, FederationAuthorityCore
 from .authority_state import AuthorityRepository, AuthoritySecurityToken
 from .authority_work import AuthorityLease, AuthorityWorkRepository, AuthorityWorkResult
 from .transport import PRIVATE_DELIVERY_ORIGINS_SETTING, AddressCheckedTransport, private_delivery_origins
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -114,55 +118,16 @@ class FederationAuthorityActivation:
                 )
                 await self.work.release_lease(lease)
             except Exception:
-                pass
-
-    async def _authorize_from_result(
-        self,
-        claim: AuthorityClaim,
-        result: AuthorityWorkResult | None,
-    ) -> AuthorizedFederationSender | None:
-        self._raise_published_failure(result)
-        if result is None or result.status != "verified":
-            return None
-        evidence = result.evidence
-        canonical = canonical_protocol_address(claim.canonical_address)
-        if evidence.get("canonical_address") != canonical:
-            raise FederationAuthorityError(
-                "sender_address_did_mismatch", did_aw=claim.did_aw
-            )
-        if evidence.get("did_aw") != claim.did_aw:
-            raise FederationAuthorityError(
-                "sender_address_did_mismatch", did_aw=claim.did_aw
-            )
-        if evidence.get("current_did_key") != claim.current_did_key:
-            raise FederationAuthorityError(
-                "sender_current_key_mismatch", did_aw=claim.did_aw
-            )
-        delivery_origin = str(evidence.get("delivery_origin") or "").strip()
-        if claim.delivery_origin and claim.delivery_origin != delivery_origin:
-            raise FederationAuthorityError("sender_route_mismatch", did_aw=claim.did_aw)
-        effective_claim = AuthorityClaim(
-            canonical_address=claim.canonical_address,
-            did_aw=claim.did_aw,
-            current_did_key=claim.current_did_key,
-            delivery_origin=delivery_origin,
-        )
-        token = await self.core.authorize_from_shared_cohort(effective_claim)
-        if token is None:
-            return None
-        return AuthorizedFederationSender(
-            token=token,
-            canonical_address=token.canonical_address,
-            delivery_origin=delivery_origin,
-        )
+                logger.warning("federation_authority_failure_publication_failed", exc_info=True)
 
     async def _contact_from_result(
         self,
         canonical_address: str,
         result: AuthorityWorkResult | None,
+        *, not_found_reason: str = "recipient_identity_not_found",
     ) -> ResolvedContactIdentity | None:
         self._raise_published_failure(
-            result, not_found_reason="recipient_identity_not_found"
+            result, not_found_reason=not_found_reason
         )
         if result is None or result.status != "verified":
             return None
@@ -194,335 +159,83 @@ class FederationAuthorityActivation:
         )
 
     async def authorize(
-        self,
-        claim: AuthorityClaim,
-        *,
-        source_ip: str,
+        self, claim: AuthorityClaim, *, source_ip: str,
     ) -> AuthorizedFederationSender:
-        cached = (
-            await self.core.authorize_from_shared_cohort(claim)
-            if claim.delivery_origin
-            else None
-        )
+        cached = await self.core.authorize_from_shared_cohort(claim) if claim.delivery_origin else None
         if cached is not None:
-            return AuthorizedFederationSender(
-                token=cached,
-                canonical_address=cached.canonical_address,
-                delivery_origin=claim.delivery_origin,
-            )
-
-        canonical = canonical_protocol_address(claim.canonical_address)
-        domain = canonical.split("/", 1)[0]
-        owner_id = uuid4()
-        authority_generation: int | None = None
-        discovery_lease: AuthorityLease | None = None
-        evidence_lease: AuthorityLease | None = None
-        result_published = False
-        await self.work.consume_token(
-            bucket_kind="source_ip",
-            bucket_key=source_ip or "unknown",
-            burst=5,
-            refill_per_minute=30,
+            return AuthorizedFederationSender(cached, cached.canonical_address, claim.delivery_origin)
+        resolved = await self._resolve_address(
+            claim.canonical_address, source_ip=source_ip,
+            not_found_reason="sender_identity_not_found", busy_reason="federation_authority_cas_conflict",
         )
-        await self.work.consume_token(
-            bucket_kind="domain",
-            bucket_key=domain,
-            burst=5,
-            refill_per_minute=30,
+        if resolved.did_aw != claim.did_aw:
+            raise FederationAuthorityError("sender_address_did_mismatch", did_aw=claim.did_aw)
+        if resolved.current_did_key != claim.current_did_key:
+            raise FederationAuthorityError("sender_current_key_mismatch", did_aw=claim.did_aw)
+        if claim.delivery_origin and resolved.delivery_origin != claim.delivery_origin:
+            raise FederationAuthorityError("sender_route_mismatch", did_aw=claim.did_aw)
+        return AuthorizedFederationSender(resolved.token, resolved.canonical_address, resolved.delivery_origin)
+
+    async def resolve_contact(self, address: str, *, source_ip: str) -> ResolvedContactIdentity:
+        return await self._resolve_address(
+            address, source_ip=source_ip, not_found_reason="recipient_identity_not_found",
+            busy_reason="federation_resolver_busy",
         )
-        await self.work.acquire_permits(
-            owner_id=owner_id,
-            scopes=(("global", "external-reads", 32), ("domain", domain, 2)),
-            ttl_seconds=10,
-        )
-        try:
-            discovery_key = "discovery:" + canonical
-            discovery_lease = await self.work.acquire_lease(
-                discovery_key,
-                owner_id=owner_id,
-                ttl_seconds=10,
-            )
-            if not discovery_lease.acquired:
-                result = await self.work.wait_for_result(
-                    discovery_key,
-                    deadline_seconds=5,
-                )
-                authorized = await self._authorize_from_result(claim, result)
-                if authorized is None:
-                    raise FederationAuthorityError("federation_authority_cas_conflict")
-                return authorized
 
-            authority = await self._discover_registry_authority(domain)
-            await self.work.consume_token(
-                bucket_kind="origin",
-                bucket_key=authority.registry_origin,
-                burst=5,
-                refill_per_minute=30,
-            )
-            await self.work.acquire_permits(
-                owner_id=owner_id,
-                scopes=(("origin", authority.registry_origin, 4),),
-                ttl_seconds=10,
-            )
-            evidence_key = f"origin:{authority.registry_origin}:address:{canonical}"
-            evidence_lease = await self.work.acquire_lease(
-                evidence_key,
-                owner_id=owner_id,
-                ttl_seconds=10,
-            )
-            if not evidence_lease.acquired:
-                result = await self.work.wait_for_result(
-                    evidence_key,
-                    deadline_seconds=5,
-                )
-                authorized = await self._authorize_from_result(claim, result)
-                if authorized is None:
-                    raise FederationAuthorityError("federation_authority_cas_conflict")
-                return authorized
-
-            authority_generation = evidence_lease.fence
-            evidence = await self.resolver.fetch_evidence(
-                canonical,
-                authority_generation=authority_generation,
-                discovered_authority=authority,
-            )
-            checkpoint = await self.core.repository.get_checkpoint(evidence.did_aw)
-            if checkpoint is not None:
-                evidence = await self.resolver.fetch_evidence(
-                    canonical,
-                    authority_generation=authority_generation,
-                    checkpoint=checkpoint,
-                    bypass_cache=True,
-                    discovered_authority=authority,
-                )
-            evidence_claim = AuthorityClaim(
-                canonical_address=canonical,
-                did_aw=evidence.did_aw,
-                current_did_key=evidence.current_did_key,
-                delivery_origin=evidence.delivery_origin,
-            )
-            try:
-                token = await self.core.commit_verified_evidence(
-                    evidence_claim,
-                    evidence,
-                    publishing_fence=evidence_lease.fence,
-                    fences=(discovery_lease, evidence_lease),
-                )
-            except FederationAuthorityError as exc:
-                if exc.reason != "federation_authority_cas_conflict":
-                    raise
-                winner = await self.core.repository.get_checkpoint(evidence.did_aw)
-                evidence = await self.resolver.fetch_evidence(
-                    canonical,
-                    authority_generation=authority_generation,
-                    checkpoint=winner,
-                    bypass_cache=True,
-                    discovered_authority=authority,
-                )
-                evidence_claim = AuthorityClaim(
-                    canonical_address=canonical,
-                    did_aw=evidence.did_aw,
-                    current_did_key=evidence.current_did_key,
-                    delivery_origin=evidence.delivery_origin,
-                )
-                token = await self.core.commit_verified_evidence(
-                    evidence_claim,
-                    evidence,
-                    publishing_fence=evidence_lease.fence,
-                    fences=(discovery_lease, evidence_lease),
-                )
-            result = {
-                "canonical_address": token.canonical_address,
-                "did_aw": token.did_aw,
-                "checkpoint_revision": token.checkpoint_revision,
-                "cohort_generation": token.cohort_generation,
-                "current_did_key": evidence.current_did_key,
-                "controller_did": evidence.controller_did,
-                "delivery_origin": evidence.delivery_origin,
-            }
-            published = await self.work.publish_result(
-                evidence_lease,
-                status="verified",
-                evidence=result,
-                ttl_seconds=60,
-            )
-            await self.work.publish_result(
-                discovery_lease,
-                status="verified",
-                evidence=result,
-                ttl_seconds=60,
-            )
-            result_published = True
-            authorized = await self._authorize_from_result(claim, published)
-            if authorized is None:
-                raise FederationAuthorityError("federation_authority_cas_conflict")
-            return authorized
-        except FederationAuthorityError as exc:
-            if not result_published:
-                await self._publish_failure(exc, evidence_lease, discovery_lease)
-            raise
-        finally:
-            await self.work.release_permits(owner_id=owner_id)
-            if authority_generation is not None:
-                await self.resolver.expire_generation(authority_generation)
-
-    async def resolve_contact(
-        self,
-        address: str,
-        *,
-        source_ip: str,
+    async def _resolve_address(
+        self, address: str, *, source_ip: str, not_found_reason: str, busy_reason: str,
     ) -> ResolvedContactIdentity:
         canonical = canonical_protocol_address(address)
         domain = canonical.split("/", 1)[0]
         owner_id = uuid4()
-        authority_generation: int | None = None
-        discovery: AuthorityLease | None = None
-        evidence_lease: AuthorityLease | None = None
+        authority_generation = None
+        discovery = evidence_lease = None
         result_published = False
-        for bucket_kind, bucket_key in (
-            ("source_ip", source_ip or "unknown"),
-            ("domain", domain),
-        ):
-            await self.work.consume_token(
-                bucket_kind=bucket_kind,
-                bucket_key=bucket_key,
-                burst=5,
-                refill_per_minute=30,
-            )
+        for bucket_kind, bucket_key in (("source_ip", source_ip or "unknown"), ("domain", domain)):
+            await self.work.consume_token(bucket_kind=bucket_kind, bucket_key=bucket_key, burst=5, refill_per_minute=30)
         await self.work.acquire_permits(
-            owner_id=owner_id,
-            scopes=(("global", "external-reads", 32), ("domain", domain, 2)),
-            ttl_seconds=10,
+            owner_id=owner_id, scopes=(("global", "external-reads", 32), ("domain", domain, 2)), ttl_seconds=10,
         )
         try:
             discovery_key = "discovery:" + canonical
-            discovery = await self.work.acquire_lease(
-                discovery_key,
-                owner_id=owner_id,
-                ttl_seconds=10,
-            )
+            discovery = await self.work.acquire_lease(discovery_key, owner_id=owner_id, ttl_seconds=10)
             if not discovery.acquired:
-                result = await self.work.wait_for_result(
-                    discovery_key,
-                    deadline_seconds=5,
-                )
-                resolved = await self._contact_from_result(canonical, result)
+                result = await self.work.wait_for_result(discovery_key, deadline_seconds=5)
+                resolved = await self._contact_from_result(canonical, result, not_found_reason=not_found_reason)
                 if resolved is None:
-                    raise FederationAuthorityError("federation_resolver_busy")
+                    raise FederationAuthorityError(busy_reason)
                 return resolved
             authority = await self._discover_registry_authority(domain)
-            await self.work.consume_token(
-                bucket_kind="origin",
-                bucket_key=authority.registry_origin,
-                burst=5,
-                refill_per_minute=30,
-            )
-            await self.work.acquire_permits(
-                owner_id=owner_id,
-                scopes=(("origin", authority.registry_origin, 4),),
-                ttl_seconds=10,
-            )
-            evidence_key = (
-                "origin:" + authority.registry_origin + ":address:" + canonical
-            )
-            evidence_lease = await self.work.acquire_lease(
-                evidence_key,
-                owner_id=owner_id,
-                ttl_seconds=10,
-            )
+            await self.work.consume_token(bucket_kind="origin", bucket_key=authority.registry_origin, burst=5, refill_per_minute=30)
+            await self.work.acquire_permits(owner_id=owner_id, scopes=(("origin", authority.registry_origin, 4),), ttl_seconds=10)
+            evidence_key = f"origin:{authority.registry_origin}:address:{canonical}"
+            evidence_lease = await self.work.acquire_lease(evidence_key, owner_id=owner_id, ttl_seconds=10)
             if not evidence_lease.acquired:
-                result = await self.work.wait_for_result(
-                    evidence_key,
-                    deadline_seconds=5,
-                )
-                resolved = await self._contact_from_result(canonical, result)
+                result = await self.work.wait_for_result(evidence_key, deadline_seconds=5)
+                resolved = await self._contact_from_result(canonical, result, not_found_reason=not_found_reason)
                 if resolved is None:
-                    raise FederationAuthorityError("federation_resolver_busy")
+                    raise FederationAuthorityError(busy_reason)
                 return resolved
             authority_generation = evidence_lease.fence
-            evidence = await self.resolver.fetch_evidence(
-                canonical,
-                authority_generation=evidence_lease.fence,
-                discovered_authority=authority,
-                not_found_reason="recipient_identity_not_found",
+            committed = await self.core.resolve_evidence_and_commit(
+                None, self.resolver, address=canonical, authority_generation=authority_generation,
+                publishing_fence=evidence_lease.fence, fences=(discovery, evidence_lease),
+                discovered_authority=authority, not_found_reason=not_found_reason,
             )
-            checkpoint = await self.core.repository.get_checkpoint(evidence.did_aw)
-            if checkpoint is not None:
-                evidence = await self.resolver.fetch_evidence(
-                    canonical,
-                    authority_generation=evidence_lease.fence,
-                    checkpoint=checkpoint,
-                    bypass_cache=True,
-                    discovered_authority=authority,
-                    not_found_reason="recipient_identity_not_found",
-                )
-            claim = AuthorityClaim(
-                canonical_address=canonical,
-                did_aw=evidence.did_aw,
-                current_did_key=evidence.current_did_key,
-                delivery_origin=evidence.delivery_origin,
-            )
-            try:
-                token = await self.core.commit_verified_evidence(
-                    claim,
-                    evidence,
-                    publishing_fence=evidence_lease.fence,
-                    fences=(discovery, evidence_lease),
-                )
-            except FederationAuthorityError as exc:
-                if exc.reason != "federation_authority_cas_conflict":
-                    raise
-                checkpoint = await self.core.repository.get_checkpoint(evidence.did_aw)
-                evidence = await self.resolver.fetch_evidence(
-                    canonical,
-                    authority_generation=evidence_lease.fence,
-                    checkpoint=checkpoint,
-                    bypass_cache=True,
-                    discovered_authority=authority,
-                    not_found_reason="recipient_identity_not_found",
-                )
-                claim = AuthorityClaim(
-                    canonical_address=canonical,
-                    did_aw=evidence.did_aw,
-                    current_did_key=evidence.current_did_key,
-                    delivery_origin=evidence.delivery_origin,
-                )
-                token = await self.core.commit_verified_evidence(
-                    claim,
-                    evidence,
-                    publishing_fence=evidence_lease.fence,
-                    fences=(discovery, evidence_lease),
-                )
+            token, evidence = committed.token, committed.evidence
             result = {
-                "canonical_address": canonical,
-                "did_aw": evidence.did_aw,
-                "current_did_key": evidence.current_did_key,
-                "controller_did": evidence.controller_did,
+                "canonical_address": token.canonical_address, "did_aw": token.did_aw,
+                "checkpoint_revision": token.checkpoint_revision, "cohort_generation": token.cohort_generation,
+                "current_did_key": evidence.current_did_key, "controller_did": evidence.controller_did,
                 "delivery_origin": evidence.delivery_origin,
-                "checkpoint_revision": token.checkpoint_revision,
-                "cohort_generation": token.cohort_generation,
             }
-            await self.work.publish_result(
-                evidence_lease,
-                status="verified",
-                evidence=result,
-                ttl_seconds=60,
-            )
-            await self.work.publish_result(
-                discovery,
-                status="verified",
-                evidence=result,
-                ttl_seconds=60,
-            )
+            published = await self.work.publish_result(evidence_lease, status="verified", evidence=result, ttl_seconds=60)
+            await self.work.publish_result(discovery, status="verified", evidence=result, ttl_seconds=60)
             result_published = True
-            return ResolvedContactIdentity(
-                token=token,
-                canonical_address=canonical,
-                did_aw=evidence.did_aw,
-                current_did_key=evidence.current_did_key,
-                controller_did=evidence.controller_did,
-                delivery_origin=evidence.delivery_origin,
-            )
+            resolved = await self._contact_from_result(canonical, published, not_found_reason=not_found_reason)
+            if resolved is None:
+                raise FederationAuthorityError(busy_reason)
+            return resolved
         except FederationAuthorityError as exc:
             if not result_published:
                 await self._publish_failure(exc, evidence_lease, discovery)
