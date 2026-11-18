@@ -25,7 +25,7 @@ func TestCleanupClaudeNotifyHookInstalledByOldPath(t *testing.T) {
 	root := t.TempDir()
 	path := writeNotifySettings(t, root, `{"other":"kept","hooks":{"PreToolUse":[{"command":"keep"}]}}`)
 	// The unchanged installer is the historical --setup-hooks path.
-	installed := SetupClaudeHooks(root, false)
+	installed := SetupClaudeHooks(root, skipHookConfirmation)
 	if installed.Error != nil {
 		t.Fatal(installed.Error)
 	}

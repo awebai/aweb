@@ -1,15 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/awebai/aw/internal/atomicfile"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 )
 
@@ -20,10 +19,10 @@ import (
 const codexActivityHookCommand = "aw activity hook"
 
 type codexHookHandler struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-	Async   bool   `json:"async,omitempty"`
-	Timeout int    `json:"timeout"`
+	Type    runtimeHookKind `json:"type"`
+	Command string          `json:"command"`
+	Async   bool            `json:"async,omitempty"`
+	Timeout int             `json:"timeout"`
 }
 
 // Tool and prompt events run in the background so they never delay Codex.
@@ -33,37 +32,39 @@ var codexActivityHookEvents = []struct {
 	event   string
 	handler codexHookHandler
 }{
-	{"UserPromptSubmit", codexHookHandler{Type: "command", Command: codexActivityHookCommand, Async: true, Timeout: 10}},
-	{"PreToolUse", codexHookHandler{Type: "command", Command: codexActivityHookCommand, Async: true, Timeout: 10}},
-	{"PostToolUse", codexHookHandler{Type: "command", Command: codexActivityHookCommand, Async: true, Timeout: 10}},
-	{"PermissionRequest", codexHookHandler{Type: "command", Command: codexActivityHookCommand, Async: true, Timeout: 10}},
-	{"Stop", codexHookHandler{Type: "command", Command: codexActivityHookCommand, Timeout: 10}},
-	{"Interrupt", codexHookHandler{Type: "command", Command: codexActivityHookCommand, Timeout: 3}},
-	{"SessionEnd", codexHookHandler{Type: "command", Command: codexActivityHookCommand, Timeout: 3}},
+	{"UserPromptSubmit", codexHookHandler{Type: commandHookKind, Command: codexActivityHookCommand, Async: true, Timeout: 10}},
+	{"PreToolUse", codexHookHandler{Type: commandHookKind, Command: codexActivityHookCommand, Async: true, Timeout: 10}},
+	{"PostToolUse", codexHookHandler{Type: commandHookKind, Command: codexActivityHookCommand, Async: true, Timeout: 10}},
+	{"PermissionRequest", codexHookHandler{Type: commandHookKind, Command: codexActivityHookCommand, Async: true, Timeout: 10}},
+	{"Stop", codexHookHandler{Type: commandHookKind, Command: codexActivityHookCommand, Timeout: 10}},
+	{"Interrupt", codexHookHandler{Type: commandHookKind, Command: codexActivityHookCommand, Timeout: 3}},
+	{"SessionEnd", codexHookHandler{Type: commandHookKind, Command: codexActivityHookCommand, Timeout: 3}},
 }
 
 func init() {
 	install := &cobra.Command{Use: "install", Short: "Install the activity hook into a runtime's hook configuration", Args: cobra.NoArgs, RunE: runActivityHookInstall}
 	install.Flags().Bool("codex", false, "Install into Codex's user hooks ($CODEX_HOME/hooks.json)")
-	activityHookCmd.AddCommand(install)
+	uninstall := &cobra.Command{Use: "uninstall", Short: "Remove the aw activity hook from a runtime", Args: cobra.NoArgs, RunE: runActivityHookUninstall}
+	uninstall.Flags().Bool("codex", false, "Remove from Codex user hooks ($CODEX_HOME/hooks.json)")
+	activityHookCmd.AddCommand(install, uninstall)
 }
 
 func runActivityHookInstall(cmd *cobra.Command, _ []string) error {
-	if codex, _ := cmd.Flags().GetBool("codex"); !codex {
+	codex, err := cmd.Flags().GetBool("codex")
+	if err != nil {
+		return err
+	}
+	if !codex {
 		return usageError("name the runtime to install into: --codex")
 	}
-	dir := strings.TrimSpace(os.Getenv("CODEX_HOME"))
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		dir = filepath.Join(home, ".codex")
+	dir, err := codexHookDirectory()
+	if err != nil {
+		return err
 	}
 	path := filepath.Join(dir, "hooks.json")
 	changed, err := installCodexActivityHooks(dir)
 	if err != nil {
-		return fmt.Errorf("refusing to change %s: %w", path, err)
+		return fmt.Errorf("refusing to change %s: %w. Repair hooks.json and retry aw activity hook install --codex.", path, err)
 	}
 	state := "is already installed"
 	if changed {
@@ -73,102 +74,215 @@ func runActivityHookInstall(cmd *cobra.Command, _ []string) error {
 	return err
 }
 
-// installCodexActivityHooks adds the activity handler to every event that does
-// not have it, keeping everything else in the file. It reports whether it wrote.
+func runActivityHookUninstall(cmd *cobra.Command, _ []string) error {
+	codex, err := cmd.Flags().GetBool("codex")
+	if err != nil {
+		return err
+	}
+	if !codex {
+		return usageError("name the runtime to remove from: --codex")
+	}
+	dir, err := codexHookDirectory()
+	if err != nil {
+		return err
+	}
+	changed, err := changeCodexActivityHooks(dir, removeActivityHook)
+	if err != nil {
+		return fmt.Errorf("refusing to change %s: %w. Repair hooks.json and retry aw activity hook uninstall --codex.", filepath.Join(dir, "hooks.json"), err)
+	}
+	state := "was already absent"
+	if changed {
+		state = "was removed"
+	}
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "The aw activity hook %s in %s.\n", state, filepath.Join(dir, "hooks.json"))
+	return err
+}
+
 func installCodexActivityHooks(dir string) (bool, error) {
+	return changeCodexActivityHooks(dir, installActivityHook)
+}
+
+type activityHookOperation uint8
+
+const (
+	installActivityHook activityHookOperation = iota
+	removeActivityHook
+)
+
+func changeCodexActivityHooks(dir string, operation activityHookOperation) (bool, error) {
 	path := filepath.Join(dir, "hooks.json")
-	top := map[string]json.RawMessage{}
-	mode := os.FileMode(0o600)
-	data, err := os.ReadFile(path)
-	switch {
-	case err == nil:
-		if json.Unmarshal(data, &top) != nil || top == nil {
-			return false, errors.New("it is not a JSON object")
-		}
-		if info, statErr := os.Stat(path); statErr == nil {
-			mode = info.Mode().Perm()
-		}
-	case !os.IsNotExist(err):
+	if err := pathpreflight.PreflightFile(path, "Codex hook config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 		return false, err
 	}
-	events := map[string][]json.RawMessage{}
-	if raw, ok := top["hooks"]; ok {
-		var byEvent map[string]json.RawMessage
-		if json.Unmarshal(raw, &byEvent) != nil || byEvent == nil {
-			return false, errors.New(`"hooks" is not an object`)
+	data, err := os.ReadFile(path)
+	mode := os.FileMode(0o600)
+	if os.IsNotExist(err) {
+		if operation == removeActivityHook {
+			return false, nil
 		}
-		for event, rawGroups := range byEvent {
-			var groups []json.RawMessage
-			if json.Unmarshal(rawGroups, &groups) != nil || groups == nil {
-				return false, fmt.Errorf(`"hooks.%s" is not an array`, event)
+		data = []byte("{}\n")
+	} else if err != nil {
+		return false, err
+	} else {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return false, statErr
+		}
+		mode = info.Mode().Perm()
+	}
+	updated, changed, err := editCodexActivityHooks(data, operation)
+	if err != nil || !changed {
+		return changed, err
+	}
+
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return false, err
+	}
+	return true, atomicfile.Write(path, updated, mode)
+}
+
+// editCodexActivityHooks implements docs/runtime-hook-configuration.md:3-7 for the
+// unscoped activity handlers installed by aw.
+func editCodexActivityHooks(data []byte, operation activityHookOperation) ([]byte, bool, error) {
+	root, err := parseHookJSON(data)
+	if err != nil {
+		return nil, false, err
+	}
+	hooks := root.member("hooks")
+	if hooks != nil && hooks.object == nil {
+		return nil, false, fmt.Errorf("hooks must be an object")
+	}
+	if err := validateCodexHookEvents(hooks); err != nil {
+		return nil, false, err
+	}
+	var edits []hookJSONEdit
+	var newEvents []string
+	for _, entry := range codexActivityHookEvents {
+		groups := hooks.member(entry.event)
+		found := false
+		if groups != nil {
+			removeGroups := make([]bool, len(groups.array))
+			for i, group := range groups.array {
+				groupEdit := planCodexActivityGroup(group, operation)
+				found = found || groupEdit.Found
+				removeGroups[i] = groupEdit.RemoveGroup
+				edits = append(edits, groupEdit.Edits...)
 			}
-			for _, group := range groups {
-				if _, err := codexGroupHandlers(group); err != nil {
-					return false, fmt.Errorf(`"hooks.%s": %w`, event, err)
+			if operation == removeActivityHook {
+				for _, span := range hookArrayRemovalSpans(groups.array, removeGroups) {
+					edits = append(edits, hookJSONEdit{start: span.start, end: span.end})
 				}
 			}
-			events[event] = groups
 		}
-	}
-	changed := false
-	for _, entry := range codexActivityHookEvents {
-		if codexEventHasActivityHook(events[entry.event]) {
+		if operation == removeActivityHook || found {
 			continue
 		}
-		group, err := json.Marshal(struct {
-			Hooks []codexHookHandler `json:"hooks"`
-		}{Hooks: []codexHookHandler{entry.handler}})
+		handler, err := json.Marshal(entry.handler)
 		if err != nil {
-			return false, err
+			return nil, false, err
 		}
-		events[entry.event] = append(events[entry.event], group)
-		changed = true
+		group := `{"hooks":[` + string(handler) + `]}`
+		if groups != nil {
+			edits = append(edits, appendHookJSON(groups, group))
+		} else {
+			key, err := json.Marshal(entry.event)
+			if err != nil {
+				return nil, false, err
+			}
+			newEvents = append(newEvents, string(key)+`:[`+group+`]`)
+		}
 	}
-	if !changed {
-		return false, nil
+	if len(newEvents) > 0 {
+		if hooks == nil {
+			edits = append(edits, appendHookJSON(root, `"hooks":{`+strings.Join(newEvents, ",")+`}`))
+		} else {
+			edits = append(edits, appendHookJSON(hooks, strings.Join(newEvents, ",")))
+		}
 	}
-	if top["hooks"], err = json.Marshal(events); err != nil {
-		return false, err
+	if len(edits) == 0 {
+		return data, false, nil
 	}
-	var out bytes.Buffer
-	encoded, err := json.Marshal(top)
+	updated, err := editHookJSON(data, edits)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
-	if err = json.Indent(&out, encoded, "", "  "); err != nil {
-		return false, err
-	}
-	out.WriteByte('\n')
-	if err = os.MkdirAll(dir, 0o700); err != nil {
-		return false, err
-	}
-	return true, atomicfile.Write(filepath.Join(dir, "hooks.json"), out.Bytes(), mode)
+	return updated, true, nil
 }
 
-// codexGroupHandlers reads a matcher group's handlers, refusing a shape it
-// does not know rather than rewriting it.
-func codexGroupHandlers(group json.RawMessage) ([]map[string]any, error) {
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(group, &fields) != nil || fields == nil {
-		return nil, errors.New("a matcher group is not an object")
+func validateCodexHookEvents(hooks *hookJSONNode) error {
+	if hooks == nil {
+		return nil
 	}
-	var handlers []map[string]any
-	if raw, ok := fields["hooks"]; ok {
-		if json.Unmarshal(raw, &handlers) != nil {
-			return nil, errors.New(`a matcher group's "hooks" is not an array of objects`)
+	for event, groups := range hooks.object {
+		if groups.value != json.Delim('[') {
+			return fmt.Errorf("hooks.%s must be an array", event)
 		}
-	}
-	return handlers, nil
-}
-
-func codexEventHasActivityHook(groups []json.RawMessage) bool {
-	for _, group := range groups {
-		handlers, _ := codexGroupHandlers(group)
-		for _, handler := range handlers {
-			if handler["type"] == "command" && handler["command"] == codexActivityHookCommand {
-				return true
+		for _, group := range groups.array {
+			if group.object == nil {
+				return fmt.Errorf("hooks.%s groups must be objects", event)
+			}
+			inner := group.member("hooks")
+			if inner == nil {
+				continue
+			}
+			if inner.value != json.Delim('[') {
+				return fmt.Errorf("hooks.%s handlers must be an array", event)
+			}
+			for _, handler := range inner.array {
+				if handler.object == nil {
+					return fmt.Errorf("hooks.%s handlers must be objects", event)
+				}
 			}
 		}
 	}
-	return false
+	return nil
+}
+
+type codexActivityGroupEdit struct {
+	Found       bool
+	RemoveGroup bool
+	Edits       []hookJSONEdit
+}
+
+func planCodexActivityGroup(group *hookJSONNode, operation activityHookOperation) codexActivityGroupEdit {
+	result := codexActivityGroupEdit{}
+	// aw installs unscoped groups; a custom matcher belongs to its user.
+	if group.member("matcher") != nil {
+		return result
+	}
+	inner := group.member("hooks")
+	if inner == nil {
+		return result
+	}
+	remove := make([]bool, len(inner.array))
+	count := 0
+	for i, handler := range inner.array {
+		if handler.member("type").stringValue() == string(commandHookKind) && handler.member("command").stringValue() == codexActivityHookCommand {
+			remove[i] = true
+			count++
+		}
+	}
+	result.Found = count > 0
+	if operation == installActivityHook || !result.Found {
+		return result
+	}
+	if count == len(inner.array) && len(group.object) == 1 {
+		result.RemoveGroup = true
+		return result
+	}
+	for _, span := range hookArrayRemovalSpans(inner.array, remove) {
+		result.Edits = append(result.Edits, hookJSONEdit{start: span.start, end: span.end})
+	}
+	return result
+}
+
+func codexHookDirectory() (string, error) {
+	if configured := strings.TrimSpace(os.Getenv("CODEX_HOME")); configured != "" {
+		return configured, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".codex"), nil
 }

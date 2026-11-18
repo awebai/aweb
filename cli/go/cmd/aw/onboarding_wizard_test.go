@@ -2228,7 +2228,7 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 		channelCalls++
 		return &claudeHooksResult{}
 	}
-	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+	guidedOnboardingSetupHooks = func(repoRoot string, confirmation hookConfirmation) *claudeHooksResult {
 		hooksCalls++
 		return &claudeHooksResult{}
 	}
@@ -2276,9 +2276,9 @@ func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 		channelRepo = repoRoot
 		return &claudeHooksResult{}
 	}
-	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+	guidedOnboardingSetupHooks = func(repoRoot string, confirmation hookConfirmation) *claudeHooksResult {
 		hooksRepo = repoRoot
-		hooksAsk = askConfirmation
+		hooksAsk = confirmation == requireHookConfirmation
 		return &claudeHooksResult{}
 	}
 
@@ -2335,7 +2335,7 @@ func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 		}
 		return &claudeHooksResult{}
 	}
-	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+	guidedOnboardingSetupHooks = func(repoRoot string, confirmation hookConfirmation) *claudeHooksResult {
 		hooksCalls++
 		return &claudeHooksResult{}
 	}
@@ -2386,7 +2386,7 @@ func TestRunGuidedPostInitSetupCanSkipAgentDocsMutation(t *testing.T) {
 		channelCalls++
 		return &claudeHooksResult{}
 	}
-	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+	guidedOnboardingSetupHooks = func(repoRoot string, confirmation hookConfirmation) *claudeHooksResult {
 		hooksCalls++
 		return &claudeHooksResult{}
 	}
@@ -2437,7 +2437,7 @@ func TestExecuteHostedPathOffersClaimHumanAfterPostInitSetup(t *testing.T) {
 		events = append(events, "channel")
 		return &claudeHooksResult{}
 	}
-	guidedOnboardingSetupHooks = func(repoRoot string, askConfirmation bool) *claudeHooksResult {
+	guidedOnboardingSetupHooks = func(repoRoot string, confirmation hookConfirmation) *claudeHooksResult {
 		events = append(events, "hooks")
 		return &claudeHooksResult{}
 	}

@@ -302,7 +302,7 @@ func TestInitOutcomeFollowsWhatGuidedSetupDid(t *testing.T) {
 		guidedOnboardingInjectDocs, guidedOnboardingSetupChannel, guidedOnboardingSetupHooks, jsonFlag = oldDocs, oldChannel, oldHooks, oldJSON
 	})
 	jsonFlag = false
-	guidedOnboardingSetupHooks = func(string, bool) *claudeHooksResult { return &claudeHooksResult{Skipped: true} }
+	guidedOnboardingSetupHooks = func(string, hookConfirmation) *claudeHooksResult { return &claudeHooksResult{Skipped: true} }
 	for _, tc := range []struct {
 		name          string
 		answers       string

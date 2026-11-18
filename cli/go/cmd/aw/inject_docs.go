@@ -8,6 +8,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/internal/agentdocs"
+	"github.com/awebai/aw/internal/atomicfile"
 )
 
 const (
@@ -44,14 +45,30 @@ func InjectAgentDocsAtIdentityHome(repoRoot string, identityHome awconfig.Identi
 }
 
 func InjectProvidedAgentDocs(repoRoot, body string) *injectDocsResult {
-	return writeProvidedAgentDocs(repoRoot, body, false)
+	return writeProvidedAgentDocs(agentDocsWrite{RepositoryRoot: repoRoot, Body: body, Scope: allAgentDocs})
 }
 
 func UpdateProvidedAgentDocs(repoRoot, body string) *injectDocsResult {
-	return writeProvidedAgentDocs(repoRoot, body, true)
+	return writeProvidedAgentDocs(agentDocsWrite{RepositoryRoot: repoRoot, Body: body, Scope: existingMarkedAgentDocs})
 }
 
-func writeProvidedAgentDocs(repoRoot, body string, existingMarkedOnly bool) *injectDocsResult {
+type agentDocsScope uint8
+
+const (
+	allAgentDocs agentDocsScope = iota
+	existingMarkedAgentDocs
+)
+
+type agentDocsWrite struct {
+	RepositoryRoot string
+	Body           string
+	Scope          agentDocsScope
+}
+
+// writeProvidedAgentDocs implements docs/runtime-hook-configuration.md:6-7.
+// It stages instruction updates atomically while preserving resolved file modes.
+func writeProvidedAgentDocs(request agentDocsWrite) *injectDocsResult {
+	repoRoot, body := request.RepositoryRoot, request.Body
 	result := &injectDocsResult{}
 	canonicalRoot, err := canonicalAgentDocsTargetRoot(repoRoot)
 	if err != nil {
@@ -65,7 +82,7 @@ func writeProvidedAgentDocs(repoRoot, body string, existingMarkedOnly bool) *inj
 
 	for _, name := range candidates {
 		path := filepath.Join(repoRoot, name)
-		info, err := os.Lstat(path)
+		_, err := os.Lstat(path)
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -90,26 +107,31 @@ func writeProvidedAgentDocs(repoRoot, body string, existingMarkedOnly bool) *inj
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
-		if existingMarkedOnly && !agentdocs.HasSingleMarkedBlock(string(content)) {
+		if request.Scope == existingMarkedAgentDocs && !agentdocs.HasSingleMarkedBlock(string(content)) {
 			continue
 		}
-		mode := info.Mode().Perm()
+		targetInfo, err := os.Stat(resolved)
+		if err != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
+			continue
+		}
+		mode := targetInfo.Mode().Perm()
 		updated := removeInjectedDocs(string(content))
 		if strings.TrimSpace(updated) != "" {
 			updated = strings.TrimRight(updated, "\n") + "\n\n" + injectedDocs
 		} else {
 			updated = injectedDocs
 		}
-		if err := os.WriteFile(resolved, []byte(updated), mode); err != nil {
+		if err := atomicfile.Write(resolved, []byte(updated), mode); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", name, err))
 			continue
 		}
 		result.Injected = append(result.Injected, name)
 	}
 
-	if !foundCandidate && !existingMarkedOnly {
+	if !foundCandidate && request.Scope == allAgentDocs {
 		path := filepath.Join(repoRoot, "AGENTS.md")
-		if err := os.WriteFile(path, []byte(renderAgentsTemplate(body)), 0o644); err != nil {
+		if err := atomicfile.WriteExclusive(path, []byte(renderAgentsTemplate(body)), 0o644); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("AGENTS.md: %v", err))
 		} else {
 			result.Created = append(result.Created, "AGENTS.md")

@@ -2,14 +2,12 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"sort"
 
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -35,7 +33,7 @@ func CleanupClaudeNotifyHook(repoRoot string) *claudeNotifyCleanupResult {
 	return result
 }
 
-// Test seam for a concurrent settings edit after durable replacement write.
+// Test seam for a concurrent settings edit before the final snapshot check.
 var beforeClaudeNotifyCleanupRecheck func(string)
 
 func cleanupClaudeNotifyFile(result *claudeNotifyCleanupResult) error {
@@ -76,23 +74,20 @@ func cleanupClaudeNotifyFile(result *claudeNotifyCleanupResult) error {
 	if err != nil {
 		return fmt.Errorf("creating backup for %s: %w", path, err)
 	}
-	if err := writeAndSyncHookFile(backup, original); err != nil {
-		_ = os.Remove(backup.Name())
+	backupPath := backup.Name()
+	if err := backup.Close(); err != nil {
+		if removeErr := os.Remove(backupPath); removeErr != nil {
+			return errors.Join(err, removeErr)
+		}
+		return err
+	}
+	if err := atomicfile.Write(backupPath, original, 0o600); err != nil {
+		if removeErr := os.Remove(backupPath); removeErr != nil {
+			return errors.Join(err, removeErr)
+		}
 		return fmt.Errorf("writing backup for %s: %w", path, err)
 	}
-	result.BackupPath = backup.Name()
-	replacement, err := os.CreateTemp(filepath.Dir(path), ".aw-notify-cleanup-*")
-	if err != nil {
-		return fmt.Errorf("creating replacement (backup %s): %w", result.BackupPath, err)
-	}
-	defer os.Remove(replacement.Name())
-	if err := replacement.Chmod(info.Mode().Perm()); err != nil {
-		_ = replacement.Close()
-		return err
-	}
-	if err := writeAndSyncHookFile(replacement, updated); err != nil {
-		return err
-	}
+	result.BackupPath = backupPath
 	if beforeClaudeNotifyCleanupRecheck != nil {
 		beforeClaudeNotifyCleanupRecheck(path)
 	}
@@ -110,135 +105,22 @@ func cleanupClaudeNotifyFile(result *claudeNotifyCleanupResult) error {
 	if !os.SameFile(info, currentInfo) || info.Mode() != currentInfo.Mode() || !bytes.Equal(original, current) {
 		return fmt.Errorf("%s changed during cleanup; left it unchanged (backup %s)", path, result.BackupPath)
 	}
-	if err := os.Rename(replacement.Name(), path); err != nil {
+	if err := atomicfile.Write(path, updated, info.Mode().Perm()); err != nil {
 		return err
 	}
 	result.Removed = removed
 	return nil
 }
 
-func writeAndSyncHookFile(file *os.File, data []byte) error {
-	_, err := io.Copy(file, bytes.NewReader(data))
-	if err == nil {
-		err = file.Sync()
-	}
-	closeErr := file.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
-}
-
-// Only byte spans of removed array elements and their comma separators are
-// deleted. No surviving JSON value, key, escape, number or whitespace is encoded
-// again. Duplicate keys are refused rather than guessing which value Claude uses.
-type hookJSONNode struct {
-	start, end int
-	object     map[string]*hookJSONNode
-	array      []*hookJSONNode
-	value      any
-}
-
-func (n *hookJSONNode) member(key string) *hookJSONNode {
-	if n == nil {
-		return nil
-	}
-	return n.object[key]
-}
-func (n *hookJSONNode) stringValue() string {
-	if n == nil {
-		return ""
-	}
-	value, _ := n.value.(string)
-	return value
-}
-
-func readHookJSONNode(dec *json.Decoder, data []byte) (*hookJSONNode, error) {
-	start := int(dec.InputOffset())
-	// InputOffset before a value includes the preceding comma/colon and whitespace.
-	for start < len(data) && (data[start] == ' ' || data[start] == '\n' || data[start] == '\r' || data[start] == '\t' || data[start] == ':' || data[start] == ',') {
-		start++
-	}
-	token, err := dec.Token()
-	if err != nil {
-		return nil, err
-	}
-	n := &hookJSONNode{start: start, value: token}
-	if delim, ok := token.(json.Delim); ok {
-		switch delim {
-		case '{':
-			n.object = map[string]*hookJSONNode{}
-			for dec.More() {
-				keyToken, err := dec.Token()
-				if err != nil {
-					return nil, err
-				}
-				key := keyToken.(string)
-				if _, exists := n.object[key]; exists {
-					return nil, fmt.Errorf("duplicate JSON key %q", key)
-				}
-				child, err := readHookJSONNode(dec, data)
-				if err != nil {
-					return nil, err
-				}
-				n.object[key] = child
-			}
-		case '[':
-			for dec.More() {
-				child, err := readHookJSONNode(dec, data)
-				if err != nil {
-					return nil, err
-				}
-				n.array = append(n.array, child)
-			}
-		}
-		if _, err := dec.Token(); err != nil {
-			return nil, err
-		}
-	}
-	n.end = int(dec.InputOffset())
-	return n, nil
-}
-
-type hookByteSpan struct{ start, end int }
-
-func hookArrayRemovalSpans(nodes []*hookJSONNode, remove []bool) []hookByteSpan {
-	var spans []hookByteSpan
-	for i := 0; i < len(nodes); {
-		if !remove[i] {
-			i++
-			continue
-		}
-		first := i
-		for i < len(nodes) && remove[i] {
-			i++
-		}
-		start, end := nodes[first].start, nodes[i-1].end
-		if i < len(nodes) {
-			end = nodes[i].start
-		} else if first > 0 {
-			start = nodes[first-1].end
-		}
-		spans = append(spans, hookByteSpan{start, end})
-	}
-	return spans
-}
-
-func exactNotifyHook(n *hookJSONNode) bool {
-	kind := n.member("type").stringValue()
-	return n.member("command").stringValue() == notifyHookCommand && (n.member("type") == nil || kind == "command")
-}
-
 func removeNotifyHookBytes(data []byte) ([]byte, int, error) {
-	if !json.Valid(data) {
-		return nil, 0, fmt.Errorf("invalid JSON; settings left unchanged")
-	}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	root, err := readHookJSONNode(dec, data)
+	root, err := parseHookJSON(data)
 	if err != nil {
 		return nil, 0, err
 	}
+	if _, err := notifyHandlers(root); err != nil {
+		return nil, 0, err
+	}
+
 	post := root.member("hooks").member("PostToolUse")
 	if post == nil {
 		return data, 0, nil
@@ -248,8 +130,11 @@ func removeNotifyHookBytes(data []byte) ([]byte, int, error) {
 	var spans []hookByteSpan
 	removed := 0
 	for i, group := range groups {
+		if !ownedNotifyGroup(group) {
+			continue
+		}
 		inner := group.member("hooks")
-		if inner == nil && exactNotifyHook(group) {
+		if inner == nil && notifyHookMatches(group, notifyHookCommand) {
 			removeGroups[i] = true
 			removed++
 			continue
@@ -260,7 +145,7 @@ func removeNotifyHookBytes(data []byte) ([]byte, int, error) {
 		removeInner := make([]bool, len(inner.array))
 		count := 0
 		for j, handler := range inner.array {
-			if exactNotifyHook(handler) {
+			if notifyHookMatches(handler, notifyHookCommand) {
 				removeInner[j] = true
 				count++
 			}
@@ -283,18 +168,16 @@ func removeNotifyHookBytes(data []byte) ([]byte, int, error) {
 		}
 	}
 	spans = append(spans, hookArrayRemovalSpans(groups, removeGroups)...)
-	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
-	var updated bytes.Buffer
-	position := 0
+
+	edits := make([]hookJSONEdit, 0, len(spans))
 	for _, span := range spans {
-		updated.Write(data[position:span.start])
-		position = span.end
+		edits = append(edits, hookJSONEdit{start: span.start, end: span.end})
 	}
-	updated.Write(data[position:])
-	if !json.Valid(updated.Bytes()) {
-		return nil, 0, fmt.Errorf("cleanup would produce invalid JSON; settings left unchanged")
+	updated, err := editHookJSON(data, edits)
+	if err != nil {
+		return nil, 0, err
 	}
-	return updated.Bytes(), removed, nil
+	return updated, removed, nil
 }
 
 func runRemoveClaudeNotifyHook(cmd *cobra.Command) error {

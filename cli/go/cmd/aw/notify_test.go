@@ -43,8 +43,8 @@ func TestNotifyCooldownExpiresAfterDuration(t *testing.T) {
 func TestNotifyStampPathIsScopedByConfigPath(t *testing.T) {
 	t.Parallel()
 
-	first := notifyStampPath("notify-pending", "/tmp/config-a.yaml")
-	second := notifyStampPath("notify-pending", "/tmp/config-b.yaml")
+	first := notifyStampPath(notifyScope{Identity: "notify-pending", StateDirectory: "/tmp/config-a.yaml"})
+	second := notifyStampPath(notifyScope{Identity: "notify-pending", StateDirectory: "/tmp/config-b.yaml"})
 	if first == second {
 		t.Fatalf("stamp path should differ across config scopes: %q", first)
 	}

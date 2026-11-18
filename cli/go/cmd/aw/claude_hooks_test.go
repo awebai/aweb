@@ -7,85 +7,10 @@ import (
 	"testing"
 )
 
-func TestHookExistsEmpty(t *testing.T) {
-	t.Parallel()
-	if hookExists(map[string]any{}) {
-		t.Fatal("expected false")
-	}
-}
-
-func TestHookExistsWithNotifyHook(t *testing.T) {
-	t.Parallel()
-	settings := map[string]any{
-		"hooks": map[string]any{
-			"PostToolUse": []any{
-				map[string]any{
-					"matcher": ".*",
-					"hooks": []any{
-						map[string]any{"type": "command", "command": notifyHookCommand},
-					},
-				},
-			},
-		},
-	}
-	if !hookExists(settings) {
-		t.Fatal("expected true")
-	}
-}
-
-func TestAddNotifyHookPreservesExisting(t *testing.T) {
-	t.Parallel()
-	settings := map[string]any{
-		"hooks": map[string]any{
-			"PostToolUse": []any{map[string]any{"command": "existing"}},
-			"PreToolUse":  []any{map[string]any{"command": "pre"}},
-		},
-		"other": "value",
-	}
-	addNotifyHook(settings)
-	if settings["other"] != "value" {
-		t.Fatal("expected other settings preserved")
-	}
-	hooks := settings["hooks"].(map[string]any)
-	postToolUse := hooks["PostToolUse"].([]any)
-	if len(postToolUse) != 2 {
-		t.Fatalf("len(PostToolUse)=%d", len(postToolUse))
-	}
-	if !hookExists(settings) {
-		t.Fatal("expected hook to exist")
-	}
-}
-
-func TestReplaceLegacyNotifyHooks(t *testing.T) {
-	t.Parallel()
-	settings := map[string]any{
-		"hooks": map[string]any{
-			"PostToolUse": []any{
-				map[string]any{
-					"matcher": ".*",
-					"hooks": []any{
-						map[string]any{"type": "command", "command": legacyNotifyHookCommand},
-					},
-				},
-				map[string]any{"command": legacyNotifyHookCommand},
-			},
-		},
-	}
-	if !replaceLegacyNotifyHooks(settings) {
-		t.Fatal("expected migration")
-	}
-	if !hookExists(settings) {
-		t.Fatal("expected aw notify after migration")
-	}
-	if findNotifyHook(settings, legacyNotifyHookCommand) {
-		t.Fatal("legacy hook should be gone")
-	}
-}
-
 func TestSetupClaudeHooksCreatesNew(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
-	result := SetupClaudeHooks(tmp, false)
+	result := SetupClaudeHooks(tmp, skipHookConfirmation)
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
@@ -113,7 +38,7 @@ func TestSetupClaudeHooksRejectsSymlinkedClaudeDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := SetupClaudeHooks(tmp, false)
+	result := SetupClaudeHooks(tmp, skipHookConfirmation)
 	if result.Error == nil {
 		t.Fatal("expected symlinked .claude directory to be rejected")
 	}
@@ -136,7 +61,7 @@ func TestSetupClaudeHooksRejectsSymlinkedSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := SetupClaudeHooks(tmp, false)
+	result := SetupClaudeHooks(tmp, skipHookConfirmation)
 	if result.Error == nil {
 		t.Fatal("expected symlinked settings.json to be rejected")
 	}
@@ -173,7 +98,7 @@ func TestSetupClaudeHooksMigratesLegacyHook(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result := SetupClaudeHooks(tmp, false)
+	result := SetupClaudeHooks(tmp, skipHookConfirmation)
 	if result.Error != nil {
 		t.Fatalf("unexpected error: %v", result.Error)
 	}
@@ -195,4 +120,24 @@ func TestSetupClaudeHooksMigratesLegacyHook(t *testing.T) {
 	if findNotifyHook(updated, legacyNotifyHookCommand) {
 		t.Fatal("legacy hook should be migrated")
 	}
+}
+
+// Read-only assertion for real-file install/cleanup tests, using the production predicate.
+func hookExists(settings map[string]any) bool { return findNotifyHook(settings, notifyHookCommand) }
+func findNotifyHook(settings map[string]any, command string) bool {
+	data, _ := json.Marshal(settings)
+	root, err := parseHookJSON(data)
+	if err != nil {
+		return false
+	}
+	handlers, err := notifyHandlers(root)
+	if err != nil {
+		return false
+	}
+	for _, handler := range handlers {
+		if notifyHookMatches(handler, command) {
+			return true
+		}
+	}
+	return false
 }

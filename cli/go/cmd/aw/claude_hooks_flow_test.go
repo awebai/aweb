@@ -39,7 +39,7 @@ func TestMaterializedHomeDoesNotInstallOrRemoveNotifyHook(t *testing.T) {
 		var before []byte
 		if installed {
 			writeNotifySettings(t, root, `{"other":42}`)
-			result := SetupClaudeHooks(root, false)
+			result := SetupClaudeHooks(root, skipHookConfirmation)
 			if result.Error != nil {
 				t.Fatal(result.Error)
 			}
@@ -97,7 +97,7 @@ func TestClaudeHookCleanupCLIExplicitAndScoped(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	root := t.TempDir()
 	path := writeNotifySettings(t, root, `{"other":42}`)
-	if result := SetupClaudeHooks(root, false); result.Error != nil {
+	if result := SetupClaudeHooks(root, skipHookConfirmation); result.Error != nil {
 		t.Fatal(result.Error)
 	}
 	before, _ := os.ReadFile(path)

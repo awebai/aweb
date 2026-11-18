@@ -177,4 +177,33 @@ func TestActivityHookInstallCodex(t *testing.T) {
 			t.Fatal("install changed the identity home")
 		}
 	})
+	t.Run("uninstall preserves user hooks and is idempotent", func(t *testing.T) {
+		dir := codexHome(t)
+		path := filepath.Join(dir, "hooks.json")
+		original := []byte(`{"large":9007199254740993,"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"./guard.sh"}]}]}}`)
+		if err := os.WriteFile(path, original, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if out, code := run(t, dir, nil, "activity", "hook", "install", "--codex"); code != 0 {
+			t.Fatalf("install: %s", out)
+		}
+		if out, code := run(t, dir, nil, "activity", "hook", "uninstall", "--codex"); code != 0 || !strings.Contains(out, "removed") {
+			t.Fatalf("uninstall: %d %s", code, out)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(data, []byte("aw activity hook")) || !bytes.Contains(data, []byte("./guard.sh")) || !bytes.Contains(data, []byte("9007199254740993")) {
+			t.Fatalf("uninstall lost user data: %s", data)
+		}
+		if out, code := run(t, dir, nil, "activity", "hook", "uninstall", "--codex"); code != 0 {
+			t.Fatalf("repeat uninstall: %s", out)
+		}
+		after, _ := os.ReadFile(path)
+		if !bytes.Equal(data, after) {
+			t.Fatal("repeat uninstall changed bytes")
+		}
+	})
+
 }

@@ -617,7 +617,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			printChannelMCPResult(channelResult)
 		}
 		if initSetupHooks {
-			hookResult := SetupClaudeHooks(repoRoot, initIsTTY())
+			hookResult := SetupClaudeHooks(repoRoot, hookConfirmationForTerminal(initIsTTY()))
 			printClaudeHooksResult(hookResult)
 		}
 		return nil
@@ -1173,7 +1173,7 @@ func printPostInitActions(result *initResult, workingDir string) initSetupDone {
 		done.ChannelGuidancePrinted = channelResult != nil
 	}
 	if initSetupHooks {
-		hookResult := SetupClaudeHooks(repoRoot, isTTY())
+		hookResult := SetupClaudeHooks(repoRoot, hookConfirmationForTerminal(isTTY()))
 		printClaudeHooksResult(hookResult)
 	}
 	return done

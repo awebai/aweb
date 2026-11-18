@@ -3682,6 +3682,7 @@ Publish live activity from a Codex hook event on stdin
 
 Subcommands:
 - `install` Install the activity hook into a runtime's hook configuration
+- `uninstall` Remove the aw activity hook from a runtime
 
 Flags:
 - `-h, --help help for hook`
@@ -3695,6 +3696,16 @@ Install the activity hook into a runtime's hook configuration
 Flags:
 - `--codex Install into Codex's user hooks ($CODEX_HOME/hooks.json)`
 - `-h, --help help for install`
+
+## `activity hook uninstall`
+
+### `activity hook uninstall`
+
+Remove the aw activity hook from a runtime
+
+Flags:
+- `--codex Remove from Codex user hooks ($CODEX_HOME/hooks.json)`
+- `-h, --help help for uninstall`
 
 ## `activity show`
 

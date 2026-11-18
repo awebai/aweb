@@ -14,6 +14,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/chat"
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +53,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		configPath = ""
 	}
-	stampPath := notifyStampPath(sel.Alias, configPath)
+	stampPath := notifyStampPath(notifyScope{Identity: sel.Alias, StateDirectory: configPath})
 	if notifyCooldownActive(stampPath, notifyCooldown) {
 		return nil
 	}
@@ -79,9 +80,18 @@ func runNotify(cmd *cobra.Command, args []string) error {
 // specific CLI config scope. This keeps notify cooldown state local to the
 // active aw configuration instead of leaking across unrelated worktrees/tests
 // that happen to use the same identity handle.
-func notifyStampPath(identity, configPath string) string {
+type notifyScope struct {
+	Identity       string
+	StateDirectory string
+}
+
+func notifyStampPath(scope notifyScope) string {
+	identity, configPath := scope.Identity, scope.StateDirectory
 	h := sha256.Sum256([]byte(identity + "\n" + configPath))
-	return filepath.Join(os.TempDir(), "aw-notify-"+hex.EncodeToString(h[:8]))
+	if configPath == "" {
+		return ""
+	}
+	return filepath.Join(configPath, "notify", hex.EncodeToString(h[:8]))
 }
 
 // notifyCooldownActive returns true if the stamp file was modified within the cooldown period.
@@ -93,13 +103,15 @@ func notifyCooldownActive(stampPath string, cooldown time.Duration) bool {
 	return time.Since(info.ModTime()) < cooldown
 }
 
-// touchNotifyStamp creates or updates the stamp file's modification time.
+// touchNotifyStamp implements docs/runtime-hook-configuration.md:9-10.
 func touchNotifyStamp(stampPath string) {
-	f, err := os.Create(stampPath)
-	if err != nil {
+	if stampPath == "" {
 		return
 	}
-	f.Close()
+	// Failure to persist a cooldown must never suppress a working notification.
+	if err := (atomicfile.Options{Mode: 0o600, ParentMode: 0o700}).Write(stampPath, nil); err != nil {
+		debugLog("writing notify cooldown: %v", err)
+	}
 }
 
 func formatNotifyOutput(result *chat.PendingResult, selfAlias string, selfDIDs ...string) string {

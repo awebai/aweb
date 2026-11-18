@@ -1,12 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/awebai/aw/internal/pathpreflight"
 )
 
@@ -24,7 +24,21 @@ type claudeHooksResult struct {
 	FilePath      string
 }
 
-func SetupClaudeHooks(repoRoot string, askConfirmation bool) *claudeHooksResult {
+type hookConfirmation uint8
+
+const (
+	skipHookConfirmation hookConfirmation = iota
+	requireHookConfirmation
+)
+
+func hookConfirmationForTerminal(interactive bool) hookConfirmation {
+	if interactive {
+		return requireHookConfirmation
+	}
+	return skipHookConfirmation
+}
+
+func SetupClaudeHooks(repoRoot string, confirmation hookConfirmation) *claudeHooksResult {
 	result := &claudeHooksResult{
 		FilePath: filepath.Join(repoRoot, ".claude", "settings.json"),
 	}
@@ -42,22 +56,21 @@ func SetupClaudeHooks(repoRoot string, askConfirmation bool) *claudeHooksResult 
 		return result
 	}
 
-	settings := map[string]any{}
-	if len(content) > 0 {
-		if err := json.Unmarshal(content, &settings); err != nil {
-			result.Error = fmt.Errorf("parsing %s: %w", result.FilePath, err)
-			result.Skipped = true
-			return result
-		}
+	input := content
+	if len(input) == 0 {
+		input = []byte("{}\n")
 	}
-
-	if hookExists(settings) {
+	data, exists, err := installNotifyHookBytes(input)
+	if err != nil {
+		result.Error = fmt.Errorf("parsing %s: %w. Repair the JSON and retry aw init --setup-hooks.", result.FilePath, err)
+		result.Skipped = true
+		return result
+	}
+	if exists {
 		result.AlreadyExists = true
 		return result
 	}
-
-	migrated := replaceLegacyNotifyHooks(settings)
-	if !migrated && askConfirmation {
+	if confirmation == requireHookConfirmation {
 		answer, err := promptString("Enable Claude Code polling fallback? (chat only, after tool calls; no mail or idle wake-ups) (y/n)", "n")
 		if err != nil {
 			result.Error = err
@@ -70,9 +83,14 @@ func SetupClaudeHooks(repoRoot string, askConfirmation bool) *claudeHooksResult 
 			return result
 		}
 	}
-
-	if !migrated {
-		addNotifyHook(settings)
+	mode := os.FileMode(0o644)
+	info, statErr := os.Stat(result.FilePath)
+	if statErr == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(statErr) {
+		result.Error = statErr
+		result.Skipped = true
+		return result
 	}
 
 	settingsDir := filepath.Dir(result.FilePath)
@@ -92,18 +110,12 @@ func SetupClaudeHooks(repoRoot string, askConfirmation bool) *claudeHooksResult 
 		return result
 	}
 
-	data, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		result.Error = fmt.Errorf("marshaling settings: %w", err)
-		result.Skipped = true
-		return result
-	}
 	if err := pathpreflight.PreflightFile(result.FilePath, "Claude hook config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 		result.Error = err
 		result.Skipped = true
 		return result
 	}
-	if err := os.WriteFile(result.FilePath, append(data, '\n'), 0o644); err != nil {
+	if err := atomicfile.Write(result.FilePath, data, mode); err != nil {
 		result.Error = fmt.Errorf("writing %s: %w", result.FilePath, err)
 		result.Skipped = true
 		return result
@@ -115,101 +127,6 @@ func SetupClaudeHooks(repoRoot string, askConfirmation bool) *claudeHooksResult 
 		result.Updated = true
 	}
 	return result
-}
-
-func hookExists(settings map[string]any) bool {
-	return findNotifyHook(settings, notifyHookCommand)
-}
-
-func findNotifyHook(settings map[string]any, target string) bool {
-	hooks, ok := settings["hooks"].(map[string]any)
-	if !ok {
-		return false
-	}
-	postToolUse, ok := hooks["PostToolUse"].([]any)
-	if !ok {
-		return false
-	}
-	for _, entry := range postToolUse {
-		entryMap, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		if cmd, ok := entryMap["command"].(string); ok && cmd == target {
-			return true
-		}
-		innerHooks, ok := entryMap["hooks"].([]any)
-		if !ok {
-			continue
-		}
-		for _, h := range innerHooks {
-			hookMap, ok := h.(map[string]any)
-			if !ok {
-				continue
-			}
-			if cmd, ok := hookMap["command"].(string); ok && cmd == target {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func addNotifyHook(settings map[string]any) {
-	hooks, ok := settings["hooks"].(map[string]any)
-	if !ok {
-		hooks = map[string]any{}
-		settings["hooks"] = hooks
-	}
-	postToolUse, ok := hooks["PostToolUse"].([]any)
-	if !ok {
-		postToolUse = []any{}
-	}
-	postToolUse = append(postToolUse, map[string]any{
-		"matcher": ".*",
-		"hooks": []any{
-			map[string]any{
-				"type":    "command",
-				"command": notifyHookCommand,
-			},
-		},
-	})
-	hooks["PostToolUse"] = postToolUse
-}
-
-func replaceLegacyNotifyHooks(settings map[string]any) bool {
-	hooks, ok := settings["hooks"].(map[string]any)
-	if !ok {
-		return false
-	}
-	postToolUse, ok := hooks["PostToolUse"].([]any)
-	if !ok {
-		return false
-	}
-	changed := false
-	for _, entry := range postToolUse {
-		entryMap, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		if cmd, ok := entryMap["command"].(string); ok && cmd == legacyNotifyHookCommand {
-			entryMap["command"] = notifyHookCommand
-			changed = true
-		}
-		if innerHooks, ok := entryMap["hooks"].([]any); ok {
-			for _, h := range innerHooks {
-				hookMap, ok := h.(map[string]any)
-				if !ok {
-					continue
-				}
-				if cmd, ok := hookMap["command"].(string); ok && cmd == legacyNotifyHookCommand {
-					hookMap["command"] = notifyHookCommand
-					changed = true
-				}
-			}
-		}
-	}
-	return changed
 }
 
 func printClaudeHooksResult(result *claudeHooksResult) {
