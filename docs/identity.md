@@ -595,6 +595,31 @@ rewritten. It reports only counts (`verified`, `self_derived`, `unbound`,
 unavailable. Operators investigate those counts before proceeding. This command
 requires the server's database and AWID configuration; it performs no migration.
 
+### Native member projections for embedding hosts
+
+`aweb.member_team_key.member_projection_columns_sql(alias)` supplies the native
+member columns for a SELECT or joined host snapshot. Construct its immutable
+`MemberProjection.from_row(mapping)` from the complete row; omitted columns are
+an error, including authority columns whose value is NULL. PostgreSQL JSON rows
+are supported: the constructor normalizes UUID and timestamp strings to their
+native types. A host keeps its account and custody overlays separate.
+
+`projection.verified_identity()` applies the existing verified-key rule. Raw
+stable-DID and address claims remain available only for policy classification;
+a complete projection by itself proves neither identity binding nor membership.
+`read_member_projection(db, *, team_id=None, did_key=None, agent_id=None)` reads
+the same shape. Select by explicit team plus key, or by agent ID with an optional
+team constraint. It retains inactive/deleted rows so an actor resolver can
+distinguish a known refused actor from an absent team-level principal.
+
+Hosts pass that typed projection as `cert_info["agent_row"]` only for the exact
+certificate team/key it describes. Complete legacy dictionaries are validated;
+an incomplete legacy dictionary is replaced by a native read, rather than
+manufacturing NULL authority facts. Native scope-aware authentication is exposed
+as `aweb.team_auth_deps.resolve_team_identity_with_grant_scope(request, db, *,
+grant_scope)`. Hosts apply account-specific fences to its result; they do not
+copy its grant or certificate policy.
+
 ## Session grants
 
 A session grant lets a worker process act as an identity until revoked (or for an explicit finite window)

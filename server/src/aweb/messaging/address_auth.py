@@ -39,6 +39,8 @@ def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> di
 async def local_recipient_for_address_binding(db, resolution: Any, address: str) -> dict | None:
     """Find residence for an independently admitted address identity.
 
+    docs/identity-messaging-contract.md:272-277: "locality is residence of that
+    exact DID, independent of a membership's superseded key or invalidated marker."
     The registry supplies the canonical DID and current signature key. A local
     membership's old key/verification marker cannot decide whether that DID
     still lives here after rotation. This lookup grants no membership or actor
