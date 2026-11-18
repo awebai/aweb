@@ -29,7 +29,7 @@ class RunningTreeTests(unittest.TestCase):
             source = root / "cli/go/source.txt"
             source.parent.mkdir(parents=True)
             source.write_text("first")
-            for path in ("awid/source.txt", "key-holder/source.txt"):
+            for path in ("awid/source.txt", "key-holder/source.txt", "naapp-lib/source.txt"):
                 file = root / path
                 file.parent.mkdir()
                 file.write_text(path)
@@ -66,6 +66,7 @@ class RunningTreeTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(contents.getmember("awid/source.txt"))
                 self.assertIsNotNone(contents.getmember("key-holder/source.txt"))
+                self.assertIsNotNone(contents.getmember("naapp-lib/source.txt"))
                 self.assertIsNotNone(contents.getmember("deploy/team/render_env.py"))
             source.write_text("second")
             with self.assertRaisesRegex(RuntimeError, "clean"):
