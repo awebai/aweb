@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import folio.api as folio_api
+import folio.present_routes as present_routes
 from folio.presentation import (
     _BUILTIN_THEMES,
     content_security_policy,
@@ -125,7 +126,7 @@ def test_present_route_sets_x_robots_tag(monkeypatch) -> None:
         assert token == "secret-token"
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
+    monkeypatch.setattr(present_routes, "presented_document", fake_get_presented_document)
 
     response = TestClient(app).get("/present/secret-token")
 
@@ -368,7 +369,7 @@ def test_present_route_sets_content_security_policy(monkeypatch) -> None:
     async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
+    monkeypatch.setattr(present_routes, "presented_document", fake_get_presented_document)
     response = TestClient(app).get("/present/secret-token")
 
     assert response.status_code == 200

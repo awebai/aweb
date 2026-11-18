@@ -14,6 +14,7 @@ from aweb_layout import (
 from fastapi.testclient import TestClient
 
 import folio.api as folio_api
+import folio.present_routes as present_routes
 import folio.surfaces as surfaces
 from folio.config import Settings
 
@@ -390,7 +391,7 @@ def test_user_content_asset_route_is_noindex(monkeypatch) -> None:
     async def fake_get_public_asset(_database, *, asset_id: UUID) -> dict:
         return {"bytes": b"fake-png", "content_type": "image/png"}
 
-    monkeypatch.setattr(folio_api, "get_public_asset", fake_get_public_asset)
+    monkeypatch.setattr(present_routes, "get_public_asset", fake_get_public_asset)
 
     response = TestClient(app).get(f"/assets/{asset_id}")
 
@@ -406,7 +407,7 @@ def test_present_route_keeps_noindex_header(monkeypatch) -> None:
     async def fake_get_presented_document(_database, *, runtime, token: str) -> dict:
         return {"body": "# Private", "theme": None, "allowed_assets": {}}
 
-    monkeypatch.setattr(folio_api, "presented_document", fake_get_presented_document)
+    monkeypatch.setattr(present_routes, "presented_document", fake_get_presented_document)
 
     response = TestClient(app).get("/present/private-token")
 
