@@ -26,6 +26,27 @@ PAIRS = [
 ]
 
 
+def read_completed_events(path: Path) -> list[dict[str, object]]:
+    """Apply docs/release.md's User-path event evidence framing rule."""
+    # The receiver appends UTF-8 JSON followed by LF. A concurrent snapshot may
+    # end inside either the JSON or a UTF-8 code point; decode completed records only.
+    records = path.read_bytes().split(b"\n")[:-1]
+    events = []
+    for number, record in enumerate(records, start=1):
+        refusal = (
+            f"Invalid completed event in {path}, record {number}. "
+            "Inspect the retained receiver event log before requesting a new run."
+        )
+        try:
+            event = json.loads(record.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError(refusal) from error
+        if not isinstance(event, dict):
+            raise ValueError(refusal)
+        events.append(event)
+    return events
+
+
 class CLICommandError(AssertionError):
     def __init__(self, lane, actor, args, result):
         try:
@@ -250,8 +271,7 @@ class Lane:
             for actor in self.actors.values():
                 events = actor.get("events")
                 if events and events.exists():
-                    for line in events.read_text().splitlines():
-                        event = json.loads(line)
+                    for event in read_completed_events(events):
                         if event.get("type") == "awakening":
                             Path(
                                 str(events) + ".release-" + event["meta"]["message_id"]
@@ -763,8 +783,7 @@ class Lane:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if path.exists():
-                for line in path.read_text().splitlines():
-                    event = json.loads(line)
+                for event in read_completed_events(path):
                     if predicate(event):
                         return event
             for proc, _ in self.receivers:

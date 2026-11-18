@@ -423,6 +423,18 @@ concurrency proof uses separate `AWEB_GATE_LEDGER` directories for its two runs;
 it must not share either ledger or retained artifact directory. Resource labels,
 Compose project names, networks, workspaces and logs remain unique per run.
 
+### User-path event evidence
+
+The real channel receiver appends one UTF-8 JSON object followed by a newline
+for each event. Journey readers consume only newline-terminated records: an
+unfinished trailing record is pending evidence, including when its final UTF-8
+character is incomplete. It cannot establish delivery or fail a case merely
+because the reader observed an append in progress. A malformed complete record
+still fails and identifies the retained log and record to inspect. The existing
+delivery deadline and receiver-liveness checks remain in force; an incomplete
+record cannot extend the deadline or qualify a missing event. Normal delivery
+and failure cleanup use the same record reader.
+
 ## Server OCI image
 
 A `server-v*` tag dispatches both the Python and image publishers. The PyPI
