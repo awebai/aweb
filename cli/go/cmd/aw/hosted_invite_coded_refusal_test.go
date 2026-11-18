@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
@@ -161,5 +162,43 @@ func TestHostedInviteCodedRefusalRetry(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPendingHostedCertificateFetchIsNarrow(t *testing.T) {
+	oldTeam, oldDomain, oldID := teamFetchCertTeam, teamFetchCertNamespace, teamFetchCertID
+	t.Cleanup(func() { teamFetchCertTeam, teamFetchCertNamespace, teamFetchCertID = oldTeam, oldDomain, oldID })
+	home := awconfig.IdentityHome{Root: t.TempDir(), Source: awconfig.IdentityHomeFlag}
+	pub, key, _ := awid.GenerateKeypair()
+	if err := awid.SaveSigningKey(filepath.Join(home.Root, "signing.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := newHostedIDTreeRecovery(hostedIdentityContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := &hostedInviteCreation{Tree: tree, TokenHash: "original", DIDKey: awid.ComputeDIDKey(pub), Scope: "local", TeamID: "backend:example.com"}
+	if err := state.save(filepath.Join(home.Root, hostedInviteRecoveryFile)); err != nil {
+		t.Fatal(err)
+	}
+	teamFetchCertTeam, teamFetchCertNamespace, teamFetchCertID = "backend", "example.com", "certificate-from-service"
+	ok, err := pendingHostedExchangeTarget(teamFetchCertCmd, home)
+	if err != nil || !ok {
+		t.Fatalf("reconciliation cannot use pending home: %v", err)
+	}
+	teamFetchCertTeam = "another"
+	if ok, err := pendingHostedExchangeTarget(teamFetchCertCmd, home); err != nil || ok {
+		t.Fatal("pending fetch escaped original team")
+	}
+	teamFetchCertTeam = "backend"
+	_, otherKey, _ := awid.GenerateKeypair()
+	if err := awid.SaveSigningKey(filepath.Join(home.Root, "signing.key"), otherKey); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := pendingHostedExchangeTarget(teamFetchCertCmd, home); err != nil || ok {
+		t.Fatal("pending fetch used a replaced key")
+	}
+	if ok, err := pendingHostedExchangeTarget(mailInboxCmd, home); err != nil || ok {
+		t.Fatal("pending home became an acting identity")
 	}
 }
