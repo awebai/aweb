@@ -4,13 +4,16 @@ The Docker uninstall proof separately exercises real signed G1 and real CAS
 uninstall/reinstall. These tests isolate persisted legacy decisions and races.
 """
 
+import asyncio
 from datetime import timedelta
+from uuid import uuid4
 
 import httpx
 import pytest
 from test_edit_sessions import exchange
-from test_present_privacy import mint, present_world
+from test_present_privacy import OWNER, mint, present_world
 
+from folio import installation_access
 from folio.link_secrets import read_only_link_key
 
 __all__ = ["present_world"]
@@ -165,3 +168,73 @@ async def test_unavailable_g1_refuses_without_adopting_or_permanently_refusing_r
         "SELECT installation_id, installation_refused FROM {{tables.presentation_links}} UNION ALL SELECT installation_id, installation_refused FROM {{tables.edit_sessions}}"
     )
     assert all(row["installation_id"] is None and not row["installation_refused"] for row in rows)
+
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"lock-wait"
+
+
+@pytest.mark.parametrize("served", ["page", "image"])
+async def test_link_that_expires_during_a_lock_wait_serves_nothing(
+    present_world, client, monkeypatch, served
+):
+    """A read that began before the link's expiry and waited on the link row past it
+    is refused: the deadline is checked on live time after every wait."""
+    app, db, _ = present_world
+    asset_id = uuid4()
+    await db.execute(
+        """INSERT INTO {{tables.assets}} (asset_id, team_id, kind, bytes, content_type)
+        VALUES ($1, $2, 'image', $3, 'image/png')""",
+        asset_id,
+        OWNER.team_id,
+        _PNG,
+    )
+    await db.execute(
+        "UPDATE {{tables.document_versions}} SET body=$1",
+        f"![shown](/assets/{asset_id})",
+    )
+    link = await mint(present_world, editable=False)
+    key = read_only_link_key(link["token"])
+    url = link["url"] if served == "page" else f"{link['url']}/assets/{asset_id}"
+    assert (await client.get(url)).status_code == 200
+
+    await db.execute(
+        """UPDATE {{tables.presentation_links}}
+        SET expires_at=clock_timestamp() + interval '3 seconds' WHERE token=$1""",
+        key,
+    )
+    locked, release = asyncio.Event(), asyncio.Event()
+
+    async def hold_link_row() -> None:
+        async with db.transaction() as tx:
+            await tx.execute(
+                "SELECT 1 FROM {{tables.presentation_links}} WHERE token=$1 FOR UPDATE", key
+            )
+            locked.set()
+            await release.wait()
+
+    holders: list[asyncio.Task] = []
+    admit = installation_access.capability_permit
+
+    async def admit_then_lock(*args, **kwargs):
+        # The link row is locked after admission, so the serving transaction
+        # starts before the deadline and waits on the row until after it.
+        permit = await admit(*args, **kwargs)
+        holders.append(asyncio.create_task(hold_link_row()))
+        await locked.wait()
+        return permit
+
+    monkeypatch.setattr(installation_access, "capability_permit", admit_then_lock)
+    request = asyncio.create_task(client.get(url))
+    await locked.wait()
+    expires_at = await db.fetch_value(
+        "SELECT expires_at FROM {{tables.presentation_links}} WHERE token=$1", key
+    )
+    while await db.fetch_value("SELECT clock_timestamp() <= $1", expires_at):
+        await asyncio.sleep(0.1)
+    await asyncio.sleep(0.2)
+    assert not request.done()
+    release.set()
+    await asyncio.gather(*holders)
+    response = await request
+    assert response.status_code == 404
+    assert _PNG not in response.content
