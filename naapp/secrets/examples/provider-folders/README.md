@@ -27,8 +27,10 @@ interrupted runner job.
   is bounded at 4 KiB, with exact fields, and `target` is a leaf name. The
   report is opened by leaf name relative to the outbox without following links,
   must be a regular file, and is read with the byte cap enforced. The publisher
-  checks its size and SHA-256, stages the verified bytes privately (`0600`), and
-  uploads those bytes. Operator configuration, never the manifest, fixes the
+  checks its size and SHA-256 and uploads exactly the verified bytes it holds in
+  memory, so a later change to the outbox file cannot reach the upload. No copy
+  of a report is kept in publisher state; a retry re-reads and re-verifies the
+  outbox file against the manifest. Operator configuration, never the manifest, fixes the
   seat, the size limit (20 MiB in the initial run) and the extensions (`pdf`,
   `docx`, `md`, `txt`). An extension allowlist is not a content-safety check.
 - **Identity.** A publication is (seat, job_id, sha256, target) at one
@@ -37,7 +39,9 @@ interrupted runner job.
   `description = "aweb-publish/1 seat=<seat> job=<job_id> sha256=<sha256>"`.
   A reused job_id with any other binding is a `job_conflict`. A fresh job_id
   from the same seat with the same content and target is a `duplicate`. A
-  target that other content occupies is `target_taken`.
+  target that other content occupies is `target_taken`. An item that carries
+  this job's binding but whose size or quickXorHash does not verify is
+  `remote_unverified`: an item from this job exists and needs a read-back.
 - **Write (`onedrive.py`).** The publisher lists the app folder, then creates
   any new item through an upload session whose item body carries
   `@microsoft.graph.conflictBehavior: fail` and the binding `description`, so
@@ -47,7 +51,9 @@ interrupted runner job.
   another origin. Remote content is compared by `quickXorHash`, the only hash
   Graph documents for both personal and business drives. The read-back by item
   ID downloads the bytes and compares SHA-256. `description` is documented for
-  OneDrive Personal only.
+  OneDrive Personal only. A provider answer that is not the documented shape is
+  an unknown outcome (`malformed_response`), reconciled on the next run like a
+  lost answer.
 - **Receipts.** Each outcome (`published`, `already_published`, `refused` with
   a reason) is written under the publisher's state. A lost receipt never repeats
   an upload, because the next run reconciles against the folder.
@@ -63,7 +69,9 @@ publisher's own state is a cache.
   write; one found with a different binding is a conflict; one not found, with
   the target free, is uploaded with `conflictBehavior=fail`; one not found, with
   the target taken, is refused. A ledger recorded for another destination
-  refuses to run (`destination_changed`).
+  refuses to run (`destination_changed`). A ledger that cannot be read refuses
+  to run (`ledger_unreadable`) rather than guess; the operator removes it, and
+  the next run rebuilds it from the folder.
 - **An interrupted write.** If the provider's answer is lost, the job is marked
   uncertain and stays queued. The next run reconciles the remote item (binding,
   name, size and quickXorHash) before any retry. The result is a verified match

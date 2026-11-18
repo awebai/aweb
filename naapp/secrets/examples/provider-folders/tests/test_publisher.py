@@ -268,7 +268,7 @@ def test_items_bound_to_another_seat_are_not_this_jobs(standin, outbox_dir, stat
     assert standin.snapshot() == before
 
 
-def test_a_remote_item_whose_content_does_not_match_its_binding_is_a_conflict(
+def test_a_remote_item_of_this_job_whose_content_does_not_verify_is_reported(
     standin, outbox_dir, state_dir
 ):
     job_id = new_job(outbox_dir)
@@ -280,8 +280,89 @@ def test_a_remote_item_whose_content_does_not_match_its_binding_is_a_conflict(
 
     receipt = make_publisher(standin, outbox_dir, state_dir).publish(job_id)
 
-    assert (receipt.outcome, receipt.reason) == ("refused", "job_conflict")
+    assert (receipt.outcome, receipt.reason) == ("refused", "remote_unverified")
     assert standin.snapshot() == before
+
+
+def test_an_upload_whose_returned_item_does_not_verify_is_reported(standin, outbox_dir, state_dir):
+    job_id = new_job(outbox_dir)
+    standin.misreport_next_commit = True
+
+    receipt = make_publisher(standin, outbox_dir, state_dir).publish(job_id)
+
+    assert (receipt.outcome, receipt.reason) == ("refused", "remote_unverified")
+    assert len(standin.items) == 1
+    ledger = json.loads((state_dir / "ledger.json").read_text())
+    assert ledger["jobs"][job_id]["status"] == "uncertain"
+
+
+def test_a_failed_listing_after_a_name_conflict_marks_the_job_uncertain(
+    standin, outbox_dir, state_dir
+):
+    job_id = new_job(outbox_dir)
+    standin.insert_before_next_commit = ("summary.md", b"raced in first\n")
+    standin.before_commit = lambda: setattr(standin, "fail_next_list", True)
+
+    with pytest.raises(PublishUncertain):
+        make_publisher(standin, outbox_dir, state_dir).publish(job_id)
+
+    ledger = json.loads((state_dir / "ledger.json").read_text())
+    assert ledger["jobs"][job_id]["status"] == "uncertain"
+
+
+@pytest.mark.parametrize("endpoint", ["approot", "list", "session"])
+def test_a_malformed_provider_answer_before_the_write_is_uncertain(
+    standin, outbox_dir, state_dir, endpoint
+):
+    job_id = new_job(outbox_dir)
+    standin.malformed_next = endpoint
+
+    with pytest.raises(PublishUncertain, match="malformed_response"):
+        make_publisher(standin, outbox_dir, state_dir).publish(job_id)
+    assert standin.items == {}
+
+    receipt = make_publisher(standin, outbox_dir, state_dir).publish(job_id)
+    assert receipt.outcome == "published"
+
+
+def test_a_malformed_answer_after_the_write_reconciles_to_one_item(standin, outbox_dir, state_dir):
+    job_id = new_job(outbox_dir)
+    standin.malformed_next = "commit"
+
+    with pytest.raises(PublishUncertain, match="malformed_response"):
+        make_publisher(standin, outbox_dir, state_dir).publish(job_id)
+    receipt = make_publisher(standin, outbox_dir, state_dir).publish(job_id)
+
+    assert receipt.outcome == "already_published"
+    assert standin.committed_uploads == 1
+    assert len(standin.items) == 1
+
+
+@pytest.mark.parametrize(
+    "ledger",
+    [
+        b"{not json",
+        b"[]",
+        b'{"v": 1, "jobs": {}}',
+        b'{"v": 1, "destination": {"drive_id": "standin-drive"}, "jobs": {}}',
+        b'{"v": 1, "destination": {"drive_id": "standin-drive", "folder_id": "STANDIN-APPROOT"}, "jobs": []}',
+        b'{"v": 1, "destination": {"drive_id": "standin-drive", "folder_id": "STANDIN-APPROOT"}, "jobs": {"x": {"seat": 3}}}',
+        b'{"v": 2, "destination": {"drive_id": "standin-drive", "folder_id": "STANDIN-APPROOT"}, "jobs": {}}',
+    ],
+)
+def test_an_unreadable_ledger_is_refused_until_the_operator_removes_it(
+    standin, outbox_dir, state_dir, ledger
+):
+    job_id = new_job(outbox_dir)
+    state_dir.mkdir()
+    (state_dir / "ledger.json").write_bytes(ledger)
+
+    with pytest.raises(Refused, match="ledger_unreadable"):
+        make_publisher(standin, outbox_dir, state_dir).publish(job_id)
+    assert standin.items == {}
+
+    (state_dir / "ledger.json").unlink()
+    assert make_publisher(standin, outbox_dir, state_dir).publish(job_id).outcome == "published"
 
 
 def test_listing_follows_pages(standin, outbox_dir, state_dir):
@@ -444,15 +525,21 @@ def test_a_malformed_job_id_is_refused_before_reading(standin, outbox_dir, state
         make_publisher(standin, outbox_dir, state_dir).publish(job_id)
 
 
-def test_the_uploaded_bytes_come_from_private_staging(standin, outbox_dir, state_dir):
+def test_the_uploaded_bytes_are_the_verified_ones_and_no_copy_is_retained(
+    standin, outbox_dir, state_dir
+):
     job_id = new_job(outbox_dir)
-    publisher = make_publisher(standin, outbox_dir, state_dir)
+    swapped = REPORT.replace(b"synthetic", b"invented!")
+    assert len(swapped) == len(REPORT)
+    standin.before_session = lambda: (outbox_dir / f"{job_id}.md").write_bytes(swapped)
 
-    publisher.publish(job_id)
+    receipt = make_publisher(standin, outbox_dir, state_dir).publish(job_id)
 
-    staged = state_dir / "staging" / f"{job_id}.md"
-    assert staged.read_bytes() == REPORT
-    assert staged.stat().st_mode & 0o077 == 0
+    assert receipt.outcome == "published"
+    [item] = standin.items.values()
+    assert item["content"] == REPORT
+    retained = [path for path in state_dir.rglob("*") if path.is_file()]
+    assert all(REPORT not in path.read_bytes() for path in retained)
 
 
 # Recovery: the outbox is the export queue, outside the /state backup.

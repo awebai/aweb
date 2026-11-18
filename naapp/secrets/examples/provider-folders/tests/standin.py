@@ -40,6 +40,10 @@ class OneDriveStandIn:
         self.insert_before_next_commit: tuple[str, bytes] | None = None
         self.foreign_next_link: str | None = None
         self.before_commit: Callable[[], None] | None = None
+        self.before_session: Callable[[], None] | None = None
+        self.malformed_next: str | None = None
+        self.fail_next_list = False
+        self.misreport_next_commit = False
         self.approot = {
             "id": "STANDIN-APPROOT",
             "name": "Fictional Publisher",
@@ -87,8 +91,15 @@ class OneDriveStandIn:
             return _error(403, "accessDenied")
         path = unquote(url.path)
         if request.method == "GET" and path == APPROOT_PREFIX:
+            if self._take_malformed("approot"):
+                return _malformed()
             return httpx.Response(200, json=self.approot)
         if request.method == "GET" and path == f"{APPROOT_PREFIX}/children":
+            if self.fail_next_list:
+                self.fail_next_list = False
+                return _error(503, "serviceNotAvailable")
+            if self._take_malformed("list"):
+                return _malformed()
             return self._list(url)
         if request.method == "POST" and path.startswith(f"{APPROOT_PREFIX}:/"):
             if path.endswith(":/createUploadSession"):
@@ -111,10 +122,20 @@ class OneDriveStandIn:
             )
         return httpx.Response(200, json=body)
 
+    def _take_malformed(self, endpoint: str) -> bool:
+        if self.malformed_next != endpoint:
+            return False
+        self.malformed_next = None
+        return True
+
     def _name_taken(self, name: str) -> bool:
         return any(item["name"].casefold() == name.casefold() for item in self.items.values())
 
     def _create_session(self, request: httpx.Request, name: str) -> httpx.Response:
+        if self.before_session is not None:
+            self.before_session()
+        if self._take_malformed("session"):
+            return _malformed()
         item = json.loads(request.content)["item"]
         if item.get("@microsoft.graph.conflictBehavior") != "fail":
             return _error(400, "invalidRequest")
@@ -148,6 +169,13 @@ class OneDriveStandIn:
         if self.lose_next_commit_response:
             self.lose_next_commit_response = False
             raise httpx.ReadTimeout("response lost after commit", request=request)
+        if self._take_malformed("commit"):
+            return _malformed()
+        if self.misreport_next_commit:
+            self.misreport_next_commit = False
+            reported = _public(item)
+            reported["file"] = {"hashes": {"quickXorHash": reference_quick_xor(b"other")}}
+            return httpx.Response(201, json=reported)
         return httpx.Response(201, json=_public(item))
 
     def _content_redirect(self, item_id: str) -> httpx.Response:
@@ -166,6 +194,10 @@ class OneDriveStandIn:
 
 def _public(item: dict) -> dict:
     return {key: value for key, value in item.items() if key != "content"}
+
+
+def _malformed() -> httpx.Response:
+    return httpx.Response(200, json={"value": "not a list", "id": 7})
 
 
 def _error(status: int, code: str) -> httpx.Response:

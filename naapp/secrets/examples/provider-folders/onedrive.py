@@ -60,33 +60,42 @@ class GraphAppFolder:
         self._origin = _origin(self.base)
 
     def destination(self) -> Destination:
-        body = self._call("GET", f"{self.base}/me/drive/special/approot").json()
-        return Destination(drive_id=body["parentReference"]["driveId"], folder_id=body["id"])
+        body = _object(self._call("GET", f"{self.base}/me/drive/special/approot"))
+        parent = body.get("parentReference")
+        return Destination(
+            drive_id=_string(parent.get("driveId") if isinstance(parent, dict) else None),
+            folder_id=_string(body.get("id")),
+        )
 
     def list_items(self) -> list[RemoteItem]:
         items = []
         url = f"{self.base}/me/drive/special/approot/children?$select={LIST_FIELDS}"
         while url:
-            body = self._call("GET", url).json()
-            items.extend(_remote_item(entry) for entry in body["value"])
-            url = body.get("@odata.nextLink")
-            if url and _origin(url) != self._origin:
+            body = _object(self._call("GET", url))
+            entries = body.get("value")
+            if not isinstance(entries, list):
+                raise ProviderUnavailable("malformed_response")
+            items.extend(_remote_item(entry) for entry in entries)
+            url = _optional_string(body.get("@odata.nextLink"))
+            if url is not None and _origin(url) != self._origin:
                 raise ProviderUnavailable("next_link_origin")
         return items
 
     def upload_new(self, name: str, content: bytes, description: str) -> RemoteItem:
         """Create one new item, never replacing an existing one."""
-        session = self._call(
-            "POST",
-            f"{self.base}/me/drive/special/approot:/{quote(name, safe='')}:/createUploadSession",
-            json={
-                "item": {
-                    "@microsoft.graph.conflictBehavior": "fail",
-                    "description": description,
-                }
-            },
-        ).json()
-        upload_url = session["uploadUrl"]
+        session = _object(
+            self._call(
+                "POST",
+                f"{self.base}/me/drive/special/approot:/{quote(name, safe='')}:/createUploadSession",
+                json={
+                    "item": {
+                        "@microsoft.graph.conflictBehavior": "fail",
+                        "description": description,
+                    }
+                },
+            )
+        )
+        upload_url = _string(session.get("uploadUrl"))
         if urlsplit(upload_url).scheme != "https":
             raise ProviderRejected("upload_url_not_https")
         # The upload URL is pre-authenticated; the bearer token is never sent to it.
@@ -96,7 +105,7 @@ class GraphAppFolder:
             content=content,
             headers={"Content-Range": f"bytes 0-{len(content) - 1}/{len(content)}"},
         )
-        return _remote_item(response.json())
+        return _remote_item(_object(response))
 
     def download(self, item_id: str) -> bytes:
         """Read one item's bytes by ID; the redirect to the content host carries no token."""
@@ -127,15 +136,47 @@ class GraphAppFolder:
         raise ProviderRejected(code)
 
 
-def _remote_item(entry: dict) -> RemoteItem:
-    hashes = (entry.get("file") or {}).get("hashes") or {}
+def _remote_item(entry: object) -> RemoteItem:
+    """Validate one driveItem; a malformed one makes the outcome unknown."""
+    if not isinstance(entry, dict):
+        raise ProviderUnavailable("malformed_response")
+    size = entry.get("size")
+    if type(size) is not int:
+        raise ProviderUnavailable("malformed_response")
+    file = entry.get("file")
+    hashes = file.get("hashes") if isinstance(file, dict) else None
+    quick_xor = hashes.get("quickXorHash") if isinstance(hashes, dict) else None
     return RemoteItem(
-        id=entry["id"],
-        name=entry["name"],
-        size=entry["size"],
-        quick_xor_hash=hashes.get("quickXorHash"),
-        description=entry.get("description"),
+        id=_string(entry.get("id")),
+        name=_string(entry.get("name")),
+        size=size,
+        quick_xor_hash=_optional_string(quick_xor),
+        description=_optional_string(entry.get("description")),
     )
+
+
+def _object(response: httpx.Response) -> dict:
+    try:
+        body = response.json()
+    except ValueError:
+        raise ProviderUnavailable("malformed_response") from None
+    if not isinstance(body, dict):
+        raise ProviderUnavailable("malformed_response")
+    return body
+
+
+def _string(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise ProviderUnavailable("malformed_response")
+    return value
+
+
+def _optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ProviderUnavailable("malformed_response")
+    return value
 
 
 def _origin(url: str) -> tuple[str, str, int | None]:
