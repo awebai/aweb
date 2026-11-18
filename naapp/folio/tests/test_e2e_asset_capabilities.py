@@ -383,3 +383,42 @@ def test_browser_shows_images_on_the_present_page_and_in_the_editor(
             )
         finally:
             browser.close()
+
+
+def test_editor_marks_refused_images_and_retries_failed_reads(
+    folio: RunningFolio,
+    aw_workspace_factory: Callable[[str], AWWorkspace],
+) -> None:
+    team = _provision_team(aw_workspace_factory("editor-image-states"), folio=folio, alias="alice")
+    asset_id = _upload(folio, team, _PIXEL_PNG)
+    _create_document(
+        folio, team, slug="deck", title="Deck", body=f"# Deck\n\n![one](/assets/{asset_id})\n"
+    )
+    image_path = f"**/assets/{asset_id}"
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            # An outage on the first read: marked as retrying, then shown.
+            failures = [503]
+            retrying = browser.new_page(ignore_https_errors=True)
+            retrying.route(
+                image_path,
+                lambda route: (
+                    route.fulfill(status=failures.pop()) if failures else route.continue_()
+                ),
+            )
+            retrying.goto(_mint_present(folio, team, slug="deck", editable=True)["url"])
+            retrying.wait_for_selector('#preview img[data-folio-image="retrying"]', timeout=10000)
+            retrying.wait_for_function(
+                _LOADED_IMAGE, arg=["#preview img.folio-img", asset_id], timeout=15000
+            )
+            assert retrying.locator("#preview img[data-folio-image]").count() == 0
+
+            # A refusal: marked as refused, not retried into a blank.
+            refused = browser.new_page(ignore_https_errors=True)
+            refused.route(image_path, lambda route: route.fulfill(status=404))
+            refused.goto(_mint_present(folio, team, slug="deck", editable=True)["url"])
+            refused.wait_for_selector('#preview img[data-folio-image="refused"]', timeout=10000)
+        finally:
+            browser.close()

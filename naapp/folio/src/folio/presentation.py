@@ -1209,6 +1209,7 @@ def _editor_styles(*, root_css: str) -> str:
     .document-body pre {{ overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; }}
     .document-body blockquote {{ border-left: 4px solid var(--border); color: var(--muted); margin-left: 0; padding-left: 1rem; }}
     .document-body img {{ display: block; max-width: 100%; height: auto; border-radius: 12px; margin: 1rem 0; }}
+    img[data-folio-image] {{ min-height: 2.5rem; padding: 0.5rem; border: 1px dashed currentColor; font-size: 0.9rem; }}
     .document-body table {{ border-collapse: collapse; width: 100%; }}
     .document-body th, .document-body td {{ border: 1px solid var(--border); padding: 0.5rem; }}
     @media (max-width: 900px) {{
@@ -1292,10 +1293,16 @@ def _editor_script(*, initial_json: str) -> str:
     let previewTimer = null;
     let previewSeq = 0;
     // Images are served to this edit session only, so each is fetched with the
-    // session header and shown from a blob: URL. An image the session cannot
-    // read (revoked, removed, another team's) is left unshown.
+    // session header and shown from a blob: URL. A refused image (removed, or
+    // not this session's to read) is marked with a message saying so; an
+    // outage or failed read is marked as retrying and retried with backoff,
+    // then marked as failed with what the person can do.
     const sessionImagePrefix = endpoint + '/assets/';
     const sessionImages = new Map();
+    const IMAGE_REFUSED = 'This image is not available to this editing session. It may have been removed.';
+    const IMAGE_RETRYING = 'This image could not be loaded yet. Retrying.';
+    const IMAGE_FAILED = 'This image could not be loaded. Reload the editor to try again.';
+    const IMAGE_RETRY_DELAYS_MS = [2000, 4000, 8000];
     function sessionImagePath(source) {{
       try {{
         const url = new URL(source || '', window.location.href);
@@ -1304,19 +1311,50 @@ def _editor_script(*, initial_json: str) -> str:
       }} catch (err) {{ /* not a URL: not a session image */ }}
       return null;
     }}
-    function showSessionImage(img, source) {{
-      img.removeAttribute('src');
-      img.dataset.folioSource = source || '';
+    async function readSessionImage(path) {{
+      // Resolves to a blob: URL, or to null when the server refuses the image;
+      // rejects on an outage or a failed read, which the caller retries.
+      const response = await sessionFetch(path.slice(endpoint.length));
+      if (response.status === 403 || response.status === 404) return null;
+      if (!response.ok) throw new Error('image read answered HTTP ' + response.status);
+      return URL.createObjectURL(await response.blob());
+    }}
+    function markImage(img, state, message) {{
+      img.dataset.folioImage = state;
+      img.alt = message;
+      img.title = message;
+    }}
+    function showSessionImage(img, source, attempt = 0) {{
+      if (attempt === 0) {{
+        img.removeAttribute('src');
+        img.dataset.folioSource = source || '';
+        img.dataset.folioAlt = img.alt;
+      }}
       const path = sessionImagePath(source);
       if (path === null) return;
-      if (!sessionImages.has(path)) {{
-        sessionImages.set(path, sessionFetch(path.slice(endpoint.length))
-          .then(async (response) => response.ok ? URL.createObjectURL(await response.blob()) : null)
-          .catch(() => null));
-      }}
+      if (!sessionImages.has(path)) sessionImages.set(path, readSessionImage(path));
       sessionImages.get(path).then((blobUrl) => {{
-        if (blobUrl === null) {{ sessionImages.delete(path); return; }}
-        if (img.dataset.folioSource === source) img.src = blobUrl;
+        if (img.dataset.folioSource !== source) return;
+        if (blobUrl === null) {{
+          sessionImages.delete(path);
+          markImage(img, 'refused', IMAGE_REFUSED);
+          return;
+        }}
+        delete img.dataset.folioImage;
+        img.removeAttribute('title');
+        img.alt = img.dataset.folioAlt || '';
+        img.src = blobUrl;
+      }}, () => {{
+        sessionImages.delete(path);
+        if (img.dataset.folioSource !== source) return;
+        if (attempt >= IMAGE_RETRY_DELAYS_MS.length) {{
+          markImage(img, 'failed', IMAGE_FAILED);
+          return;
+        }}
+        markImage(img, 'retrying', IMAGE_RETRYING);
+        setTimeout(() => {{
+          if (img.isConnected && img.dataset.folioSource === source) showSessionImage(img, source, attempt + 1);
+        }}, IMAGE_RETRY_DELAYS_MS[attempt]);
       }});
     }}
     let shownBlocks = new Set();
