@@ -139,6 +139,27 @@ func FetchCard(ctx context.Context, httpClient *http.Client, rawURL string) (Car
 }
 
 func (c *Client) Call(ctx context.Context, rpcURL, method string, params any, credential Credential, out any) error {
+	return c.call(ctx, rpcCall{URL: rpcURL, Method: method, Params: params, Credential: credential, Out: out})
+}
+
+type rpcCall struct {
+	URL, Method string
+	Params      any
+	Credential  Credential
+	Out         any
+}
+
+// call owns credential-bearing RPC transport (docs/a2a.md:973-978). Call keeps
+// the published Go signature while this implementation uses named inputs.
+func (c *Client) call(ctx context.Context, input rpcCall) error {
+	rpcURL, method, params, credential, out := input.URL, input.Method, input.Params, input.Credential, input.Out
+	httpClient := effectiveHTTPClient(c.HTTPClient)
+	if credential.APIKey != "" || credential.BearerToken != "" || credential.TaskToken != "" {
+		if err := ValidateCredentialURL(rpcURL); err != nil {
+			return err
+		}
+		httpClient = CredentialHTTPClient(httpClient)
+	}
 	requestID := strings.TrimSpace(c.RequestID)
 	if requestID == "" {
 		requestID = "aw-a2a-" + randomHexString(12)
@@ -169,7 +190,7 @@ func (c *Client) Call(ctx context.Context, rpcURL, method string, params any, cr
 	if credential.TaskToken != "" {
 		req.Header.Set("X-A2A-Task-Token", credential.TaskToken)
 	}
-	resp, err := effectiveHTTPClient(c.HTTPClient).Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -242,6 +263,9 @@ func IsTerminalState(state string) bool {
 	}
 }
 
+// SameOriginRPCFromCardURL derives the conventional RPC path beside a direct
+// card. Callers validate an advertised endpoint with ValidateRPCOrigin before
+// selecting a stored credential.
 func SameOriginRPCFromCardURL(cardURL string) string {
 	parsed, err := url.Parse(strings.TrimSpace(cardURL))
 	if err != nil {

@@ -1,6 +1,7 @@
 package a2agw
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -28,6 +29,7 @@ type Config struct {
 	Bridge              Bridge
 	Audit               AuditSink
 	AcceptNewTasksUntil time.Time
+	OperatorToken       string
 }
 
 type Route struct {
@@ -306,7 +308,15 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/health":
 		writeJSON(w, http.StatusOK, g.Health())
 	case r.URL.Path == "/config":
-		writeJSON(w, http.StatusOK, g.Diagnostics())
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Vary", "Authorization")
+		token, bearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if bearer && g.config.OperatorToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(g.config.OperatorToken)) == 1 {
+			writeJSON(w, http.StatusOK, g.Diagnostics())
+		} else {
+			// Keep the diagnostic object shape, with no per-route enumeration.
+			writeJSON(w, http.StatusOK, Diagnostics{Host: g.config.Host, RootCardMode: g.config.RootCardMode, TaskExecution: g.taskExecution, Routes: []RouteDiagnostic{}})
+		}
 	case r.URL.Path == a2a.WellKnownAgentCardPath:
 		if g.config.RootCardMode == RootCardDefaultAgent {
 			if route := g.routeConfigs[strings.TrimSpace(g.config.DefaultRouteID)]; route.Disabled {

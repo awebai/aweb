@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +20,69 @@ import (
 )
 
 const a2aSupportCardPath = "/a2a/agents/r_support/agent-card.json"
+
+func TestA2ARefusesCrossOriginCardBeforeSendingCredentials(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	var called atomic.Bool
+	destination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Store(true)
+		if _, err := w.Write([]byte(`{"jsonrpc":"2.0","result":{"id":"task","status":{"state":"TASK_STATE_COMPLETED"}}}`)); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer destination.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewEncoder(w).Encode(testA2ACard(destination.URL + "/a2a/agents/r_support/rpc")); err != nil {
+			t.Error(err)
+		}
+	}))
+	defer origin.Close()
+	writeA2ACredentialsForTest(t, tmp, origin.URL, "must-not-escape", "", "")
+	for _, args := range [][]string{{"send", origin.URL + a2aSupportCardPath, "hello"}, {"status", origin.URL + a2aSupportCardPath, "task"}, {"cancel", origin.URL + a2aSupportCardPath, "task"}} {
+		run := exec.CommandContext(ctx, bin, append([]string{"a2a"}, args...)...)
+		run.Dir, run.Env = tmp, testCommandEnv(tmp)
+		out, err := run.CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "same origin") || called.Load() {
+			t.Fatalf("%s disclosed credential destination: called=%v err=%v out=%s", args[0], called.Load(), err, out)
+		}
+	}
+}
+
+func TestA2AVerificationRequiresAffirmativePublicationFields(t *testing.T) {
+	for _, missing := range []string{"status", "verification", "card_url", "none"} {
+		t.Run(missing, func(t *testing.T) {
+			cardURL := "https://example.com/a2a/agents/r_support/agent-card.json"
+			publication := map[string]string{"status": "active", "verification": "awid_publication_available", "card_url": cardURL, "card_digest": "sha256:test"}
+			delete(publication, missing)
+			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewEncoder(w).Encode(map[string]any{"address": "acme.com/help", "a2a": publication}); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer registry.Close()
+			previousRegistry := a2aCardRegistry
+			a2aCardRegistry = registry.URL
+			t.Cleanup(func() { a2aCardRegistry = previousRegistry })
+			got := verifyA2ACardWithAWID(context.Background(), a2aCardVerification{CardURL: cardURL, Digest: "sha256:test", Address: "acme.com/help", RegistryURL: registry.URL})
+			if missing == "none" {
+				if got.Status != a2a.VerificationAWIDVerified {
+					t.Fatalf("valid publication refused: %#v", got)
+				}
+				return
+			}
+			wantCode := "a2a_publication_unavailable"
+			if missing == "card_url" {
+				wantCode = "a2a_card_url_mismatch"
+			}
+			if got.Status != a2a.VerificationFailed || got.Code != wantCode || got.Message == "" {
+				t.Fatalf("missing %s accepted as verified: %#v", missing, got)
+			}
+		})
+	}
+}
 
 func TestA2ACardReportsUnsignedInteropWithoutAWIDClaim(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

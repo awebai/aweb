@@ -927,3 +927,57 @@ A future `https://aweb.ai/a2a/binding/v1` could map A2A operations onto signed a
 
 This is not part of the current gateway surface. It should be specified only if
 external A2A SDKs or clients need it.
+
+## Appendix C: Admission, reply identity, and diagnostics
+
+Route authentication is checked for all four RPC methods before accessing task
+state. An unauthenticated `SendMessage` retains the `TASK_STATE_AUTH_REQUIRED`
+response shape but creates no stored task and issues no task bearer token. A
+public route still issues an opaque token on successful send; task IDs alone
+never authorize reads or cancellation. Configured concurrent-task limits are
+atomic per route. Expiry removes stored records, and completion, cancellation,
+and reply deadlines stop bridge polling and remove its thread state.
+
+Before a local bridge sends, it resolves the recipient through aw mail's
+identity resolver and sends to that exact DID and stable ID. A plaintext Go send receipt
+includes additive `recipient_did` and `recipient_stable_id` fields containing the
+exact signed recipient claims. A managed provider advertises
+`capabilities: ["recipient_identity_v1"]` in its runtime configuration and
+returns these same fields from its actual signed send. A provider without this
+capability cannot configure an active route requiring verified replies; the
+error names the provider and the upgrade needed. Explicitly setting
+`require_verified_replies: false` and `allow_unverified_local_reply: true`
+preserves an unverified route on such a provider. The explicit requirement wins
+when both settings are true.
+
+Reply messages pass through aw mail's signature, display-binding, and sender
+verification code, including messages fetched through a managed provider.
+Verified replies must come from the identity recorded at creation, in the
+recorded conversation and task context. Explicit unverified routes report
+`metadata.reply_verification: "unverified"`; the CLI displays that label.
+Only a complete standalone `a2a-reply` fence counts as a reply. Quoted fences,
+fences nested inside another code block, and ambiguous multiple reply blocks
+cannot supply the answer.
+
+`CancelTask` commits local cancellation even if the agent's cancellation notice
+cannot be sent. In that case it returns `cancel_notification_failed`, names the
+canceled task and state, and asks the caller to contact the agent; it does not
+claim the agent was notified.
+
+The public `/config` retains the diagnostic object shape with an empty `routes`
+array and no default-route selector. Operators set `operator_token_env` to the
+name of an environment variable holding a diagnostics token. A request with
+`Authorization: Bearer <operator token>` receives full route diagnostics. The
+token itself is never included. `-check` still prints full diagnostics locally.
+
+The outbound CLI requires the card and selected RPC interface to use the same
+origin before selecting a stored credential. Credential-bearing RPC requests,
+managed configuration fetches, and managed bridge requests require HTTPS and
+keep redirects on that origin. Literal loopback IP addresses support HTTP for
+local development. A DNS name, including `localhost`, does not grant that
+exception. Ordinary server requests have bounded header, body, write, and idle
+times; an A2A wait extends its write deadline to its configured response budget.
+
+The plaintext bridge, per-request registry readiness check, and best-effort
+audit observer retain their existing contracts. Authentication refusals are
+recorded as refusals rather than successful task sends.

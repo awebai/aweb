@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -80,6 +82,12 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "route_not_found", "request_id": requestID})
 		return
 	}
+	// The HTTP server bounds ordinary writes; an A2A wait uses its configured
+	// response budget (docs/a2a.md:588) rather than the server's default.
+	controller := http.NewResponseController(w)
+	if err := controller.SetWriteDeadline(time.Now().Add(effectiveResponseTimeout(route) + 20*time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		log.Printf("aweb-a2a-gw: cannot set response deadline: %v", err)
+	}
 	caller := callerScopeFromRequest(r, route)
 	g.audit(AuditEvent{
 		Stage:             "gateway_ingress",
@@ -93,8 +101,16 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 	maxBytes := effectiveMaxMessageBytes(route)
 	body, err := readLimitedBody(r.Body, maxBytes)
 	if err != nil {
-		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: "request_too_large", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
-		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "request_too_large", "request_id": requestID})
+		status, code, message := http.StatusBadRequest, "request_body_failed", "Request body could not be read. Retry the request with a complete JSON body."
+		var timeout net.Error
+		if errors.As(err, &timeout) && timeout.Timeout() {
+			status, code, message = http.StatusRequestTimeout, "request_body_timeout", "Request body timed out. Retry with a complete JSON body within ten seconds."
+		} else if errors.Is(err, errRequestBodyTooLarge) {
+			status, code, message = http.StatusRequestEntityTooLarge, "request_too_large", "Request body is too large. Reduce the message size to the route's advertised limit and retry."
+		}
+		log.Printf("aweb-a2a-gw: request body failed request=%s: %v", requestID, err)
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: code, LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		writeJSON(w, status, map[string]string{"error": code, "message": message, "request_id": requestID})
 		return
 	}
 	var req rpcRequest
@@ -125,12 +141,26 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "error", Code: rpcErrCode(rpcErr), LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 	} else {
 		resp.Result = result
-		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: "ok", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		outcome, code := AuditOK, ""
+		if authRequired(route, caller) {
+			outcome, code = AuditDenied, "authentication_required"
+		}
+		g.audit(AuditEvent{Stage: "gateway_response", RequestID: requestID, RouteID: route.RouteID, CallerScopeClass: callerScopeClass(caller.Value), TargetAddressHash: auditHash(route.Address), Outcome: string(outcome), Code: code, LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 	}
 	writeRPC(w, http.StatusOK, resp)
 }
 
 func (g *Gateway) handleRPCMethod(ctx context.Context, route Route, req rpcRequest, requestID string, caller callerScope) (any, *rpcError) {
+	if authRequired(route, caller) {
+		text := "Authentication is required. Send the route API key in X-A2A-API-Key or the route bearer in Authorization, as advertised by its card."
+		if req.Method == "SendMessage" {
+			// Auth refusal is an ephemeral result, with no retained state or bearer token.
+			id := mustNewUUIDv4()
+			message := statusMessage(id, "", TaskStateAuthRequired, text)
+			return map[string]any{"task": Task{ID: id, Status: TaskStatus{State: TaskStateAuthRequired, Timestamp: formatTime(time.Now()), Message: &message}}}, nil
+		}
+		return nil, jsonRPCError(-32003, text, requestID, map[string]any{"code": "authentication_required"})
+	}
 	switch req.Method {
 	case "SendMessage":
 		return g.rpcSendMessage(ctx, route, req.Params, requestID, caller)
@@ -159,17 +189,12 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route Route, raw json.RawM
 	if err := validateInboundMessage(params.Message); err != nil {
 		return nil, jsonRPCError(-32602, "invalid message", requestID, map[string]any{"detail": err.Error()})
 	}
-	if !authRequired(route, caller) && route.Limits.MaxConcurrentTasks > 0 && g.tasks.activeCount(route.RouteID, caller.Value) >= route.Limits.MaxConcurrentTasks {
-		return nil, jsonRPCError(-32003, "too many active tasks", requestID, map[string]any{"code": "max_concurrent_tasks"})
-	}
-	record, err := g.tasks.create(route.RouteID, caller.Value, requestID, params.Message, effectiveTaskTTL(route))
+	record, err := g.tasks.create(taskCreation{RouteID: route.RouteID, CallerScope: caller.Value, RequestID: requestID, Message: params.Message, TTL: effectiveTaskTTL(route), MaxActive: route.Limits.MaxConcurrentTasks})
 	if err != nil {
+		if errors.Is(err, errTaskLimit) {
+			return nil, jsonRPCError(-32003, "Too many active tasks. Wait for an existing task to finish or cancel it, then retry.", requestID, map[string]any{"code": "max_concurrent_tasks"})
+		}
 		return nil, jsonRPCError(-32000, "task id generation failed", requestID, nil)
-	}
-	if authRequired(route, caller) {
-		msg := statusMessage(record.ID, record.ContextID, TaskStateAuthRequired, "This route requires caller authentication.")
-		record, _ = g.tasks.updateState(record.ID, TaskStateAuthRequired, &msg, nil)
-		return map[string]any{"task": record.Task}, nil
 	}
 	text := textFromMessage(params.Message)
 	if err := g.bridge.SendTask(ctx, BridgeTask{
@@ -213,12 +238,9 @@ func (g *Gateway) rpcGetTask(route Route, raw json.RawMessage, requestID string,
 	if taskID == "" {
 		return nil, jsonRPCError(-32602, "task id is required", requestID, nil)
 	}
-	record, ok := g.tasks.getVisible(route.RouteID, caller.Value, caller.TaskToken, taskID)
-	if !ok && publicAnonymousTaskLookupAllowed(route, caller) {
-		record, ok = g.tasks.getPublicAnonymous(route.RouteID, taskID)
-	}
+	record, ok := g.tasks.getVisible(taskAccess{RouteID: route.RouteID, CallerScope: caller.Value, Token: caller.TaskToken, TaskID: taskID})
 	if !ok {
-		return nil, jsonRPCError(-32004, "task not found", requestID, map[string]any{"code": "task_not_found"})
+		return nil, jsonRPCError(-32004, "Task not found. Send the route credential or the task token returned by SendMessage, then retry.", requestID, map[string]any{"code": "task_not_found"})
 	}
 	task := record.Task
 	if params.HistoryLength == nil {
@@ -242,7 +264,7 @@ func (g *Gateway) rpcListTasks(route Route, raw json.RawMessage, requestID strin
 			return nil, jsonRPCError(-32602, "invalid params", requestID, map[string]any{"detail": err.Error()})
 		}
 	}
-	tasks := g.tasks.listVisible(route.RouteID, caller.Value, params.Status, params.ContextID, params.PageSize, params.IncludeArtifacts)
+	tasks := g.tasks.listVisible(taskListQuery{RouteID: route.RouteID, CallerScope: caller.Value, Status: params.Status, ContextID: params.ContextID, Limit: params.PageSize, IncludeArtifacts: params.IncludeArtifacts})
 	return map[string]any{"tasks": tasks, "nextPageToken": "", "pageSize": effectivePageSize(params.PageSize), "totalSize": len(tasks)}, nil
 }
 
@@ -255,7 +277,10 @@ func (g *Gateway) rpcCancelTask(ctx context.Context, route Route, raw json.RawMe
 	if !ok {
 		return nil, jsonRPCError(-32004, "task not found", requestID, map[string]any{"code": "task_not_found"})
 	}
-	_ = g.bridge.CancelTask(ctx, BridgeCancel{RequestID: requestID, RouteID: route.RouteID, Address: route.Address, TaskID: record.ID, ContextID: record.ContextID})
+	if err := g.bridge.CancelTask(ctx, BridgeCancel{RequestID: requestID, RouteID: route.RouteID, Address: route.Address, TaskID: record.ID, ContextID: record.ContextID}); err != nil {
+		log.Printf("aweb-a2a-gw: cancellation notice failed request=%s task=%s: %v", requestID, record.ID, err)
+		return nil, jsonRPCError(-32000, "Task canceled locally, but the agent could not be notified. Contact the target agent to confirm it stopped work.", requestID, map[string]any{"code": "cancel_notification_failed", "task_id": record.ID, "state": TaskStateCanceled})
+	}
 	return record.Task, nil
 }
 
@@ -328,11 +353,6 @@ func callerScopeFromRequest(r *http.Request, route Route) callerScope {
 	return callerScope{TaskToken: token}
 }
 
-func publicAnonymousTaskLookupAllowed(route Route, caller callerScope) bool {
-	mode := normalizedAuthMode(route.Auth.Mode)
-	return (mode == "" || mode == "none") && caller.Value == "anonymous:unscoped"
-}
-
 func normalizedAuthMode(mode string) string {
 	return strings.ToLower(strings.TrimSpace(mode))
 }
@@ -364,6 +384,8 @@ func requestIDFromHeader(r *http.Request) string {
 	return mustNewUUIDv4()
 }
 
+var errRequestBodyTooLarge = errors.New("request body too large")
+
 func readLimitedBody(body io.ReadCloser, maxBytes int) ([]byte, error) {
 	defer body.Close()
 	reader := io.LimitReader(body, int64(maxBytes)+1)
@@ -372,7 +394,7 @@ func readLimitedBody(body io.ReadCloser, maxBytes int) ([]byte, error) {
 		return nil, err
 	}
 	if len(data) > maxBytes {
-		return nil, fmt.Errorf("request body exceeds %d bytes", maxBytes)
+		return nil, fmt.Errorf("request body exceeds %d bytes: %w", maxBytes, errRequestBodyTooLarge)
 	}
 	return data, nil
 }

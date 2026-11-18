@@ -252,7 +252,7 @@ func buildA2ACardOutput(ctx context.Context, cardURL, address, registryURL strin
 		verification.Message = "Agent Card contains signatures; aw a2a does not verify JWS yet. Use --address for AWID publication verification."
 	}
 	if strings.TrimSpace(address) != "" {
-		verification = verifyA2ACardWithAWID(ctx, cardURL, digest.Value, strings.TrimSpace(address), strings.TrimSpace(registryURL))
+		verification = verifyA2ACardWithAWID(ctx, a2aCardVerification{CardURL: cardURL, Digest: digest.Value, Address: strings.TrimSpace(address), RegistryURL: strings.TrimSpace(registryURL)})
 	}
 	return a2aCardOutput{
 		URL:          strings.TrimSpace(cardURL),
@@ -266,7 +266,14 @@ func buildA2ACardOutput(ctx context.Context, cardURL, address, registryURL strin
 	}, nil
 }
 
-func verifyA2ACardWithAWID(ctx context.Context, cardURL, digestValue, address, registryURL string) a2a.VerificationResult {
+type a2aPublicationAvailability string
+
+const a2aPublicationAvailable a2aPublicationAvailability = "awid_publication_available"
+
+type a2aCardVerification struct{ CardURL, Digest, Address, RegistryURL string }
+
+func verifyA2ACardWithAWID(ctx context.Context, input a2aCardVerification) a2a.VerificationResult {
+	cardURL, digestValue, address, registryURL := input.CardURL, input.Digest, input.Address, input.RegistryURL
 	domain, name, err := splitA2AAddress(address)
 	if err != nil {
 		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_address_invalid", Message: err.Error(), Digest: digestValue}
@@ -285,17 +292,17 @@ func verifyA2ACardWithAWID(ctx context.Context, cardURL, digestValue, address, r
 	if lookup == nil || lookup.A2A == nil {
 		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_publication_missing", Message: "AWID has no active A2A publication for this address.", Digest: digestValue}
 	}
-	if strings.TrimSpace(lookup.A2A.Status) != "" && strings.TrimSpace(lookup.A2A.Status) != "active" {
-		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_publication_unavailable", Message: "AWID A2A publication is not active.", Digest: digestValue}
+	if strings.TrimSpace(lookup.A2A.Status) != awid.A2AStatusActive {
+		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_publication_unavailable", Message: "AWID A2A publication is not active. Ask the address owner to publish an active route, then retry.", Digest: digestValue}
 	}
-	if strings.TrimSpace(lookup.A2A.Verification) != "" && strings.TrimSpace(lookup.A2A.Verification) != "awid_publication_available" {
-		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_publication_unavailable", Message: "AWID publication is not available.", Digest: digestValue}
+	if a2aPublicationAvailability(strings.TrimSpace(lookup.A2A.Verification)) != a2aPublicationAvailable {
+		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_publication_unavailable", Message: "AWID publication is not available. Ask the address owner to check publication and delegation, then retry.", Digest: digestValue}
 	}
 	if lookup.A2A.CardDigest != digestValue {
 		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: awid.A2APublicationCodeCardDigestMismatch, Message: "Served card digest does not match active AWID publication.", Digest: digestValue}
 	}
-	if strings.TrimSpace(lookup.A2A.CardURL) != "" && strings.TrimSpace(lookup.A2A.CardURL) != strings.TrimSpace(cardURL) {
-		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_card_url_mismatch", Message: "Served card URL does not match active AWID publication.", Digest: digestValue}
+	if strings.TrimSpace(lookup.A2A.CardURL) != strings.TrimSpace(cardURL) {
+		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_card_url_mismatch", Message: "Served card URL does not match active AWID publication. Use the card URL published by the address owner.", Digest: digestValue}
 	}
 	return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationAWIDVerified, Code: "awid_publication_verified", Message: "AWID publication active; served card digest matches.", Digest: digestValue}
 }
@@ -625,7 +632,7 @@ func runA2APublish(ctx context.Context, cardURL string) (a2aPublishOutput, error
 	if err != nil {
 		return a2aPublishOutput{}, a2aPublishError("publish A2A route", err)
 	}
-	verification := verifyA2ACardWithAWID(ctx, cardURL, digest.Value, address, registryURL)
+	verification := verifyA2ACardWithAWID(ctx, a2aCardVerification{CardURL: cardURL, Digest: digest.Value, Address: address, RegistryURL: registryURL})
 	return a2aPublishOutput{
 		Address:         address,
 		RegistryURL:     registryURL,
@@ -724,6 +731,9 @@ func resolveA2ACallTarget(ctx context.Context, cardURL string) (a2a.Card, string
 	}
 	iface, err := a2a.SelectJSONRPCInterface(card)
 	if err != nil {
+		return a2a.Card{}, "", a2a.Credential{}, err
+	}
+	if err := a2a.ValidateRPCOrigin(a2a.OriginPair{Source: cardURL, Destination: iface.URL}); err != nil {
 		return a2a.Card{}, "", a2a.Credential{}, err
 	}
 	credential := loadA2ACredentialBestEffort(cardURL, iface.URL)
@@ -835,6 +845,9 @@ func formatA2ATask(task a2a.Task) string {
 		sb.WriteString(fmt.Sprintf("Context: %s\n", termtext.Line(task.ContextID)))
 	}
 	sb.WriteString(fmt.Sprintf("State:   %s\n", termtext.Line(task.Status.State)))
+	if verification, ok := task.Metadata["reply_verification"].(string); ok {
+		sb.WriteString(fmt.Sprintf("Reply:   %s\n", termtext.Line(verification)))
+	}
 	if text := a2aTaskText(task); text != "" {
 		sb.WriteString(fmt.Sprintf("Text:    %s\n", termtext.Block(text)))
 	}

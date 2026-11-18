@@ -52,7 +52,7 @@ func TestGatewayRPCSendMessageImmediateAndScopedGetList(t *testing.T) {
 		t.Fatalf("explicit historyLength=0 should omit history: %#v", getAliceNoHistory)
 	}
 	getUnauthed := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-API-Key": "wrong"}, http.StatusOK)
-	if rpcErrorCode(getUnauthed) != "task_not_found" {
+	if rpcErrorCode(getUnauthed) != "authentication_required" {
 		t.Fatalf("unauthenticated get error code: got %#v", getUnauthed)
 	}
 	listAlice := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-5", "ListTasks", map[string]any{"status": TaskStateWorking}), headers, http.StatusOK)
@@ -155,7 +155,7 @@ func TestGatewayRPCWaitSuccessInputRequiredAndTimeout(t *testing.T) {
 	if _, ok, err := gwTimeout.ApplyBridgeReply(BridgeReply{TaskID: timeoutTask["id"].(string), ContextID: "ctx-3", State: "completed", Text: "Late answer"}); err != nil || !ok {
 		t.Fatalf("late reply should complete timed-out response task: ok=%v err=%v", ok, err)
 	}
-	timeoutGet := postRPC(t, gwTimeout, "/a2a/agents/r_support/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": timeoutTask["id"].(string)}), nil, http.StatusOK)
+	timeoutGet := postRPC(t, gwTimeout, "/a2a/agents/r_support/rpc", rpcEnvelope("req-4", "GetTask", map[string]any{"id": timeoutTask["id"].(string)}), map[string]string{"X-A2A-Task-Token": taskBearerToken(t, timeoutTask)}, http.StatusOK)
 	if got := taskStatus(rpcTaskResult(t, timeoutGet, "")); got != TaskStateCompleted {
 		t.Fatalf("late reply state: got %s", got)
 	}
@@ -244,8 +244,8 @@ func TestGatewayRPCUnscopedPublicListDisabledAndPublicGet(t *testing.T) {
 		t.Fatalf("list error code: got %#v", list)
 	}
 	publicGet := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3a", "GetTask", map[string]any{"id": taskID}), nil, http.StatusOK)
-	if rpcTaskResult(t, publicGet, "")["id"] != taskID {
-		t.Fatal("public route should fetch anonymous task by task id")
+	if rpcErrorCode(publicGet) != "task_not_found" {
+		t.Fatal("anonymous task reads require the issued token")
 	}
 	get := postRPC(t, gw, "/a2a/agents/r_support/rpc", rpcEnvelope("req-3", "GetTask", map[string]any{"id": taskID}), map[string]string{"X-A2A-Task-Token": token}, http.StatusOK)
 	if rpcTaskResult(t, get, "")["id"] != taskID {

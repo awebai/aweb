@@ -131,12 +131,12 @@ func TestA2AGatewayBuildsFromManagedRuntimeConfig(t *testing.T) {
 		switch r.URL.Path {
 		case "/runtime/config/gw-test":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"gateway_id":              "gw-test",
-				"gateway_identity":        "did:aw:gateway",
-				"gateway_identity_status": "active",
-				"config_revision":         "rev-1",
-				"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
-				"provider_extension":      map[string]any{"ignored": true},
+				"gateway_id":       "gw-test",
+				"gateway_identity": "did:aw:gateway",
+				"capabilities":     []string{"recipient_identity_v1"}, "gateway_identity_status": "active",
+				"config_revision":    "rev-1",
+				"expires_at":         time.Now().Add(time.Hour).Format(time.RFC3339),
+				"provider_extension": map[string]any{"ignored": true},
 				"routes": []map[string]any{{
 					"provider_extension": map[string]any{"ignored": true},
 					"route_id":           "r_personal",
@@ -235,9 +235,9 @@ func TestA2AGatewayBuildsFromManagedRuntimeConfig(t *testing.T) {
 func TestA2AGatewayManagedRuntimeDisabledRouteDoesNotBrickGateway(t *testing.T) {
 	cfg := fileConfig{
 		Host:          "a2a.aweb.ai",
-		ManagedConfig: managedConfigForTest("http://ac.invalid", "gw-test", "test-token"),
+		ManagedConfig: managedConfigForTest("https://ac.invalid", "gw-test", "test-token"),
 	}
-	if err := mergeManagedRuntimeConfig(&cfg, managedRuntimeConfigPayload{
+	if err := mergeManagedRuntimeConfig(&cfg, managedRuntimeConfigPayload{Capabilities: []providerCapability{recipientIdentityV1},
 		GatewayID:             "gw-test",
 		GatewayIdentity:       "did:aw:gateway",
 		GatewayIdentityStatus: "active",
@@ -293,12 +293,12 @@ func TestManagedConfigValidationReportsMissingFieldsDeterministically(t *testing
 
 func TestManagedRuntimeConfigRejectsMissingAndMismatchedTopLevelFields(t *testing.T) {
 	valid := map[string]any{
-		"gateway_id":              "gw-test",
-		"gateway_identity":        "did:aw:gateway",
-		"gateway_identity_status": "active",
-		"config_revision":         "rev-1",
-		"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
-		"routes":                  []any{},
+		"gateway_id":       "gw-test",
+		"gateway_identity": "did:aw:gateway",
+		"capabilities":     []string{"recipient_identity_v1"}, "gateway_identity_status": "active",
+		"config_revision": "rev-1",
+		"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
+		"routes":          []any{},
 	}
 	tests := []struct {
 		name   string
@@ -345,7 +345,8 @@ func TestManagedConfigURLsMustBeAbsoluteHTTP(t *testing.T) {
 		bridgeURL string
 		wantError bool
 	}{
-		{name: "valid http", configURL: "http://control.example/config", bridgeURL: "http://bridge.example/a2a"},
+		{name: "remote http refused", configURL: "http://control.example/config", bridgeURL: "http://bridge.example/a2a", wantError: true},
+		{name: "local development http", configURL: "http://127.0.0.1:8080/config", bridgeURL: "http://[::1]:8080/a2a"},
 		{name: "valid https", configURL: "https://control.example/config", bridgeURL: "https://bridge.example/a2a"},
 		{name: "malformed config", configURL: ":// not-a-url", bridgeURL: "https://bridge.example/a2a", wantError: true},
 		{name: "relative config", configURL: "/config", bridgeURL: "https://bridge.example/a2a", wantError: true},
@@ -384,7 +385,7 @@ func TestManagedConfigURLsMustBeAbsoluteHTTP(t *testing.T) {
 }
 
 func TestManagedRuntimeConfigRoutesJSONShape(t *testing.T) {
-	prefix := `{"gateway_id":"gw-test","gateway_identity":"did:aw:gateway","gateway_identity_status":"active","config_revision":"rev-1","expires_at":"2099-01-01T00:00:00Z","routes":`
+	prefix := `{"gateway_id":"gw-test","gateway_identity":"did:aw:gateway","capabilities":["recipient_identity_v1"],"gateway_identity_status":"active","config_revision":"rev-1","expires_at":"2099-01-01T00:00:00Z","routes":`
 	tests := []struct {
 		name       string
 		routesJSON string
@@ -445,7 +446,7 @@ func TestManagedRuntimeConfigRejectsUnusableRouteBinding(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			route := validRoute
 			tt.mutate(&route)
-			payload := managedRuntimeConfigPayload{
+			payload := managedRuntimeConfigPayload{Capabilities: []providerCapability{recipientIdentityV1},
 				GatewayID: "gw-test", GatewayIdentity: "did:aw:gateway", GatewayIdentityStatus: "active",
 				ConfigRevision: "rev-1", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339), Routes: []managedRuntimeRoute{route},
 			}
@@ -470,7 +471,7 @@ func TestManagedRuntimeConfigRejectsAmbiguousRouteTopology(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			payload := managedRuntimeConfigPayload{
+			payload := managedRuntimeConfigPayload{Capabilities: []providerCapability{recipientIdentityV1},
 				GatewayID: "gw-test", GatewayIdentity: "did:aw:gateway", GatewayIdentityStatus: "active",
 				ConfigRevision: "rev-1", ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339), Routes: tt.routes,
 			}
@@ -528,8 +529,9 @@ func TestManagedBridgeCapturedOldGenerationFailsClosedAfterRouteRevision(t *test
 			defer server.Close()
 
 			oldConfig := fileConfig{
-				ManagedConfig: managedConfig{BridgeURL: server.URL, GatewayID: "gw-test", BearerToken: "token"},
-				Routes:        []routeConfig{{RouteID: "old-route", Address: "gateway.example/agent"}},
+				ManagedRuntime: managedRuntimeMeta{RecipientIdentityAvailable: true},
+				ManagedConfig:  managedConfig{BridgeURL: server.URL, GatewayID: "gw-test", BearerToken: "token"},
+				Routes:         []routeConfig{{RouteID: "old-route", Address: "gateway.example/agent"}},
 			}
 			transport, err := managedBridgeTransportFromConfig(oldConfig)
 			if err != nil {
@@ -583,7 +585,7 @@ func TestManagedGatewayCapturedGenerationFailsClosedAcrossRefresh(t *testing.T) 
 	defer server.Close()
 
 	payloadFor := func(revision, routeID string) managedRuntimeConfigPayload {
-		return managedRuntimeConfigPayload{
+		return managedRuntimeConfigPayload{Capabilities: []providerCapability{recipientIdentityV1},
 			GatewayID: "gw-test", GatewayIdentity: "did:aw:gateway", GatewayIdentityStatus: "active",
 			ConfigRevision: revision, ExpiresAt: time.Now().Add(time.Hour).Format(time.RFC3339),
 			Routes: []managedRuntimeRoute{{
@@ -656,7 +658,12 @@ func TestManagedGatewayCapturedGenerationFailsClosedAcrossRefresh(t *testing.T) 
 	}
 	cancelBody := fmt.Sprintf(`{"jsonrpc":"2.0","id":"cancel-old","method":"CancelTask","params":{"id":%q}}`, taskID)
 	postRefreshCancel := call(oldGateway, "/a2a/agents/old-route/rpc", cancelBody, map[string]string{"X-A2A-Task-Token": token})
-	if postRefreshCancel["result"] == nil {
+	errorObj, ok := postRefreshCancel["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing failed-notice error: %#v", postRefreshCancel)
+	}
+	errorData, ok := errorObj["data"].(map[string]any)
+	if !ok || errorData["code"] != "cancel_notification_failed" {
 		t.Fatalf("captured old task state was not retained for cancel: %#v", postRefreshCancel)
 	}
 	mu.Lock()
@@ -707,11 +714,11 @@ func TestA2AGatewayLoadsExplicitManagedEnvWhenConfigFileMissing(t *testing.T) {
 			t.Fatalf("unexpected managed request %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"gateway_id":              "gw-test",
-			"gateway_identity":        "did:aw:gateway",
-			"gateway_identity_status": "active",
-			"config_revision":         "rev-env",
-			"expires_at":              time.Now().Add(time.Hour).Format(time.RFC3339),
+			"gateway_id":       "gw-test",
+			"gateway_identity": "did:aw:gateway",
+			"capabilities":     []string{"recipient_identity_v1"}, "gateway_identity_status": "active",
+			"config_revision": "rev-env",
+			"expires_at":      time.Now().Add(time.Hour).Format(time.RFC3339),
 			"routes": []map[string]any{{
 				"route_id":      "r_personal",
 				"host":          "a2a.aweb.ai",
@@ -770,12 +777,12 @@ func TestA2AGatewayRejectsExpiredManagedRuntimeConfig(t *testing.T) {
 	tmp := t.TempDir()
 	managedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"gateway_id":              "gw-test",
-			"gateway_identity":        "did:aw:gateway",
-			"gateway_identity_status": "active",
-			"config_revision":         "rev-expired",
-			"expires_at":              time.Now().Add(-time.Minute).Format(time.RFC3339),
-			"routes":                  []map[string]any{},
+			"gateway_id":       "gw-test",
+			"gateway_identity": "did:aw:gateway",
+			"capabilities":     []string{"recipient_identity_v1"}, "gateway_identity_status": "active",
+			"config_revision": "rev-expired",
+			"expires_at":      time.Now().Add(-time.Minute).Format(time.RFC3339),
+			"routes":          []map[string]any{},
 		})
 	}))
 	defer managedServer.Close()
@@ -863,10 +870,10 @@ func TestA2AGatewayManagedRefreshFailureKeepsLastGoodRoutes(t *testing.T) {
 	cfg := fileConfig{
 		Host:          "a2a.aweb.ai",
 		RegistryURL:   registry.URL,
-		ManagedConfig: managedConfigForTest("http://ac.invalid", "a2a-gateway", "test-token"),
+		ManagedConfig: managedConfigForTest("https://ac.invalid", "a2a-gateway", "test-token"),
 	}
 	expiresAt := time.Now().Add(time.Hour).Format(time.RFC3339)
-	if err := mergeManagedRuntimeConfig(&cfg, managedRuntimeConfigPayload{
+	if err := mergeManagedRuntimeConfig(&cfg, managedRuntimeConfigPayload{Capabilities: []providerCapability{recipientIdentityV1},
 		GatewayID:             "a2a-gateway",
 		GatewayIdentity:       "did:aw:gateway",
 		GatewayIdentityStatus: "active",
@@ -944,7 +951,7 @@ func TestA2AGatewayManagedRefreshExtendsAcceptWindowForStableRevision(t *testing
 		ManagedConfig: managedConfigForTest(managedServer.URL, "a2a-gateway", "test-token"),
 	}
 	expiresAt := time.Now().Add(2 * time.Second).Format(time.RFC3339)
-	payload := managedRuntimeConfigPayload{
+	payload := managedRuntimeConfigPayload{Capabilities: []providerCapability{recipientIdentityV1},
 		GatewayID:             "a2a-gateway",
 		GatewayIdentity:       "did:aw:gateway",
 		GatewayIdentityStatus: "active",
@@ -1029,7 +1036,7 @@ func TestA2AGatewayManagedRefreshSwapsUnderLoad(t *testing.T) {
 	defer managedServer.Close()
 
 	payloadForRevision := func(revision string) managedRuntimeConfigPayload {
-		return managedRuntimeConfigPayload{
+		return managedRuntimeConfigPayload{Capabilities: []providerCapability{recipientIdentityV1},
 			GatewayID:             "a2a-gateway",
 			GatewayIdentity:       "did:aw:gateway-" + revision,
 			GatewayIdentityStatus: "active",
@@ -1130,11 +1137,11 @@ func TestA2AGatewayRuntimeHealthReportsManagedConfig(t *testing.T) {
 			t.Fatalf("unexpected managed request %s %s", r.Method, r.URL.Path)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"gateway_id":              "gw-test",
-			"gateway_identity":        "did:aw:gateway",
-			"gateway_identity_status": "active",
-			"config_revision":         "gw-test:42",
-			"expires_at":              expiresAt,
+			"gateway_id":       "gw-test",
+			"gateway_identity": "did:aw:gateway",
+			"capabilities":     []string{"recipient_identity_v1"}, "gateway_identity_status": "active",
+			"config_revision": "gw-test:42",
+			"expires_at":      expiresAt,
 			"routes": []map[string]any{{
 				"route_id":      "r_personal",
 				"host":          "a2a.aweb.ai",

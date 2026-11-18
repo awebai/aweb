@@ -11,6 +11,14 @@ type AuditSink interface {
 	RecordA2A(AuditEvent)
 }
 
+type AuditOutcome string
+
+const (
+	AuditOK      AuditOutcome = "ok"
+	AuditDenied  AuditOutcome = "denied"
+	AuditIgnored AuditOutcome = "ignored"
+)
+
 type AuditEvent struct {
 	Stage               string `json:"stage"`
 	RequestID           string `json:"request_id,omitempty"`

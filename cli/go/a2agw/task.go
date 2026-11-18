@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/awebai/aw/awid"
 )
 
 const (
@@ -61,11 +63,12 @@ type BridgeCancel struct {
 }
 
 type BridgeReply struct {
-	TaskID    string
-	ContextID string
-	State     string
-	Text      string
-	Artifacts []Artifact
+	TaskID       string
+	ContextID    string
+	State        string
+	Text         string
+	Artifacts    []Artifact
+	Verification awid.VerificationStatus
 }
 
 type Task struct {
@@ -130,7 +133,21 @@ func newTaskStore(now func() time.Time) *taskStore {
 	return &taskStore{tasks: map[string]*taskRecord{}, now: now}
 }
 
-func (s *taskStore) create(routeID, callerScope, requestID string, message A2AMessage, ttl time.Duration) (*taskRecord, error) {
+var errTaskLimit = errors.New("too many active tasks")
+
+type taskCreation struct {
+	RouteID     string
+	CallerScope string
+	RequestID   string
+	Message     A2AMessage
+	TTL         time.Duration
+	MaxActive   int
+}
+
+// create owns expiry and atomic per-route task admission (docs/a2a.md:801-809).
+func (s *taskStore) create(input taskCreation) (*taskRecord, error) {
+	routeID, callerScope, requestID := input.RouteID, input.CallerScope, input.RequestID
+	message, ttl, maxActive := input.Message, input.TTL, input.MaxActive
 	taskID, err := newUUIDv4()
 	if err != nil {
 		return nil, err
@@ -165,14 +182,36 @@ func (s *taskStore) create(routeID, callerScope, requestID string, message A2AMe
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked()
+	if maxActive > 0 {
+		active := 0
+		for _, existing := range s.tasks {
+			if existing.RouteID == routeID && !existing.Terminal {
+				active++
+			}
+		}
+		if active >= maxActive {
+			return nil, errTaskLimit
+		}
+	}
 	s.tasks[taskID] = record
 	s.order = append(s.order, taskID)
+	// Reclaim idle stores too: expiry is storage lifetime, not just a read filter.
+	time.AfterFunc(ttl, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.pruneExpiredLocked()
+	})
 	return cloneRecord(record), nil
 }
 
-func (s *taskStore) getVisible(routeID, callerScope, token, taskID string) (*taskRecord, bool) {
+type taskAccess struct{ RouteID, CallerScope, Token, TaskID string }
+
+func (s *taskStore) getVisible(access taskAccess) (*taskRecord, bool) {
+	routeID, callerScope, token, taskID := access.RouteID, access.CallerScope, access.Token, access.TaskID
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked()
 	record, ok := s.tasks[taskID]
 	if !ok || record.RouteID != routeID || s.expiredLocked(record) {
 		return nil, false
@@ -183,22 +222,18 @@ func (s *taskStore) getVisible(routeID, callerScope, token, taskID string) (*tas
 	return cloneRecord(record), true
 }
 
-func (s *taskStore) getPublicAnonymous(routeID, taskID string) (*taskRecord, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	record, ok := s.tasks[taskID]
-	if !ok || record.RouteID != routeID || s.expiredLocked(record) {
-		return nil, false
-	}
-	if record.CallerScope != "anonymous:unscoped" {
-		return nil, false
-	}
-	return cloneRecord(record), true
+type taskListQuery struct {
+	RouteID, CallerScope, Status, ContextID string
+	Limit                                   int
+	IncludeArtifacts                        bool
 }
 
-func (s *taskStore) listVisible(routeID, callerScope, status, contextID string, limit int, includeArtifacts bool) []Task {
+func (s *taskStore) listVisible(query taskListQuery) []Task {
+	routeID, callerScope, status, contextID := query.RouteID, query.CallerScope, query.Status, query.ContextID
+	limit, includeArtifacts := query.Limit, query.IncludeArtifacts
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pruneExpiredLocked()
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
@@ -224,21 +259,6 @@ func (s *taskStore) listVisible(routeID, callerScope, status, contextID string, 
 		}
 	}
 	return out
-}
-
-func (s *taskStore) activeCount(routeID, callerScope string) int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	count := 0
-	for _, record := range s.tasks {
-		if record == nil || record.RouteID != routeID || record.Terminal || s.expiredLocked(record) {
-			continue
-		}
-		if callerScope == "" || record.CallerScope == callerScope {
-			count++
-		}
-	}
-	return count
 }
 
 func (s *taskStore) updateWorking(taskID string) (*taskRecord, bool) {
@@ -298,6 +318,9 @@ func (s *taskStore) applyReply(reply BridgeReply) (*taskRecord, bool, error) {
 	record.Status = TaskStatus{State: state, Timestamp: formatTime(now), Message: &msg}
 	record.UpdatedAt = now
 	record.Terminal = isTerminalState(state)
+	if reply.Verification != "" {
+		record.Metadata["reply_verification"] = string(reply.Verification)
+	}
 	if len(reply.Artifacts) > 0 {
 		record.Artifacts = cloneArtifacts(reply.Artifacts)
 	} else if messageText != "" {
@@ -353,6 +376,20 @@ func (s *taskStore) updateState(taskID, state string, message *A2AMessage, artif
 
 func (s *taskStore) expiredLocked(record *taskRecord) bool {
 	return !record.ExpiresAt.IsZero() && !s.now().Before(record.ExpiresAt)
+}
+
+func (s *taskStore) pruneExpiredLocked() {
+	order := s.order[:0]
+	for _, id := range s.order {
+		record := s.tasks[id]
+		if record == nil || s.expiredLocked(record) {
+			delete(s.tasks, id)
+		} else {
+			order = append(order, id)
+		}
+	}
+	clear(s.order[len(order):])
+	s.order = order
 }
 
 func (r *taskRecord) visibleTo(callerScope, token string) bool {
