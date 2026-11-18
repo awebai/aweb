@@ -1038,7 +1038,76 @@ def render_editor_page(
   <title>Edit · folio</title>
   {_identity_meta(public_origin)}
   <style>
-    {_FONT_FACE}
+{_editor_styles(root_css=root_css)}
+  </style>
+  <style id="session-theme"></style>
+</head>
+<body>
+  <header class="bar">
+    <span class="brand"><svg viewBox="0 0 48 64" width="18" height="24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5"><path stroke="#b76e17" d="M13 3 C12 17 21 22 43 22"/><path d="M3 32 H43"/><path d="M7 61 C16 47 25 42 43 42"/></g></svg>folio<span class="sub">editing</span></span>
+    <div class="tabs" role="tablist" aria-label="View">
+      <button id="tab-edit" type="button" role="tab" aria-selected="true">Write</button>
+      <button id="tab-preview" type="button" role="tab" aria-selected="false">Preview</button>
+    </div>
+    <div class="actions">
+      <span id="status" class="status" role="status" aria-live="polite"></span>
+      <input id="editor-name" aria-label="Name (optional)" class="ghost-input" type="text" maxlength="120" autocomplete="name" placeholder="Name (optional)">
+      <button id="discard" class="ghost-button" type="button">Discard changes</button>
+      <button id="save" class="save" type="button">Save new version</button>
+    </div>
+  </header>
+  <div id="link-recovery" class="link-recovery" role="alert" tabindex="-1" hidden>
+    <p id="recovery-message">This edit link has expired or been revoked. Your unsaved text is still in the editor.</p>
+    <button id="copy-draft" class="ghost-button" type="button">Copy your text</button>
+    <p id="reopen-instructions">Return to your dashboard and reopen Edit, then paste your text.</p>
+    <p id="copy-status" role="status"></p>
+  </div>
+  <div id="new-version" class="link-recovery" hidden>
+    <p id="new-version-message" role="status"></p>
+    <button id="load-latest" class="ghost-button" type="button">Load latest version</button>
+  </div>
+  <dialog id="load-dialog" class="modal" aria-labelledby="load-title">
+    <div class="modal-card">
+      <h2 id="load-title" class="modal-title">Load the latest version?</h2>
+      <p class="modal-text">Your unsaved changes will be discarded.</p>
+      <div class="modal-actions">
+        <button id="load-cancel" class="ghost-button" type="button" autofocus>Keep editing</button>
+        <button id="load-confirm" class="btn-danger" type="button">Load latest version</button>
+      </div>
+    </div>
+  </dialog>
+  <main class="workspace">
+    <div id="bootstrap-status" class="bootstrap-status" role="status" aria-atomic="true" data-state="loading">Opening the editor…</div>
+    <section id="pane-edit" class="pane pane-edit is-active">
+      <textarea id="body" aria-label="Write" class="editor" spellcheck="false" autofocus disabled placeholder=""></textarea>
+    </section>
+    <section id="pane-preview" class="pane pane-preview" tabindex="0" aria-label="Preview">
+      <article class="surface" id="preview-card">
+{logo_html}        <p class="eyebrow" id="preview-eyebrow">Version {version_number}</p>
+{header_html}        <div class="document-body" id="preview">{preview}</div>
+{footer_html}      </article>
+    </section>
+  </main>
+  <dialog id="discard-dialog" class="modal" aria-labelledby="discard-title">
+    <div class="modal-card">
+      <h2 id="discard-title" class="modal-title">Discard unsaved changes?</h2>
+      <p class="modal-text">This reverts the editor to the last saved version. Your unsaved edits will be lost.</p>
+      <div class="modal-actions">
+        <button id="discard-cancel" class="ghost-button" type="button">Keep editing</button>
+        <button id="discard-confirm" class="btn-danger" type="button">Discard changes</button>
+      </div>
+    </div>
+  </dialog>
+  <script nonce="{escape(nonce, quote=True)}">
+{_editor_script(initial_json=initial_json)}
+  </script>
+</body>
+</html>"""
+
+
+def _editor_styles(*, root_css: str) -> str:
+    """The editor page's stylesheet, with the team theme's root variables."""
+    return f"""    {_FONT_FACE}
     {root_css}
     :root {{
       --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -1172,68 +1241,12 @@ def render_editor_page(
       border: 1px solid var(--danger); background: var(--danger); color: var(--danger-ink);
       border-radius: 2px; padding: 8px 16px; font: inherit; font-size: 0.84rem; font-weight: 600; cursor: pointer;
     }}
-    .btn-danger:hover {{ opacity: 0.92; }}
-  </style>
-  <style id="session-theme"></style>
-</head>
-<body>
-  <header class="bar">
-    <span class="brand"><svg viewBox="0 0 48 64" width="18" height="24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="5.5"><path stroke="#b76e17" d="M13 3 C12 17 21 22 43 22"/><path d="M3 32 H43"/><path d="M7 61 C16 47 25 42 43 42"/></g></svg>folio<span class="sub">editing</span></span>
-    <div class="tabs" role="tablist" aria-label="View">
-      <button id="tab-edit" type="button" role="tab" aria-selected="true">Write</button>
-      <button id="tab-preview" type="button" role="tab" aria-selected="false">Preview</button>
-    </div>
-    <div class="actions">
-      <span id="status" class="status" role="status" aria-live="polite"></span>
-      <input id="editor-name" aria-label="Name (optional)" class="ghost-input" type="text" maxlength="120" autocomplete="name" placeholder="Name (optional)">
-      <button id="discard" class="ghost-button" type="button">Discard changes</button>
-      <button id="save" class="save" type="button">Save new version</button>
-    </div>
-  </header>
-  <div id="link-recovery" class="link-recovery" role="alert" tabindex="-1" hidden>
-    <p id="recovery-message">This edit link has expired or been revoked. Your unsaved text is still in the editor.</p>
-    <button id="copy-draft" class="ghost-button" type="button">Copy your text</button>
-    <p id="reopen-instructions">Return to your dashboard and reopen Edit, then paste your text.</p>
-    <p id="copy-status" role="status"></p>
-  </div>
-  <div id="new-version" class="link-recovery" hidden>
-    <p id="new-version-message" role="status"></p>
-    <button id="load-latest" class="ghost-button" type="button">Load latest version</button>
-  </div>
-  <dialog id="load-dialog" class="modal" aria-labelledby="load-title">
-    <div class="modal-card">
-      <h2 id="load-title" class="modal-title">Load the latest version?</h2>
-      <p class="modal-text">Your unsaved changes will be discarded.</p>
-      <div class="modal-actions">
-        <button id="load-cancel" class="ghost-button" type="button" autofocus>Keep editing</button>
-        <button id="load-confirm" class="btn-danger" type="button">Load latest version</button>
-      </div>
-    </div>
-  </dialog>
-  <main class="workspace">
-    <div id="bootstrap-status" class="bootstrap-status" role="status" aria-atomic="true" data-state="loading">Opening the editor…</div>
-    <section id="pane-edit" class="pane pane-edit is-active">
-      <textarea id="body" aria-label="Write" class="editor" spellcheck="false" autofocus disabled placeholder=""></textarea>
-    </section>
-    <section id="pane-preview" class="pane pane-preview" tabindex="0" aria-label="Preview">
-      <article class="surface" id="preview-card">
-{logo_html}        <p class="eyebrow" id="preview-eyebrow">Version {version_number}</p>
-{header_html}        <div class="document-body" id="preview">{preview}</div>
-{footer_html}      </article>
-    </section>
-  </main>
-  <dialog id="discard-dialog" class="modal" aria-labelledby="discard-title">
-    <div class="modal-card">
-      <h2 id="discard-title" class="modal-title">Discard unsaved changes?</h2>
-      <p class="modal-text">This reverts the editor to the last saved version. Your unsaved edits will be lost.</p>
-      <div class="modal-actions">
-        <button id="discard-cancel" class="ghost-button" type="button">Keep editing</button>
-        <button id="discard-confirm" class="btn-danger" type="button">Discard changes</button>
-      </div>
-    </div>
-  </dialog>
-  <script nonce="{escape(nonce, quote=True)}">
-    (() => {{
+    .btn-danger:hover {{ opacity: 0.92; }}"""
+
+
+def _editor_script(*, initial_json: str) -> str:
+    """The editor page's script: opener exchange, session requests, preview and live refresh."""
+    return f"""    (() => {{
     // The fragment must leave history before storage, parsing or requests.
     let opener = window.location.hash;
     history.replaceState(null, '', window.location.pathname + window.location.search);
@@ -1621,7 +1634,4 @@ def render_editor_page(
     }}
     updateButtons();
     startSession();
-    }})();
-  </script>
-</body>
-</html>"""
+    }})();"""
