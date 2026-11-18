@@ -58,9 +58,11 @@ clarification. The team is aweb team `aweb:juan.aweb.ai`; the coordinator seat
 4. Implement in `./work`, your worktree on your own branch: the smallest correct
    change, tests in both directions for behaviour changes, and conformance
    vectors re-frozen only by a deliberate, reviewed decision. Hand back with the
-   exact SHA and evidence. Single-repository work merges after review per the
-   active team instructions; the coordinator integrates cross-repository
-   combinations and release tags.
+   exact SHA and evidence. Follow [Gate before landing](../../AGENTS.md#gate-before-landing),
+   quoting team instructions v37 (`29072ab2-f5bb-4578-8b88-cb24d6f38b65`): every
+   stage, journeys included, passes at the exact commit before the coordinator
+   lands that gated commit unchanged. Authors do not merge to main; a merge or
+   resolution that creates a new commit must be gated before it lands.
 5. Review from that independently derived model, not only the author's framing.
    Restate the purpose and check each affected site: it fails closed, the status
    is correct, the message is distinct, and the real error is logged. Evidence

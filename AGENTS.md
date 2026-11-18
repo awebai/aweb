@@ -39,9 +39,24 @@ When you finish a task, review your change, get an independent review ACK on
 the exact head SHA, push your branch and send the coordinator a landing
 request. Authors do not merge to main. Who reviews, what the landing request
 carries, the checks you run on the exact head before sending it, and how the
-coordinator lands it and gates main are set in the "Branches and code reviews"
+coordinator lands the gated commit are set in the "Branches and code reviews"
 section of the active team instructions (`aw instructions show`). Follow them
-there; this file does not restate them.
+there.
+
+### Gate before landing
+
+Team instructions v37 (`29072ab2-f5bb-4578-8b88-cb24d6f38b65`), quoting Juan's
+2026-11-18 direction:
+
+> Every stage of the gate, journeys included, has already passed at that exact
+> commit before it lands.
+
+Run all stages through the team's gate VM dispatcher before requesting landing.
+The coordinator lands the reviewed, gated commit unchanged. A merge or conflict
+resolution that creates a different commit needs its own full gate before that
+commit lands. A focused or checks-only pass is partial evidence, not landing
+qualification; a red or flaky full gate prevents landing. A full gate after
+landing does not replace this requirement.
 
 ## Start Here
 

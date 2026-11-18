@@ -17,33 +17,14 @@ rather than choosing silently.
 Never make work-in-progress or temporary branches. Stay on the worktree and
 branch assigned to you.
 
-When you finish a task, stand back and review the code, get an independent
-review, and then keep main in sync. Main is the shared branch and divergence is
-the thing to avoid.
-
-**Ordinary single-repo work: merge it yourself.** After your reviewer ACKs,
-merge your branch to main and merge main back into your branch, from your own
-worktree. Do not wait for anyone. Many agents cannot stay coordinated if
-integration queues behind one of them.
-
-**Ask the coordinator to integrate when the change spans repositories, cuts a
-release tag, or touches production tooling.** There the risk is not your diff
-but the combination: two branches can each pass alone and fail together, and a
-tag must point at one reviewed commit. The coordinator merges those from a
-detached worktree based on `origin/main`, so no working tree is touched and the
-combination is built and tested before it lands.
-
-Either way: never merge work your reviewer has not ACKed, and always merge
-`origin/main` into your branch before handing off, so your reviewer reads it
-against current main rather than against a base that has moved.
-
-That merge does **not** by itself make what was reviewed what lands - it is the
-step that makes a SHA-identity check insufficient, because the branch keeps its
-ACKed tip while its contents change underneath. Before you push, follow "Before
-you push to main" in the active team instructions.
-
-A team without a coordinator self-merges everything; follow your team's active
-instructions rather than assuming this split is universal.
+Get an independent review ACK, publish the exact branch head, and request
+landing from the coordinator. Authors do not merge to main. Follow
+[Gate before landing](../AGENTS.md#gate-before-landing), which quotes team
+instructions v37 (`29072ab2-f5bb-4578-8b88-cb24d6f38b65`): every stage, journeys
+included, passes at the exact commit before landing, and that gated commit lands
+unchanged. Integrate current main before qualifying the final candidate; a new
+merge commit must be gated before it lands. The active team instructions own
+review routing and the landing handoff.
 
 ## Start Here
 
