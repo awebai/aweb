@@ -22,7 +22,7 @@ func (signingKeyPermissionsFix) Plan(_ context.Context, ctx doctorFixContext, ch
 		plan.Status = doctorFixStatusNoop
 		return plan, nil
 	}
-	plan.PlannedMutations = []doctorFixMutation{{Operation: "chmod", Path: path, Description: "Restrict signing key permissions to 0600 without changing its bytes."}}
+	plan.PlannedMutations = []doctorFixMutation{{Operation: doctorFixChmod, permissionMode: privateKeyPermissionMode, Path: path, Description: "Restrict signing key permissions to 0600 without changing its bytes."}}
 	return plan, nil
 }
 func (signingKeyPermissionsFix) Apply(_ context.Context, ctx doctorFixContext, plan doctorFixPlan) (doctorFixPlan, error) {

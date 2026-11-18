@@ -17,6 +17,24 @@ R is refused, including identity R. ID certificates additionally require R in
 the prime subgroup. The stricter ID profile is not substituted for another
 artifact's field, lifetime or authority rules.
 
+The canonical, nonidentity, prime-subgroup public-key requirement is a deliberate
+policy enforced by the shared verifier in every family and all three runtimes,
+including Go and Python. This is an explicit acceptance rule, not merely a move
+of existing calls. The shared vector's `ed25519-small-order-A-0` through `-7`,
+`ed25519-noncanonical-A-identity`, `ed25519-noncanonical-A-x0-sign-bit`, and both
+`ed25519-mixed-order-A-*` cases require refusal in all three; the honest control
+requires acceptance.
+
+All three message verifiers refuse mixed-order R. The shared
+`ed25519-mixed-order-R-honest-A` case has a prime-subgroup public key and a
+mixed-order R; its expected result is `failed` for Go, Python and TypeScript.
+It exercises the message verifier even though its opaque signed bytes come from
+an ID-certificate fixture. Go and Python's native verification reject it;
+TypeScript applies the noncofactored equation explicitly. Ordinary Ed25519
+signing computes R as a scalar multiple of the prime-order base point, so
+released standard signers cannot emit a mixed-order R
+([RFC 8032 section 5.1.6](https://www.rfc-editor.org/rfc/rfc8032.html#section-5.1.6)).
+
 The message-family changes are deliberate: TypeScript refuses mixed-order R
 under ruling `2c74f907-fee7-496f-bba7-1dadbaefee37`; Go refuses identity/small-order
 R under ruling `beb23450-5400-473e-9651-0e25bfb649f9`. The public

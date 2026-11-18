@@ -101,7 +101,7 @@ func (additionalPrivateKeyPermissionsFix) Plan(_ context.Context, ctx doctorFixC
 		return plan, nil
 	}
 	for _, finding := range findings {
-		plan.PlannedMutations = append(plan.PlannedMutations, doctorFixMutation{Operation: "chmod", Path: finding.Path, Description: "Restrict private-key file permissions to 0600 without changing its bytes."})
+		plan.PlannedMutations = append(plan.PlannedMutations, doctorFixMutation{Operation: doctorFixChmod, permissionMode: privateKeyPermissionMode, Path: finding.Path, Description: "Restrict private-key file permissions to 0600 without changing its bytes."})
 	}
 	return plan, nil
 }

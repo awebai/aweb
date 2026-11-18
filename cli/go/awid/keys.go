@@ -140,7 +140,7 @@ func ParseSigningKey(data []byte) (ed25519.PrivateKey, error) {
 }
 
 // parsePrivatePEM owns private-key PEM shape and size validation; algorithm
-// constructors consume its decoded seed (docs/signature-primitives.md:78-81).
+// constructors consume its decoded seed (docs/signature-primitives.md:96-99).
 func parsePrivatePEM(data []byte, kind privateKeyKind) ([]byte, error) {
 	var description string
 	switch kind {
