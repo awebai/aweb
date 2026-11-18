@@ -1,4 +1,10 @@
-"""Real signed team-auth requests across an external AWID key rotation."""
+"""Isolated cache refresh tests with simulated registry and Redis services.
+
+These explicit unadmitted-team fixtures exercise crypto verification, refresh
+coalescing and cooldown behavior. They have no admitted native pin and cannot
+prove key-change authority. Real admitted-pin/controller-act coverage lives in
+test_team_key_pinning.py and test_admitted_team_key_cache.py.
+"""
 
 from __future__ import annotations
 
@@ -8,16 +14,15 @@ import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import awid.registry as registry_module
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import HTTPException
-
-import awid.registry as registry_module
-from awid.registry import CachedRegistryClient
-from team_facts_fixtures import LegacyTeamFacts
-from awid.signing import canonical_json_bytes, sign_message
 from aweb.team_auth_deps import verify_request_certificate
+from awid.registry import CachedRegistryClient
+from awid.signing import canonical_json_bytes, sign_message
+from fastapi import HTTPException
+from team_facts_fixtures import LegacyTeamFacts
 from test_team_auth_deps import (
     _encode_certificate,
     _make_certificate,
@@ -62,6 +67,7 @@ class LegacyCacheRegistry(LegacyTeamFacts, CachedRegistryClient):
 @pytest_asyncio.fixture
 async def world(monkeypatch, aweb_cloud_db):
     monkeypatch.delenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", raising=False)
+    monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "false")
     clock = [1_000_000]
     monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
     old, _, old_did = _make_keypair()
@@ -113,6 +119,14 @@ async def world(monkeypatch, aweb_cloud_db):
                 "team_did_key": env.keys[name],
                 "created_at": "2026-01-01T00:00:00Z",
             },
+        )
+
+    for name in env.keys:
+        assert (
+            await aweb_cloud_db.aweb_db.fetch_value(
+                "SELECT count(*) FROM {{tables.teams}} WHERE team_id=$1", f"{name}:acme.com"
+            )
+            == 0
         )
 
     env.redis = _Redis(clock)
@@ -178,10 +192,10 @@ async def _refused(env, **kwargs):
 
 
 @pytest.mark.asyncio
-async def test_external_rotation_recovers_on_first_request_and_updates_cache(world):
+async def test_unadmitted_registry_key_change_refreshes_verification_inputs(world):
     env = world
-    # The controller rotates outside this client; its old-key certificate still
-    # follows the existing cache freshness policy until the failure refresh.
+    # No admitted pin exists in this cache-only fixture. A simulated registry
+    # response change exercises freshness, not controller rotation authority.
     env.keys["backend"] = env.new_did
     assert (await _verify(env, signer="old"))["verified_team_did_key"] == env.old_did
     assert env.key_reads == 0
@@ -240,7 +254,7 @@ async def test_cooldown_is_shared_by_clients_and_independent_per_team(world):
 
 
 @pytest.mark.asyncio
-async def test_second_rotation_recovers_after_cooldown(world):
+async def test_second_unadmitted_registry_key_change_refreshes_after_cooldown(world):
     env = world
     env.keys["backend"] = env.new_did
     await _verify(env)
