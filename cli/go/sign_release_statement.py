@@ -7,14 +7,13 @@ from pathlib import Path
 import sys
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from ykman.device import list_all_devices
 from yubikit.core.smartcard import SmartCardConnection
 from yubikit.piv import KEY_TYPE, PIN_POLICY, SLOT, TOUCH_POLICY, PivSession
 
 # ykman script supplies sys.argv but does not add the script directory to sys.path.
 sys.path.insert(0, str(Path(sys.argv[0]).resolve().parent))
-from release_manifest import parse_statement  # noqa: E402
+from release_manifest import parse_statement, verify_statement_signature  # noqa: E402
 
 
 def sign_statement(*, serial, public_key_path, statement_path, signature_path):
@@ -22,7 +21,7 @@ def sign_statement(*, serial, public_key_path, statement_path, signature_path):
     statement = statement_path.read_bytes()
     parse_statement(statement)
     public = serialization.load_pem_public_key(public_key_path.read_bytes())
-    if not isinstance(public, Ed25519PublicKey):
+    if KEY_TYPE.from_public_key(public) is not KEY_TYPE.ED25519:
         raise ValueError("expected an Ed25519 public key")
     if signature_path.exists():
         raise FileExistsError(f"{signature_path} exists; choose a new output file")
@@ -62,7 +61,9 @@ def sign_statement(*, serial, public_key_path, statement_path, signature_path):
             message=statement,
             hash_algorithm=None,
         )
-        public.verify(signature, statement)
+        verify_statement_signature(
+            public=public.public_bytes_raw(), signed=signature, statement=statement
+        )
         with signature_path.open("xb") as output:
             output.write(signature)
     print(f"Wrote verified raw Ed25519 signature to {signature_path}")

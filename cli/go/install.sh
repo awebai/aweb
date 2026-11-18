@@ -265,19 +265,10 @@ def create_statement(manifest_bytes):
     return statement
 
 
-def verify_manifest(
-    *, manifest_bytes, signature_bytes, keys, requested_version, running_version=""
-):
-    signature = json.loads(signature_bytes, object_pairs_hook=unique_object)
-    if not isinstance(signature, dict):
-        raise ValueError("release signature envelope must be an object")
-    public = base64.b64decode(keys.get(signature["key_id"], ""), validate=True)
-    signed = base64.b64decode(signature["signature"], validate=True)
-    statement = base64.b64decode(signature["statement"], validate=True)
-    if len(statement) > MAX_STATEMENT_BYTES:
-        raise ValueError("release statement exceeds 256 bytes")
-    if len(public) != 32 or len(signed) != 64:
-        raise ValueError("release signing key is not pinned or signature is malformed")
+def verify_statement_signature(*, public, signed, statement):
+    """Verify raw signatures for docs/install-integrity.md:28-39 in one owner."""
+    if len(public) != 32 or len(signed) != 64 or len(statement) > MAX_STATEMENT_BYTES:
+        raise ValueError("invalid statement signature input")
     # Ed25519 SubjectPublicKeyInfo prefix followed by the pinned public key.
     with tempfile.TemporaryDirectory(prefix="aw-release-verify-") as tmp:
         directory = Path(tmp)
@@ -308,10 +299,28 @@ def verify_manifest(
             raise ValueError(
                 "invalid publisher signature (OpenSSL with Ed25519 support is required)"
             )
+
+
+def verify_manifest(
+    *, manifest_bytes, signature_bytes, keys, requested_version, running_version=""
+):
+    signature = json.loads(signature_bytes, object_pairs_hook=unique_object)
+    if not isinstance(signature, dict):
+        raise ValueError("release signature envelope must be an object")
+    public = base64.b64decode(keys.get(signature["key_id"], ""), validate=True)
+    signed = base64.b64decode(signature["signature"], validate=True)
+    statement = base64.b64decode(signature["statement"], validate=True)
+    if len(statement) > MAX_STATEMENT_BYTES:
+        raise ValueError("release statement exceeds 256 bytes")
+    if len(public) != 32 or len(signed) != 64:
+        raise ValueError("release signing key is not pinned or signature is malformed")
+    verify_statement_signature(public=public, signed=signed, statement=statement)
     statement_version, statement_commit, statement_digest = parse_statement(statement)
     if hashlib.sha256(manifest_bytes).hexdigest() != statement_digest:
         raise ValueError("release manifest digest does not match signed statement")
     manifest = json.loads(manifest_bytes, object_pairs_hook=unique_object)
+    if not isinstance(manifest, dict):
+        raise ValueError("release manifest must be an object")
     if (
         manifest.get("version") != statement_version
         or manifest.get("source_commit") != statement_commit
