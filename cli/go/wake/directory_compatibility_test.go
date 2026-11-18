@@ -47,12 +47,8 @@ func TestWakeSharedStateWarnsOnceWithoutRefusingCommands(t *testing.T) {
 				t.Fatal("inspection changed operator permissions")
 			}
 			_, err = NewChannelCoreRunner(store).bundlePath()
-			if sub == "" {
-				if err == nil || !strings.Contains(err.Error(), "chmod go-w '"+shared+"'") || !strings.Contains(err.Error(), "then retry aw wake") {
-					t.Fatalf("unsafe executable-cache parent was not refused actionably: %v", err)
-				}
-			} else if err != nil {
-				t.Fatalf("non-executable shared state blocked private runner: %v", err)
+			if err != nil {
+				t.Fatalf("shared state blocked runner cache: %v", err)
 			}
 		})
 	}
@@ -72,7 +68,7 @@ func TestRunnerDoesNotRefuseStorageManagedAncestor(t *testing.T) {
 	}
 }
 
-func TestRunnerCacheOwnershipRule(t *testing.T) {
+func TestRunnerExecutionDirectoryOwnershipRule(t *testing.T) {
 	current := uint32(os.Geteuid())
 	for _, tc := range []struct {
 		name   string
@@ -96,5 +92,31 @@ func TestRunnerCacheOwnershipRule(t *testing.T) {
 				t.Fatal("missing repair command")
 			}
 		})
+	}
+}
+
+func TestRunnerTemporaryParentMustProtectPrivateEntries(t *testing.T) {
+	parent := t.TempDir()
+	if err := checkRunnerSnapshotParent(parent); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkRunnerSnapshotParent(parent); err == nil || !strings.Contains(err.Error(), "Ask the system administrator") || !strings.Contains(err.Error(), "retry aw wake") {
+		t.Fatalf("unprotected temporary parent: %v", err)
+	}
+	if err := os.Chmod(parent, 0o777|os.ModeSticky); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkRunnerSnapshotParent(parent); err != nil {
+		t.Fatalf("sticky parent refuses protected entry: %v", err)
+	}
+	snapshot := t.TempDir()
+	if err := os.Chmod(snapshot, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkRunnerSnapshotDirectory(snapshot); err == nil || !strings.Contains(err.Error(), "chmod go-w") || !strings.Contains(err.Error(), "retry aw wake") {
+		t.Fatalf("writable execution directory: %v", err)
 	}
 }

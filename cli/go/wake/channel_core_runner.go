@@ -342,20 +342,21 @@ func (c *ChannelCoreChild) run(ctx context.Context) {
 	}
 }
 
-func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
+func (c *ChannelCoreChild) runOnce(ctx context.Context) (runErr error) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		c.setNode("", "", "system Node executable not found in PATH", false)
 		return errors.New("system Node executable not found in PATH")
 	}
-	bundle, err := c.runner.bundlePath()
+	bundle, err := c.runner.executableSnapshot()
 	if err != nil {
 		c.setNode(node, "", err.Error(), false)
 		return err
 	}
+	defer func() { runErr = errors.Join(runErr, bundle.close()) }()
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(childCtx, node, bundle)
+	cmd := exec.CommandContext(childCtx, node, bundle.Path)
 	configureChildProcess(cmd)
 	pipes, err := openChildPipes()
 	if err != nil {
@@ -381,7 +382,7 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 	}
 	if err := cmd.Start(); err != nil {
 		pipes.closeAll()
-		c.setNode(node, bundle, err.Error(), false)
+		c.setNode(node, bundle.Path, err.Error(), false)
 		return err
 	}
 	pipes.closeChildEnds()
@@ -397,7 +398,7 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 	}
 	c.ownedProcessGroups = append(retained, cmd.Process.Pid)
 	c.mu.Unlock()
-	c.setNode(node, bundle, "", false)
+	c.setNode(node, bundle.Path, "", false)
 	go func() {
 		defer close(writerDone)
 		enc := json.NewEncoder(pipes.stdinWriter)
@@ -757,16 +758,12 @@ func (c *ChannelCoreChild) setError(err error) {
 
 // bundlePath implements docs/wake-runner-integrity.md:3-18.
 func (r *ChannelCoreRunner) bundlePath() (string, error) {
-	if err := checkRunnerCacheDirectory(r.store.Dir()); err != nil {
-		return "", err
-	}
+	warnWakeDirectory(r.store.Dir())
 	root := filepath.Join(r.store.Dir(), "channel-core")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return "", err
 	}
-	if err := checkRunnerCacheDirectory(root); err != nil {
-		return "", err
-	}
+	warnWakeDirectory(root)
 	// A released older aw trusts this marker. Invalidate it before repairing
 	// bytes so a later downgrade cannot mistake this bundle for the older one.
 	if err := os.Remove(filepath.Join(root, "runner.sha256")); err != nil && !os.IsNotExist(err) {

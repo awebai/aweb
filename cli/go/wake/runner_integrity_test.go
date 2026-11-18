@@ -92,24 +92,62 @@ func TestRunnerCacheDoesNotWriteThroughSymlink(t *testing.T) {
 	}
 }
 
-func TestRunnerRefusesSharedWritableCache(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX permissions")
-	}
+func TestRunnerExecutesPrivateSnapshotOfSharedCache(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(store.Dir(), "channel-core")
-	if err := os.Mkdir(dir, 0700); err != nil {
+	runner := NewChannelCoreRunner(store)
+	cache, err := runner.bundlePath()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0777); err != nil {
+	expected, err := os.ReadFile(cache)
+	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewChannelCoreRunner(store).bundlePath()
-	if err == nil || !strings.Contains(err.Error(), "then retry aw wake.") {
-		t.Fatalf("missing actionable unsafe cache refusal: %v", err)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(filepath.Dir(cache), 0o777); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := runner.executableSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := snapshot.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if strings.HasPrefix(snapshot.Path, store.Dir()+string(os.PathSeparator)) {
+		t.Fatal("execution snapshot remains in shared state")
+	}
+	if err := os.WriteFile(cache, []byte("changed after verification"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(snapshot.Path)
+	if err != nil || !bytes.Equal(got, expected) {
+		t.Fatalf("cache mutation changed execution bytes: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		fileInfo, err := os.Stat(snapshot.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		directoryInfo, err := os.Stat(snapshot.directory)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fileInfo.Mode().Perm() != 0o600 || directoryInfo.Mode().Perm() != 0o700 {
+			t.Fatal("execution snapshot is not private")
+		}
+	}
+	if err := snapshot.close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(snapshot.directory); !os.IsNotExist(err) {
+		t.Fatalf("snapshot cleanup: %v", err)
 	}
 }
 

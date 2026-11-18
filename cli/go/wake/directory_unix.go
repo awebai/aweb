@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -66,13 +67,34 @@ func (directory wakeDirectoryPermissions) writableByAnotherUser() bool {
 	return directory.Mode.Perm()&0o022 != 0 || (directory.Owner != uint32(os.Geteuid()) && directory.Owner != 0)
 }
 
-func checkRunnerCacheDirectory(path string) error {
+func checkRunnerSnapshotDirectory(path string) error {
 	directory, err := inspectWakeDirectory(path)
 	if err != nil {
 		return err
 	}
 	if directory.writableByAnotherUser() {
-		return fmt.Errorf("unsafe executable-cache directory %s: another user can replace runner bytes. Run %s, or choose a private --state-dir, then retry aw wake.", path, directory.repairAdvice())
+		return fmt.Errorf("unsafe private runner directory %s: another user can replace runner bytes. Run %s, or choose a private --state-dir, then retry aw wake.", path, directory.repairAdvice())
+	}
+	return nil
+}
+
+// The system's sticky temporary directory protects a newly created private
+// snapshot from renames by other UIDs, independently of mounted state volumes.
+func runnerSnapshotRoot() string {
+	if runtime.GOOS == "darwin" {
+		return "/private/tmp"
+	}
+	return "/tmp"
+}
+
+func checkRunnerSnapshotParent(path string) error {
+	directory, err := inspectWakeDirectory(path)
+	if err != nil {
+		return err
+	}
+	foreignOwner := directory.Owner != 0 && directory.Owner != uint32(os.Geteuid())
+	if foreignOwner || (directory.Mode.Perm()&0o022 != 0 && directory.Mode&os.ModeSticky == 0) {
+		return fmt.Errorf("unsafe system temporary directory %s. Ask the system administrator to restore its ownership and sticky permissions, then retry aw wake.", path)
 	}
 	return nil
 }

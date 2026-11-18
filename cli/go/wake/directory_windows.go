@@ -2,6 +2,10 @@
 
 package wake
 
-// Access to Windows state and executable-cache directories is governed by ACLs.
-func warnWakeDirectory(path string)               {}
-func checkRunnerCacheDirectory(path string) error { return nil }
+import "os"
+
+// Access to Windows state and private snapshot directories is governed by ACLs.
+func warnWakeDirectory(path string)                  {}
+func checkRunnerSnapshotDirectory(path string) error { return nil }
+func checkRunnerSnapshotParent(path string) error    { return nil }
+func runnerSnapshotRoot() string                     { return os.TempDir() }
