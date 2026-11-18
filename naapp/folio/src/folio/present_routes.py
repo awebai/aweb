@@ -1,11 +1,17 @@
-"""The human-facing presentation routes: read-only pages, the editor and its session."""
+"""The human-facing presentation routes: read-only pages, the editor and its session.
+
+Image bytes are served only under the capability that shows them (docs/sot.md,
+Images): a live read-only link at /present/<token>/assets/<uuid>, an edit
+session at /present/edit/<id>/assets/<uuid>. The Markdown reference
+/assets/<uuid> names an image; nothing serves it.
+"""
 
 import secrets
 from collections.abc import Callable
 from typing import Annotated, Any
 from uuid import UUID
 
-from aweb_naapp.runtime.app import NOINDEX_ROBOTS_HEADER, NaappRuntime
+from aweb_naapp.runtime.app import NaappRuntime
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from pgdbm import AsyncDatabaseManager
@@ -13,7 +19,8 @@ from pgdbm import AsyncDatabaseManager
 from folio import edit_sessions
 from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings
-from folio.installation_access import presented_document
+from folio.images import image_response
+from folio.installation_access import presented_document, presented_image
 from folio.models import (
     PresentationEditRequest,
     PresentationEditResponse,
@@ -32,7 +39,7 @@ from folio.repository import (
     _allowed_assets_for_body,
     _theme_from_row,
     append_presented_version,
-    get_public_asset,
+    get_team_image,
 )
 
 
@@ -50,7 +57,17 @@ def mount_presentation_routes(
     """
     resolved = settings
 
-    def presentation_asset_embeds(allowed_assets: object) -> dict[UUID, dict[str, str]]:
+    origin = resolved.public_origin.rstrip("/")
+
+    def presented_image_url(token: str) -> Callable[[UUID], str]:
+        return lambda asset_id: f"{origin}/present/{token}/assets/{asset_id}"
+
+    def session_image_url(link_id: str) -> Callable[[UUID], str]:
+        return lambda asset_id: f"{origin}/present/edit/{link_id}/assets/{asset_id}"
+
+    def presentation_asset_embeds(
+        allowed_assets: object, *, image_url: Callable[[UUID], str]
+    ) -> dict[UUID, dict[str, str]]:
         if not isinstance(allowed_assets, dict):
             return {}
         embeds: dict[UUID, dict[str, str]] = {}
@@ -59,10 +76,7 @@ def mount_presentation_routes(
                 continue
             kind = str(raw.get("kind") or "")
             if kind == "image":
-                embeds[asset_id] = {
-                    "kind": "image",
-                    "url": f"{resolved.public_origin.rstrip('/')}/assets/{asset_id}",
-                }
+                embeds[asset_id] = {"kind": "image", "url": image_url(asset_id)}
             elif kind == "video":
                 status = str(raw.get("stream_status") or "pending_upload")
                 embed = {"kind": "video", "status": status}
@@ -77,29 +91,48 @@ def mount_presentation_routes(
                 embeds[asset_id] = embed
         return embeds
 
-    @app.get("/assets/{asset_id}")
-    async def asset_route(
+    @app.get("/present/{token}/assets/{asset_id}")
+    async def presented_image_route(
+        token: str,
         asset_id: UUID,
         database: Annotated[AsyncDatabaseManager, Depends(db)],
     ) -> Response:
-        asset = await get_public_asset(database, asset_id=asset_id)
-        return Response(
-            content=asset["bytes"],
-            media_type=str(asset["content_type"]),
-            headers={
-                "X-Content-Type-Options": "nosniff",
-                "X-Robots-Tag": NOINDEX_ROBOTS_HEADER,
-            },
-        )
+        image = await presented_image(database, runtime=runtime, token=token, asset_id=asset_id)
+        return image_response(image)
+
+    @app.get("/present/edit/{link_id}/assets/{asset_id}")
+    async def session_image_route(
+        link_id: str,
+        asset_id: UUID,
+        request: Request,
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> Response:
+        # The editor previews unsaved drafts, so a session reads any of its team's images.
+        async with edit_sessions.access(
+            database,
+            runtime,
+            link_id=link_id,
+            credential=request.headers.get(edit_sessions.SESSION_HEADER),
+        ) as (tx, link):
+            image = await get_team_image(tx, team_id=link["team_id"], asset_id=asset_id)
+        return image_response(image)
 
     async def edit_snapshot(
-        database: AsyncDatabaseManager, team_id: str, body: str, version_number: int, assets: dict
+        database: AsyncDatabaseManager,
+        *,
+        link_id: str,
+        team_id: str,
+        body: str,
+        version_number: int,
+        assets: dict,
     ) -> dict:
         row = await database.fetch_one(
             "SELECT tokens,logo_asset_id,header,footer FROM {{tables.themes}} WHERE team_id=$1",
             team_id,
         )
-        theme = _theme_from_row(row, public_origin=resolved.public_origin) if row else None
+        theme = _theme_from_row(row, public_origin=None) if row else None
+        image_url = session_image_url(link_id)
+        logo_asset_id = (theme or {}).get("logo_asset_id")
         return {
             "body": body,
             "version_number": version_number,
@@ -107,12 +140,12 @@ def mount_presentation_routes(
                 "css": _editor_theme_css(theme),
                 "header": (theme or {}).get("header"),
                 "footer": (theme or {}).get("footer"),
-                "logo_url": (theme or {}).get("logo_url"),
+                "logo_url": image_url(logo_asset_id) if logo_asset_id is not None else None,
             },
             "html": render_presented_markdown(
                 body,
                 public_origin=resolved.public_origin,
-                asset_embeds=presentation_asset_embeds(assets),
+                asset_embeds=presentation_asset_embeds(assets, image_url=image_url),
             ),
         }
 
@@ -128,7 +161,7 @@ def mount_presentation_routes(
                 public_origin=resolved.public_origin,
             ),
             headers={
-                "Content-Security-Policy": f"default-src 'self'; img-src 'self'; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'"
+                "Content-Security-Policy": f"default-src 'self'; img-src 'self' blob:; script-src 'nonce-{nonce}'; style-src 'unsafe-inline' 'self'; base-uri 'none'; frame-ancestors 'none'"
             },
         )
 
@@ -155,7 +188,12 @@ def mount_presentation_routes(
         return {
             "session_secret": credential,
             **await edit_snapshot(
-                database, current["team_id"], current["body"], current["version_number"], assets
+                database,
+                link_id=link_id,
+                team_id=current["team_id"],
+                body=current["body"],
+                version_number=current["version_number"],
+                assets=assets,
             ),
         }
 
@@ -189,7 +227,12 @@ def mount_presentation_routes(
             database, team_id=link["team_id"], body=state["body"]
         )
         return await edit_snapshot(
-            database, link["team_id"], state["body"], state["version_number"], assets
+            database,
+            link_id=link_id,
+            team_id=link["team_id"],
+            body=state["body"],
+            version_number=state["version_number"],
+            assets=assets,
         )
 
     @app.post("/present/edit/{link_id}/edit", response_model=PresentationEditResponse)
@@ -233,7 +276,7 @@ def mount_presentation_routes(
         html = render_presented_markdown(
             payload.body,
             public_origin=resolved.public_origin,
-            asset_embeds=presentation_asset_embeds(assets),
+            asset_embeds=presentation_asset_embeds(assets, image_url=session_image_url(link_id)),
         )
         return HTMLResponse(
             html,
@@ -249,10 +292,9 @@ def mount_presentation_routes(
     ) -> HTMLResponse:
         presented = await presented_document(database, runtime=runtime, token=token)
         theme = presented.get("theme")
+        image_url = presented_image_url(token)
         if isinstance(theme, dict) and theme.get("logo_asset_id") is not None:
-            theme["logo_url"] = (
-                f"{resolved.public_origin.rstrip('/')}/assets/{theme['logo_asset_id']}"
-            )
+            theme["logo_url"] = image_url(theme["logo_asset_id"])
         if bool(presented.get("editable")):
             raise edit_sessions.unavailable()
         nonce = secrets.token_urlsafe(16)
@@ -264,7 +306,9 @@ def mount_presentation_routes(
                 body=str(presented["body"]),
                 theme=theme,
                 public_origin=resolved.public_origin,
-                asset_embeds=presentation_asset_embeds(presented.get("allowed_assets")),
+                asset_embeds=presentation_asset_embeds(
+                    presented.get("allowed_assets"), image_url=image_url
+                ),
                 nonce=nonce,
             ),
             headers={

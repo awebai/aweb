@@ -514,6 +514,24 @@ def _safe_image_src(
     return src.strip()
 
 
+def _served_image_src(
+    src: str,
+    *,
+    public_origin: str | None,
+    image_asset_ids: set[UUID],
+    image_urls: dict[UUID, str],
+) -> str | None:
+    """The ``src`` a viewer loads for a validated asset reference: the URL the
+    caller's capability serves it at, or the reference itself when none is given."""
+    reference = _safe_image_src(src, public_origin=public_origin, image_asset_ids=image_asset_ids)
+    if reference is None:
+        return None
+    asset_id = _asset_id_from_same_origin_src(reference, public_origin=public_origin)
+    if asset_id is None:
+        return None
+    return image_urls.get(asset_id, reference)
+
+
 def _video_iframe_html(*, iframe_url: str, title: str) -> str:
     safe_url = escape(iframe_url, quote=True)
     safe_title = escape(title or "Embedded video", quote=True)
@@ -695,9 +713,18 @@ def render_presented_markdown(
     allowed_asset_ids: set[UUID] | None = None,
     asset_embeds: dict[UUID, dict[str, str]] | None = None,
 ) -> str:
-    """Render Markdown to sanitized HTML safe for unauthenticated public pages."""
+    """Render Markdown to sanitized HTML safe for unauthenticated public pages.
+
+    The body names images by reference (``/assets/<uuid>``). An image embed's
+    ``url`` is where the viewer's capability serves it, and becomes its ``src``.
+    """
 
     embeds = asset_embeds or {}
+    image_urls = {
+        asset_id: embed["url"]
+        for asset_id, embed in embeds.items()
+        if str(embed.get("kind") or "image") == "image" and embed.get("url")
+    }
     image_asset_ids = {
         asset_id
         for asset_id, embed in embeds.items()
@@ -723,8 +750,11 @@ def render_presented_markdown(
             kept = " ".join(token for token in value.split() if token.startswith("folio-"))
             return kept or None
         if tag == "img" and attribute == "src":
-            return _safe_image_src(
-                value, public_origin=public_origin, image_asset_ids=image_asset_ids
+            return _served_image_src(
+                value,
+                public_origin=public_origin,
+                image_asset_ids=image_asset_ids,
+                image_urls=image_urls,
             )
         return value
 
@@ -1246,18 +1276,52 @@ def render_editor_page(
 
     let previewTimer = null;
     let previewSeq = 0;
+    // Images are served to this edit session only, so each is fetched with the
+    // session header and shown from a blob: URL. An image the session cannot
+    // read (revoked, removed, another team's) is left unshown.
+    const sessionImagePrefix = endpoint + '/assets/';
+    const sessionImages = new Map();
+    function sessionImagePath(source) {{
+      try {{
+        const url = new URL(source || '', window.location.href);
+        if (url.origin === window.location.origin && url.pathname.startsWith(sessionImagePrefix)
+            && !url.search && !url.hash) return url.pathname;
+      }} catch (err) {{ /* not a URL: not a session image */ }}
+      return null;
+    }}
+    function showSessionImage(img, source) {{
+      img.removeAttribute('src');
+      img.dataset.folioSource = source || '';
+      const path = sessionImagePath(source);
+      if (path === null) return;
+      if (!sessionImages.has(path)) {{
+        sessionImages.set(path, sessionFetch(path.slice(endpoint.length))
+          .then(async (response) => response.ok ? URL.createObjectURL(await response.blob()) : null)
+          .catch(() => null));
+      }}
+      sessionImages.get(path).then((blobUrl) => {{
+        if (blobUrl === null) {{ sessionImages.delete(path); return; }}
+        if (img.dataset.folioSource === source) img.src = blobUrl;
+      }});
+    }}
+    let shownBlocks = new Set();
     function applyPreview(html) {{
-      // Compare against the current blocks (ignoring any prior highlight) and
-      // briefly flash the blocks that changed.
-      for (const el of previewEl.children) el.classList.remove('folio-changed');
-      const prev = new Set([...previewEl.children].map((el) => el.outerHTML));
-      previewEl.innerHTML = html;
-      for (const el of previewEl.children) {{
-        if (!prev.has(el.outerHTML)) {{
+      // Parse in an inert template, so no image request leaves without the
+      // session header, then briefly flash the blocks whose HTML changed.
+      const incoming = document.createElement('template');
+      incoming.innerHTML = html;
+      const blocks = [...incoming.content.children].map((el) => [el, el.outerHTML]);
+      const images = [...incoming.content.querySelectorAll('img')].map((img) => [img, img.getAttribute('src')]);
+      for (const [img] of images) img.removeAttribute('src');
+      previewEl.replaceChildren(incoming.content);
+      for (const [img, source] of images) showSessionImage(img, source);
+      for (const [el, key] of blocks) {{
+        if (!shownBlocks.has(key)) {{
           el.classList.add('folio-changed');
           setTimeout(() => el.classList.remove('folio-changed'), 1700);
         }}
       }}
+      shownBlocks = new Set(blocks.map(([, key]) => key));
     }}
     async function refreshPreview() {{
       if (unavailable || !ready) return;
@@ -1445,7 +1509,7 @@ def render_editor_page(
         }}
         let logo = previewCard.querySelector('.brand-logo');
         if (!logo && state.theme.logo_url) {{ logo = document.createElement('img'); logo.className='brand-logo'; logo.alt='Team logo'; previewCard.prepend(logo); }}
-        if (logo) {{ logo.hidden = !state.theme.logo_url; if (state.theme.logo_url) logo.src=state.theme.logo_url; }}
+        if (logo) {{ logo.hidden = !state.theme.logo_url; if (state.theme.logo_url) showSessionImage(logo, state.theme.logo_url); }}
       }}
       savedBody = state.body;
       baseVersion = state.version_number;

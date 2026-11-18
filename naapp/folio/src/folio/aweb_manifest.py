@@ -269,6 +269,20 @@ MANIFEST: dict[str, Any] = {
             "mutation": False,
         },
         {
+            "name": "asset-content",
+            "description": "Read an image asset's bytes.",
+            "method": "GET",
+            "path": "/v1/assets/{asset_id}/content",
+            "input_schema": {
+                "type": "object",
+                "properties": {"asset_id": {"type": "string"}},
+                "required": ["asset_id"],
+            },
+            "params": [{"name": "asset_id", "in": "path"}],
+            "scopes": ["folio:read"],
+            "mutation": False,
+        },
+        {
             "name": "billing",
             "description": "Get the team's usage: documents and the most versions on any document.",
             "method": "GET",

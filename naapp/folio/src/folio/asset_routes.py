@@ -1,4 +1,4 @@
-"""Team members' asset routes: upload, video direct upload and metadata."""
+"""Team members' asset routes: upload, video direct upload, metadata and image bytes."""
 
 from collections.abc import Callable
 from typing import Annotated, Any
@@ -6,9 +6,11 @@ from uuid import UUID
 
 from aweb_naapp.runtime.team_auth import Principal
 from fastapi import Depends, FastAPI
+from fastapi.responses import Response
 from pgdbm import AsyncDatabaseManager
 
 from folio.config import Settings
+from folio.images import image_response
 from folio.models import (
     AssetMetadataResponse,
     ImageAssetResponse,
@@ -16,7 +18,12 @@ from folio.models import (
     VideoDirectUploadRequest,
     VideoDirectUploadResponse,
 )
-from folio.repository import create_video_direct_upload, get_asset_metadata, upload_image_asset
+from folio.repository import (
+    create_video_direct_upload,
+    get_asset_metadata,
+    get_team_image,
+    upload_image_asset,
+)
 
 
 def mount_asset_routes(
@@ -56,3 +63,12 @@ def mount_asset_routes(
         return await get_asset_metadata(
             database, principal=actor, settings=resolved, asset_id=asset_id
         )
+
+    @app.get("/v1/assets/{asset_id}/content")
+    async def get_asset_content_route(
+        asset_id: UUID,
+        actor: Annotated[Principal, Depends(principal)],
+        database: Annotated[AsyncDatabaseManager, Depends(db)],
+    ) -> Response:
+        image = await get_team_image(database, team_id=actor.team_id, asset_id=asset_id)
+        return image_response(image)

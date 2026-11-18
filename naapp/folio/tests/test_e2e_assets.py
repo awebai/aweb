@@ -7,6 +7,7 @@ from typing import Any
 
 import httpx
 import pytest
+from test_e2e_asset_capabilities import _member_read
 from test_e2e_present import _mint_present
 from test_e2e_smoke import (
     AWWorkspace,
@@ -86,11 +87,10 @@ def test_image_asset_upload_embed_render_and_team_scoped_sanitizer(
     assert asset_a["content_type"] == "image/png"
     assert asset_a["url"] == f"{folio.origin}/assets/{asset_a['asset_id']}"
 
-    fetched = httpx.get(asset_a["url"], timeout=10.0)
-    assert fetched.status_code == 200, fetched.text
-    assert fetched.headers["content-type"].startswith("image/png")
-    assert fetched.headers["x-content-type-options"] == "nosniff"
-    assert fetched.content == _ONE_BY_ONE_PNG_BYTES
+    # The url is the Markdown reference; members read the bytes with team auth.
+    fetched = _member_read(team_a, f"{folio.origin}/v1/assets/{asset_a['asset_id']}/content")
+    assert fetched.returncode == 0, fetched.stderr.decode(errors="replace")
+    assert fetched.stdout == _ONE_BY_ONE_PNG_BYTES
 
     _create_document(
         folio,
@@ -104,9 +104,10 @@ def test_image_asset_upload_embed_render_and_team_scoped_sanitizer(
             "<script>alert('x')</script>"
         ),
     )
-    page = httpx.get(_mint_present(folio, team_a, slug="deck")["url"], timeout=10.0)
+    presented = _mint_present(folio, team_a, slug="deck")
+    page = httpx.get(presented["url"], timeout=10.0)
     assert page.status_code == 200, page.text
-    assert f'src="{asset_a["url"]}"' in page.text
+    assert f'src="{presented["url"]}/assets/{asset_a["asset_id"]}"' in page.text
     assert "safe chart" in page.text
     assert "example.com" not in page.text
     assert "data:image" not in page.text

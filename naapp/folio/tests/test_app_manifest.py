@@ -30,6 +30,7 @@ _EXPECTED_TOOLS = {
     "asset-image",
     "asset-video",
     "asset-get",
+    "asset-content",
     "billing",
 }
 
@@ -48,6 +49,7 @@ _MUTATIONS = {
     "asset-image": True,
     "asset-video": True,
     "asset-get": False,
+    "asset-content": False,
     "billing": False,
 }
 

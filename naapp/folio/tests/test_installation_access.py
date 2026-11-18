@@ -11,6 +11,8 @@ import pytest
 from test_edit_sessions import exchange
 from test_present_privacy import mint, present_world
 
+from folio.link_secrets import read_only_link_key
+
 __all__ = ["present_world"]
 
 
@@ -87,12 +89,12 @@ async def test_legacy_row_older_than_installation_commits_permanent_refusal(
 ):
     app, db, _ = present_world
     link = await mint(present_world, editable=False)
+    key = read_only_link_key(link["token"])
     row = await db.fetch_one(
-        "SELECT created_at FROM {{tables.presentation_links}} WHERE token=$1", link["token"]
+        "SELECT created_at FROM {{tables.presentation_links}} WHERE token=$1", key
     )
     await db.execute(
-        "UPDATE {{tables.presentation_links}} SET installation_id=NULL WHERE token=$1",
-        link["token"],
+        "UPDATE {{tables.presentation_links}} SET installation_id=NULL WHERE token=$1", key
     )
     source = app.state.test_grants
     source.installed_at = row["created_at"] + timedelta(seconds=0 if equal else 1)
@@ -103,7 +105,7 @@ async def test_legacy_row_older_than_installation_commits_permanent_refusal(
     )
     stored = await db.fetch_one(
         "SELECT installation_id, installation_refused FROM {{tables.presentation_links}} WHERE token=$1",
-        link["token"],
+        key,
     )
     assert stored["installation_id"] is None and stored["installation_refused"]
     source.installation_id = "later-installation"
@@ -113,8 +115,7 @@ async def test_legacy_row_older_than_installation_commits_permanent_refusal(
     ] == "installation_binding_refused"
     assert (
         await db.fetch_one(
-            "SELECT installation_refused FROM {{tables.presentation_links}} WHERE token=$1",
-            link["token"],
+            "SELECT installation_refused FROM {{tables.presentation_links}} WHERE token=$1", key
         )
     )["installation_refused"]
 

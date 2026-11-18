@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 import secrets
 import time
@@ -19,6 +18,7 @@ from pgdbm.core import TransactionManager
 
 from folio.installation_access import capability_permit, require_binding
 from folio.installation_access import refusal as installation_refusal
+from folio.link_secrets import secret_digest
 
 SESSION_HEADER = "X-Folio-Edit-Session"
 
@@ -28,9 +28,10 @@ def unavailable() -> HTTPException:
 
 
 def secret_hash(value: str | None) -> bytes:
+    """The stored digest of a well-formed opener or session credential (folio.link_secrets)."""
     if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", value):
         raise unavailable()
-    return hashlib.sha256(value.encode("ascii")).digest()
+    return secret_digest(value)
 
 
 async def member_proof(runtime: NaappRuntime, row: dict[str, Any]) -> MembershipProof:

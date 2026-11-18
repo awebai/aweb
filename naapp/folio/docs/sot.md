@@ -43,9 +43,17 @@ earns its place here.
 ### 1. Media — images and video
 
 - **Images:** agents upload images and embed them in documents
-  (`![alt](…)`). Stored as team-scoped assets, served from our origin,
-  raster + safe-type allowlist (no SVG / active content), magic-byte
-  validated — the atext logo-asset discipline, generalized.
+  (`![alt](…)`). Stored as team-scoped assets, raster + safe-type allowlist
+  (no SVG / active content), magic-byte validated — the atext logo-asset
+  discipline, generalized. `/assets/<uuid>` in Markdown, and the `url` and
+  `logo_url` fields that name it, are references: nothing serves that path.
+  Image bytes are served only under the capability that shows them, inside the
+  installation fence: a live read-only link at `/present/<token>/assets/<uuid>`
+  (the images its pinned version embeds, and the team logo), an edit session at
+  `/present/edit/<id>/assets/<uuid>` with its session header (any of its team's
+  images, since the editor previews drafts), and a member's team-auth read at
+  `GET /v1/assets/<uuid>/content`. Revoking a link, its expiry or uninstalling
+  Folio ends access to the images it showed.
 - **Video:** agents upload video and embed it. Video does NOT fit Postgres
   BYTEA — it uses **Cloudflare Stream** (upload → transcode to adaptive HLS →
   CDN delivery → player + signed playback tokens). We store the Stream UID on
@@ -154,6 +162,22 @@ or maximum lifetime**, including while its tab is hidden.
 
 The manifest bytes are unchanged. Moving read-only link tokens to fragments is
 separate work, and no legacy editable-token authority path remains.
+
+### 7. Read-only present links
+
+- **Mint** (cert-auth): `POST /v1/present {slug, version?, ttl_seconds?}`. The
+  token is 32 random bytes in 43 unpadded base64url characters; the URL is
+  `/present/<token>`, and revoke takes the same token.
+- **Storage**: the link's row is keyed by the token's verifier, the hex SHA-256
+  of its UTF-8 bytes (naapp-lib `secret_verifier`), never the token, so a
+  database read does not yield a link that opens.
+- **Lifetime**: a read-only link is a bearer link. It lives until it is revoked
+  or expires (30 days at most), whether or not its creator is still a member of
+  the team; an editable session, by contrast, ends with its creator's membership.
+- **Not naapp-lib capability links**: those mint for page_store page projections
+  and need a browser-held key signing every request, while a read-only
+  presentation must open as a plain URL in any browser or link preview; Folio
+  shares only their verifier.
 
 ## Authority & privacy
 

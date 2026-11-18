@@ -1,9 +1,22 @@
 """Folio's capability rows consume the shared installation permit/fence."""
 
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
+from uuid import UUID
+
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.installation import InstallationPermit, InstallationRefused
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
+
+from folio.link_secrets import read_only_link_key
+
+if TYPE_CHECKING:
+    from folio.repository import TeamImage
 
 
 def refusal(error: InstallationRefused) -> HTTPException:
@@ -103,20 +116,61 @@ async def capability_permit(
         raise refusal(error) from None
 
 
+@asynccontextmanager
+async def live_presentation(
+    db: AsyncDatabaseManager, *, runtime: NaappRuntime, token: str
+) -> AsyncIterator[tuple[TransactionManager, str]]:
+    """A transaction in which the read-only link opened by ``token`` is bound to
+    the current installation; yields it with the link's stored key.
+
+    Everything served under the link, its page and the images that page shows,
+    passes this check (docs/sot.md, Images).
+    """
+    link_key = read_only_link_key(token)
+    permit = await capability_permit(db, runtime, link_id=link_key)
+    try:
+        async with permit.transaction() as tx:
+            selected = await tx.fetch_one(
+                "SELECT * FROM {{tables.presentation_links}} WHERE token=$1 FOR SHARE", link_key
+            )
+            if selected is None:
+                raise HTTPException(404, detail="Presentation not found")
+            require_binding(permit, dict(selected))
+            yield tx, link_key
+    except InstallationRefused as error:
+        raise refusal(error) from None
+
+
 async def presented_document(
     db: AsyncDatabaseManager, *, runtime: NaappRuntime, token: str
 ) -> dict:
     from folio.repository import get_presented_document
 
-    permit = await capability_permit(db, runtime, link_id=token)
-    try:
-        async with permit.transaction() as tx:
-            selected = await tx.fetch_one(
-                "SELECT * FROM {{tables.presentation_links}} WHERE token=$1 FOR SHARE", token
-            )
-            if selected is None:
-                raise HTTPException(404, detail="Presentation not found")
-            require_binding(permit, dict(selected))
-            return await get_presented_document(tx, token=token)
-    except InstallationRefused as error:
-        raise refusal(error) from None
+    async with live_presentation(db, runtime=runtime, token=token) as (tx, link_key):
+        return await get_presented_document(tx, link_key=link_key)
+
+
+async def presented_image(
+    db: AsyncDatabaseManager, *, runtime: NaappRuntime, token: str, asset_id: UUID
+) -> TeamImage:
+    """An image the live read-only link shows: one its pinned version embeds, or the team logo."""
+    from folio.repository import get_presented_document, get_team_image
+
+    async with live_presentation(db, runtime=runtime, token=token) as (tx, link_key):
+        presented = await get_presented_document(tx, link_key=link_key)
+        if asset_id not in shown_image_ids(presented):
+            raise HTTPException(404, detail="Asset not found")
+        return await get_team_image(tx, team_id=presented["team_id"], asset_id=asset_id)
+
+
+def shown_image_ids(presented: dict) -> set[UUID]:
+    """The images a presented page shows: its body's image assets and the team logo."""
+    shown = {
+        asset_id
+        for asset_id, asset in presented["allowed_assets"].items()
+        if asset["kind"] == "image"
+    }
+    logo = (presented.get("theme") or {}).get("logo_asset_id")
+    if logo is not None:
+        shown.add(logo)
+    return shown

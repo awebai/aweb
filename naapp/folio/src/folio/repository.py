@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
 import json
 import re
 import secrets
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -18,6 +18,7 @@ from pgdbm.core import TransactionManager
 from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
 from folio.config import Settings
 from folio.event_emit import emit_doc_changed
+from folio.link_secrets import read_only_link_key, secret_digest
 from folio.presentation import builtin_preset, sanitize_theme_tokens
 
 
@@ -304,7 +305,7 @@ async def mint_presentation_link(
         VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING expires_at
         """,
-        token,
+        token if editable else read_only_link_key(token),
         document_id,
         version_number,
         ttl,
@@ -313,7 +314,7 @@ async def mint_presentation_link(
         principal.alias,
         principal.certificate_id,
         editable,
-        hashlib.sha256(opener.encode()).digest() if opener else None,
+        secret_digest(opener) if opener else None,
         principal.team_did_key,
         installation_id,
     )
@@ -335,27 +336,31 @@ async def revoke_presentation_link(
     principal: Principal,
     token: str,
 ) -> None:
+    """Revoke by the minted token: an editable link's public id, or a read-only bearer token."""
     row = await db.fetch_one(
         """
         SELECT p.token
         FROM {{tables.presentation_links}} p
         JOIN {{tables.documents}} d ON d.document_id = p.document_id
-        WHERE p.token = $1 AND d.team_id = $2
+        WHERE d.team_id = $2
+          AND ((p.editable IS TRUE AND p.token = $1) OR (p.editable IS FALSE AND p.token = $3))
         """,
         token,
         principal.team_id,
+        read_only_link_key(token),
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Presentation not found")
     await db.execute(
         "UPDATE {{tables.presentation_links}} SET revoked_at = NOW() WHERE token = $1",
-        token,
+        row["token"],
     )
 
 
 async def get_presented_document(
-    db: AsyncDatabaseManager | TransactionManager, *, token: str
+    db: AsyncDatabaseManager | TransactionManager, *, link_key: str
 ) -> dict[str, Any]:
+    """The live read-only link keyed by ``link_key`` (see folio.link_secrets), as presented."""
     row = await db.fetch_one(
         """
         SELECT p.editable, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer,
@@ -376,7 +381,7 @@ async def get_presented_document(
         WHERE p.token = $1 AND p.editable IS FALSE AND p.revoked_at IS NULL AND p.expires_at > NOW()
           AND (p.editable IS FALSE OR p.expires_at <= p.created_at + interval '300 seconds')
         """,
-        token,
+        link_key,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Presentation not found")
@@ -384,6 +389,7 @@ async def get_presented_document(
     body = str(row["latest_body"] if editable else row["pinned_body"])
     version_number = int(row["latest_version_number"] if editable else row["pinned_version_number"])
     return {
+        "team_id": str(row["team_id"]),
         "body": body,
         "version_number": version_number,
         "editable": editable,
@@ -504,13 +510,6 @@ def _theme_from_row(row: Any, *, public_origin: str | None) -> dict[str, Any] | 
         "footer": data.get("footer"),
         "updated_at": data.get("updated_at"),
     }
-
-
-def _asset_response(row: Any) -> dict[str, Any]:
-    data = dict(row)
-    if data.get("kind") != "image" or data.get("bytes") is None:
-        raise HTTPException(status_code=404, detail="Asset not found")
-    return {"bytes": bytes(data["bytes"]), "content_type": data["content_type"]}
 
 
 _SAFE_IMAGE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
@@ -801,11 +800,26 @@ async def upsert_theme(
     return await get_theme(db, principal=principal, settings=settings)
 
 
-async def get_public_asset(db: AsyncDatabaseManager, *, asset_id: UUID) -> dict[str, Any]:
+@dataclass(frozen=True)
+class TeamImage:
+    """An image asset's stored bytes, as uploaded by a member of its team."""
+
+    content: bytes
+    content_type: str
+
+
+async def get_team_image(
+    db: AsyncDatabaseManager | TransactionManager, *, team_id: str, asset_id: UUID
+) -> TeamImage:
+    """Read one of the team's image assets; another team's asset is not found."""
     row = await db.fetch_one(
-        "SELECT kind, bytes, content_type FROM {{tables.assets}} WHERE asset_id = $1",
+        """
+        SELECT bytes, content_type FROM {{tables.assets}}
+        WHERE team_id = $1 AND asset_id = $2 AND kind = 'image'
+        """,
+        team_id,
         asset_id,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Asset not found")
-    return _asset_response(row)
+    return TeamImage(content=bytes(row["bytes"]), content_type=str(row["content_type"]))

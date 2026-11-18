@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from test_e2e_asset_capabilities import _member_read
 from test_e2e_present import _mint_present
 from test_e2e_smoke import (
     AWWorkspace,
@@ -140,11 +141,10 @@ def test_theme_wraps_present_page_and_body_team_cannot_cross_scope(
     assert theme["logo_asset_id"] is not None
     assert theme["logo_url"] == f"{folio.origin}/assets/{theme['logo_asset_id']}"
 
-    logo = httpx.get(theme["logo_url"], timeout=10.0)
-    assert logo.status_code == 200, logo.text
-    assert logo.headers["content-type"].startswith("image/png")
-    assert logo.headers["x-content-type-options"] == "nosniff"
-    assert logo.content == base64.b64decode(_ONE_BY_ONE_PNG)
+    # logo_url is the asset's reference; members read the bytes with team auth.
+    logo = _member_read(team_a, f"{folio.origin}/v1/assets/{theme['logo_asset_id']}/content")
+    assert logo.returncode == 0, logo.stderr.decode(errors="replace")
+    assert logo.stdout == base64.b64decode(_ONE_BY_ONE_PNG)
 
     themed = _mint_present(folio, team_a, slug="memo")
     themed_page = httpx.get(themed["url"], timeout=10.0)
@@ -159,7 +159,7 @@ def test_theme_wraps_present_page_and_body_team_cannot_cross_scope(
     assert "</style><script" not in themed_page.text.lower()
     assert "&lt;/style&gt;&lt;script&gt;alert(3)&lt;/script&gt;" in themed_page.text
     assert "&lt;img src=x onerror=alert(4)&gt;" in themed_page.text
-    assert f'src="{folio.origin}/assets/{theme["logo_asset_id"]}"' in themed_page.text
+    assert f'src="{themed["url"]}/assets/{theme["logo_asset_id"]}"' in themed_page.text
     assert "<table>" in themed_page.text
 
     b_theme = _put_theme(

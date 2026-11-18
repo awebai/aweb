@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urljoin, urlsplit
 import asyncpg
 import httpx
 import pytest
+from playwright.sync_api import sync_playwright
 from test_e2e_present import _mint_present
 from test_e2e_smoke import (
     POSTGRES_URL,
@@ -46,6 +47,17 @@ _PNG_HEADER = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
 _PNG_TRAILER = b"\x00\x00\x00\x00IEND\xaeB`\x82"
 _IMG_SRC = re.compile(r'<img class="folio-img" src="([^"]+)"')
 _LOGO_SRC = re.compile(r'<img class="brand-logo" src="([^"]+)"')
+
+
+# A decodable 1x1 PNG: a browser only reports a loaded image for real pixels.
+_PIXEL_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02\xfeA\xe2\x8b\x9b"
+    b"\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+_LOADED_IMAGE = """([selector, source]) => [...document.querySelectorAll(selector)].some(
+    (img) => (!source || (img.dataset.folioSource || img.src).includes(source))
+        && img.complete && img.naturalWidth > 0)"""
 
 
 def _png(marker: str) -> bytes:
@@ -320,3 +332,47 @@ def test_read_only_token_is_stored_only_as_a_verifier(
     revoked = _aw_request(team, "POST", f"{folio.origin}/v1/present/{token}/revoke")
     assert _aw_json(revoked, context="revoke by minted token") == {"revoked": True}
     assert httpx.get(link["url"], timeout=10.0).status_code == 404
+
+
+def test_browser_shows_images_on_the_present_page_and_in_the_editor(
+    folio: RunningFolio,
+    aw_workspace_factory: Callable[[str], AWWorkspace],
+    tmp_path: Path,
+) -> None:
+    team = _provision_team(aw_workspace_factory("browser-images"), folio=folio, alias="alice")
+    first_id = _upload(folio, team, _PIXEL_PNG)
+    second_id = _upload(folio, team, _PIXEL_PNG)
+    _set_logo(folio, team, _PIXEL_PNG)
+    _create_document(
+        folio, team, slug="deck", title="Deck", body=f"# Deck\n\n![first](/assets/{first_id})\n"
+    )
+    _append_version(
+        folio,
+        team,
+        slug="deck",
+        body=f"# Deck\n\n![second](/assets/{second_id})\n",
+        tmp_path=tmp_path,
+    )
+    pinned = _mint_present(folio, team, slug="deck", version=1)
+    editable = _mint_present(folio, team, slug="deck", editable=True)
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        try:
+            page = browser.new_page(ignore_https_errors=True)
+            page.goto(pinned["url"])
+            page.wait_for_function(_LOADED_IMAGE, arg=["img.folio-img", first_id], timeout=10000)
+            page.wait_for_function(_LOADED_IMAGE, arg=["img.brand-logo", ""], timeout=10000)
+
+            editor = browser.new_page(ignore_https_errors=True)
+            editor.goto(editable["url"])
+            editor.wait_for_function(
+                _LOADED_IMAGE, arg=["#preview img.folio-img", second_id], timeout=10000
+            )
+            editor.wait_for_function(_LOADED_IMAGE, arg=[".brand-logo", ""], timeout=10000)
+            editor.locator("#body").fill(f"Draft\n\n![first](/assets/{first_id})\n")
+            editor.wait_for_function(
+                _LOADED_IMAGE, arg=["#preview img.folio-img", first_id], timeout=10000
+            )
+        finally:
+            browser.close()
