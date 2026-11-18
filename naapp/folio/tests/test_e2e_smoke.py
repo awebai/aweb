@@ -316,8 +316,11 @@ def _aw_json(result: subprocess.CompletedProcess[str], *, context: str) -> Any:
 
 @contextmanager
 def _running_folio(
-    *, awid_service_token: str | None, tls_dir: Path | None = None, app_id: str = "folio",
+    *, awid_service_token: str | None, team_server_origin: str, tls_dir: Path | None = None,
+    app_id: str = "folio",
 ) -> Iterator[RunningFolio]:
+    """Folio, with ``team_server_origin`` (this test's own coordination server)
+    as the one team server it reaches outside the egress guard."""
     _require_e2e_enabled()
     _wait_http_ok(f"{AWID_URL}/health")
 
@@ -349,6 +352,7 @@ def _running_folio(
                 "FOLIO_AUTH_CACHE_TTL_SECONDS": "2",
                 "FOLIO_PUBLIC_ORIGIN": proxy_origin,
                 "FOLIO_APP_ID": app_id,
+                "FOLIO_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([team_server_origin]),
             }
         )
         env.pop("FOLIO_AWID_SERVICE_TOKEN", None)
@@ -433,10 +437,15 @@ def folio_without_awid_service_token(tmp_path_factory: pytest.TempPathFactory) -
 
 @contextmanager
 def _installed_deployment(tmp_path: Path, service_token: str | None) -> Iterator[RunningFolio]:
-    with _running_folio(awid_service_token=service_token, tls_dir=tmp_path / "tls", app_id="folio-e2e") as running:
+    with _coordination_listener() as (listener, server_origin), _running_folio(
+        awid_service_token=service_token, team_server_origin=server_origin,
+        tls_dir=tmp_path / "tls", app_id="folio-e2e",
+    ) as running:
         assert running.ca_file is not None
-        with _running_coordination_server(tmp_path, app_origin=running.origin, ca_file=running.ca_file) as (origin, env):
-            yield replace(running, server_origin=origin, server_env=env)
+        with _running_coordination_server(
+            tmp_path, listener=listener, app_origin=running.origin, ca_file=running.ca_file,
+        ) as env:
+            yield replace(running, server_origin=server_origin, server_env=env)
 
 
 @pytest.fixture(scope="module")
@@ -771,69 +780,74 @@ def test_private_team_member_authenticates_without_the_awid_service_token(
 
 
 @contextmanager
-def _running_coordination_server(
-    tmp_path: Path, *, app_origin: str, ca_file: Path,
-) -> Iterator[tuple[str, dict[str, str]]]:
-    """Real aweb, with the real HTTPS fetcher pinned to this test origin."""
-    with ExitStack() as setup:
-        listener = setup.enter_context(socket.socket())
+def _coordination_listener() -> Iterator[tuple[socket.socket, str]]:
+    """The coordination server's listening socket and its loopback origin, bound
+    before Folio starts so Folio can be configured with that origin."""
+    with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
-        port = listener.getsockname()[1]
-        origin = f"http://127.0.0.1:{port}"
-        redis_url = STACK.redis_url
-        if redis_url is None:
-            redis_port = _compose("port", "redis", "6379").stdout.strip().rsplit(":", 1)[1]
-            redis_url = f"redis://{STACK.host}:{redis_port}/0"
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_", "AWID_"))}
-        env.update(
-            AWEB_DATABASE_URL=POSTGRES_URL,
-            AWEB_REDIS_URL=redis_url,
-            AWEB_PUBLIC_ORIGIN=origin,
-            AWID_REGISTRY_URL=AWID_URL,
-            AWID_SERVICE_TOKEN=AWID_SERVICE_TOKEN,
+        yield listener, f"http://127.0.0.1:{listener.getsockname()[1]}"
+
+
+@contextmanager
+def _running_coordination_server(
+    tmp_path: Path, *, listener: socket.socket, app_origin: str, ca_file: Path,
+) -> Iterator[dict[str, str]]:
+    """Real aweb on ``listener``, with the real HTTPS fetcher pinned to this test origin."""
+    origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    redis_url = STACK.redis_url
+    if redis_url is None:
+        redis_port = _compose("port", "redis", "6379").stdout.strip().rsplit(":", 1)[1]
+        redis_url = f"redis://{STACK.host}:{redis_port}/0"
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_", "AWID_"))}
+    env.update(
+        AWEB_DATABASE_URL=POSTGRES_URL,
+        AWEB_REDIS_URL=redis_url,
+        AWEB_PUBLIC_ORIGIN=origin,
+        AWID_REGISTRY_URL=AWID_URL,
+        AWID_SERVICE_TOKEN=AWID_SERVICE_TOKEN,
+    )
+    # Use the locked server source environment, not an installed aweb artifact.
+    project = Path(__file__).resolve().parents[3] / "server"
+    runner = tmp_path / "installation-server.py"
+    runner.write_text(
+        "import sys\n"
+        "from urllib.parse import urlsplit\n"
+        "import uvicorn\n"
+        "from aweb.api import create_app\n"
+        "from aweb.app_manifests import ManifestFetcher\n"
+        "from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations, parse_destination\n"
+        "origin = urlsplit(sys.argv[1])\n"
+        "destination = parse_destination({'host': origin.hostname, 'port': origin.port, 'path': '/**', "
+        "'methods': ['GET'], 'network': 'internal', 'cidr': origin.hostname + '/32'}, "
+        "internal_destinations=InternalDestinations.ALLOWED)\n"
+        "app = create_app()\n"
+        "app.state.manifest_fetcher = ManifestFetcher(destination=destination, egress=Egress("
+        "addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED), "
+        "resolver=DnsResolver(), user_agent='folio-install-test/1', ca_file=sys.argv[2]))\n"
+        "uvicorn.run(app, fd=int(sys.argv[3]))\n"
+    )
+    with (tmp_path / "coordination.log").open("w+") as log:
+        proc = subprocess.Popen(
+            ["uv", "run", "--offline", "--frozen", "--project", str(project),
+             "python", str(runner), app_origin, str(ca_file), str(listener.fileno())],
+            env=env, stdout=log, stderr=log, pass_fds=(listener.fileno(),),
         )
-        # Use the locked server source environment, not an installed aweb artifact.
-        project = Path(__file__).resolve().parents[3] / "server"
-        runner = tmp_path / "installation-server.py"
-        runner.write_text(
-            "import sys\n"
-            "from urllib.parse import urlsplit\n"
-            "import uvicorn\n"
-            "from aweb.api import create_app\n"
-            "from aweb.app_manifests import ManifestFetcher\n"
-            "from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress, InternalDestinations, parse_destination\n"
-            "origin = urlsplit(sys.argv[1])\n"
-            "destination = parse_destination({'host': origin.hostname, 'port': origin.port, 'path': '/**', "
-            "'methods': ['GET'], 'network': 'internal', 'cidr': origin.hostname + '/32'}, "
-            "internal_destinations=InternalDestinations.ALLOWED)\n"
-            "app = create_app()\n"
-            "app.state.manifest_fetcher = ManifestFetcher(destination=destination, egress=Egress("
-            "addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED), "
-            "resolver=DnsResolver(), user_agent='folio-install-test/1', ca_file=sys.argv[2]))\n"
-            "uvicorn.run(app, fd=int(sys.argv[3]))\n"
-        )
-        with (tmp_path / "coordination.log").open("w+") as log:
-            proc = subprocess.Popen(
-                ["uv", "run", "--offline", "--frozen", "--project", str(project),
-                 "python", str(runner), app_origin, str(ca_file), str(listener.fileno())],
-                env=env, stdout=log, stderr=log, pass_fds=(listener.fileno(),),
-            )
-            listener.close()
+        listener.close()
+        try:
+            _wait_http_ok(f"{origin}/health")
+            yield env
+        finally:
+            proc.terminate()
             try:
-                _wait_http_ok(f"{origin}/health")
-                yield origin, env
-            finally:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=10)
-                # uv may report forwarded SIGTERM as 128 + SIGTERM.
-                if proc.returncode not in (0, -15, 143, None):
-                    log.seek(0)
-                    raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+            # uv may report forwarded SIGTERM as 128 + SIGTERM.
+            if proc.returncode not in (0, -15, 143, None):
+                log.seek(0)
+                raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
 
 
 def test_install_after_mint_uses_replacement_grant(
@@ -847,11 +861,14 @@ def test_install_after_mint_uses_replacement_grant(
     instance.mkdir()
     # A reachable TLS deployment has its own identity, never the hosted id.
     app_id = "folio-install"
-    with _running_folio(
-        awid_service_token=AWID_SERVICE_TOKEN, tls_dir=tmp_path / "tls", app_id=app_id,
+    with _coordination_listener() as (listener, origin), _running_folio(
+        awid_service_token=AWID_SERVICE_TOKEN, team_server_origin=origin,
+        tls_dir=tmp_path / "tls", app_id=app_id,
     ) as folio:
         assert folio.ca_file is not None
-        with _running_coordination_server(tmp_path, app_origin=folio.origin, ca_file=folio.ca_file) as (origin, server_env):
+        with _running_coordination_server(
+            tmp_path, listener=listener, app_origin=folio.origin, ca_file=folio.ca_file,
+        ) as server_env:
             aw_workspace.env["AWEB_URL"] = origin
             _configure_folio_client(aw_workspace, folio)
             _run_aw(aw_workspace, "workspace", "connect", "--service", origin, "--team", team.team_id)

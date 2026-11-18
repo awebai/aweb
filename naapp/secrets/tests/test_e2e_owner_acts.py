@@ -65,7 +65,9 @@ TEAM = "h"
 APP_ID = "lane-secrets"
 TEAM_ID = f"{TEAM}:{DOMAIN}"
 REGISTRY = "http://awid.svc.test:8010"
-AWEB = "http://aweb.svc.test:8000"
+# The lane's coordination server, behind the TLS front: the team publishes an
+# https name, and both apps list it as the operator's own team server.
+AWEB = "https://aweb.svc.test"
 API = "https://api.secrets.svc.test"
 CONSOLE = "https://console.secrets.svc.test"
 ROLE = "secrets.owner"
@@ -94,6 +96,7 @@ LOGS_COMPOSE_ENV = {
 }
 # What the TLS front serves, and the service behind each host.
 UPSTREAMS = {
+    "aweb.svc.test": "aweb:8000",
     "api.secrets.svc.test": "secrets:8770",
     "console.secrets.svc.test": "secrets:8770",
     "api.logs.svc.test": "logs:8765",
@@ -166,6 +169,9 @@ def secrets_env() -> dict[str, str]:
         "SECRETS_HOOK_INTERNAL_DESTINATIONS": "allowed",
         "SECRETS_HOOK_INTERNAL_CIDR": LANE_SUBNET,
         "SECRETS_HOOK_CA_FILE": "/run/secrets-keys/hook-ca.pem",
+        "SECRETS_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([AWEB]),
+        # The lane's CA, which the team server's TLS front presents.
+        "SSL_CERT_FILE": "/run/secrets-keys/hook-ca.pem",
     }
 
 
@@ -306,7 +312,8 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
         ip = _docker("inspect", "-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", dns).stdout.strip()
         assert ip, "no DNS address"
         lane.env["SECRETS_E2E_DNS_IP"] = ip
-        lane.up("postgres", "redis", "awid", "aweb", "smtp")
+        # The front carries the coordination server's https name from the start.
+        lane.up("postgres", "redis", "awid", "aweb", "smtp", "front")
         result = lane.compose("--profile", "browser", "build", "cli", "browser")
         assert result.returncode == 0, result.stdout + result.stderr
         _docker("tag", f"{project}-browser", f"{project}-browser")
@@ -364,7 +371,8 @@ def write_service_member(lane: Lane, controller: str) -> None:
     for name in ("custody", "request", "params", "response", "runner", "smtp", "manifest", "event", "delivery", "grant", "resolve"):
         # The app's shared key-file format: 64 hex characters, each independent.
         (keys / name).write_text(secrets.token_hex(32) + "\n")
-    # The lane's CA, which the app's hook deliveries to the lane's Logs trust.
+    # The lane's CA, which the app's hook deliveries to the lane's Logs and its
+    # team-server reads trust.
     shutil.copyfile(lane.runtime / "tls" / "ca.pem", keys / "hook-ca.pem")
     for path in keys.iterdir():
         path.chmod(0o644)
