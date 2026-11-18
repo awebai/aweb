@@ -124,7 +124,8 @@ async def live_presentation(
     the current installation; yields it with the link's stored key.
 
     Everything served under the link, its page and the images that page shows,
-    passes this check (docs/sot.md, Images).
+    passes this check (docs/sot.md §1, Images), and the link must still be live
+    when the content has been read.
     """
     link_key = read_only_link_key(token)
     permit = await capability_permit(db, runtime, link_id=link_key)
@@ -137,8 +138,25 @@ async def live_presentation(
                 raise HTTPException(404, detail="Presentation not found")
             require_binding(permit, dict(selected))
             yield tx, link_key
+            await require_unexpired(tx, link_key=link_key)
     except InstallationRefused as error:
         raise refusal(error) from None
+
+
+async def require_unexpired(tx: TransactionManager, *, link_key: str) -> None:
+    """Refuse unless the link is unrevoked and before its deadline on live time.
+
+    NOW() is fixed when the transaction starts, and a read can then wait on
+    installation and link locks; clock_timestamp() is read after every wait, so
+    nothing is served past the link's expiry (docs/sot.md §7, Lifetime).
+    """
+    live = await tx.fetch_one(
+        """SELECT 1 FROM {{tables.presentation_links}}
+        WHERE token=$1 AND revoked_at IS NULL AND expires_at > clock_timestamp()""",
+        link_key,
+    )
+    if live is None:
+        raise HTTPException(404, detail="Presentation not found")
 
 
 async def presented_document(
