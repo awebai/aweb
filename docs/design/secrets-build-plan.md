@@ -160,7 +160,7 @@ Paths below abbreviate `naapp-lib/src/aweb_naapp/` as `aweb_naapp/` and
 ### S0. secrets contract vectors
 
 - **Status: Built (aweb-acgh.18.1).**
-- **Where:** `naapp/secrets/vectors/use-approval-v1.json` (`aweb.secrets.use-approval/1`
+- **Where:** `naapp/secrets/vectors/use-approval-v2.json` (`aweb.secrets.use-approval/2`
   under B2's prefix) and `hook-actions-v1.json` (the §11.5 transition-to-action
   table). The runner protocol's request and assignment signatures, HPKE suite
   and `info` binding are `docs/vectors/secrets-runner-protocol-v1.json` with the

@@ -1753,8 +1753,8 @@ approval cannot authorize another dispatch. A denial or expiry is final for that
 
 ### 10.4 The frozen canonical request
 
-`aweb.secrets.use-approval/1` is the typed request object secrets hands B2 to
-freeze. It carries `type` (`aweb.secrets.use-approval`) and `v` (1) inside. B2
+`aweb.secrets.use-approval/2` is the typed request object secrets hands B2 to
+freeze. It carries `type` (`aweb.secrets.use-approval`) and `v` (2) inside. B2
 covers it under its single prefix: the approval binds
 `"aweb.approval-request/1\n" || canonical_json({policy, request})`, with B2's
 canonical-bytes rules (integers only, so amounts are integer minor units). It
@@ -1765,7 +1765,7 @@ v, type, installation_id, install_generation, team_id,
 requester: {principal, member_did_key, certificate_id, did_aw?, alias},
 secret: {secret_id, secret_ref, version, kind, backend},
 action: broker | run_job,
-broker: {operation_id, operation_digest, params}  |  {method, canonical_url, header_names, body_sha256, body_preview}
+broker: {operation_id, operation_digest, params, headers}  |  {method, canonical_url, headers, body_sha256, body_preview}
 run_job: {runner_id, job_id, job_digest, params, credential_delivery},
 policy_digest, grant_id, request_id, reason (untrusted, bounded),
 issued_at, expires_at
@@ -1779,8 +1779,16 @@ issued_at, expires_at
 - **Shape.** `requester.principal` is `did_aw` when the certificate carries
   `member_did_aw`, otherwise `member_did_key` (§4.1); `did_aw` is omitted, never
   null, when absent. Exactly one of `broker` and `run_job` is present, named by
-  `action`. `naapp/secrets/vectors/use-approval-v1.json` freezes the fields and
+  `action`. `naapp/secrets/vectors/use-approval-v2.json` freezes the fields and
   bytes, and its test checks them against B2's real mint.
+- **Agent headers.** `broker.headers` is the ordered list of
+  `{"name", "value"}` objects for every header the agent supplied that the
+  broker sends, in both forms: the name lowercased, the value exactly as sent,
+  in submitted order, with repeated names kept. It is `[]` when the agent
+  supplied none, never omitted. It holds only headers that passed §7.4, so a
+  credential-shaped value never reaches the frozen bytes. A named operation's
+  fixed headers are covered by `operation_digest`; the headers the secret's
+  kind injects and the headers the broker sets are never in it.
 
 - **Evidence.** B3 binds the assertion to the request hash. secrets keeps B2's
   `auth_evidence_ref` and puts the hash of the evidence in the hook event
@@ -1791,6 +1799,7 @@ issued_at, expires_at
   - the secret ref and kind, never the value;
   - the method and the full canonical URL with the host emphasized, or the
     operation and its typed parameters, or the job and its parameters;
+  - every agent-supplied header name and value, in order;
   - the requester's alias and DID;
   - the policy, and the times.
 - **The requester's reason.** It is shown in a box labelled as unverified text
