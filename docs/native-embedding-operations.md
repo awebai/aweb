@@ -233,3 +233,10 @@ host.router.routes.append(
 That route uses the same native receiver, exception handlers and federation
 authority as the API; it adds no second forwarding/validation implementation.
 Host wrappers must preserve the external signed request path.
+
+Native serving helpers follow that same reference for wake publication,
+messaging runtime, origins, mutation callbacks and the existing identity-binding
+cache. Hosts carrying the reference need no copied fields for those helpers.
+States without a native reference retain their existing direct-field behavior.
+Request verification remains with its common verification owner; a serving
+resource reference never substitutes for a verified identity or request proof.

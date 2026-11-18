@@ -134,6 +134,9 @@ def agent_wake_scope(publisher: AgentWakePublisher | None) -> Generator[None]:
 
 def agent_wake_publisher(state) -> AgentWakePublisher | None:
     """The process's publisher on an application state, if it runs one."""
+    from aweb.application_state import native_application_state
+
+    state = native_application_state(state)
     return getattr(state, "agent_wake_publisher", None)
 
 

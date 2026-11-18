@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from awid.log import canonical_server_origin
 from aweb.config import get_public_origin
+from aweb.application_state import native_application_state
 
 
 def public_origins(request=None, *, public_origin: str | None = None) -> set[str]:
@@ -13,6 +14,7 @@ def public_origins(request=None, *, public_origin: str | None = None) -> set[str
 
 def application_public_origins(state, *, public_origin: str | None = None) -> set[str]:
     """The origins an application state configures as its own, with ``public_origin`` if given."""
+    state = native_application_state(state)
     origins = {
         canonical_server_origin(value)
         for value in getattr(state, "federation_public_origins", [])

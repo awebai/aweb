@@ -6,6 +6,7 @@ import logging
 from typing import Awaitable, Callable
 
 from fastapi import Request
+from aweb.application_state import native_application_state
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,7 @@ MutationCallback = Callable[[str, dict], Awaitable[None]]
 
 def mutation_callback(request: Request) -> MutationCallback | None:
     """Return the on_mutation callback of the application serving this request."""
-    return getattr(request.app.state, "on_mutation", None)
+    return getattr(native_application_state(request.app.state), "on_mutation", None)
 
 
 async def fire_mutation_hook(request: Request, event_type: str, context: dict) -> None:

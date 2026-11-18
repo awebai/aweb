@@ -76,6 +76,9 @@ async def verify_identity_binding(
 
 def identity_binding_cache(app_state) -> OrderedDict:
     """The application's cache of observed identity bindings, kept on its state."""
+    from aweb.application_state import native_application_state
+
+    app_state = native_application_state(app_state)
     cache = getattr(app_state, "identity_binding_cache", None)
     if cache is None:
         cache = OrderedDict()

@@ -17,11 +17,15 @@ from aweb.embedding import (
     embedded_aweb, native_resources,
 )
 from aweb.mcp.server import ManagedMCPApp
+from aweb.mcp.mutations import mutation_callback_from_scope
+from aweb.messaging.runtime import messaging_runtime
 from aweb.db import DatabaseInfra
 from test_awid_transport import awid, db_infra  # noqa: F401
 
 
 def _extended_mcp(resources):
+    host_context = FastAPI()
+    host_context.state.native_resources = resources
     mcp = FastMCP("host extension", streamable_http_path="/", json_response=True, stateless_http=True,
                   transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 
@@ -29,6 +33,11 @@ def _extended_mcp(resources):
     async def hosted_extension() -> str:
         """A host's tool must survive native resource startup."""
         assert resources.agent_wake_publisher is resources.api_app.state.agent_wake_publisher
+        runtime = messaging_runtime(host_context.state)
+        assert runtime.registry_client is resources.registry_client
+        assert runtime.agent_wake_publisher is resources.agent_wake_publisher
+        assert runtime.public_origin == resources.public_origin
+        assert mutation_callback_from_scope({"app": host_context}) is resources.on_mutation
         return "host extension present"
 
     return ManagedMCPApp(mcp.streamable_http_app(), mcp.session_manager)
