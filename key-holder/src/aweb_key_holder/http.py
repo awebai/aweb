@@ -185,8 +185,12 @@ def create_app(holder):
     @app.post("/v1/enrollments/{person}/refresh-binding")
     async def refresh_binding(person: str, request: Request):
         caller, value, chain = await input_for(request)
-        return await HolderBindingRefresher(holder=holder).packet(
-            person=person, caller=caller, body=value, chain=chain
-        )
+        try:
+            return await HolderBindingRefresher(holder=holder).packet(
+                person=person, caller=caller, body=value, chain=chain
+            )
+        except (Refused, ApprovalRefused) as error:
+            logger.info("Holder binding refresh refused (%s)", error.code)
+            raise
 
     return app

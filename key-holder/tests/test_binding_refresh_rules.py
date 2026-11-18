@@ -9,9 +9,15 @@ from aweb_key_holder.keys import Refused
 
 def test_binding_refresh_does_not_replace_person_keys_or_retired_enrollment():
     key = "did:key:person"
-    caller = Caller("did:aw:person", key, "1", b"{}")
+    caller = Caller(identity="did:aw:person", key=key, timestamp="1", body=b"{}")
     trust = Trust(
-        "did:aw:person", "example.test", key, "sha256:cert", "did:key:issuer", b"", 1
+        person="did:aw:person",
+        organisation="example.test",
+        identity_key=key,
+        certificate="sha256:cert",
+        issuer="did:key:issuer",
+        issuer_public_key=b"",
+        observed_at=1,
     )
     row = {"person": trust.person, "identity_key": key, "active": 1, "retired_at": None}
     check_active_enrollment(row, caller=caller, trust=trust)
