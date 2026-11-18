@@ -48,6 +48,7 @@ class AuthenticatorFlags(IntFlag):
 
 class AssertionFailure(StrEnum):
     INVALID = "assertion_invalid"
+    COUNTER_NOT_ADVANCED = "assertion_counter_not_advanced"
     CREDENTIAL_MISMATCH = "credential_not_enrolled"
     BACKUP_ELIGIBLE = "credential_backup_eligible"
 
@@ -128,9 +129,17 @@ def verify_assertion(
             expected_origin=expected_origin,
             expected_rp_id=expected_rp_id,
             credential_public_key=public_key,
-            credential_current_sign_count=sign_count,
+            # Verify crypto once before comparing the caller's locked counter;
+            # a zero baseline accepts either supported authenticator counter form.
+            credential_current_sign_count=0,
             require_user_verification=True,
         )
+        if type(sign_count) is not int or sign_count < 0:
+            raise AssertionRefused(AssertionFailure.INVALID)
+        if (
+            verified.new_sign_count > 0 or sign_count > 0
+        ) and verified.new_sign_count <= sign_count:
+            raise AssertionRefused(AssertionFailure.COUNTER_NOT_ADVANCED)
         if verified.credential_id != credential_id:
             raise AssertionRefused(AssertionFailure.CREDENTIAL_MISMATCH)
         if backup_policy is BackupPolicy.FORBIDDEN and flags & (
