@@ -1,4 +1,5 @@
 """Non-expiring grants use the existing non-null timestamp storage contract."""
+
 from datetime import datetime
 
 
