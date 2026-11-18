@@ -537,15 +537,6 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	if home.External() {
 		return usageError("team admin create creates a first-agent identity; refusing to change selected identity home %s; use id team create for a sibling team", home.Root)
 	}
-	if !teamHumanCreateBYOT && resolveInitAPIKey() != "" {
-		base, err := resolveAPIKeyInitAwebURL()
-		if err != nil {
-			return err
-		}
-		if _, err := resolveAgentCreation(wd, resolveInitAPIKey(), base, "", true); err != nil {
-			return err
-		}
-	}
 	printTeamCreateExtendNotice(wd)
 	createHomeOverride := ""
 	if strings.TrimSpace(teamHumanCreateHome) != "" {
@@ -642,6 +633,25 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
 		return usageError("aw team admin create does not use --namespace or --registry in the local empty-profile path")
+	}
+	// Only the first-member API branch selects a key. Existing namespace
+	// founding (and explicit BYOT above) retains its own controller authority.
+	creationTarget := wd
+	if createHomeOverride != "" {
+		creationTarget = createHomeOverride
+	}
+	existingCreator, err := teamCreateHasIdentityMaterial(creationTarget)
+	if err != nil {
+		return err
+	}
+	if !existingCreator && resolveInitAPIKey() != "" {
+		base, err := resolveAPIKeyInitAwebURL()
+		if err != nil {
+			return err
+		}
+		if _, err := resolveAgentCreation(creationTarget, resolveInitAPIKey(), base, "", true); err != nil {
+			return err
+		}
 	}
 	if createHomeOverride != "" {
 		if err := os.MkdirAll(createHomeOverride, 0o755); err != nil {
