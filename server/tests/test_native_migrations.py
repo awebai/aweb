@@ -6,6 +6,16 @@ from pgdbm import AsyncMigrationManager
 from aweb.db import DatabaseInfra
 
 
+def test_complete_native_migration_inventory_is_packaged():
+    from aweb.migrations import native_migration_modules
+
+    inventory = native_migration_modules()
+    assert [module.module_name for module in inventory] == ["aweb-aweb", "aweb_naapp_hooks"]
+    for module in inventory:
+        assert module.migrations_path.is_dir()
+        assert list(module.migrations_path.glob("*.sql")), module.module_name
+
+
 @pytest.mark.asyncio
 async def test_core_only_host_is_not_ready_until_owner_act_module_is_applied(shared_test_pool):
     from aweb.migrations import (

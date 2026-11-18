@@ -3,6 +3,7 @@ from __future__ import annotations
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Literal, Optional
 from uuid import UUID
@@ -31,6 +32,7 @@ from aweb.team_auth_deps import TeamIdentity, _resolve_team_key, get_team_identi
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -711,7 +713,21 @@ async def publish_my_encryption_key(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> PublishEncryptionKeyResponse:
     """Publish the calling agent's identity-signed E2E encryption key."""
-    aweb_db = db.get_manager("aweb")
+    return await publish_encryption_key(db=db.get_manager("aweb"), identity=identity, payload=payload)
+
+
+async def publish_encryption_key(
+    *, db, identity: TeamIdentity, payload: EncryptionKeyAssertion,
+) -> PublishEncryptionKeyResponse:
+    """Validate and persist an authenticated member's signed encryption key.
+
+    ``db`` is the native manager or the host's open transaction. The host must
+    supply a verified identity; this operation checks the exact live member
+    row and validates signature, identity and validity before persisting. A
+    valid identity-signed renewal may update the same encryption key's validity
+    window. Private encryption material remains with its custody owner.
+    """
+    aweb_db = db
     expected_stable_id = identity.did_aw.strip() or None
     try:
         canonical_payload, created_at, not_before, expires_at = validate_encryption_key_assertion(
@@ -721,11 +737,13 @@ async def publish_my_encryption_key(
             now=datetime.now(timezone.utc),
         )
     except ValueError as exc:
+        logger.warning("Encryption-key assertion refused for member %s", identity.agent_id, exc_info=True)
         raise HTTPException(
             status_code=422,
             detail={
                 "code": "invalid_encryption_key_assertion",
-                "message": str(exc),
+                "message": str(exc) + ". Publish an identity-signed encryption-key assertion "
+                "with current validity and matching identity fields, then retry.",
             },
         )
 
@@ -743,7 +761,10 @@ async def publish_my_encryption_key(
         identity.did_key,
     )
     if row is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Agent not found. Reconnect this identity to the team before publishing its encryption key.",
+        )
 
     await aweb_db.execute(
         """
