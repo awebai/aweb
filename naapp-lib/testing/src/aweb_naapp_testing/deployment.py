@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from http import HTTPMethod
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -49,7 +50,9 @@ class E2EStack:
 
 def candidate_hostname(project: str, service: str) -> str:
     helper = REPOSITORY_ROOT / "scripts/candidate-network.py"
-    return subprocess.check_output([sys.executable, str(helper), "hostname", project, service], text=True).strip()
+    return subprocess.check_output(
+        [sys.executable, str(helper), "hostname", project, service], text=True
+    ).strip()
 
 
 def e2e_stack(env: Mapping[str, str], *, project: str, database: str) -> E2EStack:
@@ -68,13 +71,20 @@ def e2e_stack(env: Mapping[str, str], *, project: str, database: str) -> E2EStac
     credentials = f"{database}:{database}"
     return E2EStack(
         host=host,
-        awid_url=(f"http://{candidate_hostname(project, 'awid')}:8010" if container_network
-                  else f"http://{host}:{awid_port}"),
-        postgres_url=(f"postgresql://{credentials}@{candidate_hostname(project, 'postgres')}:5432/{database}"
-                      if container_network
-                      else f"postgresql://{credentials}@{host}:{postgres_port}/{database}"),
+        awid_url=(
+            f"http://{candidate_hostname(project, 'awid')}:8010"
+            if container_network
+            else f"http://{host}:{awid_port}"
+        ),
+        postgres_url=(
+            f"postgresql://{credentials}@{candidate_hostname(project, 'postgres')}:5432/{database}"
+            if container_network
+            else f"postgresql://{credentials}@{host}:{postgres_port}/{database}"
+        ),
         compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
-        redis_url=f"redis://{candidate_hostname(project, 'redis')}:6379/0" if container_network else None,
+        redis_url=f"redis://{candidate_hostname(project, 'redis')}:6379/0"
+        if container_network
+        else None,
     )
 
 
@@ -173,7 +183,12 @@ class _RecordingProxyHandler(BaseHTTPRequestHandler):
 
         self.send_response(upstream.status_code)
         for key, value in upstream.headers.items():
-            if key.lower() in {"content-length", "connection", "transfer-encoding", "content-encoding"}:
+            if key.lower() in {
+                "content-length",
+                "connection",
+                "transfer-encoding",
+                "content-encoding",
+            }:
                 continue
             self.send_header(key, value)
         self.send_header("Content-Length", str(len(upstream.content)))
@@ -231,7 +246,8 @@ def wait_http_ok(url: str, *, timeout_seconds: float = 30.0, ca_file: Path | Non
     while time.monotonic() < deadline:
         try:
             response = httpx.get(
-                url, timeout=2.0,
+                url,
+                timeout=2.0,
                 verify=ssl.create_default_context(cafile=str(ca_file)) if ca_file else True,
             )
             if response.status_code < 500:
@@ -269,14 +285,16 @@ def run_aw_json(workspace: AWWorkspace, *args: str) -> dict[str, Any]:
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise AssertionError(f"aw command did not emit JSON: {result.stdout}\n{result.stderr}") from exc
+        raise AssertionError(
+            f"aw command did not emit JSON: {result.stdout}\n{result.stderr}"
+        ) from exc
     assert isinstance(payload, dict)
     return payload
 
 
 def aw_request(
     team: E2ETeam,
-    method: str,
+    method: HTTPMethod,
     url: str,
     *,
     body: str | None = None,
@@ -300,15 +318,17 @@ def aw_request(
 
 def assert_aw_success(result: subprocess.CompletedProcess[str], *, context: str) -> str:
     assert result.returncode == 0, (
-        f"aw id request failed: {context}\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}\n"
+        f"aw id request failed: {context}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}\n"
     )
     return result.stdout
 
 
-def assert_aw_status(result: subprocess.CompletedProcess[str], status: int, *, context: str) -> None:
-    assert result.returncode != 0, f"expected HTTP {status} failure for {context}, got success: {result.stdout}"
+def assert_aw_status(
+    result: subprocess.CompletedProcess[str], status: int, *, context: str
+) -> None:
+    assert result.returncode != 0, (
+        f"expected HTTP {status} failure for {context}, got success: {result.stdout}"
+    )
     assert f"HTTP {status}" in result.stderr, (
         f"expected HTTP {status} for {context}\n"
         f"stdout:\n{result.stdout}\n"
@@ -350,7 +370,9 @@ def aw_workspace_factory(tmp_path: Path, *, awid_url: str) -> Callable[[str], AW
     return make
 
 
-def _write_workspace_binding(workspace: AWWorkspace, *, team_id: str, alias: str, cert_path: str) -> None:
+def _write_workspace_binding(
+    workspace: AWWorkspace, *, team_id: str, alias: str, cert_path: str
+) -> None:
     now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     workspace_id = str(uuid.uuid4())
     (workspace.path / ".aw" / "workspace.yaml").write_text(
@@ -371,7 +393,11 @@ updated_at: \"{now}\"
 
 
 def provision_team(
-    workspace: AWWorkspace, *, awid_url: str, namespace_prefix: str, alias: str = "alice",
+    workspace: AWWorkspace,
+    *,
+    awid_url: str,
+    namespace_prefix: str,
+    alias: str = "alice",
 ) -> E2ETeam:
     """A new namespace and team at ``awid_url``, with ``alias`` as its one member,
     bound to ``workspace``. The team has no server and installs nothing."""
@@ -380,18 +406,62 @@ def provision_team(
     team = "default"
     address = f"{namespace}/{alias}"
 
-    run_aw(workspace, "id", "create", "--domain", namespace, "--name", alias,
-           "--registry", awid_url, "--skip-dns-verify")
-    run_aw(workspace, "id", "team", "create", "--namespace", namespace, "--name", team,
-           "--registry", awid_url)
-    add_member = run_aw_json(workspace, "id", "team", "add-member", "--namespace", namespace,
-                             "--team", team, "--member", address)
+    run_aw(
+        workspace,
+        "id",
+        "create",
+        "--domain",
+        namespace,
+        "--name",
+        alias,
+        "--registry",
+        awid_url,
+        "--skip-dns-verify",
+    )
+    run_aw(
+        workspace,
+        "id",
+        "team",
+        "create",
+        "--namespace",
+        namespace,
+        "--name",
+        team,
+        "--registry",
+        awid_url,
+    )
+    add_member = run_aw_json(
+        workspace,
+        "id",
+        "team",
+        "add-member",
+        "--namespace",
+        namespace,
+        "--team",
+        team,
+        "--member",
+        address,
+    )
     certificate_id = str(add_member["certificate_id"])
-    fetch_cert = run_aw_json(workspace, "id", "team", "fetch-cert", "--namespace", namespace,
-                             "--team", team, "--cert-id", certificate_id, "--registry", awid_url)
+    fetch_cert = run_aw_json(
+        workspace,
+        "id",
+        "team",
+        "fetch-cert",
+        "--namespace",
+        namespace,
+        "--team",
+        team,
+        "--cert-id",
+        certificate_id,
+        "--registry",
+        awid_url,
+    )
     team_id = f"{team}:{namespace}"
     run_aw(workspace, "id", "team", "switch", team_id)
-    _write_workspace_binding(workspace, team_id=team_id, alias=alias, cert_path=str(fetch_cert["cert_path"]))
+    _write_workspace_binding(
+        workspace, team_id=team_id, alias=alias, cert_path=str(fetch_cert["cert_path"])
+    )
     cert = run_aw_json(workspace, "id", "cert", "show")
     return E2ETeam(
         workspace=workspace,
@@ -446,7 +516,9 @@ def running_app(
             tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             tls.load_cert_chain(certificates.cert_file, certificates.key_file)
             proxy.socket = tls.wrap_socket(proxy.socket, server_side=True)
-        proxy_origin = f"{'https' if certificates else 'http'}://{address}:{proxy.server_address[1]}"
+        proxy_origin = (
+            f"{'https' if certificates else 'http'}://{address}:{proxy.server_address[1]}"
+        )
         env = os.environ.copy()
         for variable in drop_env:
             env.pop(variable, None)
@@ -468,13 +540,17 @@ def running_app(
             with pytest.MonkeyPatch.context() as patch:
                 # Only this host's own test listener bypasses the public egress proxy.
                 for variable in ("NO_PROXY", "no_proxy"):
-                    patch.setenv(variable, ",".join(filter(None, (os.environ.get(variable), address))))
+                    patch.setenv(
+                        variable, ",".join(filter(None, (os.environ.get(variable), address)))
+                    )
                 if ca_file is not None:
                     # All resident clients trust the disposable deployment's CA.
                     # Keep earlier session deployments trusted when another starts.
                     previous = os.environ.get("SSL_CERT_FILE")
                     bundle = ca_file.with_name("client-ca-bundle.pem")
-                    bundle.write_bytes((Path(previous).read_bytes() if previous else b"") + ca_file.read_bytes())
+                    bundle.write_bytes(
+                        (Path(previous).read_bytes() if previous else b"") + ca_file.read_bytes()
+                    )
                     patch.setenv("SSL_CERT_FILE", str(bundle))
                     patch.setenv("GODEBUG", "x509sslcertoverrideplatform=1")
                 try:
@@ -483,12 +559,18 @@ def running_app(
                     setup_error = exc
                     raise
                 manifest = httpx.get(
-                    f"{proxy_origin}/.well-known/aweb-app.json", timeout=10.0,
+                    f"{proxy_origin}/.well-known/aweb-app.json",
+                    timeout=10.0,
                     verify=ssl.create_default_context(cafile=str(ca_file)) if ca_file else True,
                 )
                 manifest.raise_for_status()
-                yield RunningApp(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy,
-                                 app_id=manifest.json()["app"]["id"], ca_file=ca_file)
+                yield RunningApp(
+                    origin=proxy_origin,
+                    backend_origin=backend_origin,
+                    proxy=proxy,
+                    app_id=_served_app_id(manifest.json()),
+                    ca_file=ca_file,
+                )
         finally:
             proxy.shutdown()
             proxy.server_close()
@@ -514,9 +596,23 @@ def running_app(
                 ) from setup_error
 
 
+def _served_app_id(manifest: object) -> str:
+    """The app id a served manifest names."""
+    app = manifest.get("app") if isinstance(manifest, dict) else None
+    app_id = app.get("id") if isinstance(app, dict) else None
+    if not isinstance(app_id, str) or not app_id:
+        raise AssertionError(f"the served manifest names no app id: {manifest!r}")
+    return app_id
+
+
 @contextmanager
 def running_coordination_server(
-    tmp_path: Path, *, stack: E2EStack, awid_service_token: str, app_origin: str, ca_file: Path,
+    tmp_path: Path,
+    *,
+    stack: E2EStack,
+    awid_service_token: str,
+    app_origin: str,
+    ca_file: Path,
 ) -> Iterator[CoordinationServer]:
     """Real aweb, with the real HTTPS fetcher pinned to this test origin."""
     with ExitStack() as setup:
@@ -558,9 +654,23 @@ def running_coordination_server(
         )
         with (tmp_path / "coordination.log").open("w+") as log:
             proc = subprocess.Popen(
-                ["uv", "run", "--offline", "--frozen", "--project", str(SERVER_PROJECT),
-                 "python", str(runner), app_origin, str(ca_file), str(listener.fileno())],
-                env=env, stdout=log, stderr=log, pass_fds=(listener.fileno(),),
+                [
+                    "uv",
+                    "run",
+                    "--offline",
+                    "--frozen",
+                    "--project",
+                    str(SERVER_PROJECT),
+                    "python",
+                    str(runner),
+                    app_origin,
+                    str(ca_file),
+                    str(listener.fileno()),
+                ],
+                env=env,
+                stdout=log,
+                stderr=log,
+                pass_fds=(listener.fileno(),),
             )
             listener.close()
             try:
@@ -576,7 +686,9 @@ def running_coordination_server(
                 # uv may report forwarded SIGTERM as 128 + SIGTERM.
                 if proc.returncode not in (0, -15, 143, None):
                     log.seek(0)
-                    raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
+                    raise AssertionError(
+                        f"coordination server exit {proc.returncode}: {log.read()}"
+                    )
 
 
 def configure_app_client(workspace: AWWorkspace, app: RunningApp) -> None:
@@ -589,8 +701,20 @@ def configure_app_client(workspace: AWWorkspace, app: RunningApp) -> None:
 
 
 def publish_team_server(team: E2ETeam, origin: str, *, awid_url: str) -> None:
-    published = run_aw_json(team.workspace, "id", "team", "set-server", "--team", team.team,
-                            "--namespace", team.namespace, "--url", origin, "--registry", awid_url)
+    published = run_aw_json(
+        team.workspace,
+        "id",
+        "team",
+        "set-server",
+        "--team",
+        team.team,
+        "--namespace",
+        team.namespace,
+        "--url",
+        origin,
+        "--registry",
+        awid_url,
+    )
     assert published["status"] == "published" and published["server_url"] == origin
 
 
@@ -598,10 +722,27 @@ def grant_install_admin(team: E2ETeam, server: CoordinationServer) -> None:
     started = time.monotonic()
     try:
         operator = subprocess.run(
-            ["uv", "run", "--offline", "--frozen", "--project", str(SERVER_PROJECT),
-             "aweb", "install-admin", "grant", "--team-id", team.team_id,
-             "--principal-did", team.did_key, "--role", "owner"],
-            env=server.env, text=True, capture_output=True, timeout=30,
+            [
+                "uv",
+                "run",
+                "--offline",
+                "--frozen",
+                "--project",
+                str(SERVER_PROJECT),
+                "aweb",
+                "install-admin",
+                "grant",
+                "--team-id",
+                team.team_id,
+                "--principal-did",
+                team.did_key,
+                "--role",
+                "owner",
+            ],
+            env=server.env,
+            text=True,
+            capture_output=True,
+            timeout=30,
         )
     except subprocess.TimeoutExpired as exc:
         elapsed = time.monotonic() - started
@@ -621,12 +762,22 @@ def connect_team_server(team: E2ETeam, app: RunningApp, *, awid_url: str) -> Non
     assert app.server is not None
     team.workspace.env["AWEB_URL"] = app.server.origin
     configure_app_client(team.workspace, app)
-    run_aw(team.workspace, "workspace", "connect", "--service", app.server.origin, "--team", team.team_id)
+    run_aw(
+        team.workspace,
+        "workspace",
+        "connect",
+        "--service",
+        app.server.origin,
+        "--team",
+        team.team_id,
+    )
     publish_team_server(team, app.server.origin, awid_url=awid_url)
     grant_install_admin(team, app.server)
 
 
-def install_app(team: E2ETeam, app: RunningApp, *, grant_scopes: Sequence[str] = ()) -> dict[str, Any]:
+def install_app(
+    team: E2ETeam, app: RunningApp, *, grant_scopes: Sequence[str] = ()
+) -> dict[str, Any]:
     """Installs the app for ``team`` through ``aw plugin install`` and checks the
     server reports it active; ``grant_scopes`` narrows the grant."""
     assert app.server is not None
@@ -635,10 +786,19 @@ def install_app(team: E2ETeam, app: RunningApp, *, grant_scopes: Sequence[str] =
         args.extend(["--grant-scope", scope])
     installed = run_aw_json(team.workspace, *args)
     assert installed["approved"], installed
-    apps = aw_json(aw_request(team, "GET", app.server.origin + "/v1/apps/installed?team_id=" + team.team_id),
-                   context=f"installed {app.app_id}")
-    assert any(entry["app_id"] == app.app_id and entry["state"] == "active" and entry["origin"] == app.origin
-               and entry["installation_id"] for entry in apps["apps"]), apps
+    apps = aw_json(
+        aw_request(
+            team, HTTPMethod.GET, app.server.origin + "/v1/apps/installed?team_id=" + team.team_id
+        ),
+        context=f"installed {app.app_id}",
+    )
+    assert any(
+        entry["app_id"] == app.app_id
+        and entry["state"] == "active"
+        and entry["origin"] == app.origin
+        and entry["installation_id"]
+        for entry in apps["apps"]
+    ), apps
     return installed
 
 

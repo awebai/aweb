@@ -15,8 +15,8 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import replace
+from http import HTTPMethod
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pytest
@@ -78,14 +78,19 @@ def deployment(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningApp]
         }
 
     with running_app(
-        name="library", factory="library.api:create_app", env_for=settings,
+        name="library",
+        factory="library.api:create_app",
+        env_for=settings,
         drop_env=("LIBRARY_AWID_SERVICE_TOKEN", "LIBRARY_APP_KEY_FILES", "LIBRARY_APP_ID"),
         tls_dir=directory / "tls",
     ) as app:
         assert app.ca_file is not None
         with running_coordination_server(
-            directory, stack=STACK, awid_service_token=AWID_SERVICE_TOKEN,
-            app_origin=app.origin, ca_file=app.ca_file,
+            directory,
+            stack=STACK,
+            awid_service_token=AWID_SERVICE_TOKEN,
+            app_origin=app.origin,
+            ca_file=app.ca_file,
         ) as server:
             yield replace(app, server=server)
 
@@ -97,23 +102,26 @@ def workspaces(tmp_path: Path) -> Callable[[str], AWWorkspace]:
 
 
 def _team(workspaces: Callable[[str], AWWorkspace], name: str, app: RunningApp) -> E2ETeam:
-    team = provision_team(workspaces(name), awid_url=STACK.awid_url, namespace_prefix="library-authz")
+    team = provision_team(
+        workspaces(name), awid_url=STACK.awid_url, namespace_prefix="library-authz"
+    )
     connect_team_server(team, app, awid_url=STACK.awid_url)
     return team
 
 
 def _publish(team: E2ETeam, app: RunningApp, blueprint_ref: str):
     body = json.dumps(_blueprint_payload(blueprint_ref=blueprint_ref), separators=(",", ":"))
-    return aw_request(team, "POST", f"{app.origin}/v1/blueprints/import", body=body)
+    return aw_request(team, HTTPMethod.POST, f"{app.origin}/v1/blueprints/import", body=body)
 
 
 def _catalog_has(app: RunningApp, blueprint_ref: str) -> bool:
-    response = httpx.get(f"{app.origin}/v1/blueprints/{blueprint_ref}", timeout=10.0,
-                         verify=_verify(app))
+    response = httpx.get(
+        f"{app.origin}/v1/blueprints/{blueprint_ref}", timeout=10.0, verify=_verify(app)
+    )
     return response.status_code == 200
 
 
-def _verify(app: RunningApp) -> Any:
+def _verify(app: RunningApp) -> ssl.SSLContext | bool:
     return ssl.create_default_context(cafile=str(app.ca_file)) if app.ca_file else True
 
 
@@ -122,57 +130,77 @@ def _ref() -> str:
 
 
 def test_a_team_that_never_installed_library_cannot_publish(
-    deployment: RunningApp, workspaces: Callable[[str], AWWorkspace],
+    deployment: RunningApp,
+    workspaces: Callable[[str], AWWorkspace],
 ) -> None:
     team = _team(workspaces, "uninstalled", deployment)
     blueprint_ref = _ref()
 
-    assert_aw_status(_publish(team, deployment, blueprint_ref), 403, context="publish without an install")
+    assert_aw_status(
+        _publish(team, deployment, blueprint_ref), 403, context="publish without an install"
+    )
     assert not _catalog_has(deployment, blueprint_ref)
-    assert_aw_status(aw_request(team, "GET", f"{deployment.origin}/v1/shelf"), 403,
-                     context="shelf read without an install")
+    assert_aw_status(
+        aw_request(team, HTTPMethod.GET, f"{deployment.origin}/v1/shelf"),
+        403,
+        context="shelf read without an install",
+    )
 
 
 def test_an_install_without_library_write_cannot_write(
-    deployment: RunningApp, workspaces: Callable[[str], AWWorkspace],
+    deployment: RunningApp,
+    workspaces: Callable[[str], AWWorkspace],
 ) -> None:
     team = _team(workspaces, "read-only", deployment)
     install_app(team, deployment, grant_scopes=("library:read",))
     blueprint_ref = _ref()
 
-    assert_aw_status(_publish(team, deployment, blueprint_ref), 403, context="publish with library:read only")
+    assert_aw_status(
+        _publish(team, deployment, blueprint_ref), 403, context="publish with library:read only"
+    )
     assert not _catalog_has(deployment, blueprint_ref)
     assert_aw_status(
-        aw_request(team, "POST", f"{deployment.origin}/v1/team/register", body="{}"),
-        403, context="register with library:read only",
+        aw_request(team, HTTPMethod.POST, f"{deployment.origin}/v1/team/register", body="{}"),
+        403,
+        context="register with library:read only",
     )
-    shelf = aw_json(aw_request(team, "GET", f"{deployment.origin}/v1/shelf"), context="shelf with library:read")
+    shelf = aw_json(
+        aw_request(team, HTTPMethod.GET, f"{deployment.origin}/v1/shelf"),
+        context="shelf with library:read",
+    )
     assert isinstance(shelf, dict)
 
 
 def test_an_uninstalled_team_is_refused(
-    deployment: RunningApp, workspaces: Callable[[str], AWWorkspace],
+    deployment: RunningApp,
+    workspaces: Callable[[str], AWWorkspace],
 ) -> None:
     team = _team(workspaces, "uninstalling", deployment)
     install_app(team, deployment)
-    aw_json(aw_request(team, "GET", f"{deployment.origin}/v1/proposals"), context="installed member reads")
+    aw_json(
+        aw_request(team, HTTPMethod.GET, f"{deployment.origin}/v1/proposals"),
+        context="installed member reads",
+    )
 
     uninstall_app(team, deployment)
 
     deadline = time.monotonic() + GRANT_WINDOW_SECONDS
     while True:
-        refused = aw_request(team, "GET", f"{deployment.origin}/v1/proposals")
+        refused = aw_request(team, HTTPMethod.GET, f"{deployment.origin}/v1/proposals")
         if refused.returncode != 0 or time.monotonic() >= deadline:
             break
         time.sleep(1.0)
     assert_aw_status(refused, 403, context="member of a team that uninstalled Library")
     blueprint_ref = _ref()
-    assert_aw_status(_publish(team, deployment, blueprint_ref), 403, context="publish after uninstall")
+    assert_aw_status(
+        _publish(team, deployment, blueprint_ref), 403, context="publish after uninstall"
+    )
     assert not _catalog_has(deployment, blueprint_ref)
 
 
 def test_a_team_signed_certificate_the_registry_never_published_is_unauthenticated(
-    deployment: RunningApp, workspaces: Callable[[str], AWWorkspace],
+    deployment: RunningApp,
+    workspaces: Callable[[str], AWWorkspace],
 ) -> None:
     team = _team(workspaces, "unpublished-cert", deployment)
     install_app(team, deployment)
@@ -186,13 +214,15 @@ def test_a_team_signed_certificate_the_registry_never_published_is_unauthenticat
     response = httpx.get(
         f"{deployment.origin}/v1/shelf",
         headers=unpublished.headers(aud=deployment.origin, method="GET", path="/v1/shelf"),
-        timeout=10.0, verify=_verify(deployment),
+        timeout=10.0,
+        verify=_verify(deployment),
     )
     assert response.status_code == 401, response.text
 
 
 def test_a_granted_member_publishes_shelves_and_materializes(
-    deployment: RunningApp, workspaces: Callable[[str], AWWorkspace],
+    deployment: RunningApp,
+    workspaces: Callable[[str], AWWorkspace],
 ) -> None:
     team = _team(workspaces, "granted", deployment)
     install_app(team, deployment)
@@ -202,15 +232,24 @@ def test_a_granted_member_publishes_shelves_and_materializes(
     assert published["blueprint_ref"] == blueprint_ref
     assert _catalog_has(deployment, blueprint_ref)
     shelved = aw_json(
-        aw_request(team, "POST", f"{deployment.origin}/v1/shelf/import",
-                   body=json.dumps({"source_blueprint_ref": blueprint_ref, "profile_ref": "developer"})),
+        aw_request(
+            team,
+            HTTPMethod.POST,
+            f"{deployment.origin}/v1/shelf/import",
+            body=json.dumps({"source_blueprint_ref": blueprint_ref, "profile_ref": "developer"}),
+        ),
         context="granted import to shelf",
     )
     assert shelved["created"] is True
     materialized = aw_json(
-        aw_request(team, "POST", f"{deployment.origin}/v1/materialize",
-                   body=json.dumps({"profile_ref": "developer", "runtime_kind": "claude-code",
-                                    "target": "local"})),
+        aw_request(
+            team,
+            HTTPMethod.POST,
+            f"{deployment.origin}/v1/materialize",
+            body=json.dumps(
+                {"profile_ref": "developer", "runtime_kind": "claude-code", "target": "local"}
+            ),
+        ),
         context="granted materialize",
     )
     assert materialized["source_blueprint_ref"] == blueprint_ref
