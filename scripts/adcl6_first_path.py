@@ -182,7 +182,10 @@ def stage_product_source(
     archive = runtime / "source.tar"
     source_sha = archive_running_tree(root, archive)
     extract(
-        archive, source_sha, build / "holder", ("awid/", "key-holder/", "naapp-lib/", "deploy/team/")
+        archive,
+        source_sha,
+        build / "holder",
+        ("awid/", "key-holder/", "naapp-lib/", "deploy/team/"),
     )
     go_tree = subprocess.check_output(
         ["git", "rev-parse", f"{source_sha}:cli/go"], cwd=root, text=True

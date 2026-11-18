@@ -29,7 +29,11 @@ class RunningTreeTests(unittest.TestCase):
             source = root / "cli/go/source.txt"
             source.parent.mkdir(parents=True)
             source.write_text("first")
-            for path in ("awid/source.txt", "key-holder/source.txt", "naapp-lib/source.txt"):
+            for path in (
+                "awid/source.txt",
+                "key-holder/source.txt",
+                "naapp-lib/source.txt",
+            ):
                 file = root / path
                 file.parent.mkdir()
                 file.write_text(path)
