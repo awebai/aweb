@@ -13,14 +13,13 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
-
 from awid.external_authority import DNSLookup
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_key_acts import (
     MemoryTeamKeyPins,
-    TeamKeyMemo,
     TeamKeyActError,
+    TeamKeyMemo,
     TeamKeyPin,
     TeamKeyUnverified,
     pinned_team_key,
@@ -355,7 +354,10 @@ async def test_a_team_never_seen_is_pinned_to_the_first_key():
         )
         == team
     )
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(team, None)
+    pin = await pins.pin(TEAM_ID)
+    assert pin.team_did_key == team
+    assert pin.act_at is None
+    assert pin.admitted_at is not None
 
 
 @pytest.mark.asyncio
@@ -363,7 +365,7 @@ async def test_a_different_key_without_any_act_is_refused():
     pins = MemoryTeamKeyPins()
     _, pinned = keypair()
     _, served = keypair()
-    await pins.first_sight(TEAM_ID, pinned)
+    initial_pin = await pins.first_sight(TEAM_ID, pinned)
     with pytest.raises(TeamKeyUnverified) as refused:
         await pinned_team_key(
             TEAM_ID,
@@ -374,7 +376,7 @@ async def test_a_different_key_without_any_act_is_refused():
             enforce=True,
         )
     assert refused.value.reason == "no_act"
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None)
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None, admitted_at=initial_pin.admitted_at)
 
 
 @pytest.mark.asyncio
@@ -386,7 +388,7 @@ async def test_a_served_key_the_registry_act_does_not_name_keeps_the_pin(enforce
     controller = keypair()
     _, pinned = keypair()
     _, served = keypair()
-    await pins.first_sight(TEAM_ID, pinned)
+    initial_pin = await pins.first_sight(TEAM_ID, pinned)
     with caplog.at_level(logging.WARNING, logger="awid.team_key_acts"):
         key = await pinned_team_key(
             TEAM_ID,
@@ -397,7 +399,7 @@ async def test_a_served_key_the_registry_act_does_not_name_keeps_the_pin(enforce
             enforce=enforce,
         )
     assert key == pinned
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None)
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(pinned, None, admitted_at=initial_pin.admitted_at)
     assert [r.getMessage() for r in caplog.records] == [
         f"team_key_pin_kept team={TEAM_ID} pinned={pinned} served={served} reason=key_mismatch",
     ]
@@ -413,8 +415,8 @@ async def test_a_process_still_served_the_old_key_uses_the_rotated_pin(enforce):
     _, old = keypair()
     _, new = keypair()
     resolver = _dns("_awid.team.example.com", controller[1])
-    record = _example_act(controller, new)
     await pins.first_sight(TEAM_ID, old)
+    record = _example_act(controller, new)
     assert (
         await pinned_team_key(
             TEAM_ID, new, pins=pins, fetch_act=_fetch(record), resolver=resolver, enforce=enforce
@@ -443,8 +445,8 @@ async def test_two_rotations_never_move_the_pin_to_the_middle_key(enforce):
     _, middle = keypair()
     _, last = keypair()
     resolver = _dns("_awid.team.example.com", controller[1])
-    latest = _example_act(controller, last)
     await pins.first_sight(TEAM_ID, first)
+    latest = _example_act(controller, last)
 
     assert (
         await pinned_team_key(
@@ -478,7 +480,7 @@ async def test_without_enforcement_an_act_for_the_served_key_from_no_dns_control
     controller = keypair()
     _, pinned = keypair()
     _, served = keypair()
-    await pins.first_sight(TEAM_ID, pinned)
+    initial_pin = await pins.first_sight(TEAM_ID, pinned)
     key = await pinned_team_key(
         TEAM_ID,
         served,
@@ -488,7 +490,7 @@ async def test_without_enforcement_an_act_for_the_served_key_from_no_dns_control
         enforce=False,
     )
     assert key == served
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, None)
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, None, admitted_at=initial_pin.admitted_at)
 
 
 @pytest.mark.asyncio
@@ -550,7 +552,7 @@ async def test_without_enforcement_a_mismatch_is_logged_served_and_moves_the_pin
     pins = MemoryTeamKeyPins()
     _, pinned = keypair()
     _, served = keypair()
-    await pins.first_sight(TEAM_ID, pinned)
+    initial_pin = await pins.first_sight(TEAM_ID, pinned)
     with caplog.at_level(logging.WARNING, logger="awid.team_key_acts"):
         key = await pinned_team_key(
             TEAM_ID,
@@ -562,7 +564,7 @@ async def test_without_enforcement_a_mismatch_is_logged_served_and_moves_the_pin
         )
     assert key == served
     # The served key is the team's one current key on this server.
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, None)
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, None, admitted_at=initial_pin.admitted_at)
     assert [r.getMessage() for r in caplog.records] == [
         f"team_key_pin_mismatch team={TEAM_ID} pinned={pinned} served={served} reason=no_act enforced=false",
         f"team_key_pin_moved_without_act team={TEAM_ID} from={pinned} to={served} reason=no_act",
@@ -575,17 +577,21 @@ async def test_a_move_without_an_act_keeps_the_time_of_the_last_accepted_act():
     _, first = keypair()
     _, acted = keypair()
     _, served = keypair()
-    signed_at = datetime(2026, 11, 12, 10, 0, tzinfo=timezone.utc)
-    await pins.first_sight(TEAM_ID, first)
+    initial_pin = await pins.first_sight(TEAM_ID, first)
+    signed_at = datetime.now(timezone.utc)
     assert await pins.move(
-        TEAM_ID, expected=TeamKeyPin(first, None), new=TeamKeyPin(acted, signed_at)
+        TEAM_ID,
+        expected=TeamKeyPin(first, None, admitted_at=initial_pin.admitted_at),
+        new=TeamKeyPin(acted, signed_at, admitted_at=initial_pin.admitted_at),
     )
 
     await pinned_team_key(
         TEAM_ID, served, pins=pins, fetch_act=_fetch(None), resolver=TXTAnswers({}), enforce=False
     )
 
-    assert await pins.pin(TEAM_ID) == TeamKeyPin(served, signed_at)
+    assert await pins.pin(TEAM_ID) == TeamKeyPin(
+        served, signed_at, admitted_at=initial_pin.admitted_at
+    )
 
 
 @pytest.mark.asyncio

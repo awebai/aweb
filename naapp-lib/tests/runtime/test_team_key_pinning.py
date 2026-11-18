@@ -121,7 +121,10 @@ async def test_substituted_registry_team_key_does_not_admit_a_forged_member(
     forged = await _get(registry, team_cache(), forger)
 
     assert forged.status_code == 401, forged.text
-    assert forged.json()["detail"] == "team_key_unverified"
+    assert (
+        forged.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     pinned = await pins_db.fetch_value(
         "SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID
     )
@@ -161,7 +164,10 @@ async def test_rotation_by_a_controller_dns_does_not_name_is_refused(registry, t
     forged = await _get(registry, team_cache(), forger)
 
     assert forged.status_code == 401, forged.text
-    assert forged.json()["detail"] == "team_key_unverified"
+    assert (
+        forged.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     pinned = await pins_db.fetch_value(
         "SELECT team_did_key FROM {{tables.team_key_pins}} WHERE team_id = $1", TEAM_ID
     )

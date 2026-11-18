@@ -10,15 +10,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
-
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair
 from test_team_key_pinning import (  # noqa: F401
     _substitute_registry_team_key,
-    pinning,
     register_namespace_controller,
     rotate_team_key,
+)
+from test_team_key_pinning import (
+    pinning as pinning,
 )
 
 SERVICE = "https://aweb.example.test"
@@ -82,7 +83,10 @@ async def test_registration_under_a_key_with_no_controller_act_is_refused(regist
     response = await _register(env, substituted_sk)
 
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "team_key_unverified"
+    assert (
+        response.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     assert await _held_key(env) == env.team_did
 
 

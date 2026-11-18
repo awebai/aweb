@@ -49,6 +49,7 @@ from awid.team_certificate import (
 )
 from awid.team_ids import parse_team_id
 from awid.team_key_acts import (
+    TEAM_KEY_UNVERIFIED_DETAIL,
     MemoryTeamKeyPins,
     TeamKeyMemo,
     TeamKeyPinStore,
@@ -303,7 +304,7 @@ class AWIDTeamCache:
                 enforce=self._enforce_team_key_pins,
             )
         except TeamKeyUnverified:
-            raise HTTPException(status_code=401, detail="team_key_unverified") from None
+            raise HTTPException(status_code=401, detail=TEAM_KEY_UNVERIFIED_DETAIL) from None
         self._team_key_memo.put(team_id, served_key, key)
         return key
 

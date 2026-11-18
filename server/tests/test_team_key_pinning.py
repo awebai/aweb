@@ -14,10 +14,10 @@ from datetime import datetime, timezone
 
 import httpx
 import pytest
-
-from awid_service.testing import TXTAnswers
 from awid.signing import canonical_json_bytes, sign_message
-from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
+from awid_service.testing import TXTAnswers
+from test_dashboard_privacy import TEAM, TEAM_NAME
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -146,8 +146,14 @@ async def test_substituted_registry_team_key_does_not_admit_a_forged_member(pinn
     roster = await _roster(env, forger)
 
     assert (connected.status_code, roster.status_code) == (401, 401), (connected.text, roster.text)
-    assert connected.json()["detail"] == "team_key_unverified"
-    assert roster.json()["detail"] == "team_key_unverified"
+    assert (
+        connected.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
+    assert (
+        roster.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     assert (
         await env.db.fetch_value(
             "SELECT count(*) FROM {{tables.agents}} WHERE team_id = $1 AND did_key = $2",
@@ -193,7 +199,10 @@ async def test_rotation_by_a_controller_dns_does_not_name_is_refused(pinning):
     response = await _connect(env, _member(next_sk, next_did, "mallory"))
 
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "team_key_unverified"
+    assert (
+        response.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     assert (await _pin(env))["team_did_key"] == env.team_did
 
 
@@ -220,7 +229,10 @@ async def test_an_older_act_cannot_roll_the_pin_back(pinning):
     response = await _connect(env, _member(first_sk, first_did, "grace"))
 
     assert response.status_code == 401, response.text
-    assert response.json()["detail"] == "team_key_unverified"
+    assert (
+        response.json()["detail"]
+        == "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+    )
     assert (await _pin(env))["team_did_key"] == second_did
 
 

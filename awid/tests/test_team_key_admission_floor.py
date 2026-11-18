@@ -102,3 +102,37 @@ async def test_first_sight_pin_accepts_a_genuine_act_after_admission():
         )
         == next_key
     )
+
+
+@pytest.mark.asyncio
+async def test_staged_admission_floor_records_would_refuse_without_breaking_the_flow(caplog):
+    controller_key, controller_did = _keypair()
+    _, current_key = _keypair()
+    _, historical_key = _keypair()
+    record = _rotation_act(
+        signing_key=controller_key,
+        signer_did=controller_did,
+        new_key=historical_key,
+        signed_at=datetime.now(timezone.utc) - timedelta(days=1),
+    )
+    pins = MemoryTeamKeyPins()
+    first = await pins.first_sight("team:example.test", current_key)
+
+    async def fetch_act():
+        return record
+
+    assert (
+        await pinned_team_key(
+            "team:example.test",
+            historical_key,
+            pins=pins,
+            fetch_act=fetch_act,
+            resolver=NamespaceControllerDNS(controller_did),
+            enforce=False,
+        )
+        == historical_key
+    )
+    assert "reason=not_newer enforced=false" in caplog.text
+    admitted = await pins.pin("team:example.test")
+    assert admitted.act_at is None
+    assert admitted.admitted_at == first.admitted_at

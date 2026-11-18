@@ -15,20 +15,26 @@ Enforcement is staged (``aweb.config.enforce_team_key_pins``): until
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
-
-from fastapi import HTTPException, Request
 
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.team_ids import parse_team_id
 from awid.team_key_acts import (
+    TEAM_KEY_UNVERIFIED_DETAIL,
     TeamKeyMemo,
     TeamKeyPin,
     TeamKeyUnverified,
+)
+from awid.team_key_acts import (
     pinned_team_key as pin_team_key,
 )
+from fastapi import HTTPException, Request
 
-from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS, awid_dependency_http_exception
+from aweb.awid_error_handling import (
+    AWID_DEPENDENCY_ERRORS,
+    awid_dependency_http_exception,
+)
 from aweb.config import enforce_team_key_pins
 
 logger = logging.getLogger(__name__)
@@ -55,14 +61,20 @@ class AdmittedTeamKeys:
 
     async def pin(self, team_id: str) -> TeamKeyPin | None:
         row = await self._db.fetch_one(
-            "SELECT team_did_key, team_key_act_at FROM {{tables.teams}} WHERE team_id = $1",
+            "SELECT team_did_key, team_key_act_at, created_at FROM {{tables.teams}} WHERE team_id = $1",
             team_id,
         )
-        return None if row is None else TeamKeyPin(row["team_did_key"], row["team_key_act_at"])
+        return (
+            None
+            if row is None
+            else TeamKeyPin(
+                row["team_did_key"], row["team_key_act_at"], admitted_at=row["created_at"]
+            )
+        )
 
     async def first_sight(self, team_id: str, team_did_key: str) -> TeamKeyPin:
         # Admission (connect, service registration) writes the row.
-        return TeamKeyPin(team_did_key, None)
+        return TeamKeyPin(team_did_key, None, admitted_at=datetime.now(timezone.utc))
 
     async def move(self, team_id: str, *, expected: TeamKeyPin, new: TeamKeyPin) -> bool:
         moved = await self._db.fetch_value(
@@ -71,6 +83,7 @@ class AdmittedTeamKeys:
             SET team_did_key = $2, team_key_act_at = $3
             WHERE team_id = $1 AND team_did_key = $4
               AND team_key_act_at IS NOT DISTINCT FROM $5
+              AND ($6::timestamptz IS NULL OR created_at = $6)
             RETURNING team_id
             """,
             team_id,
@@ -78,6 +91,7 @@ class AdmittedTeamKeys:
             new.act_at,
             expected.team_did_key,
             expected.act_at,
+            expected.admitted_at,
         )
         return moved is not None
 
@@ -90,7 +104,7 @@ def txt_resolver_for(state: Any) -> Any:
 
 
 def team_key_unverified_exception() -> HTTPException:
-    return HTTPException(status_code=401, detail=TEAM_KEY_UNVERIFIED)
+    return HTTPException(status_code=401, detail=TEAM_KEY_UNVERIFIED_DETAIL)
 
 
 async def pinned_team_key(
