@@ -72,11 +72,14 @@ type RouterCard struct {
 type AuthMode string
 
 const (
+	AuthModeUnspecified  AuthMode = ""
 	AuthModeNone         AuthMode = "none"
 	AuthModeStaticAPIKey AuthMode = "static_api_key"
 	AuthModeBearer       AuthMode = "bearer"
 )
 
+// AuthConfig retains the released string input. New parses it once
+// into routeAuthPolicy; request admission never interprets raw configuration.
 type AuthConfig struct {
 	Mode         string
 	StaticAPIKey string
@@ -100,7 +103,7 @@ type Gateway struct {
 	config        Config
 	rootCard      a2a.Card
 	routeCards    map[string]a2a.Card
-	routeConfigs  map[string]Route
+	routeConfigs  map[string]runtimeRoute
 	bridge        Bridge
 	tasks         *taskStore
 	rateLimiter   *rateLimiter
@@ -173,7 +176,7 @@ func newGateway(config Config, previous *Gateway) (*Gateway, error) {
 		return nil, fmt.Errorf("host is required")
 	}
 	routeCards := make(map[string]a2a.Card, len(config.Routes))
-	routeConfigs := make(map[string]Route, len(config.Routes))
+	routeConfigs := make(map[string]runtimeRoute, len(config.Routes))
 	for _, route := range config.Routes {
 		route.RouteID = strings.TrimSpace(route.RouteID)
 		if route.RouteID == "" {
@@ -182,7 +185,11 @@ func newGateway(config Config, previous *Gateway) (*Gateway, error) {
 		if _, exists := routeCards[route.RouteID]; exists {
 			return nil, fmt.Errorf("duplicate route_id %q", route.RouteID)
 		}
-		if err := validateRouteRuntimeConfig(route); err != nil {
+		auth, err := parseRouteAuthPolicy(route)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateRouteLimits(route); err != nil {
 			return nil, err
 		}
 		card, err := a2a.PerAddressCard(a2a.CardConfig{
@@ -214,7 +221,7 @@ func newGateway(config Config, previous *Gateway) (*Gateway, error) {
 			}
 		}
 		routeCards[route.RouteID] = card
-		routeConfigs[route.RouteID] = route
+		routeConfigs[route.RouteID] = runtimeRoute{Route: route, Auth: auth}
 	}
 	mode := config.RootCardMode
 	if mode == "" && len(config.Routes) == 1 {
@@ -312,20 +319,7 @@ func (g *Gateway) AcceptNewTasksUntil() time.Time {
 	return time.Unix(0, nanos)
 }
 
-func validateRouteRuntimeConfig(route Route) error {
-	switch normalizedAuthMode(route.Auth.Mode) {
-	case "", AuthModeNone:
-	case AuthModeStaticAPIKey:
-		if strings.TrimSpace(route.Auth.StaticAPIKey) == "" && !route.Disabled {
-			return fmt.Errorf("route %s: static_api_key mode requires Auth.StaticAPIKey", route.RouteID)
-		}
-	case AuthModeBearer:
-		if strings.TrimSpace(route.Auth.BearerToken) == "" && !route.Disabled {
-			return fmt.Errorf("route %s: bearer mode requires Auth.BearerToken", route.RouteID)
-		}
-	default:
-		return fmt.Errorf("route %s: unsupported auth mode %q", route.RouteID, route.Auth.Mode)
-	}
+func validateRouteLimits(route Route) error {
 	if raw := strings.TrimSpace(route.Limits.RateLimit); raw != "" {
 		if _, err := parseRateLimit(raw); err != nil {
 			return fmt.Errorf("route %s: invalid rate limit %q: %w", route.RouteID, raw, err)
@@ -400,7 +394,7 @@ func (g *Gateway) Diagnostics() Diagnostics {
 			Mode:             route.Mode,
 			CardPath:         a2a.DirectCardPath(route.RouteID),
 			RPCPath:          a2a.DirectRPCPath(route.RouteID),
-			AuthMode:         route.Auth.Mode,
+			AuthMode:         string(route.Auth.Mode),
 			Disabled:         route.Disabled,
 			RateLimit:        route.Limits.RateLimit,
 			AWIDRequired:     awidRequired,

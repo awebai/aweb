@@ -947,6 +947,10 @@ local identity, including one reached through another address or alias. A local
 agent's ability to receive a reply in a conversation it initiated does not grant
 a public A2A entry point. Native `-check` remains an offline configuration check;
 normal startup validates enabled targets before opening the listener.
+Startup requires the target registry to be reachable. A failed resolution stops
+startup for all routes; configure a supervisor to restart the gateway so it can
+retry after registry connectivity recovers. This may be a transient outage,
+not an invalid route configuration.
 
 Before a native bridge sends, it resolves the recipient through aw mail's
 identity resolver, requires a public target, and sends to that exact DID and stable ID. A plaintext Go send receipt

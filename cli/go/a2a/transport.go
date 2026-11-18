@@ -13,7 +13,7 @@ import (
 // ValidateCredentialURL is the transport policy for secrets sent by the A2A
 // client and managed gateway. Plain HTTP is limited to literal loopback hosts
 // for local development; DNS names cannot opt a remote connection into it
-// (docs/a2a.md:985-988).
+// (docs/a2a.md:989-992).
 func ValidateCredentialURL(raw string) error {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
@@ -34,7 +34,7 @@ type OriginPair struct {
 }
 
 // ValidateRPCOrigin binds card credential selection to its advertised RPC
-// destination (docs/a2a.md:983-984), using the common origin comparator.
+// destination (docs/a2a.md:987-988), using the common origin comparator.
 func ValidateRPCOrigin(pair OriginPair) error {
 	a, err := url.Parse(strings.TrimSpace(pair.Source))
 	if err != nil {

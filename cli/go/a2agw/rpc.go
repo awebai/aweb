@@ -150,7 +150,7 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 	writeRPC(w, http.StatusOK, resp)
 }
 
-func (g *Gateway) handleRPCMethod(ctx context.Context, route Route, req rpcRequest, requestID string, caller callerScope) (any, *rpcError) {
+func (g *Gateway) handleRPCMethod(ctx context.Context, route runtimeRoute, req rpcRequest, requestID string, caller callerScope) (any, *rpcError) {
 	if authRequired(route, caller) {
 		text := "Authentication is required. Send the route API key in X-A2A-API-Key or the route bearer in Authorization, as advertised by its card."
 		if req.Method == "SendMessage" {
@@ -175,7 +175,7 @@ func (g *Gateway) handleRPCMethod(ctx context.Context, route Route, req rpcReque
 	}
 }
 
-func (g *Gateway) rpcSendMessage(ctx context.Context, route Route, raw json.RawMessage, requestID string, caller callerScope) (any, *rpcError) {
+func (g *Gateway) rpcSendMessage(ctx context.Context, route runtimeRoute, raw json.RawMessage, requestID string, caller callerScope) (any, *rpcError) {
 	if !g.taskExecution {
 		return nil, jsonRPCError(-32000, "aweb bridge not configured", requestID, map[string]any{"code": "bridge_not_configured"})
 	}
@@ -230,7 +230,7 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route Route, raw json.RawM
 	return map[string]any{"task": waited.Task}, nil
 }
 
-func (g *Gateway) rpcGetTask(route Route, raw json.RawMessage, requestID string, caller callerScope) (any, *rpcError) {
+func (g *Gateway) rpcGetTask(route runtimeRoute, raw json.RawMessage, requestID string, caller callerScope) (any, *rpcError) {
 	var params getTaskParams
 	if err := parseRawObject(raw, &params); err != nil {
 		return nil, jsonRPCError(-32602, "invalid params", requestID, map[string]any{"detail": err.Error()})
@@ -255,7 +255,7 @@ func (g *Gateway) rpcGetTask(route Route, raw json.RawMessage, requestID string,
 	return task, nil
 }
 
-func (g *Gateway) rpcListTasks(route Route, raw json.RawMessage, requestID string, caller callerScope) (any, *rpcError) {
+func (g *Gateway) rpcListTasks(route runtimeRoute, raw json.RawMessage, requestID string, caller callerScope) (any, *rpcError) {
 	if caller.Value == "" || caller.Value == "anonymous:unscoped" {
 		return nil, jsonRPCError(-32003, "ListTasks requires an isolated caller scope", requestID, map[string]any{"code": "list_tasks_scope_required"})
 	}
@@ -269,7 +269,7 @@ func (g *Gateway) rpcListTasks(route Route, raw json.RawMessage, requestID strin
 	return map[string]any{"tasks": tasks, "nextPageToken": "", "pageSize": effectivePageSize(params.PageSize), "totalSize": len(tasks)}, nil
 }
 
-func (g *Gateway) rpcCancelTask(ctx context.Context, route Route, raw json.RawMessage, requestID string, caller callerScope) (any, *rpcError) {
+func (g *Gateway) rpcCancelTask(ctx context.Context, route runtimeRoute, raw json.RawMessage, requestID string, caller callerScope) (any, *rpcError) {
 	var params cancelTaskParams
 	if err := parseRawObject(raw, &params); err != nil {
 		return nil, jsonRPCError(-32602, "invalid params", requestID, map[string]any{"detail": err.Error()})
@@ -318,9 +318,9 @@ func textFromMessage(message A2AMessage) string {
 	return strings.Join(parts, "\n\n")
 }
 
-func authRequired(route Route, caller callerScope) bool {
-	mode := normalizedAuthMode(route.Auth.Mode)
-	if mode == "" || mode == AuthModeNone {
+func authRequired(route runtimeRoute, caller callerScope) bool {
+	mode := route.Auth.Mode
+	if mode == AuthModeNone {
 		return false
 	}
 	return caller.Value == "" || strings.HasPrefix(caller.Value, "anonymous:")
@@ -331,10 +331,10 @@ type callerScope struct {
 	TaskToken string
 }
 
-func callerScopeFromRequest(r *http.Request, route Route) callerScope {
+func callerScopeFromRequest(r *http.Request, route runtimeRoute) callerScope {
 	token := strings.TrimSpace(r.Header.Get("X-A2A-Task-Token"))
-	switch normalizedAuthMode(route.Auth.Mode) {
-	case "", AuthModeNone:
+	switch route.Auth.Mode {
+	case AuthModeNone:
 		return callerScope{Value: "anonymous:unscoped", TaskToken: token}
 	case AuthModeStaticAPIKey:
 		key := strings.TrimSpace(r.Header.Get("X-A2A-API-Key"))
@@ -354,11 +354,7 @@ func callerScopeFromRequest(r *http.Request, route Route) callerScope {
 	return callerScope{TaskToken: token}
 }
 
-func normalizedAuthMode(mode string) AuthMode {
-	return AuthMode(strings.ToLower(strings.TrimSpace(mode)))
-}
-
-func (g *Gateway) rateLimitAllows(route Route, caller callerScope) bool {
+func (g *Gateway) rateLimitAllows(route runtimeRoute, caller callerScope) bool {
 	if g.rateLimiter == nil || strings.TrimSpace(route.Limits.RateLimit) == "" {
 		return true
 	}
@@ -400,21 +396,21 @@ func readLimitedBody(body io.ReadCloser, maxBytes int) ([]byte, error) {
 	return data, nil
 }
 
-func effectiveMaxMessageBytes(route Route) int {
+func effectiveMaxMessageBytes(route runtimeRoute) int {
 	if route.Limits.MaxMessageBytes > 0 {
 		return route.Limits.MaxMessageBytes
 	}
 	return defaultMaxMessageBytes
 }
 
-func effectiveTaskTTL(route Route) time.Duration {
+func effectiveTaskTTL(route runtimeRoute) time.Duration {
 	if route.Limits.TaskTTL > 0 {
 		return route.Limits.TaskTTL
 	}
 	return defaultTaskTTL
 }
 
-func effectiveResponseTimeout(route Route) time.Duration {
+func effectiveResponseTimeout(route runtimeRoute) time.Duration {
 	if route.ResponseTimeout > 0 {
 		return route.ResponseTimeout
 	}

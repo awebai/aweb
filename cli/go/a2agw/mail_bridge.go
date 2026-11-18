@@ -54,7 +54,7 @@ type MailBridgeConfig struct {
 }
 
 // RequiresVerifiedReplies implements the explicit requirement's precedence over
-// the local override (docs/a2a.md:959-961). The safe zero-value requires it.
+// the local override (docs/a2a.md:963-965). The safe zero-value requires it.
 func (config MailBridgeConfig) RequiresVerifiedReplies() bool {
 	return config.RequireVerifiedReplies || !config.AllowUnverifiedLocalReply
 }
@@ -162,7 +162,7 @@ func (b *MailBridge) ValidateTarget(ctx context.Context, address string) error {
 	return err
 }
 
-// resolveTargetIdentity implements docs/a2a.md:943-952: a public route cannot
+// resolveTargetIdentity implements docs/a2a.md:943-956: a public route cannot
 // expose a local identity, even through an alias. Resolve through aw mail's
 // authority before signing; provider receipts carry the same signed binding.
 func (b *MailBridge) resolveTargetIdentity(ctx context.Context, address string) (recipientIdentity, error) {
@@ -537,7 +537,7 @@ func (b *MailBridge) recordAudit(event AuditEvent) {
 }
 
 // recipientFromSend preserves the bound outgoing identity, or the provider's
-// exact signed recipient (docs/a2a.md:951-956).
+// exact signed recipient (docs/a2a.md:955-960).
 func recipientFromSend(req *awid.SendMessageRequest, resp *awid.SendMessageResponse) recipientIdentity {
 	if req.ToDID != "" {
 		return recipientIdentity{DID: req.ToDID, StableID: req.ToStableID}
@@ -546,7 +546,7 @@ func recipientFromSend(req *awid.SendMessageRequest, resp *awid.SendMessageRespo
 }
 
 // matchesSender applies the recorded target binding after mail verification
-// (docs/a2a.md:963-967).
+// (docs/a2a.md:967-971).
 func (thread *mailBridgeThread) matchesSender(msg awid.InboxMessage) bool {
 	if thread.TargetStableID != "" {
 		return msg.FromStableID == thread.TargetStableID
@@ -599,7 +599,7 @@ type ReplyParseInput struct {
 	AllowQuestionReply bool
 }
 
-// ParseA2AReplyWithOptions owns bridge reply parsing (docs/a2a.md:968-970).
+// ParseA2AReplyWithOptions owns bridge reply parsing (docs/a2a.md:972-974).
 // ParseA2AReply retains the published Go entry point and delegates here.
 func ParseA2AReplyWithOptions(input ReplyParseInput) (BridgeReply, bool, error) {
 	block, found := extractFence(fenceInput{Body: input.Body, Label: "a2a-reply"})
@@ -648,7 +648,7 @@ func ParseA2AReplyWithOptions(input ReplyParseInput) (BridgeReply, bool, error) 
 type fenceInput struct{ Body, Label string }
 
 // extractFence selects one standalone fence without treating quoted or nested
-// customer text as reply instructions (docs/a2a.md:968-970).
+// customer text as reply instructions (docs/a2a.md:972-974).
 func extractFence(input fenceInput) (string, bool) {
 	var marker byte
 	var width int

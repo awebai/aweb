@@ -180,7 +180,7 @@ func runManagedGateway(base fileConfig, listen string) error {
 	return server.ListenAndServe()
 }
 
-// gatewayHTTPServer bounds request lifetimes (docs/a2a.md:988-989).
+// gatewayHTTPServer bounds request lifetimes (docs/a2a.md:992-993).
 func gatewayHTTPServer(listen string, handler http.Handler) *http.Server {
 	return &http.Server{Addr: listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute}
 }
@@ -845,7 +845,7 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 			Mode:            strings.TrimSpace(route.Mode),
 			Disabled:        route.Disabled,
 			ResponseTimeout: secondsDuration(route.Limits.ResponseTimeoutSeconds),
-			Auth:            authConfig{Mode: strings.TrimSpace(route.Auth.Mode)},
+			Auth:            authConfig{Mode: route.Auth.Mode},
 			Limits: limitsConfig{
 				MaxMessageBytes:    route.Limits.MaxMessageBytes,
 				RateLimit:          rateLimitFromManaged(route.Limits.RateLimit),
@@ -905,7 +905,7 @@ func mergeManagedRuntimeConfig(cfg *fileConfig, payload managedRuntimeConfigPayl
 	return nil
 }
 
-// docs/a2a.md:954-961 requires a capability decision
+// docs/a2a.md:958-965 requires a capability decision
 // before accepting tasks. Explicit unverified routes remain interoperable.
 func validateManagedReplyIdentity(cfg *fileConfig, payload managedRuntimeConfigPayload) error {
 	if !requiresVerifiedReplies(*cfg) || slices.Contains(payload.Capabilities, recipientIdentityV1) {
@@ -1238,7 +1238,7 @@ func convertRoute(route routeConfig) (a2agw.Route, error) {
 		Disabled:        route.Disabled,
 		ResponseTimeout: responseTimeout,
 		Auth: a2agw.AuthConfig{
-			Mode:         strings.TrimSpace(route.Auth.Mode),
+			Mode:         route.Auth.Mode,
 			StaticAPIKey: firstNonEmpty(route.Auth.StaticAPIKey, envValue(route.Auth.StaticAPIKeyEnv)),
 			BearerToken:  firstNonEmpty(route.Auth.BearerToken, envValue(route.Auth.BearerTokenEnv)),
 		},

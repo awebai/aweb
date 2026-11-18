@@ -243,7 +243,7 @@ func TestHTTPMailBridgeAuthenticationBeforeMailAndTaskAccess(t *testing.T) {
 		auth    authConfig
 		headers map[string]string
 	}{
-		{auth: authConfig{Mode: string(a2agw.AuthModeBearer), BearerToken: "route-secret"}, headers: map[string]string{"Authorization": "Bearer route-secret"}},
+		{auth: authConfig{Mode: " BeArEr ", BearerToken: "route-secret"}, headers: map[string]string{"Authorization": "Bearer route-secret"}},
 		{auth: authConfig{Mode: string(a2agw.AuthModeStaticAPIKey), StaticAPIKey: "route-secret"}, headers: map[string]string{"X-A2A-API-Key": "route-secret"}},
 	} {
 		t.Run(tc.auth.Mode, func(t *testing.T) {
