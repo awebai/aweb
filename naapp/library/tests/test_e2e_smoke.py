@@ -21,6 +21,7 @@ import pytest
 
 pytestmark = pytest.mark.e2e
 
+
 @dataclass(frozen=True)
 class E2EStack:
     awid_url: str
@@ -30,7 +31,9 @@ class E2EStack:
 
 def candidate_hostname(project: str, service: str) -> str:
     helper = Path(__file__).resolve().parents[3] / "scripts/candidate-network.py"
-    return subprocess.check_output([sys.executable, str(helper), "hostname", project, service], text=True).strip()
+    return subprocess.check_output(
+        [sys.executable, str(helper), "hostname", project, service], text=True
+    ).strip()
 
 
 def e2e_stack(env: Mapping[str, str]) -> E2EStack:
@@ -41,10 +44,16 @@ def e2e_stack(env: Mapping[str, str]) -> E2EStack:
     postgres_port = env.get("NAAPP_E2E_POSTGRES_PORT", "55432")
     container_network = env.get("NAAPP_E2E_CONTAINER_NETWORK") == "1"
     return E2EStack(
-        awid_url=(f"http://{candidate_hostname(project, 'awid')}:8010" if container_network
-                  else f"http://{host}:{awid_port}"),
-        postgres_url=(f"postgresql://library:library@{candidate_hostname(project, 'postgres')}:5432/library" if container_network
-                      else f"postgresql://library:library@{host}:{postgres_port}/library"),
+        awid_url=(
+            f"http://{candidate_hostname(project, 'awid')}:8010"
+            if container_network
+            else f"http://{host}:{awid_port}"
+        ),
+        postgres_url=(
+            f"postgresql://library:library@{candidate_hostname(project, 'postgres')}:5432/library"
+            if container_network
+            else f"postgresql://library:library@{host}:{postgres_port}/library"
+        ),
         compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
     )
 
@@ -136,7 +145,12 @@ class _RecordingProxyHandler(BaseHTTPRequestHandler):
 
         self.send_response(upstream.status_code)
         for key, value in upstream.headers.items():
-            if key.lower() in {"content-length", "connection", "transfer-encoding", "content-encoding"}:
+            if key.lower() in {
+                "content-length",
+                "connection",
+                "transfer-encoding",
+                "content-encoding",
+            }:
                 continue
             self.send_header(key, value)
         self.send_header("Content-Length", str(len(upstream.content)))
@@ -240,7 +254,9 @@ def _run_aw_json(workspace: AWWorkspace, *args: str) -> dict[str, Any]:
     try:
         payload = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise AssertionError(f"aw command did not emit JSON: {result.stdout}\n{result.stderr}") from exc
+        raise AssertionError(
+            f"aw command did not emit JSON: {result.stdout}\n{result.stderr}"
+        ) from exc
     assert isinstance(payload, dict)
     return payload
 
@@ -271,15 +287,17 @@ def _aw_request(
 
 def _assert_aw_success(result: subprocess.CompletedProcess[str], *, context: str) -> str:
     assert result.returncode == 0, (
-        f"aw id request failed: {context}\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}\n"
+        f"aw id request failed: {context}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}\n"
     )
     return result.stdout
 
 
-def _assert_aw_status(result: subprocess.CompletedProcess[str], status: int, *, context: str) -> None:
-    assert result.returncode != 0, f"expected HTTP {status} failure for {context}, got success: {result.stdout}"
+def _assert_aw_status(
+    result: subprocess.CompletedProcess[str], status: int, *, context: str
+) -> None:
+    assert result.returncode != 0, (
+        f"expected HTTP {status} failure for {context}, got success: {result.stdout}"
+    )
     assert f"HTTP {status}" in result.stderr, (
         f"expected HTTP {status} for {context}\n"
         f"stdout:\n{result.stdout}\n"
@@ -296,7 +314,9 @@ def _aw_json(result: subprocess.CompletedProcess[str], *, context: str) -> Any:
 
 
 @contextmanager
-def _running_library(*, awid_service_token: str | None, registry_url: str = AWID_URL) -> Iterator[RunningLibrary]:
+def _running_library(
+    *, awid_service_token: str | None, registry_url: str = AWID_URL
+) -> Iterator[RunningLibrary]:
     _require_e2e_enabled()
     _wait_http_ok(f"{registry_url}/health")
 
@@ -371,7 +391,9 @@ def _running_library(*, awid_service_token: str | None, registry_url: str = AWID
             if proc.stderr:
                 proc.stderr.close()
             if failed:
-                raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
+                raise RuntimeError(
+                    f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+                )
 
 
 @pytest.fixture(scope="session")
@@ -425,7 +447,9 @@ def aw_workspace(aw_workspace_factory: Callable[[str], AWWorkspace]) -> AWWorksp
     return aw_workspace_factory("primary")
 
 
-def _write_workspace_binding(workspace: AWWorkspace, *, team_id: str, alias: str, cert_path: str) -> None:
+def _write_workspace_binding(
+    workspace: AWWorkspace, *, team_id: str, alias: str, cert_path: str
+) -> None:
     now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     workspace_id = str(uuid.uuid4())
     (workspace.path / ".aw" / "workspace.yaml").write_text(
@@ -564,18 +588,20 @@ def test_private_team_authenticates_without_the_awid_service_token(
     library_without_awid_service_token: RunningLibrary, aw_workspace: AWWorkspace
 ) -> None:
     team = _provision_team(aw_workspace)
-    result = _aw_request(
-        team, "GET", f"{library_without_awid_service_token.origin}/v1/proposals"
-    )
+    result = _aw_request(team, "GET", f"{library_without_awid_service_token.origin}/v1/proposals")
     assert _assert_aw_success(result, context="private team without service token").strip() == "[]"
 
 
-def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:
+def test_real_aw_team_auth_reaches_team_scoped_routes(
+    library: RunningLibrary, aw_workspace: AWWorkspace
+) -> None:
     team = _provision_team(aw_workspace)
     # Public catalog read with team auth still works (a JSON array; may be non-empty
     # if earlier tests published blueprints into the shared catalog).
     blueprints = _aw_request(team, "GET", f"{library.origin}/v1/blueprints")
-    assert isinstance(json.loads(_assert_aw_success(blueprints, context="list blueprints smoke")), list)
+    assert isinstance(
+        json.loads(_assert_aw_success(blueprints, context="list blueprints smoke")), list
+    )
     # A valid certificate passes auth: get-binding for an unbound agent is a real
     # 404 (not 401), proving auth + the live endpoint.
     binding = _aw_request(team, "GET", f"{library.origin}/v1/agents/agent-1/profile-binding")
@@ -591,10 +617,13 @@ def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
 ) -> None:
     team = _provision_team(aw_workspace)
     # Valid certificate authenticates and reaches the live endpoint.
-    assert _assert_aw_success(
-        _aw_request(team, "GET", f"{library.origin}/v1/proposals"),
-        context="valid certificate reaches proposals",
-    ).strip() == "[]"
+    assert (
+        _assert_aw_success(
+            _aw_request(team, "GET", f"{library.origin}/v1/proposals"),
+            context="valid certificate reaches proposals",
+        ).strip()
+        == "[]"
+    )
 
     _run_aw(
         aw_workspace,
