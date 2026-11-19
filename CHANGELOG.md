@@ -3,6 +3,10 @@
 ## Unreleased
 
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
+- `aw chat pending`, `open`, `history`, `listen` and `show-pending` fail with
+  the reason when the local encryption key state exists but cannot be loaded,
+  as `aw mail` reads do. A workspace with no encryption key state keeps
+  reading, with a warning.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
   delayed refreshes from restoring invalidated entries without changing the
