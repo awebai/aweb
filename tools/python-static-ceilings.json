@@ -277,12 +277,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/lifecycle.py",
-      "code": "arg-type",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/mcp/signing.py",
       "code": "call-arg",
       "count": 17
