@@ -375,6 +375,7 @@ async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_re
     prepared_task = None
     try:
         async with db.transaction() as terminal_tx:
+            terminal_pid = await terminal_tx.fetch_value("SELECT pg_backend_pid()")
             changed = await apply_agent_disposition_on(
                 terminal_tx,
                 agent_ids=[agent],
@@ -385,6 +386,7 @@ async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_re
             assert changed == 1
             prepared_task = asyncio.create_task(prepare())
             pid = await prepared_pid
+            assert pid != terminal_pid
             # Wait for the real blocked UPDATE, not a guessed scheduling delay.
             async with asyncio.timeout(5):
                 while not await db.fetch_value("SELECT cardinality(pg_blocking_pids($1)) > 0", pid):
@@ -557,12 +559,14 @@ async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
     cleanup_task = None
     try:
         async with db.transaction() as holder:
+            holder_pid = await holder.fetch_value("SELECT pg_backend_pid()")
             await holder.fetch_one(
                 "SELECT workspace_id FROM {{tables.workspaces}} WHERE workspace_id=$1 FOR UPDATE",
                 high,
             )
             cleanup_task = asyncio.create_task(clean())
             pid = await cleanup_pid
+            assert pid != holder_pid
             async with asyncio.timeout(5):
                 while not await db.fetch_value("SELECT cardinality(pg_blocking_pids($1)) > 0", pid):
                     assert not cleanup_task.done()
