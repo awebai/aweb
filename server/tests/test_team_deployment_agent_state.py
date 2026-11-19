@@ -14,6 +14,7 @@ import socket
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -661,3 +662,132 @@ print(out.strip())
     blocked = json.loads(answer.stdout.strip().splitlines()[-1])
     import signal
     assert int(signal.SIGTERM) not in blocked and int(signal.SIGINT) not in blocked
+
+
+class RecordingSink:
+    """A sink that records each write, and raises an interrupt on the first
+    write made once the archive is being finalized."""
+
+    def __init__(self, interrupt):
+        self.writes: list[int] = []
+        self.finalizing = False
+        self.interrupt = interrupt
+        self.raised = False
+
+    def write(self, data: bytes) -> int:
+        if self.finalizing and not self.raised:
+            self.raised = True
+            self.at_raise = len(self.writes)
+            raise self.interrupt()
+        self.writes.append(len(data))
+        return len(data)
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, agent_state.Terminated])
+def test_an_interrupt_of_the_final_write_makes_no_further_write(tmp_path, monkeypatch, interrupt):
+    # The reviewer's case: tarfile's close writes the trailer, then closes
+    # its stream in a finally that flushes what remains. Once the interrupt
+    # has come, nothing more may reach the sink.
+    root = state(tmp_path)
+    # A member size that leaves the stream's buffer near full at close, so
+    # the trailer's padding writes a record and the stream's own close then
+    # flushes again (found by search over this fixture: 3648 to 4224 bytes).
+    (root / "home" / "work.bin").write_bytes(b"x" * 4096)
+    sink = RecordingSink(interrupt)
+    real_close = tarfile.TarFile.close
+
+    def finalizing(self):
+        # Only the archive stream's close (mode "w|"), not the inventory's
+        # header-only TarFile.
+        if isinstance(self.fileobj, tarfile._Stream):
+            sink.finalizing = True
+        return real_close(self)
+
+    monkeypatch.setattr(tarfile.TarFile, "close", finalizing)
+    with pytest.raises(interrupt):
+        agent_state.capture(root, sink)
+    assert sink.raised and sink.writes, "the interrupt did not come at the archive's finalization"
+    # Nothing after the interrupted write: not tarfile's own stream close,
+    # not the finalizer.
+    import gc
+    gc.collect()
+    assert len(sink.writes) == sink.at_raise, f"writes after the interrupt: {sink.writes[sink.at_raise:]}"
+
+
+def test_the_ordinary_capture_still_round_trips_after_the_abandon_path(tmp_path):
+    stream, inventory = capture(state(tmp_path))
+    agent_state.restore(lambda: io.BytesIO(stream), tmp_path / "restored", inventory["members"])
+    assert (tmp_path / "restored" / "seats/one/.aw/signing.key").read_text() == "key"
+
+
+def test_an_interrupt_as_the_archive_is_finalized_ends_a_non_reading_age_promptly(tmp_path, monkeypatch):
+    # A child that never reads: the interrupt arrives as close() begins, and
+    # the encrypt must end the child and remove the partial without first
+    # finishing the archive into its pipe.
+    import signal
+    import time
+
+    root = state(tmp_path)
+    partial = tmp_path / "state.tar.age.partial"
+    children = []
+    real_child = agent_state.Child
+
+    class Recorded(real_child):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            children.append(self)
+
+    real_close = tarfile.TarFile.close
+
+    def interrupted_close(self):
+        os.kill(os.getpid(), signal.SIGINT)
+        return real_close(self)
+
+    monkeypatch.setattr(agent_state, "Child", Recorded)
+    monkeypatch.setattr(tarfile.TarFile, "close", interrupted_close)
+    command = child(tmp_path, "never-reads", f"open({str(partial)!r}, 'wb').write(b'x')\ntime.sleep(120)")
+    previous = signal.signal(signal.SIGINT, agent_state.interrupted)
+    began = time.monotonic()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            agent_state.encrypt(root, partial, command, 60, agent_state.DEFAULT_ENDPOINTS)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert time.monotonic() - began < 15
+    assert children[0].process.returncode is not None
+    assert not partial.exists()
+
+
+def test_the_starter_unblocks_sigint_and_sigterm_only(tmp_path):
+    # An unrelated signal the parent blocks stays blocked in the child.
+    import signal
+
+    probe = [sys.executable, "-c",
+             "import signal; print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])))"]
+    before = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGUSR1})
+    try:
+        with agent_state.signals_held():
+            started = agent_state.Child(probe, 30, stdout=subprocess.PIPE, text=True)
+        out, _ = started.process.communicate(timeout=30)
+        started.finish()
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, before)
+    blocked = json.loads(out)
+    assert int(signal.SIGUSR1) in blocked
+    assert int(signal.SIGTERM) not in blocked and int(signal.SIGINT) not in blocked
+
+
+@pytest.mark.parametrize("signame", ["SIGTERM", "SIGINT"])
+def test_sigint_and_sigterm_reach_a_child_started_under_the_hold(tmp_path, signame):
+    # Delivered, not merely unblocked: the child started through the starter
+    # while the parent holds both signals dies of the one sent to it.
+    import signal
+
+    sent = getattr(signal, signame)
+    with agent_state.signals_held():
+        started = agent_state.Child([sys.executable, "-c", "import time; time.sleep(60)"], 30)
+    time.sleep(0.5)
+    started.process.send_signal(sent)
+    started.process.wait(timeout=10)
+    started.timer.cancel()
+    assert started.process.returncode == -sent

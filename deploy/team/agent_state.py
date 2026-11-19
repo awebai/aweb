@@ -145,20 +145,44 @@ class Discard:
         return 0
 
 
+class Abandonable:
+    """The archive's sink, which can be abandoned: once it is, nothing more
+    reaches the real sink. A write that fails or is interrupted abandons it
+    (tarfile's close flushes again from its own finally), and so does the
+    CLI's handler for SIGINT and SIGTERM, for a signal that lands between
+    writes."""
+
+    def __init__(self, sink: BinaryIO):
+        self.sink = sink
+        self.abandoned = False
+
+    def write(self, data: bytes) -> int:
+        if self.abandoned:
+            return len(data)
+        try:
+            return self.sink.write(data)
+        except BaseException:
+            self.abandoned = True
+            raise
+
+
+# The captures writing now, for the signal handlers to abandon.
+WRITING: set[Abandonable] = set()
+
+
 def capture(root: Path, sink: BinaryIO, endpoints: Endpoints = DEFAULT_ENDPOINTS) -> dict:
     """root as a checked tar stream written to sink; returns the inventory
-    the manifest records."""
+    the manifest records. On any failure or interrupt, nothing more is
+    written to sink, by this function, by tarfile's close or its finalizer:
+    a reader that has stopped draining cannot block the unwinding."""
     members, omitted = inventory(root, endpoints)
     with tarfile.open(fileobj=Discard(), mode="w", format=tarfile.PAX_FORMAT) as probe:  # type: ignore[call-overload]
         planned = [probe.gettarinfo(path, arcname) for path, arcname in members]
     check(planned)
-    # Not a with-block: on an exception its exit would close the stream, and
-    # closing writes the archive's last blocks into the sink, which blocks for
-    # ever when the sink is a pipe its reader has stopped draining. The
-    # stream is closed only once every member is written; on failure the
-    # caller ends the reader.
-    tar = tarfile.open(fileobj=sink, mode="w|", format=tarfile.PAX_FORMAT)
+    out = Abandonable(sink)
+    WRITING.add(out)
     try:
+        tar = tarfile.open(fileobj=out, mode="w|", format=tarfile.PAX_FORMAT)  # type: ignore[call-overload]
         for (path, arcname), expected in zip(members, planned, strict=True):
             info = tar.gettarinfo(path, arcname)
             if (info.type, info.size, info.mtime, info.linkname) != (expected.type, expected.size, expected.mtime,
@@ -169,13 +193,12 @@ def capture(root: Path, sink: BinaryIO, endpoints: Endpoints = DEFAULT_ENDPOINTS
                     tar.addfile(info, data)
             else:
                 tar.addfile(info)
+        tar.close()
     except BaseException:
-        # Abandoned unwritten: marked closed, so that neither this exit nor
-        # the stream's own finalizer later writes into the sink.
-        tar.fileobj.closed = True
-        tar.closed = True
+        out.abandoned = True
         raise
-    tar.close()
+    finally:
+        WRITING.discard(out)
     return {"members": len(planned), "omitted": omitted}
 
 
@@ -226,14 +249,15 @@ def signals_held():
         signal.pthread_sigmask(signal.SIG_SETMASK, held)
 
 
-# How every child starts: a Python that clears the signal mask it inherited
-# from the parent's hold on SIGINT and SIGTERM, then becomes the command by
+# How every child starts: a Python that unblocks SIGINT and SIGTERM, which
+# it inherited held from the parent's hold (any other inherited blocked
+# signal stays blocked), then becomes the command by
 # its absolute path (same process, same streams). No Python code runs in the
 # parent's forked image between fork and exec: a preexec_fn would, and that
 # can deadlock once threads exist, as the deadline timers do.
 UNHELD = (
     "import os, signal, sys\n"
-    "signal.pthread_sigmask(signal.SIG_SETMASK, set())\n"
+    "signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})\n"
     "try:\n"
     "    os.execv(sys.argv[1], sys.argv[1:])\n"
     "except OSError as error:\n"
@@ -326,8 +350,12 @@ class Terminated(BaseException):
     ended as on an interrupt."""
 
 
-def terminate(signum: int, frame: object) -> None:
-    raise Terminated()
+def interrupted(signum: int, frame: object) -> None:
+    """The CLI's SIGINT and SIGTERM handler: every capture writing now is
+    abandoned first, then the interrupt is raised where the process is."""
+    for out in list(WRITING):
+        out.abandoned = True
+    raise Terminated() if signum == signal.SIGTERM else KeyboardInterrupt()
 
 
 class Child:
@@ -592,7 +620,8 @@ def main(argv: list[str]) -> int:
     restore_parser.add_argument("--identity", type=Path, required=True)
     restore_parser.add_argument("--target", type=Path, required=True)
     args = parser.parse_args(argv)
-    signal.signal(signal.SIGTERM, terminate)
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
     try:
         (capture_command if args.command == "capture" else restore_command)(args)
     except (Refused, OSError) as refused:
