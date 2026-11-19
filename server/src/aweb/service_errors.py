@@ -77,7 +77,9 @@ class IdentityBindingError(ServiceError):
         self.status_code = 403 if self.code is IdentityBindingCode.MISMATCH else 503
         self.headers = headers
         self.message = (
-            "This signing key does not match the claimed identity. Use the identity's current credentials."
+            "The claimed identity and signing key do not match. "
+            "Check the identity and its current public-key binding, "
+            "then correct the request and retry."
             if self.code is IdentityBindingCode.MISMATCH
             else "Identity verification is unavailable. Retry when the identity registry is available."
         )
