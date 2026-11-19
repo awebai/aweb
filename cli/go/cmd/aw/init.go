@@ -657,8 +657,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("org") && !initWorkspaceTeam {
 		return usageError("--org requires --workspace-team")
 	}
-	if strings.TrimSpace(initTeam) != "" && !initTeamFlagApplies() {
-		return initTeamFlagUsageError()
+	if strings.TrimSpace(initTeam) != "" {
+		applies, err := initTeamFlagApplies()
+		if err != nil {
+			return err
+		}
+		if !applies {
+			return initTeamFlagUsageError()
+		}
 	}
 	if initRemoveNotifyHook {
 		if len(args) != 0 {
@@ -957,7 +963,11 @@ func runInitFromExistingCertificate(cmd *cobra.Command) (initDispatchResult, err
 	if err != nil {
 		return initDispatchComplete, err
 	}
-	if hasCertificateForInit(wd) {
+	hasCertificate, err := hasCertificateForInit(wd)
+	if err != nil {
+		return initDispatchComplete, err
+	}
+	if hasCertificate {
 		firstConnect, err := initWorkspaceMissing(wd)
 		if err != nil {
 			return initDispatchComplete, err

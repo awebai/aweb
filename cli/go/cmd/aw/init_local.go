@@ -74,22 +74,26 @@ func localNamespaceHeldElsewhere(ctx context.Context, registry *awid.RegistryCli
 // --new-team path, the only one that reads --team. The paths runInit takes
 // before it (workspace team, --join-from, admission, AWEB_API_KEY, an
 // existing certificate or workspace) would ignore the flag.
-func initTeamFlagApplies() bool {
+func initTeamFlagApplies() (bool, error) {
 	if !initNewTeam || initBYOD || initGlobal || strings.TrimSpace(initUsername) != "" || strings.TrimSpace(initDomain) != "" {
-		return false
+		return false, nil
 	}
 	if initWorkspaceTeam || strings.TrimSpace(initJoinFrom) != "" || strings.TrimSpace(initAdmissionTeamID) != "" || resolveInitAPIKey() != "" {
-		return false
+		return false, nil
 	}
 	wd, err := os.Getwd()
 	if err != nil {
-		return false
+		return false, err
 	}
-	if hasCertificateForInit(wd) {
-		return false
+	hasCertificate, err := hasCertificateForInit(wd)
+	if err != nil {
+		return false, err
+	}
+	if hasCertificate {
+		return false, nil
 	}
 	missing, err := initWorkspaceMissing(wd)
-	return err == nil && missing
+	return missing, err
 }
 
 // initTeamFlagUsageText says where --team applies.

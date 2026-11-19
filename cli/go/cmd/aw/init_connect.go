@@ -319,10 +319,15 @@ func connectNameRefusalText(code string, cert *awid.TeamCertificate) string {
 	return ""
 }
 
-// hasCertificateForInit checks if at least one team certificate exists in the working directory.
-func hasCertificateForInit(workingDir string) bool {
+// hasCertificateForInit distinguishes absent certificates from unreadable
+// identity state (docs/identity.md#key-material-and-local-files). An unreadable
+// installed certificate cannot select fresh identity creation.
+func hasCertificateForInit(workingDir string) (bool, error) {
 	stored, err := awconfig.ListTeamCertificates(workingDir)
-	return err == nil && len(stored) > 0
+	if err != nil {
+		return false, fmt.Errorf("read stored team certificates: %w; repair the stored certificate state before running aw init", err)
+	}
+	return len(stored) > 0, nil
 }
 
 // discoverRepoOrigin attempts to find the git remote origin URL.
