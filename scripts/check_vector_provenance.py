@@ -865,6 +865,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("awid/src/awid/external_authority.py"): (
+        "federation-origin-ip-v1.json",
+    ),
     PurePosixPath("scripts/generate_owner_act_delivery_vector.py"): (
         "docs/vectors/owner-act-delivery-v1.json",
     ),
