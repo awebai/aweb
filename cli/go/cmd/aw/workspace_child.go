@@ -168,7 +168,7 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 		awebURL = strings.TrimSpace(sourceServerURL)
 	}
 	awebURL = awebURLOrDefault(awebURL)
-	if err := upsertAcceptedTeamMembershipState(worktreePath, accepted.Output, accepted.Certificate, accepted.RegistryURL, awebURL, true); err != nil {
+	if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{Location: teamMembershipLocation{WorkingDir: worktreePath}, Output: accepted.Output, Certificate: accepted.Certificate, RegistryURL: accepted.RegistryURL, AwebURL: awebURL, Activation: membershipMakeActive}); err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, err
 	}

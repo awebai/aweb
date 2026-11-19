@@ -55,7 +55,7 @@ func TestProvisionedMembershipConnectsBeforePublishingItsKey(t *testing.T) {
 			})
 			defer server.Close()
 			t.Setenv("AWID_REGISTRY_URL", server.URL)
-			err := recordAcceptedTeamMembership(target, output, cert, server.URL, server.URL, recordMembershipOptions{IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(target)), SetActive: true, WriteWorkspaceBinding: true})
+			err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: target, Output: output, Certificate: cert, RegistryURL: server.URL, AwebURL: server.URL, IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(target)), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding})
 			switch scenario {
 			case "ready":
 				if err != nil || connectCalls != 1 || publishCalls == 0 {

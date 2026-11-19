@@ -1298,7 +1298,7 @@ func acceptAndStoreTeamInvite(workingDir, token string, opts teamAcceptInviteOpt
 	}
 	// Join deliberately leaves the worktree binding for `aw init`; only the
 	// teams.yaml membership and the encryption key are recorded here.
-	if err := recordAcceptedTeamMembership(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{IdentityHome: store.IdentityHome, SetActive: store.SetActive}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: workingDir, Output: accepted.Output, Certificate: accepted.Certificate, RegistryURL: accepted.RegistryURL, AwebURL: accepted.AwebURL, IdentityHome: store.IdentityHome, Activation: store.membershipActivation(), Binding: membershipLeaveWorkspaceBinding}); err != nil {
 		if store.RejectDuplicate {
 			return nil, rollbackAddedTeamCertificate(workingDir, identityHomeRoot, accepted, err)
 		}
@@ -4041,39 +4041,6 @@ func rollbackAddedTeamCertificate(workingDir, identityHome string, accepted *acc
 	return cause
 }
 
-// recordMembershipOptions controls the two steps that legitimately differ across
-// accept/enroll paths. WriteWorkspaceBinding is the intended join-vs-provision
-// boundary: agent-provisioning paths write the worktree binding immediately so the
-// agent is ready to run, while `aw team join`/`aw team accept-invite` leave it unset
-// and defer it to `aw init`.
-type recordMembershipOptions struct {
-	IdentityHome          encryptionKeyIdentityHomeIntent
-	SetActive             bool
-	WriteWorkspaceBinding bool
-}
-
-// recordAcceptedTeamMembership finalizes an accepted team membership: the steps
-// every accept/enroll path shares once the certificate is in hand. It records the
-// teams.yaml membership, optionally writes the worktree binding, and ensures the
-// local identity encryption key so the member can do E2E messaging. How the
-// certificate was obtained (local mint / hosted accept / cross-machine fetch) stays
-// with each caller; only these shared steps live here.
-func recordAcceptedTeamMembership(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, opts recordMembershipOptions) error {
-	identityHomeRoot, _, err := opts.IdentityHome.resolve()
-	if err != nil {
-		return err
-	}
-	if err := upsertAcceptedTeamMembershipState(workingDir, output, cert, registryURL, awebURL, opts.SetActive, identityHomeRoot); err != nil {
-		return err
-	}
-	if opts.WriteWorkspaceBinding {
-		if err := ensureAcceptedTeamWorkspaceBinding(workingDir, output, cert, awebURL); err != nil {
-			return err
-		}
-	}
-	return ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, opts.IdentityHome)
-}
-
 func upsertWorkspaceMembershipCache(workspace *awconfig.WorktreeWorkspace, membership awconfig.WorktreeMembership) {
 	if workspace == nil {
 		return
@@ -4212,7 +4179,7 @@ func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentR
 		if opts.NoAddress {
 			return teamMemberEnrollmentPlan{}, usageError("--no-address requires --global")
 		}
-		teamState, err := loadOptionalTeamState(opts.WorkingDir, opts.IdentityHome)
+		teamState, err := loadOptionalTeamState(teamMembershipLocation{WorkingDir: opts.WorkingDir, IdentityHome: opts.IdentityHome})
 		if err != nil {
 			return teamMemberEnrollmentPlan{}, err
 		}
@@ -4279,7 +4246,7 @@ func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentR
 }
 
 func ensureTeamAcceptScopeAllowed(workingDir, identityHome, scope string) error {
-	teamState, err := loadOptionalTeamState(workingDir, identityHome)
+	teamState, err := loadOptionalTeamState(teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome})
 	if err != nil {
 		return err
 	}
