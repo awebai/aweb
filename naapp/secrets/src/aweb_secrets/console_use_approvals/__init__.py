@@ -111,8 +111,7 @@ class ConsoleUseApprovals:
             raise HTTPException(403, "approver_required")
         if current.expires_at <= datetime.now(UTC):
             raise HTTPException(401, "console_session_required")
-        if kind == Kind.USE:
-            _renderable_use(frozen)
+        _renderable_use(frozen)
         return linked.approval.approval_id, admitted, frozen
 
     async def options(

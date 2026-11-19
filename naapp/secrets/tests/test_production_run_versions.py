@@ -95,7 +95,10 @@ async def test_only_current_run_payload_can_get_decision_options(root, monkeypat
     response = await _decision_options(root, pending=pending, csrf=csrf)
     if version is PayloadVersion.RETAINED_V1:
         assert response.status_code == 409
-        assert response.json()["detail"] == use_approval.UNRENDERABLE_MESSAGE
+        assert response.json()["detail"] == (
+            "This approval uses an unsupported format. "
+            "Ask the requester to submit a new request ID."
+        )
     else:
         assert response.status_code == 200
     assert await _authority_snapshot(root) == before
@@ -117,7 +120,10 @@ async def test_only_current_run_payload_can_be_decided_with_a_bound_proof(
     db = root[0].runtime.db()
     if version is PayloadVersion.RETAINED_V1:
         assert response.status_code == 409
-        assert response.json()["detail"] == use_approval.UNRENDERABLE_MESSAGE
+        assert response.json()["detail"] == (
+            "This approval uses an unsupported format. "
+            "Ask the requester to submit a new request ID."
+        )
         assert await _authority_snapshot(root) == before
     else:
         assert response.status_code == 200

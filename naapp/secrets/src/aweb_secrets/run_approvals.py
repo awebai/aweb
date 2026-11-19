@@ -33,6 +33,7 @@ from aweb_secrets.run_plan import FrozenRunPlan, FrozenRunSlot, PreparedRun, Run
 from aweb_secrets.secret import SecretRecord
 from aweb_secrets.use_approval import (
     RunJob,
+    UseApprovalRefused,
     UseApprovalView,
     use_approval_request,
     use_approval_view,
@@ -425,6 +426,16 @@ def _result(record: RunApprovalRecord, *, may_send=False, refusal=None) -> RunAp
     return RunApprovalAdmission(**record.__dict__, may_send=may_send, refusal=refusal)
 
 
+def _current_run_request(raw: str) -> dict[str, Any]:
+    """Require the shared renderable payload before fresh B2 consumption (§10.4)."""
+    request = json.loads(raw)
+    try:
+        use_approval_view(request)
+    except UseApprovalRefused as exc:
+        raise RunPlanRefused(exc.code) from None
+    return request
+
+
 async def admit_run_approvals(
     tx: TransactionManager, approvals: Approvals, *, prepared: PreparedRun
 ) -> RunApprovalAdmission:
@@ -468,7 +479,10 @@ async def admit_run_approvals(
                 if row["approval_id"] is not None:
                     failed_id = row["approval_id"]
                     admitted = await approvals.admit(
-                        failed_id, json.loads(row["request"]), record.dispatch_id, tx=joint
+                        failed_id,
+                        _current_run_request(row["request"]),
+                        record.dispatch_id,
+                        tx=joint,
                     )
                     if not admitted.first or not admitted.may_send:
                         # Without our atomic marker, an earlier standalone B2
