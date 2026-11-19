@@ -369,7 +369,7 @@ serving dependencies; the generated tool reference remains the surface inventory
 
 `fire_mutation_callback` and `fire_mutation_hook` return the frozen
 `MutationDeliveryOutcome` from `aweb.hooks`. `MutationDeliveryStatus` distinguishes
-`DELIVERED`, `NOT_CONFIGURED` and `FAILED`. An existing host callback returning
+`DELIVERED`, `DEFERRED`, `NOT_CONFIGURED` and `FAILED`. An existing host callback returning
 `None` remains a completed callback; a callback exception is logged and becomes
 a failed outcome, without raising from these best-effort helpers. A composed
 host callback forwards the native outcome if its caller needs cleanup evidence.
@@ -382,3 +382,11 @@ outbox consumer calls `require_delivery()` on a returned native outcome and
 keeps an incomplete row pending; callbacks returning `None` retain their
 existing successful-delivery meaning. No second queue or callback parser is
 introduced.
+
+
+`HeldMutationEvents.record` returns `DEFERRED`: the callback has been recorded
+for the caller's outer commit and has not executed. A transaction-owning host
+fires the held batch only after commit, as above. A deletion consumer preserves
+that deferred result instead of verifying post-commit cleanup inside the open
+transaction. `require_delivery()` accepts only `DELIVERED`, so a durable outbox
+cannot mark deferred callback work complete. No additional queue is introduced.
