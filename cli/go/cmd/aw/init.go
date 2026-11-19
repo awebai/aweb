@@ -931,7 +931,7 @@ func resolveInitAWIDRegistryURL() (string, error) {
 	if strings.EqualFold(value, "local") {
 		return "", usageError("AWID_REGISTRY_URL=local is not supported by `aw init`; use an explicit localhost URL such as http://localhost:8010")
 	}
-	return cleanBaseURL(value)
+	return awid.CanonicalRegistryServerOrigin(value)
 }
 
 func initBaseURLIsLocalhost(raw string) bool {
