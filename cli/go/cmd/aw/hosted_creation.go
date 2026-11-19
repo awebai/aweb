@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -70,7 +70,7 @@ func (tree *hostedIDTreeRecovery) retainResponse(response awid.IDTreeCreationRes
 }
 
 func loadHostedIdentityRecovery(path string) (*hostedIdentityRecovery, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Read()
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func saveHostedIdentityRecovery(path string, state *hostedIdentityRecovery) erro
 	if err != nil {
 		return err
 	}
-	return awid.AtomicWriteFile(path, raw)
+	return (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Write(raw)
 }
 
 // Marshal structs through the ordinary JSON encoder before canonicalizing; the

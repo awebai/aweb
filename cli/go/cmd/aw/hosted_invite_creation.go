@@ -124,7 +124,7 @@ type hostedInviteCreation struct {
 }
 
 func loadHostedInviteCreation(path string) (*hostedInviteCreation, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Read()
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
