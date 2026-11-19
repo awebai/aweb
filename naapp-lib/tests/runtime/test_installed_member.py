@@ -19,6 +19,7 @@ from time import monotonic_ns
 from typing import Annotated
 
 import httpx
+import pytest
 from aweb.app_manifests import FetchedManifest
 from aweb.installations import install_verified_manifest_on, uninstall_installation_on
 from aweb_naapp_testing import Member
@@ -198,3 +199,16 @@ async def test_a_member_is_refused_once_the_team_uninstalls_the_app(
 
 async def _wait_until_stale(fresh_until_ns: int) -> None:
     await asyncio.sleep(max(0, (fresh_until_ns - monotonic_ns()) / 1e9) + 0.01)
+
+
+def test_a_member_route_that_is_no_declared_tool_refuses_to_start(tmp_path, coordination):
+    runtime = _runtime(tmp_path, coordination, "postgresql://localhost/unused")
+    app = FastAPI()
+    member = runtime.installed_member(policy=allow_all)
+
+    @app.post("/v1/things/purge")
+    async def purge(installed: Annotated[InstalledMember, Depends(member)]) -> dict:
+        return {}
+
+    with pytest.raises(RuntimeError):
+        runtime.check_authorized_routes(app)

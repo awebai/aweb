@@ -47,7 +47,7 @@ import httpx
 from awid.dns_verify import DomainVerifier
 from awid.external_authority import TXTOutcomeResolver
 from awid.registry import RegistryClient
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.dependencies.models import Dependant
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.routing import APIRoute
@@ -755,9 +755,8 @@ class NaappRuntime:
         """
         member_authorized = self.authorized(grants=self.installation_grants(), policy=policy)
 
-        async def installed(
-            authorization: Authorization = Depends(member_authorized),
-        ) -> InstalledMember:
+        async def installed(request: Request) -> InstalledMember:
+            authorization = await member_authorized(request)
             try:
                 permit = await self.installation_fence().permit(authorization.principal.team_id)
                 _require_the_granted_installation(authorization, permit)
@@ -768,6 +767,8 @@ class NaappRuntime:
                 ) from None
             return InstalledMember(authorization=authorization, permit=permit)
 
+        # The route check (check_authorized_routes) sees this guard on the route.
+        self._guards[installed] = None
         return installed
 
     async def record_manifest_command(
