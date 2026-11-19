@@ -19,3 +19,18 @@ func retainUnfinishedProvisioningIdentity(err error) bool {
 	var incomplete *provisionedMembershipIncompleteError
 	return errors.As(err, &pending) || errors.As(err, &incomplete)
 }
+
+// retainedIdentityError carries the operation owner's retained-home decision
+// without replacing its diagnostic, refusal code or transport cause.
+type retainedIdentityError struct{ cause error }
+
+func (err *retainedIdentityError) Error() string         { return err.cause.Error() }
+func (err *retainedIdentityError) Unwrap() error         { return err.cause }
+func (err *retainedIdentityError) RetainsIdentity() bool { return true }
+
+func retainIdentityForRecovery(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &retainedIdentityError{cause: cause}
+}
