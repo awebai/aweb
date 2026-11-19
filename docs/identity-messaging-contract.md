@@ -87,6 +87,13 @@ Exact active identity-contact matching has one owner and retains contact locks
 through an existing delivery transaction. Policy refusals carry a next action;
 federation retains the stable reason separately from that human detail.
 
+Native sends keep their current policy decision through the message commit.
+Mail rechecks admission inside its new-thread or continuation transaction.
+Local chat locks the identity's policy rows and rechecks the same shared rule
+inside the transaction that stores the session/message. Registry contact
+resolution and host callbacks run after that transaction commits; a refused
+native chat leaves no newly created session or conversation behind.
+
 The modes are:
 
 - `open`: accept valid senders after address route and identity binding

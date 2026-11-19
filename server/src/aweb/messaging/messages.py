@@ -8,7 +8,11 @@ from aweb.messaging.recipient_lookup import (
 
 
 from datetime import datetime
-from aweb.member_team_key import MemberProjection, member_projection_columns_sql
+from aweb.member_team_key import (
+    MemberProjection,
+    MemberReadLock,
+    member_projection_columns_sql,
+)
 from aweb.messaging.recipient import Recipient
 
 from aweb.messaging.delivery_policy import (
@@ -26,11 +30,16 @@ def utc_iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-async def policy_rows_for_participant(db, participant: dict) -> list[Recipient]:
+async def policy_rows_for_participant(
+    db, participant: dict, *, read_lock: MemberReadLock = MemberReadLock.NONE
+) -> list[Recipient]:
     """Policy evidence for an existing participant, never new routing authority."""
     did = str(participant.get("did") or "").strip()
     if not did:
         return []
+    if not isinstance(read_lock, MemberReadLock):
+        raise TypeError("Policy reads require a named MemberReadLock")
+    lock_sql = " FOR SHARE OF a" if read_lock is MemberReadLock.SHARE else ""
     rows = await db.get_manager("aweb").fetch_all(
         "SELECT "
         + member_projection_columns_sql("a")
@@ -38,7 +47,8 @@ async def policy_rows_for_participant(db, participant: dict) -> list[Recipient]:
         FROM {{tables.agents}} a WHERE a.deleted_at IS NULL
           AND (a.did_key=$1 OR a.did_aw=$1)
         ORDER BY a.agent_id
-        """,
+        """
+        + lock_sql,
         did,
     )
     # All raw-claim matches must pass policy; none selects a recipient or route.

@@ -44,7 +44,13 @@ from aweb.federation.envelope import (
     verify_federation_envelope,
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
-from aweb.hooks import fire_mutation_callback
+from aweb.hooks import fire_mutation_callback, HeldMutationEvents
+from aweb.member_team_key import MemberReadLock
+from aweb.messaging.delivery_policy import (
+    DeliveryAttempt,
+    DeliverySender,
+    authorize_delivery,
+)
 from aweb.event_types import MutationEventType
 from aweb.message_events import ChatMessageSentContext
 from aweb.messaging.kinds import ContentModeValue, MessageTransport
@@ -1501,9 +1507,93 @@ async def send_chat(
         source=MessageInputSource.CHAT_SEND,
         content_mode=payload.content_mode,
     )
+    if any(
+        row.get("external") or _target_delivery_origin(row) for row in target.recipients
+    ):
+        return await _dispatch_chat(
+            db, auth=auth, target=target, payload=payload, runtime=runtime
+        )
+    return await _send_local_chat(
+        db, auth=auth, target=target, payload=payload, runtime=runtime
+    )
+
+
+async def _dispatch_chat(
+    db,
+    *,
+    auth: MessagingAuth,
+    target: ChatTarget,
+    payload: CreateSessionRequest | SendMessageRequest,
+    runtime: MessagingRuntime,
+) -> SentChat:
     if target.session_id is not None:
         return await _send_in_continued_session(db, auth, target, payload, runtime)
     return await _send_to_named_recipients(db, auth, target, payload, runtime)
+
+
+async def _authorize_local_chat_commit(
+    db, *, auth: MessagingAuth, target: ChatTarget
+) -> None:
+    """Hold native policy rows through the write, using the one delivery rule.
+
+    docs/identity-messaging-contract.md:69-87 applies current policy even to a
+    stored participant. Raw claim matches provide locks/policy only; a new
+    send retains its independently admitted recipient identity and route.
+    """
+    attempt = (
+        DeliveryAttempt.STORED_ROUTE
+        if target.session_id is not None
+        else DeliveryAttempt.FIRST_CONTACT
+    )
+    sender = DeliverySender(
+        did=(participant_dids(auth) or [""])[0],
+        address=_sender_address(auth),
+        verified_dids=tuple(auth_dids(auth)),
+    )
+    for recipient in target.recipients:
+        policies = await policy_rows_for_participant(
+            db,
+            {"did": recipient.did or recipient.did_aw or recipient.did_key},
+            read_lock=MemberReadLock.SHARE,
+        )
+        selected = policies if attempt is DeliveryAttempt.STORED_ROUTE else (recipient,)
+        for policy in selected:
+            await authorize_delivery(
+                db, recipient=policy, sender=sender, attempt=attempt
+            )
+    await require_agent_chat(db, target.recipients)
+
+
+async def _send_local_chat(
+    db,
+    *,
+    auth: MessagingAuth,
+    target: ChatTarget,
+    payload: CreateSessionRequest | SendMessageRequest,
+    runtime: MessagingRuntime,
+) -> SentChat:
+    """Commit native chat under admission locks, then perform external effects."""
+    events = HeldMutationEvents()
+    held_runtime = replace(runtime, on_mutation=events.record)
+    with agent_wake_scope(runtime.agent_wake_publisher):
+        async with db.get_manager("aweb").transaction() as tx:
+            send_db = TransactionInfra(db, tx)
+            await _authorize_local_chat_commit(send_db, auth=auth, target=target)
+            sent = await _dispatch_chat(
+                send_db, auth=auth, target=target, payload=payload, runtime=held_runtime
+            )
+    # New named sends alone learn contacts; replay receipts have no participants.
+    # Namespace/controller resolution belongs outside the message transaction.
+    if target.session_id is None and sent.participants is not None:
+        await _record_successful_chat_contacts(
+            db,
+            owner_did=(auth.did_aw or _actor_did(auth)).strip(),
+            sender_team_id=auth.team_id,
+            recipients=target.recipients,
+            registry_client=runtime.registry_client,
+        )
+    await events.fire(runtime.on_mutation)
+    return sent
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1846,7 +1936,6 @@ async def _send_to_local_named_chat(
     plan: _ChatSessionPlan,
 ) -> SentChat:
     """Persist and complete a named native chat after remote routing is excluded."""
-    registry_client = runtime.registry_client
     id_chain = auth.id_chain
     actor_did = author.did
     actor_agent_id = author.agent_id
@@ -1972,14 +2061,6 @@ async def _send_to_local_named_chat(
         raise DeliveryRefusal(
             status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
         )
-
-    await _record_successful_chat_contacts(
-        db,
-        owner_did=(auth.did_aw or actor_did).strip(),
-        sender_team_id=auth.team_id,
-        recipients=target_rows,
-        registry_client=registry_client,
-    )
 
     await _record_wait(
         db,
