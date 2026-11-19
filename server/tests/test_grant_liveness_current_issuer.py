@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass
 from enum import StrEnum
@@ -18,6 +19,7 @@ from test_team_key_pinning import pinning as pinning
 class IssuerReacceptance(StrEnum):
     SUPERSEDED = "superseded"
     REACCEPTED = "reaccepted"
+    REGISTRY_REVOKED = "registry-revoked"
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,21 @@ async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
     env = pinning
     member = _new_member("presentworker")
     certificate = _certificate(env.team_sk, env.team_did, member, "presence-before")
+    registry = env.app.state.awid_registry_client
+    if issuer is IssuerReacceptance.REGISTRY_REVOKED:
+        claims = json.loads(base64.b64decode(certificate))
+        await registry.register_team_certificate(
+            "example.test",
+            TEAM.split(":", 1)[0],
+            team_controller_signing_key=env.team_sk,
+            certificate_id=claims["certificate_id"],
+            member_did_key=member[1],
+            member_did_aw=None,
+            member_address=None,
+            alias=member[2],
+            identity_scope="local",
+            certificate=certificate,
+        )
     assert (await _connect(env, member, certificate)).status_code == 200
     signing_key, did_key = _session_keypair()
     body = json.dumps(
@@ -82,10 +99,20 @@ async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
             member_row["agent_id"],
         )
     )
-    before = await valid_grant_liveness_by_workspace(env.db, [workspace])
+    before = await valid_grant_liveness_by_workspace(
+        env.db, [workspace], registry_client=env.app.state.awid_registry_client
+    )
     assert str(before[workspace]["grant_id"]) == grant.grant_id
 
-    next_sk, next_did = await _change_key(env)
+    if issuer is IssuerReacceptance.REGISTRY_REVOKED:
+        await registry.revoke_team_certificate(
+            "example.test",
+            TEAM.split(":", 1)[0],
+            team_controller_signing_key=env.team_sk,
+            certificate_id=claims["certificate_id"],
+        )
+    else:
+        next_sk, next_did = await _change_key(env)
     if issuer is IssuerReacceptance.REACCEPTED:
         reconnected = await _connect(
             env,
@@ -107,4 +134,6 @@ async def test_grant_liveness_and_request_auth_share_current_issuer_eligibility(
     )
     # This is the same public native reader used by roster/status. Root Redis
     # presence cannot mask the grant-specific question in this assertion.
-    assert workspace not in await valid_grant_liveness_by_workspace(env.db, [workspace])
+    assert workspace not in await valid_grant_liveness_by_workspace(
+        env.db, [workspace], registry_client=env.app.state.awid_registry_client
+    )

@@ -1696,7 +1696,9 @@ async def test_grant_terminal_reason_distinguishes_normal_deadline_from_actual_e
     # must close normally, not as grant_expired.
     assert (
         await grant_terminal_reason(
-            type("Req", (), {"app": app})(), _DbShim(aweb_cloud_db.aweb_db), identity
+            Request({"type": "http", "app": app}),
+            _DbShim(aweb_cloud_db.aweb_db),
+            identity,
         )
         is None
     )
@@ -1710,7 +1712,7 @@ async def test_grant_terminal_reason_distinguishes_normal_deadline_from_actual_e
         grant_id,
     )
     expired = await grant_terminal_reason(
-        type("Req", (), {"app": app})(), _DbShim(aweb_cloud_db.aweb_db), identity
+        Request({"type": "http", "app": app}), _DbShim(aweb_cloud_db.aweb_db), identity
     )
     assert expired == "grant_expired"
 

@@ -63,6 +63,9 @@ def harness(monkeypatch):
         async def get_team_fresh(self, domain, name):
             return legacy_team(domain, name)
 
+        async def list_team_certificates(self, domain, name, *, active_only):
+            return [SimpleNamespace(certificate_id="cert")]
+
         async def get_team_revocations(self, *_):
             self.calls.append(clock.seconds)
             if self.fail_at is not None and clock.seconds >= self.fail_at:
@@ -92,8 +95,8 @@ def harness(monkeypatch):
                     revoked_at=None,
                     issued_by_certificate_id="cert",
                     agent_id=identity.agent_id,
-                    status="active",
-                    deleted_at=None,
+                    subject_status="active",
+                    subject_deleted_at=None,
                     # The subject is a member under its team's current key.
                     certificate_id="cert",
                     accepted_team_did_key="did:key:zTeam",
@@ -148,6 +151,7 @@ def harness(monkeypatch):
 
     request = SimpleNamespace(
         headers={},
+        state=SimpleNamespace(),
         app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry)),
         is_disconnected=disconnected,
     )

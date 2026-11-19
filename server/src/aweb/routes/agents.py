@@ -507,7 +507,10 @@ async def list_agents(
         str(p.get("workspace_id")): p for p in presences if p.get("workspace_id")
     }
     grant_liveness_by_id = await valid_grant_liveness_by_workspace(
-        aweb_db, workspace_ids
+        aweb_db,
+        workspace_ids,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        request=request,
     )
 
     agents: list[AgentView] = []

@@ -20,21 +20,20 @@ from fastapi import HTTPException, Request
 
 from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
-from aweb.config import get_settings, require_registered_certificates
+from aweb.config import get_settings
+from aweb.certificate_registration import configured_registration_mode
 from aweb.member_team_key import (
     GRANT_ISSUER_RECOVERY_DETAIL,
-    grant_issuer_current,
     member_key_columns_sql,
 )
-from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state, never_expires
+from aweb.identity_grant_status import GrantValidityState, grant_validity
+from aweb.grant_expiry import never_expires
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
-    _get_registered_certificates,
-    _get_revoked_certificates,
 )
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
@@ -193,7 +192,7 @@ async def _verify_identity_grant_row(
         SELECT g.team_id, g.grant_did_key, g.scopes, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
                a.did_key AS subject_did_key, a.did_aw, a.address, a.alias,
-               a.agent_id, a.identity_scope, a.status, a.deleted_at,
+               a.agent_id, a.identity_scope, a.status AS subject_status, a.deleted_at AS subject_deleted_at,
                a.certificate_id, """
         + member_key_columns_sql("a")
         + """
@@ -244,57 +243,37 @@ async def _verify_identity_grant_row(
 
 
 async def _require_request_grant_validity(request: Request, row) -> str:
-    """Check the authenticated grant's stored subject and issuer eligibility."""
-    lifetime_state = grant_lifetime_state(
-        issued_at=row.get("issued_at"),
-        expires_at=row["expires_at"],
-        revoked_at=row["revoked_at"],
+    """Map the common grant observation to the released request refusals."""
+    observation = await grant_validity(
+        row=row,
         now=datetime.now(UTC),
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        registration_mode=configured_registration_mode(),
+        request=request,
     )
-    if lifetime_state is GrantLifetimeState.REVOKED:
+    observation.raise_if_unavailable()
+    state = observation.state
+    if state is GrantValidityState.REVOKED:
         raise HTTPException(status_code=403, detail="grant revoked")
-    if lifetime_state is GrantLifetimeState.EXPIRED:
+    if state is GrantValidityState.EXPIRED:
         raise HTTPException(status_code=403, detail="grant expired")
-    if row["status"] != "active" or row["deleted_at"] is not None:
+    if state is GrantValidityState.SUBJECT_INACTIVE:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
-    if not grant_issuer_current(row):
+    if state in (
+        GrantValidityState.ISSUER_SUPERSEDED,
+        GrantValidityState.ISSUER_REVOKED,
+    ):
         raise HTTPException(
             status_code=403,
             detail="grant issuing certificate revoked. " + GRANT_ISSUER_RECOVERY_DETAIL,
         )
-    # A grant is a delegation from a membership; revoking the issuing
-    # certificate must end the delegation with it (aweb-abfn). Grants minted
-    # before issued_by_certificate_id was recorded cannot be checked and are
-    # bounded by their own expiry. Registry unavailability fails closed with
-    # the same 503 the certificate-presenting path raises.
-    issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
-    if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(
-            request, row["team_id"], certificate_ids=[issuing_certificate_id]
+    if state is GrantValidityState.ISSUER_UNREGISTERED:
+        raise HTTPException(
+            status_code=403,
+            detail="grant issuing certificate not registered. "
+            + GRANT_ISSUER_RECOVERY_DETAIL,
         )
-        if issuing_certificate_id in revoked_certs:
-            raise HTTPException(
-                status_code=403,
-                detail="grant issuing certificate revoked. "
-                + GRANT_ISSUER_RECOVERY_DETAIL,
-            )
-        # Staged existence requirement (default OFF): an unregistered issuing
-        # certificate is unrevocable, so with
-        # AWEB_REQUIRE_REGISTERED_CERTIFICATES on it must exist at the
-        # registry or the delegation ends, mirroring the certificate paths.
-        # Ordering preserved: revocation keeps its own distinct verdict above.
-        if require_registered_certificates():
-            registered_certs = await _get_registered_certificates(
-                request, row["team_id"]
-            )
-            if issuing_certificate_id not in registered_certs:
-                raise HTTPException(
-                    status_code=403,
-                    detail="grant issuing certificate not registered. "
-                    + GRANT_ISSUER_RECOVERY_DETAIL,
-                )
-
-    return issuing_certificate_id
+    return str(row.get("issued_by_certificate_id") or "").strip()
 
 
 async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:

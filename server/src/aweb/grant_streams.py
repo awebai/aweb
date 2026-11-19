@@ -8,18 +8,15 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-from aweb.grant_expiry import GrantLifetimeState, grant_lifetime_state
-from aweb.config import require_registered_certificates
+from aweb.identity_grant_status import GrantValidityState, grant_validity
+from aweb.certificate_registration import configured_registration_mode
 from aweb.member_team_key import (
     GRANT_ISSUER_RECOVERY_DETAIL,
-    grant_issuer_current,
     member_key_columns_sql,
 )
 from aweb.team_auth_deps import (
     TeamIdentity,
     _aweb_db,
-    _get_registered_certificates,
-    _get_revoked_certificates,
 )
 
 GRANT_STREAM_RECHECK_SECONDS = 30
@@ -81,7 +78,7 @@ async def grant_terminal_reason(
         """
         SELECT g.team_id, g.grant_did_key, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
-               a.agent_id, a.status, a.deleted_at,
+               a.agent_id, a.status AS subject_status, a.deleted_at AS subject_deleted_at,
                a.certificate_id, """
         + member_key_columns_sql("a")
         + """
@@ -93,39 +90,25 @@ async def grant_terminal_reason(
     )
     if row is None or row["grant_did_key"] != grant.session_did_key:
         return "grant_revoked"
-    lifetime_state = grant_lifetime_state(
-        issued_at=row.get("issued_at"),
-        expires_at=_as_utc(row["expires_at"]),
-        revoked_at=row["revoked_at"],
-        now=now,
-    )
-    if lifetime_state is GrantLifetimeState.REVOKED:
-        return "grant_revoked"
-    if lifetime_state is GrantLifetimeState.EXPIRED:
-        return "grant_expired"
-    if (
-        str(row["agent_id"]) != str(identity.agent_id)
-        or row["status"] != "active"
-        or row["deleted_at"] is not None
-    ):
+    if str(row["agent_id"]) != str(identity.agent_id):
         return "grant_subject_inactive"
-    if not grant_issuer_current(row):
-        return "grant_issuer_revoked"
-
-    issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
-    if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(
-            request, row["team_id"], certificate_ids=[issuing_certificate_id]
-        )
-        if issuing_certificate_id in revoked_certs:
-            return "grant_issuer_revoked"
-        if require_registered_certificates():
-            registered_certs = await _get_registered_certificates(
-                request, row["team_id"]
-            )
-            if issuing_certificate_id not in registered_certs:
-                return "grant_issuer_revoked"
-    return None
+    observation = await grant_validity(
+        row=row,
+        now=now,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        registration_mode=configured_registration_mode(),
+        request=request,
+    )
+    observation.raise_if_unavailable()
+    return {
+        GrantValidityState.ACTIVE: None,
+        GrantValidityState.REVOKED: "grant_revoked",
+        GrantValidityState.EXPIRED: "grant_expired",
+        GrantValidityState.SUBJECT_INACTIVE: "grant_subject_inactive",
+        GrantValidityState.ISSUER_SUPERSEDED: "grant_issuer_revoked",
+        GrantValidityState.ISSUER_REVOKED: "grant_issuer_revoked",
+        GrantValidityState.ISSUER_UNREGISTERED: "grant_issuer_revoked",
+    }[observation.state]
 
 
 def _as_utc(value: datetime) -> datetime:

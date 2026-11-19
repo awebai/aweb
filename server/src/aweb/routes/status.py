@@ -361,7 +361,10 @@ async def status(
         p.get("workspace_id", ""): p for p in all_presences if p.get("workspace_id")
     }
     grant_liveness_by_workspace = await valid_grant_liveness_by_workspace(
-        aweb_db, workspace_ids
+        aweb_db,
+        workspace_ids,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        request=request,
     )
 
     workspace_rows = await aweb_db.fetch_all(
