@@ -25,14 +25,14 @@ type nativeInviteRegistrationRequest struct {
 }
 
 // An inconclusive reconciliation must not be mistaken for a definite refusal
-// of the original write (docs/cli-integration-contract.md:144).
+// of the original write (docs/cli-integration-contract.md:151-175).
 type nativeInviteRegistrationUnknownError struct{ cause error }
 
 func (e *nativeInviteRegistrationUnknownError) Error() string { return e.cause.Error() }
 func (e *nativeInviteRegistrationUnknownError) Unwrap() error { return e.cause }
 
 // An already-registered reply succeeds only after fetching the exact signed
-// effect, not merely a certificate for the same alias (docs/cli-integration-contract.md:144).
+// effect, not merely a certificate for the same alias (docs/cli-integration-contract.md:151-175).
 func registerExactNativeInviteCertificate(ctx context.Context, request nativeInviteRegistrationRequest) error {
 	err := request.Registry.RegisterCertificate(ctx, request.RegistryURL, request.Invite.Domain, request.Invite.TeamName, request.Certificate, request.TeamKey)
 	if err == nil {
@@ -85,8 +85,17 @@ func nativeInviteRegistrationDefinitelyRefused(err error) bool {
 }
 
 func nativeInviteIssuanceRefusal(invite *awconfig.TeamInvite, cause error) error {
-	check := formatShellCommand([]string{"aw", "id", "team", "check-invite", "--invite-id", invite.InviteID, "--json"})
+	check := formatShellCommand(nativeInviteCheckArgv(invite))
 	return withErrorCode("invite_issuance_pending", fmt.Errorf("invite %s issuance is incomplete or unknown: %w; retain the recipient key and invite record, then run `%s` to check its exact certificate before cancelling or resuming", invite.InviteID, cause, check))
+}
+
+func nativeInviteCheckArgv(invite *awconfig.TeamInvite) []string {
+	args := []string{"aw"}
+	issuance, err := awconfig.InspectTeamInviteIssuance(invite)
+	if err == nil && issuance != nil {
+		args = append(args, "--identity-home", issuance.Context.IdentityHome)
+	}
+	return append(args, "id", "team", "check-invite", "--invite-id", invite.InviteID, "--json")
 }
 
 type nativeInviteResumeRequest struct {
@@ -97,7 +106,7 @@ type nativeInviteResumeRequest struct {
 }
 
 // Resumption holds the invite lock and replays only the frozen effect; neither
-// enrollment selection nor certificate signing runs again (docs/cli-integration-contract.md:144).
+// enrollment selection nor certificate signing runs again (docs/cli-integration-contract.md:151-175).
 func resumeNativeInviteIssuance(ctx context.Context, request nativeInviteResumeRequest) (*acceptedTeamInvite, error) {
 	invite, issuance := request.Invite, request.Issuance
 	cert := &issuance.PreparedEffect

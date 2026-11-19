@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +56,30 @@ func TestOATSAttemptedInviteCannotCancelItsLinkedChildOrReplaceItsRecipient(t *t
 	}
 	if strings.Contains(string(out), invite.Secret) || strings.Contains(string(out), `"status": "cancelled"`) {
 		t.Fatal("attempt was cancelled or exposed its bearer")
+	}
+	var cancellation inviteCancellationOutput
+	if err := json.NewDecoder(bytes.NewReader(out)).Decode(&cancellation); err != nil {
+		t.Fatal(err)
+	}
+	expectedStep := formatShellCommand([]string{"aw", "--identity-home", home, "id", "team", "check-invite", "--invite-id", invite.InviteID, "--json"})
+	if cancellation.IdentityHome != home || cancellation.NextStep != expectedStep {
+		t.Fatalf("operator recovery lost the non-default recipient home: %#v", cancellation)
+	}
+	vectorBytes, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "docs", "vectors", "cli-integration-codes-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct {
+		Cancellation struct {
+			States []string `json:"states"`
+			Codes  []string `json:"codes"`
+		} `json:"invite_cancellation"`
+	}
+	if err := json.Unmarshal(vectorBytes, &vector); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(vector.Cancellation.States, string(cancellation.Status)) || !slices.Contains(vector.Cancellation.Codes, cancellation.Code) {
+		t.Fatal("actual pending cancellation is missing from the published CLI vocabulary")
 	}
 	retainedChild, err := childStore.Invitation(child.InvitationID)
 	if err != nil || retainedChild == nil || retainedChild.Void {

@@ -592,7 +592,7 @@ type nativeInviteIssuanceRequest struct {
 	DefaultClaimResult *awid.AtomicAddressClaimResult
 }
 
-// Registry success consumes enrollment before recipient writes (docs/cli-integration-contract.md:133-144).
+// Registry success consumes enrollment before recipient writes (docs/cli-integration-contract.md:146-161).
 func issueNativeInviteCertificate(ctx context.Context, request nativeInviteIssuanceRequest) (*awid.TeamCertificate, error) {
 	invite, plan, teamKey := request.Invite, request.Plan, request.TeamKey
 	registry, registryURL := request.Registry, request.RegistryURL
@@ -617,6 +617,11 @@ func issueNativeInviteCertificate(ctx context.Context, request nativeInviteIssua
 	}); err != nil {
 		return nil, nativeInviteIssuanceRefusal(invite, fmt.Errorf("retain exact issuance before registration: %w", err))
 	}
+	retained, err := awconfig.LoadTeamInvite(invite.InviteID)
+	if err != nil {
+		return nil, nativeInviteIssuanceRefusal(invite, fmt.Errorf("read retained issuance before registration: %w", err))
+	}
+	invite = retained
 	if err := registerExactNativeInviteCertificate(ctx, nativeInviteRegistrationRequest{Invite: invite, Certificate: cert, TeamKey: teamKey, MemberKey: plan.IdentitySigningKey, Registry: registry, RegistryURL: registryURL}); err != nil {
 		if !nativeInviteRegistrationDefinitelyRefused(err) {
 			return nil, nativeInviteIssuanceRefusal(invite, err)

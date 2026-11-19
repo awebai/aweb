@@ -42,7 +42,7 @@ var teamResumeInviteCmd = &cobra.Command{
 }
 
 // Checking never clears an attempted fence: absence after an uncertain write
-// cannot prove that submission will not commit (docs/cli-integration-contract.md:144).
+// cannot prove that submission will not commit (docs/cli-integration-contract.md:151-175).
 func runTeamCheckInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	id := strings.TrimSpace(teamCheckInviteID)
 	if id == "" {
@@ -110,7 +110,7 @@ func runTeamCheckInvite(cmd *cobra.Command, args []string) (resultErr error) {
 }
 
 // Recovery requires the recorded recipient's own key and exact home; knowing
-// an invite ID never permits replacing another identity (docs/cli-integration-contract.md:144).
+// an invite ID never permits replacing another identity (docs/cli-integration-contract.md:151-175).
 func runTeamResumeInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	id := strings.TrimSpace(teamResumeInviteID)
 	if id == "" {

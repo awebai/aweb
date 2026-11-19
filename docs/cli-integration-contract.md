@@ -59,6 +59,11 @@ destination. The signed record vectors are
 
 ## Refusal codes
 
+The machine-readable CLI code list is
+[`cli-integration-codes-v1.json`](vectors/cli-integration-codes-v1.json).
+It also names invite inspection states and wake verdicts. It does not replace
+the registry's or service's own open refusal vocabulary.
+
 The existing JSON error envelope carries `error.code`, `error.message`, and,
 for service refusals, `http_status`, `detail`, and `reason` where available.
 Service registration preserves the service's own refusal code as `error.code`
@@ -149,7 +154,9 @@ record. Its shared recovery header reports `attempted`; it is neither unused nor
 consumed. `ConsumedAt` is set only after confirmed exact issuance. A failed or
 unknown confirmation write keeps the attempt. Offline cancellation refuses an
 attempt with `status: attempted`, `code: invite_issuance_pending`, and a retained
-linked-child disposition. Unknown progress is also refused. A definite refusal
+linked-child disposition. Its complete `next_step` command includes the original
+recipient `--identity-home`, also returned as `identity_home`, when the fence is
+readable. Unknown progress is also refused. A definite refusal
 of the original registration restores the unused invite and its original token;
 an uncertain write or refusal of a later replay does not.
 

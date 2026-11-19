@@ -27,12 +27,13 @@ const (
 )
 
 type inviteCancellationOutput struct {
-	InviteID    string                  `json:"invite_id"`
-	Status      inviteCancellationState `json:"status"`
-	Code        string                  `json:"code"`
-	LinkedChild inviteChildDisposition  `json:"linked_child_disposition"`
-	Message     string                  `json:"message"`
-	NextStep    string                  `json:"next_step"`
+	InviteID     string                  `json:"invite_id"`
+	Status       inviteCancellationState `json:"status"`
+	Code         string                  `json:"code"`
+	LinkedChild  inviteChildDisposition  `json:"linked_child_disposition"`
+	Message      string                  `json:"message"`
+	NextStep     string                  `json:"next_step"`
+	IdentityHome string                  `json:"identity_home,omitempty"`
 }
 
 var teamRevokeInviteID string
@@ -70,7 +71,10 @@ func runTeamRevokeInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	if inspectErr != nil || (issuance != nil && issuance.State == awconfig.RecoveryAttempted) {
 		out.Status, out.Code = inviteAttempted, "invite_issuance_pending"
 		out.Message = "This invite has an attempted or unknown issuance. Cancellation cannot determine whether its certificate was issued."
-		out.NextStep = formatShellCommand([]string{"aw", "id", "team", "check-invite", "--invite-id", id, "--json"})
+		out.NextStep = formatShellCommand(nativeInviteCheckArgv(invite))
+		if issuance != nil {
+			out.IdentityHome = issuance.Context.IdentityHome
+		}
 		if invite.IDChild != nil {
 			out.LinkedChild = inviteChildRetained
 		}
