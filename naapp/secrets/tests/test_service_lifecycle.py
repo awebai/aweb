@@ -1,74 +1,13 @@
-"""Root dependencies exist before routers mount, and share the runtime database."""
+"""A failing public prepare hook disconnects its already-connected runtime."""
 
 from contextlib import asynccontextmanager
 
 import httpx
 import pytest
 from aweb_naapp.runtime.db import ApplyMigrations
-from fastapi import APIRouter
 
 from aweb_secrets.app import create_app
-from tests.test_app import API, CONSOLE, InstalledTeams, _settings, allow_all, kms_check
-
-
-async def test_services_start_before_router_factories_and_cleanup_between_lifespans(
-    registry, test_db_factory, tmp_path
-):
-    database = await test_db_factory.create_db(suffix="root_lifecycle")
-    active = []
-    closed = []
-
-    @asynccontextmanager
-    async def prepare(runtime):
-        db = runtime.db()
-        assert await db.fetch_value("SELECT 1") == 1
-        active.append(db)
-        try:
-            yield
-        finally:
-            closed.append(active.pop())
-
-    def human(runtime):
-        assert active == [runtime.db()]
-        router = APIRouter()
-
-        @router.get("/")
-        @router.get("/lifecycle-only")
-        async def home():
-            return {"connected": await active[0].fetch_value("SELECT 1") == 1}
-
-        return router
-
-    service = create_app(
-        _settings(database.config.get_dsn(), tmp_path),
-        grants=InstalledTeams({}),
-        policy=allow_all,
-        kms=kms_check(True),
-        awid_transport=registry.transport,
-        prepare=prepare,
-        console_routers=(human,),
-        schema_preparation=ApplyMigrations(),
-    )
-    for _ in range(2):
-        async with service.api_app.router.lifespan_context(service.api_app):
-            async with httpx.AsyncClient(
-                transport=httpx.ASGITransport(service), base_url=CONSOLE
-            ) as client:
-                assert (await client.get("/")).json() == {"connected": True}
-                assert (await client.get("/lifecycle-only")).json() == {"connected": True}
-                # The API root serves public docs, never this console handler.
-                landing = await client.get(API + "/")
-                assert landing.status_code == 200
-                assert landing.headers["content-type"].startswith("text/html")
-                assert (await client.get(API + "/lifecycle-only")).status_code == 404
-        assert active == []
-        assert service.runtime.connected_db() is None
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(service), base_url=CONSOLE
-        ) as client:
-            assert (await client.get("/")).status_code == 404
-            assert (await client.get("/lifecycle-only")).status_code == 404
-    assert len(closed) == 2
+from tests.test_app import CONSOLE, InstalledTeams, _settings, allow_all, kms_check
 
 
 async def test_failed_service_startup_disconnects_runtime_and_leaves_no_console_routes(

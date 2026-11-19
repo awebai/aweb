@@ -13,8 +13,8 @@ from aweb_naapp_testing.smtp import SmtpServer
 from fastapi import FastAPI, Request
 from service_server import Listener, ServiceServerError, serving
 
+from aweb_secrets.app import SecretsService
 from aweb_secrets.composition import create_service
-from tests.production_database import prepared_service_databases as prepared_service_databases
 from tests.test_composition import settings
 
 
@@ -185,7 +185,6 @@ async def test_bind_failure_never_constructs_an_app():
 
 
 async def test_actual_production_root_serves_both_tls_origins_once(
-    test_db_factory,
     prepared_service_databases,
     registry,
     tmp_path,
@@ -195,8 +194,8 @@ async def test_actual_production_root_serves_both_tls_origins_once(
     with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(24)) as smtp:
         configured = settings(database, tmp_path, smtp)
 
-        def factory(ports):
-            return create_service(
+        def factory(ports: tuple[int, ...]) -> SecretsService:
+            service = create_service(
                 configured.model_copy(
                     update={
                         "public_origin": f"https://127.0.0.1:{ports[0]}",
@@ -205,6 +204,9 @@ async def test_actual_production_root_serves_both_tls_origins_once(
                 ),
                 awid_transport=registry.transport,
             )
+            assert service.runtime.connected_db() is None
+            assert service.services is None
+            return service
 
         async with serving(
             factory,
@@ -213,6 +215,7 @@ async def test_actual_production_root_serves_both_tls_origins_once(
         ) as running:
             service = running.app
             assert service.runtime.connected_db() is not None
+            assert service.services is not None
             async with httpx.AsyncClient(
                 verify=ssl.create_default_context(cafile=tls.ca_file),
                 trust_env=False,
@@ -222,9 +225,13 @@ async def test_actual_production_root_serves_both_tls_origins_once(
                     f"https://localhost:{running.ports[1]}",
                 )
                 assert (await client.get(api + "/health")).json()["checks"]["kms"] == "ok"
+                landing = await client.get(api + "/")
+                assert landing.status_code == 200
+                assert landing.headers["content-type"].startswith("text/html")
                 assert (await client.get(human + "/enrolment")).status_code == 200
                 assert (await client.get(api + "/enrolment")).status_code == 404
                 assert (await client.get(human + "/")).status_code == 303
                 assert (await client.get(api + "/v1/secrets")).status_code == 401
         assert service.runtime.connected_db() is None
+        assert service.services is None
     no_owned_tasks()
