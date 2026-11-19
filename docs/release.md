@@ -412,6 +412,12 @@ ports; their failing diagnostics are replaced by the positive network regression
 and endpoint controls. Reachability errors report the service, address, network
 path and underlying curl error separately from an application health response.
 
+The candidate tools image sets pytest's `--durations=0 --durations-min=0`
+for outer and isolated suite runners. Their retained stage logs and
+`test-egress/suite.log` include setup, call and teardown timings, including
+fast cases. These are pytest phase durations, not whole-stage wall time;
+non-pytest suites keep their existing reports.
+
 Each gate invocation retains distinct logs even at the same SHA. The ordinary
 ledger still serializes/reuses proof for a tree. An explicitly authorized
 concurrency proof uses separate `AWEB_GATE_LEDGER` directories for its two runs;
