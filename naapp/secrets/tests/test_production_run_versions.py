@@ -11,10 +11,10 @@ from enum import IntEnum
 import pytest
 from aweb_naapp.dispatch import State
 from aweb_naapp.runtime.approvals import ApprovalState, Decision
-from aweb_naapp_testing.owner_acts import AUDIENCE
 
 from aweb_secrets import use_approval
 from aweb_secrets.use_approval import UseApprovalRefusalCode
+from tests.production_approvals import requester_receipt, stored_approval
 from tests.test_production_bootstrap import ApprovalAction, ProductionRequest, approval_request
 from tests.test_production_bootstrap import root as root
 from tests.test_production_dispatch import member_replay
@@ -74,14 +74,16 @@ async def _approve_run(root, *, pending: ProductionRequest, csrf: dict[str, str]
     assert response.json()["state"] == ApprovalState.APPROVED
 
 
-async def _authority_snapshot(root):
+async def _authority_snapshot(root, *, pending: ProductionRequest):
     db = root[0].runtime.db()
+    approval = await stored_approval(root, pending=pending)
     return (
-        await db.fetch_all(
-            "SELECT state,consumed_operation_id FROM approvals ORDER BY approval_id"
-        ),
-        await db.fetch_value("SELECT count(*) FROM passkey_assertions"),
-        await db.fetch_value("SELECT count(*) FROM outbox_events"),
+        approval.state,
+        approval.consumed_operation_id,
+        approval.decided_by,
+        approval.dispatch_outcome,
+        await requester_receipt(root, pending=pending),
+        await db.fetch_value("SELECT count(*) FROM run_approval_audit_proofs"),
         await db.fetch_value("SELECT count(*) FROM run_approval_admissions"),
         await db.fetch_value("SELECT count(*) FROM run_deliveries WHERE assignment IS NOT NULL"),
     )
@@ -97,7 +99,7 @@ async def test_only_current_run_payload_can_get_decision_options(
             root, version=version, onepassword_values=onepassword_values
         )
     assert use_approval.REQUEST_VERSION == PayloadVersion.CURRENT_V2.value
-    before = await _authority_snapshot(root)
+    before = await _authority_snapshot(root, pending=pending)
     response = await _decision_options(root, pending=pending, csrf=csrf)
     if version is PayloadVersion.RETAINED_V1:
         assert response.status_code == 409
@@ -107,7 +109,7 @@ async def test_only_current_run_payload_can_get_decision_options(
         )
     else:
         assert response.status_code == 200
-    assert await _authority_snapshot(root) == before
+    assert await _authority_snapshot(root, pending=pending) == before
 
 
 @pytest.mark.parametrize("version", list(PayloadVersion))
@@ -123,7 +125,7 @@ async def test_only_current_run_payload_can_be_decided_with_a_bound_proof(
         assert options.status_code == 200
         assertion = pending.device.get(options.json())
     assert use_approval.REQUEST_VERSION == PayloadVersion.CURRENT_V2.value
-    before = await _authority_snapshot(root)
+    before = await _authority_snapshot(root, pending=pending)
     response = await _decide(root, pending=pending, csrf=csrf, assertion=assertion)
     db = root[0].runtime.db()
     if version is PayloadVersion.RETAINED_V1:
@@ -132,11 +134,12 @@ async def test_only_current_run_payload_can_be_decided_with_a_bound_proof(
             "This approval uses an unsupported format. "
             "Ask the requester to submit a new request ID."
         )
-        assert await _authority_snapshot(root) == before
+        assert await _authority_snapshot(root, pending=pending) == before
     else:
         assert response.status_code == 200
-        assert await db.fetch_value("SELECT state FROM approvals") == ApprovalState.APPROVED
-        assert await db.fetch_value("SELECT consumed_operation_id FROM approvals") is None
+        approval = await stored_approval(root, pending=pending)
+        assert approval.state is ApprovalState.APPROVED
+        assert approval.consumed_operation_id is None
         assert await db.fetch_value("SELECT count(*) FROM run_approval_admissions") == 0
 
 
@@ -156,14 +159,14 @@ async def test_only_current_approved_run_payload_can_gain_fresh_admission(
     if version is PayloadVersion.RETAINED_V1:
         assert response.status_code == 403
         assert response.json()["code"] == UseApprovalRefusalCode.UNRENDERABLE
-        assert await db.fetch_value("SELECT consumed_operation_id FROM approvals") is None
+        assert (await stored_approval(root, pending=pending)).consumed_operation_id is None
         assert await db.fetch_value("SELECT count(*) FROM run_approval_admissions") == 0
-        assert await db.fetch_value("SELECT state FROM dispatches") == State.AWAITING_APPROVAL
+        assert (await requester_receipt(root, pending=pending))["state"] == State.REFUSED
     else:
         assert response.status_code == 202
         assert response.json()["state"] == State.ADMITTED
         assert await db.fetch_value("SELECT count(*) FROM run_approval_admissions") == 1
-        assert await db.fetch_value("SELECT consumed_operation_id FROM approvals") is not None
+        assert (await stored_approval(root, pending=pending)).consumed_operation_id is not None
     assert (
         await db.fetch_value("SELECT count(*) FROM run_deliveries WHERE assignment IS NOT NULL")
         == 0
@@ -184,15 +187,9 @@ async def test_an_original_run_admission_remains_readable_without_rearming(
         assert admitted.status_code == 202
         assert admitted.json()["state"] == State.ADMITTED
     assert use_approval.REQUEST_VERSION == PayloadVersion.CURRENT_V2.value
-    before = await _authority_snapshot(root)
-    _, client, _, member, *_ = root
-    path = "/v1/status/" + pending.reply["request_ref"]
-    status = await client.get(
-        AUDIENCE + path, headers=member.headers(aud=AUDIENCE, method="GET", path=path)
-    )
-    assert status.status_code == 200
-    assert status.json() == admitted.json()
+    before = await _authority_snapshot(root, pending=pending)
+    assert await requester_receipt(root, pending=pending) == admitted.json()
     replay = await member_replay(root, pending)
     assert replay.status_code == 202
     assert replay.json() == admitted.json()
-    assert await _authority_snapshot(root) == before
+    assert await _authority_snapshot(root, pending=pending) == before
