@@ -278,6 +278,9 @@ func TestACertificateThatIsNotThisHomesCurrentMembershipIsRefusedAndNothingInsta
 		if code := errorCodeOf(err); code != tc.code {
 			t.Errorf("%s: code %q, err %v", name, code, err)
 		}
+		if (tc.code == "certificate_revoked" || name == "a status aw does not know") && (err == nil || !strings.Contains(err.Error(), "ask the team's owner")) {
+			t.Errorf("%s: missing next action: %v", name, err)
+		}
 		if !maps.Equal(contents, homeContents(t, home)) {
 			t.Errorf("%s: the refusal changed the home", name)
 		}
@@ -491,7 +494,7 @@ func TestRecordingAnInstalledCertificateWithNoRegistryKeepsTheMembershipsRegistr
 	if _, err := installTeamCertificateFile(context.Background(), installRequest(t, registry, home, certificateFile(t, cert))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := commitTeamCertificate(t.TempDir(), home, "fetch-cert", cert, "", "", func() (string, error) { return "already_installed", nil }); err != nil {
+	if _, err := commitTeamCertificate(certificateCommit{WorkingDir: t.TempDir(), IdentityHome: home, Command: "fetch-cert", Certificate: cert, RegistryURL: "", WorkspacePath: "", Decide: func() (certificateInstallStatus, error) { return certificateAlreadyInstalled, nil }}); err != nil {
 		t.Fatal(err)
 	}
 	state, err := awconfig.LoadTeamStateFromIdentityHome(home)

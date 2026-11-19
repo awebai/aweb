@@ -20,7 +20,7 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
-
+from aweb.identity_scope import IdentityScope
 from aweb.member_status import MemberStatus as MemberStatus
 from aweb.service_errors import NotFoundError
 from aweb.team_scope import member_team_scope as member_team_scope
@@ -33,7 +33,9 @@ class MemberReadLock(Enum):
     SHARE = auto()
 
 
-RECIPIENT_RECONNECT_DETAIL = "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
+RECIPIENT_RECONNECT_DETAIL = (
+    "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
+)
 
 
 CURRENT_MEMBERSHIP_REQUIRED_DETAIL = (
@@ -94,7 +96,7 @@ class MemberProjection(Mapping[str, Any]):
     Raw claims remain available for policy classification. Consumers obtain
     attributed identity through ``verified_identity``; eligibility remains the
     member owner's decision. Missing columns are not replaced with NULL.
-    docs/identity.md:569-585 separates verified projection from policy claims.
+    docs/identity.md:598-609 separates verified projection from policy claims.
     """
 
     _row: Mapping[str, Any]
@@ -104,30 +106,25 @@ class MemberProjection(Mapping[str, Any]):
         columns = (*_MEMBER_COLUMNS, "current_team_did_key")
         missing = [column for column in columns if column not in source]
         if missing:
-            raise ValueError(
-                "Incomplete native member projection: " + ", ".join(missing)
-            )
+            raise ValueError("Incomplete native member projection: " + ", ".join(missing))
         values = {column: source[column] for column in columns}
         for column in columns:
             if column in ("agent_id", "deleted_at"):
                 continue
             if values[column] is not None and not isinstance(values[column], str):
-                raise ValueError(
-                    f"Native member projection column {column} must be text or NULL"
-                )
+                raise ValueError(f"Native member projection column {column} must be text or NULL")
         # PostgreSQL row_to_json/to_jsonb encodes UUIDs/timestamps as strings.
         # A host's joined snapshot and the native SELECT have one public shape.
         values["agent_id"] = UUID(str(values["agent_id"]))
+        # These are NOT NULL constrained native columns, not optional host overlays.
+        values["status"] = MemberStatus(values["status"])
+        values["identity_scope"] = IdentityScope(values["identity_scope"])
         if isinstance(values["deleted_at"], str):
             values["deleted_at"] = datetime.fromisoformat(
                 values["deleted_at"].replace("Z", "+00:00")
             )
-        if values["deleted_at"] is not None and not isinstance(
-            values["deleted_at"], datetime
-        ):
-            raise ValueError(
-                "Native member projection deleted_at must be a timestamp or NULL"
-            )
+        if values["deleted_at"] is not None and not isinstance(values["deleted_at"], datetime):
+            raise ValueError("Native member projection deleted_at must be a timestamp or NULL")
         object.__setattr__(self, "_row", MappingProxyType(values))
 
     @classmethod
@@ -182,9 +179,7 @@ async def read_member_projection(
     return MemberProjection.from_row(row) if row is not None else None
 
 
-async def lock_member_projections(
-    tx, *, agent_ids: list[UUID]
-) -> list[MemberProjection]:
+async def lock_member_projections(tx, *, agent_ids: list[UUID]) -> list[MemberProjection]:
     """Read complete native actor facts under caller-owned row locks.
 
     Actor-ID ordering preserves the public embedding transaction contract.
@@ -226,10 +221,16 @@ def member_key_current(row) -> bool:
     member_key_columns_sql) was accepted under its team's current key. A row
     read without those columns is not."""
     accepted = str(row.get("accepted_team_did_key") or "").strip()
-    return (
-        bool(accepted)
-        and accepted == str(row.get("current_team_did_key") or "").strip()
-    )
+    return bool(accepted) and accepted == str(row.get("current_team_did_key") or "").strip()
+
+
+def member_row_active(row: Mapping[str, Any] | None) -> bool:
+    """Read native status/deletion only, never identity or current-key authority.
+
+    migrations/aweb/001_initial.sql:42-45 defines native row state separately
+    from any certificate proof.
+    """
+    return bool(row and row.get("status") == MemberStatus.ACTIVE and row.get("deleted_at") is None)
 
 
 def current_member(row: Mapping[str, Any] | None) -> bool:
@@ -238,12 +239,7 @@ def current_member(row: Mapping[str, Any] | None) -> bool:
     Migration 052:1-4 and docs/design/team-room-v1.md:16-21 require current
     membership; the identity's independent residence is not this question.
     """
-    return bool(
-        row
-        and row.get("status") == MemberStatus.ACTIVE.value
-        and row.get("deleted_at") is None
-        and member_key_current(row)
-    )
+    return member_row_active(row) and member_key_current(row)
 
 
 def current_member_sql(agent: str) -> str:
@@ -266,7 +262,7 @@ async def current_member_projections(
 ) -> list[MemberProjection]:
     """Select members by identity or membership without a newest-row winner.
 
-    docs/identity.md:93-107 scopes a member name to a team. Verified global
+    docs/identity.md:93-102 scopes a member name to a team. Verified global
     claims are selected through identity_binding, never raw metadata.
     SHARE holds eligible rows through the caller's transaction, preserving
     delivery policy through commit (identity-messaging-contract.md:314-320).
@@ -344,9 +340,7 @@ async def read_participant_identity_projection(
     projections = [MemberProjection.from_row(row) for row in rows]
     if not projections:
         return None
-    identities = {
-        (row.verified_identity().get("did_aw"), row["did_key"]) for row in projections
-    }
+    identities = {(row.verified_identity().get("did_aw"), row["did_key"]) for row in projections}
     if len(identities) != 1:
         raise ConflictError(
             "Participant identity is ambiguous. Reconnect with current identity credentials."
@@ -367,9 +361,7 @@ async def current_member_team_ids_for_identity(
         return set()
     return {
         row["team_id"]
-        for row in await current_member_projections(
-            db, dids=selected, read_lock=read_lock
-        )
+        for row in await current_member_projections(db, dids=selected, read_lock=read_lock)
     }
 
 
@@ -379,19 +371,19 @@ def grant_issuer_current(row) -> bool:
     certificate: the subject is a member under the current key and that
     member's certificate is the one the grant was issued from. A credential
     issued from a superseded certificate does not return: reaccepting the
-    member does not renew an earlier delegation (docs/identity.md:766-769).
+    member does not renew an earlier delegation (docs/identity.md:807-811).
     """
     if not member_key_current(row):
         return False
     issuer = str(row.get("issued_by_certificate_id") or "").strip()
     current = str(row.get("certificate_id") or "").strip()
-    return not issuer or not current or issuer == current
+    return not issuer or issuer == current
 
 
 def grant_issuer_current_sql(*, agent: str, grant: str) -> str:
     """The SQL form of grant_issuer_current for joined presence readers.
 
-    docs/identity.md:775-779 retains exact issuing-certificate equality after
+    docs/identity.md:807-811 retains exact issuing-certificate equality after
     reacceptance. Legacy issuer-ID-less grants keep their existing lifetime.
     Both aliases are source-code identifiers, never request values.
     """
@@ -401,4 +393,4 @@ def grant_issuer_current_sql(*, agent: str, grant: str) -> str:
     current_key = member_key_current_sql(agent)
     issuer = f"NULLIF(BTRIM({grant}.issued_by_certificate_id), '')"
     current = f"NULLIF(BTRIM({agent}.certificate_id), '')"
-    return f"({current_key} AND ({issuer} IS NULL OR {current} IS NULL OR {issuer}={current}))"
+    return f"({current_key} AND ({issuer} IS NULL OR {issuer}={current}))"

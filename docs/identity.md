@@ -101,6 +101,35 @@ certificate wire field for this value is still `alias`; product docs and new CLI
 work call it **name**. Compatibility output may dual-emit `alias` and `name`;
 that does not create two concepts.
 
+### Pending private-team key confirmation
+
+Hosted creation can return a usable certificate while its registry registration
+is pending. The client checks the artifact signature and its binding to the
+home's signing key, but an unregistered member cannot read a private team's
+metadata. An absent certificate-status response or a private-read refusal is
+not evidence that the registry agrees with the supplied team key.
+
+The CLI records this key in the membership's `teams.yaml` entry as
+`team_key: {did_key: ..., state: unconfirmed}`. The same field becomes
+`state: confirmed` only when an existing registry read independently supplies
+the matching key. A public team's metadata may supply that evidence before
+certificate registration; a private team's certificate-status read can supply
+it after registration. Normal certificate clients recheck an unconfirmed key
+before using the credential. A definite mismatch refuses with a sentence
+saying the key this agent was given does not match the registry's and to ask
+the team's owner. An unreachable registry leaves the key unconfirmed, without
+adding a registration requirement to a supported pending flow. Certificate,
+request-signature, revocation and server admission rules still apply.
+
+A confirmation is agreement with the selected registry's current-key answer;
+it does not authenticate that answer against a new trust root or resolve the
+separate question of trusting registry-supplied first team keys. No new
+registry endpoint is introduced here. Offline `aw doctor` performs no network
+read and explicitly reports an unconfirmed stored key and what will confirm
+it. Online doctor probes the same owner and reports unavailable evidence as
+unknown, naming the registry; doctor remains read-only. These rules implement
+Antares245fb075, relayed in coordinator37ecee52.
+
 ## Name and address rules
 
 - A **member name** is the team-local routing key for one team membership, for

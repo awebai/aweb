@@ -18,23 +18,22 @@ from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from fastapi import HTTPException, Request
 
-from aweb.request_body import request_body_sha256
-from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
+from aweb.application_state import application_registry_client
+from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext, MessagingAuth, TeamIdentity
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
-from aweb.config import get_settings
 from aweb.certificate_registration import configured_registration_mode
+from aweb.config import get_settings
+from aweb.grant_expiry import never_expires
+from aweb.id_chain_auth import authenticate_id_chain
+from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
+from aweb.identity_grant_status import GrantValidityState, grant_validity
 from aweb.member_team_key import (
     GRANT_ISSUER_RECOVERY_DETAIL,
     member_key_columns_sql,
 )
-from aweb.identity_grant_status import GrantValidityState, grant_validity
-from aweb.grant_expiry import never_expires
-from aweb.auth_context import MessagingAuth
-from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
-from aweb.id_chain_auth import authenticate_id_chain
-from aweb.auth_context import TeamIdentity
-from aweb.team_registry import native_database_manager
+from aweb.request_body import request_body_sha256
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
+from aweb.team_registry import native_database_manager
 
 GRANT_AUTH_SCHEME = "AWEB-Grant "
 GRANT_AUTH_PREFIX = "AWEB-Grant DIDKey "
@@ -233,7 +232,7 @@ async def _require_request_grant_validity(request: Request, row) -> str:
     observation = await grant_validity(
         row=row,
         now=datetime.now(UTC),
-        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        registry_client=application_registry_client(request.app.state),
         registration_mode=configured_registration_mode(),
         request=request,
     )

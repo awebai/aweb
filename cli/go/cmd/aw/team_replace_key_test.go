@@ -57,7 +57,7 @@ func TestPostLocalIdentityKeyReplacementRejectsOversizeResponseAsOutcomeUnknown(
 	}
 	payload := localIdentityKeyReplacementRequest{TeamID: "backend:acme.com"}
 
-	_, err = postLocalIdentityKeyReplacementOnce(context.Background(), server.URL, "alice", payload, teamKey)
+	_, err = postLocalIdentityKeyReplacementOnce(context.Background(), awid.LocalIdentityKeyReplacementInput{ServiceURL: server.URL, Alias: "alice", Request: payload, TeamKey: teamKey})
 	if err == nil {
 		t.Fatal("expected oversize replace-key response to be rejected")
 	}
@@ -209,7 +209,7 @@ func TestReplacementHomeRejectsGlobalMembershipCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = preflightReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, newDID, "")
+	_, err = preflightReplacementAgentHome(replacementAgentHome{HomeDir: agentHome, TeamID: "backend:acme.com", Alias: "alice", OldDIDKey: oldDID, NewDIDKey: newDID, OldCertificateID: ""})
 	if err == nil || !strings.Contains(err.Error(), "local member") {
 		t.Fatalf("error=%v", err)
 	}
@@ -224,7 +224,7 @@ func TestGenerateReplacementKeyUsesRealLocalHomeWithoutIdentityYAML(t *testing.T
 		t.Fatal(err)
 	}
 
-	oldCertID, newDID, generatedPath, err := prepareGeneratedReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, "")
+	oldCertID, newDID, generatedPath, err := prepareGeneratedReplacementAgentHome(replacementAgentHome{HomeDir: agentHome, TeamID: "backend:acme.com", Alias: "alice", OldDIDKey: oldDID, OldCertificateID: ""})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestGenerateReplacementKeyRefusesToOverwriteExistingSigningKey(t *testing.T
 	t.Cleanup(server.Close)
 	_, agentHome, oldDID, _, _, _ := seedReplaceKeyWorkspace(t, server.URL)
 
-	_, _, _, err := prepareGeneratedReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, "")
+	_, _, _, err := prepareGeneratedReplacementAgentHome(replacementAgentHome{HomeDir: agentHome, TeamID: "backend:acme.com", Alias: "alice", OldDIDKey: oldDID, OldCertificateID: ""})
 	if err == nil {
 		t.Fatal("expected existing-key refusal")
 	}
@@ -266,7 +266,7 @@ func TestReplacementHomeWithoutOldCertificateAcceptsExplicitCertificateID(t *tes
 	if err := os.Remove(awconfig.TeamCertificatePath(agentHome, "backend:acme.com")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := preflightReplacementAgentHome(agentHome, "backend:acme.com", "alice", oldDID, newDID, "cert-from-operator-records")
+	got, err := preflightReplacementAgentHome(replacementAgentHome{HomeDir: agentHome, TeamID: "backend:acme.com", Alias: "alice", OldDIDKey: oldDID, NewDIDKey: newDID, OldCertificateID: "cert-from-operator-records"})
 	if err != nil {
 		t.Fatal(err)
 	}

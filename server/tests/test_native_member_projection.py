@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 import pytest
-
 from aweb.member_team_key import MemberProjection
 
 
@@ -61,3 +60,22 @@ def test_host_cannot_mutate_a_captured_native_snapshot(native_json_snapshot):
     native_json_snapshot["did_aw_verified_key"] = native_json_snapshot["did_key"]
     assert projection["did_aw_verified_key"] is None
     assert projection.verified_identity()["did_aw"] is None
+
+
+def test_native_snapshot_exposes_the_canonical_scope_and_status_types(native_json_snapshot):
+    from aweb.identity_scope import IdentityScope
+    from aweb.member_status import MemberStatus
+
+    projection = MemberProjection.from_row(native_json_snapshot)
+    assert projection["identity_scope"] is IdentityScope.GLOBAL
+    assert projection["status"] is MemberStatus.ACTIVE
+
+
+@pytest.mark.parametrize("column", ["identity_scope", "status"])
+@pytest.mark.parametrize("invalid", [None, "unrecognized"])
+def test_invalid_constrained_native_vocabulary_is_not_a_valid_projection(
+    native_json_snapshot, column, invalid
+):
+    native_json_snapshot[column] = invalid
+    with pytest.raises(ValueError):
+        MemberProjection.from_row(native_json_snapshot)

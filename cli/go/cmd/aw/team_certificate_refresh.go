@@ -69,7 +69,7 @@ func refreshOwnTeamCertificate(ctx context.Context, sel *awconfig.Selection, hom
 	// The workspace binding names the certificate its clients present, so it
 	// is pointed at the new one before the install sends anything with it.
 	if _, err := installTeamCertificateFile(ctx, teamCertificateInstall{
-		WorkingDir: sel.WorkingDir, Home: home, Certificate: cert, ReplaceSuperseded: true,
+		WorkingDir: sel.WorkingDir, Home: home, Certificate: cert, Replacement: replaceSupersededCertificate,
 		WorkspacePath: sel.WorkspacePath, RegistryURL: registryURL, Registry: registry,
 	}); err != nil {
 		return "", err

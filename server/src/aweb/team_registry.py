@@ -5,10 +5,15 @@ scope, dependency errors and the admitted team-key rule; it creates no cache.
 """
 
 from __future__ import annotations
+
 import logging
 from typing import Any
+
 from awid.team_ids import build_team_id, parse_team_id
+from awid.team_key_acts import TeamKeyMemo, TeamKeyUnverified
 from fastapi import HTTPException, Request
+
+from aweb.application_state import application_registry_client, native_application_state
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
@@ -17,15 +22,13 @@ from aweb.awid_error_handling import (
     serves_team,
     team_not_served_exception,
 )
-from aweb.team_scope import member_team_scope
-from aweb.team_key_reader import read_team_key as read_team_key
+from aweb.certificate_evidence import EvidenceMode
 from aweb.team_key_pins import (
     team_key_unverified_exception,
     txt_resolver_for,
 )
-from aweb.application_state import application_registry_client, native_application_state
-from aweb.certificate_evidence import EvidenceMode
-from awid.team_key_acts import TeamKeyMemo, TeamKeyUnverified
+from aweb.team_key_reader import read_team_key as read_team_key
+from aweb.team_scope import member_team_scope
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +44,9 @@ def native_database_manager(db_or_manager):
 
 def request_auth_audiences(request: Request) -> list[str]:
     """The configured public origin required by team-auth-envelope-v2.md:21-28."""
-    configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
+    configured = str(
+        getattr(native_application_state(request.app.state), "public_origin", "") or ""
+    ).strip()
     if configured:
         return [configured]
     raise HTTPException(
@@ -109,17 +114,17 @@ async def request_revoked_certificates(
     team_id: str,
     *,
     certificate_ids: list[str] | None = None,
-    fresh: bool = False,
+    evidence: EvidenceMode = EvidenceMode.CACHED,
 ) -> set[str]:
     """Get the set of revoked certificate IDs from awid.
 
     Raises HTTPException(503) if awid is unreachable.
     """
     return await revoked_certificates(
-        getattr(request.app.state, "awid_registry_client", None),
+        application_registry_client(request.app.state),
         team_id,
         certificate_ids=certificate_ids,
-        fresh=fresh,
+        evidence=evidence,
     )
 
 
@@ -128,22 +133,25 @@ async def revoked_certificates(
     team_id: str,
     *,
     certificate_ids: list[str] | None = None,
-    fresh: bool = False,
+    evidence: EvidenceMode = EvidenceMode.CACHED,
 ) -> set[str]:
     """The revoked certificate IDs of a team, read through this registry client.
 
     Raises HTTPException(503) if awid is unreachable.
     """
+    if not isinstance(evidence, EvidenceMode):
+        raise TypeError("Use a named EvidenceMode for revocation evidence")
     domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
         raise awid_registry_not_configured_exception(operation="AWID team revocation check")
 
     try:
-        select = getattr(registry_client, "get_team_revocations_for_certificates", None)
-        if certificate_ids is not None and callable(select):
-            return await select(domain, team_name, certificate_ids, fresh=fresh)
-        if fresh:
+        if certificate_ids is not None:
+            return await registry_client.get_team_revocations_for_certificates(
+                domain, team_name, certificate_ids, fresh=evidence is EvidenceMode.FRESH
+            )
+        if evidence is EvidenceMode.FRESH:
             return await registry_client.get_team_revocations_fresh(domain, team_name)
         return await registry_client.get_team_revocations(domain, team_name)
     except AWID_DEPENDENCY_ERRORS as exc:
@@ -168,9 +176,7 @@ async def request_registered_certificates(request: Request, team_id: str) -> set
     hosted-certificate-anchoring.md:286-294 distinguishes unknown acquisition
     from an empty authoritative list. The SDK owns cache freshness.
     """
-    return await registered_certificates(
-        getattr(request.app.state, "awid_registry_client", None), team_id
-    )
+    return await registered_certificates(application_registry_client(request.app.state), team_id)
 
 
 async def registered_certificates(

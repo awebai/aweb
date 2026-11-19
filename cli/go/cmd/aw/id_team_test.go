@@ -2328,6 +2328,9 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 	var acceptCalls int
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if servePendingPrivateTeamRead(w, r, teamID) {
+			return
+		}
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/did" {
 			t.Fatalf("hosted global retry must not use split DID registration")
 		}
@@ -2429,6 +2432,9 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 	var acceptCalls int
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if servePendingPrivateTeamRead(w, r, teamID) {
+			return
+		}
 		if r.URL.Path == "/api/v1/spawn/invite-preview" {
 			writeLegacyHostedPreviewForTest(t, w, r, teamID, serverURL)
 			return

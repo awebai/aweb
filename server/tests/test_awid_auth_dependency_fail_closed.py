@@ -2,19 +2,18 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from aweb import identity_auth_deps
+from aweb.identity_address import AddressResolution
 from aweb.service_errors import IdentityBindingError
-from fastapi import HTTPException
-from starlette.requests import Request
-
+from aweb.team_auth_deps import _get_revoked_certificates, _resolve_team_key
 from awid.registry import (
     CachedRegistryClient,
     KeyResolution,
     RegistryClient,
     RegistryError,
 )
-from aweb import identity_auth_deps
-from aweb.identity_address import AddressResolution
-from aweb.team_auth_deps import _get_revoked_certificates, _resolve_team_key
+from fastapi import HTTPException
+from starlette.requests import Request
 from tests.awid_stall_support import stalled_registry_url
 
 
@@ -49,8 +48,9 @@ class _CacheRedis:
         return len(keys)
 
 
-class _RateLimitedFreshIdentityRegistry:
+class _RateLimitedFreshIdentityRegistry(RegistryClient):
     def __init__(self, fresh_status=429):
+        super().__init__(registry_url="https://unit-registry.example")
         self.fresh_status = fresh_status
 
     async def resolve_key(self, did_aw: str):
@@ -62,13 +62,12 @@ class _RateLimitedFreshIdentityRegistry:
         raise RegistryError("rate limit exceeded", status_code=429)
 
     async def list_did_addresses(self, did_aw: str):
-        raise AssertionError(
-            "a mismatching identity must fail before address resolution"
-        )
+        raise AssertionError("a mismatching identity must fail before address resolution")
 
 
-class _FailingIdentityRegistry:
+class _FailingIdentityRegistry(RegistryClient):
     def __init__(self, exc: Exception) -> None:
+        super().__init__(registry_url="https://unit-registry.example")
         self.exc = exc
 
     async def resolve_key_fresh(self, did_aw: str):
@@ -84,9 +83,7 @@ def _request_with_registry(registry_client):
             "method": "GET",
             "path": "/v1/messages/inbox",
             "query_string": b"",
-            "app": SimpleNamespace(
-                state=SimpleNamespace(awid_registry_client=registry_client)
-            ),
+            "app": SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry_client)),
             "headers": [
                 (b"authorization", b"DIDKey did:key:alice sig"),
                 (b"x-aweb-timestamp", b"2026-06-22T00:00:00Z"),
@@ -128,9 +125,7 @@ async def test_team_revocation_check_error_never_returns_empty_set():
 
 @pytest.mark.asyncio
 async def test_team_revocation_check_upstream_failure_is_retryable_503_and_still_denies():
-    request = _request_with_registry(
-        _FailingTeamRegistry(httpx.ConnectError("connect refused"))
-    )
+    request = _request_with_registry(_FailingTeamRegistry(httpx.ConnectError("connect refused")))
 
     with pytest.raises(HTTPException) as raised:
         await _get_revoked_certificates(request, "backend:acme.com")
@@ -172,18 +167,12 @@ async def test_identity_auth_warmed_key_and_address_cache_makes_zero_upstream_ca
         redis_client=_CacheRedis(),
         transport=httpx.MockTransport(handler),
     )
-    monkeypatch.setattr(
-        identity_auth_deps, "parse_didkey_auth", lambda header: (did_key, "sig")
-    )
+    monkeypatch.setattr(identity_auth_deps, "parse_didkey_auth", lambda header: (did_key, "sig"))
     monkeypatch.setattr(
         identity_auth_deps, "require_timestamp", lambda request: "2026-06-22T00:00:00Z"
     )
-    monkeypatch.setattr(
-        identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None
-    )
-    monkeypatch.setattr(
-        identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None
-    )
+    monkeypatch.setattr(identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None)
+    monkeypatch.setattr(identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None)
     request = _request_with_registry(registry)
 
     try:
@@ -218,17 +207,11 @@ async def test_identity_did_aw_stale_cache_never_accepts_without_a_current_bindi
     monkeypatch.setattr(
         identity_auth_deps, "require_timestamp", lambda request: "2026-06-22T00:00:00Z"
     )
-    monkeypatch.setattr(
-        identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None
-    )
-    monkeypatch.setattr(
-        identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None
-    )
+    monkeypatch.setattr(identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None)
+    monkeypatch.setattr(identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None)
     request = _request_with_registry(_RateLimitedFreshIdentityRegistry(fresh_status))
 
-    with pytest.raises(
-        HTTPException if fresh_status == 200 else IdentityBindingError
-    ) as raised:
+    with pytest.raises(HTTPException if fresh_status == 200 else IdentityBindingError) as raised:
         await identity_auth_deps.resolve_identity_auth(request)
 
     assert raised.value.status_code == expected_status
@@ -247,15 +230,9 @@ async def test_identity_did_aw_resolution_error_fails_closed(monkeypatch):
     monkeypatch.setattr(
         identity_auth_deps, "require_timestamp", lambda request: "2026-06-22T00:00:00Z"
     )
-    monkeypatch.setattr(
-        identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None
-    )
-    monkeypatch.setattr(
-        identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None
-    )
-    request = _request_with_registry(
-        _FailingIdentityRegistry(RuntimeError("resolver bug"))
-    )
+    monkeypatch.setattr(identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None)
+    monkeypatch.setattr(identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None)
+    request = _request_with_registry(_FailingIdentityRegistry(RuntimeError("resolver bug")))
 
     with pytest.raises(IdentityBindingError) as raised:
         await identity_auth_deps.resolve_identity_auth(request)
@@ -274,15 +251,9 @@ async def test_identity_did_aw_resolution_upstream_failure_is_retryable_503_and_
     monkeypatch.setattr(
         identity_auth_deps, "require_timestamp", lambda request: "2026-06-22T00:00:00Z"
     )
-    monkeypatch.setattr(
-        identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None
-    )
-    monkeypatch.setattr(
-        identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None
-    )
-    request = _request_with_registry(
-        _FailingIdentityRegistry(httpx.ReadTimeout("read timed out"))
-    )
+    monkeypatch.setattr(identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None)
+    monkeypatch.setattr(identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None)
+    request = _request_with_registry(_FailingIdentityRegistry(httpx.ReadTimeout("read timed out")))
 
     with pytest.raises(IdentityBindingError) as raised:
         await identity_auth_deps.resolve_identity_auth(request)
@@ -306,10 +277,7 @@ async def test_a_stalled_registry_team_key_read_is_retryable_503_and_still_denie
             await registry.aclose()
 
     assert raised.value.status_code == 503
-    assert (
-        raised.value.detail
-        == "AWID team key resolution upstream unavailable (TimeoutError)"
-    )
+    assert raised.value.detail == "AWID team key resolution upstream unavailable (TimeoutError)"
 
 
 @pytest.mark.asyncio
@@ -325,10 +293,7 @@ async def test_a_stalled_registry_revocation_check_is_retryable_503_and_still_de
             await registry.aclose()
 
     assert raised.value.status_code == 503
-    assert (
-        raised.value.detail
-        == "AWID team revocation check upstream unavailable (TimeoutError)"
-    )
+    assert raised.value.detail == "AWID team revocation check upstream unavailable (TimeoutError)"
 
 
 @pytest.mark.asyncio
@@ -341,19 +306,13 @@ async def test_a_stalled_registry_did_aw_resolution_is_retryable_503_and_still_d
     monkeypatch.setattr(
         identity_auth_deps, "require_timestamp", lambda request: "2026-06-22T00:00:00Z"
     )
-    monkeypatch.setattr(
-        identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None
-    )
-    monkeypatch.setattr(
-        identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None
-    )
+    monkeypatch.setattr(identity_auth_deps, "enforce_timestamp_skew", lambda timestamp: None)
+    monkeypatch.setattr(identity_auth_deps, "verify_did_key_signature", lambda **kwargs: None)
     async with stalled_registry_url() as url:
         registry = RegistryClient(registry_url=url, timeout_seconds=0.3)
         try:
             with pytest.raises(IdentityBindingError) as raised:
-                await identity_auth_deps.resolve_identity_auth(
-                    _request_with_registry(registry)
-                )
+                await identity_auth_deps.resolve_identity_auth(_request_with_registry(registry))
         finally:
             await registry.aclose()
 

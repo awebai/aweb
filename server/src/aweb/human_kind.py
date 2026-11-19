@@ -3,6 +3,7 @@
 Raw runtime labels remain usable as historical provenance, never as evidence of
 current human kind. Acquire observations before opening a projection transaction.
 """
+
 from __future__ import annotations
 
 import logging
@@ -10,6 +11,8 @@ from collections.abc import Mapping
 
 from awid.identity_observation import (
     IdentityKind as IdentityKind,
+)
+from awid.identity_observation import (
     IdentityKindObservation as IdentityKindObservation,
 )
 from awid.identity_observation import (
@@ -23,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_verified_human(row: Mapping) -> bool:
+    """Read the stored current-key marker; this performs no fresh ID-chain check."""
     return (
         row.get("agent_type") == IdentityKind.HUMAN.value
         and bool(row.get("did_key"))
@@ -31,6 +35,10 @@ def is_verified_human(row: Mapping) -> bool:
 
 
 def effective_agent_type(row: Mapping) -> str:
+    """Return display classification while withholding an unverified human label.
+
+    Other runtime labels are retained as provenance, not credential authority.
+    """
     runtime = row.get("agent_type") or IdentityKind.AGENT.value
     return (
         IdentityKind.UNKNOWN.value
@@ -39,17 +47,19 @@ def effective_agent_type(row: Mapping) -> str:
     )
 
 
-def human_predicate_sql(alias: str = '') -> str:
+def human_predicate_sql(alias: str = "") -> str:
     """Null-safe current-human predicate; alias is a source-code SQL identifier."""
     if alias and (not alias.isascii() or not alias.isidentifier()):
-        raise ValueError('Invalid SQL alias')
-    prefix = alias + '.' if alias else ''
-    return (f"COALESCE({prefix}agent_type = 'human' AND "
-            f"{prefix}human_verified_key = NULLIF({prefix}did_key, ''), FALSE)")
+        raise ValueError("Invalid SQL alias")
+    prefix = alias + "." if alias else ""
+    return (
+        f"COALESCE({prefix}agent_type = 'human' AND "
+        f"{prefix}human_verified_key = NULLIF({prefix}did_key, ''), FALSE)"
+    )
 
 
-def agent_listing_predicate_sql(alias: str = '') -> str:
+def agent_listing_predicate_sql(alias: str = "") -> str:
     """Display only: legacy human labels must not turn into agent roster entries."""
     human_predicate_sql(alias)  # Validate the source-code identifier consistently.
-    prefix = alias + '.' if alias else ''
+    prefix = alias + "." if alias else ""
     return f"COALESCE({prefix}agent_type, 'agent') <> 'human'"

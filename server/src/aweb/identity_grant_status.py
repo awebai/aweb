@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
+from aweb.application_state import application_registry_client
 from aweb.certificate_registration import (
     RegistrationDecision,
     RegistrationMode,
@@ -144,7 +145,7 @@ async def effective_grant_status(
     observation = await grant_validity(
         row=row,
         now=now,
-        registry_client=getattr(request.app.state, "awid_registry_client", None),
+        registry_client=application_registry_client(request.app.state),
         registration_mode=configured_registration_mode(),
         request=request,
     )

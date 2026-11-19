@@ -18,6 +18,11 @@ from awid.identity_observation import (
     observe_identity_binding as observe_public_identity_binding,
 )
 from fastapi import Request
+
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+)
 from aweb.service_errors import IdentityBindingCode, IdentityBindingError
 
 from aweb.application_state import native_application_state
@@ -35,7 +40,7 @@ class IdentityProjectionField(StrEnum):
 def verified_key_sql(agent: str = "") -> str:
     """The SQL form of verified_projection's current-key guard.
 
-    docs/identity.md:569-578 makes global claims conditional on this marker.
+    docs/identity.md:598-607 makes global claims conditional on this marker.
     ``agent`` is a source-code SQL alias, never a value from a request.
     """
     if agent and not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", agent):
@@ -57,7 +62,7 @@ def verified_identity_field_sql(field: IdentityProjectionField, *, agent: str = 
 def verified_principal_did_sql(*, agent: str = "") -> str:
     """Project a member principal without adopting a raw stable-DID claim.
 
-    docs/identity.md:569-585 requires registry-verified marker evidence for
+    docs/identity.md:598-609 requires registry-verified marker evidence for
     stable identity. A local principal remains its literal signing did:key.
     """
     stable = verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent=agent)
@@ -91,13 +96,14 @@ async def verify_identity_binding(
         return IdentityBinding(did_key=did_key)
     if not did_aw or not did_aw.startswith("did:aw:"):
         raise IdentityBindingError(IdentityBindingCode.MISMATCH)
-    client = (
-        registry_client
-        if registry_client is not None
-        else getattr(request.app.state, "awid_registry_client", None)
-    )
-    if client is None:
-        raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+    try:
+        client = (
+            registry_client
+            if registry_client is not None
+            else application_registry_client(request.app.state)
+        )
+    except RegistryClientUnavailable as exc:
+        raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
     cache = identity_binding_cache(request.app.state)
     key = (did_aw, did_key, address)
     if registry_client is not None:

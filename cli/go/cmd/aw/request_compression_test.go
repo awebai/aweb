@@ -32,7 +32,7 @@ func TestDirectHostedRequestCompression(t *testing.T) {
 			return err
 		}},
 		{"replace_key", func(base string) error {
-			_, err := postLocalIdentityKeyReplacementOnce(context.Background(), base, "alice", localIdentityKeyReplacementRequest{TeamID: cert.Team}, key)
+			_, err := postLocalIdentityKeyReplacementOnce(context.Background(), awid.LocalIdentityKeyReplacementInput{ServiceURL: base, Alias: "alice", Request: localIdentityKeyReplacementRequest{TeamID: cert.Team}, TeamKey: key})
 			return err
 		}},
 		{"remove_member", func(base string) error {
