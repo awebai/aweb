@@ -19,7 +19,9 @@ from awid.team_ids import parse_team_id
 from aweb.agent_status import StatusDocumentError, verify_status_document
 from aweb.deps import get_db, get_redis
 from aweb.hooks import fire_mutation_hook
-from aweb.team_auth_deps import TeamIdentity, _resolve_team_key, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.team_registry import resolve_team_key
+from aweb.member_team_key import current_member_projections
 
 logger = logging.getLogger(__name__)
 
@@ -75,15 +77,9 @@ def _require_did_key(host_did: str) -> str:
 
 
 async def _host_is_active_member(db, *, team_id: str, host_did: str) -> bool:
-    row = await db.fetch_one(
-        """
-        SELECT 1 FROM {{tables.agents}}
-        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
-        """,
-        team_id,
-        host_did,
-    )
-    return row is not None
+    # agent-health.md:43-44,78-89 requires a certified current team member;
+    # stored status-host delegation supplies no independent membership proof.
+    return bool(await current_member_projections(db, team_id=team_id, dids=[host_did]))
 
 
 async def _require_active_member_host(db, *, team_id: str, host_did: str) -> str:
@@ -91,7 +87,10 @@ async def _require_active_member_host(db, *, team_id: str, host_did: str) -> str
     if not await _host_is_active_member(db, team_id=team_id, host_did=host_did):
         raise HTTPException(
             status_code=422,
-            detail="host_not_member: host_did is not an active member of this team",
+            detail=(
+                "host_not_member: host_did is not a current member of this team. "
+                "Check the host name; if it exists, ask it to reconnect with a current team certificate."
+            ),
         )
     return host_did
 
@@ -241,9 +240,7 @@ async def controller_set_status_host(
     """
     alias = alias.strip()
     if not alias:
-        raise HTTPException(
-            status_code=422, detail="invalid_request: Agent alias is required"
-        )
+        raise HTTPException(status_code=422, detail="invalid_request: Agent alias is required")
     team_id = payload.team_id.strip()
     try:
         parse_team_id(team_id)
@@ -268,7 +265,7 @@ async def controller_set_status_host(
             "previous_host_did": payload.previous_host_did,
         },
     )
-    if authorizer_did != await _resolve_team_key(request, team_id):
+    if authorizer_did != await resolve_team_key(request, team_id):
         raise HTTPException(
             status_code=403,
             detail="controller_required: Team controller authorization is required to set a status host",
@@ -276,9 +273,7 @@ async def controller_set_status_host(
 
     host_did = payload.host_did.strip()
     if host_did:
-        host_did = await _require_active_member_host(
-            aweb_db, team_id=team_id, host_did=host_did
-        )
+        host_did = await _require_active_member_host(aweb_db, team_id=team_id, host_did=host_did)
 
     async with aweb_db.transaction() as tx:
         agent = await tx.fetch_one(
@@ -291,9 +286,7 @@ async def controller_set_status_host(
             alias,
         )
         if agent is None:
-            raise HTTPException(
-                status_code=404, detail="agent_not_found: Agent not found"
-            )
+            raise HTTPException(status_code=404, detail="agent_not_found: Agent not found")
         current = await tx.fetch_one(
             "SELECT host_did FROM {{tables.agent_status_hosts}} WHERE agent_id = $1",
             agent["agent_id"],

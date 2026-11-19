@@ -28,9 +28,7 @@ class _DB:
         return self.manager
 
 
-def _envelope(
-    *, message_id: UUID | None = None, kind: str = "mail"
-) -> FederationEnvelope:
+def _envelope(*, message_id: UUID | None = None, kind: str = "mail") -> FederationEnvelope:
     return FederationEnvelope(
         type=kind,
         sender_did_aw="did:aw:alice",
@@ -79,9 +77,7 @@ async def _seed_recipient_and_authority(
     return dict(recipient), await _seed_sender_authority(db, envelope)
 
 
-async def _seed_sender_authority(
-    db, envelope: FederationEnvelope
-) -> AuthoritySecurityToken:
+async def _seed_sender_authority(db, envelope: FederationEnvelope) -> AuthoritySecurityToken:
     await db.execute(
         """
         INSERT INTO {{tables.federation_did_checkpoints}} (
@@ -204,11 +200,7 @@ async def _seed_stored_route(db, envelope: FederationEnvelope, recipient: dict) 
     }
     chat = (
         {
-            did: {
-                key: value
-                for key, value in participant.items()
-                if key != "transport_hint"
-            }
+            did: {key: value for key, value in participant.items() if key != "transport_hint"}
             for did, participant in conversation.items()
         }
         if envelope.type == "chat"
@@ -464,9 +456,7 @@ async def test_phase_b_waits_for_and_enforces_concurrent_recipient_policy_change
             )
         )
         await asyncio.sleep(0.1)
-        assert not delivery.done(), (
-            "Phase B must wait for the recipient policy row lock"
-        )
+        assert not delivery.done(), "Phase B must wait for the recipient policy row lock"
 
     with pytest.raises(FederationAuthorityError) as error:
         await delivery
@@ -698,9 +688,7 @@ async def test_phase_b_rejects_preexisting_noncanonical_stored_route(
             conversation_id,
             target_did,
         )
-        snapshot["conversation"][target_did]["delivery_origin"] = (
-            "https://poisoned-target.example"
-        )
+        snapshot["conversation"][target_did]["delivery_origin"] = "https://poisoned-target.example"
     else:
         did = sender_did if malformed_route.startswith("sender") else target_did
         await manager.execute(
@@ -746,9 +734,7 @@ async def test_phase_b_rejects_preexisting_external_chat_target_origin(
         conversation_id,
         envelope.target_did_aw,
     )
-    snapshot["chat"][envelope.target_did_aw]["delivery_origin"] = (
-        "https://poisoned-target.example"
-    )
+    snapshot["chat"][envelope.target_did_aw]["delivery_origin"] = "https://poisoned-target.example"
 
     with pytest.raises(FederationAuthorityError) as error:
         await deliver_federated_phase_b(
@@ -1068,9 +1054,7 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(
             "message_ingress_receipts",
             "federation_mutation_outbox",
         ):
-            assert (
-                await manager.fetch_value(f'SELECT COUNT(*) FROM "aweb".{table}') == 0
-            )
+            assert await manager.fetch_value(f'SELECT COUNT(*) FROM "aweb".{table}') == 0
 
     await refused()
     # An address-only contact, a wrong identity at the right address, a wrong
@@ -1100,9 +1084,7 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(
         "UPDATE {{tables.contacts}} SET status='active', owner_did='did:aw:wrong-owner'"
     )
     await refused()
-    await manager.execute(
-        "UPDATE {{tables.contacts}} SET owner_did=$1", envelope.target_did_aw
-    )
+    await manager.execute("UPDATE {{tables.contacts}} SET owner_did=$1", envelope.target_did_aw)
     accepted = await deliver()
     assert accepted["message_id"] == envelope.message_id
     # Both a new first-contact send and a stored-route continuation recheck
@@ -1139,9 +1121,7 @@ async def test_phase_b_contacts_only_requires_exact_active_contact(
         snapshot["chat"] = {row["did"]: dict(row) for row in participants}
     continuation = envelope.model_copy(update={"message_id": str(uuid4())})
     with pytest.raises(FederationAuthorityError) as continued:
-        await deliver(
-            continuation, stored_route_continuation=True, stored_route_snapshot=snapshot
-        )
+        await deliver(continuation, stored_route_continuation=True, stored_route_snapshot=snapshot)
     assert continued.value.reason == "recipient_policy_rejected"
 
     fresh = envelope.model_copy(
@@ -1191,9 +1171,7 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(
 
     async def check(envelope, recipient, index):
         async with manager.transaction() as tx:
-            locked = await _lock_current_recipient(
-                tx, envelope=envelope, recipient=recipient
-            )
+            locked = await _lock_current_recipient(tx, envelope=envelope, recipient=recipient)
             current = locked.recipient
             ready[index].set()
             await ready[1 - index].wait()
@@ -1204,16 +1182,12 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(
                 stored_route_continuation=False,
             )
 
-    await asyncio.wait_for(
-        asyncio.gather(check(forward, bob, 0), check(reverse, alice, 1)), 5
-    )
+    await asyncio.wait_for(asyncio.gather(check(forward, bob, 0), check(reverse, alice, 1)), 5)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("marked", [True, False])
-async def test_recipient_lock_reads_identity_from_current_storage(
-    aweb_cloud_db, marked
-):
+async def test_recipient_lock_reads_identity_from_current_storage(aweb_cloud_db, marked):
     from aweb.federation.delivery import _lock_current_recipient
 
     manager = aweb_cloud_db.aweb_db
@@ -1238,9 +1212,7 @@ async def test_recipient_lock_reads_identity_from_current_storage(
         )
     # A stored key-addressed route or minimal lookup result must still discover
     # the live recipient's global identity policy from storage.
-    keyed = envelope.model_copy(
-        update={"target_did_aw": envelope.target_current_did_key}
-    )
+    keyed = envelope.model_copy(update={"target_did_aw": envelope.target_current_did_key})
     async with manager.transaction() as tx:
         locked = await _lock_current_recipient(
             tx, envelope=keyed, recipient={"agent_id": recipient["agent_id"]}
@@ -1251,9 +1223,7 @@ async def test_recipient_lock_reads_identity_from_current_storage(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["open", "contacts_only", None, "unknown"])
-async def test_global_recipient_without_stable_did_uses_own_federation_policy(
-    aweb_cloud_db, mode
-):
+async def test_global_recipient_without_stable_did_uses_own_federation_policy(aweb_cloud_db, mode):
     from aweb.federation.delivery import _lock_current_recipient, _authorize_policy
 
     manager = aweb_cloud_db.aweb_db
@@ -1270,9 +1240,7 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(
         recipient["agent_id"],
         mode,
     )
-    keyed = envelope.model_copy(
-        update={"target_did_aw": envelope.target_current_did_key}
-    )
+    keyed = envelope.model_copy(update={"target_did_aw": envelope.target_current_did_key})
     async with manager.transaction() as tx:
         locked = await _lock_current_recipient(tx, envelope=keyed, recipient=recipient)
         current = locked.recipient
@@ -1307,9 +1275,7 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "accepted_under,delivered", [("current", True), ("superseded", False)]
-)
+@pytest.mark.parametrize("accepted_under,delivered", [("current", True), ("superseded", False)])
 async def test_phase_b_same_team_delivery_needs_the_sender_under_the_current_key(
     aweb_cloud_db, accepted_under, delivered
 ):

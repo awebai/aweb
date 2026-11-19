@@ -108,9 +108,7 @@ def harness(monkeypatch):
 
         async def fetch_all(self, sql, *args):
             if "SELECT p.did, p.alias, p.address" in sql:
-                return [
-                    dict(did=identity.did_key, alias="alice", address=identity.address)
-                ]
+                return [dict(did=identity.did_key, alias="alice", address=identity.address)]
             return []
 
         async def fetch_value(self, sql, *args):
@@ -190,9 +188,7 @@ def harness(monkeypatch):
             identity=auth,
         )
 
-    return SimpleNamespace(
-        clock=clock, registry=registry, db=db, redis=redis, open=open_stream
-    )
+    return SimpleNamespace(clock=clock, registry=registry, db=db, redis=redis, open=open_stream)
 
 
 async def collect(response):

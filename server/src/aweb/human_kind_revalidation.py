@@ -76,9 +76,7 @@ async def revalidate_human_kind(db, registry_client, *, apply: bool = False):
     report = {
         "apply": apply,
         "before": _inventory(rows),
-        "outcomes": {
-            state: dict.fromkeys(OUTCOMES, 0) for state in ("active", "retired")
-        },
+        "outcomes": {state: dict.fromkeys(OUTCOMES, 0) for state in ("active", "retired")},
         "stamped": 0,
         "changed": 0,
     }
@@ -99,8 +97,6 @@ async def revalidate_human_kind(db, registry_client, *, apply: bool = False):
             report["stamped" if stamped else "changed"] += 1
     report["after"] = _inventory(await _rows(db))
     report["unresolved_active"] = report["changed"] + sum(
-        count
-        for outcome, count in report["outcomes"]["active"].items()
-        if outcome != "human"
+        count for outcome, count in report["outcomes"]["active"].items() if outcome != "human"
     )
     return report

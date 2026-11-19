@@ -20,6 +20,7 @@ from awid.signing import canonical_json_bytes, sign_message
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_keypair():
     sk = SigningKey.generate()
     pk = bytes(sk.verify_key)
@@ -84,7 +85,9 @@ class TestCertificateSignature:
         _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(
-            team_sk, team_did_key, agent_did_key,
+            team_sk,
+            team_did_key,
+            agent_did_key,
             team_id="backend:acme.com",
             alias="alice",
         )
@@ -139,7 +142,9 @@ class TestParseAndVerifyCertificate:
         _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(
-            team_sk, team_did_key, agent_did_key,
+            team_sk,
+            team_did_key,
+            agent_did_key,
             certificate_id="revoked-cert",
         )
         encoded = _encode_certificate(cert)
@@ -160,7 +165,9 @@ class TestParseAndVerifyCertificate:
         _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(
-            team_sk, team_did_key, agent_did_key,
+            team_sk,
+            team_did_key,
+            agent_did_key,
             team_id="backend:acme.com",
             alias="alice",
             identity_scope="global",
@@ -233,7 +240,9 @@ class TestParseAndVerifyCertificate:
         _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(
-            team_sk, team_did_key, agent_did_key,
+            team_sk,
+            team_did_key,
+            agent_did_key,
             identity_scope="global",
             member_did_aw="did:aw:z6Mkstable",
             member_address="acme.com/alice",
@@ -258,7 +267,9 @@ class TestParseAndVerifyCertificate:
         _, _, agent_did_key = _make_keypair()
 
         cert = _make_certificate(
-            team_sk, team_did_key, agent_did_key,
+            team_sk,
+            team_did_key,
+            agent_did_key,
             identity_scope="local",
             member_did_aw="",
             member_address="",

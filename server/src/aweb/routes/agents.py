@@ -56,9 +56,9 @@ from aweb.role_name_compat import (
     resolve_role_name_aliases,
 )
 from aweb.service_errors import ForbiddenError
+from aweb.team_registry import resolve_team_key
 from aweb.team_auth_deps import (
     TeamIdentity,
-    _resolve_team_key,
     get_team_identity,
     team_identity_with_grant_scope,
 )
@@ -302,7 +302,7 @@ async def suggest_alias_prefix(
     request_payload = payload or SuggestAliasPrefixRequest()
     aweb_db = db.get_manager("aweb")
     if request_payload.scope == "global":
-        existing = await _global_namespace_names(request, aweb_db, identity)
+        existing = await _global_namespace_names(request, identity)
         user_prefix = _identity_global_name_prefix(identity)
         names = _suggest_scoped_names(
             existing,
@@ -320,9 +320,7 @@ async def suggest_alias_prefix(
     return SuggestAliasPrefixResponse(
         team_id=identity.team_id,
         name_prefix=names[0],
-        names=[SuggestAliasPrefixName(name=name) for name in names]
-        if include_names
-        else None,
+        names=[SuggestAliasPrefixName(name=name) for name in names] if include_names else None,
     )
 
 
@@ -346,19 +344,13 @@ async def _local_team_aliases(aweb_db, team_id: str) -> list[str]:
     return [str(r.get("alias") or "") for r in rows]
 
 
-async def _global_namespace_names(
-    request: Request, aweb_db, identity: TeamIdentity
-) -> list[str]:
+async def _global_namespace_names(request: Request, identity: TeamIdentity) -> list[str]:
     namespace, _team_name = parse_team_id(identity.team_id)
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None or not hasattr(registry_client, "list_addresses"):
-        raise HTTPException(status_code=503, detail="awid_registry_unavailable")
+    registry_client = application_registry_client(request.app.state)
     try:
         addresses = await registry_client.list_addresses(namespace)
     except Exception as exc:
-        raise HTTPException(
-            status_code=503, detail="awid_registry_unavailable"
-        ) from exc
+        raise HTTPException(status_code=503, detail="awid_registry_unavailable") from exc
     names = []
     for address in addresses or []:
         if isinstance(address, dict):
@@ -1079,7 +1071,7 @@ async def replace_local_identity_key(
             "new_certificate_id": payload.new_certificate_id,
         },
     )
-    if authorizer_did != await _resolve_team_key(request, team_id):
+    if authorizer_did != await resolve_team_key(request, team_id):
         raise HTTPException(
             status_code=403,
             detail="Team controller authorization is required for local identity key replacement",

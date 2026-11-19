@@ -15,7 +15,7 @@ from typing import Any
 
 from aweb.agent_status import stored_status_document
 from aweb.identity_grant_status import effective_grant_status
-from aweb.member_team_key import member_key_columns_sql
+from aweb.member_team_key import current_member_sql, member_key_columns_sql
 from aweb.application_state import application_registry_client
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.workspace_activity import workspace_activity_by_id
@@ -211,7 +211,10 @@ async def agent_health(
         SELECT a.agent_id, h.host_did,
                EXISTS (
                    SELECT 1 FROM {{tables.agents}} m
-                   WHERE m.team_id = a.team_id AND m.did_key = h.host_did AND m.deleted_at IS NULL
+                   WHERE m.team_id = a.team_id AND m.did_key = h.host_did
+                     AND """
+        + current_member_sql("m")
+        + """
                ) AS host_active,
                s.signed_payload, s.signature,
                (SELECT array_agg(w.workspace_id) FROM {{tables.workspaces}} w

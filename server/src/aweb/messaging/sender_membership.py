@@ -14,7 +14,8 @@ from aweb.certificate_registration import (
     configured_registration_mode,
     read_certificate_registration,
 )
-from aweb.team_auth_deps import _get_revoked_certificates
+from aweb.application_state import application_registry_client
+from aweb.team_registry import request_revoked_certificates
 
 
 logger = logging.getLogger(__name__)
@@ -46,9 +47,7 @@ async def sender_memberships(
     ``member_rows`` are the senders' agent rows when the caller read them with
     its messages; otherwise they are read here.
     """
-    keys = {
-        (str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows
-    }
+    keys = {(str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows}
     result = {key: SenderMembership(team_id=key[0]) for key in keys}
     if request is None:
         return result
@@ -91,18 +90,14 @@ async def sender_memberships(
             try:
                 parse_team_id(team)
             except ValueError:
-                logger.warning(
-                    "Sender membership has invalid team scope", exc_info=True
-                )
+                logger.warning("Sender membership has invalid team scope", exc_info=True)
                 continue
             try:
-                revocations[team] = await _get_revoked_certificates(
+                revocations[team] = await request_revoked_certificates(
                     request, team, certificate_ids=team_certificates[team]
                 )
             except HTTPException:
-                logger.warning(
-                    "Sender certificate revocations unavailable", exc_info=True
-                )
+                logger.warning("Sender certificate revocations unavailable", exc_info=True)
                 revocations[team] = None
         revoked = revocations[team]
         if revoked is None:
@@ -111,7 +106,7 @@ async def sender_memberships(
             projection.state = SenderMembershipState.INACTIVE
             continue
         registration = await read_certificate_registration(
-            registry_client=getattr(request.app.state, "awid_registry_client", None),
+            registry_client=application_registry_client(request.app.state),
             team_id=team,
             certificate_id=certificate_id,
             mode=configured_registration_mode(),

@@ -64,6 +64,10 @@ func errorCodeOf(err error) string {
 	if errors.As(err, &coded) {
 		return coded.code
 	}
+	var certificate *awid.CurrentTeamCertificateError
+	if errors.As(err, &certificate) {
+		return string(certificate.Code)
+	}
 	return ""
 }
 
@@ -150,9 +154,8 @@ func errorEnvelope(err error, message string) cliErrorEnvelope {
 	if errors.As(err, &plain) && plain.jsonMessage != "" {
 		message = plain.jsonMessage
 	}
-	var coded *codedError
-	if errors.As(err, &coded) {
-		detail.Code = coded.code
+	if code := errorCodeOf(err); code != "" {
+		detail.Code = code
 	}
 	return cliErrorEnvelope{Error: cliErrorBody{Code: detail.Code, Message: message, HTTPStatus: detail.HTTPStatus, Detail: detail.Detail, Reason: detail.Reason}}
 }

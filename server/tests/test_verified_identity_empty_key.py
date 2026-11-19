@@ -40,8 +40,6 @@ async def test_empty_signing_key_and_empty_marker_cannot_attribute_global_metada
         row = await read_member_projection(env.db, agent_id=actor.id)
         assert row.verified_identity()["did_aw"] is None
         assert row.verified_identity()["address"] is None
-        metadata = await lookup_identity_metadata_by_agent_id(
-            env.infra, [str(actor.id)]
-        )
+        metadata = await lookup_identity_metadata_by_agent_id(env.infra, [str(actor.id)])
         assert not metadata[str(actor.id)].get("stable_id"), metadata
         assert not metadata[str(actor.id)].get("address"), metadata

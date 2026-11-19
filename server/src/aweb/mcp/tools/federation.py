@@ -63,9 +63,7 @@ def mcp_messaging_runtime(
         mail_transport=mail_transport,
         chat_transport=chat_transport,
         public_origin=origin or application_public_origin(state),
-        public_origins=frozenset(
-            application_public_origins(state, public_origin=origin or None)
-        ),
+        public_origins=frozenset(application_public_origins(state, public_origin=origin or None)),
         on_mutation=current_mutation_callback(),
         agent_wake_publisher=agent_wake_publisher(state),
         identity_binding_cache=identity_binding_cache(state)
@@ -77,7 +75,5 @@ def mcp_messaging_runtime(
 def registry_delivery_origin(resolution) -> str:
     delivery = getattr(resolution, "delivery", None)
     return str(
-        getattr(resolution, "delivery_origin", None)
-        or getattr(delivery, "origin", "")
-        or ""
+        getattr(resolution, "delivery_origin", None) or getattr(delivery, "origin", "") or ""
     ).strip()
