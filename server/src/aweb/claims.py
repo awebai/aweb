@@ -288,7 +288,30 @@ async def release_task_claims(
 async def release_task_claims_on(
     tx, *, team_id: str, task_ref: str, workspace_id: str | None = None
 ) -> list[str]:
-    """Release task claims/focus in an existing lifecycle transaction."""
+    """Release claims and focus with workspace-before-claim lock ordering.
+
+    Status writers hold the task row; deletion hooks act on a deleted task.
+    Lock workspaces in UUID order, matching acquisition and lifecycle cleanup,
+    before deleting claims (docs/aweb-sot.md:1151–1166).
+    """
+    await tx.fetch_all(
+        """
+        SELECT w.workspace_id
+        FROM {{tables.workspaces}} w
+        WHERE w.team_id = $1
+          AND EXISTS (
+              SELECT 1 FROM {{tables.task_claims}} c
+              WHERE c.team_id = $1 AND c.task_ref = $2
+                AND c.workspace_id = w.workspace_id
+                AND ($3::uuid IS NULL OR c.workspace_id = $3)
+          )
+        ORDER BY w.workspace_id
+        FOR UPDATE
+        """,
+        team_id,
+        task_ref,
+        UUID(workspace_id) if workspace_id else None,
+    )
     released_focus_by_workspace: dict[str, str] = {}
     if workspace_id:
         released_rows = await tx.fetch_all(
