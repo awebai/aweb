@@ -12,6 +12,7 @@ from awid.federation_errors import FederationAuthorityError
 from awid.log import canonical_server_origin
 from aweb_naapp.client_identity import ClientIdentity
 
+from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.agent_wake import agent_wake_publisher, agent_wake_scope
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.deps import get_db
@@ -301,6 +302,11 @@ async def receive_federated_message(
             )
         except FederationEnvelopeError as exc:
             raise _stable_envelope_error(exc) from exc
+        observe_message_vocabulary(
+            source=MessageInputSource.FEDERATION_INGRESS,
+            content_mode=envelope.content_mode,
+            priority=envelope.priority,
+        )
         if envelope.target_delivery_origin not in _public_origins(request):
             raise FederationAuthorityError("target_route_mismatch")
 

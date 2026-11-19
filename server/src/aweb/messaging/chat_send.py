@@ -13,6 +13,7 @@ from uuid import UUID
 
 import asyncpg.exceptions
 from fastapi import HTTPException
+from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.identity_address import require_address_evidence
 
 from awid.federation_errors import FederationAuthorityError
@@ -1438,6 +1439,10 @@ async def send_chat(
     A target that names recipients takes a ``CreateSessionRequest``; a target
     that continues a session takes a ``SendMessageRequest``.
     """
+    observe_message_vocabulary(
+        source=MessageInputSource.CHAT_SEND,
+        content_mode=payload.content_mode,
+    )
     if target.session_id is not None:
         return await _send_in_continued_session(db, auth, target, payload, runtime)
     return await _send_to_named_recipients(db, auth, target, payload, runtime)

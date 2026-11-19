@@ -7,6 +7,7 @@ Managed membership/export/federation remain separately negotiated capabilities.
 
 from __future__ import annotations
 
+from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.human_kind import is_verified_human
 
 import hashlib
@@ -263,6 +264,11 @@ class NativeMessagingService:
             raise ContractError("stale", "recipient authority")
         await self._policy(self.db, auth, recipient)
         payload = self._validate_envelope(auth, value, recipient)
+        observe_message_vocabulary(
+            source=MessageInputSource.NATIVE_PREPARATION,
+            content_mode=payload.content_mode,
+            priority=payload.priority,
+        )
         now = datetime.now(UTC)
         for pid, retained in list(self._preparations.items()):
             if json.loads(retained.prepared_bytes)["expires_at"] <= now.strftime(

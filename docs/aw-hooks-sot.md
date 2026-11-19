@@ -123,6 +123,16 @@ adding defaults; absent and empty metadata remain distinct. The inbound
 context keeps its shared mail/chat shape rather than acquiring native chat's
 preview or recipient-alias list.
 
+`aweb.message_vocabulary.observe_message_vocabulary` measures unnamed accepted
+metadata once at the mail/chat send entry, native preparation after its
+signed envelope validation, or after federation signature
+verification, before replay exits. The Prometheus counter
+`aweb_unnamed_message_vocabulary_total` has only bounded `source` and `field`
+labels. One log line names the source and unnamed fields; neither counter nor
+log contains the received values, identifiers or message content. A counter
+failure is logged and leaves the send working. Contexts and hook translation
+do not observe again. This is measurement only; validators remain unchanged.
+
 Native chat recipients accept the existing list or a tuple; the context takes
 an immutable snapshot and returns a fresh list in the callback dictionary.
 Nullable identity projections remain null. Local sends omit the

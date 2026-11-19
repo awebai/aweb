@@ -15,6 +15,7 @@ from pgdbm.errors import QueryError
 
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
+from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.agent_wake import agent_wake_scope
 from aweb.attachment_service import refuse_remote_attachments
 from aweb.db import TransactionInfra
@@ -1459,6 +1460,11 @@ async def send_mail(
     runtime: MessagingRuntime,
 ) -> SentMail:
     """Store and deliver the signed or encrypted ``payload`` to a resolved target."""
+    observe_message_vocabulary(
+        source=MessageInputSource.MAIL_SEND,
+        content_mode=payload.content_mode,
+        priority=payload.priority,
+    )
     return await _send_mail_to_resolved_target(
         db,
         auth=auth,

@@ -1,3 +1,4 @@
+# ruff: noqa: F811 -- pytest imports the real shared fixture by name.
 """Real native HTTP requests are observed before exact replay suppresses hooks."""
 
 from datetime import datetime, timezone
