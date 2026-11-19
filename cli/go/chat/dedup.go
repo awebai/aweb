@@ -22,23 +22,38 @@ const (
 
 type deliveredIDsFile map[string]string
 
-func deliveredIDsRoot(startDir string) string {
+// deliveredIDsRoot keeps receipt scope stable on lookup failures; only absent
+// markers permit a parent search (docs/receiving-events.md:174).
+func deliveredIDsRoot(startDir string) (string, error) {
+	directory := filepath.Clean(startDir)
 	for _, name := range []string{"context", "workspace.yaml"} {
-		if path := filepath.Join(filepath.Clean(startDir), ".aw", name); fileExists(path) {
-			return filepath.Clean(startDir)
+		exists, err := receiptStoreMarkerExists(filepath.Join(directory, ".aw", name))
+		if err != nil {
+			return "", err
+		}
+		if exists {
+			return directory, nil
 		}
 	}
-	if root := findGitRoot(startDir); root != "" {
-		return root
+	root, err := findGitRoot(directory)
+	if err != nil {
+		return "", err
 	}
-	return filepath.Clean(startDir)
+	if root != "" {
+		return root, nil
+	}
+	return directory, nil
 }
 
-func deliveredIDsPath(startDir string) string {
+func deliveredIDsPath(startDir string) (string, error) {
 	if override := strings.TrimSpace(os.Getenv(DeliveredIDsPathEnv)); override != "" {
-		return filepath.Clean(override)
+		return filepath.Clean(override), nil
 	}
-	return filepath.Join(deliveredIDsRoot(startDir), ".aw", DeliveredIDsFileName)
+	root, err := deliveredIDsRoot(startDir)
+	if err != nil {
+		return "", fmt.Errorf("locate chat delivery receipts: %w. Repair the workspace before retrying", err)
+	}
+	return filepath.Join(root, ".aw", DeliveredIDsFileName), nil
 }
 
 // LoadDeliveredIDs reads unexpired receipt IDs for the current process directory.
@@ -54,7 +69,11 @@ func LoadDeliveredIDs() (map[string]struct{}, error) {
 // LoadDeliveredIDsForDir reads receipt IDs for startDir, honoring
 // DeliveredIDsPathEnv. Receipts older than ten minutes are excluded.
 func LoadDeliveredIDsForDir(startDir string) (map[string]struct{}, error) {
-	entries, err := loadDeliveredIDTimes(deliveredIDsPath(startDir), time.Now())
+	path, err := deliveredIDsPath(startDir)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := loadDeliveredIDTimes(path, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +101,10 @@ func SaveDeliveredIDsForDir(startDir string, ids []string) (err error) {
 		return nil
 	}
 	now := time.Now()
-	path := deliveredIDsPath(startDir)
+	path, err := deliveredIDsPath(startDir)
+	if err != nil {
+		return err
+	}
 
 	// Serialize receipt updates so concurrent writers retain each other's
 	// accepted deliveries (docs/receiving-events.md:174). Kernel-released
@@ -133,8 +155,9 @@ func DeliveredMessageIDs(messages []awid.ChatMessage) []string {
 	return ids
 }
 
-// FilterDeliveredMessages retains the released best-effort, process-directory
-// API. Deprecated: use FilterDeliveredMessagesForDir to handle receipt errors.
+// FilterDeliveredMessages filters for the process directory and leaves messages
+// unchanged on a receipt-store read error.
+// Deprecated: use FilterDeliveredMessagesForDir to receive failure diagnostics.
 func FilterDeliveredMessages(messages []awid.ChatMessage) []awid.ChatMessage {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -153,7 +176,7 @@ func FilterDeliveredMessages(messages []awid.ChatMessage) []awid.ChatMessage {
 func FilterDeliveredMessagesForDir(startDir string, messages []awid.ChatMessage) ([]awid.ChatMessage, error) {
 	delivered, err := LoadDeliveredIDsForDir(startDir)
 	if err != nil {
-		return nil, fmt.Errorf("read chat delivery receipts: %w. Repair or remove %s before retrying", err, deliveredIDsPath(startDir))
+		return nil, err
 	}
 	filtered := make([]awid.ChatMessage, 0, len(messages))
 	for _, msg := range messages {
@@ -165,7 +188,15 @@ func FilterDeliveredMessagesForDir(startDir string, messages []awid.ChatMessage)
 	return filtered, nil
 }
 
-func loadDeliveredIDTimes(path string, now time.Time) (map[string]time.Time, error) {
+// loadDeliveredIDTimes distinguishes expired receipts from unreadable entries.
+// A failed receipt read must not admit delivered messages as new
+// (docs/receiving-events.md:174).
+func loadDeliveredIDTimes(path string, now time.Time) (entries map[string]time.Time, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("read chat delivery receipts at %q: %w. Repair or remove that store before retrying", path, err)
+		}
+	}()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -177,16 +208,19 @@ func loadDeliveredIDTimes(path string, now time.Time) (map[string]time.Time, err
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
+	if raw == nil {
+		return nil, fmt.Errorf("delivery receipt store must be a JSON object")
+	}
 	active := make(map[string]time.Time, len(raw))
 	cutoff := now.Add(-deliveredIDsTTL)
 	for id, ts := range raw {
 		id = strings.TrimSpace(id)
 		if id == "" {
-			continue
+			return nil, fmt.Errorf("delivery receipt identifier is empty")
 		}
 		seenAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(ts))
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("delivery receipt %q timestamp: %w", id, err)
 		}
 		if seenAt.Before(cutoff) {
 			continue
@@ -214,21 +248,33 @@ func writeDeliveredIDs(path string, entries map[string]time.Time) error {
 	return atomicfile.Options{Mode: 0o600, ParentMode: 0o700}.Write(path, data)
 }
 
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+func receiptStoreMarkerExists(path string) (bool, error) {
+	// The marker itself selects scope; a dangling target must not redirect
+	// receipts to a parent workspace (docs/receiving-events.md:174).
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("inspect receipt-store marker %q: %w", path, err)
 }
 
-func findGitRoot(startDir string) string {
-	dir := filepath.Clean(startDir)
+func findGitRoot(startDir string) (string, error) {
+	directory := filepath.Clean(startDir)
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir
+		exists, err := receiptStoreMarkerExists(filepath.Join(directory, ".git"))
+		if err != nil {
+			return "", err
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
+		if exists {
+			return directory, nil
 		}
-		dir = parent
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return "", nil
+		}
+		directory = parent
 	}
 }

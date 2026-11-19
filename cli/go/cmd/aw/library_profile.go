@@ -16,6 +16,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
+	"github.com/awebai/aw/internal/termtext"
 	"gopkg.in/yaml.v3"
 )
 
@@ -302,7 +303,21 @@ func applyPublicLibraryProfileToHome(homeDir string, selector libraryProfileSele
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := writeMaterializationWarnings(os.Stderr, materialized); err != nil {
+		return nil, nil, err
+	}
 	return materialized, materialized.FilesWritten, nil
+}
+
+// writeMaterializationWarnings keeps successful materialization diagnostics
+// visible at the CLI boundary, including temporary-payload cleanup failures.
+func writeMaterializationWarnings(out io.Writer, result *blueprint.MaterializeResult) error {
+	for _, warning := range result.Warnings {
+		if _, err := fmt.Fprintf(out, "WARNING: %s\n", termtext.Body(warning)); err != nil {
+			return fmt.Errorf("write materialization warnings: %w. The home is materialized; use a writable diagnostic output to inspect its warnings", err)
+		}
+	}
+	return nil
 }
 
 func applyLocalBlueprintProfileToHome(homeDir string, selector libraryProfileSelector, sourceDir string, force bool) (*blueprint.MaterializeResult, []string, error) {

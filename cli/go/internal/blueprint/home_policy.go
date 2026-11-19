@@ -48,7 +48,7 @@ func validateHomeOp(op materializeWriteOp) error {
 		want := "AGENTS.md"
 		if strings.HasPrefix(op.Rel, ".claude/skills/") {
 			if len(strings.Split(op.Rel, "/")) != 3 {
-				return fmt.Errorf("Library skill link %q uses a legacy file projection. Use a directory projection at .claude/skills/<name>", op.Rel)
+				return fmt.Errorf("Library skill link %q uses a file projection. Use a directory projection at .claude/skills/<name>", op.Rel)
 			}
 			want = "../../skills/" + strings.TrimPrefix(op.Rel, ".claude/skills/")
 		} else if op.Rel != "CLAUDE.md" {

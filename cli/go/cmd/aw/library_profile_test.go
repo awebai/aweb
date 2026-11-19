@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,6 +20,28 @@ import (
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
 )
+
+func TestMaterializationWarningsAreVisibleAndReportWriteFailure(t *testing.T) {
+	result := &blueprint.MaterializeResult{Warnings: []string{"remove payload\x1b[2J manually"}}
+	var output bytes.Buffer
+	if err := writeMaterializationWarnings(&output, result); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "WARNING:") || strings.Contains(output.String(), "\x1b") || !strings.Contains(output.String(), `\x1b`) {
+		t.Fatalf("materialization warning was hidden or unsafe: %q", output.String())
+	}
+	reader, writer := io.Pipe()
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	err := writeMaterializationWarnings(writer, result)
+	if closeErr := writer.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if !errors.Is(err, io.ErrClosedPipe) || !strings.Contains(err.Error(), "The home is materialized") {
+		t.Fatalf("warning output failure lost cause or completed-effect context: %v", err)
+	}
+}
 
 func TestMissingLibraryPluginClassificationUsesErrorIdentity(t *testing.T) {
 	for _, err := range []error{

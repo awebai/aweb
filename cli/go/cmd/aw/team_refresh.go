@@ -96,8 +96,8 @@ func runTeamRefresh(cmd *cobra.Command, args []string) error {
 			InstructionsInjected []string `json:"instructions_injected,omitempty"`
 		}{MaterializeResult: result, InstructionsInjected: docsResult.Injected})
 	}
-	for _, warning := range result.Warnings {
-		fmt.Fprintf(out, "WARNING: %s\n", warning)
+	if err := writeMaterializationWarnings(out, result); err != nil {
+		return err
 	}
 	for _, name := range docsResult.Injected {
 		fmt.Fprintf(out, "Refreshed aw team instructions in %s\n", name)

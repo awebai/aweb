@@ -102,8 +102,10 @@ async def _local_sender_mail(
     cross_team=False,
     plaintext=False,
 ):
-    """Deliver one local-sender E2EE mail to bob; yield bob's real CLI context
-    and the registry it resolves through."""
+    """Deliver local-sender mail to bob and yield its real CLI/registry context.
+
+    The default is encrypted v2; plaintext selects the signed plaintext route.
+    """
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc).replace(microsecond=0)
     sender_team = TEAM

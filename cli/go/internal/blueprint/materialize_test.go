@@ -3,6 +3,7 @@ package blueprint
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -154,14 +155,14 @@ func TestMaterializeLibraryProfilePayloadAllowsFoldedBlockMission(t *testing.T) 
 	}
 }
 
-func TestMaterializeLocalProfileForceMigratesLegacyClaudeSkillFileLink(t *testing.T) {
+func TestMaterializeLocalProfileForceMigratesSkillFileProjection(t *testing.T) {
 	fixture := engineeringFixtureRoot(t)
 	target := t.TempDir()
-	legacyDir := filepath.Join(target, ".claude", "skills", "implement")
-	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+	projectionDir := filepath.Join(target, ".claude", "skills", "implement")
+	if err := os.MkdirAll(projectionDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("../../../skills/implement/SKILL.md", filepath.Join(legacyDir, "SKILL.md")); err != nil {
+	if err := os.Symlink("../../../skills/implement/SKILL.md", filepath.Join(projectionDir, "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -378,4 +379,69 @@ func mustPayloadDigest(t *testing.T, files []LibraryProfilePayloadFile) string {
 		t.Fatal(err)
 	}
 	return digest
+}
+
+func TestMaterializePublicationDoesNotOverwriteAConcurrentDestination(t *testing.T) {
+	for _, operation := range []materializeWriteOp{
+		{Kind: opFile, Rel: "AGENTS.md", Data: []byte("profile content")},
+		{Kind: opSymlink, Rel: "CLAUDE.md", LinkTarget: "AGENTS.md"},
+	} {
+		t.Run(string(operation.Kind), func(t *testing.T) {
+			root := t.TempDir()
+			plan := materializeWritePlan{TargetRoot: root, Operations: []materializeWriteOp{operation}, CollisionPolicy: preserveExistingProfileFiles}
+			if err := plan.preflight(); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, operation.Rel)
+			if err := os.WriteFile(path, []byte("operator content"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := plan.write()
+			if !errors.Is(err, os.ErrExist) {
+				t.Fatalf("publication replaced a concurrent destination: %v", err)
+			}
+			if !strings.Contains(err.Error(), "Use another home or resolve the conflicting destination") {
+				t.Fatalf("collision has no recovery action: %v", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != "operator content" {
+				t.Fatalf("publication changed operator file: %q", got)
+			}
+		})
+	}
+}
+
+func TestRuntimeProjectionPublicationPreservesUnmanagedConcurrentContent(t *testing.T) {
+	for _, conflict := range []struct{ name, child string }{
+		{name: "file"}, {name: "directory", child: "operator.txt"},
+	} {
+		t.Run(conflict.name, func(t *testing.T) {
+			root := t.TempDir()
+			operation := materializeWriteOp{Kind: opSymlink, Rel: ".claude/skills/reviewer", LinkTarget: "../../skills/reviewer"}
+			plan := materializeWritePlan{TargetRoot: root, Operations: []materializeWriteOp{operation}, CollisionPolicy: replaceExistingProfileFiles}
+			if err := plan.preflight(); err != nil {
+				t.Fatal(err)
+			}
+			operatorPath := filepath.Join(root, operation.Rel, conflict.child)
+			if err := os.MkdirAll(filepath.Dir(operatorPath), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(operatorPath, []byte("operator content"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := plan.write(); err == nil || !strings.Contains(err.Error(), "Repair the destination before retrying") {
+				t.Fatalf("unmanaged projection conflict was not refused actionably: %v", err)
+			}
+			data, err := os.ReadFile(operatorPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(data) != "operator content" {
+				t.Fatalf("projection replaced operator content: %q", data)
+			}
+		})
+	}
 }

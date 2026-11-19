@@ -115,10 +115,11 @@ func materializeLoadedProfile(options loadedProfileOptions) (*MaterializeResult,
 	if force {
 		policy = replaceExistingProfileFiles
 	}
-	if err := (materializeWritePlan{TargetRoot: absTarget, Operations: ops, CollisionPolicy: policy}).preflight(); err != nil {
+	plan := materializeWritePlan{TargetRoot: absTarget, Operations: ops, CollisionPolicy: policy}
+	if err := plan.preflight(); err != nil {
 		return nil, err
 	}
-	written, err := writeMaterializedFiles(absTarget, ops)
+	written, err := plan.write()
 	if err != nil {
 		return nil, err
 	}
@@ -733,10 +734,11 @@ func writeLibraryHomeFiles(options libraryHomeWriteOptions) ([]string, error) {
 			return nil, fmt.Errorf("unsupported materialized home file kind %q for %s. Use file or a documented runtime symlink", file.Kind, rel)
 		}
 	}
-	if err := (materializeWritePlan{TargetRoot: absTarget, Operations: ops, CollisionPolicy: options.CollisionPolicy}).preflight(); err != nil {
+	plan := materializeWritePlan{TargetRoot: absTarget, Operations: ops, CollisionPolicy: options.CollisionPolicy}
+	if err := plan.preflight(); err != nil {
 		return nil, err
 	}
-	return writeMaterializedFiles(absTarget, ops)
+	return plan.write()
 }
 
 type materializeWriteKind string
@@ -858,18 +860,18 @@ func validateMaterializeDestination(targetRoot string, op materializeWriteOp, po
 		return fmt.Errorf("%s already exists; pass --force to overwrite", rel)
 	}
 	if policy == replaceExistingProfileFiles && info.IsDir() {
-		legacy, err := isLegacyClaudeSkillFileLinkDir(path, op)
+		fileProjection, err := isClaudeSkillFileProjectionDirectory(path, op)
 		if err != nil {
 			return err
 		}
-		if legacy {
+		if fileProjection {
 			return nil
 		}
 	}
 	return fmt.Errorf("%s already exists and is not a symlink", rel)
 }
 
-func isLegacyClaudeSkillFileLinkDir(path string, op materializeWriteOp) (bool, error) {
+func isClaudeSkillFileProjectionDirectory(path string, op materializeWriteOp) (bool, error) {
 	rel := filepath.ToSlash(op.Rel)
 	parts := strings.Split(rel, "/")
 	if len(parts) != 3 || parts[0] != ".claude" || parts[1] != "skills" || parts[2] == "" {
@@ -928,50 +930,76 @@ func rejectSymlinkedExistingSymlinkTarget(targetRoot, baseDir, linkTarget, label
 	return nil
 }
 
-func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]string, error) {
-	written := make([]string, 0, len(ops))
-	for _, op := range ops {
-		path := filepath.Join(targetRoot, filepath.FromSlash(op.Rel))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, err
+// write carries preflight's collision policy into publication. Exclusive file
+// commits and symlink creation preserve a destination created concurrently
+// (docs/blueprint-materialization-contract.md:200-214).
+func (plan materializeWritePlan) write() ([]string, error) {
+	written := make([]string, 0, len(plan.Operations))
+	for _, op := range plan.Operations {
+		path := filepath.Join(plan.TargetRoot, filepath.FromSlash(op.Rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			return nil, materializePublicationError(op.Rel, err)
 		}
 		if op.Kind == opSymlink {
-			info, err := os.Lstat(path)
-			if err == nil && info.IsDir() {
-				legacy, legacyErr := isLegacyClaudeSkillFileLinkDir(path, op)
-				if legacyErr != nil {
-					return nil, legacyErr
-				}
-				if !legacy {
-					return nil, fmt.Errorf("%s existing directory is not a legacy Claude skill link", filepath.ToSlash(op.Rel))
-				}
-				err = os.RemoveAll(path)
-			} else if err == nil {
-				err = os.Remove(path)
+			var err error
+			if plan.CollisionPolicy == preserveExistingProfileFiles {
+				err = os.Symlink(op.LinkTarget, path)
+			} else {
+				err = replaceRuntimeProjection(path, op)
 			}
-			if err != nil && !os.IsNotExist(err) {
-				return nil, err
-			}
-			if err := os.Symlink(op.LinkTarget, path); err != nil {
-				return nil, err
+			if err != nil {
+				return nil, materializePublicationError(op.Rel, err)
 			}
 		} else {
 			data := op.Data
-			// The profile owns the generated AGENTS.md body; team doc injection owns
-			// only its marker-delimited region inside that file.
+			// The profile owns the body; doc injection owns its marked block.
 			if filepath.ToSlash(op.Rel) == "AGENTS.md" {
 				existing, err := os.ReadFile(path)
 				if err == nil {
 					data = []byte(agentdocs.PreserveMarkedBlock(string(existing), string(data)))
 				} else if !os.IsNotExist(err) {
-					return nil, err
+					return nil, materializePublicationError(op.Rel, err)
 				}
 			}
-			if err := atomicfile.Write(path, data, 0o644); err != nil {
-				return nil, err
+			options := atomicfile.Options{Mode: 0644, Exclusive: plan.CollisionPolicy == preserveExistingProfileFiles}
+			if err := options.Write(path, data); err != nil {
+				return nil, materializePublicationError(op.Rel, err)
 			}
 		}
 		written = append(written, filepath.ToSlash(op.Rel))
 	}
 	return written, nil
+}
+
+func materializePublicationError(rel string, err error) error {
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("profile destination %q appeared during materialization: %w. Use another home or resolve the conflicting destination before retrying", rel, err)
+	}
+	return fmt.Errorf("publish profile destination %q: %w. Repair the destination before retrying", rel, err)
+}
+
+// replaceRuntimeProjection replaces a symlink or the file projection written by
+// aw-v1.32.5's blueprint materializer; unmanaged directories remain untouched.
+func replaceRuntimeProjection(path string, op materializeWriteOp) error {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.IsDir() {
+			fileProjection, err := isClaudeSkillFileProjectionDirectory(path, op)
+			if err != nil {
+				return err
+			}
+			if !fileProjection {
+				return fmt.Errorf("%s existing directory is not a Claude skill file projection", op.Rel)
+			}
+			err = os.RemoveAll(path)
+		} else if info.Mode()&os.ModeSymlink != 0 {
+			err = os.Remove(path)
+		} else {
+			return fmt.Errorf("%s existing file is not a runtime projection", op.Rel)
+		}
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(op.LinkTarget, path)
 }
