@@ -126,6 +126,12 @@ def _parse_signed_timestamp(value: str) -> datetime:
     return dt
 
 
+def _require_fresh_mail_attestation(payload: SendMessageRequest) -> None:
+    """Require current attestation time for a new signed mail submission."""
+    if payload.signature is not None:
+        _parse_signed_timestamp(payload.timestamp)
+
+
 def _validate_signed_mail_payload(
     *,
     signature: str,
@@ -953,7 +959,7 @@ async def send_mail_conversation_continuation(
             # payload.timestamp is the sender's attestation retained in
             # signed_payload; deliver_message separately assigns server receipt
             # time for ordering, so the two values may disagree.
-            _parse_signed_timestamp(payload.timestamp)
+            _require_fresh_mail_attestation(payload)
         encrypted_metadata = _validate_encrypted_payload(
             payload,
             auth=auth,
@@ -1556,7 +1562,7 @@ async def _send_mail_to_resolved_target(
         # payload.timestamp is the sender's attestation retained in
         # signed_payload; deliver_message separately assigns server receipt
         # time for ordering, so the two values may disagree.
-        _parse_signed_timestamp(payload.timestamp)
+        _require_fresh_mail_attestation(payload)
 
     if (recipient or {}).get("external"):
         return await deliver_remote_mail_and_project_locally(
