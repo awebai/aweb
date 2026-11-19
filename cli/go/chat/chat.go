@@ -1,5 +1,5 @@
 // ABOUTME: Chat protocol functions composing low-level aweb-go client methods.
-// ABOUTME: Provides Send, Open, History, Pending, ExtendWait, and ShowPending.
+// ABOUTME: Provides Send, Open, History, Pending, Listen, and ShowPending.
 
 package chat
 
@@ -664,25 +664,6 @@ func sessionActivity(session awid.ChatSessionItem) string {
 	return session.CreatedAt
 }
 
-// findSession finds the session ID for a conversation with targetAlias.
-// Checks pending first (captures sender_waiting), falls back to listing sessions.
-//
-// Selection priority for pending sessions:
-//  1. sender_waiting sessions over non-waiting (urgent conversations first)
-//  2. smallest participant count (1:1 over group)
-//  3. most recent LastActivity (tiebreaker)
-//
-// Selection priority for fallback (all sessions):
-//  1. smallest participant count
-//  2. most recent LastActivity, falling back to CreatedAt (tiebreaker)
-func findSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
-	return findSessionWithOptions(ctx, client, targetAlias, waitingSessionFirst)
-}
-
-func findLatestSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
-	return findSessionWithOptions(ctx, client, targetAlias, latestSession)
-}
-
 // lookupSession is the one session lookup every chat command uses
 // (IDENTITY_RULES.md): a DID the caller confirmed for target is a strong
 // identity and selects alone; otherwise target is matched as given, a bare
@@ -704,6 +685,19 @@ const (
 	waitingSessionFirst
 )
 
+// findSessionWithOptions finds the session ID for a conversation with targetAlias.
+// Checks pending first (captures sender_waiting), falls back to listing sessions;
+// choice sets the pending priority below (waitingSessionFirst) or takes the
+// latest session (latestSession).
+//
+// Selection priority for pending sessions:
+//  1. sender_waiting sessions over non-waiting (urgent conversations first)
+//  2. smallest participant count (1:1 over group)
+//  3. most recent LastActivity (tiebreaker)
+//
+// Selection priority for fallback (all sessions):
+//  1. smallest participant count
+//  2. most recent LastActivity, falling back to CreatedAt (tiebreaker)
 func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, choice sessionChoice) (sessionID string, senderWaiting bool, err error) {
 	rawTarget := strings.TrimSpace(targetAlias)
 	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
@@ -1392,9 +1386,9 @@ func shouldProbeExistingSession(target string) bool {
 	// (cli/go/awid/chat.go:159 generates UUID4 when signingKey is set). With
 	// the post-aame server-side 'one active 1:1' dedup, that fresh UUID
 	// conflicts with the existing session and 409s. Probing for bare aliases
-	// lets findLatestSession discover the existing session_id, route via
+	// lets findSessionWithOptions(latestSession) discover the existing session_id, route via
 	// ChatSendMessage on the per-session endpoint, and bypass the conflict
-	// entirely. Ambiguous targets are surfaced by findLatestSession as
+	// entirely. Ambiguous targets are surfaced by that lookup as
 	// ErrAmbiguousConversation and propagate up.
 	return strings.TrimSpace(target) != ""
 }

@@ -2602,7 +2602,7 @@ func TestFindSessionFallback(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2635,7 +2635,7 @@ func TestFindSessionFallbackUsesParticipantAddress(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "otherco/monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2680,7 +2680,7 @@ func TestFindSessionStableDIDHandleOnlyErrorsOnAmbiguousAliasMatches(t *testing.
 		},
 	})
 
-	_, _, err := findSession(context.Background(), client, "did:aw:monitor")
+	_, _, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err == nil {
 		t.Fatal("expected ambiguity error")
 	}
@@ -2731,7 +2731,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsSparseAndRichRowsForSameIdentity(t 
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2782,7 +2782,7 @@ func TestFindSessionStableDIDHandleOnlyPendingAllowsSparseAndRichRowsForSameIden
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2823,7 +2823,7 @@ func TestFindSessionAliasAllowsAddressAndStableDIDRowsForSameIdentity(t *testing
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2879,7 +2879,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsAddressAndStableDIDRowsForSameIdent
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2920,7 +2920,7 @@ func TestFindSessionAliasAllowsAddressAndCurrentDIDRowsForSameIdentity(t *testin
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2976,7 +2976,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsAddressAndCurrentDIDRowsForSameIden
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3041,7 +3041,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsStableAndCurrentDIDRowsForSameIdent
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3106,7 +3106,7 @@ func TestFindSessionAliasAllowsStableAndCurrentDIDRowsForSameIdentity(t *testing
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3165,7 +3165,7 @@ func TestFindSessionAliasAllowsAddressOnlyAndStableDIDRowsForSameIdentity(t *tes
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3224,7 +3224,7 @@ func TestFindSessionStableDIDHandleOnlyAllowsAddressOnlyAndStableDIDRowsForSameI
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "did:aw:monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "did:aw:monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3265,7 +3265,7 @@ func TestFindSessionAddressTargetPrefersAddressBackedRowOverDIDOnlyDuplicate(t *
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "acme.com/monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "acme.com/monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3324,7 +3324,7 @@ func TestFindSessionAliasAllowsAddressOnlyAndCurrentDIDRowsForSameIdentity(t *te
 		},
 	})
 
-	sessionID, senderWaiting, err := findSession(context.Background(), client, "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), client, "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3362,7 +3362,7 @@ func TestFindSessionAliasErrorsOnAmbiguousAliasMatches(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	_, _, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	_, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", waitingSessionFirst)
 	if err == nil {
 		t.Fatal("expected ambiguity error")
 	}
@@ -3395,8 +3395,8 @@ func TestFindSessionAliasAmbiguityReadsTheFullListBeforeChoosingAPendingMatch(t 
 	})
 	t.Cleanup(server.Close)
 
-	for _, find := range []func(context.Context, *awid.Client, string) (string, bool, error){findSession, findLatestSession} {
-		sessionID, _, err := find(context.Background(), mustClient(t, server.URL), "monitor")
+	for _, choice := range []sessionChoice{waitingSessionFirst, latestSession} {
+		sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", choice)
 		if err == nil || !strings.Contains(err.Error(), "multiple conversations match monitor") {
 			t.Fatalf("session_id=%q err=%v, want the ambiguity refusal", sessionID, err)
 		}
@@ -3430,7 +3430,7 @@ func TestFindSessionAliasAllowsSparseAndRichRowsForSameIdentity(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3467,7 +3467,7 @@ func TestFindSessionPendingDoesNotPreferSparseGroupOverDirect(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "otherco/monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3507,7 +3507,7 @@ func TestFindSessionFallbackDoesNotPreferSparseGroupOverDirect(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "otherco/monitor")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "otherco/monitor", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3532,7 +3532,7 @@ func TestFindSessionNotFound(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	_, _, err := findSession(context.Background(), mustClient(t, server.URL), "nobody")
+	_, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "nobody", waitingSessionFirst)
 	if err == nil {
 		t.Fatal("expected error for missing session")
 	}
@@ -4813,7 +4813,7 @@ func TestFindSessionPrefersSmallestPending(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4840,7 +4840,7 @@ func TestFindSessionPrefersSmallestFallback(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4866,7 +4866,7 @@ func TestFindSessionPendingPrefersWaiting(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4893,7 +4893,7 @@ func TestFindLatestSessionPendingPrefersActivity(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, senderWaiting, err := findLatestSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, senderWaiting, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", latestSession)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4921,7 +4921,7 @@ func TestFindSessionPendingTiebreaksOnActivity(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4949,7 +4949,7 @@ func TestFindSessionFallbackTiebreaksOnCreatedAt(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -4986,7 +4986,7 @@ func TestFindSessionFallbackTiebreaksOnLastActivity(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findSession(context.Background(), mustClient(t, server.URL), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustClient(t, server.URL), "bob", waitingSessionFirst)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5025,7 +5025,7 @@ func TestFindLatestSessionBareAliasScopesToClientTeam(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findLatestSession(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "bob", latestSession)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5058,7 +5058,7 @@ func TestFindLatestSessionAddressDoesNotFallbackToHandle(t *testing.T) {
 	})
 	t.Cleanup(server.Close)
 
-	sessionID, _, err := findLatestSession(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "partner.local/bob")
+	sessionID, _, err := findSessionWithOptions(context.Background(), mustTeamClient(t, server.URL, "main:partner.local"), "partner.local/bob", latestSession)
 	if err == nil {
 		t.Fatalf("session_id=%s, want no conversation found", sessionID)
 	}
