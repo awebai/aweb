@@ -116,6 +116,13 @@ retain every character, including case and whitespace. No context performs
 validator narrowing or changes a signed priority. Constructors cannot newly
 fail on accepted metadata, so callback timing remains unchanged.
 
+Mail send, chat send, mail acknowledgement and inbound federation producers
+use these contexts before passing dictionaries to the existing callback or
+durable outbox. They pass the accepted mode and priority to the context without
+adding defaults; absent and empty metadata remain distinct. The inbound
+context keeps its shared mail/chat shape rather than acquiring native chat's
+preview or recipient-alias list.
+
 Native chat recipients accept the existing list or a tuple; the context takes
 an immutable snapshot and returns a fresh list in the callback dictionary.
 Nullable identity projections remain null. Local sends omit the

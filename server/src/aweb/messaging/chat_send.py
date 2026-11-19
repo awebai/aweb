@@ -38,6 +38,9 @@ from aweb.federation.envelope import (
 )
 from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_message
 from aweb.hooks import fire_mutation_callback
+from aweb.event_types import MutationEventType
+from aweb.message_events import ChatMessageSentContext
+from aweb.messaging.kinds import ContentModeValue, MessageTransport
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, participant_dids
 from aweb.messaging.address_auth import (
     identity_recipient,
@@ -1805,22 +1808,20 @@ async def _fire_chat_message_sent(
     from_did: str,
     to_aliases: list[str],
     preview: str,
-    content_mode: str,
+    content_mode: ContentModeValue | None,
     federated: bool = False,
 ) -> None:
-    context = {
-        "team_id": auth.team_id,
-        "session_id": str(session_id),
-        "conversation_id": str(session_id),
-        "message_id": str(message_id),
-        "from_agent_id": from_agent_id,
-        "from_alias": auth.alias or "",
-        "from_did": from_did,
-        "from_did_aw": (auth.did_aw or "").strip() or None,
-        "to_aliases": to_aliases,
-        "preview": preview,
-        "content_mode": content_mode,
-    }
-    if federated:
-        context["federated"] = True
-    await fire_mutation_callback(runtime.on_mutation, "chat.message_sent", context)
+    context = ChatMessageSentContext(
+        team_id=auth.team_id,
+        session_id=str(session_id),
+        message_id=str(message_id),
+        from_agent_id=from_agent_id,
+        from_alias=auth.alias or "",
+        from_did=from_did,
+        from_did_aw=(auth.did_aw or "").strip() or None,
+        to_aliases=tuple(to_aliases),
+        preview=preview,
+        content_mode=content_mode,
+        transport=MessageTransport.FEDERATED if federated else MessageTransport.LOCAL,
+    )
+    await fire_mutation_callback(runtime.on_mutation, MutationEventType.CHAT_MESSAGE_SENT.value, context.to_context())

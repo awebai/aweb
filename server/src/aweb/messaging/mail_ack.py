@@ -6,8 +6,10 @@ from datetime import datetime
 from uuid import UUID
 
 from aweb.agent_wake import AgentWakePublisher, agent_wake_scope, record_did_wakes
+from aweb.event_types import MutationEventType
 from aweb.hooks import MutationCallback, fire_mutation_callback
 from aweb.identity_auth_deps import MessagingAuth, participant_dids
+from aweb.message_events import MessageAcknowledgedContext
 from aweb.messaging.mail_attribution import incoming_mail_sql
 
 
@@ -46,15 +48,15 @@ async def acknowledge_mail(
     for row in acknowledged:
         await fire_mutation_callback(
             on_mutation,
-            "message.acknowledged",
-            {
-                "team_id": auth.team_id,
-                "agent_id": auth.agent_id,
-                "alias": auth.alias,
-                "message_id": str(row["message_id"]),
-                "from_alias": row["from_alias"],
-                "subject": row["subject"] or "",
-                "content_mode": row["content_mode"] or "legacy_plaintext_v1",
-            },
+            MutationEventType.MAIL_ACKNOWLEDGED.value,
+            MessageAcknowledgedContext(
+                team_id=auth.team_id,
+                agent_id=auth.agent_id,
+                alias=auth.alias,
+                message_id=str(row["message_id"]),
+                from_alias=row["from_alias"],
+                subject=row["subject"] or "",
+                content_mode=row["content_mode"],
+            ).to_context(),
         )
     return [row["message_id"] for row in acknowledged]
