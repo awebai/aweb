@@ -14,6 +14,8 @@ from aweb.messaging.kinds import (
     ContentModeValue,
     MessagePriority,
     MessagePriorityValue,
+    accepted_content_mode,
+    accepted_message_priority,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,23 +53,19 @@ def observe_message_vocabulary(
     than in callback constructors that may never be reached on exact retries.
     """
     unnamed: list[_VocabularyField] = []
-    if content_mode is not None and content_mode not in frozenset(ContentMode):
+    if accepted_content_mode(content_mode) not in frozenset(ContentMode):
         unnamed.append(_VocabularyField.CONTENT_MODE)
-    if priority is not None and priority not in frozenset(MessagePriority):
+    if accepted_message_priority(priority) not in frozenset(MessagePriority):
         unnamed.append(_VocabularyField.PRIORITY)
     if not unnamed:
         return
     try:
         for field in unnamed:
-            UNNAMED_MESSAGE_VOCABULARY.labels(
-                source=source.value, field=field.value
-            ).inc()
-    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            UNNAMED_MESSAGE_VOCABULARY.labels(source=source.value, field=field.value).inc()
+    except Exception as exc:
         # Measurement cannot refuse accepted input or expose a dependency's
         # exception contents in the request's logging context.
-        logger.error(
-            "message_vocabulary_counter_unavailable failure_type=%s", type(exc).__name__
-        )
+        logger.error("message_vocabulary_counter_unavailable failure_type=%s", type(exc).__name__)
     logger.info(
         "message_vocabulary_unnamed source=%s fields=%s",
         source.value,
