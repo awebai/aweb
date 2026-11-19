@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awconfig"
 )
 
@@ -151,5 +153,25 @@ func TestA2ASendReturnsDeliveredTaskWhenTokenFileBecomesMalformed(t *testing.T) 
 	}
 	if string(after) != original {
 		t.Fatalf("damaged file overwritten: %s", after)
+	}
+}
+
+func TestA2ARegistryFallbackDoesNotAcquireOperatorTrust(t *testing.T) {
+	var requests atomic.Int32
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if err := json.NewEncoder(w).Encode(map[string]any{"address": "acme.com/help", "a2a": map[string]string{"status": "active", "verification": "awid_publication_available", "card_url": "https://gateway.example/card", "card_digest": "digest"}}); err != nil {
+			t.Error(err)
+		}
+	}))
+	input := a2aCardVerification{CardURL: "https://gateway.example/card", Digest: "digest", Address: "acme.com/help", RegistryURL: server.URL}
+	refused := verifyA2ACardWithAWID(context.Background(), input)
+	if refused.Code != "awid_lookup_failed" || requests.Load() != 0 {
+		t.Fatalf("stored URL reached without operator authority: result=%#v requests=%d", refused, requests.Load())
+	}
+	input.ExplicitRegistryURL = server.URL
+	accepted := verifyA2ACardWithAWID(context.Background(), input)
+	if accepted.Status != a2a.VerificationAWIDVerified || requests.Load() != 1 {
+		t.Fatalf("operator URL failed: result=%#v requests=%d", accepted, requests.Load())
 	}
 }

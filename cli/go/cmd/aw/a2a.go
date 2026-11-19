@@ -291,7 +291,7 @@ func buildA2ACardOutput(ctx context.Context, cardURL, address, registryURL strin
 		verification.Message = "Agent Card contains signatures; aw a2a does not verify JWS yet. Use --address for AWID publication verification."
 	}
 	if strings.TrimSpace(address) != "" {
-		verification = verifyA2ACardWithAWID(ctx, a2aCardVerification{CardURL: cardURL, Digest: digest.Value, Address: strings.TrimSpace(address), RegistryURL: strings.TrimSpace(registryURL)})
+		verification = verifyA2ACardWithAWID(ctx, a2aCardVerification{CardURL: cardURL, Digest: digest.Value, Address: strings.TrimSpace(address), RegistryURL: strings.TrimSpace(registryURL), ExplicitRegistryURL: registryURL})
 	}
 	return a2aCardOutput{
 		URL:          strings.TrimSpace(cardURL),
@@ -309,7 +309,27 @@ type a2aPublicationAvailability string
 
 const a2aPublicationAvailable a2aPublicationAvailability = "awid_publication_available"
 
-type a2aCardVerification struct{ CardURL, Digest, Address, RegistryURL string }
+type a2aCardVerification struct{ CardURL, Digest, Address, RegistryURL, ExplicitRegistryURL string }
+
+type a2aRegistryChoice struct{ FallbackURL, ExplicitURL string }
+
+// newA2ARegistryClient passes operator choice to the shared registry trust owner.
+// Stored or discovered fallback URLs do not acquire operator authority
+// (awid/registry_pin.go:139-141).
+func newA2ARegistryClient(choice a2aRegistryChoice) (*awid.RegistryClient, error) {
+	registry := awid.NewAWIDRegistryClient(a2aHTTPClient(), nil)
+	if explicit := strings.TrimSpace(choice.ExplicitURL); explicit != "" {
+		if err := registry.Resolver.TrustRegistryOrigin(explicit); err != nil {
+			return nil, err
+		}
+	}
+	if fallback := strings.TrimSpace(choice.FallbackURL); fallback != "" {
+		if err := registry.SetFallbackRegistryURL(fallback); err != nil {
+			return nil, err
+		}
+	}
+	return registry, nil
+}
 
 func verifyA2ACardWithAWID(ctx context.Context, input a2aCardVerification) a2a.VerificationResult {
 	cardURL, digestValue, address, registryURL := input.CardURL, input.Digest, input.Address, input.RegistryURL
@@ -317,13 +337,11 @@ func verifyA2ACardWithAWID(ctx context.Context, input a2aCardVerification) a2a.V
 	if err != nil {
 		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_address_invalid", Message: err.Error(), Digest: digestValue}
 	}
-	registry := newAWIDRegistryClient(a2aHTTPClient(), nil)
-	registry.RequestID = "aw-a2a-" + time.Now().UTC().Format("20060102T150405.000000000")
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_registry_url_invalid", Message: err.Error(), Digest: digestValue}
-		}
+	registry, err := newA2ARegistryClient(a2aRegistryChoice{FallbackURL: registryURL, ExplicitURL: input.ExplicitRegistryURL})
+	if err != nil {
+		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "a2a_registry_url_invalid", Message: "Invalid A2A registry URL. Set --registry-url to an absolute registry origin and retry.", Digest: digestValue}
 	}
+	registry.RequestID = "aw-a2a-" + time.Now().UTC().Format("20060102T150405.000000000")
 	lookup, _, err := registry.GetA2APublication(ctx, domain, name)
 	if err != nil {
 		return a2a.VerificationResult{Tier: a2a.VerificationTier2, Status: a2a.VerificationFailed, Code: "awid_lookup_failed", Message: redactedRegistryError(err), Digest: digestValue}
@@ -473,17 +491,16 @@ func runA2APublish(ctx context.Context, input a2aPublishInput) (a2aPublishOutput
 	if strings.TrimSpace(selection.DID) != "" && strings.TrimSpace(selection.DID) != currentDIDKey {
 		return a2aPublishOutput{}, usageError("current identity did %s does not match signing key %s; repair .aw/identity.yaml before publishing", selection.DID, currentDIDKey)
 	}
-	registry := newAWIDRegistryClient(a2aHTTPClient(), nil)
-	registry.RequestID = "aw-a2a-publish-" + time.Now().UTC().Format("20060102T150405.000000000")
 	registryURL := strings.TrimSpace(input.RegistryURL)
 	if registryURL == "" {
 		registryURL = strings.TrimSpace(selection.RegistryURL)
 	}
-	if registryURL != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return a2aPublishOutput{}, fmt.Errorf("registry-url: %w", err)
-		}
-	} else {
+	registry, err := newA2ARegistryClient(a2aRegistryChoice{FallbackURL: registryURL, ExplicitURL: input.RegistryURL})
+	if err != nil {
+		return a2aPublishOutput{}, fmt.Errorf("registry-url: %w. Set --registry-url to an absolute registry origin and retry", err)
+	}
+	registry.RequestID = "aw-a2a-publish-" + time.Now().UTC().Format("20060102T150405.000000000")
+	if registryURL == "" {
 		domain, _, err := splitA2AAddress(address)
 		if err != nil {
 			return a2aPublishOutput{}, err
@@ -594,7 +611,7 @@ func runA2APublish(ctx context.Context, input a2aPublishInput) (a2aPublishOutput
 	if err != nil {
 		return a2aPublishOutput{}, a2aPublishError("publish A2A route", err)
 	}
-	verification := verifyA2ACardWithAWID(ctx, a2aCardVerification{CardURL: cardURL, Digest: digest.Value, Address: address, RegistryURL: registryURL})
+	verification := verifyA2ACardWithAWID(ctx, a2aCardVerification{CardURL: cardURL, Digest: digest.Value, Address: address, RegistryURL: registryURL, ExplicitRegistryURL: input.RegistryURL})
 	return a2aPublishOutput{
 		Address:         address,
 		RegistryURL:     registryURL,

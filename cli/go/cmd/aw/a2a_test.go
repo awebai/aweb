@@ -63,10 +63,7 @@ func TestA2AVerificationRequiresAffirmativePublicationFields(t *testing.T) {
 				}
 			}))
 			defer registry.Close()
-			previousRegistry := a2aCardRegistry
-			a2aCardRegistry = registry.URL
-			t.Cleanup(func() { a2aCardRegistry = previousRegistry })
-			got := verifyA2ACardWithAWID(context.Background(), a2aCardVerification{CardURL: cardURL, Digest: "sha256:test", Address: "acme.com/help", RegistryURL: registry.URL})
+			got := verifyA2ACardWithAWID(context.Background(), a2aCardVerification{CardURL: cardURL, Digest: "sha256:test", Address: "acme.com/help", RegistryURL: registry.URL, ExplicitRegistryURL: registry.URL})
 			if missing == "none" {
 				if got.Status != a2a.VerificationAWIDVerified {
 					t.Fatalf("valid publication refused: %#v", got)
