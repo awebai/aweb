@@ -181,8 +181,11 @@ async def reconcile_presence(
             changed += bool(count)
             published += count
         except Exception as exc:
-            logger.warning(
-                "Presence reconciliation failed for %s: %s", team_id, type(exc).__name__
+            logger.error(
+                "Presence reconciliation failed for %s: %s",
+                team_id,
+                type(exc).__name__,
+                exc_info=True,
             )
             failures.append(PresenceReconciliationFailure(team_id, exc))
     if failures:

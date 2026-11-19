@@ -413,10 +413,10 @@ async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -
                 status=r["status"],
                 identity_scope=r["identity_scope"],
                 last_seen=(
-                    selected[str(r["agent_id"])].activity.last_seen_at.isoformat()
-                    if str(r["agent_id"]) in selected
-                    and selected[str(r["agent_id"])].activity
-                    and selected[str(r["agent_id"])].activity.last_seen_at
+                    observed.last_seen_at.isoformat()
+                    if (context := selected.get(str(r["agent_id"]))) is not None
+                    and (observed := context.activity) is not None
+                    and observed.last_seen_at is not None
                     else None
                 ),
                 workspace_path=selected[str(r["agent_id"])].workspace["workspace_path"]

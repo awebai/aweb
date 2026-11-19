@@ -7,6 +7,7 @@ from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 from aweb.application_state import RegistryClientUnavailable
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.workspace_activity import workspace_activity_by_id
@@ -72,7 +73,7 @@ async def list_agents(db_infra, redis, *, registry_client=None) -> str:
             }
         )
 
-    by_agent = {}
+    by_agent: dict[str, dict[str, Any]] = {}
     for agent in agents:
         prior = by_agent.get(agent["agent_id"])
         if prior is None or agent["online"]:
