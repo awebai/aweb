@@ -884,19 +884,6 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if err := awid.VerifyCustodyProof(req); err != nil {
 		return nil, err
 	}
-	ts, err := time.Parse(time.RFC3339, strings.TrimSpace(req.Timestamp))
-	if err != nil {
-		return nil, fmt.Errorf("bad_timestamp")
-	}
-	if s.now().Sub(ts) > 60*time.Second || ts.Sub(s.now()) > 60*time.Second {
-		return nil, fmt.Errorf("bad_timestamp")
-	}
-	if strings.TrimSpace(req.Audience) != "local-resident-custody:"+strings.TrimSpace(s.serviceID) {
-		return nil, fmt.Errorf("bad_audience")
-	}
-	if req.SubjectDIDKey != s.identity.DID || (req.SubjectDIDAW != "" && req.SubjectDIDAW != s.identity.StableID) {
-		return nil, fmt.Errorf("grant_subject_mismatch")
-	}
 	kind := strings.TrimSpace(req.Envelope.Type)
 	if kind != "mail" && kind != "chat" {
 		return nil, fmt.Errorf("message_not_allowed")
@@ -907,54 +894,8 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if from := strings.TrimSpace(req.Envelope.From); from != "" && from != strings.TrimSpace(s.identity.Address) && from != strings.TrimSpace(s.identity.Handle) {
 		return nil, fmt.Errorf("message_not_allowed")
 	}
-	grantStatus := s.clientDeps(ctx).grantStatus
-	if grantStatus == nil {
-		return nil, fmt.Errorf("grant_freshness_unavailable")
-	}
-	// Custody checks retain their short freshness/read budget within the calling request.
-	freshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	st, err := grantStatus(freshCtx, req.GrantID)
-	if err != nil {
-		s.reportFailure("check grant freshness", "grant_freshness_unavailable", err)
-		return nil, fmt.Errorf("grant_freshness_unavailable")
-	}
-	if !st.Active {
-		switch firstNonEmpty(strings.TrimSpace(st.EffectiveStatus), strings.TrimSpace(st.Status)) {
-		case "expired":
-			return nil, fmt.Errorf("grant_expired")
-		case "revoked":
-			return nil, fmt.Errorf("grant_revoked")
-		case "issuer_revoked":
-			return nil, fmt.Errorf("grant_issuer_revoked")
-		case "issuer_not_registered":
-			return nil, fmt.Errorf("grant_issuer_not_registered")
-		case "subject_inactive":
-			return nil, fmt.Errorf("grant_subject_inactive")
-		}
-		return nil, fmt.Errorf("grant_scope_denied")
-	}
-	if strings.TrimSpace(st.ExpiresAt) == "" {
-		return nil, fmt.Errorf("grant_freshness_unavailable")
-	}
-	if err := checkGrantExpiry(st.ExpiresAt, s.now()); err != nil {
+	if _, err := s.admitCustodyRequest(ctx, custodyAdmission{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, teamID: req.TeamID, subjectDIDAW: req.SubjectDIDAW, subjectDIDKey: req.SubjectDIDKey, audience: req.Audience, timestamp: req.Timestamp, scope: custodySendScope(kind)}); err != nil {
 		return nil, err
-	}
-	if strings.TrimSpace(st.GrantDIDKey) != strings.TrimSpace(req.SessionDIDKey) {
-		return nil, fmt.Errorf("grant_session_mismatch")
-	}
-	if strings.TrimSpace(st.TeamID) != strings.TrimSpace(req.TeamID) {
-		return nil, fmt.Errorf("grant_team_mismatch")
-	}
-	requiredScope := kind + ".send"
-	ok := false
-	for _, sc := range st.Scopes {
-		if strings.TrimSpace(sc) == requiredScope {
-			ok = true
-		}
-	}
-	if !ok {
-		return nil, fmt.Errorf("grant_scope_denied")
 	}
 	key, cached, err := s.reserveCustodyReplay(custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest}, &awid.PlainMessageSignResponse{})
 	if err != nil {
@@ -1198,8 +1139,8 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 	if kind != "mail" && kind != "chat" {
 		return nil, fmt.Errorf("message_not_allowed")
 	}
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	grant, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, kind+".send")
+
+	grant, err := s.admitCustodyRequest(ctx, custodyAdmission{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, teamID: req.TeamID, subjectDIDAW: req.SubjectDIDAW, subjectDIDKey: req.SubjectDIDKey, audience: req.Audience, timestamp: req.Timestamp, scope: custodySendScope(kind)})
 	if err != nil {
 		return nil, err
 	}
@@ -1548,8 +1489,8 @@ func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUn
 	if req.Envelope.Kind != kind || req.Envelope.MessageID != strings.TrimSpace(req.MessageID) || req.Envelope.ConversationID != strings.TrimSpace(req.ConversationID) {
 		return nil, fmt.Errorf("message_binding_mismatch")
 	}
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	if _, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, kind+".read"); err != nil {
+
+	if _, err := s.admitCustodyRequest(ctx, custodyAdmission{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, teamID: req.TeamID, subjectDIDAW: req.SubjectDIDAW, subjectDIDKey: req.SubjectDIDKey, audience: req.Audience, timestamp: req.Timestamp, scope: custodyReadScope(kind)}); err != nil {
 		return nil, err
 	}
 	key, cached, err := s.reserveCustodyReplay(custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest}, &awid.E2EEUnwrapResponse{})
