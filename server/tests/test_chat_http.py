@@ -45,6 +45,7 @@ from aweb.routes.chat import router as chat_router
 from aweb.routes.federation import router as federation_router
 from federation_activation_support import TestFederationAuthority
 from did_key_fixtures import named_did_key
+from test_messages_http import _admit_seeded_team_members
 
 
 def _make_keypair():
@@ -3989,66 +3990,8 @@ async def test_create_chat_session_team_and_contacts_accepts_verified_same_team_
         bob_did_key,
     )
 
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        alice_did_key,
-        team_id="backend:acme.com",
-        alias="alice",
-        member_did_aw="did:aw:alice",
-        member_address="acme.com/alice",
-    )
-    cert_header = _encode_certificate(cert)
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    payload = {"to_aliases": ["bob"], "message": "team delivery"}
-    body = json.dumps(payload).encode()
-    headers = {
-        **_signed_team_headers(
-            alice_sk, alice_did_key, "backend:acme.com", cert_header, body
-        ),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
-
-    assert resp.status_code == 200, resp.text
-
-
-@pytest.mark.asyncio
-async def test_create_chat_session_team_and_contacts_accepts_verified_same_team_non_contact_duplicate_path(
-    aweb_cloud_db,
-):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
-    _, _, bob_did_key = _make_keypair()
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', $1)
-        """,
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('backend:acme.com', $2, 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'team_and_contacts', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN $2 END)
-        """,
-        alice_did_key,
-        bob_did_key,
+    await _admit_seeded_team_members(
+        aweb_cloud_db.aweb_db, team_id="backend:acme.com", team_did_key=team_did_key
     )
 
     cert = _make_certificate(
