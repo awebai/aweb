@@ -43,18 +43,6 @@
     },
     {
       "tool": "mypy",
-      "file": "awid/src/awid/registry.py",
-      "code": "arg-type",
-      "count": 8
-    },
-    {
-      "tool": "mypy",
-      "file": "awid/src/awid/registry.py",
-      "code": "misc",
-      "count": 2
-    },
-    {
-      "tool": "mypy",
       "file": "awid/src/awid_service/db.py",
       "code": "arg-type",
       "count": 1
@@ -289,18 +277,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/identity_auth_deps.py",
-      "code": "union-attr",
-      "count": 2
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/identity_binding.py",
-      "code": "assignment",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/installations.py",
       "code": "assignment",
       "count": 1
@@ -322,24 +298,6 @@
       "file": "server/src/aweb/lifecycle.py",
       "code": "arg-type",
       "count": 1
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/mcp/auth.py",
-      "code": "arg-type",
-      "count": 2
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/mcp/auth.py",
-      "code": "assignment",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/mcp/auth.py",
-      "code": "attr-defined",
-      "count": 5
     },
     {
       "tool": "mypy",
@@ -481,12 +439,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/messaging/mail_send.py",
-      "code": "union-attr",
-      "count": 2
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/messaging/messages.py",
       "code": "arg-type",
       "count": 2
@@ -496,12 +448,6 @@
       "file": "server/src/aweb/messaging/messages.py",
       "code": "list-item",
       "count": 2
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/messaging/sender_membership.py",
-      "code": "assignment",
-      "count": 1
     },
     {
       "tool": "mypy",
@@ -572,24 +518,6 @@
     {
       "tool": "mypy",
       "file": "server/src/aweb/routes/conversations.py",
-      "code": "operator",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/routes/events.py",
-      "code": "assignment",
-      "count": 3
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/routes/events.py",
-      "code": "attr-defined",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/routes/events.py",
       "code": "operator",
       "count": 1
     },
@@ -694,12 +622,6 @@
       "file": "awid/src/awid/registry.py",
       "code": "BLE001",
       "count": 7
-    },
-    {
-      "tool": "ruff",
-      "file": "awid/src/awid/registry.py",
-      "code": "E731",
-      "count": 2
     },
     {
       "tool": "ruff",
@@ -920,12 +842,6 @@
     {
       "tool": "ruff",
       "file": "server/src/aweb/federation/delivery.py",
-      "code": "BLE001",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/src/aweb/grant_liveness.py",
       "code": "BLE001",
       "count": 1
     },
@@ -1297,12 +1213,6 @@
     },
     {
       "tool": "ruff",
-      "file": "server/tests/test_agent_status_host_http.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
       "file": "server/tests/test_agent_status_publish_http.py",
       "code": "F401",
       "count": 1
@@ -1573,12 +1483,6 @@
     },
     {
       "tool": "ruff",
-      "file": "server/tests/test_id_chain_request_auth.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
       "file": "server/tests/test_id_tree_contact_replacement.py",
       "code": "F401",
       "count": 1
@@ -1654,12 +1558,6 @@
       "file": "server/tests/test_mcp_team_certificate_evidence_http.py",
       "code": "F401",
       "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_member_team_key.py",
-      "code": "F401",
-      "count": 2
     },
     {
       "tool": "ruff",
@@ -1795,12 +1693,6 @@
     },
     {
       "tool": "ruff",
-      "file": "server/tests/test_service_registration_team_key.py",
-      "code": "F401",
-      "count": 2
-    },
-    {
-      "tool": "ruff",
       "file": "server/tests/test_status_locks_http.py",
       "code": "F401",
       "count": 1
@@ -1819,12 +1711,6 @@
     },
     {
       "tool": "ruff",
-      "file": "server/tests/test_team_auth_deps.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
       "file": "server/tests/test_team_controller_registry_outage_http.py",
       "code": "F401",
       "count": 2
@@ -1838,12 +1724,6 @@
     {
       "tool": "ruff",
       "file": "server/tests/test_team_documents_http.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_team_key_pinning.py",
       "code": "F401",
       "count": 1
     },
