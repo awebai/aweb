@@ -819,6 +819,10 @@ ROOT_CONSUMERS = {
         'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
         'filepath.Join("..", "..", "..", "docs", "vectors", "message-display-binding-v1.json")',
     ),
+    PurePosixPath("cli/go/chat/stream_display_binding_test.go"): _consumer(
+        "team-auth-envelope-v2.json",
+        'filepath.Join("..", "..", "..", "docs", "vectors", "team-auth-envelope-v2.json")',
+    ),
     PurePosixPath("channel-core/test/request_envelope_as_message.test.ts"): _consumer(
         {
             "message-display-binding-v1.json",
