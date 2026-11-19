@@ -209,6 +209,38 @@ for origin in ['http://awid:8010','http://server:8000','http://peer:8000']:
     )
 
 
+def run_released_kernel_wake_probe(*, lane, binary, lane_failures):
+    """Run the required kernel seam and retain its failure in lane admission."""
+    with phase("released-kernel-wake"):
+        try:
+            compose(
+                "exec",
+                "-T",
+                "cli",
+                "node",
+                "/work/user_paths_oats.mjs",
+                "--aw",
+                binary,
+                "--root",
+                "/identities/kernel-wake",
+                "--seat",
+                f"/identities/{lane}/g1",
+                "--fixture-home",
+                f"/identities/{lane}/home",
+                "--sender",
+                f"/identities/{lane}/t1",
+                "--team",
+                f"members:{lane}-g1.test",
+                "--source-commit",
+                os.environ.get("USER_PATHS_CANDIDATE_SHA")
+                or run("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
+                "--output",
+                "/work/released-kernel-wake.json",
+            )
+        except subprocess.CalledProcessError:
+            lane_failures.append("released-kernel-wake")
+
+
 def main():
     global BASELINE_READY
     kernel_wake_required = True
@@ -533,34 +565,9 @@ def main():
         kernel_wake_required = not BASELINE_READY and not CANDIDATE_BIN
         if kernel_wake_required:
             probe_lane, probe_binary = selected_lanes[0]
-            with phase("released-kernel-wake"):
-                try:
-                    compose(
-                        "exec",
-                        "-T",
-                        "cli",
-                        "node",
-                        "/work/user_paths_oats.mjs",
-                        "--aw",
-                        probe_binary,
-                        "--root",
-                        "/identities/kernel-wake",
-                        "--seat",
-                        f"/identities/{probe_lane}/g1",
-                        "--fixture-home",
-                        f"/identities/{probe_lane}/home",
-                        "--sender",
-                        f"/identities/{probe_lane}/t1",
-                        "--team",
-                        f"members:{probe_lane}-g1.test",
-                        "--source-commit",
-                        os.environ.get("USER_PATHS_CANDIDATE_SHA")
-                        or run("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
-                        "--output",
-                        "/work/released-kernel-wake.json",
-                    )
-                except subprocess.CalledProcessError:
-                    lane_failures.append("released-kernel-wake")
+            run_released_kernel_wake_probe(
+                lane=probe_lane, binary=probe_binary, lane_failures=lane_failures
+            )
         status = 1 if lane_failures else 0
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
