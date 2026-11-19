@@ -104,8 +104,9 @@ async def test_newly_admitted_global_human_connects_behind_warm_strict_list(test
         dns_server = DnsServer()
         await dns_server.start()
         stack.callback(dns_server.close)
+        # DNS supplies controller authority; AWID_REGISTRY_URL selects the local registry.
         dns_server.records[(f"_awid.{domain}", "TXT")] = [
-            f'"{awid_txt_value(ROOT["did_key"], registry_origin)}"',
+            f'"{awid_txt_value(ROOT["did_key"])}"',
         ]
         resolver = dns.asyncresolver.Resolver(configure=False)
         resolver.nameservers = ["127.0.0.1"]
