@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-19
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-untrusted-input with one backing note; operator direction source-reported through coordinator mail.
+* **Update**: [Codex live delivery is the OATS wake](/aweb-protocol-expert/decisions/codex-live-delivery-is-the-oats-wake.md) gains "No further investment in `aw run`": the launcher is headed for obsolescence, gets no quality work, new runner tests, refusal-text changes or new support, may have existing release-evidence fixtures repaired, still has boundary-crossing defects reported, and keeps its released command and compatibility code.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
