@@ -101,7 +101,7 @@ async def test_changed_sender_conversation_or_proof_never_acknowledges_a_retry(
     with pytest.raises(ConflictError) as refused:
         result.refuse_conflicting_message_id()
     assert refused.value.detail == (
-        "message_id already exists for a different signed message. Choose a new message_id and retry."
+        "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
     )
 
 

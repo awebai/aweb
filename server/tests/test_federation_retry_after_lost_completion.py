@@ -279,7 +279,7 @@ async def test_plaintext_outbound_and_ingress_retry_after_completion_fault_cross
                 )
                 assert conflict.status_code == 409, conflict.text
                 assert conflict.json()["detail"] == (
-                    "message_id already exists for a different signed message. Choose a new message_id and retry."
+                    "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
                 )
             assert (
                 await table_counts(env.db),

@@ -214,7 +214,7 @@ async def test_exact_fresh_chat_retry_does_not_close_newer_session(
     conflict = await _post(sender, changed)
     assert conflict.status_code == (409 if encrypted else 422), conflict.text
     assert conflict.json()["detail"] == (
-        "message_id already exists for a different signed message. Choose a new message_id and retry."
+        "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
         if encrypted
         else "signed_payload body must match the chat message. Check the chat fields and sign the message again."
     )
@@ -287,7 +287,7 @@ async def test_continued_chat_exact_retry_returns_one_accepted_message(
         conflict = await _post(sender, changed_controls)
         assert conflict.status_code == 409, conflict.text
         assert conflict.json()["detail"] == (
-            "message_id already exists for a different signed message. Choose a new message_id and retry."
+            "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
         )
         assert await _snapshot(pair) == before
         assert len(pair.target.calls) == posts
