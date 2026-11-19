@@ -6,6 +6,7 @@ import json
 from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.client_address import request_client_address
 from aweb.identity_auth_deps import participant_dids
 from aweb.mcp.auth import get_auth, primary_auth_did
 from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
@@ -64,7 +65,7 @@ async def contacts_add(
             )
         resolved = await federation_authority.resolve_contact(
             normalize_hosted_handle_reference(contact_address),
-            source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
+            source_ip=request_client_address(auth.request),
         )
         result = await add_contact(
             db_infra,
@@ -376,7 +377,7 @@ async def _resolve_contact_target(
                 auth = get_auth()
                 resolved = await federation_authority.resolve_contact(
                     address,
-                    source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
+                    source_ip=request_client_address(auth.request),
                 )
             except FederationAuthorityError as exc:
                 if exc.reason != "recipient_identity_not_found":

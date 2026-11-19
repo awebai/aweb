@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from awid.federation_errors import FederationAuthorityError
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
+from aweb.client_address import request_client_address
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.contacts import (
     CONTACT_ADDRESS_PATTERN,
@@ -76,7 +77,7 @@ async def create_contact(
         raise FederationAuthorityError("federation_authority_coordination_unavailable")
     resolved = await authority.resolve_contact(
         payload.contact_address,
-        source_ip=str(request.client.host if request.client else "unknown"),
+        source_ip=request_client_address(request),
     )
     result = await add_contact(
         db,
@@ -114,7 +115,7 @@ async def bind_contact_identity_route(
         raise FederationAuthorityError("federation_authority_coordination_unavailable")
     resolved = await authority.resolve_contact(
         payload.address,
-        source_ip=str(request.client.host if request.client else "unknown"),
+        source_ip=request_client_address(request),
     )
     replacement = bool(
         payload.expected_old_did_aw and payload.expected_old_did_aw != resolved.did_aw

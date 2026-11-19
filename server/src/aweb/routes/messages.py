@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.client_address import request_client_address
 from aweb.agent_wake import agent_wake_publisher
 from aweb.messaging.mail_attribution import incoming_mail_sql, readable_mail_sql
 
@@ -519,7 +520,7 @@ async def send_message(
         sender,
         payload,
         runtime,
-        source=str(request.client.host if request.client else "unknown"),
+        source=request_client_address(request),
     )
     return _send_response(await send_mail(db, sender, target, payload, runtime))
 

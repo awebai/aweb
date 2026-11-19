@@ -110,3 +110,68 @@ async def test_outbound_budget_uses_the_same_configured_client_address(
         )
         expected = ["203.0.113.1", "203.0.113.2"] if trusted else ["127.0.0.1"]
         assert [row["bucket_key"] for row in rows] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["mail", "chat", "contact"])
+@pytest.mark.parametrize("trusted", [True, False])
+async def test_mounted_mcp_budget_uses_the_shared_request_client_address(
+    privacy_app,
+    monkeypatch,
+    surface,
+    trusted,
+):
+    from aweb.mcp.server import create_mcp_app
+
+    env = privacy_app
+    actor = env.actors["alice"]
+    monkeypatch.setenv("AWEB_CLIENT_ADDRESS_HEADER", "X-Client-IP" if trusted else "")
+    async with _authority(env, monkeypatch) as authority:
+        mcp = create_mcp_app(
+            db_infra=env.infra,
+            redis=env.redis,
+            registry_client=env.app.state.awid_registry_client,
+            federation_authority=authority,
+            public_origin=str(env.client.base_url).rstrip("/"),
+        )
+        env.app.mount("/budget-mcp", mcp)
+        await mcp.startup()
+        try:
+            for index in (1, 2):
+                address = f"foreign.test/missing-{index}"
+                tool, arguments = {
+                    "mail": ("send_mail", {"to": address, "body": "first contact"}),
+                    "chat": ("send_chat", {"to": address, "message": "first contact"}),
+                    "contact": ("contacts_add", {"contact_address": address}),
+                }[surface]
+                body = json.dumps(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": index,
+                        "method": "tools/call",
+                        "params": {"name": tool, "arguments": arguments},
+                    }
+                ).encode()
+                response = await env.client.post(
+                    "/budget-mcp/",
+                    content=body,
+                    headers={
+                        **_signed_team_headers(
+                            actor.sk, actor.did, TEAM, actor.certificate, body
+                        ),
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream",
+                        "X-Client-IP": f"untrusted, 203.0.113.{index}",
+                    },
+                )
+                assert response.status_code == 200, response.text
+                assert "recipient_identity_not_found" in response.text, response.text
+            sources = await env.db.fetch_all(
+                "SELECT bucket_key FROM {{tables.federation_authority_token_buckets}} "
+                "WHERE bucket_kind='source_ip' ORDER BY bucket_key",
+            )
+            assert [row["bucket_key"] for row in sources] == (
+                ["203.0.113.1", "203.0.113.2"] if trusted else ["127.0.0.1"]
+            )
+        finally:
+            await mcp.shutdown()

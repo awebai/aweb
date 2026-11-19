@@ -167,6 +167,11 @@ class FederationAuthorityActivation:
         token = await self.core.authorize_from_shared_cohort(claim)
         if token is None:
             return None
+        if (
+            evidence.get("checkpoint_revision") != token.checkpoint_revision
+            or evidence.get("cohort_generation") != token.cohort_generation
+        ):
+            return None
         return ResolvedContactIdentity(
             token=token,
             canonical_address=canonical_address,
@@ -229,6 +234,15 @@ class FederationAuthorityActivation:
         lookup: AuthorityLookupPolicy,
     ) -> ResolvedContactIdentity:
         canonical = canonical_protocol_address(address)
+        # docs/identity-messaging-contract.md:199-208: reuse only a live,
+        # checkpoint-matching PostgreSQL cohort, before charging external work.
+        published = await self.work.get_result("discovery:" + canonical)
+        if published is not None and published.status == AuthorityResultState.VERIFIED:
+            cached = await self._contact_from_result(
+                canonical, published, lookup=lookup
+            )
+            if cached is not None:
+                return cached
         domain = canonical.split("/", 1)[0]
         owner_id = uuid4()
         authority_generation = None

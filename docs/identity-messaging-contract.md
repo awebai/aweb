@@ -236,7 +236,9 @@ equal it. Unknown local first contact and route injection fail closed. Target
 registry or PostgreSQL/lease publication dependency failure uses
 `federation_authority_coordination_unavailable` (503, retryable).
 
-Federation's first-contact source budget uses the socket peer by default and
+Inbound and outbound federation first-contact source budgets share
+`aweb.client_address.request_client_address` across HTTP and mounted MCP.
+The source budget uses the socket peer by default and
 ignores forwarded client-address headers. A deployment behind a trusted proxy
 can set `AWEB_CLIENT_ADDRESS_HEADER` to the header carrying the client address.
 The shared `aweb_naapp.client_identity.ClientIdentity` resolver uses its final

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.client_address import request_client_address
 from aweb.agent_wake import agent_wake_publisher
 
 from aweb.attachment_service import (
@@ -393,7 +394,7 @@ async def create_or_send(
         sender,
         payload,
         runtime,
-        source=str(request.client.host if request.client else "unknown"),
+        source=request_client_address(request),
     )
     target_dids = sorted(
         {_target_did(row) for row in target.recipients if _target_did(row)}
@@ -1429,7 +1430,7 @@ async def send_message(
         sender,
         session_id,
         runtime,
-        source=str(request.client.host if request.client else "unknown"),
+        source=request_client_address(request),
     )
     sent = await send_chat(db, sender, target, payload, runtime)
     return SendMessageResponse(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aweb.client_address import request_client_address
 from aweb.messaging.chat_policy import HumanChatRefused
 from aweb.identity_auth_deps import participant_dids
 
@@ -404,7 +405,7 @@ async def chat_send(
         federation_authority=federation_authority,
         chat_transport=federation_transport,
     )
-    source = "mcp:" + str(auth.did_key or auth.did_aw or "unknown")
+    source = request_client_address(auth.request)
     address_ref = to_address.strip()
     named_alias = ""
     selector = None

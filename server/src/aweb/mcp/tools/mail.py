@@ -1,6 +1,7 @@
 """MCP tools for async mail messaging."""
 
 from __future__ import annotations
+from aweb.client_address import request_client_address
 from aweb.messaging.mail_attribution import incoming_mail_sql
 
 from aweb.identity_auth_deps import participant_dids
@@ -277,7 +278,7 @@ async def send_mail(
             sender,
             selector,
             runtime,
-            source="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
+            source=request_client_address(auth.request),
         )
         if target.continuation is not None:
             recipient_participant = target.continuation.recipient_participant
