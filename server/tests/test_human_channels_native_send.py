@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from test_mcp_mail_conversation_parity import mail_server as mail_server
 from aweb.human_channels.contract import ContractError, canonical_record, decode_record
 from aweb.human_channels.native import NativeMessagingService
 from aweb.identity_auth_deps import MessagingAuth
@@ -701,3 +702,26 @@ async def test_native_facts_project_identity_in_endpoint_team(native_send):
     assert facts.value['principal'] == {'kind': 'native', 'did': 'did:aw:human'}
     assert facts.value['actor_id'] == env['b']
     assert facts.value['team_id'] == env['auth'].team_id
+
+
+@pytest.mark.asyncio
+async def test_legacy_native_policy_retains_forbidden_contract_after_local_refusal(mail_server):
+    from dataclasses import replace
+    from test_local_policy_refusal_boundaries import admitted_local_recipient
+
+    env = mail_server
+    bob = await admitted_local_recipient(env)
+    recipient = await env.db.fetch_one(
+        "SELECT * FROM {{tables.agents}} WHERE agent_id=$1", UUID(bob.id)
+    )
+    outsider = MessagingAuth(
+        did_key=env.pilot_did, did_aw=env.pilot_stable, address=None,
+        team_id="ops:acme.com", verified_team_id="ops:acme.com",
+    )
+    with pytest.raises(ContractError) as refused:
+        await NativeMessagingService._policy(None, env.fixture.infra, outsider, recipient)
+    assert refused.value.code == "forbidden"
+    assert "reachable only from inside its own team" in refused.value.field
+    member = replace(outsider, did_key=bob.did, did_aw=None, team_id=bob.team,
+                     verified_team_id=bob.team)
+    await NativeMessagingService._policy(None, env.fixture.infra, member, recipient)
