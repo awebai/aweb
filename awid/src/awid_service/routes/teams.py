@@ -8,6 +8,7 @@ import re
 from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any, Literal
+from uuid import UUID
 
 import asyncpg
 from awid.contract import normalize_identity_scope
@@ -769,28 +770,31 @@ def _team_list_parameters(
     limit: int,
     cursor: dict[str, Any] | None,
 ) -> list[object]:
-    """Bind the visibility and keyset page from docs/awid-sot.md:670-672.
+    """Bind the visibility and keyset page from docs/awid-sot.md:670-677.
 
     The route verifies the reader before binding its DID; only a verified
     trusted-service credential selects ALL_TEAMS. Request values never form SQL.
     """
-    cursor_ts = None
-    cursor_team_uuid = None
+    cursor_ts: datetime | None = None
+    cursor_team_uuid: UUID | None = None
     if cursor is not None:
         cursor_created_at = cursor.get("created_at")
-        cursor_team_uuid = cursor.get("team_uuid")
+        cursor_uuid_input = cursor.get("team_uuid")
         if not isinstance(cursor_created_at, str) or not isinstance(
-            cursor_team_uuid, str
+            cursor_uuid_input, str
         ):
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail="Invalid cursor. Restart the team listing without a cursor and retry.",
             )
         try:
             cursor_ts = datetime.fromisoformat(cursor_created_at.replace("Z", "+00:00"))
+            if cursor_ts.utcoffset() is None:
+                raise ValueError("cursor timestamp requires a timezone")
+            cursor_team_uuid = UUID(cursor_uuid_input)
         except ValueError as exc:
             raise HTTPException(
-                status_code=400,
+                status_code=422,
                 detail="Invalid cursor. Restart the team listing without a cursor and retry.",
             ) from exc
     return [

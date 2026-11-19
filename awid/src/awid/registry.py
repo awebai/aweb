@@ -416,10 +416,6 @@ def _raise_registry_response_error(*, status_code: int, content: bytes) -> None:
     body_is_json = False
     try:
         parsed_error = json_loads(content)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        # A non-JSON error still carries its HTTP failure and sanitized body.
-        parsed_error = None
-    else:
         body_is_json = True
         if isinstance(parsed_error, dict):
             raw_detail = parsed_error.get("detail")
@@ -427,6 +423,11 @@ def _raise_registry_response_error(*, status_code: int, content: bytes) -> None:
                 detail = _safe_error_text(str(raw_detail).encode("utf-8"))
             if isinstance(raw_detail, dict) and isinstance(raw_detail.get("code"), str):
                 code = _safe_error_text(raw_detail["code"].encode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, UnicodeEncodeError):
+        # Malformed JSON or non-encodable detail/code remains the original
+        # HTTP failure, with a bounded textual fallback and no inferred code.
+        detail = None
+        code = None
     response_text = _safe_error_text(content)
     if status_code == 409:
         conflict = code if code is not None else _ADDRESS_CONFLICT_DETAILS.get(detail)
