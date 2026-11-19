@@ -37,7 +37,9 @@ elif args[0] == 'build':
  context=Path(args[-1])
  Path(os.environ['BUILD_OBSERVATION']).write_text(json.dumps({
  'files': sorted(str(p.relative_to(context)) for p in context.rglob('*') if p.is_file()),
- 'body': (context/'source.txt').read_text(), 'args':args}))
+ 'body': (context/'source.txt').read_text(), 'args':args,
+ 'builder':os.environ.get('BUILDX_BUILDER'), 'buildkit':os.environ.get('BUILDKIT_HOST'),
+ 'docker_host':os.environ.get('DOCKER_HOST')}))
 elif args[0] == 'cp':
  if os.environ.get('COPY_FAIL'):
   sys.exit(17)
@@ -112,6 +114,9 @@ elif args[0] not in ('create', 'rm'):
         env = dict(
             self.env,
             MISSING_IMAGE="1",
+            BUILDX_BUILDER="unrelated-remote-builder",
+            BUILDKIT_HOST="tcp://remote:1234",
+            DOCKER_HOST="unix:///admitted-local.sock",
             BUILD_OBSERVATION=str(observation),
             SHA=source.commit,
             TREE=source.tree,
@@ -127,6 +132,9 @@ elif args[0] not in ('create', 'rm'):
             "sha256:prepared",
         )
         observed = json.loads(observation.read_text())
+        self.assertIsNone(observed["builder"])
+        self.assertIsNone(observed["buildkit"])
+        self.assertEqual(observed["docker_host"], "unix:///admitted-local.sock")
         self.assertEqual(observed["files"], ["source.txt"])
         self.assertEqual(observed["body"], "committed source")
         self.assertIn("USER_PATHS_SOURCE_TREE=" + source.tree, observed["args"])

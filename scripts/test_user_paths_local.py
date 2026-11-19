@@ -128,6 +128,13 @@ def prepare_runtime(
                 root=root,
             )
             command(["tar", "-xf", str(archive), "-C", str(context)])
+            # docker build uses the admitted daemon's builder unless these override it.
+            # https://docs.docker.com/build/builders/#difference-between-docker-build-and-docker-buildx-build
+            build_environment = {
+                key: value
+                for key, value in environ.items()
+                if key not in ("BUILDX_BUILDER", "BUILDKIT_HOST")
+            }
             with (evidence / "runtime-build.log").open("w") as log:
                 result = invoke(
                     [
@@ -144,7 +151,7 @@ def prepare_runtime(
                         str(context / "candidate-gate/Dockerfile"),
                         str(context),
                     ],
-                    env=environ,
+                    env=build_environment,
                     stdout=log.fileno(),
                     timeout=None,
                 )
