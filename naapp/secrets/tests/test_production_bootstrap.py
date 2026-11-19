@@ -46,7 +46,13 @@ from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretBackend, SecretRecord
 from tests.human_owner import apply_holder, fixture_principal, member_key
-from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
+from tests.production_authority import (
+    SERVER,
+    authority,
+    install,
+    install_audit_receiver,
+    no_dns_override,
+)
 from tests.production_database import prepared_service_databases as prepared_service_databases
 from tests.test_composition import settings
 from tests.test_console_bootstrap import delivered_url
@@ -97,6 +103,7 @@ async def root(
                 update={
                     "public_origin": AUDIENCE,
                     "awid_service_token": SERVICE_TOKEN,
+                    "team_server_internal_origins": frozenset({SERVER}),
                     **production_settings,
                 }
             )

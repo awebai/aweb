@@ -37,7 +37,7 @@ from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from enum import StrEnum
-from ipaddress import IPv4Network, IPv6Network
+from ipaddress import IPv4Network, IPv6Network, ip_address
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -92,7 +92,7 @@ from aweb_naapp.runtime.authorization import (
 )
 from aweb_naapp.runtime.awid_member_credentials import read_member_credentials
 from aweb_naapp.runtime.db import NaappDatabase, SchemaPreparation, Store
-from aweb_naapp.runtime.event_emit import AppEvents, is_loopback_host
+from aweb_naapp.runtime.event_emit import AppEvents
 from aweb_naapp.runtime.health import CheckResult, HealthCheck, mount_health
 from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
@@ -114,7 +114,7 @@ from aweb_naapp.runtime.team_auth import (
 )
 from aweb_naapp.runtime.team_grants import AppIdentity, TeamGrantSource
 from aweb_naapp.runtime.team_key_pins import DatabaseTeamKeyPins
-from aweb_naapp.runtime.team_server import TeamServerDirectory
+from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerReach
 from aweb_naapp.skills import Skills
 
 if TYPE_CHECKING:
@@ -171,6 +171,7 @@ class NaappRuntime:
         awid_txt_resolver: TXTOutcomeResolver | None = None,
         awid_domain_verifier: DomainVerifier | None = None,
         team_server_transport: httpx.AsyncBaseTransport | None = None,
+        team_server_egress: Egress | None = None,
         stores: Sequence[Store] = (),
         schema_preparation: SchemaPreparation,
         hook_egress: Egress | None = None,
@@ -248,45 +249,14 @@ class NaappRuntime:
             team_cache=self._team_cache,
             transport=awid_transport,
         )
+        team_server_reach = TeamServerReach(
+            egress=team_server_egress,
+            internal_origins=settings.team_server_internal_origins,
+            transport=team_server_transport,
+        )
         self._installation_fence: InstallationFence | None = None
-        self._installation_grants = None
-        if self.manifest.app_keys_for(APP_GRANT_READ):
-            key = load_app_key(settings, self.manifest, APP_GRANT_READ)
-            self._installation_grants = TeamGrantSource(
-                identity=AppIdentity(
-                    app_id=self.manifest.app_id,
-                    origin=self.manifest.document["app"]["origin"],
-                    digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest(),
-                    manifest_digests=tuple(
-                        (version, "sha256:" + hashlib.sha256(data).hexdigest())
-                        for version, data in sorted(self._manifest_variants.items())
-                    ),
-                ),
-                signer=AppCredentialSigner(
-                    app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ
-                ),
-                discovery=self.team_server_directory(),
-                transport=team_server_transport,
-            )
-        hook_key = (
-            load_app_key(settings, self._manifest, HOOK_RESOLVE)
-            if self._manifest.app_keys_for(HOOK_RESOLVE)
-            else None
-        )
-        self._hook_resolver = (
-            HookResolver(
-                directory=self._team_server_directory,
-                signer=AppCredentialSigner(
-                    app_id=self._manifest.app_id,
-                    key=hook_key,
-                    purpose=HOOK_RESOLVE,
-                ),
-                app_origin=self._manifest.document["app"]["origin"],
-                transport=team_server_transport,
-            )
-            if hook_key is not None
-            else None
-        )
+        self._installation_grants = self._installation_grant_source(settings, team_server_reach)
+        self._hook_resolver = self._hook_resolution(settings, team_server_reach)
         self._hooks = RuntimeHooks.from_settings(
             settings,
             self._manifest,
@@ -297,6 +267,47 @@ class NaappRuntime:
         )
         # Each authorized() guard, with the action_kind it was given.
         self._guards: dict[Callable[..., object], ActionKind | None] = {}
+
+    def _installation_grant_source(
+        self, settings: NaappSettings, reach: TeamServerReach
+    ) -> TeamGrantSource | None:
+        """The grant reader for the served manifest's bytes, when it declares a grant-read key."""
+        if not self.manifest.app_keys_for(APP_GRANT_READ):
+            return None
+        key = load_app_key(settings, self.manifest, APP_GRANT_READ)
+        return TeamGrantSource(
+            identity=AppIdentity(
+                app_id=self.manifest.app_id,
+                origin=self.manifest.document["app"]["origin"],
+                digest="sha256:" + hashlib.sha256(self.manifest_bytes).hexdigest(),
+                manifest_digests=tuple(
+                    (version, "sha256:" + hashlib.sha256(data).hexdigest())
+                    for version, data in sorted(self._manifest_variants.items())
+                ),
+            ),
+            signer=AppCredentialSigner(
+                app_id=self.manifest.app_id, key=key, purpose=APP_GRANT_READ
+            ),
+            discovery=self.team_server_directory(),
+            reach=reach,
+        )
+
+    def _hook_resolution(
+        self, settings: NaappSettings, reach: TeamServerReach
+    ) -> HookResolver | None:
+        """The hook resolver, when the served manifest declares a hook-resolve key."""
+        if not self._manifest.app_keys_for(HOOK_RESOLVE):
+            return None
+        return HookResolver(
+            directory=self._team_server_directory,
+            signer=AppCredentialSigner(
+                app_id=self._manifest.app_id,
+                key=load_app_key(settings, self._manifest, HOOK_RESOLVE),
+                purpose=HOOK_RESOLVE,
+            ),
+            app_origin=self._manifest.document["app"]["origin"],
+            reach=reach,
+        )
 
     @property
     def manifest_bytes(self) -> bytes:
@@ -855,6 +866,18 @@ class NaappRuntime:
         )
 
 
+def _only_this_host_reaches(host: str) -> bool:
+    """Whether ``host`` names this machine alone: localhost, a ``.localhost``
+    name (RFC 6761 §6.3) or a loopback address."""
+    host = host.lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 def _refuse_the_hosted_app_id_elsewhere(
     settings: NaappSettings, template: Mapping[str, Any]
 ) -> None:
@@ -869,7 +892,9 @@ def _refuse_the_hosted_app_id_elsewhere(
             "manifest_template_invalid", "a manifest template names the hosted app.origin"
         )
     origin = settings.public_origin.rstrip("/")
-    if origin == hosted["origin"].rstrip("/") or is_loopback_host(urlsplit(origin).hostname or ""):
+    if origin == hosted["origin"].rstrip("/") or _only_this_host_reaches(
+        urlsplit(origin).hostname or ""
+    ):
         return
     if settings.app_id == hosted.get("id"):
         prefix = settings.model_config.get("env_prefix", "")

@@ -110,6 +110,70 @@ def canonical_url(url: str) -> CanonicalURL:
     )
 
 
+# The only hosts a plain-http operator origin may name: this machine's loopback.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def operator_origin(origin: str) -> str:
+    """An origin the operator configured, in canonical form, or a refusal
+    (docs/design/app-team-server-api.md §1, trust chain step 4: the operator's
+    own team servers, ``TEAM_SERVER_INTERNAL_ORIGINS``).
+
+    An origin is a scheme, a host and a port, and nothing else: https on any
+    host, or plain http only on this machine's loopback (``127.0.0.1``,
+    ``[::1]``, ``localhost``). Its host and port are canonicalized as
+    :func:`canonical_url` canonicalizes them, and the scheme's default port is
+    left out, so two spellings of one origin compare equal.
+    """
+    canonical, path = _operator_url(origin)
+    if path is not None:
+        raise _refuse("origin", "an origin has no path")
+    return canonical
+
+
+def operator_base_url(url: str) -> str:
+    """A base URL the operator configured, in canonical form, or a refusal
+    (naapp-lib/README.md, the ``APP_EVENTS_ORIGIN`` base-URL rule).
+
+    A base URL is an operator origin (see :func:`operator_origin`) optionally
+    followed by a path prefix, such as the mount point of a service the app
+    appends its own paths to. It has no query, fragment or userinfo, and a
+    trailing slash is dropped.
+    """
+    canonical, path = _operator_url(url)
+    return canonical + (path or "")
+
+
+def _operator_url(url: str) -> tuple[str, str | None]:
+    """The canonical origin of an operator URL, and its path prefix (None when it has no path)."""
+    scheme, sep, rest = url.partition("://")
+    scheme = scheme.lower()
+    if not sep or scheme not in ("https", "http"):
+        raise _refuse("scheme")
+    if any(_is_space_or_control(char) or char == "\\" for char in rest):
+        raise _refuse("character")
+    if any(char in rest for char in "?#"):
+        raise _refuse("origin", "an operator URL has no query or fragment")
+    authority_text, slash, path_text = rest.partition("/")
+    if not authority_text:
+        raise _refuse("host")
+    if "@" in authority_text:
+        raise _refuse("userinfo")
+    host, ip, port = _authority(authority_text)
+    explicit_port = (
+        authority_text.partition("]")[2] if authority_text.startswith("[") else authority_text
+    ).count(":") == 1
+    default_port = DEFAULT_PORT if scheme == "https" else 80
+    if not explicit_port:
+        port = default_port
+    if scheme == "http" and host not in LOOPBACK_HOSTS:
+        raise _refuse("scheme", "plain http is only for a loopback host")
+    authority = f"[{host}]" if isinstance(ip, IPv6Address) else host
+    origin = f"{scheme}://{authority}" + ("" if port == default_port else f":{port}")
+    path = _canonical_path(f"/{path_text}").rstrip("/") if slash else None
+    return origin, path
+
+
 def _is_space_or_control(char: str) -> bool:
     return char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
 

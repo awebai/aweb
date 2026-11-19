@@ -14,6 +14,8 @@ from aweb_naapp_testing.smtp import SmtpServer
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from service_server import Listener, serving
 
+from tests.production_authority import SERVER
+
 
 @asynccontextmanager
 async def logs_receiver(test_db_factory, registry, transport, directory, host, name, certificates):
@@ -48,6 +50,7 @@ async def logs_receiver(test_db_factory, registry, transport, directory, host, n
                 console_origin=f"https://console.{name}:{ports[0]}",
                 awid_registry_url=REGISTRY_URL,
                 awid_service_token=SERVICE_TOKEN,
+                team_server_internal_origins=[SERVER],
                 app_key_files=keys,
             ),
             email=EmailSettings.from_env(
