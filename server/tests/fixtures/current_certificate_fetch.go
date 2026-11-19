@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
@@ -36,6 +37,12 @@ func fetchCertificate() fetchResult {
 	if len(input.MemberSeed) != ed25519.SeedSize {
 		return fetchResult{Error: "probe member seed has the wrong length"}
 	}
+	key, err := awid.ParseSigningKey(pem.EncodeToMemory(&pem.Block{
+		Type: "ED25519 PRIVATE KEY", Bytes: input.MemberSeed,
+	}))
+	if err != nil {
+		return fetchResult{Error: fmt.Sprintf("decode probe member key: %v", err)}
+	}
 	client := awid.NewAWIDRegistryClient(&http.Client{Timeout: 10 * time.Second}, nil)
 	if err := client.SetFallbackRegistryURL(input.RegistryURL); err != nil {
 		return fetchResult{Error: fmt.Sprintf("select registry: %v", err)}
@@ -44,7 +51,7 @@ func fetchCertificate() fetchResult {
 	defer cancel()
 	certificate, err := client.FetchTeamCertificate(
 		ctx, input.RegistryURL, input.Domain, input.Team, input.CertificateID,
-		ed25519.NewKeyFromSeed(input.MemberSeed),
+		key,
 	)
 	if err != nil {
 		result := fetchResult{Error: err.Error()}
