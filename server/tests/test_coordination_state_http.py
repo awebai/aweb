@@ -312,3 +312,41 @@ async def test_committed_deletion_reports_claim_release_failure_and_retries(
         )
         == 0
     )
+
+
+@pytest.mark.asyncio
+async def test_narrow_heartbeat_refreshes_only_current_metadata_indices(privacy_app):
+    from aweb.presence import update_agent_presence
+
+    env = privacy_app
+    workspace = str(env.actors["alice"].workspace)
+    await update_agent_presence(
+        env.redis,
+        workspace_id=workspace,
+        alias="alice",
+        team_id=TEAM,
+        repo_id="old-repo",
+        current_branch="old-branch",
+        ttl_seconds=30,
+    )
+    await update_agent_presence(
+        env.redis,
+        workspace_id=workspace,
+        alias="alice",
+        team_id=TEAM,
+        repo_id="current-repo",
+        current_branch="current-branch",
+        ttl_seconds=30,
+    )
+    old_key = "idx:repo_workspaces:old-repo"
+    current_key = "idx:repo_workspaces:current-repo"
+    branch_key = "idx:branch_workspaces:current-repo:current-branch"
+    for key in (old_key, current_key, branch_key):
+        await env.redis.expire(key, 1)
+    heartbeat = await request_as(
+        env, alias="alice", method="POST", path="/v1/agents/heartbeat"
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+    assert await env.redis.ttl(current_key) > 30
+    assert await env.redis.ttl(branch_key) > 30
+    assert await env.redis.ttl(old_key) <= 1
