@@ -100,8 +100,7 @@ func TestOATSNativeInviteConnectionFailureRetainsTheExactAttempt(t *testing.T) {
 	}
 	// The provisioning driver receives a wrapped error. It must see the retained
 	// fence before deciding whether it may discard this recipient's credentials.
-	var retention interface{ RetainsIdentity() bool }
-	if !errors.As(fmt.Errorf("provisioning acceptance: %w", acceptErr), &retention) || !retention.RetainsIdentity() {
+	if !retainUnfinishedProvisioningIdentity(fmt.Errorf("provisioning acceptance: %w", acceptErr)) {
 		t.Fatalf("retained native issuance did not protect its recipient through outer cleanup: %v", acceptErr)
 	}
 	var transport *net.OpError
