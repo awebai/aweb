@@ -750,7 +750,7 @@ async def _stored_exact_chat_send(
             sender_did=actor_dids[0],
             conversation_id=session_id,
             chat_participant_dids=frozenset(actor_dids)
-            | frozenset(_target_did(row) for row in recipient_rows),
+            | frozenset(row.get("did") or _target_did(row) for row in recipient_rows),
             chat_controls=ChatReplayControls(
                 sender_leaving=payload.leaving,
                 hang_on=payload.hang_on,
@@ -773,8 +773,6 @@ async def _stored_exact_chat_send(
             _parse_signed_timestamp(str(payload.timestamp))
         lookup.refuse_conflicting_message_id()
     row = lookup.message
-    if row is None:
-        return None
     if _payload_is_encrypted(payload):
         validate_encrypted_chat_payload(
             payload,
@@ -814,6 +812,8 @@ async def _stored_exact_chat_send(
             sender_leaving=payload.leaving,
             hang_on=payload.hang_on,
         )
+    # Only an admitted, integrity-checked exact retry may consume its bound refs.
+    await attachment_retry(db, payload, MessageKind.CHAT)
     return row
 
 
@@ -1710,29 +1710,10 @@ async def _send_to_named_recipients(
         UUID(payload.session_id) if payload.session_id is not None else None
     )
     target_rows = list(target.recipients)
-    target_dids = sorted({_target_did(row) for row in target_rows if _target_did(row)})
     if _payload_is_encrypted(payload):
         await require_non_custodial_recipients(
             db, payload.encrypted_envelope or {}, target_rows, sender=auth
         )
-
-    existing_attachment = await attachment_retry(db, payload, "chat")
-    if existing_attachment:
-        binding, row = existing_attachment
-        expected_targets = set(binding.participant_dids) - set(actor_dids)
-        if (
-            set(target_dids) != expected_targets
-            or (payload.session_id and payload.session_id != binding.conversation_id)
-            or payload.message
-            or payload.signature
-            or payload.signed_payload
-            or bool(payload.leaving) != bool(row.get("sender_leaving"))
-            or (payload.reply_to or "") != str(row.get("reply_to") or "")
-        ):
-            raise DeliveryRefusal(
-                status_code=409, detail={"code": "attachment_conflict"}
-            )
-        return SentChat(session_id=UUID(binding.conversation_id), message=dict(row))
 
     participant_rows = [
         {
@@ -1886,7 +1867,6 @@ async def _send_to_remote_named_chat(
     id_chain = auth.id_chain
     actor_did = author.did
     actor_agent_id = author.agent_id
-    actor_alias = author.alias
     sender_address = author.address
     requested_session_id = plan.requested_session_id
     target_rows = list(target.recipients)
