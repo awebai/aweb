@@ -35,7 +35,9 @@ class Event:
 
     workspace_id: str
     type: str = ""
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -169,7 +171,9 @@ class TeamEvent:
 
     team_id: str
     type: str = ""
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -450,7 +454,9 @@ async def stream_events_multi(
         while True:
             # Check for client disconnect
             if check_disconnected and await check_disconnected():
-                logger.debug(f"Client disconnected, ending stream for {len(channels)} channels")
+                logger.debug(
+                    f"Client disconnected, ending stream for {len(channels)} channels"
+                )
                 return
 
             now = loop.time()
@@ -487,7 +493,9 @@ async def stream_events_multi(
                     timeout=1.0,
                 )
             except RedisConnectionError:
-                logger.info("Redis pubsub connection dropped; reconnecting", exc_info=True)
+                logger.info(
+                    "Redis pubsub connection dropped; reconnecting", exc_info=True
+                )
                 await _close_pubsub(pubsub)
                 pubsub = None
                 next_reconnect_at = now + reconnect_delay_seconds
@@ -530,12 +538,17 @@ async def stream_events_multi(
 
             # Send keepalive comment if needed
             if current_time - last_keepalive >= keepalive_seconds:
-                if pubsub is not None and current_time - last_pubsub_ping >= keepalive_seconds:
+                if (
+                    pubsub is not None
+                    and current_time - last_pubsub_ping >= keepalive_seconds
+                ):
                     try:
                         await pubsub.ping()
                         last_pubsub_ping = current_time
                     except RedisError:
-                        logger.info("Redis pubsub ping failed; reconnecting", exc_info=True)
+                        logger.info(
+                            "Redis pubsub ping failed; reconnecting", exc_info=True
+                        )
                         await _close_pubsub(pubsub)
                         pubsub = None
                         next_reconnect_at = current_time + reconnect_delay_seconds
