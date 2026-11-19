@@ -89,3 +89,32 @@ func TestClaimHumanControllerFilePreservesReadFailures(t *testing.T) {
 		}
 	}
 }
+
+// The controller pin refusal is a diagnostic from the server's authority
+// decision. This exercises the CLI mapper/display owners, not that authority.
+func TestClaimHumanControllerPinRefusalKeepsServerAction(t *testing.T) {
+	const detail = "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+	body, err := json.Marshal(struct {
+		Detail string `json:"detail"`
+	}{Detail: detail})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusal := &awid.APIError{StatusCode: 401, Body: string(body)}
+	mapped := mapClaimHumanError(refusal)
+	if mapped != refusal {
+		t.Fatalf("controller pin refusal lost its server cause/action: %v", mapped)
+	}
+	output := errorEnvelope(mapped, codedRefusalText(mapped, mapped.Error())).Error
+	if output.HTTPStatus != 401 || output.Code != "http_error" || output.Detail != detail || !strings.Contains(output.Message, detail) {
+		t.Fatalf("server pin diagnostic changed: %+v", output)
+	}
+}
+
+func TestClaimHumanMemberAuthenticationRefusalKeepsReleasedAdvice(t *testing.T) {
+	refusal := &awid.APIError{StatusCode: 401, Body: `{"detail":"did:key mismatch"}`}
+	mapped := mapClaimHumanError(refusal)
+	if mapped.Error() != "Your signing key does not match the registered agent. Check .aw/signing.key is intact." {
+		t.Fatalf("member-authentication advice changed: %v", mapped)
+	}
+}
