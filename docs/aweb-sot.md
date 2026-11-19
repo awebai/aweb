@@ -1009,7 +1009,10 @@ verified shared-team authority.
 existing conversation ID starts a new conversation. An explicit existing
 `conversation_id` continues that conversation, subject to participant and
 recipient checks. The server preserves the sender's signed conversation ID;
-an initial ID collision refuses with 409 `conversation_exists`. The accepted
+an initial ID collision refuses with 409 `conversation_exists`. The HTTP detail
+retains that released value, with an additive `recovery_action` directing the
+sender to continue the existing conversation or choose a new ID. MCP carries
+the same action and the stable `conversation_exists` reason. The accepted
 `new_conversation` field is a no-op. HTTP, MCP and saved-contact mail all use
 this rule; chat session reuse is unchanged. `aw mail send` to a recipient
 creates a fresh signed UUID without conversation/inbox pair lookup and rejects

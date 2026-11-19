@@ -8,10 +8,20 @@ from typing import Any
 from aweb.agent_wake import agent_wake_publisher
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import identity_binding_cache
+from aweb.identity_scope import normalize_identity_scope
 from aweb.mcp.auth import AuthContext
 from aweb.federation.origins import application_public_origins
 from aweb.mcp.mutations import current_mutation_callback
 from aweb.messaging.runtime import MessagingRuntime, application_public_origin
+
+
+def mcp_sender_budget_key(auth: AuthContext) -> str:
+    """Keep MCP federation budgets per authenticated sender behind shared proxies.
+
+    HTTP budgets use the configured client address; an MCP request can have no
+    HTTP peer and must retain its established authenticated-identity namespace.
+    """
+    return f"mcp:{auth.did_key}"
 
 
 def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
@@ -25,7 +35,11 @@ def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
         team_id=auth.team_id,
         alias=auth.alias,
         agent_id=auth.agent_id,
-        identity_scope=auth.identity_scope,
+        identity_scope=(
+            normalize_identity_scope(auth.identity_scope)
+            if auth.identity_scope is not None
+            else None
+        ),
         certificate_id=auth.certificate_id,
         verified_team_id=auth.team_id if auth.certificate_id else None,
         address_resolution=auth.address_resolution,
@@ -63,7 +77,9 @@ def mcp_messaging_runtime(
         mail_transport=mail_transport,
         chat_transport=chat_transport,
         public_origin=origin or application_public_origin(state),
-        public_origins=frozenset(application_public_origins(state, public_origin=origin or None)),
+        public_origins=frozenset(
+            application_public_origins(state, public_origin=origin or None)
+        ),
         on_mutation=current_mutation_callback(),
         agent_wake_publisher=agent_wake_publisher(state),
         identity_binding_cache=identity_binding_cache(state)

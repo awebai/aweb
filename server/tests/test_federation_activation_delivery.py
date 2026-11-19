@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from enum import Enum, auto
 import json
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -18,6 +19,11 @@ from aweb.federation.delivery import (
 )
 from aweb.federation.envelope import FederationEnvelope
 from did_key_fixtures import named_did_key
+
+
+class _AdmissionKey(Enum):
+    CURRENT = auto()
+    SUPERSEDED = auto()
 
 
 class _DB:
@@ -1157,6 +1163,14 @@ async def test_identity_policy_share_locks_allow_opposite_team_deliveries(
             forward.sender_address,
         )
     )
+    # This positive lock-order neighbor needs two admitted current members;
+    # identity residence alone is deliberately insufficient for shared-team policy.
+    await manager.execute(
+        """UPDATE {{tables.agents}} a SET accepted_team_did_key=t.team_did_key
+           FROM {{tables.teams}} t WHERE t.team_id=a.team_id
+             AND a.agent_id=ANY($1::uuid[])""",
+        [bob["agent_id"], alice["agent_id"]],
+    )
     reverse = forward.model_copy(
         update={
             "sender_did_aw": forward.target_did_aw,
@@ -1275,9 +1289,16 @@ async def test_global_recipient_without_stable_did_uses_own_federation_policy(aw
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("accepted_under,delivered", [("current", True), ("superseded", False)])
-async def test_phase_b_same_team_delivery_needs_the_sender_under_the_current_key(
-    aweb_cloud_db, accepted_under, delivered
+@pytest.mark.parametrize(
+    "sender_key,recipient_key,delivered",
+    [
+        (_AdmissionKey.CURRENT, _AdmissionKey.CURRENT, True),
+        (_AdmissionKey.SUPERSEDED, _AdmissionKey.CURRENT, False),
+        (_AdmissionKey.CURRENT, _AdmissionKey.SUPERSEDED, False),
+    ],
+)
+async def test_phase_b_shared_team_delivery_requires_both_current_admissions(
+    aweb_cloud_db, sender_key, recipient_key, delivered
 ):
     manager = aweb_cloud_db.aweb_db
     envelope = _envelope()
@@ -1289,6 +1310,15 @@ async def test_phase_b_same_team_delivery_needs_the_sender_under_the_current_key
     current_key = await manager.fetch_value(
         "SELECT team_did_key FROM {{tables.teams}} WHERE team_id='backend:beta.example'",
     )
+    admission_keys = {
+        _AdmissionKey.CURRENT: current_key,
+        _AdmissionKey.SUPERSEDED: "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    }
+    await manager.execute(
+        "UPDATE {{tables.agents}} SET accepted_team_did_key=$2 WHERE agent_id=$1",
+        recipient["agent_id"],
+        admission_keys[recipient_key],
+    )
     await manager.execute(
         """
         INSERT INTO {{tables.agents}} (team_id, alias, did_key, did_aw, address, identity_scope, inbound_mode,
@@ -1298,9 +1328,7 @@ async def test_phase_b_same_team_delivery_needs_the_sender_under_the_current_key
         envelope.sender_current_did_key,
         envelope.sender_did_aw,
         envelope.sender_address,
-        current_key
-        if accepted_under == "current"
-        else "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+        admission_keys[sender_key],
     )
 
     if delivered:

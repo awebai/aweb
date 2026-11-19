@@ -29,23 +29,34 @@ class EventConstantInventoryTests(unittest.TestCase):
 
     def test_named_constants_and_import_aliases_resolve(self):
         for prefix, expression in (
-            ("from aweb.event_types import MutationEventType", "MutationEventType.MAIL_SENT"),
-            ("from aweb.event_types import MutationEventType as Event", "Event.MAIL_SENT"),
-            ("from aweb.event_types import MutationEventType as Event", "Event.MAIL_SENT.value"),
+            (
+                "from aweb.event_types import MutationEventType",
+                "MutationEventType.MAIL_SENT",
+            ),
+            (
+                "from aweb.event_types import MutationEventType as Event",
+                "Event.MAIL_SENT",
+            ),
+            (
+                "from aweb.event_types import MutationEventType as Event",
+                "Event.MAIL_SENT.value",
+            ),
             ("import aweb.event_types as events", "events.MutationEventType.MAIL_SENT"),
             ("import aweb.event_types", "aweb.event_types.MutationEventType.MAIL_SENT"),
         ):
             with self.subTest(expression=expression):
                 sites, failures = self.inventory(
-                    prefix + "\nasync def send():\n    await fire_mutation_callback(None, "
-                    + expression + ", {})\n"
+                    prefix
+                    + "\nasync def send():\n    await fire_mutation_callback(None, "
+                    + expression
+                    + ", {})\n"
                 )
                 self.assertEqual(failures, [])
                 self.assertEqual([site["event"] for site in sites], ["message.sent"])
 
     def test_literals_and_repeated_call_sites_remain_counted(self):
         sites, failures = self.inventory(
-            'async def send():\n'
+            "async def send():\n"
             '    await fire_mutation_callback(None, "message.sent", {})\n'
             '    await fire_mutation_callback(None, "message.sent", {})\n'
         )
@@ -55,47 +66,55 @@ class EventConstantInventoryTests(unittest.TestCase):
 
     def test_both_conditional_branches_are_resolved(self):
         sites, failures = self.inventory(
-            'from aweb.event_types import MutationEventType as Event\n'
-            'async def send():\n'
-            '    await fire_mutation_callback(None, Event.MAIL_SENT if incoming else '
-            'Event.CHAT_MESSAGE_SENT, {})\n'
+            "from aweb.event_types import MutationEventType as Event\n"
+            "async def send():\n"
+            "    await fire_mutation_callback(None, Event.MAIL_SENT if incoming else "
+            "Event.CHAT_MESSAGE_SENT, {})\n"
         )
         self.assertEqual(failures, [])
-        self.assertEqual([site["event"] for site in sites], ["chat.message_sent", "message.sent"])
+        self.assertEqual(
+            [site["event"] for site in sites], ["chat.message_sent", "message.sent"]
+        )
 
     def test_unknown_dynamic_or_wrong_owner_is_not_silently_omitted(self):
         for expression in (
             "dynamic_event_name",
             "Event.UNKNOWN_MEMBER",
             "TransportEventType.MAIL_DELIVERED",
-            'Event.MAIL_SENT if incoming else dynamic_event_name',
+            "Event.MAIL_SENT if incoming else dynamic_event_name",
             '"message.sent" if incoming else dynamic_event_name',
             'getattr(Event, "MAIL_SENT")',
         ):
             with self.subTest(expression=expression):
                 sites, failures = self.inventory(
-                    'from aweb.event_types import MutationEventType as Event, TransportEventType\n'
-                    'async def send():\n    await fire_mutation_callback(None, '
-                    + expression + ', {})\n'
+                    "from aweb.event_types import MutationEventType as Event, TransportEventType\n"
+                    "async def send():\n    await fire_mutation_callback(None, "
+                    + expression
+                    + ", {})\n"
                 )
                 self.assertEqual(sites, [])
-                self.assertTrue(any("unsupported non-literal" in failure for failure in failures))
+                self.assertTrue(
+                    any("unsupported non-literal" in failure for failure in failures)
+                )
 
     def test_shadowed_enum_reference_is_dynamic(self):
         for declaration in (
-            'Event = external_value\nasync def send():',
-            'async def send(Event):',
-            'from other_module import Event\nasync def send():',
-            'from aweb.event_types import MutationEventType as Event, TransportEventType as Event\nasync def send():',
-            'Event.MAIL_SENT = external_value\nasync def send():',
+            "Event = external_value\nasync def send():",
+            "async def send(Event):",
+            "from other_module import Event\nasync def send():",
+            "from aweb.event_types import MutationEventType as Event, TransportEventType as Event\nasync def send():",
+            "Event.MAIL_SENT = external_value\nasync def send():",
         ):
             with self.subTest(declaration=declaration):
                 sites, failures = self.inventory(
-                    'from aweb.event_types import MutationEventType as Event\n'
-                    + declaration + '\n    await fire_mutation_callback(None, Event.MAIL_SENT, {})\n'
+                    "from aweb.event_types import MutationEventType as Event\n"
+                    + declaration
+                    + "\n    await fire_mutation_callback(None, Event.MAIL_SENT, {})\n"
                 )
                 self.assertEqual(sites, [])
-                self.assertTrue(any("unsupported non-literal" in failure for failure in failures))
+                self.assertTrue(
+                    any("unsupported non-literal" in failure for failure in failures)
+                )
 
 
 if __name__ == "__main__":

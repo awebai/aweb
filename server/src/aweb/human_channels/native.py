@@ -7,6 +7,16 @@ Managed membership/export/federation remain separately negotiated capabilities.
 
 from __future__ import annotations
 
+from aweb.messaging.mail_storage import (
+    MailStorageInput,
+    MailSender,
+    MailRecipient,
+    MailAttestation,
+    mail_content_for_storage,
+    store_mail,
+)
+from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
+
 import hashlib
 import json
 import logging
@@ -19,6 +29,7 @@ from uuid import UUID, uuid4
 
 from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
+from aweb.service_errors import ServiceError
 
 from aweb.attachment_service import prepare_attachment_send
 from aweb.db import TransactionInfra
@@ -40,7 +51,7 @@ from aweb.messaging.chat_policy import (
     require_agent_chat,
 )
 from aweb.messaging.conversations import create_conversation, get_conversation
-from aweb.messaging.messages import authorize_message_delivery, deliver_message
+from aweb.messaging.messages import authorize_message_delivery
 
 from .authority import NativeMessagingAuthority, NativeMessagingSubject
 from .contract import ContractError, ContractRecord, canonical_record, decode_record
@@ -250,6 +261,11 @@ class NativeMessagingService:
             raise ContractError("stale", "recipient authority")
         await self._policy(self.db, auth, recipient)
         payload = self._validate_envelope(auth, value, recipient)
+        observe_message_vocabulary(
+            source=MessageInputSource.NATIVE_PREPARATION,
+            content_mode=payload.content_mode,
+            priority=payload.priority,
+        )
         now = datetime.now(UTC)
         for pid, retained in list(self._preparations.items()):
             if json.loads(retained.prepared_bytes)["expires_at"] <= now.strftime(
@@ -376,8 +392,8 @@ class NativeMessagingService:
             _validate_encrypted_payload,
             _validate_signed_mail_payload,
         )
-        from aweb.routes.chat import CreateSessionRequest
-        from aweb.routes.messages import SendMessageRequest
+        from aweb.messaging.chat_models import CreateSessionRequest
+        from aweb.messaging.mail_models import SendMessageRequest
 
         try:
             if value["format"] == "native_plaintext":
@@ -522,7 +538,7 @@ class NativeMessagingService:
                 except AttachmentError as error:
                     raise ContractError("invalid", "attachment references") from error
             return payload
-        except HTTPException as error:
+        except (ServiceError, HTTPException) as error:
             raise ContractError("invalid", str(error.detail)) from error
         except (ValueError, TypeError, KeyError) as error:
             if isinstance(error, ContractError):
@@ -681,7 +697,7 @@ class NativeMessagingUnitOfWork:
                 raise HumanChatRefused(recipient_label(current_recipient))
         for old in (retained.author, retained.recipient):
             row = by_id.get(str(old["agent_id"]))
-            if not current_member(row):
+            if row is None or not current_member(row):
                 raise ContractError("forbidden", CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
             if any(
                 row.get(k) != old.get(k)
@@ -839,28 +855,48 @@ class NativeMessagingUnitOfWork:
                     )
                     if route.recipient_participant["did"] != recipient["did"]:
                         raise ContractError("forbidden", "exact conversation participant")
-                await deliver_message(
+                await store_mail(
                     db,
-                    **common,
-                    from_did=_principal(self.auth),
-                    to_did=recipient["did"],
-                    from_alias=self.auth.alias,
-                    to_alias=recipient["alias"],
-                    subject=payload.subject,
-                    body=payload.body,
-                    priority=payload.priority,
-                    sender_address=self.auth.address,
-                    team_id=self.auth.team_id,
-                    from_agent_id=self.auth.agent_id,
-                    to_agent_id=str(recipient["agent_id"]),
-                    conversation_id=cid,
-                    skip_policy_check=True,
+                    message=MailStorageInput(
+                        local_team_id=self.auth.team_id,
+                        sender=MailSender(
+                            did=_principal(self.auth),
+                            alias=self.auth.alias,
+                            address=self.auth.address,
+                            agent_id=self.auth.agent_id,
+                        ),
+                        recipient=MailRecipient(
+                            did=recipient["did"],
+                            alias=recipient["alias"],
+                            address=recipient.get("address"),
+                            agent_id=str(recipient["agent_id"]),
+                            signed_did=None,
+                            wake_dids=(
+                                recipient.get("did_aw"),
+                                recipient.get("did_key"),
+                            ),
+                        ),
+                        content=mail_content_for_storage(
+                            payload, encrypted_metadata=payload.encrypted_metadata
+                        ),
+                        attestation=MailAttestation(
+                            signature=common["signature"],
+                            signed_payload=common["signed_payload"],
+                            id_chain=common["id_chain"],
+                        ),
+                        priority=payload.priority,
+                        message_id=common["message_id"],
+                        conversation_id=cid,
+                    ),
                 )
             else:
                 cid = await ensure_session(
                     db,
                     team_id=self.auth.team_id,
-                    participant_rows=[dict(actor, agent_id=None), dict(recipient, agent_id=None)],
+                    participant_rows=[
+                        dict(actor, agent_id=None),
+                        dict(recipient, agent_id=None),
+                    ],
                     created_by=_principal(self.auth),
                     session_id=UUID(value["conversation_id"]),
                 )

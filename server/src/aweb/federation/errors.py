@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from awid.federation_errors import FederationAuthorityError
+
+if TYPE_CHECKING:
+    from aweb.messaging.delivery_policy import DeliveryPolicyRefused
+
+
+class FederationPolicyRefused(FederationAuthorityError):
+    """A stable federation reason retaining the canonical policy's next action."""
+
+    def __init__(self, refusal: DeliveryPolicyRefused) -> None:
+        self.detail = refusal.detail
+        super().__init__(refusal.code.value)
 
 
 class RecipientNotResidentError(FederationAuthorityError):
@@ -38,9 +49,10 @@ def authority_error_body(
     *,
     correlation_id: str,
 ) -> dict[str, Any]:
+    """Serialize the canonical federation reason, retryability and correlation identifier."""
     body: dict[str, Any] = {
         "detail": error.detail
-        if isinstance(error, (RecipientNotResidentError, LocalRecipientNotFoundError))
+        if isinstance(error, (RecipientNotResidentError, LocalRecipientNotFoundError, FederationPolicyRefused))
         else error.reason,
         "reason": error.reason,
         "retryable": error.retryable,

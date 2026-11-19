@@ -27,7 +27,6 @@ from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.mutation_hooks import create_mutation_handler
 from aweb.routes.chat import router as chat_router
-from aweb.service_errors import ValidationError
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 from test_messages_http import (
     _build_test_app,
@@ -41,14 +40,41 @@ TEAM = "ops:acme.com"
 INTERNAL_SECRET = "mutation-parity-test-secret"
 
 MESSAGE_SENT_KEYS = {
-    "team_id", "from_agent_id", "from_did", "from_did_aw", "to_agent_id", "from_alias",
-    "message_id", "conversation_id", "to_alias", "subject", "priority", "content_mode",
+    "team_id",
+    "from_agent_id",
+    "from_did",
+    "from_did_aw",
+    "to_agent_id",
+    "from_alias",
+    "message_id",
+    "conversation_id",
+    "to_alias",
+    "subject",
+    "priority",
+    "content_mode",
 }
 CHAT_SENT_KEYS = {
-    "team_id", "session_id", "conversation_id", "message_id", "from_agent_id", "from_alias",
-    "from_did", "from_did_aw", "to_aliases", "preview", "content_mode",
+    "team_id",
+    "session_id",
+    "conversation_id",
+    "message_id",
+    "from_agent_id",
+    "from_alias",
+    "from_did",
+    "from_did_aw",
+    "to_aliases",
+    "preview",
+    "content_mode",
 }
-ACKNOWLEDGED_KEYS = {"team_id", "agent_id", "alias", "message_id", "from_alias", "subject", "content_mode"}
+ACKNOWLEDGED_KEYS = {
+    "team_id",
+    "agent_id",
+    "alias",
+    "message_id",
+    "from_alias",
+    "subject",
+    "content_mode",
+}
 
 
 class _RecordingRedis:
@@ -83,15 +109,22 @@ async def server(aweb_cloud_db, monkeypatch):
         sk, _, did_key = _make_keypair()
         keys[alias] = (sk, did_key)
         agents[alias] = await _insert_agent(
-            db, team_id=TEAM, alias=alias, did_key=did_key,
-            did_aw=f"did:aw:{alias}", address=f"acme.com/{alias}",
+            db,
+            team_id=TEAM,
+            alias=alias,
+            did_key=did_key,
+            did_aw=f"did:aw:{alias}",
+            address=f"acme.com/{alias}",
         )
         workspaces[alias] = uuid4()
         await db.execute(
             """INSERT INTO {{tables.workspaces}}
                (workspace_id, team_id, agent_id, alias, workspace_type)
                VALUES ($1, $2, $3, $4, 'hosted_mcp')""",
-            workspaces[alias], TEAM, UUID(agents[alias]), alias,
+            workspaces[alias],
+            TEAM,
+            UUID(agents[alias]),
+            alias,
         )
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", INTERNAL_SECRET)
@@ -102,7 +135,9 @@ async def server(aweb_cloud_db, monkeypatch):
         async def signer(**kwargs):
             signed = canonical_signed_payload(dict(kwargs["payload"]))
             return HostedMessageSigningResult(
-                from_did=did_key, signing_key_id=did_key, signed_payload=signed,
+                from_did=did_key,
+                signing_key_id=did_key,
+                signed_payload=signed,
                 signature=sign_message(sk, signed.encode()),
             )
 
@@ -120,8 +155,13 @@ async def server(aweb_cloud_db, monkeypatch):
 
     redis = _RecordingRedis()
     app = _build_test_app(db, legacy_registry())
-    seed_verified_bindings(app, *((f"did:aw:{alias}", did, f"acme.com/{alias}")
-                                  for alias, (_, did) in keys.items()))
+    seed_verified_bindings(
+        app,
+        *(
+            (f"did:aw:{alias}", did, f"acme.com/{alias}")
+            for alias, (_, did) in keys.items()
+        ),
+    )
     app.state.on_mutation = record_mutation
 
     # The task routes run as the member named by the request; certificate
@@ -129,8 +169,13 @@ async def server(aweb_cloud_db, monkeypatch):
     async def task_identity(request: Request) -> TeamIdentity:
         alias = request.headers["X-Test-Actor"]
         return TeamIdentity(
-            team_id=TEAM, alias=alias, did_key=keys[alias][1], did_aw=f"did:aw:{alias}",
-            address=f"acme.com/{alias}", agent_id=agents[alias], identity_scope="global",
+            team_id=TEAM,
+            alias=alias,
+            did_key=keys[alias][1],
+            did_aw=f"did:aw:{alias}",
+            address=f"acme.com/{alias}",
+            agent_id=agents[alias],
+            identity_scope="global",
             certificate_id=f"cert-{alias}",
         )
 
@@ -138,30 +183,48 @@ async def server(aweb_cloud_db, monkeypatch):
     app.include_router(chat_router)
     app.dependency_overrides[get_team_identity] = task_identity
     for route in app.routes:
-        for dependency in getattr(getattr(route, "dependant", None), "dependencies", []):
-            if getattr(dependency.call, "_aweb_grant_scope", None) in {"coord.read", "coord.write"}:
+        for dependency in getattr(
+            getattr(route, "dependant", None), "dependencies", []
+        ):
+            if getattr(dependency.call, "_aweb_grant_scope", None) in {
+                "coord.read",
+                "coord.write",
+            }:
                 app.dependency_overrides[dependency.call] = task_identity
     mcp = create_mcp_app(db_infra=app.state.db, redis=redis, hosted_signer=signer)
     app.mount("/mcp", mcp)
     await mcp.startup()
     try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
 
             async def mcp_result(alias, tool, **arguments):
                 current_actor["alias"] = alias
                 principal = str(uuid4())
                 headers = {
-                    "Accept": "application/json, text/event-stream", "X-Team-ID": TEAM,
-                    "X-User-ID": principal, "X-AWEB-Actor-ID": agents[alias],
+                    "Accept": "application/json, text/event-stream",
+                    "X-Team-ID": TEAM,
+                    "X-User-ID": principal,
+                    "X-AWEB-Actor-ID": agents[alias],
                     "X-AWEB-Auth": build_internal_auth_header_value(
-                        secret=INTERNAL_SECRET, team_id=TEAM,
-                        principal_type="u", principal_id=principal, actor_id=agents[alias],
+                        secret=INTERNAL_SECRET,
+                        team_id=TEAM,
+                        principal_type="u",
+                        principal_id=principal,
+                        actor_id=agents[alias],
                     ),
                 }
-                response = await client.post("/mcp/", headers=headers, json={
-                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                    "params": {"name": tool, "arguments": arguments},
-                })
+                response = await client.post(
+                    "/mcp/",
+                    headers=headers,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/call",
+                        "params": {"name": tool, "arguments": arguments},
+                    },
+                )
                 assert response.status_code == 200, response.text
                 result = response.json()
                 assert "error" not in result, result
@@ -173,7 +236,9 @@ async def server(aweb_cloud_db, monkeypatch):
                 return payload
 
             async def rest_task_response(alias, method, path, body=None):
-                return await client.request(method, path, json=body, headers={"X-Test-Actor": alias})
+                return await client.request(
+                    method, path, json=body, headers={"X-Test-Actor": alias}
+                )
 
             async def rest_task(alias, method, path, body=None):
                 response = await rest_task_response(alias, method, path, body)
@@ -184,7 +249,8 @@ async def server(aweb_cloud_db, monkeypatch):
                 sk, did_key = keys[alias]
                 data = json.dumps(body).encode() if body is not None else b""
                 response = await client.post(
-                    path, content=data,
+                    path,
+                    content=data,
                     headers={
                         "Content-Type": "application/json",
                         **_signed_identity_headers(sk, did_key, "", data),
@@ -194,12 +260,27 @@ async def server(aweb_cloud_db, monkeypatch):
                 return response.json()
 
             async def rest_mail(alias, *, body, to_alias=None, conversation_id=None):
-                target = {"to_alias": to_alias} if to_alias else {"conversation_id": conversation_id}
-                return await rest_post(alias, "/v1/messages", {**target, "subject": "status", "body": body})
+                target = (
+                    {"to_alias": to_alias}
+                    if to_alias
+                    else {"conversation_id": conversation_id}
+                )
+                return await rest_post(
+                    alias, "/v1/messages", {**target, "subject": "status", "body": body}
+                )
 
             yield SimpleNamespace(
-                db=db, app=app, agents=agents, workspaces=workspaces, mutations=mutations, redis=redis,
-                mcp_call=mcp_call, mcp_result=mcp_result, rest_post=rest_post, rest_mail=rest_mail, rest_task=rest_task,
+                db=db,
+                app=app,
+                agents=agents,
+                workspaces=workspaces,
+                mutations=mutations,
+                redis=redis,
+                mcp_call=mcp_call,
+                mcp_result=mcp_result,
+                rest_post=rest_post,
+                rest_mail=rest_mail,
+                rest_task=rest_task,
                 rest_task_response=rest_task_response,
             )
     finally:
@@ -213,17 +294,31 @@ def _events(server, event_type):
 @pytest.mark.asyncio
 async def test_mcp_send_mail_fires_message_sent_like_rest(server):
     # No pilot/bob mail pair exists yet: the new-conversation path.
-    fresh = await server.mcp_call("pilot", "send_mail", to="bob", subject="new", body="fresh", plaintext=True)
+    fresh = await server.mcp_call(
+        "pilot", "send_mail", to="bob", subject="new", body="fresh", plaintext=True
+    )
     rest = await server.rest_mail("bob", to_alias="pilot", body="from rest")
     # The caller explicitly selects the conversation-continuation path.
-    continued = await server.mcp_call("pilot", "send_mail", conversation_id=fresh["conversation_id"], subject="re", body="reply", plaintext=True)
+    continued = await server.mcp_call(
+        "pilot",
+        "send_mail",
+        conversation_id=fresh["conversation_id"],
+        subject="re",
+        body="reply",
+        plaintext=True,
+    )
     assert continued["conversation_id"] == fresh["conversation_id"]
-    rest_continued = await server.rest_mail("bob", conversation_id=fresh["conversation_id"], body="rest reply")
+    rest_continued = await server.rest_mail(
+        "bob", conversation_id=fresh["conversation_id"], body="rest reply"
+    )
     assert rest_continued["conversation_id"] == fresh["conversation_id"]
 
     events = _events(server, "message.sent")
     assert [event["message_id"] for event in events] == [
-        fresh["message_id"], rest["message_id"], continued["message_id"], rest_continued["message_id"],
+        fresh["message_id"],
+        rest["message_id"],
+        continued["message_id"],
+        rest_continued["message_id"],
     ]
     mcp_events, rest_event = [events[0], events[2]], events[1]
     assert set(rest_event) == MESSAGE_SENT_KEYS
@@ -249,15 +344,25 @@ async def test_mcp_send_mail_fires_message_sent_like_rest(server):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("via", ["mcp", "rest"])
 async def test_a_mail_reply_reaches_the_recipients_event_stream(server, via):
-    opened = await server.mcp_call("bob", "send_mail", to="pilot", subject="new", body="open", plaintext=True)
-    server.app.state.on_mutation = create_mutation_handler(server.redis, server.app.state.db)
+    opened = await server.mcp_call(
+        "bob", "send_mail", to="pilot", subject="new", body="open", plaintext=True
+    )
+    server.app.state.on_mutation = create_mutation_handler(
+        server.redis, server.app.state.db
+    )
 
     if via == "mcp":
         await server.mcp_call(
-            "pilot", "send_mail", conversation_id=opened["conversation_id"], body="reply", plaintext=True,
+            "pilot",
+            "send_mail",
+            conversation_id=opened["conversation_id"],
+            body="reply",
+            plaintext=True,
         )
     else:
-        await server.rest_mail("pilot", conversation_id=opened["conversation_id"], body="reply")
+        await server.rest_mail(
+            "pilot", conversation_id=opened["conversation_id"], body="reply"
+        )
 
     assert _published(server, f"events:{server.agents['bob']}") == ["message.delivered"]
 
@@ -299,21 +404,35 @@ async def test_check_mail_acknowledges_like_the_ack_route(server):
         )
         return {str(row["message_id"]): row["read_at"] for row in rows}
 
-    acknowledged = await server.rest_post("pilot", f"/v1/messages/{by_route['message_id']}/ack")
+    acknowledged = await server.rest_post(
+        "pilot", f"/v1/messages/{by_route['message_id']}/ack"
+    )
     # The tool acknowledges the unread mail it returns: the one the route left.
     await server.mcp_call("pilot", "check_mail")
 
     events = _events(server, "message.acknowledged")
-    assert [event["message_id"] for event in events] == [by_route["message_id"], by_tool["message_id"]]
-    route_event, tool_event = ({**event, "message_id": "<this message>"} for event in events)
+    assert [event["message_id"] for event in events] == [
+        by_route["message_id"],
+        by_tool["message_id"],
+    ]
+    route_event, tool_event = (
+        {**event, "message_id": "<this message>"} for event in events
+    )
     assert tool_event == route_event
     assert route_event == {
-        "team_id": TEAM, "agent_id": server.agents["pilot"], "alias": "pilot", "message_id": "<this message>",
-        "from_alias": "bob", "subject": "status", "content_mode": "legacy_plaintext_v1",
+        "team_id": TEAM,
+        "agent_id": server.agents["pilot"],
+        "alias": "pilot",
+        "message_id": "<this message>",
+        "from_alias": "bob",
+        "subject": "status",
+        "content_mode": "legacy_plaintext_v1",
     }
     assert wakes.submitted == [{"did:did:aw:pilot": {"mail"}}] * 2
     read_at = await stored_read_at()
-    assert read_at[by_route["message_id"]] == datetime.fromisoformat(acknowledged["acknowledged_at"])
+    assert read_at[by_route["message_id"]] == datetime.fromisoformat(
+        acknowledged["acknowledged_at"]
+    )
     assert read_at[by_tool["message_id"]] is not None
 
     # Mail that is already read is acknowledged again by neither.
@@ -326,13 +445,22 @@ async def test_check_mail_acknowledges_like_the_ack_route(server):
 
 @pytest.mark.asyncio
 async def test_mcp_send_chat_fires_chat_message_sent_like_rest(server):
-    opened = await server.mcp_call("pilot", "send_chat", to="bob", message="hello bob", plaintext=True)
+    opened = await server.mcp_call(
+        "pilot", "send_chat", to="bob", message="hello bob", plaintext=True
+    )
     continued = await server.mcp_call(
-        "pilot", "send_chat", conversation_id=opened["conversation_id"], message="still there?", plaintext=True,
+        "pilot",
+        "send_chat",
+        conversation_id=opened["conversation_id"],
+        message="still there?",
+        plaintext=True,
     )
 
     sent = _events(server, "chat.message_sent")
-    assert [event["message_id"] for event in sent] == [opened["message_id"], continued["message_id"]]
+    assert [event["message_id"] for event in sent] == [
+        opened["message_id"],
+        continued["message_id"],
+    ]
     for event in sent:
         assert set(event) == CHAT_SENT_KEYS
         assert event["team_id"] == TEAM
@@ -348,16 +476,22 @@ async def test_mcp_send_chat_fires_chat_message_sent_like_rest(server):
 
 @pytest.mark.asyncio
 async def test_mcp_mark_chat_read_publishes_read_receipt_like_rest(server):
-    opened = await server.mcp_call("bob", "send_chat", to="pilot", message="ping", plaintext=True)
+    opened = await server.mcp_call(
+        "bob", "send_chat", to="pilot", message="ping", plaintext=True
+    )
     session_id = opened["conversation_id"]
     before = len(server.redis.published)
 
     marked = await server.mcp_call(
-        "pilot", "mark_chat_read", conversation_id=session_id, message_ids=[opened["message_id"]],
+        "pilot",
+        "mark_chat_read",
+        conversation_id=session_id,
+        message_ids=[opened["message_id"]],
     )
     assert marked["messages_marked"] == 1
     receipts = [
-        payload for channel, payload in server.redis.published[before:]
+        payload
+        for channel, payload in server.redis.published[before:]
         if payload.get("signal_type") == "read_receipt"
     ]
     assert len(receipts) == 1
@@ -366,10 +500,16 @@ async def test_mcp_mark_chat_read_publishes_read_receipt_like_rest(server):
     assert receipts[0]["agent_id"] == "did:aw:pilot"
 
     # Nothing newly read: no receipt, as on the REST route.
-    again = await server.mcp_call("pilot", "mark_chat_read", conversation_id=session_id, up_to_message_id=opened["message_id"])
+    again = await server.mcp_call(
+        "pilot",
+        "mark_chat_read",
+        conversation_id=session_id,
+        up_to_message_id=opened["message_id"],
+    )
     assert again["messages_marked"] == 0
     assert [
-        payload for channel, payload in server.redis.published[before:]
+        payload
+        for channel, payload in server.redis.published[before:]
         if payload.get("signal_type") == "read_receipt"
     ] == receipts
 
@@ -380,30 +520,48 @@ async def test_mark_chat_read_marks_like_the_read_route(server, shape):
     server.app.state.redis = server.redis
     wakes = server.app.state.agent_wake_publisher = _RecordingWakes()
 
-    opened = await server.mcp_call("bob", "send_chat", to="pilot", message="ping", plaintext=True)
+    opened = await server.mcp_call(
+        "bob", "send_chat", to="pilot", message="ping", plaintext=True
+    )
     session_id = opened["conversation_id"]
     continued = await server.mcp_call(
-        "bob", "send_chat", conversation_id=session_id, message="ping again", plaintext=True,
+        "bob",
+        "send_chat",
+        conversation_id=session_id,
+        message="ping again",
+        plaintext=True,
     )
 
     observed = {}
-    for via, message_id in (("mcp", opened["message_id"]), ("rest", continued["message_id"])):
-        arguments = {"message_ids": [message_id]} if shape == "message_ids" else {"up_to_message_id": message_id}
+    for via, message_id in (
+        ("mcp", opened["message_id"]),
+        ("rest", continued["message_id"]),
+    ):
+        arguments = (
+            {"message_ids": [message_id]}
+            if shape == "message_ids"
+            else {"up_to_message_id": message_id}
+        )
         published, woken = len(server.redis.published), len(wakes.submitted)
 
         marked = []
         # The second call finds nothing left to mark.
         for _ in range(2):
             if via == "mcp":
-                result = await server.mcp_call("pilot", "mark_chat_read", conversation_id=session_id, **arguments)
+                result = await server.mcp_call(
+                    "pilot", "mark_chat_read", conversation_id=session_id, **arguments
+                )
             else:
-                result = await server.rest_post("pilot", f"/v1/chat/sessions/{session_id}/read", arguments)
+                result = await server.rest_post(
+                    "pilot", f"/v1/chat/sessions/{session_id}/read", arguments
+                )
             marked.append(result["messages_marked"])
 
         read_by = await server.db.fetch_all(
             """SELECT agent_id FROM {{tables.chat_message_reads}}
                WHERE session_id = $1 AND did = 'did:aw:pilot' AND message_id = $2""",
-            UUID(session_id), UUID(message_id),
+            UUID(session_id),
+            UUID(message_id),
         )
         receipt = await server.db.fetch_one(
             """SELECT agent_id, last_read_message_id FROM {{tables.chat_read_receipts}}
@@ -414,9 +572,14 @@ async def test_mark_chat_read_marks_like_the_read_route(server, shape):
             "marked": marked,
             "read_by": [str(row["agent_id"]) for row in read_by],
             "receipt_by": str(receipt["agent_id"]),
-            "receipt_names_the_message": receipt["last_read_message_id"] == UUID(message_id),
+            "receipt_names_the_message": receipt["last_read_message_id"]
+            == UUID(message_id),
             "signals": [
-                (payload["agent_id"], payload["session_id"] == session_id, payload["message_id"] == message_id)
+                (
+                    payload["agent_id"],
+                    payload["session_id"] == session_id,
+                    payload["message_id"] == message_id,
+                )
                 for _, payload in server.redis.published[published:]
                 if payload.get("signal_type") == "read_receipt"
             ],
@@ -441,14 +604,27 @@ TASK_SPECIFIC_KEYS = {"task_id", "task_ref", "comment_id"}
 TASK_CHANGES = [
     ("task_update", {"title": "Renamed"}, "PATCH", "", {"title": "Renamed"}, ()),
     ("task_update", {"assignee": "bob"}, "PATCH", "", {"assignee_alias": "bob"}, ()),
-    ("task_update", {"status": "closed", "notes": "done", "assignee": "bob"}, "PATCH", "",
-     {"status": "closed", "notes": "done", "assignee_alias": "bob"}, ("in_progress",)),
+    (
+        "task_update",
+        {"status": "closed", "notes": "done", "assignee": "bob"},
+        "PATCH",
+        "",
+        {"status": "closed", "notes": "done", "assignee_alias": "bob"},
+        ("in_progress",),
+    ),
     ("task_claim", {}, "PATCH", "", {"status": "in_progress"}, ()),
     ("task_close", {}, "PATCH", "", {"status": "closed"}, ("in_progress",)),
     ("task_close", {}, "PATCH", "", {"status": "closed"}, ()),
     ("task_reopen", {}, "PATCH", "", {"status": "open"}, ("in_progress", "closed")),
     ("task_reopen", {}, "PATCH", "", {"status": "open"}, ("in_progress",)),
-    ("task_comment_add", {"body": "a note"}, "POST", "/comments", {"body": "a note"}, ()),
+    (
+        "task_comment_add",
+        {"body": "a note"},
+        "POST",
+        "/comments",
+        {"body": "a note"},
+        (),
+    ),
 ]
 
 
@@ -459,8 +635,15 @@ def _fired_since(server, start, task):
         assert context["task_id"] == task["task_id"]
         if "task_ref" in context:
             assert context["task_ref"] == task["task_ref"]
-        fired.append((kind, {key: "<this task>" if key in TASK_SPECIFIC_KEYS else value
-                             for key, value in context.items()}))
+        fired.append(
+            (
+                kind,
+                {
+                    key: "<this task>" if key in TASK_SPECIFIC_KEYS else value
+                    for key, value in context.items()
+                },
+            )
+        )
     return fired
 
 
@@ -468,16 +651,31 @@ def _fired_since(server, start, task):
 async def test_mcp_task_create_fires_the_events_of_its_rest_route(server):
     start = len(server.mutations)
     by_tool = await server.mcp_call(
-        "pilot", "task_create", title="Ship it", description="details", priority=1,
-        task_type="bug", labels=["release"], assignee="bob",
+        "pilot",
+        "task_create",
+        title="Ship it",
+        description="details",
+        priority=1,
+        task_type="bug",
+        labels=["release"],
+        assignee="bob",
     )
     tool_events = _fired_since(server, start, by_tool)
 
     start = len(server.mutations)
-    by_route = await server.rest_task("pilot", "POST", "/v1/tasks", {
-        "title": "Ship it", "description": "details", "priority": 1,
-        "task_type": "bug", "labels": ["release"], "assignee_alias": "bob",
-    })
+    by_route = await server.rest_task(
+        "pilot",
+        "POST",
+        "/v1/tasks",
+        {
+            "title": "Ship it",
+            "description": "details",
+            "priority": 1,
+            "task_type": "bug",
+            "labels": ["release"],
+            "assignee_alias": "bob",
+        },
+    )
     route_events = _fired_since(server, start, by_route)
 
     assert [kind for kind, _ in route_events] == ["task.created"]
@@ -489,25 +687,43 @@ async def test_mcp_task_create_fires_the_events_of_its_rest_route(server):
         [UUID(by_tool["task_id"]), UUID(by_route["task_id"])],
     )
     assert [dict(row) for row in stored] == [
-        {"created_by_alias": "pilot", "created_by_did": "did:aw:pilot", "assignee_did": "did:aw:bob"},
+        {
+            "created_by_alias": "pilot",
+            "created_by_did": "did:aw:pilot",
+            "assignee_did": "did:aw:bob",
+        },
     ] * 2
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tool, arguments, method, suffix, body, earlier_statuses", TASK_CHANGES)
+@pytest.mark.parametrize(
+    "tool, arguments, method, suffix, body, earlier_statuses", TASK_CHANGES
+)
 async def test_mcp_task_tool_fires_the_events_of_its_rest_route(
-    server, tool, arguments, method, suffix, body, earlier_statuses,
+    server,
+    tool,
+    arguments,
+    method,
+    suffix,
+    body,
+    earlier_statuses,
 ):
     fired = {}
     for via in ("mcp", "rest"):
-        task = await server.rest_task("pilot", "POST", "/v1/tasks", {"title": "Same change"})
+        task = await server.rest_task(
+            "pilot", "POST", "/v1/tasks", {"title": "Same change"}
+        )
         for status in earlier_statuses:
-            await server.rest_task("pilot", "PATCH", f"/v1/tasks/{task['task_ref']}", {"status": status})
+            await server.rest_task(
+                "pilot", "PATCH", f"/v1/tasks/{task['task_ref']}", {"status": status}
+            )
         start = len(server.mutations)
         if via == "mcp":
             await server.mcp_call("pilot", tool, ref=task["task_ref"], **arguments)
         else:
-            await server.rest_task("pilot", method, f"/v1/tasks/{task['task_ref']}{suffix}", body)
+            await server.rest_task(
+                "pilot", method, f"/v1/tasks/{task['task_ref']}{suffix}", body
+            )
         fired[via] = _fired_since(server, start, task)
 
     assert fired["rest"], "the route fired nothing to compare with"
@@ -524,32 +740,45 @@ async def _create_task(server, via, alias, title):
 
 async def _set_status(server, via, alias, ref, status):
     if via == "mcp":
-        tool = {"in_progress": "task_claim", "closed": "task_close", "open": "task_reopen"}[status]
+        tool = {
+            "in_progress": "task_claim",
+            "closed": "task_close",
+            "open": "task_reopen",
+        }[status]
         return await server.mcp_call(alias, tool, ref=ref)
-    return await server.rest_task(alias, "PATCH", f"/v1/tasks/{ref}", {"status": status})
+    return await server.rest_task(
+        alias, "PATCH", f"/v1/tasks/{ref}", {"status": status}
+    )
 
 
 async def _claims(server, task_ref):
     rows = await server.db.fetch_all(
-        "SELECT workspace_id FROM {{tables.task_claims}} WHERE team_id = $1 AND task_ref = $2", TEAM, task_ref,
+        "SELECT workspace_id FROM {{tables.task_claims}} WHERE team_id = $1 AND task_ref = $2",
+        TEAM,
+        task_ref,
     )
     return [row["workspace_id"] for row in rows]
 
 
 async def _focus(server, alias):
     return await server.db.fetch_value(
-        "SELECT focus_task_ref FROM {{tables.workspaces}} WHERE workspace_id = $1", server.workspaces[alias],
+        "SELECT focus_task_ref FROM {{tables.workspaces}} WHERE workspace_id = $1",
+        server.workspaces[alias],
     )
 
 
 def _published(server, channel):
-    return [payload["type"] for name, payload in server.redis.published if name == channel]
+    return [
+        payload["type"] for name, payload in server.redis.published if name == channel
+    ]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("via", ["mcp", "rest"])
 async def test_claim_then_close_releases_the_claim_and_reaches_the_streams(server, via):
-    server.app.state.on_mutation = create_mutation_handler(server.redis, server.app.state.db)
+    server.app.state.on_mutation = create_mutation_handler(
+        server.redis, server.app.state.db
+    )
     task = await _create_task(server, via, "pilot", "Stream me")
     ref = task["task_ref"]
 
@@ -563,14 +792,28 @@ async def test_claim_then_close_releases_the_claim_and_reaches_the_streams(serve
 
     # What the dashboard's team stream and the member's own stream carry.
     assert _published(server, f"team-events:{TEAM}") == [
-        "task.created", "task.claimed", "task.status_changed", "task.assignee_changed",
-        "task.unclaimed", "task.status_changed",
+        "task.created",
+        "task.claimed",
+        "task.status_changed",
+        "task.assignee_changed",
+        "task.unclaimed",
+        "task.status_changed",
     ]
     assert _published(server, f"events:{server.workspaces['pilot']}") == [
-        "task.created", "task.claimed", "task.status_changed", "task.unclaimed", "task.status_changed",
+        "task.created",
+        "task.claimed",
+        "task.status_changed",
+        "task.unclaimed",
+        "task.status_changed",
     ]
-    unclaimed = [payload for name, payload in server.redis.published if payload["type"] == "task.unclaimed"]
-    assert [(payload["task_ref"], payload["alias"]) for payload in unclaimed] == [(ref, "pilot")] * 2
+    unclaimed = [
+        payload
+        for name, payload in server.redis.published
+        if payload["type"] == "task.unclaimed"
+    ]
+    assert [(payload["task_ref"], payload["alias"]) for payload in unclaimed] == [
+        (ref, "pilot")
+    ] * 2
 
     await _set_status(server, via, "pilot", ref, "open")
     await _set_status(server, via, "bob", ref, "in_progress")
@@ -580,7 +823,9 @@ async def test_claim_then_close_releases_the_claim_and_reaches_the_streams(serve
 @pytest.mark.asyncio
 @pytest.mark.parametrize("via", ["mcp", "rest"])
 @pytest.mark.parametrize("status", ["closed", "open"])
-async def test_leaving_in_progress_releases_every_claim_without_a_mutation_handler(server, via, status):
+async def test_leaving_in_progress_releases_every_claim_without_a_mutation_handler(
+    server, via, status
+):
     server.app.state.on_mutation = None
     task = await _create_task(server, via, "pilot", "No handler")
     ref = task["task_ref"]
@@ -588,7 +833,9 @@ async def test_leaving_in_progress_releases_every_claim_without_a_mutation_handl
     await server.db.execute(
         """INSERT INTO {{tables.task_claims}} (team_id, workspace_id, alias, task_ref)
            VALUES ($1, $2, 'bob', $3)""",
-        TEAM, server.workspaces["bob"], ref,
+        TEAM,
+        server.workspaces["bob"],
+        ref,
     )
 
     await _set_status(server, via, "pilot", ref, status)
@@ -607,22 +854,42 @@ async def test_a_refused_close_keeps_the_claim_and_fires_nothing(server, via):
     start = len(server.mutations)
 
     if via == "mcp":
-        refused = await server.mcp_result("pilot", "task_update", ref=ref, status="closed", assignee="nobody")
+        refused = await server.mcp_result(
+            "pilot", "task_update", ref=ref, status="closed", assignee="nobody"
+        )
         assert refused == {"error": "Assignee agent not found in this team"}
     else:
-        with pytest.raises(ValidationError, match="Assignee agent not found in this team"):
-            await server.rest_task("pilot", "PATCH", f"/v1/tasks/{ref}", {"status": "closed", "assignee_alias": "nobody"})
+        refused = await server.rest_task_response(
+            "pilot",
+            "PATCH",
+            f"/v1/tasks/{ref}",
+            {"status": "closed", "assignee_alias": "nobody"},
+        )
+        assert refused.status_code == 422, refused.text
+        assert refused.json() == {"detail": "Assignee agent not found in this team"}
 
     assert server.mutations[start:] == []
     assert await _claims(server, ref) == [server.workspaces["pilot"]]
-    assert await server.db.fetch_value("SELECT status FROM {{tables.tasks}} WHERE task_id = $1", UUID(task["task_id"])) == "in_progress"
+    assert (
+        await server.db.fetch_value(
+            "SELECT status FROM {{tables.tasks}} WHERE task_id = $1",
+            UUID(task["task_id"]),
+        )
+        == "in_progress"
+    )
 
 
 @pytest.mark.asyncio
-async def test_a_close_that_rolls_back_restores_the_claim_and_fires_nothing(server, monkeypatch):
-    task = await server.rest_task("pilot", "POST", "/v1/tasks", {"title": "Rolled back"})
+async def test_a_close_that_rolls_back_restores_the_claim_and_fires_nothing(
+    server, monkeypatch
+):
+    task = await server.rest_task(
+        "pilot", "POST", "/v1/tasks", {"title": "Rolled back"}
+    )
     ref = task["task_ref"]
-    await server.rest_task("pilot", "PATCH", f"/v1/tasks/{ref}", {"status": "in_progress"})
+    await server.rest_task(
+        "pilot", "PATCH", f"/v1/tasks/{ref}", {"status": "in_progress"}
+    )
     start = len(server.mutations)
     release = tasks_service.release_task_claims_on
     released = []
@@ -633,13 +900,21 @@ async def test_a_close_that_rolls_back_restores_the_claim_and_fires_nothing(serv
 
     monkeypatch.setattr(tasks_service, "release_task_claims_on", release_then_fail)
     with pytest.raises(RuntimeError, match="fails after the release"):
-        await server.rest_task("pilot", "PATCH", f"/v1/tasks/{ref}", {"status": "closed"})
+        await server.rest_task(
+            "pilot", "PATCH", f"/v1/tasks/{ref}", {"status": "closed"}
+        )
 
     assert released == [str(server.workspaces["pilot"])]
     assert server.mutations[start:] == []
     assert await _claims(server, ref) == [server.workspaces["pilot"]]
     assert await _focus(server, "pilot") == ref
-    assert await server.db.fetch_value("SELECT status FROM {{tables.tasks}} WHERE task_id = $1", UUID(task["task_id"])) == "in_progress"
+    assert (
+        await server.db.fetch_value(
+            "SELECT status FROM {{tables.tasks}} WHERE task_id = $1",
+            UUID(task["task_id"]),
+        )
+        == "in_progress"
+    )
 
 
 @pytest.mark.asyncio
@@ -658,38 +933,51 @@ async def test_mcp_task_tools_answer_a_conflict_or_refusal_as_an_error(server):
            (task_id, team_id, task_number, root_task_seq, task_ref_suffix, title,
             assignee_alias, assignee_did, created_by_alias, app_request)
            VALUES ($1, $2, 900, 900, 'zzzz', 'App request', 'bob', 'did:aw:bob', 'pilot', '{}'::jsonb)""",
-        request_id, TEAM,
+        request_id,
+        TEAM,
     )
     for tool, arguments in (
         ("task_claim", {}),
         ("task_update", {"assignee": "pilot"}),
         ("task_update", {"status": "closed", "assignee": "pilot"}),
     ):
-        assert await server.mcp_result("pilot", tool, ref=str(request_id), **arguments) == {"error": "target_mismatch"}
+        assert await server.mcp_result(
+            "pilot", tool, ref=str(request_id), **arguments
+        ) == {"error": "target_mismatch"}
 
     assert server.mutations[start:] == []
-    assert dict(await server.db.fetch_one(
-        "SELECT status, assignee_alias FROM {{tables.tasks}} WHERE task_id = $1", request_id,
-    )) == {"status": "open", "assignee_alias": "bob"}
+    assert dict(
+        await server.db.fetch_one(
+            "SELECT status, assignee_alias FROM {{tables.tasks}} WHERE task_id = $1",
+            request_id,
+        )
+    ) == {"status": "open", "assignee_alias": "bob"}
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("tool, arguments", [
-    ("task_create", {"title": ""}),
-    ("task_create", {"title": "x" * 4097}),
-    ("task_create", {"title": "Bad priority", "priority": 9}),
-    ("task_create", {"title": "Bad type", "task_type": "nonsense"}),
-    ("task_create", {"title": "Long", "description": "x" * 65537}),
-    ("task_update", {"status": "finished"}),
-    ("task_update", {"priority": 9}),
-    ("task_update", {"task_type": "nonsense"}),
-    ("task_update", {"title": "x" * 4097}),
-    ("task_comment_add", {"body": ""}),
-    ("task_comment_add", {"body": "x" * 65537}),
-])
-async def test_mcp_task_tools_refuse_what_their_rest_routes_refuse(server, tool, arguments):
+@pytest.mark.parametrize(
+    "tool, arguments",
+    [
+        ("task_create", {"title": ""}),
+        ("task_create", {"title": "x" * 4097}),
+        ("task_create", {"title": "Bad priority", "priority": 9}),
+        ("task_create", {"title": "Bad type", "task_type": "nonsense"}),
+        ("task_create", {"title": "Long", "description": "x" * 65537}),
+        ("task_update", {"status": "finished"}),
+        ("task_update", {"priority": 9}),
+        ("task_update", {"task_type": "nonsense"}),
+        ("task_update", {"title": "x" * 4097}),
+        ("task_comment_add", {"body": ""}),
+        ("task_comment_add", {"body": "x" * 65537}),
+    ],
+)
+async def test_mcp_task_tools_refuse_what_their_rest_routes_refuse(
+    server, tool, arguments
+):
     task = await server.rest_task("pilot", "POST", "/v1/tasks", {"title": "Bounds"})
-    before = await server.db.fetch_one("SELECT * FROM {{tables.tasks}} WHERE task_id = $1", UUID(task["task_id"]))
+    before = await server.db.fetch_one(
+        "SELECT * FROM {{tables.tasks}} WHERE task_id = $1", UUID(task["task_id"])
+    )
     start = len(server.mutations)
     if tool != "task_create":
         arguments = {"ref": task["task_ref"], **arguments}
@@ -699,18 +987,43 @@ async def test_mcp_task_tools_refuse_what_their_rest_routes_refuse(server, tool,
     assert set(refused) == {"error"}
     assert isinstance(refused["error"], str) and refused["error"]
     assert server.mutations[start:] == []
-    assert await server.db.fetch_value("SELECT count(*) FROM {{tables.tasks}} WHERE team_id = $1", TEAM) == 1
-    assert await server.db.fetch_value("SELECT count(*) FROM {{tables.task_comments}} WHERE team_id = $1", TEAM) == 0
-    assert await server.db.fetch_one("SELECT * FROM {{tables.tasks}} WHERE task_id = $1", UUID(task["task_id"])) == before
+    assert (
+        await server.db.fetch_value(
+            "SELECT count(*) FROM {{tables.tasks}} WHERE team_id = $1", TEAM
+        )
+        == 1
+    )
+    assert (
+        await server.db.fetch_value(
+            "SELECT count(*) FROM {{tables.task_comments}} WHERE team_id = $1", TEAM
+        )
+        == 0
+    )
+    assert (
+        await server.db.fetch_one(
+            "SELECT * FROM {{tables.tasks}} WHERE task_id = $1", UUID(task["task_id"])
+        )
+        == before
+    )
 
     # The route refuses the same input before it reaches the service.
     if tool == "task_create":
         method, path, body = "POST", "/v1/tasks", arguments
     elif tool == "task_update":
-        method, path, body = "PATCH", f"/v1/tasks/{task['task_ref']}", {k: v for k, v in arguments.items() if k != "ref"}
+        method, path, body = (
+            "PATCH",
+            f"/v1/tasks/{task['task_ref']}",
+            {k: v for k, v in arguments.items() if k != "ref"},
+        )
     else:
-        method, path, body = "POST", f"/v1/tasks/{task['task_ref']}/comments", {"body": arguments["body"]}
-    assert (await server.rest_task_response("pilot", method, path, body)).status_code == 422
+        method, path, body = (
+            "POST",
+            f"/v1/tasks/{task['task_ref']}/comments",
+            {"body": arguments["body"]},
+        )
+    assert (
+        await server.rest_task_response("pilot", method, path, body)
+    ).status_code == 422
 
 
 @pytest.mark.asyncio
@@ -727,4 +1040,8 @@ async def test_a_claim_response_carries_only_the_task(server, via):
         read = await server.rest_task("pilot", "GET", f"/v1/tasks/{task['task_ref']}")
     for response in (claimed, again, closed):
         assert set(response) == set(read)
-    assert (claimed["status"], again["status"], closed["status"]) == ("in_progress", "in_progress", "closed")
+    assert (claimed["status"], again["status"], closed["status"]) == (
+        "in_progress",
+        "in_progress",
+        "closed",
+    )

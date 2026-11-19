@@ -72,7 +72,7 @@ async def sender_memberships(
             certificate_id = str(member.get("certificate_id") or "").strip()
             if certificate_id:
                 team_certificates.setdefault(team, []).append(certificate_id)
-    revocations = {}
+    revocations: dict[str, set[str] | None] = {}
     for member in members:
         key = (str(member["team_id"]), str(member["agent_id"]))
         if key not in result:

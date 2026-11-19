@@ -7,19 +7,19 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
-from awid.registry import RegistryClient
 from starlette.datastructures import State
 
-from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
+if TYPE_CHECKING:
+    from awid.registry import RegistryClient
+    from aweb.federation.activation import FederationAuthorityActivation
+
 from aweb.application_state import native_application_state
+from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
 from aweb.config import get_public_origin
 from aweb.federation.origins import application_public_origins
 from aweb.federation.transport import delivery_transport
 from aweb.hooks import MutationCallback
 from aweb.identity_binding import identity_binding_cache
-
-if TYPE_CHECKING:
-    from aweb.federation.activation import FederationAuthorityActivation
 
 
 @dataclass(frozen=True)
@@ -55,8 +55,10 @@ def messaging_runtime(app_state: State) -> MessagingRuntime:
         chat_transport=delivery_transport(
             federation_authority,
             getattr(app_state, "federation_chat_transport", None),
-            getattr(app_state, "federation_message_transport", None),
-            getattr(app_state, "federation_mail_transport", None),
+            fallback_transports=(
+                getattr(app_state, "federation_message_transport", None),
+                getattr(app_state, "federation_mail_transport", None),
+            ),
         ),
         public_origin=application_public_origin(app_state),
         public_origins=frozenset(application_public_origins(app_state)),

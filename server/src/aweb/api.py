@@ -21,7 +21,6 @@ from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
 from .application_state import RegistryClientUnavailable
-from .auth_error_transport import install_auth_error_handlers
 from .attachments import AttachmentBackend
 from .certificate_error_transport import install_certificate_error_handlers
 from .team_control_error_transport import install_team_control_error_handlers
@@ -65,7 +64,7 @@ from .routes.service_registration import router as service_registration_router
 from .routes.session_leases import router as session_leases_router
 from .routes.status import router as status_router
 from .routing_utils import move_mount_before_spa_fallback
-from .service_errors import ServiceError
+from .error_responses import install_service_error_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -506,7 +505,7 @@ def create_app(
             ),
         )
 
-    install_auth_error_handlers(app)
+    install_service_error_handlers(app)
 
     @app.exception_handler(RegistryClientUnavailable)
     async def _registry_client_unavailable_handler(
@@ -516,18 +515,6 @@ def create_app(
 
     install_certificate_error_handlers(app)
     install_team_control_error_handlers(app)
-
-    @app.exception_handler(ServiceError)
-    async def _service_error_handler(request: Request, exc: ServiceError):
-        if exc.status_code >= 500:
-            logger.exception("Unhandled ServiceError", exc_info=exc)
-            return JSONResponse(
-                status_code=500, content={"detail": "Internal server error"}
-            )
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"detail": exc.detail},
-        )
 
     @app.get("/live", tags=["internal"])
     async def live() -> dict:
