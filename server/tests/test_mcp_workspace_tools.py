@@ -1,6 +1,7 @@
 """MCP coordination reads through the real signed transport and mounted tools."""
 
 import pytest
+from test_dashboard_privacy import privacy_app as privacy_app
 
 from test_coordination_state_http import call_mcp, request_as
 from test_coordination_state_http import coordination_mcp as coordination_mcp
