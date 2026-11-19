@@ -324,7 +324,7 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		return errors.New(legacyWorkspaceTeamAddressError)
 	}
 	if hasLegacySingleTeam {
-		return errors.New(legacyWorkspaceSingleTeamError)
+		return ErrLegacyWorkspaceSingleTeam
 	}
 	if len(removed) > 0 {
 		return fmt.Errorf("%s: %s. Run `aw init` to reinitialize this worktree.", legacyWorkspaceRemovedFieldsErrorPrefix, strings.Join(removed, ", "))
@@ -492,6 +492,11 @@ func WorktreeRootFromWorkspacePath(path string) string {
 	return filepath.Dir(filepath.Dir(filepath.Clean(path)))
 }
 
+// ErrLegacyWorkspaceSingleTeam identifies the released single-team workspace
+// shape, which can be migrated without treating other load failures as legacy.
+var ErrLegacyWorkspaceSingleTeam = errors.New(legacyWorkspaceSingleTeamError)
+
+// LegacyWorkspaceSingleTeamError preserves the released refusal text accessor.
 func LegacyWorkspaceSingleTeamError() string {
 	return legacyWorkspaceSingleTeamError
 }

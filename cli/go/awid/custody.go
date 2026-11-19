@@ -17,6 +17,15 @@ import (
 	"time"
 )
 
+// ErrAppToolDenied identifies a structured resident-custody refusal. Display
+// advice may change without changing the caller's recovery decision.
+var ErrAppToolDenied = errors.New(string(CustodyRefusalAppToolDenied))
+
+// CustodyRefusalCode names a resident-custody rule independently of its advice.
+type CustodyRefusalCode string
+
+const CustodyRefusalAppToolDenied CustodyRefusalCode = "app_tool_denied"
+
 // CustodyError keeps a stable refusal code separate from recovery guidance.
 type CustodyError struct{ Code, Message string }
 
@@ -25,6 +34,11 @@ func (e *CustodyError) Error() string {
 		return e.Code
 	}
 	return e.Code + ": " + e.Message
+}
+
+// Is exposes the known structured refusal without classifying by display text.
+func (e *CustodyError) Is(target error) bool {
+	return target == ErrAppToolDenied && CustodyRefusalCode(e.Code) == CustodyRefusalAppToolDenied
 }
 
 // PlainMessageSignRequest is the structured local-custody request for signing
@@ -153,7 +167,9 @@ func (c *UnixCustodyClient) do(ctx context.Context, method, path string, in any,
 			Detail  string `json:"detail"`
 			Message string `json:"message"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&er)
+		if err := json.NewDecoder(resp.Body).Decode(&er); err != nil {
+			return fmt.Errorf("custody_error_%d: decode refusal: %w", resp.StatusCode, err)
+		}
 		if er.Error != "" {
 			return &CustodyError{Code: er.Error, Message: er.Message}
 		}

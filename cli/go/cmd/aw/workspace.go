@@ -740,7 +740,7 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 		}
 		printOutput(output, formatWorkspaceMigrateMultiTeam)
 		return nil
-	} else if err != nil && !strings.Contains(err.Error(), awconfig.LegacyWorkspaceSingleTeamError()) {
+	} else if err != nil && !errors.Is(err, awconfig.ErrLegacyWorkspaceSingleTeam) {
 		return err
 	}
 

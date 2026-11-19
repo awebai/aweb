@@ -2,7 +2,7 @@ package awconfig
 
 import (
 	"errors"
-"fmt"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
