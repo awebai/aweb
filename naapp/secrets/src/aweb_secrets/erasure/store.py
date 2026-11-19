@@ -23,6 +23,38 @@ PROTECTED_TABLES = (
 )
 
 
+@dataclass(frozen=True)
+class RuntimeTableGrants:
+    schema: str
+    table: str
+    privileges: tuple[str, ...]
+    update_columns: tuple[str, ...] = ()
+
+    @property
+    def qualified_name(self) -> str:
+        return f'"{self.schema}".{self.table}'
+
+
+def runtime_table_grants(content_schema: str) -> tuple[RuntimeTableGrants, ...]:
+    """One policy for offline grants and read-only startup verification."""
+    return (
+        RuntimeTableGrants(content_schema, "custody_secrets", ("SELECT", "INSERT", "UPDATE")),
+        RuntimeTableGrants(content_schema, "sealed_versions", ("SELECT", "INSERT", "DELETE")),
+        RuntimeTableGrants(content_schema, "run_redaction_pins", ("SELECT", "INSERT", "DELETE")),
+        RuntimeTableGrants(
+            content_schema,
+            "onepassword_versions",
+            ("SELECT", "INSERT", "DELETE"),
+            ("binding", "destroyed_at"),
+        ),
+        RuntimeTableGrants(content_schema, "erasure_store_identity", ("SELECT",)),
+        *(
+            RuntimeTableGrants(LEDGER_SCHEMA, table, ("SELECT",))
+            for table in ("store", "allocations", "erasures")
+        ),
+    )
+
+
 class Carrier(StrEnum):
     SEALED = "sealed"
     REFERENCE = "reference"
@@ -138,19 +170,44 @@ async def verify_role_and_triggers(
             schema,
         ):
             raise ErasureUnavailable(ErasureFailure.ROLE_UNSAFE)
-    for table in (*PROTECTED_TABLES, "erasure_store_identity"):
+    for grants in runtime_table_grants(content_schema):
         if await db.fetch_value(
             "SELECT pg_has_role($2::name,c.relowner,'MEMBER')"
             " FROM pg_class c WHERE c.oid=to_regclass($1)",
-            f'"{content_schema}".{table}',
+            grants.qualified_name,
             application_role,
         ):
             raise ErasureUnavailable(ErasureFailure.ROLE_UNSAFE)
-    for table in ("store", "allocations", "erasures"):
-        if await db.fetch_value(
-            "SELECT has_table_privilege($1::name,$2::text,'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER')",
+        # Enumerate this server's table privilege vocabulary, then ask for
+        # effective rights (including PUBLIC/inheritance), not just direct ACLs.
+        if not await db.fetch_value(
+            "SELECT bool_and("
+            " has_table_privilege($1::name,c.oid,p.privilege_type)"
+            " = (p.privilege_type=ANY($3::text[]))"
+            " AND NOT has_table_privilege($1::name,c.oid,p.privilege_type||' WITH GRANT OPTION'))"
+            " FROM pg_class c CROSS JOIN LATERAL aclexplode(acldefault('r',c.relowner)) p"
+            " WHERE c.oid=to_regclass($2)",
             application_role,
-            f"secrets_erasure.{table}",
+            grants.qualified_name,
+            list(grants.privileges),
+        ):
+            raise ErasureUnavailable(ErasureFailure.ROLE_UNSAFE)
+        # Column grants are additive: a table-only check misses immutable-field
+        # UPDATE and ledger writes granted on individual columns.
+        if not await db.fetch_value(
+            "SELECT bool_and("
+            " has_column_privilege($1::name,a.attrelid,a.attnum,p.privilege)"
+            " = (p.privilege=ANY($3::text[])"
+            "    OR (p.privilege='UPDATE' AND a.attname=ANY($4::text[])))"
+            " AND NOT has_column_privilege($1::name,a.attrelid,a.attnum,"
+            " p.privilege||' WITH GRANT OPTION'))"
+            " FROM pg_attribute a CROSS JOIN"
+            " (VALUES ('SELECT'),('INSERT'),('UPDATE'),('REFERENCES')) p(privilege)"
+            " WHERE a.attrelid=to_regclass($2) AND a.attnum>0 AND NOT a.attisdropped",
+            application_role,
+            grants.qualified_name,
+            list(grants.privileges),
+            list(grants.update_columns),
         ):
             raise ErasureUnavailable(ErasureFailure.ROLE_UNSAFE)
     expected = (

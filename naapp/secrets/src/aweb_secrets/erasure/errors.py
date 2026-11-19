@@ -46,8 +46,8 @@ _EXPLANATIONS = {
         "Secrets stopped; content restore is not supported by this release."
     ),
     ErasureFailure.ROLE_UNSAFE: (
-        "Secrets runtime database privileges can bypass erasure recording. Stop "
-        "Secrets and have the database administrator restore the documented ownership; "
+        "Secrets runtime database privileges do not match the protected erasure policy. Stop "
+        "Secrets and have the database administrator restore the documented grants and ownership; "
         "init-erasure never repairs an existing ledger."
     ),
     ErasureFailure.UNAVAILABLE: (

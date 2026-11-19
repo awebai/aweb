@@ -13,6 +13,7 @@ from .store import (
     PROTECTED_TABLES,
     content_exists,
     require_matching_binding,
+    runtime_table_grants,
     store_present,
     verify_carriers,
     verify_role_and_triggers,
@@ -162,15 +163,15 @@ async def _install_store(
     for function in ("record_erasure", "record_allocation", "refuse_resurrection"):
         await tx.execute(f"ALTER FUNCTION secrets_erasure.{function}() OWNER TO {OWNER_ROLE}")
     await tx.execute(f"GRANT USAGE ON SCHEMA secrets_erasure TO {role}")
-    await tx.execute(f"GRANT SELECT ON ALL TABLES IN SCHEMA secrets_erasure TO {role}")
-    await tx.execute(f"GRANT SELECT ON {schema}.erasure_store_identity TO {role}")
-    await tx.execute(f"GRANT SELECT,INSERT,UPDATE ON {schema}.custody_secrets TO {role}")
-    await tx.execute(f"GRANT SELECT,INSERT,DELETE ON {schema}.sealed_versions TO {role}")
-    await tx.execute(f"GRANT SELECT,INSERT,DELETE ON {schema}.run_redaction_pins TO {role}")
-    await tx.execute(f"GRANT SELECT,INSERT,DELETE ON {schema}.onepassword_versions TO {role}")
-    await tx.execute(
-        f"GRANT UPDATE(binding,destroyed_at) ON {schema}.onepassword_versions TO {role}"
-    )
+    for grants in runtime_table_grants(content_schema):
+        await tx.execute(
+            f"GRANT {','.join(grants.privileges)} ON {grants.qualified_name} TO {role}"
+        )
+        if grants.update_columns:
+            await tx.execute(
+                f"GRANT UPDATE({','.join(grants.update_columns)})"
+                f" ON {grants.qualified_name} TO {role}"
+            )
     await verify_role_and_triggers(tx, application_role, content_schema=content_schema)
     return identity
 

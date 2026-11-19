@@ -101,6 +101,82 @@ async def test_initialisation_is_idempotent_and_preserves_binding(erasedb):
 
 
 @pytest.mark.parametrize(
+    "grant",
+    [
+        *(
+            f"TRUNCATE ON {{{{tables.{table}}}}}"
+            for table in (
+                "custody_secrets",
+                "sealed_versions",
+                "onepassword_versions",
+                "run_redaction_pins",
+                "erasure_store_identity",
+            )
+        ),
+        "ALL ON ALL TABLES IN SCHEMA {{schema}}",
+        "DELETE ON {{tables.custody_secrets}}",
+        "UPDATE ON {{tables.sealed_versions}}",
+        "UPDATE ON {{tables.run_redaction_pins}}",
+        "UPDATE ON {{tables.onepassword_versions}}",
+        "INSERT ON {{tables.erasure_store_identity}}",
+        "REFERENCES ON {{tables.sealed_versions}}",
+        "TRIGGER ON {{tables.onepassword_versions}}",
+        "UPDATE(wrapped_key) ON {{tables.sealed_versions}}",
+        "UPDATE(secret_id) ON {{tables.run_redaction_pins}}",
+        "UPDATE(secret_id) ON {{tables.onepassword_versions}}",
+        "INSERT(identity) ON {{tables.erasure_store_identity}}",
+        "UPDATE(last_version) ON secrets_erasure.allocations",
+    ],
+)
+async def test_startup_refuses_grants_added_after_valid_initialisation(erasedb, grant):
+    operator, service, role, custody = erasedb
+    await staged(custody, service)
+    await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
+    await operator.execute(f'GRANT {grant} TO "{role}"')
+
+    with pytest.raises(ErasureUnavailable) as refusal:
+        await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
+    assert refusal.value.reason is ErasureFailure.ROLE_UNSAFE
+
+
+@pytest.mark.parametrize(
+    "source", ["public", "inherited", "table_grant_option", "column_grant_option"]
+)
+async def test_startup_checks_effective_and_delegatable_privileges(erasedb, source):
+    operator, service, role, _ = erasedb
+    parent = "erasure_grantee_" + uuid4().hex
+    await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
+    if source == "inherited":
+        await operator.execute(f'CREATE ROLE "{parent}" NOLOGIN')
+        await operator.execute(f'GRANT "{parent}" TO "{role}"')
+    try:
+        if source in ("public", "inherited"):
+            grantee = "PUBLIC" if source == "public" else f'"{parent}"'
+            grant = "TRUNCATE ON {{tables.sealed_versions}}"
+            option = ""
+        else:
+            grantee = f'"{role}"'
+            grant = (
+                "SELECT ON {{tables.sealed_versions}}"
+                if source == "table_grant_option"
+                else "SELECT(secret_id) ON {{tables.sealed_versions}}"
+            )
+            option = " WITH GRANT OPTION"
+        await operator.execute(f"GRANT {grant} TO {grantee}{option}")
+        with pytest.raises(ErasureUnavailable) as refusal:
+            await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
+        assert refusal.value.reason is ErasureFailure.ROLE_UNSAFE
+
+        revoke = "GRANT OPTION FOR " if option else ""
+        await operator.execute(f"REVOKE {revoke}{grant} FROM {grantee}")
+        await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
+    finally:
+        if source == "inherited":
+            await operator.execute(f'DROP OWNED BY "{parent}"')
+            await operator.execute(f'DROP ROLE "{parent}"')
+
+
+@pytest.mark.parametrize(
     "statement",
     [
         "ALTER TABLE {{tables.sealed_versions}} DISABLE TRIGGER ALL",
