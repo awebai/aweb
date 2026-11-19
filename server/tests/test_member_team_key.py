@@ -29,7 +29,7 @@ from test_messages_http import (
 )
 from test_team_key_pinning import (
     _substitute_registry_team_key,
-    pinning,
+    pinning as pinning,
     register_namespace_controller,
     rotate_team_key,
 )  # noqa: F401
