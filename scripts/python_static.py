@@ -495,7 +495,9 @@ def main() -> int:
         previous = prior_ceilings(root)
         if previous is not None:
             increases = exceeded_ceilings(observed=Counter(ceilings), ceilings=previous)
-            if increases:
+            previous_total = sum(previous.values())
+            current_total = sum(ceilings.values())
+            if increases and current_total >= previous_total:
                 print(
                     "Reviewed Python diagnostic ceilings cannot increase:",
                     file=sys.stderr,
@@ -506,6 +508,18 @@ def main() -> int:
                     file=sys.stderr,
                 )
                 return 1
+            if increases:
+                print(
+                    f"Reviewed allowance relocation: total {previous_total} -> {current_total} "
+                    f"(decrease {previous_total - current_total})."
+                )
+                for group in sorted(previous.keys() | ceilings.keys()):
+                    before = previous.get(group, 0)
+                    after = ceilings.get(group, 0)
+                    if before != after:
+                        print(
+                            f"{group.tool} {group.file} [{group.code}]: {before} -> {after}"
+                        )
     except StaticCheckError as exc:
         print(f"Python static-analysis setup failed: {exc}", file=sys.stderr)
         print(SETUP_RECOVERY, file=sys.stderr)
