@@ -85,15 +85,15 @@
       status.append(review);
     } catch (error) {
       const detail = error && typeof error.detail === "string" ? error.detail.trim() : "";
-      if (error instanceof api.SessionRequired) {
-        state = state === NativeEntryState.DRAFTING ? NativeEntryState.UNCERTAIN : NativeEntryState.READY;
-        status.textContent = "Sign in with your passkey in this tab, then enter the value again.";
-      } else if (state === NativeEntryState.DRAFTING) {
+      if (state === NativeEntryState.DRAFTING) {
         state = NativeEntryState.UNCERTAIN;
         const recovery = "The value was sealed, but saving the draft was not confirmed. " +
           "Check your approval email for a link to review it. If none arrived, reload this page " +
           "and enter the value again. Unused sealed copies stay inactive.";
         status.textContent = recovery;
+      } else if (error instanceof api.SessionRequired) {
+        state = NativeEntryState.READY;
+        status.textContent = "Sign in with your passkey in this tab, then enter the value again.";
       } else {
         state = NativeEntryState.READY;
         status.textContent = detail || "The value could not be saved. Check your connection and try entering it again.";

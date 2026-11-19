@@ -5,13 +5,13 @@ from html import escape
 from pathlib import Path
 
 from aweb_naapp.console import ConsoleRoute
+from aweb_naapp.console.browser import login_redirect
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from aweb_secrets.console_changes import ConsoleChanges, _errors
 from aweb_secrets.console_forms.kinds import CONSOLE_KINDS, KIND_NAMES, kind_parameter_controls
-from aweb_secrets.console_ui import _login_redirect, console_page
-from aweb_secrets.console_values import native_value_refusals
+from aweb_secrets.console_ui import console_page
+from aweb_secrets.console_values import ConsoleValues, native_value_refusals
 from aweb_secrets.operation import CAPTURE_FIELDS
 from aweb_secrets.secret import SecretBackend, SecretKind, SecretSensitivity, mint_secret_id
 
@@ -114,22 +114,17 @@ def native_value_form(*, installation_id: str) -> str:
     )
 
 
-def native_value_forms_router(*, changes: ConsoleChanges) -> APIRouter:
+def native_value_forms_router(*, values: ConsoleValues) -> APIRouter:
     router = APIRouter(route_class=ConsoleRoute)
 
     @router.get("/secrets/native/new")
     async def entry(request: Request) -> Response:
         try:
-            current = await changes.console.sessions.current(request)
+            current = await values.console.sessions.current(request)
         except HTTPException as refused:
-            return _login_redirect(refused)
-        async with native_value_refusals(), _errors(changes.console, current):
-            installation_id = await changes.installation_for_session(current)
-            admitted = await changes._installation(current, installation_id)
-            async with changes.console.db.transaction() as tx:
-                await changes._owner(tx, current, admitted)
-                await changes.console.fence.check(tx, admitted)
-                changes._unexpired(current)
+            return login_redirect(refused)
+        async with native_value_refusals():
+            installation_id = await values.authorize_entry(current)
         return console_page(
             title="Store a secret in Secrets",
             session=current,

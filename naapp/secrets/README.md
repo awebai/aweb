@@ -194,8 +194,9 @@ storage, and shows only the staged version and creation time.
 `POST /installations/{installation_id}/native/versions` takes exactly
 `{secret, value}`: a complete native secret record and the kind's structured
 value. The current owner passkey session and tab CSRF are required. The sole
-native ingress writer reuses the shared codec and sealer, then rechecks the
-installation and session after allocation. It returns only
+native ingress writer validates with the shared codec and calls
+`Custody.stage_native_value`, which owns allocation and its metadata receipt.
+The console rechecks the installation and session after allocation. It returns only
 `{secret_id, version, created_at}`. Staging creates no active secret or grant.
 The form drafts `secret/create` and `secret_value/create` with the sealed locator;
 the existing fresh passkey approval and confirmation activate the value and

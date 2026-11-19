@@ -23,6 +23,7 @@ from .store import (
     Health,
     SecretOpener,
     SecretSealer,
+    StagedNativeValue,
     apply_custody_migrations,
 )
 from .values import ValueInvalid, decode_value, encode_value
@@ -48,6 +49,7 @@ __all__ = [
     "SealedValue",
     "SecretOpener",
     "SecretSealer",
+    "StagedNativeValue",
     "apply_custody_migrations",
     "seal",
     "seal_canary",

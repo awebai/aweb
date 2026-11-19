@@ -338,6 +338,14 @@ class StagedOnePasswordReference:
         return json.loads(self._binding_json)
 
 
+@dataclass(frozen=True, kw_only=True)
+class StagedNativeValue:
+    """The exact inert allocation receipt, with no entered bytes (§6.1)."""
+
+    context: SealContext
+    created_at: datetime
+
+
 class Custody:
     """The native envelope-encrypted store of one deployment."""
 
@@ -349,6 +357,48 @@ class Custody:
         self.backend_credential_opener = BackendCredentialOpener(provider, db)
         self.backend_credential_preview = BackendCredentialPreview(provider, db)
         self.run_pins = RunPins(provider)
+
+    async def stage_native_value(
+        self,
+        tx: TransactionManager,
+        *,
+        installation_id: str,
+        team_id: str,
+        value: bytes,
+        initial: SecretRecord,
+    ) -> StagedNativeValue:
+        """Allocate inert native custody and its public receipt (§6.1).
+
+        The owner console holds authority in its transaction and resamples it
+        after this operation. Only confirmation can activate the allocation.
+        """
+        version = await self.sealer.ingest(
+            tx,
+            installation_id=installation_id,
+            team_id=team_id,
+            secret_id=initial.secret_id,
+            value=value,
+            initial=initial,
+        )
+        created_at = await tx.fetch_value(
+            "SELECT created_at FROM {{tables.sealed_versions}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND secret_id=$3 AND version=$4",
+            installation_id,
+            team_id,
+            initial.secret_id,
+            version,
+        )
+        if not isinstance(created_at, datetime):
+            raise CustodyUnavailable("staged version metadata is unavailable")
+        return StagedNativeValue(
+            context=SealContext(
+                installation_id=installation_id,
+                team_id=team_id,
+                secret_id=initial.secret_id,
+                version=version,
+            ),
+            created_at=created_at,
+        )
 
     async def stage_backend_credential(
         self,

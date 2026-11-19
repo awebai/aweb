@@ -8,6 +8,7 @@ confirmation. The upstream, DNS, registry, SMTP, PG and TLS are real fixtures.
 import asyncio
 import json
 import secrets
+from datetime import datetime
 from enum import StrEnum
 from http import HTTPStatus
 from urllib.parse import urlencode
@@ -18,8 +19,9 @@ import uvicorn
 from aweb_naapp.dispatch import State as DispatchState
 from aweb_naapp.egress import InternalDestinations
 from aweb_naapp_testing import Member
+from aweb_secrets_values import ValueInvalid, ValueInvalidReason
 from playwright.async_api import BrowserContext, Page, expect
-from playwright.async_api import TimeoutError as BrowserTimeout
+from playwright.async_api import Error as BrowserError
 
 from aweb_secrets.custody import Custody, LocalKeyFileProvider
 from aweb_secrets.policy import Policy
@@ -95,7 +97,7 @@ async def confirm_from_mail(page: Page, *, smtp, message_start_index: int) -> No
         await expect(page.locator("#form-status")).to_have_attribute(
             "data-state", ConsoleDraftState.APPLIED
         )
-    except BrowserTimeout:
+    except BrowserError:
         # Playwright navigation diagnostics can include the personal mail locator.
         raise AssertionError("the production owner could not confirm the frozen draft") from None
 
@@ -119,23 +121,71 @@ async def sign_in_browser_owner(
             }
         },
     )
-    await install_virtual_credential(cdp, authenticator["authenticatorId"], holder.device)
+    try:
+        await install_virtual_credential(cdp, authenticator["authenticatorId"], holder.device)
+    except BrowserError:
+        raise AssertionError("the browser could not prepare the owner passkey") from None
     await page.goto(origin + "/login?" + urlencode({"scope": holder.scope}))
     await page.get_by_role("button", name="Sign in with a passkey").click()
     await page.wait_for_url(origin + "/")
     return page
 
 
+async def enter_bearer_value(page: Page, *, value: str) -> None:
+    try:
+        await page.get_by_label("Bearer token", exact=True).fill(value)
+    except BrowserError:
+        # Playwright fill diagnostics include the argument, even without tracing.
+        raise AssertionError("the owner could not enter the bearer value") from None
+
+
+async def assert_value_absent_from_browser(page: Page, *, value: str) -> None:
+    try:
+        reflected = value in await page.content()
+        stored = await page.evaluate(
+            "value => JSON.stringify({...sessionStorage,...localStorage}).includes(value)",
+            value,
+        )
+    except BrowserError:
+        raise AssertionError("the console value-retention check could not run") from None
+    if reflected or stored:
+        raise AssertionError("the console retained an entered value")
+
+
+async def assert_inert_native_receipt(response, *, db, secret_id: str) -> None:
+    assert response.status == HTTPStatus.CREATED
+    receipt = await response.json()
+    assert set(receipt) == {"secret_id", "version", "created_at"}
+    assert receipt["secret_id"] == secret_id
+    assert type(receipt["version"]) is int and receipt["version"] == 1
+    assert isinstance(receipt["created_at"], str)
+    try:
+        created_at = datetime.fromisoformat(receipt["created_at"])
+    except ValueError:
+        raise AssertionError("native staging returned an invalid creation time") from None
+    staged = await db.fetch_one("SELECT secret_id,version,created_at FROM sealed_versions")
+    assert staged is not None
+    assert (staged["secret_id"], staged["version"], staged["created_at"]) == (
+        secret_id,
+        receipt["version"],
+        created_at,
+    )
+    assert await db.fetch_value("SELECT count(*) FROM secrets") == 0
+
+
 async def enter_and_confirm_native_value(
-    page: Page, *, db, origin: str, changes_path: str, upstream, smtp
+    page: Page, *, db, origin: str, stage_path: str, changes_path: str, upstream, smtp
 ) -> str:
     entry = await page.goto(origin + "/secrets/native/new")
     assert entry.status == HTTPStatus.OK
     await page.get_by_label("Secret name", exact=True).fill("native-proof")
-    await page.get_by_label("Bearer token", exact=True).fill(upstream.creds.bearer)
+    await enter_bearer_value(page, value=upstream.creds.bearer)
+    secret_id = await page.locator('[name="secret_id"]').input_value()
     mail_before = len(smtp.received)
-    async with page.expect_response(origin + changes_path) as saved:
-        await page.get_by_role("button", name="Save the value and draft").click()
+    async with page.expect_response(origin + stage_path) as staged:
+        async with page.expect_response(origin + changes_path) as saved:
+            await page.get_by_role("button", name="Save the value and draft").click()
+    await assert_inert_native_receipt(await staged.value, db=db, secret_id=secret_id)
     response = await saved.value
     assert response.status == HTTPStatus.CREATED
     drafted = await response.json()
@@ -144,17 +194,12 @@ async def enter_and_confirm_native_value(
     assert await db.fetch_value("SELECT count(*) FROM secrets") == 0
     await page.get_by_role("link", name="Review this draft").click()
     await page.wait_for_url(origin + changes_path + "/" + drafted["change_id"] + "/review")
-    if upstream.creds.bearer in await page.content():
-        raise AssertionError("native value was reflected into the console page")
-    if await page.evaluate(
-        "value => JSON.stringify({...sessionStorage,...localStorage}).includes(value)",
-        upstream.creds.bearer,
-    ):
-        raise AssertionError("native value was persisted in browser storage")
+    await assert_value_absent_from_browser(page, value=upstream.creds.bearer)
     await confirm_from_mail(page, smtp=smtp, message_start_index=mail_before)
     record = await db.fetch_one("SELECT secret_id,active_version FROM secrets")
     assert record["active_version"] == 1
-    return record["secret_id"]
+    assert record["secret_id"] == secret_id
+    return secret_id
 
 
 async def grant_native_agent_access(
@@ -264,6 +309,7 @@ async def test_production_owner_enters_native_value_and_agent_brokers_it(
             page,
             db=db,
             origin=production_console,
+            stage_path=f"/installations/{installed['installation_id']}/native/versions",
             changes_path=changes_path,
             upstream=upstream,
             smtp=smtp,
@@ -302,13 +348,20 @@ async def test_native_form_displays_the_real_codec_refusal(root, production_cons
         response = await refused.value
         assert response.status == HTTPStatus.BAD_REQUEST
         detail = (await response.json())["detail"]
+        assert detail == str(ValueInvalid(ValueInvalidReason.SHAPE))
         await expect(page.locator("#form-status")).to_have_text(detail)
         await assert_native_inputs_cleared(page)
     assert await service.runtime.db().fetch_value("SELECT count(*) FROM sealed_versions") == 0
 
 
+class SignInLoss(StrEnum):
+    BEFORE_SEALING = "before_sealing"
+    BEFORE_DRAFT = "before_draft"
+
+
+@pytest.mark.parametrize("loss", list(SignInLoss))
 async def test_native_form_recovers_this_tabs_sign_in_and_discards_the_value(
-    root, production_console, browser, upstream
+    root, production_console, browser, upstream, loss
 ):
     service, _, _, _, installed, *_ = root
     holder = await enrolled_owner(root)
@@ -317,20 +370,48 @@ async def test_native_form_recovers_this_tabs_sign_in_and_discards_the_value(
         page = await sign_in_browser_owner(context, holder=holder, origin=production_console)
         await page.goto(production_console + "/secrets/native/new")
         await page.get_by_label("Secret name", exact=True).fill("new-tab-value")
-        await page.get_by_label("Bearer token", exact=True).fill(upstream.creds.bearer)
+        await enter_bearer_value(page, value=upstream.creds.bearer)
         await expect(page.locator("#console-reauth-notice")).to_be_hidden()
-        await page.evaluate("sessionStorage.removeItem(window.awebConsole.csrfKey)")
-        async with page.expect_response(production_console + stage_path) as refused:
+        if loss is SignInLoss.BEFORE_SEALING:
+            await page.evaluate("sessionStorage.removeItem(window.awebConsole.csrfKey)")
+            refused_path = stage_path
+        else:
+            refused_path = f"/installations/{installed['installation_id']}/change-sets"
+
+            async def lose_tab_csrf(route):
+                # The actual production handler must reject the missing tab proof.
+                headers = {
+                    name: value
+                    for name, value in route.request.headers.items()
+                    if name.lower() != "x-csrf-token"
+                }
+                await route.continue_(headers=headers)
+
+            await page.route(production_console + refused_path, lose_tab_csrf)
+        async with page.expect_response(production_console + refused_path) as refused:
             await page.get_by_role("button", name="Save the value and draft").click()
         response = await refused.value
         assert response.status == HTTPStatus.FORBIDDEN
         assert (await response.json())["detail"] == "csrf_token_required"
         await expect(page.locator("#console-reauth-notice")).to_be_visible()
-        await expect(page.locator("#form-status")).to_have_text(
-            "Sign in with your passkey in this tab, then enter the value again."
-        )
+        if loss is SignInLoss.BEFORE_SEALING:
+            await expect(page.locator("#form-status")).to_have_text(
+                "Sign in with your passkey in this tab, then enter the value again."
+            )
+        else:
+            await expect(page.locator("#form-status")).to_have_attribute(
+                "data-state", ConsoleDraftState.UNCERTAIN
+            )
+            await expect(page.locator("#form-status")).to_contain_text("approval email")
+            await expect(
+                page.get_by_role("button", name="Save the value and draft")
+            ).to_be_disabled()
         await assert_native_inputs_cleared(page)
-    assert await service.runtime.db().fetch_value("SELECT count(*) FROM sealed_versions") == 0
+    db = service.runtime.db()
+    expected_sealed = 0 if loss is SignInLoss.BEFORE_SEALING else 1
+    assert await db.fetch_value("SELECT count(*) FROM sealed_versions") == expected_sealed
+    assert await db.fetch_value("SELECT count(*) FROM change_sets") == 0
+    assert await db.fetch_value("SELECT count(*) FROM secrets") == 0
 
 
 async def test_native_form_shows_custody_recovery_without_reflecting_the_value(
@@ -362,7 +443,7 @@ async def test_native_form_shows_custody_recovery_without_reflecting_the_value(
                 secret_id=secret_id,
             )
         await page.get_by_label("Secret name", exact=True).fill("native-guard")
-        await page.get_by_label("Bearer token", exact=True).fill(upstream.creds.bearer)
+        await enter_bearer_value(page, value=upstream.creds.bearer)
         async with page.expect_response(production_console + stage_path) as refused:
             await page.get_by_role("button", name="Save the value and draft").click()
         response = await refused.value
@@ -391,7 +472,7 @@ async def test_lost_native_draft_response_recovers_from_the_actual_approval_emai
         page = await sign_in_browser_owner(context, holder=holder, origin=production_console)
         await page.goto(production_console + "/secrets/native/new")
         await page.get_by_label("Secret name", exact=True).fill("lost-draft")
-        await page.get_by_label("Bearer token", exact=True).fill(upstream.creds.bearer)
+        await enter_bearer_value(page, value=upstream.creds.bearer)
         await page.route(production_console + changes_path, lose_response)
         mail_before = len(smtp.received)
         button = page.get_by_role("button", name="Save the value and draft")
@@ -518,6 +599,6 @@ async def test_invalid_native_entry_never_allocates_or_reflects_the_value(root, 
     )
     assert response.status_code == HTTPStatus.BAD_REQUEST
     if fault is InvalidNativeEntry.BASIC_USERNAME:
-        assert "username" in response.json()["detail"] and ":" in response.json()["detail"]
+        assert response.json()["detail"] == str(ValueInvalid(ValueInvalidReason.BASIC_USERNAME))
     assert_value_not_returned(response=response, value=value)
     assert await service.runtime.db().fetch_value("SELECT count(*) FROM sealed_versions") == 0
