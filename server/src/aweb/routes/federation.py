@@ -285,6 +285,8 @@ async def _local_envelope_recipient(
     ):
         raise FederationAuthorityError("recipient_current_key_mismatch")
     return recipient
+
+
 async def _verified_delivery_replay(
     request: Request, *, payload: FederatedDeliveryRequest, db
 ) -> tuple[FederationEnvelope, str, StoredFederationReceipt | None]:
