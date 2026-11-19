@@ -182,7 +182,7 @@ func canonicalFallbackRegistryURL(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
-	return canonicalRegistryServerOrigin(raw)
+	return CanonicalRegistryServerOrigin(raw)
 }
 
 func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {

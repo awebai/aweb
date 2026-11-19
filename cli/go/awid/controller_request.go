@@ -113,7 +113,7 @@ func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryUR
 	if strings.TrimSpace(registryURL) == "" {
 		registryURL = c.defaultRegistryURL()
 	}
-	aud, err := canonicalServerOrigin(registryURL)
+	aud, err := CanonicalRegistryServerOrigin(registryURL)
 	if err != nil {
 		return err
 	}
