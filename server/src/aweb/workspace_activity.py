@@ -9,6 +9,8 @@ from enum import StrEnum
 from uuid import UUID
 
 from redis.asyncio import Redis
+from starlette.requests import Request
+from awid.registry import RegistryClient
 
 from .config import get_presence_ttl_seconds
 from .grant_liveness import valid_grant_liveness_by_workspace
@@ -55,7 +57,12 @@ def _presence_timestamp(presence: Mapping[str, str]) -> datetime | None:
 
 
 async def workspace_activity_by_id(
-    db, redis: Redis | None, *, workspace_ids: list[str]
+    db,
+    redis: Redis | None,
+    *,
+    workspace_ids: list[str],
+    registry_client: RegistryClient,
+    request: Request | None = None,
 ) -> dict[str, WorkspaceActivity]:
     """Combine the timestamps written by root, MCP and valid grant heartbeats.
 
@@ -77,7 +84,11 @@ async def workspace_activity_by_id(
         [UUID(value) for value in workspace_ids],
     )
     grants = await valid_grant_liveness_by_workspace(
-        db, workspace_ids, ttl_seconds=get_presence_ttl_seconds()
+        db,
+        workspace_ids,
+        registry_client=registry_client,
+        request=request,
+        ttl_seconds=get_presence_ttl_seconds(),
     )
     presences = (
         await list_agent_presences_by_workspace_ids(redis, workspace_ids)
