@@ -1065,6 +1065,14 @@ exact session/subject/signer binding and external/untrusted guest assurance.
 They assume independently verified signer facts and do not authorize membership
 or activate managed chat. See [P3 readiness](../human-channels-participants.md).
 
+## Registry authority selection (draft)
+
+`registry-authority-v1.json` records routing, provenance and fallback-404
+classification cases for the registry selection owner. It does not grant
+private-network access or establish identity authority. The Go consumer is
+implemented; independent review and the Python/TypeScript consumers remain
+pending. This draft is not a cross-language qualification result.
+
 ## Signature primitive profiles
 
 `signature-primitives-v1.json` is the common exact-byte verification and strict

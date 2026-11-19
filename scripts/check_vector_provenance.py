@@ -45,6 +45,15 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("cli/go/awid/registry_authority_test.go"): _consumer(
+        "registry-authority-v1.json",
+        '"../../../docs/vectors/registry-authority-v1.json"',
+    ),
+    PurePosixPath("cli/go/awid/registry_audience_compatibility_test.go"): _consumer(
+        {"atomic-address-claim-v1.json", "awid-controller-writes-v1.json"},
+        'readDocsVector(t, "atomic-address-claim-v1.json")',
+        'readDocsVector(t, "awid-controller-writes-v1.json")',
+    ),
     PurePosixPath("awid/tests/test_signature_primitive_vectors.py"): _consumer(
         {
             "signature-primitives-v1.json",
@@ -81,7 +90,7 @@ ROOT_CONSUMERS = {
     ),
     PurePosixPath("server/tests/test_id_chain_request_auth.py"): _consumer(
         "id-certificates-v1.json",
-        "Path(__file__).resolve().parents[2] / 'docs/vectors/id-certificates-v1.json'",
+        'Path(__file__).resolve().parents[2] / "docs/vectors/id-certificates-v1.json"',
     ),
     PurePosixPath("awid/tests/test_cross_registry_python_verifier.py"): _consumer(
         "id-certificates-v1.json",
