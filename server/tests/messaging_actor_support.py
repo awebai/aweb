@@ -27,14 +27,12 @@ class MessagingFixture(Protocol):
 
 @dataclass(frozen=True, kw_only=True)
 class RegisteredMessagingActor:
-    alias: str
     signing_key: bytes = field(repr=False)
     did_key: str
     stable_id: str
     address: str
     team_id: str
     agent_id: str
-    workspace_id: str
     certificate: str
 
 
@@ -158,13 +156,11 @@ async def admit_messaging_actor(
     if kind is IdentityKind.HUMAN:
         assert connected.agent_type == "human"
     return RegisteredMessagingActor(
-        alias=alias,
         signing_key=bytes(key),
         did_key=did_key,
         stable_id=identity.did_aw,
         address=address,
         team_id=team_id,
         agent_id=str(UUID(connected.agent_id)),
-        workspace_id=str(UUID(connected.workspace_id)),
         certificate=certificate,
     )

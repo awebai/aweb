@@ -329,13 +329,13 @@ async def _pending_for_bob_while_pilot_waits(server, sending, *, earlier_message
         await mark_messages_read(
             server.infra,
             session_id=UUID(session_id),
-            participant_did="did:aw:bob",
+            participant_did=server.dids["bob"],
             participant_agent_id=server.agents["bob"],
             message_ids=[*earlier_message_ids, message_id],
         )
         pending = await get_pending_conversations(
             server.infra,
-            participant_did="did:aw:bob",
+            participant_did=server.dids["bob"],
             participant_agent_id=server.agents["bob"],
         )
         await server.rest_chat("bob", {"body": "here"}, session_id=session_id)
