@@ -105,6 +105,7 @@ from aweb.messaging.recipients import (
     resolve_address_recipient,
 )
 from aweb.messaging.runtime import MessagingRuntime
+from aweb.messaging.delivery_policy import DeliverySender
 from aweb.messaging.refusals import DeliveryRefusalCode
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.signatures import (
@@ -934,9 +935,33 @@ async def _continuation_signature_recipient(
     return {**recipient, "did_aw": stable, "did_key": signed_key, "address": address}
 
 
-async def _commit_mail_continuation(db, *, message: MailStorageInput) -> StoredMail:
-    """Store the thread's next message before its post-commit notification."""
-    return await store_mail(db, message=message)
+async def _commit_mail_continuation(
+    db, *, message: MailStorageInput, recipient: Recipient, sender: DeliverySender
+) -> StoredMail:
+    """Recheck stored-route policy and commit the message under its read locks."""
+    if message.conversation_id is None:
+        raise ValueError(
+            "A mail continuation commit requires its stored conversation ID"
+        )
+    async with db.get_manager("aweb").transaction() as tx:
+        send_db = TransactionInfra(db, tx)
+        await admit_message_delivery(
+            send_db,
+            recipient=recipient,
+            recipient_did=message.recipient.did,
+            to_agent_id=message.recipient.agent_id,
+            sender_did=sender.did,
+            sender_address=sender.address,
+            team_id=message.sender.team_id,
+            sender_verified_team_id=None,
+            sender_verified_dids=sender.verified_dids,
+            stored_route_continuation=True,
+        )
+        stored = await store_mail(send_db, message=message)
+        await touch_conversation_activity(
+            send_db, conversation_id=message.conversation_id
+        )
+    return stored
 
 
 async def send_mail_conversation_continuation(
@@ -1088,6 +1113,12 @@ async def send_mail_conversation_continuation(
         with agent_wake_scope(runtime.agent_wake_publisher):
             message_id, server_received_at = await _commit_mail_continuation(
                 db,
+                recipient=recipient,
+                sender=DeliverySender(
+                    did=sender_did,
+                    address=sender_address,
+                    verified_dids=tuple(auth_dids(auth)),
+                ),
                 message=MailStorageInput(
                     sender=MailSender(
                         did=sender_did,
@@ -1135,8 +1166,6 @@ async def send_mail_conversation_continuation(
         if replay_lookup.stored is None:
             raise
         return replay_lookup.stored
-    await touch_conversation_activity(db, conversation_id=conversation_id)
-
     await fire_mutation_callback(
         runtime.on_mutation,
         MutationEventType.MAIL_SENT.value,
@@ -1656,6 +1685,17 @@ async def _commit_new_local_mail(
     msg_uuid = UUID(payload.message_id) if payload.message_id else None
     async with db.get_manager("aweb").transaction() as tx:
         send_db = TransactionInfra(db, tx)
+        # Preflight protects replays; a new write rechecks under the transaction
+        # that commits it, keeping membership/contact locks until delivery.
+        await authorize_message_delivery(
+            send_db,
+            recipient_agent=recipient,
+            sender_did=sender_did,
+            sender_address=sender_address,
+            sender_team_id=auth.team_id,
+            sender_verified_team_id=auth.verified_team_id,
+            sender_verified_dids=auth_dids(auth),
+        )
         # If an explicit recipient is present, conversation_id is a caller-chosen
         # initial id. Continuations use conversation_id without recipient fields.
         conversation = await _create_mail_conversation(
