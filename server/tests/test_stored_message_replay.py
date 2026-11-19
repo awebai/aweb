@@ -398,3 +398,22 @@ async def test_encrypted_chat_retry_retains_its_original_attestation_fields(cont
     )
     result = await read_stored_message(StoredArtifactReader(row), claim=claim)
     assert result.state is StoredMessageState.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_same_artifact_with_different_resolved_parties_never_advises_a_new_message_id():
+    claim, row = signed_artifact(MessageKind.CHAT)
+    result = await read_stored_message(
+        StoredChatParties(row),
+        claim=replace(
+            claim,
+            chat_participant_dids=frozenset(
+                {"did:key:accepted-sender", "did:aw:different-form"}
+            ),
+        ),
+    )
+    with pytest.raises(ConflictError) as refused:
+        result.refuse_conflicting_message_id()
+    assert refused.value.detail == (
+        "The stored chat participants differ from the resolved recipients. Retry the original conversation and recipient identities unchanged."
+    )

@@ -48,3 +48,42 @@ async def test_managed_attachment_exact_retry_never_binds_or_emits_twice(
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["mail", "chat"])
+async def test_exact_attachment_retry_keeps_the_encrypted_ingestion_deadline(
+    privacy_app, kind
+):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from aweb.e2ee_messages import E2EE_INGESTION_WINDOW
+
+    env = privacy_app
+    created = datetime.now(timezone.utc) - E2EE_INGESTION_WINDOW + timedelta(seconds=10)
+    _, _, wire, conversation_id = await managed_fixture(env, kind, created_at=created)
+    path = (
+        "/v1/messages"
+        if kind == "mail"
+        else f"/v1/chat/sessions/{conversation_id}/messages"
+    )
+    accepted = await _request(env, "alice", "POST", path, wire)
+    assert accepted.status_code == 200, accepted.text
+    before = list(env.dispatched)
+    deadline = datetime.fromisoformat(
+        wire["encrypted_envelope"]["expires_at"].replace("Z", "+00:00")
+    )
+    await asyncio.sleep(
+        max(0, (deadline - datetime.now(timezone.utc)).total_seconds()) + 0.1
+    )
+    assert datetime.now(timezone.utc) > deadline
+    repeated = await _request(env, "alice", "POST", path, wire)
+    assert repeated.status_code == 422, repeated.text
+    assert repeated.json()["detail"] == "encrypted envelope expired"
+    assert env.dispatched == before
+    assert (
+        await env.db.fetch_value(
+            "SELECT sum(binds) FROM {{tables.attachment_test_storage}}"
+        )
+        == 1
+    )

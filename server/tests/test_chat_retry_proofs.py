@@ -172,3 +172,25 @@ def test_race_classifier_distinguishes_pinned_pgdbm_wrapper_from_other_queries()
     assert not is_unique_write_conflict(
         asyncpg.exceptions.ForeignKeyViolationError("missing parent")
     )
+
+
+@pytest.mark.asyncio
+async def test_continued_retry_uses_recorded_participant_did_despite_richer_current_projection():
+    snapshot, request, auth, session_id, recipient, _ = retained_request(
+        SendMessageRequest
+    )
+    result = await _stored_exact_chat_send(
+        snapshot,
+        request,
+        auth=auth,
+        session_id=session_id,
+        actor_dids=[auth.did_key],
+        recipient_rows=[
+            {
+                "did": recipient,
+                "did_key": recipient,
+                "did_aw": "did:aw:current-projection",
+            }
+        ],
+    )
+    assert result["message_id"] == UUID(request.message_id)

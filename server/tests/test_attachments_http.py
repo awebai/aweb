@@ -86,7 +86,7 @@ async def test_legacy_attachments_refused_without_echoing_filename(privacy_app):
     assert "report.pdf" not in response.text
 
 
-async def managed_fixture(env, kind="mail"):
+async def managed_fixture(env, kind="mail", *, created_at: datetime | None = None):
     import json
     from uuid import UUID
     from aweb.attachments import AttachmentDescriptor, AttachmentError, descriptors
@@ -108,7 +108,7 @@ async def managed_fixture(env, kind="mail"):
             identity_stable_id="",
             encryption_public_key=public,
             custody="hosted_custodial",
-            now=datetime.now(timezone.utc),
+            now=created_at or datetime.now(timezone.utc),
         )
         keys[name] = dict(
             did=actor.did,
@@ -206,6 +206,7 @@ async def managed_fixture(env, kind="mail"):
         attachments=[d],
         message_id=str(uuid4()),
         conversation_id=cid,
+        created_at=created_at,
     )
     wire = dict(
         body="",
