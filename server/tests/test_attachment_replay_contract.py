@@ -79,7 +79,9 @@ async def test_exact_attachment_retry_keeps_the_encrypted_ingestion_deadline(
     assert datetime.now(timezone.utc) > deadline
     repeated = await _request(env, "alice", "POST", path, wire)
     assert repeated.status_code == 422, repeated.text
-    assert repeated.json()["detail"] == "encrypted envelope expired"
+    assert repeated.json()["detail"] == (
+        "encrypted envelope expired. Check whether the original message was delivered before preparing a new encrypted message."
+    )
     assert env.dispatched == before
     assert (
         await env.db.fetch_value(

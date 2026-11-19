@@ -235,3 +235,13 @@ async def test_policy_refusal_code_and_action_reach_http_and_mcp():
         "error": "Recipient refuses this sender. Ask the recipient to add your exact address as a contact and retry.",
         "reason": "recipient_policy_rejected",
     }
+
+
+def test_encrypted_refusal_action_checks_delivery_before_creating_another_message():
+    from aweb.messaging.refusals import encrypted_message_refusal
+
+    refused = encrypted_message_refusal(detail="encrypted envelope expired")
+    assert refused.status_code == 422
+    assert refused.detail == (
+        "encrypted envelope expired. Check whether the original message was delivered before preparing a new encrypted message."
+    )

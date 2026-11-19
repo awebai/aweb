@@ -99,21 +99,27 @@ async def managed_fixture(env, kind="mail", *, created_at: datetime | None = Non
     from test_dashboard_privacy import TEAM
 
     keys = {}
+    team_id = getattr(env, "team_id", TEAM)
     for name in ("alice", "bob"):
         actor = env.actors[name]
-        private, public = generate_x25519_keypair()
-        assertion = build_encryption_key_assertion(
-            signing_key=actor.sk,
-            identity_did=actor.did,
-            identity_stable_id="",
-            encryption_public_key=public,
-            custody="hosted_custodial",
-            now=created_at or datetime.now(timezone.utc),
-        )
+        if hasattr(actor, "encryption_key"):
+            private, assertion = actor.encryption_private, actor.encryption_key
+        else:
+            private, public = generate_x25519_keypair()
+            assertion = build_encryption_key_assertion(
+                signing_key=actor.sk,
+                identity_did=actor.did,
+                identity_stable_id="",
+                encryption_public_key=public,
+                custody="hosted_custodial",
+                now=created_at or datetime.now(timezone.utc),
+            )
         keys[name] = dict(
             did=actor.did,
-            team_id=TEAM,
+            team_id=team_id,
             signing_key=actor.sk,
+            stable_id=getattr(actor, "stable", ""),
+            address=getattr(actor, "address", ""),
             private_key=private,
             encryption_key=assertion,
         )
@@ -486,7 +492,6 @@ def test_custody_and_mcp_read_never_expose_partial_descriptors():
 
 @pytest.mark.asyncio
 async def test_attachment_grant_is_subject_scoped_and_read_scope_required(privacy_app):
-    from uuid import UUID
     from test_dashboard_privacy import TEAM
     from test_identity_grants import _session_keypair, _grant_headers
 
