@@ -492,7 +492,10 @@ async def test_message_ingress_refuses_signed_activity_bytes(privacy_app):
     )
 
     assert chat.status_code == 422
-    assert chat.json()["detail"] == "signed_payload type must be chat"
+    assert (
+        chat.json()["detail"]
+        == "signed_payload type must be chat. Check the chat fields and sign the message again."
+    )
     assert mail.status_code == 422
     assert mail.json()["detail"] == "signed_payload type must be mail"
 

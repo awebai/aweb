@@ -137,3 +137,16 @@ def registry_dependency_refusal(exc: Exception, *, operation: str) -> DeliveryRe
         status_code=status_code,
         detail=f"{operation} could not be completed. Retry when the registry is available; if this persists, ask the server operator to check the registry connection.",
     )
+
+
+def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
+    """Keep signed chat field failures actionable at every send/retry boundary.
+
+    Implements the sender-artifact checks in
+    docs/identity-messaging-contract.md:132-139.
+    """
+    return DeliveryRefusal(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        detail=detail.rstrip(".")
+        + ". Check the chat fields and sign the message again.",
+    )

@@ -23,6 +23,7 @@ from uuid import UUID
 import asyncpg.exceptions
 from aweb.messaging.refusals import (
     DeliveryRefusalCode,
+    signed_chat_payload_refusal,
     registry_configuration_refusal,
     registry_dependency_refusal,
 )
@@ -516,27 +517,17 @@ def _validate_signed_chat_payload(
     signer_did_key: str | None = None,
 ) -> None:
     if signed_payload is None:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload is required when signature is provided",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload is required when signature is provided"
         )
     try:
         payload = json.loads(signed_payload)
     except (ValueError, TypeError):
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload must be valid JSON",
-        )
+        raise signed_chat_payload_refusal(detail="signed_payload must be valid JSON")
     if not isinstance(payload, dict):
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload must be a JSON object",
-        )
+        raise signed_chat_payload_refusal(detail="signed_payload must be a JSON object")
     if payload.get("type") != "chat":
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload type must be chat",
-        )
+        raise signed_chat_payload_refusal(detail="signed_payload type must be chat")
     allowed_from_values = {
         value
         for value in (
@@ -549,9 +540,8 @@ def _validate_signed_chat_payload(
     }
     signed_from = str(payload.get("from") or "").strip()
     if signed_from and signed_from not in allowed_from_values:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload from must match the authenticated sender",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload from must match the authenticated sender"
         )
     recipient_rows = recipient_rows or []
     allowed_to_values: set[str] = set()
@@ -584,77 +574,63 @@ def _validate_signed_chat_payload(
     ):
         raise SignedRecipientMismatch(kind=MessageKind.CHAT)
     if payload.get("body") != body:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload body must match the chat message",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload body must match the chat message"
         )
     if payload.get("from_did") != from_did:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload from_did must match the authenticated sender",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload from_did must match the authenticated sender"
         )
     signed_from_stable_id = str(payload.get("from_stable_id") or "").strip()
     if (
         signed_from_stable_id
         and signed_from_stable_id != str(from_stable_id or "").strip()
     ):
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload from_stable_id must match the authenticated sender",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload from_stable_id must match the authenticated sender"
         )
     if payload.get("message_id") != message_id:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload message_id must match the chat message",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload message_id must match the chat message"
         )
     if payload.get("timestamp") != timestamp:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload timestamp must match the chat message",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload timestamp must match the chat message"
         )
     signed_conversation_id = str(payload.get("conversation_id") or "").strip()
     if conversation_id is not None:
         if not signed_conversation_id:
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                detail="signed_payload conversation_id is required",
+            raise signed_chat_payload_refusal(
+                detail="signed_payload conversation_id is required"
             )
         if signed_conversation_id != conversation_id:
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                detail="signed_payload conversation_id must match",
+            raise signed_chat_payload_refusal(
+                detail="signed_payload conversation_id must match"
             )
     elif signed_conversation_id:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload conversation_id must match",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload conversation_id must match"
         )
     if payload.get("wait_seconds") != wait_seconds:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload wait_seconds must match the chat message",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload wait_seconds must match the chat message"
         )
     if (payload.get("reply_to") or None) != ((reply_to or "").strip() or None):
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload reply_to must match the chat message",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload reply_to must match the chat message"
         )
     if bool(payload.get("sender_leaving")) != sender_leaving:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload sender_leaving must match the chat message",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload sender_leaving must match the chat message"
         )
     if bool(payload.get("hang_on")) != hang_on:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="signed_payload hang_on must match the chat message",
+        raise signed_chat_payload_refusal(
+            detail="signed_payload hang_on must match the chat message"
         )
     try:
         validate_ed25519_message_signature(signature)
     except MessageSignatureShapeError as exc:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
+        raise signed_chat_payload_refusal(detail=str(exc)) from exc
     require_verified_message_signature(
         signed_payload=signed_payload,
         signature=signature,

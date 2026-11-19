@@ -1025,7 +1025,7 @@ def test_a_signed_wait_the_message_does_not_carry_is_refused_by_the_send_validat
 
     assert (
         refused.value.detail
-        == "signed_payload wait_seconds must match the chat message"
+        == "signed_payload wait_seconds must match the chat message. Check the chat fields and sign the message again."
     )
 
 
