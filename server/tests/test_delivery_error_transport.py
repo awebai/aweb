@@ -65,7 +65,9 @@ async def test_mcp_unexpected_error_is_logged_without_exposing_its_text(caplog):
     assert response["error"].endswith("contact the server operator.")
     assert "private internal field" not in json.dumps(response)
     assert len(caplog.records) == 1
-    assert isinstance(caplog.records[0].exc_info[1], KeyError)
+    assert "failure_type=KeyError" in caplog.text
+    assert "private internal field" not in caplog.text
+    assert caplog.records[0].exc_info is None
 
 
 @pytest.mark.asyncio
@@ -102,3 +104,46 @@ def test_routes_reexport_the_service_request_types_without_a_second_validator():
     assert MailRouteInput is MailInput
     assert ChatCreateRoute is CreateSessionRequest
     assert ChatRouteInput is ChatInput
+
+
+@pytest.mark.asyncio
+async def test_mcp_binding_unavailability_preserves_the_shared_refusal_action():
+    from aweb.service_errors import IdentityBindingCode, IdentityBindingError
+
+    error = IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
+
+    @messaging_tool
+    async def refused():
+        raise error
+
+    assert json.loads(await refused()) == {
+        "error": error.message,
+        "reason": error.code.value,
+    }
+
+
+@pytest.mark.asyncio
+async def test_mcp_missing_registry_configuration_keeps_the_shared_action():
+    from aweb.application_state import RegistryClientUnavailable
+
+    error = RegistryClientUnavailable()
+
+    @messaging_tool
+    async def refused():
+        raise error
+
+    assert json.loads(await refused()) == {
+        "error": error.message,
+        "reason": error.code,
+    }
+
+
+@pytest.mark.parametrize(
+    "reason", ["federation_rate_limited", "recipient_custodial_no_e2ee"]
+)
+def test_mcp_federation_codes_keep_a_recovery_sentence_without_host_context(reason):
+    from awid.federation_errors import FederationAuthorityError
+
+    answer = json.loads(send_refusal(FederationAuthorityError(reason)))
+    assert answer["error"] == reason
+    assert answer["message"].endswith("retry.")
