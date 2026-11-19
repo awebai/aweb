@@ -195,7 +195,7 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
                 display_name="Second sender context",
                 team_did_key=env.team_did,
                 visibility="public",
-                namespace_controller_signing_key=env.team_sk,
+                namespace_controller_signing_key=env.namespace_sk,
             )
             second_team = second_name + ":example.test"
             second_certificate = _encode_certificate(

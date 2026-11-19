@@ -469,6 +469,19 @@ def run_suites(
     *, suite: Suite, workers: int, arguments: list[str], environ: dict[str, str]
 ) -> int:
     selected = (Suite.SERVER, Suite.REGISTRY) if suite is Suite.ALL else (suite,)
+    if Suite.SERVER in selected:
+        prepared = invoke(
+            ["make", "prepare-server-node"],
+            env=environ,
+            stdout=None,
+            timeout=None,
+        )
+        if prepared.returncode:
+            print(
+                "Local Node preparation failed. Run make prepare-server-node, resolve its error, then rerun make test-server-local.",
+                file=sys.stderr,
+            )
+            return prepared.returncode
     for item in selected:
         target = "test-server" if item is Suite.SERVER else "test-awid"
         env = dict(environ, PYTEST_ADDOPTS=shlex.join(arguments))

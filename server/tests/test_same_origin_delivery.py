@@ -24,6 +24,7 @@ from awid.dns_verify import DomainAuthority
 from awid.external_authority import DNSLookup
 from awid.registry import CachedRegistryClient
 from awid_service.deps import get_domain_verifier
+from awid_service.testing import TXTAnswers
 from aweb.human_kind_revalidation import revalidate_human_kind
 from test_id_chain_request_auth import ROOT, _signed_fixture_certificate
 
@@ -62,19 +63,22 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
     env = privacy_app
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "disposable-acst-proxy-secret")
-    target_team = "recipients:recipient.test"
+    target_team_name = "recipients-" + uuid4().hex[:12]
+    target_team = target_team_name + ":recipient.test"
     await env.registry.ensure_namespace(domain="recipient.test")
     await env.db.execute(
         "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
-        "VALUES ($1, 'recipient.test', 'recipients', $2)",
+        "VALUES ($1, 'recipient.test', $3, $2)",
         target_team,
         env.team_did,
+        target_team_name,
     )
     # A retained recipient membership needs a real current registry team, too.
     await env.registry_db.execute(
         "INSERT INTO {{tables.teams}} (domain,name,team_did_key,visibility) "
-        "VALUES ('recipient.test','recipients',$1,'public')",
+        "VALUES ('recipient.test',$2,$1,'public')",
         env.team_did,
+        target_team_name,
     )
     sk, _, did = _make_keypair()
     target = SimpleNamespace(sk=sk, did=did, id=uuid4())
@@ -180,9 +184,10 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
             db = db or env.db
             await db.execute(
                 "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
-                "VALUES ($1, 'recipient.test', 'recipients', $2) ON CONFLICT DO NOTHING",
+                "VALUES ($1, 'recipient.test', $3, $2) ON CONFLICT DO NOTHING",
                 target_team,
                 env.team_did,
+                target_team_name,
             )
             await db.execute(
                 "INSERT INTO {{tables.agents}} "
@@ -373,6 +378,19 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
                 dns=SimpleNamespace(lookup_txt=lookup_txt),
                 ingress=ingress,
                 effects=effects,
+                # Pin verification needs only DNS controller authority. The
+                # federation resolver separately carries the isolated HTTP
+                # registry route under its explicit development OriginContext.
+                controller_dns=TXTAnswers(
+                    {
+                        "_awid.example.test": env.namespace_did,
+                        "_awid.recipient.test": (
+                            await env.registry.namespace_authority("recipient.test")
+                        ).controller_did,
+                    }
+                ),
+                target_team=target_team,
+                target_team_name=target_team_name,
                 target_did=stable,
                 target=target,
                 target_address=address,
@@ -1474,7 +1492,10 @@ async def test_stored_own_route_rotation_requires_current_target(
         expected = (
             "this recipient's key changed; resend the message"
             if encrypted and api == "mcp"
-            else "encrypted envelope recipient did mismatch"
+            else (
+                "encrypted envelope recipient did mismatch. "
+                "Check whether the original message was delivered before preparing a new encrypted message."
+            )
             if encrypted
             else "hosted custodial signer returned signed_payload for different fields"
             if api == "mcp"

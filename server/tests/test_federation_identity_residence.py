@@ -36,11 +36,11 @@ async def _supersede_resident_membership(fixture, receiver) -> None:
     next_sk, _, next_did = _make_keypair()
     # The federation and certificate adapters consult the same fixture DNS
     # authority through their respective public resolver injection points.
-    receiver.app.state.awid_txt_resolver = fixture.dns
+    receiver.app.state.awid_txt_resolver = fixture.controller_dns
     payload = {
         "operation": "rotate_team_key",
         "domain": "recipient.test",
-        "name": "recipients",
+        "name": fixture.target_team_name,
         "new_team_did_key": next_did,
     }
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -56,7 +56,7 @@ async def _supersede_resident_membership(fixture, receiver) -> None:
         base_url="http://registry.test",
     ) as registry_http:
         rotated = await registry_http.post(
-            "/v1/namespaces/recipient.test/teams/recipients/rotate",
+            f"/v1/namespaces/recipient.test/teams/{fixture.target_team_name}/rotate",
             json={"new_team_did_key": next_did},
             headers={
                 "Authorization": f"DIDKey {namespace.controller_did} {signature}",
@@ -70,7 +70,7 @@ async def _supersede_resident_membership(fixture, receiver) -> None:
             next_sk,
             next_did,
             member_did,
-            team_id="recipients:recipient.test",
+            team_id=fixture.target_team,
             alias="new-member",
             identity_scope="local",
             certificate_id="reissued-" + uuid4().hex,
@@ -85,7 +85,7 @@ async def _supersede_resident_membership(fixture, receiver) -> None:
                 **_signed_team_headers(
                     member_sk,
                     member_did,
-                    "recipients:recipient.test",
+                    fixture.target_team,
                     certificate,
                     body,
                 ),
@@ -145,7 +145,7 @@ async def _publish_resident_encryption_key(fixture, receiver) -> dict:
     from awid.e2ee_keys import build_encryption_key_assertion
     from aweb.e2ee_messages import generate_x25519_keypair
 
-    receiver.app.state.awid_txt_resolver = fixture.dns
+    receiver.app.state.awid_txt_resolver = fixture.controller_dns
     target, env = fixture.target, fixture.env
     _, public_key = generate_x25519_keypair()
     assertion = build_encryption_key_assertion(
@@ -159,7 +159,7 @@ async def _publish_resident_encryption_key(fixture, receiver) -> dict:
             env.team_sk,
             env.team_did,
             target.did,
-            team_id="recipients:recipient.test",
+            team_id=fixture.target_team,
             alias="recipient",
             identity_scope="global",
             member_did_aw=fixture.target_did,
@@ -176,7 +176,7 @@ async def _publish_resident_encryption_key(fixture, receiver) -> dict:
                 **_signed_team_headers(
                     target.sk,
                     target.did,
-                    "recipients:recipient.test",
+                    fixture.target_team,
                     certificate,
                     body,
                 ),

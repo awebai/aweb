@@ -13,10 +13,10 @@ from pathlib import Path
 
 import httpx
 import pytest
-from nacl.signing import SigningKey
 from aweb_naapp_testing import Member
 from awid.attestation_records import sign_record
 from awid_service.testing import REGISTRY_URL
+from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.attestation import (
     AttestationRefused,
