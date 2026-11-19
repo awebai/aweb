@@ -160,7 +160,11 @@ async def _resolve_target_identity(
     # Refresh failed route facts once, retaining cached successful validation.
     for fresh in (False, True):
         try:
-            resolve = registry_client.resolve_address_fresh if fresh else registry_client.resolve_address
+            resolve = (
+                registry_client.resolve_address_fresh
+                if fresh
+                else registry_client.resolve_address
+            )
             resolved = await resolve(domain, name)
         except AWID_DEPENDENCY_ERRORS as exc:
             logger.warning(
@@ -239,9 +243,7 @@ async def _established_replay_receipt(
         if isinstance(result, str):
             result = json.loads(result)
     except (TypeError, ValueError) as exc:
-        raise FederationAuthorityError(
-            "federation_message_replay_conflict"
-        ) from exc
+        raise FederationAuthorityError("federation_message_replay_conflict") from exc
     if not isinstance(metadata, dict) or not isinstance(result, dict):
         raise FederationAuthorityError("federation_message_replay_conflict")
     return {"metadata": metadata, "result": result}
@@ -302,9 +304,7 @@ async def receive_federated_message(
         if envelope.target_delivery_origin not in _public_origins(request):
             raise FederationAuthorityError("target_route_mismatch")
 
-        ingress_envelope_hash = federation_envelope_hash(
-            envelope, payload.signature
-        )
+        ingress_envelope_hash = federation_envelope_hash(envelope, payload.signature)
         established_replay = await _established_replay_receipt(
             db,
             envelope=envelope,
@@ -315,9 +315,7 @@ async def receive_federated_message(
             envelope = envelope.model_copy(
                 update={
                     "sender_address": metadata.get("sender_address"),
-                    "sender_delivery_origin": metadata.get(
-                        "sender_delivery_origin"
-                    ),
+                    "sender_delivery_origin": metadata.get("sender_delivery_origin"),
                     "target_address": metadata.get("target_address")
                     or envelope.target_address,
                 }
@@ -340,9 +338,7 @@ async def receive_federated_message(
         )
         if stored_participants is not None:
             target_participant = stored_participants[envelope.target_did_aw]
-            stored_target_address = str(
-                target_participant.get("address") or ""
-            ).strip()
+            stored_target_address = str(target_participant.get("address") or "").strip()
             if not stored_target_address:
                 raise FederationAuthorityError("recipient_route_missing")
             if envelope.target_address not in {
@@ -355,16 +351,17 @@ async def receive_federated_message(
             )
         authority_token = None
         if envelope.sender_did_aw.startswith("did:aw:"):
-            sender_address = envelope.sender_address or str(
-                (sender_participant or {}).get("address") or ""
-            ).strip()
+            sender_address = (
+                envelope.sender_address
+                or str((sender_participant or {}).get("address") or "").strip()
+            )
             if not sender_address:
                 raise FederationAuthorityError("sender_address_required")
             sender_origin = envelope.sender_delivery_origin
             if sender_origin is None and sender_participant is not None:
-                sender_origin = str(
-                    sender_participant.get("delivery_origin") or ""
-                ).strip() or None
+                sender_origin = (
+                    str(sender_participant.get("delivery_origin") or "").strip() or None
+                )
             authority = getattr(request.app.state, "federation_authority", None)
             if authority is None:
                 raise FederationAuthorityError(
@@ -378,8 +375,10 @@ async def receive_federated_message(
                     delivery_origin=sender_origin or "",
                 ),
                 source_ip=ClientIdentity(
-                    trusted_header=os.getenv("AWEB_CLIENT_ADDRESS_HEADER", "").strip() or None,
-                ).of(request) or "unknown",
+                    trusted_header=os.getenv("AWEB_CLIENT_ADDRESS_HEADER", "").strip()
+                    or None,
+                ).of(request)
+                or "unknown",
             )
             authority_token = getattr(authorized, "token", authorized)
             envelope = envelope.model_copy(
@@ -423,19 +422,27 @@ async def receive_federated_message(
         # The preserved sender signature and Phase-A authority above establish
         # the author. Bind the adjacent proof to that author, not this server.
         if _is_local_did_key(envelope.sender_did_aw):
-            binding = await verify_identity_binding(request, did_key=envelope.sender_current_did_key)
+            binding = await verify_identity_binding(
+                request, did_key=envelope.sender_current_did_key
+            )
             await authenticate_id_chain(request, binding)
         else:
             async with authority.received_registry_client(
-                authority_token, envelope.sender_current_did_key,
+                authority_token,
+                envelope.sender_current_did_key,
                 getattr(request.app.state, "redis", None),
             ) as foreign_registry:
                 binding = await verify_identity_binding(
-                    request, did_key=envelope.sender_current_did_key,
-                    did_aw=envelope.sender_did_aw, address=envelope.sender_address or "",
-                    fresh=True, registry_client=foreign_registry,
+                    request,
+                    did_key=envelope.sender_current_did_key,
+                    did_aw=envelope.sender_did_aw,
+                    address=envelope.sender_address or "",
+                    fresh=True,
+                    registry_client=foreign_registry,
                 )
-                await authenticate_id_chain(request, binding, registry_client=foreign_registry)
+                await authenticate_id_chain(
+                    request, binding, registry_client=foreign_registry
+                )
 
         if established_replay is not None:
             with agent_wake_scope(agent_wake_publisher(request.app.state)):
@@ -457,15 +464,12 @@ async def receive_federated_message(
         )
         recipient = await resolve_agent_by_did(db, envelope.target_did_aw)
         if recipient is None:
-            recipient = await resolve_agent_by_did(
-                db, envelope.target_current_did_key
-            )
+            recipient = await resolve_agent_by_did(db, envelope.target_current_did_key)
         if recipient is None:
             raise FederationAuthorityError("recipient_identity_not_found")
         if (
             str(recipient.get("did_key") or "").strip()
-            and str(recipient.get("did_key")).strip()
-            != envelope.target_current_did_key
+            and str(recipient.get("did_key")).strip() != envelope.target_current_did_key
         ):
             raise FederationAuthorityError("recipient_current_key_mismatch")
         if _is_local_did_key(envelope.target_did_aw) and not stored_route:
