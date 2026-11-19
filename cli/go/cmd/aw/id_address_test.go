@@ -232,7 +232,7 @@ func TestIDAddressesDefaultsToCurrentGlobalIdentity(t *testing.T) {
 	oldJSON := jsonFlag
 	jsonFlag = false
 	defer func() { jsonFlag = oldJSON }()
-	out := captureIDAddressStdout(t, func() {
+	out := captureStdout(t, func() {
 		if err := runIDAddresses(nil, nil); err != nil {
 			t.Fatalf("runIDAddresses: %v", err)
 		}
@@ -245,9 +245,4 @@ func TestIDAddressesDefaultsToCurrentGlobalIdentity(t *testing.T) {
 func payloadString(payload map[string]any, key string) string {
 	value, _ := payload[key].(string)
 	return value
-}
-
-func captureIDAddressStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	return captureStdout(t, fn)
 }

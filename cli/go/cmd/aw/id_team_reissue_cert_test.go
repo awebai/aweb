@@ -104,7 +104,7 @@ func TestTeamReissueCertRevokesRegisteredOldThenRegistersFresh(t *testing.T) {
 	teamReissueCertDID = memberDID
 
 	var runErr error
-	printed := captureIDCommandStdout(t, func() {
+	printed := captureStdout(t, func() {
 		runErr = runTeamReissueCert(nil, []string{"alice"})
 	})
 	if runErr != nil {
@@ -140,7 +140,7 @@ func TestTeamReissueCertNeverRegisteredRegistersWithoutRevoke(t *testing.T) {
 	teamReissueCertDID = memberDID
 
 	var runErr error
-	printed := captureIDCommandStdout(t, func() {
+	printed := captureStdout(t, func() {
 		runErr = runTeamReissueCert(nil, []string{"alice"})
 	})
 	if runErr != nil {
@@ -330,7 +330,7 @@ func TestTeamReissueCertWithoutHomePrintsPlacementMaterial(t *testing.T) {
 	jsonFlag = true
 
 	var runErr error
-	printed := captureIDCommandStdout(t, func() {
+	printed := captureStdout(t, func() {
 		runErr = runTeamReissueCert(nil, []string{"alice"})
 	})
 	if runErr != nil {

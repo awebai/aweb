@@ -46,7 +46,7 @@ from awid.team_server_record import record_signing_bytes
 
 from .db import AwidDatabaseInfra
 from .deps import get_domain_verifier
-from .main import mount_registry
+from .main import create_app, mount_registry
 
 REGISTRY_URL = "https://registry.example"
 SERVICE_TOKEN = "awid-testing-service-token-32-bytes"
@@ -449,6 +449,34 @@ def signed_team_server_record(
 
 
 @asynccontextmanager
+async def _running_registry_app(
+    infra: AwidDatabaseInfra, *, redis: Redis | None, service_token: str | None
+) -> AsyncIterator[FastAPI]:
+    """Use the production library app with its supplied dependencies.
+
+    Route-only component callers without Redis use the public registry mount;
+    its health endpoint reports the missing dependency.
+    """
+    if redis is None:
+        app = FastAPI()
+        app.state.db = infra
+        app.state.redis = None
+        app.state.db_schema = infra.schema
+        app.state.rate_limiter = NoOpRateLimiter()
+        app.state.awid_service_token = service_token
+        mount_registry(app)
+        app.state.awid_public_origins = (REGISTRY_URL,)
+        yield app
+        return
+
+    app = create_app(db_infra=infra, redis=redis, rate_limiter=NoOpRateLimiter())
+    async with app.router.lifespan_context(app):
+        app.state.awid_service_token = service_token
+        app.state.awid_public_origins = (REGISTRY_URL,)
+        yield app
+
+
+@asynccontextmanager
 async def running_registry(
     database_url: str,
     *,
@@ -464,20 +492,13 @@ async def running_registry(
     registry = None
     try:
         await infra.initialize(shared_pool=pool, run_migrations=True)
-        app = FastAPI()
-        app.state.db = infra
-        app.state.redis = redis
-        app.state.db_schema = infra.schema
-        app.state.rate_limiter = NoOpRateLimiter()
-        app.state.awid_service_token = service_token
-        mount_registry(app)
-        # Its public origin, which covering controller signatures name. After
-        # mount_registry, which reads AWID_PUBLIC_ORIGINS from the environment.
-        app.state.awid_public_origins = (REGISTRY_URL,)
-        registry = Registry(
-            app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app)
-        )
-        yield registry
+        async with _running_registry_app(
+            infra, redis=redis, service_token=service_token
+        ) as app:
+            registry = Registry(
+                app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app)
+            )
+            yield registry
     finally:
         try:
             if registry is not None:

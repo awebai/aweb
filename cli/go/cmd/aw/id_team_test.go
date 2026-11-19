@@ -5422,11 +5422,7 @@ func TestVerifyNamedMemberRefusesAResolvedAliasThatIsNotTheOneNamed(t *testing.T
 	}
 }
 
-// captureTeamMembersStdout records the complete roster through the shared capture owner.
-func captureTeamMembersStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	return captureStdout(t, fn)
-}
+// captureStdout records the complete roster through the shared capture owner.
 
 func TestRunTeamMembersListsMembersBeyondTheFirstPage(t *testing.T) {
 	resetTeamMembersGlobals(t)
@@ -5474,7 +5470,7 @@ func TestRunTeamMembersListsMembersBeyondTheFirstPage(t *testing.T) {
 	teamMembersRegistryURL = server.URL
 
 	var runErr error
-	output := captureTeamMembersStdout(t, func() {
+	output := captureStdout(t, func() {
 		runErr = runTeamMembers(&cobra.Command{}, nil)
 	})
 	if runErr != nil {
@@ -5512,7 +5508,7 @@ func TestRunTeamMembersRefusesToPrintATruncatedRoster(t *testing.T) {
 	teamMembersRegistryURL = server.URL
 
 	var runErr error
-	output := captureTeamMembersStdout(t, func() {
+	output := captureStdout(t, func() {
 		runErr = runTeamMembers(&cobra.Command{}, nil)
 	})
 	if runErr == nil {

@@ -654,39 +654,6 @@ async def test_atomic_claim_missing_namespace_fails_before_writes(
 
 
 @pytest.mark.asyncio
-async def test_atomic_claim_stale_timestamp_fails_before_writes(
-    client,
-    awid_db_infra,
-    controller_identity,
-    monkeypatch,
-):
-    controller_signing_key, controller_did = controller_identity
-    await _register_namespace(client, controller_signing_key, controller_did)
-    identity_signing_key, identity_public_key = generate_keypair()
-    identity_did_key = did_from_public_key(identity_public_key)
-    body = _claim_body(
-        identity_signing_key=identity_signing_key,
-        identity_did_key=identity_did_key,
-        controller_signing_key=controller_signing_key,
-        timestamp=(
-            datetime.fromisoformat(_TS.replace("Z", "+00:00")) - timedelta(seconds=301)
-        )
-        .isoformat()
-        .replace("+00:00", "Z"),
-    )
-
-    resp = await client.post("/v1/namespaces/example.com/addresses/claims", json=body)
-
-    assert resp.status_code == 401, resp.text
-    assert resp.json()["detail"]["code"] == "timestamp_stale"
-    assert await _counts(awid_db_infra, body["did_aw"], body["address_name"]) == (
-        0,
-        0,
-        0,
-    )
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("offset", [-301, -300, 0, 300, 301])
 async def test_atomic_claim_timestamp_window_at_real_admission(
     client, awid_db_infra, controller_identity, monkeypatch, offset

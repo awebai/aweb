@@ -1,0 +1,333 @@
+"""Real-tool controls for the Python diagnostic ceiling, without services."""
+
+import json
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from collections import Counter
+from pathlib import Path
+
+from python_static import (
+    CEILINGS_PATH,
+    VERSIONS,
+    DiagnosticGroup,
+    Package,
+    StaticCheckError,
+    Tool,
+    exceeded_ceilings,
+    load_ceilings,
+    scan_package,
+    verify_versions,
+)
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class PythonStaticControls(unittest.TestCase):
+    def setUp(self) -> None:
+        verify_versions()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        directory = self.root / "server"
+        directory.mkdir()
+        shutil.copyfile(ROOT / "server/pyproject.toml", directory / "pyproject.toml")
+        self.source = directory / "src/aweb"
+        self.source.mkdir(parents=True)
+        (self.source / "__init__.py").write_text("")
+        self.package = Package(directory=directory, interpreter=Path(sys.executable))
+
+    def scan(self) -> Counter[DiagnosticGroup]:
+        return scan_package(root=self.root, package=self.package)
+
+    def write_budget(self, groups: list[dict[str, object]]) -> Path:
+        path = self.root / CEILINGS_PATH
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(
+            json.dumps({"schema_version": 1, "versions": VERSIONS, "groups": groups})
+        )
+        return path
+
+    def test_same_file_and_rule_growth_exceeds_existing_ceiling(self) -> None:
+        path = self.source / "defaults.py"
+        path.write_text("def first(value=[]):\n    return value\n")
+        baseline = self.scan()
+        group = DiagnosticGroup(
+            tool=Tool.RUFF, file="server/src/aweb/defaults.py", code="B006"
+        )
+        self.assertEqual(baseline[group], 1)
+        path.write_text(
+            path.read_text() + "\ndef second(value=[]):\n    return value\n"
+        )
+        failures = exceeded_ceilings(observed=self.scan(), ceilings=dict(baseline))
+        self.assertIn("ruff server/src/aweb/defaults.py [B006]: 2 > 1", failures)
+
+    def test_new_module_has_zero_allowance_and_checks_untyped_function_body(
+        self,
+    ) -> None:
+        (self.source / "new_module.py").write_text(
+            'def takes_int(value: int) -> int:\n    return value\n\ndef untyped():\n    return takes_int("bad")\n'
+        )
+        observed = self.scan()
+        group = DiagnosticGroup(
+            tool=Tool.MYPY, file="server/src/aweb/new_module.py", code="arg-type"
+        )
+        self.assertEqual(observed[group], 1)
+        self.assertIn(
+            "mypy server/src/aweb/new_module.py [arg-type]: 1 > 0",
+            exceeded_ceilings(observed=observed, ceilings={}),
+        )
+
+    def test_blind_handler_is_checked_in_new_module(self) -> None:
+        (self.source / "blind_handler.py").write_text(
+            'def read():\n    try:\n        return int("x")\n    except Exception:\n        return None\n'
+        )
+        observed = self.scan()
+        self.assertEqual(
+            observed[
+                DiagnosticGroup(
+                    tool=Tool.RUFF,
+                    file="server/src/aweb/blind_handler.py",
+                    code="BLE001",
+                )
+            ],
+            1,
+        )
+
+    def test_cleared_group_passes_and_can_be_removed_from_budget(self) -> None:
+        path = self.source / "defaults.py"
+        path.write_text("def first(value=[]):\n    return value\n")
+        baseline = dict(self.scan())
+        self.assertTrue(baseline)
+        path.write_text(
+            "def first(value=None):\n    return [] if value is None else value\n"
+        )
+        observed = self.scan()
+        self.assertEqual(exceeded_ceilings(observed=observed, ceilings=baseline), [])
+        self.assertEqual(exceeded_ceilings(observed=observed, ceilings={}), [])
+
+    def test_fastapi_declaration_is_valid(self) -> None:
+        (self.source / "declarations.py").write_text(
+            "from fastapi import Body, Depends\n\ndef dependency() -> int:\n    return 1\n\ndef route(value=Body(), dep=Depends(dependency)):\n    return value, dep\n"
+        )
+        self.assertEqual(self.scan(), Counter())
+
+    def test_noqa_does_not_hide_growth_from_raw_scan(self) -> None:
+        (self.source / "defaults.py").write_text(
+            "def first(value=[]):  # noqa: B006\n    return value\n"
+        )
+        self.assertEqual(
+            self.scan()[
+                DiagnosticGroup(
+                    tool=Tool.RUFF, file="server/src/aweb/defaults.py", code="B006"
+                )
+            ],
+            1,
+        )
+
+    def test_invalid_tool_config_is_setup_failure(self) -> None:
+        path = self.package.directory / "pyproject.toml"
+        path.write_text(path.read_text() + "\n[tool.ruff.nonexistent]\nvalue = true\n")
+        with self.assertRaisesRegex(StaticCheckError, "ruff failed"):
+            self.scan()
+
+    def test_narrowed_type_scope_and_module_suppression_refuse(self) -> None:
+        path = self.package.directory / "pyproject.toml"
+        original = path.read_text()
+        for changed, refusal in [
+            (
+                original.replace('files = ["src/aweb"]', 'files = ["src/aweb/one.py"]'),
+                "every declared",
+            ),
+            (
+                original
+                + '\n[[tool.mypy.overrides]]\nmodule = "aweb.*"\ndisable_error_code = ["arg-type"]\n',
+                "instead of module",
+            ),
+        ]:
+            with self.subTest(refusal=refusal):
+                path.write_text(changed)
+                with self.assertRaisesRegex(StaticCheckError, refusal):
+                    self.scan()
+
+    def test_boolean_ceiling_is_not_an_integer_allowance(self) -> None:
+        path = self.write_budget(
+            [
+                {
+                    "tool": "ruff",
+                    "file": "server/src/aweb/example.py",
+                    "code": "B006",
+                    "count": True,
+                }
+            ]
+        )
+        with self.assertRaisesRegex(StaticCheckError, "positive integer"):
+            load_ceilings(path)
+
+    def test_unknown_group_fields_and_duplicate_groups_refuse(self) -> None:
+        group: dict[str, object] = {
+            "tool": "ruff",
+            "file": "server/src/aweb/example.py",
+            "code": "B006",
+            "count": 1,
+        }
+        for groups, expected in [
+            ([dict(group, extra=1)], "exactly"),
+            ([group, group], "duplicate"),
+        ]:
+            with self.subTest(expected=expected):
+                with self.assertRaisesRegex(StaticCheckError, expected):
+                    load_ceilings(self.write_budget(groups))
+
+    def test_budget_path_cannot_escape_or_exempt_new_file_patterns(self) -> None:
+        for file in (
+            "../example.py",
+            "/tmp/example.py",
+            "server/src/aweb/*.py",
+            "other/example.py",
+        ):
+            with self.subTest(file=file):
+                path = self.write_budget(
+                    [{"tool": "ruff", "file": file, "code": "B006", "count": 1}]
+                )
+                with self.assertRaises(StaticCheckError):
+                    load_ceilings(path)
+
+    def test_setup_refusal_ends_with_tested_recovery_action(self) -> None:
+        command = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/python_static.py"),
+                "--root",
+                str(self.root),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+        self.assertEqual(command.returncode, 2, command.stdout + command.stderr)
+        self.assertIn("cannot read", command.stderr)
+        self.assertTrue(
+            command.stderr.rstrip().endswith(
+                "Prepare the frozen package environments and correct the reported configuration, then run make check-python-static."
+            ),
+            command.stderr,
+        )
+
+    def prepare_cli_packages(self) -> None:
+        """Build empty package roots so CLI refusal controls run actual tools."""
+        for name in ("awid", "key-holder"):
+            package = self.root / name
+            shutil.copytree(self.package.directory, package)
+            roots = (
+                '["src/awid", "src/awid_service"]'
+                if name == "awid"
+                else '["src/aweb_key_holder"]'
+            )
+            config = package / "pyproject.toml"
+            config.write_text(config.read_text().replace('["src/aweb"]', roots))
+            modules = (
+                ("awid", "awid_service") if name == "awid" else ("aweb_key_holder",)
+            )
+            for module in modules:
+                source = package / "src" / module
+                source.mkdir()
+                (source / "__init__.py").write_text("")
+        for name in ("server", "awid", "key-holder"):
+            runtime = self.root / name / ".venv/bin"
+            runtime.mkdir(parents=True)
+            (runtime / "python").symlink_to(sys.executable)
+
+    def test_growth_refusal_ends_with_tested_recovery_action(self) -> None:
+        self.prepare_cli_packages()
+        (self.source / "defaults.py").write_text(
+            "def first(value=[]):\n    return value\n"
+        )
+        self.write_budget([])
+        command = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/python_static.py"),
+                "--root",
+                str(self.root),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=90,
+        )
+        self.assertEqual(command.returncode, 1, command.stdout + command.stderr)
+        self.assertIn("[B006]: 1 > 0", command.stderr)
+        self.assertTrue(
+            command.stderr.rstrip().endswith(
+                "Fix the reported findings and lower cleared ceilings in the same change."
+            ),
+            command.stderr,
+        )
+
+    def test_raising_reviewed_allowance_refuses_even_when_tools_fit_the_new_budget(
+        self,
+    ) -> None:
+        self.prepare_cli_packages()
+        group: dict[str, object] = {
+            "tool": "ruff",
+            "file": "server/src/aweb/defaults.py",
+            "code": "B006",
+            "count": 1,
+        }
+        self.write_budget([group])
+        commands = [
+            ["git", "init", "--quiet"],
+            ["git", "add", CEILINGS_PATH.as_posix()],
+            [
+                "git",
+                "-c",
+                "user.name=Static control",
+                "-c",
+                "user.email=static-control@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "--quiet",
+                "-m",
+                "Reviewed ceiling",
+            ],
+            ["git", "update-ref", "refs/remotes/origin/main", "HEAD"],
+        ]
+        for command in commands:
+            subprocess.run(
+                command, cwd=self.root, check=True, capture_output=True, timeout=10
+            )
+        (self.source / "defaults.py").write_text(
+            "def first(value=[]):\n    return value\n"
+        )
+        self.write_budget([dict(group, count=2)])
+        command = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/python_static.py"),
+                "--root",
+                str(self.root),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=90,
+        )
+        self.assertEqual(command.returncode, 1, command.stdout + command.stderr)
+        self.assertIn(
+            "Reviewed Python diagnostic ceilings cannot increase", command.stderr
+        )
+        self.assertIn("[B006]: 2 > 1", command.stderr)
+        self.assertTrue(
+            command.stderr.rstrip().endswith(
+                "Restore the reviewed allowances and fix the additional findings."
+            ),
+            command.stderr,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
