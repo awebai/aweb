@@ -8,7 +8,6 @@ from enum import Enum, auto
 from fastapi import HTTPException
 from aweb.service_errors import (
     ServiceError,
-    IdentityBindingCode,
     IdentityBindingError,
     INTERNAL_SERVICE_ERROR_MESSAGE,
 )
@@ -41,12 +40,6 @@ RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE = (
     "and if it persists contact support"
 )
 RECIPIENT_KEY_CHANGED = "this recipient's key changed; resend the message"
-RECIPIENT_NOT_AS_REGISTERED = (
-    "this recipient's identity or key no longer matches the registry; check the address and resend"
-)
-REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY = (
-    "the registry can't confirm this recipient's key right now; try again shortly"
-)
 RECIPIENT_UNREACHABLE_IN_CONVERSATION = (
     "this recipient can no longer be reached in this conversation; "
     "start a new conversation with them by alias or address"
@@ -62,10 +55,6 @@ _HOSTED_ENVELOPE_NEXT_ACTIONS = {
     "recipient_custodial_no_e2ee": SENDER_KEY_NOT_PUBLISHED,
     "federation_envelope_invalid": SENDER_KEY_NOT_VERIFIABLE,
     "recipient_encryption_assertion_invalid_or_stale": RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE,
-}
-_IDENTITY_BINDING_NEXT_ACTIONS = {
-    IdentityBindingCode.MISMATCH: RECIPIENT_NOT_AS_REGISTERED,
-    IdentityBindingCode.UNAVAILABLE: REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY,
 }
 
 
@@ -142,12 +131,6 @@ def send_refusal(
         return json.dumps({"error": detail["message"], "reason": detail["code"], "retryable": True})
     if isinstance(exc.__cause__, E2EERecipientKeyMismatch):
         return json.dumps({"error": RECIPIENT_KEY_CHANGED})
-    if (
-        isinstance(exc, (ServiceError, HTTPException))
-        and isinstance(detail, str)
-        and detail in _IDENTITY_BINDING_NEXT_ACTIONS
-    ):
-        return json.dumps({"error": _IDENTITY_BINDING_NEXT_ACTIONS[detail], "reason": detail})
     if detail == LOCAL_DID_KEY_RECIPIENT_UNREACHABLE:
         return json.dumps({"error": RECIPIENT_UNREACHABLE_IN_CONVERSATION})
     return json.dumps({"error": detail if detail is not None else INTERNAL_SERVICE_ERROR_MESSAGE})

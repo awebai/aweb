@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from aweb.mcp.tools.refusals import SendRefusalMode
+from aweb.service_errors import IdentityBindingCode, IdentityBindingError
 from aweb.messaging.refusals import RecipientAddressNotFound
 import pytest_asyncio
 from pgdbm.errors import QueryError
@@ -958,18 +959,20 @@ NEXT_ACTIONS = [
         },
     ),
     (
-        lambda: _binding_refusal(403, "identity_binding_mismatch"),
+        lambda: IdentityBindingError(IdentityBindingCode.MISMATCH),
         {},
         {
-            "error": "this recipient's identity or key no longer matches the registry; check the address and resend",
+            "error": "The claimed identity and signing key do not match. "
+            "Check the identity and its current public-key binding, "
+            "then correct the request and retry.",
             "reason": "identity_binding_mismatch",
         },
     ),
     (
-        lambda: _binding_refusal(503, "identity_binding_unavailable"),
+        lambda: IdentityBindingError(IdentityBindingCode.UNAVAILABLE),
         {},
         {
-            "error": "the registry can't confirm this recipient's key right now; try again shortly",
+            "error": "Identity verification is unavailable. Retry when the identity registry is available.",
             "reason": "identity_binding_unavailable",
         },
     ),

@@ -123,7 +123,8 @@ async def local_recipient_for_own_route(
         # does not create bare-key first-contact authority.
         from aweb.member_team_key import read_participant_identity_projection
 
-        recipient = await read_participant_identity_projection(db, participant_did=did)
+        projection = await read_participant_identity_projection(db, participant_did=did)
+        recipient = Recipient.from_local_projection(projection) if projection is not None else None
     if recipient is None:
         refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
     if did.startswith("did:aw:"):
