@@ -134,8 +134,14 @@ logs' active registration, the producer's registered authority, then the
 packaged catalog's payload schema before deduplication and append. Unavailable
 binding or producer authority returns 503 so the sender can retry.
 
-Client certificates are verified against a fresh controller-key read and the
-runtime's shared certificate publication/revocation policy. Client quotas are
+Client certificates are verified against one runtime snapshot of controller,
+publication and revocation facts, reused for at most 60 seconds without outage
+grace. Local signature, audience, raw-path, body and time checks precede registry
+access. A known fresh key rejects a forged certificate before unknown-ID refresh.
+Cold team/status loads share at most 16 remote producers. Unknown teams and
+certificate-status failures have bounded five-second negative cooldowns; these
+answers never authorize a delivery. Repeated status requests coalesce, and an
+expired positive snapshot is never served during an outage. Client quotas are
 per member certificate in fixed UTC minute windows:
 
 - `LOGS_CLIENT_EVENTS_PER_MINUTE` defaults to **30**;

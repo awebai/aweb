@@ -155,3 +155,19 @@ See [health probes](../docs/awid-sot.md#health-probes).
 skill and driver. The driver owns planning, exact-byte staging, publication,
 tagging, registry verification, and the receipt; do not start a release by
 pushing an `awid-vX.Y.Z` tag. The version remains in `pyproject.toml`.
+
+### Identity-status capacity and cache invalidation
+
+Sharing a namespace authority reduces DNS work per domain/process, not the
+number of exact status POSTs: there is no speculative ID fill or enumeration.
+The public default remains 60 status POSTs per minute per source IP. Cold
+requests, expired cohorts and retries spend that same quota; a 429 carries
+Retry-After and cannot authorize using expired status evidence. Increase read
+budgets only on a registry you operate, or use its supported service credential.
+Both status and DNS evidence retain their original maximum 60-second age; an
+older shared DNS observation shortens a new cohort's reuse window.
+
+Scoped cache generations add a Redis GET to generation-qualified acquisitions.
+Address writes invalidate the domain's address tier at that registry, so a
+domain with continuous address writes can prevent useful address-cache reuse.
+This is independent of revocation-list membership indexing.

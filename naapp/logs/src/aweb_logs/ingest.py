@@ -15,13 +15,13 @@ from uuid import UUID
 
 from aweb_naapp.hooks.catalog import Catalog, PayloadRefused
 from aweb_naapp.hooks.delivery import (
-    AUTH_SCHEME,
     MAX_DELIVERY_BYTES,
-    SIGNED_PAYLOAD_HEADER,
     ReceiveOptions,
-    verify_delivery,
+    verify_delivery_authority,
+    verify_delivery_certificate_signature,
+    verify_delivery_transport,
 )
-from aweb_naapp.hooks.envelope import TEAM_ID_PATTERN, Envelope, verify_signature
+from aweb_naapp.hooks.envelope import Envelope
 from aweb_naapp.hooks.strictjson import (
     Refused,
     decode_base64url,
@@ -128,8 +128,8 @@ class Ingestor:
     Untrusted delivery metadata selects a team and binding, never a URL or
     authority. The kit verifies it; own_bindings then establishes that the
     signed binding is this installation's active registration. For client
-    certificates the controller key is read fresh, in addition to B1's shared
-    publication/revocation check.
+    certificates one B1 snapshot supplies the controller, publication and
+    revocation facts after local transport verification.
     """
 
     def __init__(
@@ -150,43 +150,27 @@ class Ingestor:
         team_key_did = ""
         client_facts: CachedTeamFacts | None = None
         try:
-            # Every team uses one route. Select the signed binding as a hint;
-            # only the resolver below can establish that it is ours. Authenticate
-            # the hint before permitting a client hint to cause registry I/O.
-            auth = request.headers.get("Authorization", "")
-            if not auth.startswith(AUTH_SCHEME):
-                raise Refused("wrong_scheme")
-            parts = auth[len(AUTH_SCHEME):].split(" ")
-            if len(parts) != 2:
-                raise Refused("wrong_scheme")
-            signed = decode_base64url(request.headers.get(SIGNED_PAYLOAD_HEADER, ""), "signed payload")
-            hint = parse_canonical_object(signed)
-            verify_signature(parts[0], signed, parts[1])
-            binding_id = hint.get("binding_id")
-            if not isinstance(binding_id, str) or str(UUID(binding_id)) != binding_id:
-                raise Refused("invalid_value", "binding_id")
-            team_id = hint.get("team_id")
-            if not isinstance(team_id, str) or not TEAM_ID_PATTERN.fullmatch(team_id):
-                raise Refused("invalid_value", "team_id")
-            producer = hint.get("producer")
-            if isinstance(producer, str) and producer.startswith("client:"):
-                team_key_did = await self._current_team_key(team_id)
-                client_facts = await self._team_certificates(team_id, producer.removeprefix("client:"))
-            received = verify_delivery(
+            transport = verify_delivery_transport(
                 request.method, raw_request_target(request), headers, body,
-                ReceiveOptions(
+                audience=self.runtime.settings.public_origin, now=received_at,
+            )
+            binding_id = transport.payload["binding_id"]
+            event = transport.envelope
+            if event.producer_kind == "client":
+                certificate_id = event.fields["producer"]["certificate_id"]
+                cached_key = self.runtime.team_cache().cached_team_did_key(event.team_id, certificate_id)
+                if cached_key:
+                    verify_delivery_certificate_signature(transport, headers, cached_key)
+                client_facts = await self._team_certificates(event.team_id, certificate_id)
+                team_key_did = client_facts.team_did_key
+            received = verify_delivery_authority(
+                transport, headers, ReceiveOptions(
                     audience=self.runtime.settings.public_origin, binding_id=binding_id,
                     now=received_at, team_key_did=team_key_did,
                     revoked_certificate_ids=client_facts.revoked_certificate_ids if client_facts else (),
-                    registered_certificate_ids=(
-                        client_facts.published_certificate_ids if client_facts else None
-                    ),
+                    registered_certificate_ids=client_facts.published_certificate_ids if client_facts else None,
                 ),
             )
-            # The certificate was verified under the key read fresh; the
-            # certificate ids must have been read under that same key.
-            if client_facts is not None and client_facts.team_did_key != team_key_did:
-                raise IngestRefused(503, "client_authority_changed")
         except Refused as refused:
             raise IngestRefused(401, f"transport_{refused.code}") from refused
         except (ValueError, TypeError) as exc:
@@ -235,24 +219,6 @@ class Ingestor:
             "receipt": artefact_json(*result.receipt),
         }
 
-    async def _current_team_key(self, team_id: str) -> str:
-        # Read fresh through the runtime's AWID authority: the service token
-        # of a hosted Logs, or a customer-hosted Logs' own member certificate.
-        try:
-            team_did_key = await self.runtime.team_cache().current_team_did_key(team_id)
-        except HTTPException as exc:
-            if _private_team_unreadable(exc):
-                raise IngestRefused(403, PRIVATE_TEAM_UNREADABLE) from exc
-            if (exc.status_code, exc.detail) == (401, "team_key_unverified"):
-                # The registry names a key no namespace-controller act establishes.
-                raise IngestRefused(401, "team_key_unverified") from exc
-            raise IngestRefused(503, "client_authority_unavailable") from exc
-        except ValueError as exc:
-            raise IngestRefused(503, "client_authority_unavailable") from exc
-        if team_did_key is None:
-            raise IngestRefused(401, "transport_certificate_invalid")
-        return team_did_key
-
     async def _team_certificates(self, team_id: str, certificate_id: str) -> CachedTeamFacts:
         """The team's revoked and registered certificate ids, through the
         shared cache, which reads again for a certificate it has not seen."""
@@ -261,6 +227,8 @@ class Ingestor:
         except HTTPException as exc:
             if _private_team_unreadable(exc):
                 raise IngestRefused(403, PRIVATE_TEAM_UNREADABLE) from exc
+            if (exc.status_code, exc.detail) == (401, "team_key_unverified"):
+                raise IngestRefused(401, "team_key_unverified") from exc
             if exc.status_code == 401:
                 raise IngestRefused(401, "transport_certificate_invalid") from exc
             raise IngestRefused(503, "client_authority_unavailable") from exc

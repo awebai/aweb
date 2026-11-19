@@ -24,6 +24,7 @@ from awid.team_certificate import (
     TeamCertificateError,
     check_team_certificate,
     decode_team_certificate,
+    verify_team_certificate_signature,
 )
 from nacl.signing import SigningKey
 
@@ -79,7 +80,7 @@ class Delivery:
 class ReceiveOptions:
     """What the target knows independently of the request: its public origin,
     the binding the delivery must name, its clock and, for a client's
-    certificate, what the team's registry says, read fresh: the team's current
+    certificate, a freshness-bounded snapshot of what the team's registry says: its current
     controller key, its revoked certificate ids and its registered ones.
     ``audience`` and ``binding_id`` are required. A target that takes client
     deliveries gives all three registry facts; without the key or the
@@ -97,6 +98,14 @@ class ReceiveOptions:
 @dataclass(frozen=True)
 class Received:
     """A delivery that passed every check, with its verified event."""
+
+    payload: dict[str, Any]
+    envelope: Envelope
+
+
+@dataclass(frozen=True)
+class VerifiedTransport:
+    """Locally verified bytes; member authority still needs the registry facts."""
 
     payload: dict[str, Any]
     envelope: Envelope
@@ -175,9 +184,21 @@ def verify_delivery(
     event, or raise the first refusal."""
     if not options.audience or not options.binding_id:
         raise Refused("verifier_misconfigured", "an audience and a binding are required")
+    transport = verify_delivery_transport(method, path, headers, body,
+        audience=options.audience, binding_id=options.binding_id, now=options.now)
+    return verify_delivery_authority(transport, headers, options)
+
+
+def verify_delivery_transport(
+    method: str, path: str, headers: dict[str, str], body: bytes, *,
+    audience: str, now: datetime, binding_id: str | None = None,
+) -> VerifiedTransport:
+    """The shared local stage, before registry or binding discovery."""
+    if not audience:
+        raise Refused("verifier_misconfigured", "an audience is required")
     if len(body) > MAX_DELIVERY_BYTES:
         raise Refused("request_too_large", f"{len(body)} bytes, at most {MAX_DELIVERY_BYTES}")
-    _utc(options.now, "the receiver's clock")
+    _utc(now, "the receiver's clock")
     authorization = _header(headers, "Authorization")
     if not authorization.startswith(AUTH_SCHEME):
         raise Refused("wrong_scheme", "not an AWEB-Hook credential")
@@ -199,7 +220,7 @@ def verify_delivery(
     team_id = payload["team_id"]
     if not isinstance(team_id, str) or not TEAM_ID_PATTERN.fullmatch(team_id):
         raise Refused("invalid_value", "team_id")
-    if payload["aud"] != options.audience:
+    if payload["aud"] != audience:
         raise Refused("audience_mismatch", str(payload["aud"]))
     if payload["method"] != method.upper() or payload["path"] != path:
         raise Refused("request_mismatch", f"signed for {payload['method']} {payload['path']}")
@@ -207,9 +228,9 @@ def verify_delivery(
         raise Refused("body_mismatch", "body_sha256")
     exact_time(payload, "timestamp", _DELIVERY_TIME)
     signed_at = datetime.strptime(payload["timestamp"], _DELIVERY_TIME)
-    if abs(_utc(options.now, "the receiver's clock") - signed_at) > REPLAY_WINDOW:
+    if abs(_utc(now, "the receiver's clock") - signed_at) > REPLAY_WINDOW:
         raise Refused("timestamp_outside_window", payload["timestamp"])
-    if payload["binding_id"] != options.binding_id:
+    if binding_id is not None and payload["binding_id"] != binding_id:
         raise Refused("binding_mismatch", str(payload["binding_id"]))
 
     try:
@@ -230,9 +251,38 @@ def verify_delivery(
         or payload["kid"] != _credential_kid(envelope)
     ):
         raise Refused("producer_mismatch", "the credential's signer is not the event's producer")
+    if binding_id is None and (not isinstance(payload["binding_id"], str)
+                               or not UUID_PATTERN.fullmatch(payload["binding_id"])):
+        raise Refused("invalid_value", "binding_id")
     if envelope.producer_kind == "client":
-        _verify_client_certificate(_header(headers, CERTIFICATE_HEADER), envelope, options)
-    return Received(payload=payload, envelope=envelope)
+        encoded = _header(headers, CERTIFICATE_HEADER)
+        if not encoded:
+            raise Refused("certificate_missing", "a client delivery carries its team certificate")
+        _certificate_names_producer(_decode_certificate(encoded), envelope)
+    return VerifiedTransport(payload=payload, envelope=envelope)
+
+
+def verify_delivery_authority(
+    transport: VerifiedTransport, headers: dict[str, str], options: ReceiveOptions,
+) -> Received:
+    """Complete the same verifier using one independently acquired snapshot."""
+    if transport.payload["aud"] != options.audience:
+        raise Refused("audience_mismatch", str(transport.payload["aud"]))
+    if transport.payload["binding_id"] != options.binding_id:
+        raise Refused("binding_mismatch", str(transport.payload["binding_id"]))
+    if transport.envelope.producer_kind == "client":
+        _verify_client_certificate(_header(headers, CERTIFICATE_HEADER), transport.envelope, options)
+    return Received(payload=transport.payload, envelope=transport.envelope)
+
+
+def verify_delivery_certificate_signature(
+    transport: VerifiedTransport, headers: dict[str, str], team_did_key: str,
+) -> None:
+    """A warm key rejects forged certificates before an unknown-ID refresh."""
+    try:
+        verify_team_certificate_signature(_decode_certificate(_header(headers, CERTIFICATE_HEADER)), team_did_key)
+    except TeamCertificateError as exc:
+        raise Refused("certificate_invalid", str(exc)) from None
 
 
 def _verify_client_certificate(encoded: str, envelope: Envelope, options: ReceiveOptions) -> None:

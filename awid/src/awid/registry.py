@@ -11,6 +11,7 @@ import json
 import logging
 from json import loads as json_loads
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
 from dataclasses import InitVar, asdict, dataclass, field
 from datetime import datetime, timezone
@@ -1861,6 +1862,8 @@ class CachedRegistryClient(RegistryClient):
         object.__setattr__(self, "_id_status_refreshes", {})
         object.__setattr__(self, "_team_key_signature_refreshes", {})
         object.__setattr__(self, "_team_certificate_miss_refreshes", {})
+        object.__setattr__(self, "_namespace_authorities", OrderedDict())
+        object.__setattr__(self, "_namespace_authority_refreshes", {})
 
     async def id_chain_evidence(
         self, bundle: dict[str, Any] | None, subject: dict[str, Any], *, domain: str,
@@ -1893,6 +1896,11 @@ class CachedRegistryClient(RegistryClient):
             age = _whole_seconds_up((redis_now_us - cached["fetched_at"] * _MICROSECONDS) * 1_000)
             if age <= _ID_STATUS_FRESH_SECONDS:
                 return _id_status_evidence(cached, age=age)
+        if cached is not None:
+            # The stored cohort exhausted its oldest component. Refresh DNS
+            # with that cohort, rather than repeatedly POST beside an authority
+            # whose conservative whole-second deadline has already elapsed.
+            self._namespace_authorities.pop((domain, cache_key.rsplit(":generation:", 1)[-1]), None)
         refresh = await self._coalesced_id_status_refresh(cache_key, request)
         if refresh.entry is not None:
             return _id_status_evidence(refresh.entry, age=refresh.age)
@@ -1910,9 +1918,9 @@ class CachedRegistryClient(RegistryClient):
     async def _refresh_id_status(self, cache_key: str, request: dict[str, Any]) -> _IDStatusRefresh:
         """One attempt, with DNS authority, routing and HTTP under one timeout.
 
-        The status and the authority it is checked against are stored as one
-        entry, stamped with the Redis clock when the attempt began; the
-        evidence returned now is aged by this process from that same moment.
+        The complete status and its fresh domain authority are stored together,
+        stamped at the older observation. Shared DNS authority keeps its own
+        deadline; neither a new status nor a cache hit renews its age.
         A malformed successful answer is not an outage: it removes the entry,
         so no older tree outlives it.
         """
@@ -1921,7 +1929,26 @@ class CachedRegistryClient(RegistryClient):
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 fetched_at = await self._redis_time()
-                acquired = await self._acquire_id_status(request)
+                dns_stamp, dns_started, authority = await self._shared_namespace_authority(
+                    domain, cache_key.rsplit(":generation:", 1)[-1],
+                )
+                # Operator-selected routes retain precedence. On public discovery
+                # reuse the route from this same DNS authority observation.
+                if self.transport is not None or self.domain_registry_resolver is not None:
+                    registry_url = await self._registry_url_for_domain(domain)
+                else:
+                    from awid.dns_verify import DEFAULT_AWID_REGISTRY_URL
+                    configured = canonical_server_origin(self.registry_url)
+                    registry_url = (authority.registry_url if configured == canonical_server_origin(DEFAULT_AWID_REGISTRY_URL)
+                                    else configured)
+                status = await self.fetch_id_certificate_status(domain, request, registry_origin=registry_url)
+                acquired = {"status": status, "namespace_authority": {
+                    "domain": domain, "dns_name": authority.dns_name,
+                    "inherited": authority.inherited, "controller_key": authority.controller_did,
+                }}
+                if fetched_at is not None:
+                    oldest_dns = dns_stamp if dns_stamp is not None else fetched_at - _whole_seconds_up(_monotonic_ns() - dns_started)
+                    fetched_at = min(fetched_at, oldest_dns)
         except MalformedIDStatusError:
             logger.warning("AWID identity-tree status for %s is malformed; no evidence is served", domain)
             await self._invalidate_keys(cache_key)
@@ -1932,9 +1959,52 @@ class CachedRegistryClient(RegistryClient):
         entry = {"fetched_at": fetched_at, **acquired}
         if fetched_at is not None:
             await self._redis_set(
-                cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True), ex=_ID_STATUS_FRESH_SECONDS,
+                cache_key, json.dumps(entry, separators=(",", ":"), sort_keys=True),
+                ex=max(1, _ID_STATUS_FRESH_SECONDS - _whole_seconds_up(_monotonic_ns() - dns_started)),
             )
-        return _IDStatusRefresh(entry=entry, age=_whole_seconds_up(_monotonic_ns() - started_ns))
+        return _IDStatusRefresh(entry=entry, age=_whole_seconds_up(_monotonic_ns() - min(started_ns, dns_started)))
+
+    async def _shared_namespace_authority(self, domain: str, generation: str):
+        key = (domain, generation)
+        cached = self._namespace_authorities.get(key)
+        now = _monotonic_ns()
+        redis_now = await self._redis_time()
+        if cached is not None:
+            stamp, started, authority = cached
+            age = _whole_seconds_up(now - started)
+            if (0 <= age <= _ID_STATUS_FRESH_SECONDS
+                    and (stamp is None or redis_now is None or 0 <= redis_now - stamp <= _ID_STATUS_FRESH_SECONDS)):
+                self._namespace_authorities.move_to_end(key)
+                # Redis may have advanced faster than this process's clock.
+                # The advertised age must still include that older component.
+                if stamp is not None and redis_now is not None:
+                    started = min(started, now - (redis_now - stamp) * 1_000_000_000)
+                return stamp, started, authority
+            self._namespace_authorities.pop(key, None)
+        task = self._namespace_authority_refreshes.get(key)
+        if task is None:
+            async def acquire():
+                started = _monotonic_ns()
+                stamp = await self._redis_time()
+                verify = self._domain_verifier
+                if verify is None:
+                    from awid.dns_verify import verify_domain
+                    verify = verify_domain
+                async with asyncio.timeout(self.timeout_seconds):
+                    authority = await verify(domain)
+                entry = (stamp, started, authority)
+                self._namespace_authorities[key] = entry
+                while len(self._namespace_authorities) > 256:
+                    self._namespace_authorities.popitem(last=False)
+                return entry
+            task = asyncio.create_task(acquire())
+            self._namespace_authority_refreshes[key] = task
+            def completed(done):
+                self._namespace_authority_refreshes.pop(key, None)
+                if not done.cancelled():
+                    done.exception()
+            task.add_done_callback(completed)
+        return await asyncio.shield(task)
 
     async def _redis_time(self) -> int | None:
         """The Redis server clock in whole seconds, or None when Redis is unavailable."""
@@ -3089,7 +3159,7 @@ class CachedRegistryClient(RegistryClient):
         return f"{self._id_status_cache_key_prefix(request['domain'])}:{digest}"
 
     def _id_status_cache_key_prefix(self, domain: str) -> str:
-        return f"awid:registry_cache:v2:id_status:{self.registry_url}:{domain}"
+        return f"awid:registry_cache:v3:id_status:{self.registry_url}:{domain}"
 
     def _did_key_cache_key(self, did_aw: str) -> str:
         return f"awid:registry_cache:v1:did_key:{self.registry_url}:{did_aw}"

@@ -13,11 +13,10 @@ import hashlib
 import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 from types import SimpleNamespace
+from uuid import uuid4
 
 import aweb_naapp.runtime.team_auth as team_auth_module
-
 import httpx
 import pytest
 from aweb.app_manifests import FetchedManifest
@@ -171,6 +170,8 @@ async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, re
     server_db = coordination.server.db.get_manager("aweb")
     overrides = dict(getattr(request, "param", {}))
     awid_authority: dict = {"awid_service_token": SERVICE_TOKEN}
+    if overrides.pop("anonymous", False):
+        awid_authority = {"awid_service_token": None}
     if overrides.pop("customer_hosted", False):
         # A customer-hosted Logs: its team is private, and Logs holds an
         # ordinary member certificate of its own instead of the service token.
@@ -554,19 +555,44 @@ async def test_client_transport_refuses_before_registry_or_effects(world, fault,
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
 
 
+@pytest.mark.parametrize("world", [{}, {"anonymous": True}, {"customer_hosted": True}], indirect=True)
 async def test_warm_client_deliveries_do_not_read_registry_again(world):
     delivery = world.delivery("client")
     assert (await world.send(delivery)).status_code == 200
     cold = len(world.coordination.registry.transport.calls)
     world.coordination.registry.transport.calls.clear()
+    # Compare the actual uncached component the previous ingest called on
+    # each delivery with the complete HTTP path now using bounded facts.
+    for _ in range(16):
+        assert await world.runtime.team_cache().current_team_did_key(world.member.team_id)
+    uncached_reads = len(world.coordination.registry.transport.calls)
+    assert uncached_reads >= 16
+    world.coordination.registry.transport.calls.clear()
     results = await asyncio.gather(*(world.send(delivery) for _ in range(16)))
     assert all(result.status_code == 200 for result in results)
     assert world.coordination.registry.transport.calls == []
     assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 1
-    print(json.dumps({"R10_cold_registry_reads": cold, "warm_deliveries": 16, "warm_registry_reads": 0}))
+    print(json.dumps({"R10_cold_registry_reads": cold, "uncached_component_reads": uncached_reads, "warm_deliveries": 16, "warm_registry_reads": 0}))
 
 
 def _client_facts_clock(monkeypatch):
     clock = [team_auth_module.time.monotonic_ns()]
     monkeypatch.setattr(team_auth_module, "time", SimpleNamespace(monotonic_ns=lambda: clock[0]))
     return clock
+
+
+@pytest.mark.parametrize("world", [{}, {"anonymous": True}, {"customer_hosted": True}], indirect=True)
+async def test_forged_unknown_certificate_cannot_force_a_warm_team_refresh(world):
+    good = world.delivery("client")
+    assert (await world.send(good)).status_code == 200
+    certificate = dict(world.member.certificate())
+    certificate["certificate_id"] = "unregistered-forgery"
+    signing, signature = world.event("client", producer={"certificate_id": certificate["certificate_id"]})
+    forged = sign_delivery(MEMBER_SEED, "POST", ORIGIN + PATH,
+                           world.bindings[envelope.open_envelope(signing).hook], signing, signature,
+                           base64.b64encode(json.dumps(certificate).encode()).decode(), world.now)
+    world.coordination.registry.transport.calls.clear()
+    response = await world.send(forged)
+    assert (response.status_code, _code(response)) == (401, "transport_certificate_invalid")
+    assert world.coordination.registry.transport.calls == []
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 1

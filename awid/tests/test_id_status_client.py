@@ -24,7 +24,7 @@ from redis.asyncio import Redis
 import awid.registry as registry_module
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid.id_certificates import IDChainEvidence, verify_id_chain
-from awid.registry import CachedRegistryClient, RegistryError
+from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from awid_service.deps import get_domain_verifier
 
 from id_tree_support import VECTORS, Tree, at, did_aw, did_key
@@ -287,7 +287,8 @@ async def test_a_failed_attempt_does_not_hold_back_the_next_one(env):
     env.http_status = 200
     evidence = await _evidence(env)
     assert evidence.age_seconds == 0
-    assert len(env.requests) == len(env.dns_lookups) == 2
+    assert len(env.requests) == 2
+    assert len(env.dns_lookups) == 1
 
 
 @pytest.mark.asyncio
@@ -537,7 +538,7 @@ async def test_a_corrupt_stored_entry_is_dropped_and_refreshed(env, fetched_at):
     env.redis.values[key] = json.dumps(entry | {"fetched_at": fetched_at})
     env.clock[0] += 1
     evidence = await _evidence(env)
-    assert evidence.age_seconds == 0
+    assert evidence.age_seconds == 1  # the reused DNS observation keeps its original age
     assert len(env.requests) == 2
 
 
@@ -595,7 +596,7 @@ async def test_a_malformed_successful_answer_is_unavailable_and_drops_the_old_tr
     assert _verdict(evidence)["reason"] == "evidence_unavailable"
     env.raw_body = None
     env.clock[0] += 1
-    assert (await _evidence(env)).age_seconds == 0
+    assert (await _evidence(env)).age_seconds == 1  # no renewal of the successful DNS observation
     assert len(env.requests) == 3  # the old tree was dropped, not reused
 
 
@@ -635,23 +636,66 @@ async def test_the_cached_client_reads_the_real_status_endpoint(clocked_client, 
     await tree.enroll("alice", "global-agent", when=at("2026-10-26T00:04:00Z"))
     tree.clock.now = at("2026-10-26T00:30:00Z")
 
+    dns_reads, posts = [], []
+
     async def service_dns(domain: str) -> DomainAuthority:
+        dns_reads.append(domain)
         return await clocked_client.app.dependency_overrides[get_domain_verifier]()(domain)
 
+    class ObservedTransport(httpx.ASGITransport):
+        async def handle_async_request(self, request):
+            posts.append(request)
+            return await super().handle_async_request(request)
+
+    transport = ObservedTransport(app=clocked_client.app)
     redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-    client = CachedRegistryClient(
-        "http://testserver", redis, transport=httpx.ASGITransport(app=clocked_client.app),
-        domain_verifier=service_dns,
-    )
+    client = CachedRegistryClient("http://testserver", redis, transport=transport, domain_verifier=service_dns)
+    raw = RegistryClient("http://testserver", transport=transport, domain_verifier=service_dns)
     subject = {"id": did_aw("global_agent"), "did_key": did_key("global_agent")}
     bundle = _bundle(["alice", "global-agent"])
-    key = await client._generation_cache_key(client._id_status_cache_key({"v": 1, "domain": DOMAIN, "ids": [did_aw("alice"), did_aw("global_agent")]}), client._id_status_generation_key(DOMAIN))
+    alice_subject = {"id": did_aw("alice"), "did_key": did_key("alice")}
+    requests = [(bundle, subject), (_bundle(["alice"]), alice_subject)]
+    keys = [await client._generation_cache_key(client._id_status_cache_key(
+        registry_module.status_request(chain, item, domain=DOMAIN)), client._id_status_generation_key(DOMAIN))
+        for chain, item in requests]
     try:
-        await redis.delete(key)
+        await redis.delete(*keys)
+        for chain, item in requests:
+            observed = await raw.id_chain_evidence(chain, item, domain=DOMAIN)
+            assert observed.age_seconds is not None
+        before = {"dns": len(dns_reads), "status_posts": len(posts)}
+        assert before == {"dns": 2, "status_posts": 2}
+        dns_reads.clear()
+        posts.clear()
+        stats = await redis.info("commandstats")
         evidence = await client.id_chain_evidence(bundle, subject, domain=DOMAIN)
+        await client.id_chain_evidence(requests[1][0], alice_subject, domain=DOMAIN)
+        after = {"dns": len(dns_reads), "status_posts": len(posts)}
+        after["redis_gets"] = (await redis.info("commandstats")).get("cmdstat_get", {}).get("calls", 0) - stats.get("cmdstat_get", {}).get("calls", 0)
+        assert after["dns"] == 1 and after["status_posts"] == 2
+        assert after["redis_gets"] >= 4  # includes R9's per-acquisition generation GET
+        dns_reads.clear()
+        posts.clear()
+        await client.id_chain_evidence(bundle, subject, domain=DOMAIN)
+        assert not dns_reads and not posts
+
+        # The real production limiter and route, under a separate source IP.
+        from awid.ratelimit import RedisFixedWindowRateLimiter
+        clocked_client.app.state.rate_limiter = RedisFixedWindowRateLimiter(redis=redis)
+        ip = "198.18." + str(int(uuid.uuid4().hex[:2], 16)) + "." + str(int(uuid.uuid4().hex[:2], 16))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=clocked_client.app, client=(ip, 12000)),
+                                     base_url="http://testserver") as quota_client:
+            responses = [await quota_client.post(STATUS_PATH, json={"v": 1, "domain": DOMAIN, "ids": []})
+                         for _ in range(61)]
+        assert all(response.status_code == 200 for response in responses[:60])
+        assert responses[60].status_code == 429
+        assert int(responses[60].headers["Retry-After"]) >= 0
+        print("R7_REAL_COST " + json.dumps({"before": before, "after": after, "default_public_successes": 60,
+                                            "next_status": responses[60].status_code}, sort_keys=True))
     finally:
-        await redis.delete(key)
+        await redis.delete(*keys)
         await client.aclose()
+        await raw.aclose()
         await redis.aclose()
     # A real refresh takes some time, and its age is that time rounded up.
     assert 1 <= evidence.age_seconds <= 2

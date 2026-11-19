@@ -1347,10 +1347,16 @@ which raises.
   age.
 - One Redis entry per exact status request holds the status response together
   with the namespace authority (`domain`, `dns_name`, `inherited`,
-  `controller_key`) from the client's `DomainVerifier`, both fetched in one
-  attempt. Every process sharing the entry ages it on one clock, the Redis
-  server's: the entry is stamped with the whole seconds of Redis `TIME` when
-  the attempt begins, and each read takes Redis `TIME` with the entry in one
+  `controller_key`) from the client's `DomainVerifier`. Each status body is one
+  complete observation, never assembled from different responses. Within one
+  client/process, the same domain and write generation share a DNS authority
+  observation for at most 60 seconds, including its discovered registry route;
+  explicit operator routes retain precedence. Concurrent DNS acquisitions coalesce.
+  The bounded memo holds at most 256 domain/generation entries. The Redis status
+  entry uses the `v3:id_status` key family and is stamped at the earlier of the
+  status attempt and that DNS observation, with no renewal of the older component.
+  Every process sharing the entry ages it on the Redis server's clock:
+  each read takes Redis `TIME` with the entry in one
   pipelined round trip. The age is the read's `TIME`, to the microsecond,
   less that stamp, rounded up to whole seconds, so it never reads younger
   than the evidence is. The body's `observed_at` is never used, and the age
@@ -1361,7 +1367,7 @@ which raises.
   clamped; a negative one is unavailable evidence to the verifier. An entry that is not exactly this
   shape is dropped and refreshed. An entry is kept for 60 seconds, since
   nothing older is ever presented. Without Redis nothing is stored, so each
-  read fetches.
+  read fetches status; the process's still-fresh domain authority may be reused.
 - Evidence aged 60 seconds or less is served with no DNS, routing or HTTP
   work. Older evidence waits for one refresh shared by every concurrent caller
   of that request; a cancelled caller does not cancel it. DNS, routing and HTTP

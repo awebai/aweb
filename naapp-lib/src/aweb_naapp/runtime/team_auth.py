@@ -24,6 +24,7 @@ import json
 import logging
 import re
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
@@ -251,10 +252,15 @@ class AWIDTeamCache:
             },
         )
         self._cache: dict[str, CachedTeamFacts] = {}
+        self._unknown_teams: OrderedDict[str, int] = OrderedDict()
+        self._team_load_slots = asyncio.Semaphore(16)
         self._team_refresh_locks: dict[str, asyncio.Lock] = {}
         self._unknown_refresh_at: dict[str, int] = {}
         self._team_refresh_errors: dict[str, tuple[int, Any]] = {}
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
+        self._certificate_refreshes: dict[tuple[str, str], asyncio.Task[CachedTeamFacts]] = {}
+        self._certificate_failures: OrderedDict[tuple[str, str], tuple[int, int, Any]] = OrderedDict()
+        self._team_signature_keys: OrderedDict[str, CachedTeamFacts] = OrderedDict()
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
         self._team_key_pins = team_key_pins if team_key_pins is not None else MemoryTeamKeyPins()
@@ -368,7 +374,31 @@ class AWIDTeamCache:
             fresh_until=facts.expires_at,
         )
 
+    def cached_team_did_key(self, team_id: str, certificate_id: str) -> str | None:
+        """Known fresh authority for a local signature precheck; never loads."""
+        now = time.monotonic_ns()
+        for facts in (self._cache.get(team_id), self._certificate_cache.get((team_id, certificate_id)),
+                      self._team_signature_keys.get(team_id)):
+            if facts is not None and facts.expires_at > now:
+                return facts.team_did_key
+        return None
+
+    def _refuse_known_unknown_team(self, team_id: str) -> None:
+        until = self._unknown_teams.get(team_id)
+        if until is not None:
+            if until > time.monotonic_ns():
+                raise HTTPException(status_code=401, detail="Unknown AWID team")
+            self._unknown_teams.pop(team_id, None)
+
     async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
+        self._refuse_known_unknown_team(team_id)
+        try:
+            async with asyncio.timeout(5):
+                return await self._get(team_id, certificate_id)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+
+    async def _get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
         if certificate_id and not self._reads_team_history(team_id):
             return await self._get_certificate_status(team_id, certificate_id)
         now = time.monotonic_ns()
@@ -380,6 +410,7 @@ class AWIDTeamCache:
 
         lock = self._team_refresh_locks.setdefault(team_id, asyncio.Lock())
         async with lock:
+            self._refuse_known_unknown_team(team_id)
             now = time.monotonic_ns()
             cached = self._cache.get(team_id)
             fresh = cached is not None and cached.expires_at > now
@@ -400,14 +431,25 @@ class AWIDTeamCache:
                 facts = await self._refresh_team_facts(team_id, now)
             except HTTPException as exc:
                 if exc.status_code == 401 and exc.detail == "Unknown AWID team":
-                    # Do not retain attacker-selected nonexistent teams. Check
-                    # identity because another waiter may still own this lock.
+                    # Bounded negative evidence prevents repeated unknown names
+                    # from spending registry quota; it never supplies authority.
+                    self._unknown_teams[team_id] = time.monotonic_ns() + seconds_to_ns(5)
+                    while len(self._unknown_teams) > 256:
+                        self._unknown_teams.popitem(last=False)
+                    # Another waiter may still own this lock.
                     if self._team_refresh_locks.get(team_id) is lock:
                         self._team_refresh_locks.pop(team_id, None)
                         self._unknown_refresh_at.pop(team_id, None)
                         self._team_refresh_errors.pop(team_id, None)
                 else:
                     self._team_refresh_errors[team_id] = (exc.status_code, exc.detail)
+                    while len(self._team_refresh_errors) > 256:
+                        oldest = next(iter(self._team_refresh_errors))
+                        self._team_refresh_errors.pop(oldest, None)
+                        self._unknown_refresh_at.pop(oldest, None)
+                        old_lock = self._team_refresh_locks.get(oldest)
+                        if old_lock is not None and not old_lock.locked():
+                            self._team_refresh_locks.pop(oldest, None)
                     # A slow failure must not consume its own retry window and
                     # make every waiter repeat the same upstream timeout.
                     self._unknown_refresh_at[team_id] = time.monotonic_ns()
@@ -468,6 +510,16 @@ class AWIDTeamCache:
                 ) from None
 
     async def _refresh_team_facts(
+        self, team_id: str, now: int, *, store: bool = True
+    ) -> CachedTeamFacts:
+        try:
+            async with asyncio.timeout(5):
+                async with self._team_load_slots:
+                    return await self._read_team_facts(team_id, now, store=store)
+        except TimeoutError as exc:
+            raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+
+    async def _read_team_facts(
         self, team_id: str, now: int, *, store: bool = True
     ) -> CachedTeamFacts:
         domain, team_name = parse_team_id(team_id)
@@ -554,6 +606,43 @@ class AWIDTeamCache:
     async def _get_certificate_status(
         self, team_id: str, certificate_id: str
     ) -> CachedTeamFacts:
+        key = (team_id, certificate_id)
+        now = time.monotonic_ns()
+        cached = self._certificate_cache.get(key)
+        if cached is not None and cached.expires_at > now:
+            return cached
+        failure = self._certificate_failures.get(key)
+        if failure is not None:
+            if failure[0] > now:
+                raise HTTPException(status_code=failure[1], detail=failure[2])
+            self._certificate_failures.pop(key, None)
+        task = self._certificate_refreshes.get(key)
+        if task is None:
+            async def refresh():
+                try:
+                    try:
+                        async with asyncio.timeout(5):
+                            async with self._team_load_slots:
+                                return await self._load_certificate_status(team_id, certificate_id)
+                    except TimeoutError as exc:
+                        raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
+                except HTTPException as exc:
+                    self._certificate_failures[key] = (time.monotonic_ns() + seconds_to_ns(5), exc.status_code, exc.detail)
+                    while len(self._certificate_failures) > 256:
+                        self._certificate_failures.popitem(last=False)
+                    raise
+            task = asyncio.create_task(refresh())
+            self._certificate_refreshes[key] = task
+            def completed(done):
+                self._certificate_refreshes.pop(key, None)
+                if not done.cancelled():
+                    done.exception()
+            task.add_done_callback(completed)
+        return await asyncio.shield(task)
+
+    async def _load_certificate_status(
+        self, team_id: str, certificate_id: str
+    ) -> CachedTeamFacts:
         now = time.monotonic_ns()
         cache_key = (team_id, certificate_id)
         cached = self._certificate_cache.get(cache_key)
@@ -608,6 +697,14 @@ class AWIDTeamCache:
             expires_at=now + seconds_to_ns(self.ttl_seconds),
         )
         self._certificate_cache[cache_key] = facts
+        known = self._team_signature_keys.get(team_id)
+        if known is None or known.fetched_at <= facts.fetched_at:
+            # This derived hint only rejects bad signatures before a miss read;
+            # the exact certificate's own snapshot still grants authority.
+            self._team_signature_keys[team_id] = facts
+            self._team_signature_keys.move_to_end(team_id)
+            while len(self._team_signature_keys) > 256:
+                self._team_signature_keys.popitem(last=False)
         return facts
 
     async def current_did_key(self, did_aw: str) -> str | None:

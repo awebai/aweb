@@ -38,7 +38,6 @@ class Settings:
     db_schema: str
     rate_limit_backend: str
     service_token: str | None
-    read_rate_limits: dict[str, int] = field(default_factory=dict)
     # Behind a transaction pooler (PgBouncer, Neon's -pooler endpoints) asyncpg's
     # statement cache must be off and the pool bounded.
     database_uses_transaction_pooler: bool = False
@@ -49,6 +48,7 @@ class Settings:
     # defaults (ALTER ROLE ... SET ...).
     database_require_session_settings: bool = False
     database_session_check_timeout_seconds: float = 30.0
+    read_rate_limits: dict[str, int] = field(default_factory=dict)
 
 
 def get_settings() -> Settings:
