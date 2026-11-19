@@ -26,7 +26,6 @@ class MailSender:
     alias: str | None = None
     address: str | None = None
     agent_id: str | None = None
-    team_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "did", self.did.strip())
@@ -112,6 +111,7 @@ class MailIdAvailability(Enum):
 
 @dataclass(frozen=True, kw_only=True)
 class MailStorageInput:
+    local_team_id: str | None = None
     sender: MailSender
     recipient: MailRecipient
     content: PlaintextMailContent | EncryptedMailContent
@@ -210,7 +210,7 @@ async def store_mail(db, *, message: MailStorageInput) -> StoredMail:
         message.content.subject,
         message.content.body,
         message.priority,
-        message.sender.team_id,
+        message.local_team_id,
         _optional_uuid(message.sender.agent_id, field="from_agent_id"),
         _optional_uuid(message.recipient.agent_id, field="to_agent_id"),
         message.attestation.signature,
