@@ -419,16 +419,22 @@ func runInitWorkspaceTeam(cmd *cobra.Command) error {
 	if strings.TrimSpace(initWorkspaceKey) == "" {
 		return usageError("--workspace-key is required with --workspace-team")
 	}
-	previousKey, previousLabel, previousExpected := teamEnsureWorkspaceKey, teamEnsureLabel, teamEnsureExpectedAccountID
-	teamEnsureWorkspaceKey = strings.TrimSpace(initWorkspaceKey)
-	teamEnsureLabel = strings.TrimSpace(initName)
-	teamEnsureExpectedAccountID = strings.TrimSpace(initExpectedAccountID)
-	defer func() {
-		teamEnsureWorkspaceKey = previousKey
-		teamEnsureLabel = previousLabel
-		teamEnsureExpectedAccountID = previousExpected
-	}()
-	return runTeamEnsure(cmd.Context(), cmd)
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	org, err := workspaceTeamOrgFromCommand(cmd)
+	if err != nil {
+		return err
+	}
+	out, err := ensureWorkspaceTeam(cmd.Context(), workspaceTeamEnsureInput{
+		WorkingDir: workingDir, Home: activeIdentityHome, Org: org,
+		WorkspaceKey: strings.TrimSpace(initWorkspaceKey), Label: strings.TrimSpace(initName), ExpectedAccountID: strings.TrimSpace(initExpectedAccountID),
+	})
+	if err != nil {
+		return err
+	}
+	return writeWorkspaceTeamEnsureOutput(cmd, out)
 }
 
 func runInitIndependentInvite(cmd *cobra.Command, input initInviteInput) error {

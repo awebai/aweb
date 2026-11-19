@@ -192,14 +192,9 @@ func init() {
 }
 
 func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
-	var org *string
-	if cmd.Flags().Changed("org") {
-		selector, _ := cmd.Flags().GetString("org")
-		selector = strings.TrimSpace(selector)
-		if selector == "" {
-			return usageError("--org must not be blank")
-		}
-		org = &selector
+	org, err := workspaceTeamOrgFromCommand(cmd)
+	if err != nil {
+		return err
 	}
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -219,6 +214,21 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	return writeWorkspaceTeamEnsureOutput(cmd, out)
 }
 
+func workspaceTeamOrgFromCommand(cmd *cobra.Command) (*string, error) {
+	if !cmd.Flags().Changed("org") {
+		return nil, nil
+	}
+	selector, err := cmd.Flags().GetString("org")
+	if err != nil {
+		return nil, err
+	}
+	selector = strings.TrimSpace(selector)
+	if selector == "" {
+		return nil, usageError("--org must not be blank")
+	}
+	return &selector, nil
+}
+
 type workspaceTeamEnsureInput struct {
 	WorkingDir        string
 	Home              awconfig.IdentityHome
@@ -231,6 +241,12 @@ type workspaceTeamEnsureInput struct {
 // ensureWorkspaceTeam installs only into its explicit credential root, after
 // the live host admission and spawn-authority proof (docs/cli-identity-selection.md:13-33).
 func ensureWorkspaceTeam(ctx context.Context, input workspaceTeamEnsureInput) (teamEnsureOutput, error) {
+	if strings.TrimSpace(input.WorkingDir) == "" {
+		return teamEnsureOutput{}, fmt.Errorf("workspace-team ensure requires an explicit working directory")
+	}
+	if strings.TrimSpace(input.Home.Root) == "" || !input.Home.External() {
+		return teamEnsureOutput{}, usageError("aw team ensure requires explicit --identity-home selecting the credential root to install")
+	}
 	workingDir, home, org := input.WorkingDir, input.Home, input.Org
 	workspaceDigest, err := workspaceTeamDigest(input.WorkspaceKey)
 	if err != nil {
@@ -336,8 +352,8 @@ func writeWorkspaceTeamEnsureOutput(cmd *cobra.Command, out teamEnsureOutput) er
 	if jsonFlag {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "status: %s\nteam_id: %s\nidentity_home: %s\ndid: %s\ncan_spawn: %t\n", out.Status, out.TeamID, out.IdentityHome, out.DID, out.CanSpawn)
-	return nil
+	_, err := fmt.Fprintf(cmd.OutOrStdout(), "status: %s\nteam_id: %s\nidentity_home: %s\ndid: %s\ncan_spawn: %t\n", out.Status, out.TeamID, out.IdentityHome, out.DID, out.CanSpawn)
+	return err
 }
 
 func workspaceTeamDigest(raw string) (string, error) {
