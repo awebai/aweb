@@ -410,9 +410,12 @@ hosted service's configured public origin, which must equal the owner workspace
 binding's `scheme://host[:port]`), `body_sha256` (the exact transmitted request bytes),
 `method`, `path` and `timestamp`. The service checks the audience and timestamp
 before looking up authority. This is the audience-bound variant for hosted
-identity creation; existing signup, claim-human and bootstrap-redeem signature
-bytes remain unchanged. Recovery pins the original authorizing principal as
-well as the new member key, and success still requires the exact mode readback.
+identity creation; existing signup and claim-human signature bytes remain
+unchanged. Recovery pins the original authorizing principal as well as the new
+member key, and success still requires the exact mode readback.
+
+`aw connect --bootstrap-token` is retained as an unsupported-command refusal;
+use a setup key from the dashboard or `aw init --join-from`.
 
 ## Command-to-verb mapping
 
