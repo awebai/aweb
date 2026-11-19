@@ -11,11 +11,14 @@ import (
 	"github.com/awebai/aw/internal/termtext"
 )
 
-// formatVerificationTag returns a warning string for non-verified messages.
-// Returns empty string for verified or unset status.
-// ALL CAPS for active security failures; lowercase for informational (no signature present).
+// formatVerificationTag returns the tag shown after a message's sender. A
+// verified message has none. ALL CAPS for active security failures; lowercase
+// for informational ones. A status that was never set, or one this client does
+// not name, is not a verification and says so.
 func formatVerificationTag(status awid.VerificationStatus) string {
 	switch status {
+	case awid.Verified, awid.VerifiedLegacy, awid.VerifiedCustodial:
+		return ""
 	case awid.Failed:
 		return " [VERIFICATION FAILED]"
 	case awid.IdentityMismatch:
@@ -25,7 +28,7 @@ func formatVerificationTag(status awid.VerificationStatus) string {
 	case awid.VerificationStale:
 		return " [verification stale]"
 	default:
-		return ""
+		return " [no verification]"
 	}
 }
 

@@ -103,6 +103,7 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	}
 	var data map[string]any
 	if err := json.Unmarshal([]byte(sseEvent.Data), &data); err != nil {
+		ev.VerificationStatus = awid.Failed
 		return ev
 	}
 
