@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.task_refs import TaskTitleFields, task_title_join
+
 import time
 from collections import OrderedDict
 from contextlib import aclosing
@@ -89,36 +91,6 @@ def _update_workspace_ids_cache(
     _WORKSPACE_IDS_CACHE.move_to_end(key)
     while len(_WORKSPACE_IDS_CACHE) > WORKSPACE_IDS_CACHE_MAX_SIZE:
         _WORKSPACE_IDS_CACHE.popitem(last=False)
-
-
-def _title_join(
-    alias: str,
-    team_id_col: str,
-    task_ref_col: str,
-    *,
-    include_type: bool = False,
-    guard_col: str | None = None,
-) -> str:
-    """Lateral join resolving title (+ optional type) from aweb tasks.
-
-    Matches task_ref (e.g. 'myteam-42') against team_id and task_ref_suffix
-    by reconstructing the full ref from the team slug and suffix.
-    """
-    select_expr = (
-        "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
-    )
-
-    guard = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
-
-    return f"""
-        LEFT JOIN LATERAL (
-            SELECT {select_expr}
-            FROM {{{{tables.tasks}}}} t
-            WHERE t.team_id = {team_id_col}
-              AND {task_ref_col} = (split_part({team_id_col}, ':', 1) || '-' || t.task_ref_suffix)
-              AND t.deleted_at IS NULL{guard}
-            LIMIT 1
-        ) {alias} ON true"""
 
 
 async def get_all_workspace_ids_from_db(
@@ -382,7 +354,7 @@ async def status(
             focus_info.issue_type AS focus_task_type
         FROM {{{{tables.workspaces}}}} w
         LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-        {_title_join("focus_info", "w.team_id", "w.focus_task_ref", include_type=True, guard_col="w.focus_task_ref")}
+        {task_title_join(alias="focus_info", team_id_col="w.team_id", task_ref_col="w.focus_task_ref", fields=TaskTitleFields.TITLE_AND_TYPE)}
         WHERE w.team_id = $1
           AND w.deleted_at IS NULL
           AND w.workspace_id = ANY($2::uuid[])
@@ -423,8 +395,8 @@ async def status(
             WHERE team_id = $1
             GROUP BY team_id, task_ref
         ) counts ON c.team_id = counts.team_id AND c.task_ref = counts.task_ref
-        {_title_join("claim_info", "c.team_id", "c.task_ref")}
-        {_title_join("apex_info", "c.team_id", "c.apex_task_ref", include_type=True, guard_col="c.apex_task_ref")}
+        {task_title_join(alias="claim_info", team_id_col="c.team_id", task_ref_col="c.task_ref")}
+        {task_title_join(alias="apex_info", team_id_col="c.team_id", task_ref_col="c.apex_task_ref", fields=TaskTitleFields.TITLE_AND_TYPE)}
         WHERE c.team_id = $1
           AND c.workspace_id = ANY($2::uuid[])
         ORDER BY c.claimed_at DESC

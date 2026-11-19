@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from aweb.task_refs import TaskTitleFields, task_title_join
+
 import logging
 import uuid as uuid_module
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from uuid import UUID
 
-from awid.team_ids import team_slug
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.asyncio import Redis
@@ -762,46 +763,15 @@ class ListWorkspacesResponse(BaseModel):
     next_cursor: Optional[str] = None
 
 
-def _get_team_slug(team_id: str) -> str:
-    return team_slug(team_id)
-
-
-def _title_join(
-    alias: str,
-    team_id_col: str,
-    task_ref_col: str,
-    *,
-    include_type: bool = False,
-    guard_col: str | None = None,
-) -> str:
-    """Lateral join resolving title (+ optional type) from tasks."""
-    select_expr = (
-        "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
-    )
-
-    guard = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
-
-    # task_ref = slug || '-' || task_ref_suffix, where slug is the team-name
-    # prefix from the colon-form team_id.
-    return f"""
-        LEFT JOIN LATERAL (
-            SELECT {select_expr}
-            FROM aweb.tasks t
-            WHERE t.team_id = {team_id_col}
-              AND split_part({team_id_col}, '/', -1) || '-' || t.task_ref_suffix = {task_ref_col}
-              AND t.deleted_at IS NULL{guard}
-            LIMIT 1
-        ) {alias} ON true"""
-
-
 def _build_workspace_claims_query(placeholders: str) -> str:
-    claim_join = _title_join("claim_info", "c.team_id", "c.task_ref")
-    apex_join = _title_join(
-        "apex_info",
-        "c.team_id",
-        "c.apex_task_ref",
-        include_type=True,
-        guard_col="c.apex_task_ref",
+    claim_join = task_title_join(
+        alias="claim_info", team_id_col="c.team_id", task_ref_col="c.task_ref"
+    )
+    apex_join = task_title_join(
+        alias="apex_info",
+        team_id_col="c.team_id",
+        task_ref_col="c.apex_task_ref",
+        fields=TaskTitleFields.TITLE_AND_TYPE,
     )
     return f"""
         SELECT
@@ -837,12 +807,11 @@ def _timestamp(value: Optional[datetime] | Optional[str]) -> float:
         return 0.0
 
 
-_TEAM_FOCUS_JOIN = _title_join(
-    "focus_issue",
-    "w.team_id",
-    "w.focus_task_ref",
-    include_type=True,
-    guard_col="w.focus_task_ref",
+_TEAM_FOCUS_JOIN = task_title_join(
+    alias="focus_issue",
+    team_id_col="w.team_id",
+    task_ref_col="w.focus_task_ref",
+    fields=TaskTitleFields.TITLE_AND_TYPE,
 )
 
 _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
@@ -1093,12 +1062,11 @@ async def list_workspaces(
          AND a.deleted_at IS NULL
         LEFT JOIN {{tables.repos}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
         """
-        + _title_join(
-            "focus_issue",
-            "w.team_id",
-            "w.focus_task_ref",
-            include_type=True,
-            guard_col="w.focus_task_ref",
+        + task_title_join(
+            alias="focus_issue",
+            team_id_col="w.team_id",
+            task_ref_col="w.focus_task_ref",
+            fields=TaskTitleFields.TITLE_AND_TYPE,
         )
         + """
         WHERE 1=1

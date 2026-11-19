@@ -335,7 +335,9 @@ async def create_app_task_on(
     )
     receipt = {
         "task_id": str(row["task_id"]),
-        "task_ref": format_task_ref(_get_team_slug(credential.team_id), suffix),
+        "task_ref": format_task_ref(
+            team_slug=_get_team_slug(credential.team_id), task_ref_suffix=suffix
+        ),
         "task_rev": 1,
         "external_request_id": metadata["external_request_id"],
         "task_body_sha256": digest,
@@ -549,7 +551,9 @@ async def cancel_app_task_on(
         task_id,
         json.dumps(cancellation),
     )
-    task_ref = format_task_ref(_get_team_slug(team_id), row["task_ref_suffix"])
+    task_ref = format_task_ref(
+        team_slug=_get_team_slug(team_id), task_ref_suffix=row["task_ref_suffix"]
+    )
     await release_task_claims_on(tx, team_id=team_id, task_ref=task_ref)
     if outcome is not None:
         outcome.update(

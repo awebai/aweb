@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from aweb.human_kind import agent_listing_predicate_sql
+from aweb.task_refs import task_title_join
 
 import json
 from datetime import datetime, timezone
@@ -51,19 +52,16 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
             presence_map[presence_id] = presence
 
     claim_rows = await aweb_db.fetch_all(
-        """
+        f"""
         SELECT c.task_ref, c.workspace_id, c.alias, c.human_name, c.claimed_at, c.team_id,
-               counts.claimant_count, t.title
-        FROM {{tables.task_claims}} c
+               counts.claimant_count, task_info.title
+        FROM {{{{tables.task_claims}}}} c
         JOIN (
             SELECT team_id, task_ref, COUNT(*) AS claimant_count
-            FROM {{tables.task_claims}}
+            FROM {{{{tables.task_claims}}}}
             GROUP BY team_id, task_ref
         ) counts ON c.team_id = counts.team_id AND c.task_ref = counts.task_ref
-        LEFT JOIN {{tables.tasks}} t
-            ON t.team_id = c.team_id
-            AND t.task_ref_suffix = SUBSTRING(c.task_ref FROM POSITION('-' IN c.task_ref) + 1)
-            AND t.deleted_at IS NULL
+        {task_title_join(alias="task_info", team_id_col="c.team_id", task_ref_col="c.task_ref")}
         WHERE c.team_id = $1
         ORDER BY c.claimed_at DESC
         """,

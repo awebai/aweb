@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from awid.team_ids import team_slug
+from ..task_refs import format_task_ref, task_ref_suffix
 from ..claims import (
     claim_focus_task_ref,
     release_task_claims_on,
@@ -350,7 +351,9 @@ async def answer_task_on(
         actor.alias,
         principal,
     )
-    task_ref = format_task_ref(_get_team_slug(team_id), task["task_ref_suffix"])
+    task_ref = format_task_ref(
+        team_slug=_get_team_slug(team_id), task_ref_suffix=task["task_ref_suffix"]
+    )
     released_claim_workspace_ids = await release_task_claims_on(
         tx, team_id=team_id, task_ref=task_ref
     )
@@ -409,10 +412,6 @@ def _encode_alpha_component(value: int, *, minimum_width: int = 4) -> str:
     if len(result) < minimum_width:
         result = ("a" * (minimum_width - len(result))) + result
     return result
-
-
-def format_task_ref(team_slug: str, task_ref_suffix: str) -> str:
-    return f"{team_slug}-{task_ref_suffix}"
 
 
 async def _allocate_task_number_on(manager, *, team_id: str) -> int:
@@ -538,10 +537,7 @@ async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
             raise NotFoundError("Task not found")
         return row["task_id"]
 
-    slug = _get_team_slug(team_id)
-    prefix = slug + "-"
-    ref_suffix = ref[len(prefix) :] if ref.startswith(prefix) else ref
-    ref_suffix = ref_suffix.strip()
+    ref_suffix = task_ref_suffix(team_id=team_id, ref=ref)
 
     if not ref_suffix:
         raise NotFoundError("Task not found")
@@ -672,7 +668,7 @@ async def create_task(
 
     result = {
         "task_id": str(row["task_id"]),
-        "task_ref": format_task_ref(slug, task_ref_suffix),
+        "task_ref": format_task_ref(team_slug=slug, task_ref_suffix=task_ref_suffix),
         "task_number": task_number,
         "team_id": team_id,
         "title": title,
@@ -817,7 +813,9 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
     def _dep_view(r):
         return {
             "task_id": str(r["task_id"]),
-            "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
+            "task_ref": format_task_ref(
+                team_slug=slug, task_ref_suffix=r["task_ref_suffix"]
+            ),
             "title": r["title"],
             "status": r["status"],
         }
@@ -833,7 +831,9 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
 
     return {
         "task_id": str(row["task_id"]),
-        "task_ref": format_task_ref(slug, row["task_ref_suffix"]),
+        "task_ref": format_task_ref(
+            team_slug=slug, task_ref_suffix=row["task_ref_suffix"]
+        ),
         "task_number": row["task_number"],
         "team_id": row["team_id"],
         "title": row["title"],
@@ -958,7 +958,9 @@ async def list_tasks(
         {
             **_task_list_contract(r),
             "task_id": str(r["task_id"]),
-            "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
+            "task_ref": format_task_ref(
+                team_slug=slug, task_ref_suffix=r["task_ref_suffix"]
+            ),
             "task_number": r["task_number"],
             "title": r["title"],
             "status": r["status"],
@@ -1072,7 +1074,9 @@ async def list_tasks_paginated(
         {
             **_task_list_contract(r),
             "task_id": str(r["task_id"]),
-            "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
+            "task_ref": format_task_ref(
+                team_slug=slug, task_ref_suffix=r["task_ref_suffix"]
+            ),
             "task_number": r["task_number"],
             "title": r["title"],
             "description": r["description"],
@@ -1111,7 +1115,10 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
     if not task_rows:
         return []
 
-    task_refs = {format_task_ref(slug, row["task_ref_suffix"]) for row in task_rows}
+    task_refs = {
+        format_task_ref(team_slug=slug, task_ref_suffix=row["task_ref_suffix"])
+        for row in task_rows
+    }
 
     claim_rows = await aweb_db.fetch_all(
         """
@@ -1137,7 +1144,9 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
     claim_workspace_ids: list[str] = []
     seen_claim_workspace_ids: set[str] = set()
     for row in task_rows:
-        task_ref = format_task_ref(slug, row["task_ref_suffix"])
+        task_ref = format_task_ref(
+            team_slug=slug, task_ref_suffix=row["task_ref_suffix"]
+        )
         claim = latest_claim_by_ref.get(task_ref)
         if claim is not None:
             workspace_id = claim["workspace_id"]
@@ -1176,7 +1185,9 @@ async def list_active_work(db, *, team_id: str) -> list[dict[str, Any]]:
 
     items: list[dict[str, Any]] = []
     for row in task_rows:
-        task_ref = format_task_ref(slug, row["task_ref_suffix"])
+        task_ref = format_task_ref(
+            team_slug=slug, task_ref_suffix=row["task_ref_suffix"]
+        )
         claim = latest_claim_by_ref.get(task_ref)
         owner_workspace_id = None
         owner_alias = None
@@ -1266,7 +1277,9 @@ async def list_ready_tasks(
     return [
         {
             "task_id": str(r["task_id"]),
-            "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
+            "task_ref": format_task_ref(
+                team_slug=slug, task_ref_suffix=r["task_ref_suffix"]
+            ),
             "task_number": r["task_number"],
             "title": r["title"],
             "status": r["status"],
@@ -1310,7 +1323,9 @@ async def list_blocked_tasks(db, *, team_id: str) -> list[dict[str, Any]]:
     return [
         {
             "task_id": str(r["task_id"]),
-            "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
+            "task_ref": format_task_ref(
+                team_slug=slug, task_ref_suffix=r["task_ref_suffix"]
+            ),
             "task_number": r["task_number"],
             "title": r["title"],
             "status": r["status"],
@@ -1477,7 +1492,9 @@ async def update_task(
         auto_closed: list[dict[str, Any]] = []
         if status is not None:
             if status == "in_progress":
-                task_ref = format_task_ref(slug, current["task_ref_suffix"])
+                task_ref = format_task_ref(
+                    team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+                )
                 apex_task_ref = await resolve_task_claim_apex_on(tx, team_id, task_ref)
                 workspace = await tx.fetch_one(
                     """
@@ -1611,7 +1628,8 @@ async def update_task(
                             {
                                 "task_id": str(cr["task_id"]),
                                 "task_ref": format_task_ref(
-                                    slug, cr["task_ref_suffix"]
+                                    team_slug=slug,
+                                    task_ref_suffix=cr["task_ref_suffix"],
                                 ),
                                 "title": cr["title"],
                             }
@@ -1633,7 +1651,9 @@ async def update_task(
             released_claim_workspace_ids = await release_task_claims_on(
                 tx,
                 team_id=team_id,
-                task_ref=format_task_ref(slug, current["task_ref_suffix"]),
+                task_ref=format_task_ref(
+                    team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+                ),
             )
 
     # Capture the actual write, including implicit claim assignment, from the
@@ -1729,7 +1749,9 @@ async def soft_delete_task(
     result = {
         "status": "deleted",
         "task_id": str(task_id),
-        "task_ref": format_task_ref(slug, row["task_ref_suffix"]),
+        "task_ref": format_task_ref(
+            team_slug=slug, task_ref_suffix=row["task_ref_suffix"]
+        ),
     }
     await fire_mutation_callback(
         on_mutation,

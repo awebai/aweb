@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
 from awid.team_ids import team_slug
+from .task_refs import format_task_ref, task_ref_suffix
 
 if TYPE_CHECKING:
     from .db import DatabaseInfra
@@ -112,9 +113,7 @@ async def resolve_task_claim_apex_on(
     """
     slug = team_slug(team_id)
 
-    prefix = slug + "-"
-    ref_suffix = task_ref[len(prefix) :] if task_ref.startswith(prefix) else task_ref
-    ref_suffix = ref_suffix.strip()
+    ref_suffix = task_ref_suffix(team_id=team_id, ref=task_ref)
     if not ref_suffix:
         return None
 
@@ -132,7 +131,9 @@ async def resolve_task_claim_apex_on(
 
     epic_ref: Optional[str] = None
     if (current.get("task_type") or "").strip().lower() == "epic":
-        epic_ref = f"{slug}-{current['task_ref_suffix']}"
+        epic_ref = format_task_ref(
+            team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+        )
 
     # Walk parent chain to root
     depth = 0
@@ -149,10 +150,14 @@ async def resolve_task_claim_apex_on(
             break
         current = parent
         if (current.get("task_type") or "").strip().lower() == "epic":
-            epic_ref = f"{slug}-{current['task_ref_suffix']}"
+            epic_ref = format_task_ref(
+                team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+            )
         depth += 1
 
-    return epic_ref or f"{slug}-{current['task_ref_suffix']}"
+    return epic_ref or format_task_ref(
+        team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+    )
 
 
 async def _is_open_task_ref(
@@ -161,9 +166,7 @@ async def _is_open_task_ref(
     team_id: str,
     task_ref: str,
 ) -> bool:
-    slug = team_slug(team_id)
-    prefix = slug + "-"
-    ref_suffix = task_ref[len(prefix) :] if task_ref.startswith(prefix) else task_ref
+    ref_suffix = task_ref_suffix(team_id=team_id, ref=task_ref)
 
     row = await tx.fetch_one(
         """
