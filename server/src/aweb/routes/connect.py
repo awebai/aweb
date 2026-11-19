@@ -324,6 +324,23 @@ async def _ensure_agent(
     return str(row["agent_id"])
 
 
+async def _lock_reconnecting_workspace(db, *, team_id: str, alias: str) -> None:
+    """Take the selected workspace before member writes, matching lifecycle order.
+
+    docs/aweb-sot.md:1242-1244 locks cleanup workspaces before member/claim
+    mutations. A reconnect must not hold its agent while waiting for a cleanup
+    that already holds this workspace and needs that agent. These storage locks
+    grant no identity or membership authority.
+    """
+    await db.fetch_all(
+        "SELECT workspace_id FROM {{tables.workspaces}} "
+        "WHERE team_id=$1 AND alias=$2 AND deleted_at IS NULL "
+        "ORDER BY workspace_id FOR UPDATE",
+        team_id,
+        alias,
+    )
+
+
 async def _ensure_workspace(
     db: AsyncDatabaseManager,
     team_id: str,
@@ -615,6 +632,8 @@ async def connect_agent(
                 raise ConnectIdentityRefusal(
                     ConnectIdentityRefusalReason.GENERATION_STALE
                 )
+
+        await _lock_reconnecting_workspace(tx, team_id=team_id, alias=alias)
 
         agent_id = await _ensure_agent(
             tx,
