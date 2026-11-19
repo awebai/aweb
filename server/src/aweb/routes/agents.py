@@ -802,7 +802,7 @@ async def publish_encryption_key(
         row = await read_member_projection(
             db, team_id=claims["team_id"], agent_id=agent_id
         )
-        if not current_member(row) or any(
+        if row is None or not current_member(row) or any(
             (
                 row["did_key"] != claims["member_did_key"],
                 row["certificate_id"] != claims["certificate_id"],
@@ -822,6 +822,7 @@ async def publish_encryption_key(
         team_id = principal["team_id"]
         expected_stable_id = principal["did_aw"] or None
     else:
+        assert identity is not None  # The exclusive-input check above establishes this.
         member_key = identity.did_key
         member_id = identity.agent_id
         team_id = identity.team_id
