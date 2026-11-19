@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from redis.asyncio import Redis
-from redis.asyncio.client import PubSub
+from redis.asyncio.client import Pipeline, PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
@@ -340,6 +340,16 @@ async def publish_event(redis: Redis, event: Event) -> int:
     count = await redis.publish(channel, message)
     logger.debug(f"Published {event.type} to {channel}, {count} subscribers")
     return count
+
+
+def queue_team_event(pipeline: Pipeline, event: TeamEvent) -> None:
+    """Queue the canonical team publication in a caller-owned MULTI transaction.
+
+    The caller queues its presence snapshot alongside this event, then executes
+    or retries WATCH/MULTI. Serialization happens before that Redis commit;
+    queueing neither executes nor publishes outside the transaction.
+    """
+    pipeline.publish(team_events_channel_name(event.team_id), event.to_json())
 
 
 async def publish_team_event(redis: Redis, event: TeamEvent) -> int:
