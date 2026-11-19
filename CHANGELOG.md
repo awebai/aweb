@@ -10,7 +10,11 @@
   facade as refused); neither aweb nor aweb Cloud configured the service. They
   now answer 404, and grant-authenticated requests to them are refused as outside
   the grant surface. Migration 056 drops the three outbox tables only that
-  service wrote. `GET /v1/messaging/participants/{alias}` is unchanged.
+  service wrote: `human_channel_mutations`, `human_channel_ingress` and
+  `human_channel_sends`. In aweb Cloud production all three are empty (0 rows
+  each), so the drop removes no data there; elsewhere they can hold rows only
+  where a host embedded the removed service. `GET /v1/messaging/participants/{alias}`
+  is unchanged.
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
