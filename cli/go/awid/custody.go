@@ -193,21 +193,38 @@ func custodyRequestDigest(req *PlainMessageSignRequest) (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
+// custodyProofMetadata is the identity binding shared by every custody proof.
+type custodyProofMetadata struct {
+	GrantID, SessionDIDKey, TeamID        string
+	SubjectDIDAW, SubjectDIDKey, Audience string
+}
+
+type custodyProofData struct {
+	Version                         int
+	Operation                       string
+	Metadata                        custodyProofMetadata
+	Nonce, Timestamp, RequestDigest string
+}
+
+// canonical owns the released custody proof bytes, including empty fields and
+// escaped line separators (docs/identity.md: structured local custody requests).
+func (p custodyProofData) canonical() (string, error) {
+	return CanonicalJSONValueEscapingLineSeparators(map[string]any{
+		"v": p.Version, "op": p.Operation, "grant_id": p.Metadata.GrantID,
+		"session_did_key": p.Metadata.SessionDIDKey, "team_id": p.Metadata.TeamID,
+		"subject_did_aw": p.Metadata.SubjectDIDAW, "subject_did_key": p.Metadata.SubjectDIDKey,
+		"aud": p.Metadata.Audience, "nonce": p.Nonce, "timestamp": p.Timestamp,
+		"request_digest": p.RequestDigest,
+	})
+}
+
 func custodyProofCanonical(req *PlainMessageSignRequest) (string, error) {
-	payload := map[string]any{
-		"v":               req.Version,
-		"op":              req.Operation,
-		"grant_id":        req.GrantID,
-		"session_did_key": req.SessionDIDKey,
-		"team_id":         req.TeamID,
-		"subject_did_aw":  req.SubjectDIDAW,
-		"subject_did_key": req.SubjectDIDKey,
-		"aud":             req.Audience,
-		"nonce":           req.Nonce,
-		"timestamp":       req.Timestamp,
-		"request_digest":  req.RequestDigest,
-	}
-	return CanonicalJSONValueEscapingLineSeparators(payload)
+	return (custodyProofData{
+		Version: req.Version, Operation: req.Operation,
+		Metadata: custodyProofMetadata{GrantID: req.GrantID, SessionDIDKey: req.SessionDIDKey,
+			TeamID: req.TeamID, SubjectDIDAW: req.SubjectDIDAW, SubjectDIDKey: req.SubjectDIDKey, Audience: req.Audience},
+		Nonce: req.Nonce, Timestamp: req.Timestamp, RequestDigest: req.RequestDigest,
+	}).canonical()
 }
 
 func SignCustodyProof(key ed25519.PrivateKey, req *PlainMessageSignRequest) error {
@@ -379,56 +396,71 @@ func custodyDigestValue(operation string, payload map[string]any) (string, error
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func signCustodyProofFields(key ed25519.PrivateKey, version int, operation string, fields map[string]string, requestDigest *string, nonce *string, timestamp *string, signature *string) error {
+type custodyProofSigning struct {
+	Version                     int
+	Operation                   string
+	Metadata                    *custodyProofMetadata
+	RequestDigest               string
+	Nonce, Timestamp, Signature *string
+}
+
+func signCustodyProofFields(key ed25519.PrivateKey, request custodyProofSigning) error {
 	if key == nil {
 		return fmt.Errorf("signing key is required")
 	}
+	version := request.Version
 	if version == 0 {
 		version = 1
 	}
-	if strings.TrimSpace(fields["session_did_key"]) == "" {
-		fields["session_did_key"] = ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	if strings.TrimSpace(request.Metadata.SessionDIDKey) == "" {
+		publicKey, ok := key.Public().(ed25519.PublicKey)
+		if !ok {
+			return fmt.Errorf("unsupported signing key")
+		}
+		request.Metadata.SessionDIDKey = ComputeDIDKey(publicKey)
 	}
-	if strings.TrimSpace(*timestamp) == "" {
-		*timestamp = time.Now().UTC().Format(time.RFC3339)
+	if strings.TrimSpace(*request.Timestamp) == "" {
+		*request.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	}
-	if strings.TrimSpace(*nonce) == "" {
-		n, err := GenerateUUID4()
+	if strings.TrimSpace(*request.Nonce) == "" {
+		nonce, err := GenerateUUID4()
 		if err != nil {
 			return err
 		}
-		*nonce = n
+		*request.Nonce = nonce
 	}
-	proof := map[string]any{"v": version, "op": operation, "grant_id": fields["grant_id"], "session_did_key": fields["session_did_key"], "team_id": fields["team_id"], "subject_did_aw": fields["subject_did_aw"], "subject_did_key": fields["subject_did_key"], "aud": fields["aud"], "nonce": *nonce, "timestamp": *timestamp, "request_digest": *requestDigest}
-	canonical, err := CanonicalJSONValueEscapingLineSeparators(proof)
+	canonical, err := (custodyProofData{Version: version, Operation: request.Operation,
+		Metadata: *request.Metadata, Nonce: *request.Nonce, Timestamp: *request.Timestamp, RequestDigest: request.RequestDigest}).canonical()
 	if err != nil {
 		return err
 	}
-	*signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(canonical)))
+	*request.Signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(canonical)))
 	return nil
 }
 
-func verifyCustodyProofFields(version int, operation string, fields map[string]string, nonce, timestamp, requestDigest, signature string, expectedDigest string) error {
-	if version != 1 || operation == "" {
+type custodyProofVerification struct {
+	Proof                     custodyProofData
+	Signature, ExpectedDigest string
+}
+
+func verifyCustodyProofFields(request custodyProofVerification) error {
+	proof := request.Proof
+	if proof.Version != 1 || proof.Operation == "" {
 		return fmt.Errorf("unsupported_operation")
 	}
-	if strings.TrimSpace(requestDigest) != strings.TrimSpace(expectedDigest) {
+	if strings.TrimSpace(proof.RequestDigest) != strings.TrimSpace(request.ExpectedDigest) {
 		return fmt.Errorf("message_digest_mismatch")
 	}
-	pub, err := ExtractPublicKey(strings.TrimSpace(fields["session_did_key"]))
+	publicKey, err := ExtractPublicKey(strings.TrimSpace(proof.Metadata.SessionDIDKey))
 	if err != nil {
 		return fmt.Errorf("bad_signature")
 	}
-	proof := map[string]any{"v": version, "op": operation, "grant_id": fields["grant_id"], "session_did_key": fields["session_did_key"], "team_id": fields["team_id"], "subject_did_aw": fields["subject_did_aw"], "subject_did_key": fields["subject_did_key"], "aud": fields["aud"], "nonce": nonce, "timestamp": timestamp, "request_digest": requestDigest}
-	canonical, err := CanonicalJSONValueEscapingLineSeparators(proof)
+	canonical, err := proof.canonical()
 	if err != nil {
 		return err
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(signature))
-	if err != nil {
-		return fmt.Errorf("bad_signature")
-	}
-	if !ed25519.Verify(pub, []byte(canonical), sig) {
+	signature, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(request.Signature))
+	if err != nil || !ed25519.Verify(publicKey, []byte(canonical), signature) {
 		return fmt.Errorf("bad_signature")
 	}
 	return nil
@@ -453,11 +485,11 @@ func SignE2EECreateCustodyProof(key ed25519.PrivateKey, req *E2EEEnvelopeCreateR
 		return err
 	}
 	req.RequestDigest = d
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	if err := signCustodyProofFields(key, req.Version, req.Operation, fields, &req.RequestDigest, &req.Nonce, &req.Timestamp, &req.Signature); err != nil {
+	fields := custodyProofMetadata{GrantID: req.GrantID, SessionDIDKey: req.SessionDIDKey, TeamID: req.TeamID, SubjectDIDAW: req.SubjectDIDAW, SubjectDIDKey: req.SubjectDIDKey, Audience: req.Audience}
+	if err := signCustodyProofFields(key, custodyProofSigning{Version: req.Version, Operation: req.Operation, Metadata: &fields, RequestDigest: req.RequestDigest, Nonce: &req.Nonce, Timestamp: &req.Timestamp, Signature: &req.Signature}); err != nil {
 		return err
 	}
-	req.SessionDIDKey = fields["session_did_key"]
+	req.SessionDIDKey = fields.SessionDIDKey
 	return nil
 }
 
@@ -470,8 +502,8 @@ func VerifyE2EECreateCustodyProof(req *E2EEEnvelopeCreateRequest) error {
 	if err != nil {
 		return err
 	}
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
+	fields := custodyProofMetadata{GrantID: req.GrantID, SessionDIDKey: req.SessionDIDKey, TeamID: req.TeamID, SubjectDIDAW: req.SubjectDIDAW, SubjectDIDKey: req.SubjectDIDKey, Audience: req.Audience}
+	return verifyCustodyProofFields(custodyProofVerification{Proof: custodyProofData{Version: req.Version, Operation: req.Operation, Metadata: fields, Nonce: req.Nonce, Timestamp: req.Timestamp, RequestDigest: req.RequestDigest}, Signature: req.Signature, ExpectedDigest: d})
 }
 
 func SignE2EEUnwrapCustodyProof(key ed25519.PrivateKey, req *E2EEUnwrapRequest) error {
@@ -493,11 +525,11 @@ func SignE2EEUnwrapCustodyProof(key ed25519.PrivateKey, req *E2EEUnwrapRequest) 
 		return err
 	}
 	req.RequestDigest = d
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	if err := signCustodyProofFields(key, req.Version, req.Operation, fields, &req.RequestDigest, &req.Nonce, &req.Timestamp, &req.Signature); err != nil {
+	fields := custodyProofMetadata{GrantID: req.GrantID, SessionDIDKey: req.SessionDIDKey, TeamID: req.TeamID, SubjectDIDAW: req.SubjectDIDAW, SubjectDIDKey: req.SubjectDIDKey, Audience: req.Audience}
+	if err := signCustodyProofFields(key, custodyProofSigning{Version: req.Version, Operation: req.Operation, Metadata: &fields, RequestDigest: req.RequestDigest, Nonce: &req.Nonce, Timestamp: &req.Timestamp, Signature: &req.Signature}); err != nil {
 		return err
 	}
-	req.SessionDIDKey = fields["session_did_key"]
+	req.SessionDIDKey = fields.SessionDIDKey
 	return nil
 }
 
@@ -510,8 +542,8 @@ func VerifyE2EEUnwrapCustodyProof(req *E2EEUnwrapRequest) error {
 	if err != nil {
 		return err
 	}
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
+	fields := custodyProofMetadata{GrantID: req.GrantID, SessionDIDKey: req.SessionDIDKey, TeamID: req.TeamID, SubjectDIDAW: req.SubjectDIDAW, SubjectDIDKey: req.SubjectDIDKey, Audience: req.Audience}
+	return verifyCustodyProofFields(custodyProofVerification{Proof: custodyProofData{Version: req.Version, Operation: req.Operation, Metadata: fields, Nonce: req.Nonce, Timestamp: req.Timestamp, RequestDigest: req.RequestDigest}, Signature: req.Signature, ExpectedDigest: d})
 }
 
 // AppRequestSignRequest asks the local resident custody service to sign one
@@ -584,11 +616,11 @@ func SignAppRequestCustodyProof(key ed25519.PrivateKey, req *AppRequestSignReque
 		return err
 	}
 	req.RequestDigest = d
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	if err := signCustodyProofFields(key, req.Version, req.Operation, fields, &req.RequestDigest, &req.Nonce, &req.Timestamp, &req.Signature); err != nil {
+	fields := custodyProofMetadata{GrantID: req.GrantID, SessionDIDKey: req.SessionDIDKey, TeamID: req.TeamID, SubjectDIDAW: req.SubjectDIDAW, SubjectDIDKey: req.SubjectDIDKey, Audience: req.Audience}
+	if err := signCustodyProofFields(key, custodyProofSigning{Version: req.Version, Operation: req.Operation, Metadata: &fields, RequestDigest: req.RequestDigest, Nonce: &req.Nonce, Timestamp: &req.Timestamp, Signature: &req.Signature}); err != nil {
 		return err
 	}
-	req.SessionDIDKey = fields["session_did_key"]
+	req.SessionDIDKey = fields.SessionDIDKey
 	return nil
 }
 
@@ -600,8 +632,8 @@ func VerifyAppRequestCustodyProof(req *AppRequestSignRequest) error {
 	if err != nil {
 		return err
 	}
-	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
+	fields := custodyProofMetadata{GrantID: req.GrantID, SessionDIDKey: req.SessionDIDKey, TeamID: req.TeamID, SubjectDIDAW: req.SubjectDIDAW, SubjectDIDKey: req.SubjectDIDKey, Audience: req.Audience}
+	return verifyCustodyProofFields(custodyProofVerification{Proof: custodyProofData{Version: req.Version, Operation: req.Operation, Metadata: fields, Nonce: req.Nonce, Timestamp: req.Timestamp, RequestDigest: req.RequestDigest}, Signature: req.Signature, ExpectedDigest: d})
 }
 
 // SignAppRequestViaCustody asks the grant's local custody service to sign one
