@@ -3,6 +3,7 @@ package awid
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -939,11 +940,11 @@ func (c *Client) ChatMarkRead(ctx context.Context, sessionID string, req *ChatMa
 		return &out, nil
 	}
 
-	// Well-formedness gates only the compatibility retry. The exact request is
-	// always sent first so the server remains the authoritative validator and
-	// its original error stays observable.
-	status, isHTTPError := HTTPStatusCode(originalErr)
-	if !isHTTPError || status < 400 || status >= 500 || !wellFormedChatMessageIDs(req) {
+	// The exact request is always sent first so the server remains the
+	// authoritative validator. Only an older server's answer to the ids-list
+	// shape is retried with a watermark; every other refusal is returned as
+	// itself, since a watermark would mark unpresented messages read.
+	if !olderServerRequiresWatermark(originalErr) || !wellFormedChatMessageIDs(req) {
 		return nil, originalErr
 	}
 
@@ -953,6 +954,36 @@ func (c *Client) ChatMarkRead(ctx context.Context, sessionID string, req *ChatMa
 		return nil, originalErr
 	}
 	return &fallbackOut, nil
+}
+
+// olderServerRequiresWatermark reports the answer a server released before
+// v1.26.28 gives an ids-list read: FastAPI's 422 validation refusal naming
+// the missing up_to_message_id, since its MarkReadRequest required that field
+// and forbade others (server/src/aweb/routes/chat.py, server-v1.8.1 through
+// server-v1.26.24).
+func olderServerRequiresWatermark(err error) bool {
+	if status, ok := HTTPStatusCode(err); !ok || status != http.StatusUnprocessableEntity {
+		return false
+	}
+	body, ok := HTTPErrorBody(err)
+	if !ok {
+		return false
+	}
+	var refusal struct {
+		Detail []struct {
+			Type string `json:"type"`
+			Loc  []any  `json:"loc"`
+		} `json:"detail"`
+	}
+	if json.Unmarshal([]byte(body), &refusal) != nil {
+		return false
+	}
+	for _, detail := range refusal.Detail {
+		if detail.Type == "missing" && len(detail.Loc) == 2 && detail.Loc[0] == "body" && detail.Loc[1] == "up_to_message_id" {
+			return true
+		}
+	}
+	return false
 }
 
 func wellFormedChatMessageIDs(req *ChatMarkReadRequest) bool {

@@ -121,8 +121,27 @@ const CHAT_MARK_READ_BATCH_SIZE = 1000;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function isClientError(error: unknown): error is APIError {
-  return error instanceof APIError && error.statusCode >= 400 && error.statusCode < 500;
+/**
+ * The answer a server released before v1.26.28 gives an ids-list read:
+ * FastAPI's 422 validation refusal naming the missing up_to_message_id, since
+ * its MarkReadRequest required that field and forbade others
+ * (server/src/aweb/routes/chat.py, server-v1.8.1 through server-v1.26.24).
+ */
+function isOlderServerWatermarkAnswer(error: unknown): boolean {
+  if (!(error instanceof APIError) || error.statusCode !== 422) return false;
+  let refusal: unknown;
+  try {
+    refusal = JSON.parse(error.body);
+  } catch {
+    return false;
+  }
+  const detail = (refusal as { detail?: unknown } | null)?.detail;
+  if (!Array.isArray(detail)) return false;
+  return detail.some((entry: unknown) => {
+    const item = entry as { type?: unknown; loc?: unknown } | null;
+    return item?.type === "missing" && Array.isArray(item.loc) && item.loc.length === 2
+      && item.loc[0] === "body" && item.loc[1] === "up_to_message_id";
+  });
 }
 
 function hasWellFormedMessageIDs(messageIds: readonly string[]): boolean {
@@ -146,10 +165,11 @@ export async function markRead(
       try {
         await client.post(path, { message_ids: chunk });
       } catch (error) {
-        // Well-formedness gates only the retry: the exact request is always sent
-        // first so the server remains the authoritative validator and its
-        // original error remains observable.
-        if (!isClientError(error) || !hasWellFormedMessageIDs(chunk)) throw error;
+        // The exact request is always sent first so the server remains the
+        // authoritative validator. Only an older server's answer to the
+        // ids-list shape is retried; every other refusal is shown as itself,
+        // since a watermark would mark unpresented messages read.
+        if (!isOlderServerWatermarkAnswer(error) || !hasWellFormedMessageIDs(chunk)) throw error;
         try {
           // Old servers only support a range watermark. The newest presented ID
           // intentionally preserves their deployed-client semantics, including
