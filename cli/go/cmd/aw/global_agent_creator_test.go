@@ -19,8 +19,16 @@ import (
 // Continue the provisioning path with its newly registered key/address, before
 // any parent certificate or membership exists. All exchange/signing is product code.
 func TestTeamAdminGlobalAgentGetsRegisteredCreatorsChain(t *testing.T) {
-	for _, chained := range []bool{true, false} {
-		t.Run(map[bool]string{true: "registered creator", false: "chainless unchanged"}[chained], func(t *testing.T) {
+	for _, sample := range []struct {
+		name                 string
+		chained, mintFailure bool
+	}{
+		{"registered creator", true, false},
+		{"chainless unchanged", false, false},
+		{"prepared global identity survives mint failure", false, true},
+	} {
+		t.Run(sample.name, func(t *testing.T) {
+			chained := sample.chained
 			resetTeamHumanCreateGlobals(t)
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("APP_ENV", "development")
@@ -102,13 +110,20 @@ func TestTeamAdminGlobalAgentGetsRegisteredCreatorsChain(t *testing.T) {
 			t.Setenv("AWID_REGISTRY_URL", origin)
 			serveRosterTXT(t, idCreateDNSRecordValue(v.Keys["root"].DIDKey, origin))
 			_, teamKey, _ := awid.GenerateKeypair()
-			if err := awconfig.SaveTeamKey("example.com", "backend", teamKey); err != nil {
-				t.Fatal(err)
+			if !sample.mintFailure {
+				if err := awconfig.SaveTeamKey("example.com", "backend", teamKey); err != nil {
+					t.Fatal(err)
+				}
 			}
 			seed, _ := hex.DecodeString(actor.SeedHex)
 			actorKey := ed25519.NewKeyFromSeed(seed)
-			connectCalls, publishCalls := 0, 0
+			connectCalls, publishCalls, mintCalls := 0, 0, 0
 			service := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if sample.mintFailure && r.URL.Path == "/api/v1/spawn/create-invite" {
+					mintCalls++
+					http.Error(w, "invite service unavailable", http.StatusServiceUnavailable)
+					return
+				}
 				if r.URL.Path == "/v1/connect" {
 					connectCalls++
 					cert, err := awid.DecodeTeamCertificateHeader(r.Header.Get(awid.HeaderTeamCertificate))
@@ -139,6 +154,9 @@ func TestTeamAdminGlobalAgentGetsRegisteredCreatorsChain(t *testing.T) {
 			defer service.Close()
 			workspace := workspaceBinding(service.URL, "backend:example.com", "creator", "workspace-parent")
 			writeTeamCertificateWorkspaceForTest(t, root, workspace, &testSelectionFixture{SigningKey: actorKey, IdentityScope: "global"})
+			if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(root), actorKey); err != nil {
+				t.Fatal(err)
+			}
 			writeWorkspaceBindingForTest(t, root, workspace)
 			for _, entry := range []struct {
 				dir         string
@@ -165,6 +183,18 @@ func TestTeamAdminGlobalAgentGetsRegisteredCreatorsChain(t *testing.T) {
 				}
 			}
 			accepted, err := createProvisionedTeamMember(teamMemberCreation{SourceDir: root, HomeDir: child, Name: "child", Scope: awid.IdentityScopeGlobal})
+			if sample.mintFailure {
+				if mintCalls != 1 {
+					t.Fatalf("mint-failure control did not reach its endpoint: calls=%d err=%v", mintCalls, err)
+				}
+				if err == nil || !retainUnfinishedProvisioningIdentity(err) {
+					t.Fatalf("mint refusal could discard the prepared global identity: %v", err)
+				}
+				if teamWrites != 0 || idWrites != 0 {
+					t.Fatal("mint-failure control unexpectedly submitted a membership or child chain")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("global creator provisioning (%d ID writes/%d membership writes): %v", idWrites, teamWrites, err)
 			}

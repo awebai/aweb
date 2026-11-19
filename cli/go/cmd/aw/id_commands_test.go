@@ -1267,6 +1267,9 @@ func TestExecuteIDCreateRetainsPrivateKeyWhenAtomicRegistryUnavailable(t *testin
 	if err == nil {
 		t.Fatal("expected id create to fail when atomic claim registry call fails")
 	}
+	if !retainUnfinishedProvisioningIdentity(err) {
+		t.Fatal("retained standalone creation would be removed by its outer caller")
+	}
 	if !strings.Contains(err.Error(), "could not reach AWID registry") {
 		t.Fatalf("unexpected error: %v", err)
 	}
