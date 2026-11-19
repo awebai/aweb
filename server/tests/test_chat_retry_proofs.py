@@ -194,3 +194,22 @@ async def test_continued_retry_uses_recorded_participant_did_despite_richer_curr
         ],
     )
     assert result["message_id"] == UUID(request.message_id)
+
+
+@pytest.mark.asyncio
+async def test_exact_aged_artifact_with_changed_parties_never_requests_another_signature():
+    from aweb.service_errors import ConflictError
+
+    snapshot, request, auth, session_id, _, _ = retained_request(SendMessageRequest)
+    with pytest.raises(ConflictError) as refused:
+        await _stored_exact_chat_send(
+            snapshot,
+            request,
+            auth=auth,
+            session_id=session_id,
+            actor_dids=[auth.did_key],
+            recipient_rows=[{"did_key": "did:key:different-recipient"}],
+        )
+    assert refused.value.detail == (
+        "The stored chat participants differ from the resolved recipients. Retry the original conversation and recipient identities unchanged."
+    )
