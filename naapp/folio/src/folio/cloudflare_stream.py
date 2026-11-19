@@ -83,26 +83,31 @@ class CloudflareStreamClient:
         result = data.get("result") if isinstance(data, dict) else None
         if not isinstance(result, dict):
             raise HTTPException(status_code=503, detail="Cloudflare Stream status response was invalid")
-        ready = bool(result.get("readyToStream"))
-        status_data = result.get("status")
-        state = "ready" if ready else "processing"
-        if isinstance(status_data, dict) and status_data.get("state"):
-            state = str(status_data["state"]).strip().lower()
-        if state == "pendingupload":
-            state = "pending_upload"
-        if state == "inprogress":
-            state = "processing"
-        duration = result.get("duration")
-        try:
-            duration_seconds = float(duration) if duration is not None else None
-        except (TypeError, ValueError):
-            duration_seconds = None
-        return StreamVideoStatus(
-            uid=str(result.get("uid") or stream_uid),
-            status="ready" if ready else state,
-            ready_to_stream=ready,
-            duration_seconds=duration_seconds,
-        )
+        return video_status_from_cloudflare(result, stream_uid=stream_uid)
+
+
+def video_status_from_cloudflare(result: dict[str, Any], *, stream_uid: str) -> StreamVideoStatus:
+    """A video's status from the ``result`` of Cloudflare Stream's GET /stream/<uid>."""
+    ready = bool(result.get("readyToStream"))
+    status_data = result.get("status")
+    state = "ready" if ready else "processing"
+    if isinstance(status_data, dict) and status_data.get("state"):
+        state = str(status_data["state"]).strip().lower()
+    if state == "pendingupload":
+        state = "pending_upload"
+    if state == "inprogress":
+        state = "processing"
+    duration = result.get("duration")
+    try:
+        duration_seconds = float(duration) if duration is not None else None
+    except (TypeError, ValueError):
+        duration_seconds = None
+    return StreamVideoStatus(
+        uid=str(result.get("uid") or stream_uid),
+        status="ready" if ready else state,
+        ready_to_stream=ready,
+        duration_seconds=duration_seconds,
+    )
 
 
 def _cloudflare_json(response: httpx.Response, *, context: str) -> dict[str, Any]:
