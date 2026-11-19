@@ -192,3 +192,14 @@ def test_send_refusal_rejects_unnamed_mode_before_inspecting_the_error(mode):
     assert str(refused.value) == (
         "Pass a named SendRefusalMode value before formatting a send refusal."
     )
+
+    from aweb.mcp.tools.chat import _send_refusal
+    from aweb.messaging.chat_policy import HumanChatRefused
+
+    class UnreadableHumanChatRefused(HumanChatRefused):
+        def body(self, *, correlation_id=None):
+            raise AssertionError("A wrong mode must not reach human refusal formatting")
+
+    with pytest.raises(TypeError) as human_refused:
+        _send_refusal(UnreadableHumanChatRefused("peer"), mode=mode)
+    assert str(human_refused.value) == str(refused.value)
