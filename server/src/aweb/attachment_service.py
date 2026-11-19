@@ -13,7 +13,7 @@ import logging
 from uuid import UUID
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, HTTPException
 from starlette.responses import Response
 from awid.signing import canonical_json_bytes
 from aweb.db import TransactionInfra
@@ -28,6 +28,13 @@ from aweb.attachments import (
 )
 from aweb.deps import get_db
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
+from aweb.messaging.kinds import MessageKind
+from aweb.messaging.message_replay import (
+    ChatReplayControls,
+    StoredMessageClaim,
+    EncryptedReplayArtifact,
+    stored_message_matches,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["aweb-attachments"])
@@ -349,8 +356,20 @@ async def fetch_chat_attachment(
     return await read_attachment(request, "chat", message_id, attachment_id, db, auth)
 
 
-async def attachment_retry(db, payload, kind):
-    """Reuse only an already-verified identical envelope and stored ref set."""
+def _attachment_retry_conflict() -> HTTPException:
+    """Preserve the attachment conflict code with a usable retry action."""
+    error = AttachmentError("attachment_conflict")
+    response = error.http()
+    response.detail = {
+        "code": error.code,
+        "message": "This message ID already has a different attachment request. Retry the original request unchanged, or choose a new message ID for a new message.",
+    }
+    return response
+
+
+async def attachment_retry(db, payload, kind: MessageKind | str):
+    """Use the common accepted-artifact identity plus the stored ordered refs."""
+    message_kind = MessageKind(kind)
     context = _current.get()
     if context is None:
         return None
@@ -358,7 +377,7 @@ async def attachment_retry(db, payload, kind):
     message_id = envelope.get("message_id")
     if not message_id:
         return None
-    table = "messages" if kind == "mail" else "chat_messages"
+    table = "messages" if message_kind is MessageKind.MAIL else "chat_messages"
     try:
         message_uuid = UUID(message_id)
     except (ValueError, TypeError, AttributeError):
@@ -373,13 +392,31 @@ async def attachment_retry(db, payload, kind):
     # cannot call provider.bind on this path: stored binding rows must exist.
     previous = await attachment_references(db, kind, message_id)
     if previous != [item.model_dump() for item in context.references]:
-        raise AttachmentError("attachment_conflict").http()
+        raise _attachment_retry_conflict()
     binding, row = await _binding(db.get_manager("aweb"), kind, message_id)
-    stored = row["encrypted_envelope"]
-    if isinstance(stored, str):
-        stored = json.loads(stored)
+    requested_conversation = getattr(payload, "conversation_id", None) or getattr(
+        payload, "session_id", None
+    )
+    claim = StoredMessageClaim(
+        kind=message_kind,
+        message_id=message_uuid,
+        sender_did=binding.sender_did,
+        conversation_id=UUID(requested_conversation)
+        if requested_conversation
+        else None,
+        artifact=EncryptedReplayArtifact(envelope=envelope),
+        chat_controls=ChatReplayControls(
+            sender_leaving=payload.leaving,
+            hang_on=payload.hang_on,
+            reply_to=UUID(payload.reply_to) if payload.reply_to else None,
+            timestamp=payload.timestamp,
+            signing_did=payload.from_did,
+        )
+        if message_kind is MessageKind.CHAT
+        else None,
+    )
     if (
-        stored != envelope
+        not stored_message_matches(row, claim=claim)
         or binding.sender_did not in auth_dids(context.auth)
         or payload.message_id != message_id
         or payload.timestamp != envelope.get("created_at")
@@ -391,7 +428,7 @@ async def attachment_retry(db, payload, kind):
             and payload.conversation_id != binding.conversation_id
         )
     ):
-        raise AttachmentError("attachment_conflict").http()
+        raise _attachment_retry_conflict()
     for name, allowed in {
         "to_did": {row.get("to_did"), envelope.get("routing", {}).get("to_did")},
         "to_stable_id": {envelope.get("routing", {}).get("to_stable_id")},
@@ -399,6 +436,6 @@ async def attachment_retry(db, payload, kind):
         "to_alias": {row.get("to_alias"), envelope.get("routing", {}).get("to")},
     }.items():
         if getattr(payload, name, None) and getattr(payload, name) not in allowed:
-            raise AttachmentError("attachment_conflict").http()
+            raise _attachment_retry_conflict()
     context.bound = True
     return binding, row

@@ -365,7 +365,12 @@ Inside the existing encrypted window an exact encrypted chat retry also returns
 its stored message; it does not gain the plaintext age exemption. A changed
 artifact or missing proof is a new attestation and takes the age check, including
 a changed artifact reusing an accepted UUID. The encrypted ingestion window is
-unchanged. This is Antares ruling69b3a50a (relay a491ccc8).
+unchanged. Native, outbound and attachment retries use the same stored-artifact
+comparison; an established federation receipt additionally matches its complete
+outer envelope hash and kind. Ingress and Phase B share that receipt identity
+check, and Phase B binds its canonical metadata under current authority. Stored
+proof does not by itself mean signature verification or current admission.
+This is Antares ruling69b3a50a (relay a491ccc8).
 
 
 Migration backfill marks historical rows whose exact original envelope cannot

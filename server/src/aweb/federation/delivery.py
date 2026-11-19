@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from aweb.messaging.kinds import ContentMode, MessagePriority
 from aweb.messaging.chat_storage import store_chat
+from aweb.messaging.message_replay import established_federation_receipt
 from aweb.messaging.mail_storage import (
     store_mail,
     MailStorageInput,
@@ -820,16 +821,15 @@ async def _deliver_federated_phase_b(
             """,
             message_id,
         )
-        if receipt is not None:
-            if (
-                receipt["legacy_unreplayable"]
-                or receipt["envelope_hash"] != envelope_hash
-                or _decode_json(receipt["canonical_metadata"]) != metadata
-                or receipt["storage_kind"] != envelope.type
-                or receipt["established_result"] is None
-            ):
+        established = established_federation_receipt(
+            receipt, envelope_hash=envelope_hash, kind=MessageKind(envelope.type)
+        )
+        if established is not None:
+            # Canonical metadata is bound only after ingress has restored its
+            # accepted address/route projection and Phase A has admitted it.
+            if established.metadata != metadata:
                 raise FederationAuthorityError("federation_message_replay_conflict")
-            return dict(_decode_json(receipt["established_result"]))
+            return established.result
 
         recipient = await _lock_current_recipient(
             tx,
