@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
-	"github.com/awebai/aw/awid"
 )
 
 const codeControllerKeyMissing = "controller_key_missing"
@@ -73,17 +72,8 @@ func mintPlannedTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, err
 	if err := request.Scope.validate(); err != nil {
 		return mintedTeamInvite{}, err
 	}
-	source := request.Plan.Source
-	var humanOption []string
-	if request.ForHuman != nil {
-		humanOption = []string{*request.ForHuman}
-	}
-	localMember := request.Scope == inviteMemberLocal
 	if request.Plan.Kind == inviteAuthorityHosted {
-		if request.ExpiresAfter != 0 {
-			return mintedTeamInvite{}, usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
-		}
-		created, err := createHostedTeamInvite(source.WorkingDir, externalIdentityHomeRoot(source.Home), awid.BuildTeamID(source.Domain, source.Team), localMember, humanOption...)
+		created, err := createHostedTeamInviteFromPlan(request)
 		if err != nil {
 			return mintedTeamInvite{}, err
 		}

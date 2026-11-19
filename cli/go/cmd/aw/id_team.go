@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/pathpreflight"

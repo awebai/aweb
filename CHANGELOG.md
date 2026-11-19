@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Hosted invites prepare their creator exchange before minting; a later local link-save failure warns while preserving the created token.
+
 - `aw claim-human` reports an observed email delivery failure with retry guidance; JSON output retains the optional delivery fields.
 
 - Addressed `aw id create` saves its private key before registry writes and

@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -14,6 +16,44 @@ import (
 // createHostedTeamInvite creates a single-use hosted invite and returns the
 // service's response, which carries its expiry.
 func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember bool, forHuman ...string) (*awid.SpawnCreateInviteResponse, error) {
+	requested, err := requestedInviteHuman(forHuman)
+	if err != nil {
+		return nil, err
+	}
+	domain, team, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		return nil, err
+	}
+	scope := inviteMemberGlobal
+	if localMember {
+		scope = inviteMemberLocal
+	}
+	return createHostedTeamInviteFromPlan(teamInviteMintRequest{
+		Plan: teamInvitePlan{Kind: inviteAuthorityHosted, Source: teamInviteSource{
+			WorkingDir: workingDir, Home: awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}, Domain: domain, Team: team,
+		}}, Scope: scope, ForHuman: requested,
+	})
+}
+
+// createHostedTeamInviteFromPlan prepares the creator's exchange before minting
+// a bearer (docs/id-tree-invite-issuance.md:16-24). Once minted, a failure to
+// retain its local link cannot undo the service effect or discard its token.
+func createHostedTeamInviteFromPlan(request teamInviteMintRequest) (*awid.SpawnCreateInviteResponse, error) {
+	if err := request.Scope.validate(); err != nil {
+		return nil, err
+	}
+	if request.ForHuman != nil {
+		if err := validateInviteHuman(*request.ForHuman); err != nil {
+			return nil, err
+		}
+	}
+	if request.ExpiresAfter != 0 {
+		return nil, usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
+	}
+	source := request.Plan.Source
+	workingDir, identityHome := source.WorkingDir, externalIdentityHomeRoot(source.Home)
+	teamID := awid.BuildTeamID(source.Domain, source.Team)
+	requested := request.ForHuman
 	var client *aweb.Client
 	var selected *awconfig.Selection
 	var err error
@@ -37,21 +77,29 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 		return nil, err
 	}
 	var bundle map[string]any
+	var issuerID, issuerDomain string
+	var link *awconfig.TeamInviteIDChild
 	if chain != nil {
-		bundle = chain.Bundle
-		certificates := bundle["certificates"].([]any)
-		leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+		leaf, err := chain.Leaf()
+		if err != nil {
+			return nil, err
+		}
+		issuerID, issuerDomain = leaf.ID(), leaf.Domain()
 		subject := selected.StableID
 		if subject == "" {
 			subject = selected.DID
 		}
-		if leaf["id"] != subject || leaf["kind"] != "agent" {
+		if issuerID != subject || leaf.Kind() != awid.IDCertificateKindAgent {
 			return nil, errors.New("hosted invites require the selected agent's own chain")
 		}
-	}
-	requested, err := requestedInviteHuman(forHuman)
-	if err != nil {
-		return nil, err
+		bundle = chain.Bundle
+		link, _, err = prepareTeamInviteAuthority(ctx, teamInviteAuthorityRequest{
+			Issuer: idChildOptions{WorkingDir: workingDir, IdentityHome: selected.IdentityHome, Now: time.Now},
+			Child:  inviteCreatesChild, ForHuman: requested,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	created, err := client.CreateSpawnInvite(ctx, &awid.SpawnCreateInviteRequest{
 		IDChain:    bundle,
@@ -66,33 +114,23 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 		return nil, errors.New("hosted service did not retain --for-human; upgrade the service before issuing this invite")
 	}
 	if chain != nil && (created.IDTree != nil || requested == nil) {
-		certificates := bundle["certificates"].([]any)
-		leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-		if created.IDTree == nil || created.IDTree.V != 1 || created.IDTree.IssuerID != leaf["id"] || created.IDTree.Domain != leaf["domain"] || created.IDTree.ChildKind != "agent" || (created.IDTree.Mode != "host_managed" && created.IDTree.Mode != "self_custodial") {
+		if created.IDTree == nil || created.IDTree.V != 1 || created.IDTree.IssuerID != issuerID || created.IDTree.Domain != issuerDomain || awid.IDCertificateKind(created.IDTree.ChildKind) != awid.IDCertificateKindAgent || (created.IDTree.Mode != awid.IDInvitationHostManaged && created.IDTree.Mode != awid.IDInvitationSelfCustodial) {
 			return nil, errors.New("hosted invite did not retain the selected agent issuer binding")
 		}
 	}
 	if strings.TrimSpace(created.Token) == "" {
 		return nil, fmt.Errorf("hosted team invite response is missing token")
 	}
-	if chain != nil && created.IDTree != nil && created.IDTree.Mode == "self_custodial" {
-		link, err := prepareTeamInviteIDChild(ctx, idChildOptions{WorkingDir: workingDir, IdentityHome: selected.IdentityHome, Now: time.Now})
-		if err != nil {
-			return nil, err
-		}
+	if chain != nil && created.IDTree != nil && created.IDTree.Mode == awid.IDInvitationSelfCustodial {
 		if link == nil || link.Parent != created.IDTree.IssuerID || link.Domain != created.IDTree.Domain {
 			return nil, errors.New("hosted invite child link differs from the selected issuer")
 		}
-		domain, name, err := awid.ParseTeamID(teamID)
-		if err != nil {
-			return nil, err
-		}
 		if err := awconfig.SaveTeamInvite(&awconfig.TeamInvite{
 			InviteID: hostedTeamInviteRecordID(created.Token),
-			Domain:   domain, TeamName: name,
-			IdentityScope: teamAcceptScopeFromGlobal(!localMember), IDChild: link,
+			Domain:   source.Domain, TeamName: source.Team,
+			IdentityScope: string(request.Scope), IDChild: link,
 		}); err != nil {
-			return nil, err
+			log.New(os.Stderr, "", 0).Printf("Hosted invite created; local creator link could not be saved: %v. Keep the returned invite; the joiner can select this creator with --parent %s or complete the parent request/import exchange.", err, selected.IdentityHome)
 		}
 	}
 	return created, nil

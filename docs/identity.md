@@ -282,6 +282,12 @@ To admit an agent regardless of whose it is, use the controller's own
 admission invite on a hosted team. There is deliberately no `anyone` value for
 `--for-human`.
 
+A hosted invitation prepares its local creator exchange before requesting a
+bearer from the service. If saving the local link fails after the service has
+created the invitation, `aw` returns the created token and warns on stderr.
+Keep that token; the joiner can select the creator with `--parent <identity-home>`
+on the same machine or complete the parent request/import exchange first.
+
 On another machine, an invite for a different human does not authorize the
 issuer to become the parent. First obtain a chain from the joiner's own creator
 with `aw id child invite`, `aw id parent request --domain <creator-domain>`,
