@@ -1502,6 +1502,9 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 			}
 			return false, true
 		}
+		if !eventMayBeTargetReply(ev, opts) {
+			return false, false
+		}
 		eventNames := normalizedChatEventNames(ev, resp.Participants)
 		for _, targetNames := range targetStatusNames {
 			if chatTargetNameListsOverlap(targetNames, eventNames) {
@@ -1524,6 +1527,30 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	result.SenderWaiting = waitResult.SenderWaiting
 	result.WaitedSeconds = waitResult.WaitedSeconds
 	return result, nil
+}
+
+// eventMayBeTargetReply reports whether ev can be the reply the sender waits
+// for, before its names are compared with the target's. When the caller
+// confirmed its one target's identity, only a message signed by that
+// identity is its reply: the strong tier decides, and a matching name does
+// not (chat/IDENTITY_RULES.md:38-40). A reply that fails verification is
+// still accepted and shown with its failure tag, so the failure is seen.
+func eventMayBeTargetReply(ev Event, opts SendOptions) bool {
+	confirmed := []string{strings.TrimSpace(opts.RecipientDID)}
+	if opts.ConfirmedRecipient != nil {
+		confirmed = append(confirmed, strings.TrimSpace(opts.ConfirmedRecipient.DID), strings.TrimSpace(opts.ConfirmedRecipient.StableID))
+	}
+	anyConfirmed := false
+	for _, did := range confirmed {
+		if did == "" {
+			continue
+		}
+		anyConfirmed = true
+		if did == strings.TrimSpace(ev.FromStableID) || did == strings.TrimSpace(ev.FromDID) {
+			return true
+		}
+	}
+	return !anyConfirmed
 }
 
 // Listen waits for a message in an existing conversation without sending.
