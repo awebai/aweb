@@ -418,6 +418,13 @@ test-node-deps:
 	cd channel && npm ci --no-audit --no-fund
 	cd pi-extension && npm ci --no-audit --no-fund
 
+# Local server fixtures consume these Node artifacts before their first test.
+.PHONY: prepare-server-node
+prepare-server-node: test-node-deps
+	cd channel-core && npm run build
+	cd channel && npm run build
+	cd pi-extension && npm run build
+
 test-channel test-channel-core test-pi-extension test-wake-channel-core-bundle: test-node-deps
 
 # aw wake embeds a committed channel-core build; it must match the source that
