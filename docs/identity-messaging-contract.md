@@ -365,6 +365,11 @@ mail retry retains the remote call to recover its original established response,
 then returns the existing local projection without another send event. Chat
 create and continuation return the identical accepted message from local storage
 after current admission; they do not repeat session, wait, contact or event effects.
+If an exact chat artifact's requested participants differ from the stored
+conversation, the caller is told to retry the original conversation and recipient
+identities unchanged. It must not choose a new message ID merely to recover a
+lost answer: that would submit another message. Choosing a new ID is appropriate
+only when intentionally sending a different signed artifact.
 Inside the existing encrypted window an exact encrypted chat retry also returns
 its stored message; it does not gain the plaintext age exemption. A changed
 artifact or missing proof is a new attestation and takes the age check, including

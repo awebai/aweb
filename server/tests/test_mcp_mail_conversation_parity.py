@@ -696,6 +696,11 @@ async def test_mcp_handle_address_outside_the_senders_team_needs_its_registry_bi
     server = mail_server
     await register_messaging_team(server.fixture, team_id="home:jane.aweb.ai")
     c3po = await admit_messaging_actor(server.fixture, alias="c3po", team_id="home:jane.aweb.ai")
+    # An admitted member's unbound stored address claim supplies no registry authority.
+    await server.db.execute(
+        "UPDATE {{tables.agents}} SET address='jane.aweb.ai/c3po' WHERE agent_id=$1",
+        UUID(c3po.agent_id),
+    )
     refused = await server.mcp_mail(to="@jane/c3po", plaintext=True)
     assert refused == {"error": unreachable_address_refusal("jane.aweb.ai/c3po")}
     assert await _mail_state(server) == (0, 0)
