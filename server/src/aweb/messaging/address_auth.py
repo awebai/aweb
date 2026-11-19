@@ -49,6 +49,7 @@ def resolved_recipient_controller_did(
 def local_recipient_visible_to_auth(
     row: Mapping[str, Any] | None, auth: MessagingAuth
 ) -> bool:
+    """Check same-team visibility only; this does not establish an address binding."""
     row_team_id = str((row or {}).get("team_id") or "").strip()
     auth_team_id = str(auth.team_id or "").strip()
     return bool(row_team_id and auth_team_id and row_team_id == auth_team_id)
@@ -90,6 +91,7 @@ async def local_recipient_for_address_binding(
 
 
 def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
+    """Identify global projections whose address needs registry binding evidence."""
     return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 
 
@@ -177,6 +179,7 @@ def verified_signed_payload_json(
     signature: str | None,
     did_key: str | None,
 ) -> dict[str, Any] | None:
+    """Decode a cryptographically verified object, returning no evidence on invalid input."""
     if not signed_payload or not signature or not did_key:
         return None
     try:
@@ -194,6 +197,7 @@ def verified_signed_payload_json(
 async def namespace_uses_home_registry(db, registry_client, domain: str) -> bool:
     # A local team label alone is not authority. Use the configured registry
     # only when it is the selected origin and actually serves this namespace.
+    """Compare fresh canonical namespace authority with this client's registry origin."""
     if registry_client is None or not await namespace_exists(db, domain):
         return False
     try:

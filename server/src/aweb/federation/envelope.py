@@ -205,6 +205,7 @@ def enforce_message_timestamp_skew(
     max_skew_seconds: int = FEDERATION_TIMESTAMP_SKEW_SECONDS,
     label: str = "timestamp",
 ) -> None:
+    """Require a signed timestamp within the accepted past and future attestation window."""
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     if abs((current - timestamp).total_seconds()) > max_skew_seconds:
         raise FederationEnvelopeError(f"{label} outside accepted skew")

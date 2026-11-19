@@ -101,6 +101,7 @@ async def _ensure_room(tx, team_id):
 
 
 async def room_metadata(db, actor):
+    """Return the current team's shared room identity and visibility metadata."""
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
         room = await _ensure_room(tx, actor.team_id)
@@ -205,6 +206,7 @@ def _after(cursor, room_id, team_id):
 
 
 async def read_room(db, actor, *, after=None, limit=50):
+    """Read retained team room posts and clear only notices for the returned page."""
     if not 1 <= limit <= 200:
         raise ValidationError("Room limit must be between 1 and 200")
     async with db.get_manager("aweb").transaction() as tx:
@@ -240,6 +242,7 @@ async def read_room(db, actor, *, after=None, limit=50):
 
 
 async def exact_room_message(db, actor, message_id):
+    """Read one retained room post without clearing its notice."""
     message_uuid = _uuid(message_id)
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
@@ -265,6 +268,7 @@ async def post_room_message(
     id_chain=None,
     on_mutation: MutationCallback | None = None,
 ):
+    """Verify and commit a signed team room post, emitting one callback only for a new commit."""
     require_address_evidence(actor)
     if post.e2ee:
         raise ValidationError("room_e2ee_unsupported")

@@ -71,6 +71,7 @@ class MailContinuationContext:
 
 
 def participant_delivery_origin(participant: dict) -> str:
+    """Read the canonical delivery origin retained on a conversation participant."""
     origin = str(participant.get("delivery_origin") or "").strip()
     if origin:
         return origin
@@ -82,10 +83,12 @@ def participant_delivery_origin(participant: dict) -> str:
 
 
 def participant_is_remote(participant: dict) -> bool:
+    """Identify a stored participant carrying a concrete external delivery route."""
     return bool(participant_delivery_origin(participant))
 
 
 def participant_recipient(participant: dict) -> Recipient:
+    """Project a recorded participant identity and route without selecting new membership."""
     did = str(participant.get("did") or "").strip()
     return Recipient.from_remote_projection(
         {
@@ -101,6 +104,7 @@ def participant_recipient(participant: dict) -> Recipient:
 
 
 async def recipient_for_conversation_participant(db, participant: dict) -> Recipient:
+    """Resolve local residence while retaining the recorded participant identity."""
     did = str(participant.get("did") or "").strip()
     local = await resolve_agent_by_did(db, did)
     if local is not None:
@@ -120,6 +124,7 @@ async def recipient_for_conversation_participant(db, participant: dict) -> Recip
 async def remote_recipient_from_participant(
     registry_client, participant: dict
 ) -> Recipient:
+    """Project the recorded remote identity, key and route for a continuation."""
     address = str(participant.get("address") or "").strip()
     delivery_origin = participant_delivery_origin(participant)
     participant_did = str(participant.get("did") or "").strip()
@@ -176,6 +181,7 @@ async def mail_continuation_context(
     sender_did: str,
     equivalent_dids: Iterable[str] = (),
 ) -> MailContinuationContext:
+    """Require active participation and one readable recipient before appending to a mail thread."""
     auth_context = await require_active_conversation_participant(
         db,
         conversation_id=conversation_id,
@@ -226,6 +232,7 @@ async def explicit_mail_target_matches_participant(
     to_stable_id: str | None = None,
     to_address: str | None = None,
 ) -> bool:
+    """Compare explicit selectors against the recorded participant without replacing its authority."""
     checks: list[bool] = []
     participant_alias = str(participant.get("alias") or "").strip()
     participant_did = str(participant.get("did") or "").strip()

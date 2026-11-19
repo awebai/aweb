@@ -45,6 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 def federation_envelope_hash(envelope: FederationEnvelope, signature: str) -> str:
+    """Hash the signed envelope and signature, excluding adjacent membership and lookup proofs."""
     payload = envelope.model_dump(
         mode="json",
         exclude_none=True,
@@ -759,6 +760,7 @@ async def _store_chat(tx, envelope: FederationEnvelope, signature: str, id_chain
 
 
 async def replay_federation_mutation_outbox(app, manager, *, limit: int = 100) -> int:
+    """Retry pending committed mutation callbacks through the application's configured owner."""
     callback = getattr(app.state, "on_mutation", None)
     if callback is None:
         return 0
@@ -1010,6 +1012,7 @@ async def deliver_federated_phase_b(
     before_commit: BeforeCommit | None = None,
     envelope_hash_override: str | None = None,
 ) -> dict[str, object]:
+    """Commit validated federation delivery or its exact receipt under the authority token."""
     try:
         return await _deliver_federated_phase_b(
             db,

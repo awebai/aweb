@@ -88,6 +88,7 @@ def incoming_mail_sql(dids_parameter: str) -> str:
 
 
 def readable_mail_sql(dids_parameter: str) -> str:
+    """Build the shared participant-access predicate for ordinary and conversation mail."""
     return f"""(
         (m.conversation_id IS NULL AND
             (m.from_did = ANY({dids_parameter}::text[]) OR m.to_did = ANY({dids_parameter}::text[])))

@@ -196,6 +196,7 @@ def validate_encrypted_chat_payload(
     session_id: str,
     recipient_rows: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
+    """Verify protected chat fields and recipients, returning metadata for storage."""
     if not _payload_is_encrypted(payload):
         return None
     if payload.content_mode != ContentMode.ENCRYPTED:
@@ -264,6 +265,7 @@ async def resolve_stored_remote_chat_route(
     registry_client,
     recipient: dict[str, Any],
 ) -> dict[str, str | bool]:
+    """Read the participant's recorded DID, key and delivery route without an address lookup."""
     address = str(recipient.get("address") or "").strip()
     did_aw = str(recipient.get("did_aw") or "").strip()
     participant_did = str(recipient.get("did") or "").strip()
@@ -334,6 +336,7 @@ async def deliver_federated_chat(
     route: dict[str, Any],
     session_id: str,
 ) -> dict[str, Any]:
+    """Verify the sender envelope and deliver through the selected federated route."""
     refuse_remote_attachments()
     if not _payload_is_encrypted(payload):
         _require_remote_chat_signature(payload, session_id=session_id)
@@ -1006,6 +1009,7 @@ def _is_stale_delivery_origin_status(status_code: int) -> bool:
 
 
 async def resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
+    """Find a local sender projection for the adapter's authenticated DIDs."""
     for did in actor_dids:
         if not did:
             continue
