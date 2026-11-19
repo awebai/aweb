@@ -15,6 +15,7 @@ from aweb_secrets.member_types import ToolReply, broker_result_reply
 from aweb_secrets.redaction import KnownValues
 from aweb_secrets.responses import handle_response
 from aweb_secrets.status_service import UseStatus
+from aweb_secrets.use_approval import UseApprovalRefusalCode
 from aweb_secrets.use_approvals import apply_use_approval_migrations
 from tests.human_owner import bind_owner
 from tests.test_admission import ALICE, BOB, _grant_source_grant
@@ -173,9 +174,25 @@ async def test_same_installation_new_generation_refuses_original_receipt(db, fen
     assert "result" not in reply.body
 
 
-async def test_refusal_status_uses_the_fixed_transactional_audit_code(db, fence):  # noqa: F811
+@pytest.mark.parametrize(
+    "code,message",
+    [
+        ("grant_revoked", None),
+        (
+            UseApprovalRefusalCode.HEADER_NOT_ALLOWED,
+            "Remove credentials and duplicate or malformed headers; use only allowed "
+            "agent headers and let Secrets set reserved headers.",
+        ),
+        (
+            UseApprovalRefusalCode.UNRENDERABLE,
+            "The approval cannot show the complete request. Submit a new request ID "
+            "with UTF-8 text within the published limits.",
+        ),
+    ],
+)
+async def test_refusal_status_uses_the_fixed_transactional_audit_code(db, fence, code, message):  # noqa: F811
     _, admission, dispatch_id, _ = await prepared(db, fence)
-    state = machine(BrokerAudit(producer=source, view=view(), refusal_code="grant_revoked"))
+    state = machine(BrokerAudit(producer=source, view=view(), refusal_code=code))
     async with db.transaction() as tx:
         await state.refuse(tx, dispatch_id)
     before = await snapshot(db)
@@ -183,12 +200,15 @@ async def test_refusal_status_uses_the_fixed_transactional_audit_code(db, fence)
         ref=admission.intent_id, authorization=authorization()
     )
     assert reply.status == 200
-    assert reply.body == {
+    expected = {
         "state": "refused",
         "request_id": "broker-request",
         "request_ref": admission.intent_id,
-        "code": "grant_revoked",
+        "code": code,
     }
+    if message is not None:
+        expected["message"] = message
+    assert reply.body == expected
     assert await snapshot(db) == before
 
 

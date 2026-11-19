@@ -7,6 +7,7 @@ allocate IDs nor poll, admit or dispatch. Callers supply already-projected resul
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import Any
 
@@ -21,6 +22,22 @@ class RecoveryRefusal(StrEnum):
 class RecoveryAction(StrEnum):
     OWNER_RECONCILE = "owner_reconcile"
     START_NEW_REQUEST = "start_new_request"
+
+
+# Fixed, value-free remedies for submission and status (§7.4/§10.4/§11.3).
+_REFUSAL_MESSAGES: Mapping[str, str] = {
+    UseApprovalRefusalCode.UNRENDERABLE: UNRENDERABLE_MESSAGE,
+    UseApprovalRefusalCode.HEADER_NOT_ALLOWED: (
+        "Remove credentials and duplicate or malformed headers; use only allowed "
+        "agent headers and let Secrets set reserved headers."
+    ),
+    RecoveryRefusal.RECONCILIATION_PENDING: (
+        "Have an owner review and settle the uncertain outcome in Activity before requesting this operation again."
+    ),
+    RecoveryRefusal.SECRET_VERSION_CHANGED: (
+        "The secret changed. Start a new request and obtain any required approval for its current version."
+    ),
+}
 
 
 def _envelope(state: str, request_id: str | None) -> dict[str, Any]:
@@ -53,17 +70,11 @@ def awaiting_approval(*, request_id: str, request_ref: str, approval_ref: str) -
 def refused(code: str, *, request_id: str | None, use_ref: str | None = None) -> dict[str, Any]:
     """Present an audit ref only after its caller's refusal transaction commits."""
     result = {**_envelope("refused", request_id), "code": code}
-    if code == UseApprovalRefusalCode.UNRENDERABLE:
-        result["message"] = UNRENDERABLE_MESSAGE
+    if code in _REFUSAL_MESSAGES:
+        result["message"] = _REFUSAL_MESSAGES[code]
     if code == RecoveryRefusal.RECONCILIATION_PENDING:
-        result["message"] = (
-            "Have an owner review and settle the uncertain outcome in Activity before requesting this operation again."
-        )
         result["next_step"] = {"action": RecoveryAction.OWNER_RECONCILE, "path": "/activity"}
     elif code == RecoveryRefusal.SECRET_VERSION_CHANGED:
-        result["message"] = (
-            "The secret changed. Start a new request and obtain any required approval for its current version."
-        )
         result["next_step"] = {"action": RecoveryAction.START_NEW_REQUEST}
     if use_ref is not None:
         result["use_ref"] = use_ref

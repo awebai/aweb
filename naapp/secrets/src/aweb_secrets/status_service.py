@@ -22,6 +22,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets import records, tool_results
+from aweb_secrets.broker_outcomes import not_sent_message
 from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.member_types import ToolReply
 from aweb_secrets.owners import OWNER_ROLE, hold_owner
@@ -39,6 +40,13 @@ _CLOSING_CODES = {
     State.APPROVAL_DENIED: "approval_denied",
     State.APPROVAL_EXPIRED: "approval_expired",
 }
+
+
+def _refused_receipt(*, identity: Mapping[str, str], code: str) -> ToolReply:
+    """Keep status refusals on the same safe message projection as submission (§7.6)."""
+    return ToolReply(
+        200, {**identity, **tool_results.refused(code, request_id=identity["request_id"])}
+    )
 
 
 class UseStatus:
@@ -155,9 +163,7 @@ class UseStatus:
                 return self._unavailable(receipt)
             current = _APPROVAL_STATES[view.approval_state]
             if current in {"denied", "expired", "revoked"} and ref != link["approval_ref"]:
-                return ToolReply(
-                    200, {"state": "refused", **receipt, "code": f"approval_{current}"}
-                )
+                return _refused_receipt(identity=receipt, code=f"approval_{current}")
             body = {"state": current, **receipt}
             if current == "approved":
                 body["next"] = "resubmit"
@@ -165,7 +171,7 @@ class UseStatus:
                 body["approval_ref"] = link["approval_ref"]
             return ToolReply(200, body)
         if state in _CLOSING_CODES:
-            return ToolReply(200, {"state": "refused", **receipt, "code": _CLOSING_CODES[state]})
+            return _refused_receipt(identity=receipt, code=_CLOSING_CODES[state])
         if state is State.REFUSED:
             # S3.refuse stores no result. The fixed refusal code lives in the
             # transactional operational record, never in exception text.
@@ -180,15 +186,7 @@ class UseStatus:
             payload = json.loads(event) if isinstance(event, str) else event
             if not isinstance(payload, Mapping) or not isinstance(payload.get("refusal_code"), str):
                 return self._unavailable(receipt)
-            return ToolReply(
-                200,
-                {
-                    **tool_results.refused(
-                        payload["refusal_code"], request_id=receipt["request_id"]
-                    ),
-                    **receipt,
-                },
-            )
+            return _refused_receipt(identity=receipt, code=payload["refusal_code"])
         if (
             state
             in {
@@ -225,6 +223,11 @@ class UseStatus:
         body = {"state": state.value, **receipt}
         if state is State.NOT_SENT:
             body["next"] = "resubmit"
+            stored = json.loads(row["result"]) if isinstance(row["result"], str) else row["result"]
+            if isinstance(stored, Mapping):
+                message = not_sent_message(stored)
+                if message is not None:
+                    body["message"] = message
         # Status always uses HTTP 200 for an accessible stored outcome.
         return ToolReply(200, body)
 

@@ -28,6 +28,7 @@ REQUEST_VERSION = 2
 class UseApprovalRefusalCode(StrEnum):
     UNRENDERABLE = "approval_unrenderable"
     PARAMS_INVALID = "params_invalid"
+    HEADER_NOT_ALLOWED = "header_not_allowed"
 
 
 UNRENDERABLE_MESSAGE = "The approval cannot show the complete request. Submit a new request ID with UTF-8 text within the published limits."

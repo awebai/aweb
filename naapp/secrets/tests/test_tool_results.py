@@ -88,3 +88,16 @@ def test_recovery_refusals_name_the_supported_next_action(code, step):
     assert response["next_step"] == step
     assert isinstance(response["message"], str) and response["message"]
     assert not {"send", "may_send", "dispatch_id", "link_token"} & response.keys()
+
+
+def test_a_header_refusal_tells_the_requester_how_to_correct_the_request():
+    reply = results.refused("header_not_allowed", request_id=REQUEST_ID)
+    assert reply == {
+        "state": "refused",
+        "request_id": REQUEST_ID,
+        "code": "header_not_allowed",
+        "message": (
+            "Remove credentials and duplicate or malformed headers; use only allowed "
+            "agent headers and let Secrets set reserved headers."
+        ),
+    }

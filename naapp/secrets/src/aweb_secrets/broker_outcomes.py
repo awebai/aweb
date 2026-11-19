@@ -29,6 +29,18 @@ _FLAGS = ("truncated", "undeclared_credential", "upstream_truncated")
 _MACS = ("upstream_response_hmac", "returned_hmac")
 
 
+def not_sent_message(body: Mapping[str, Any]) -> str | None:
+    """Project only a fixed, value-free pre-send remedy (§7.6)."""
+    message = body.get("message")
+    if (
+        body.get("state") == State.NOT_SENT
+        and isinstance(message, str)
+        and message in _NOT_SENT_MESSAGES
+    ):
+        return message
+    return None
+
+
 def durable_broker_receipt(
     reply: ToolReply,
     audit: Mapping[str, Any] | None = None,
@@ -46,12 +58,8 @@ def durable_broker_receipt(
         body["code"] = reply.body["code"]
     if "next" in reply.body:
         body["next"] = reply.body["next"]
-    message = reply.body.get("message")
-    if (
-        body["state"] == State.NOT_SENT
-        and isinstance(message, str)
-        and message in _NOT_SENT_MESSAGES
-    ):
+    message = not_sent_message(reply.body)
+    if message is not None:
         body["message"] = message
     live = reply.body.get("result")
     if isinstance(live, Mapping):
