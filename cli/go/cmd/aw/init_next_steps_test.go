@@ -367,3 +367,22 @@ func TestInitDefaultSetupReportsFailedDocsInjection(t *testing.T) {
 		t.Fatal("failed docs injection reported as done")
 	}
 }
+
+func TestInitNextStepsRequireAnExplicitCreationOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		result  *initResult
+		created bool
+	}{
+		{name: "missing result"},
+		{name: "unset path", result: &initResult{ServerName: "aweb.ai", ExportBaseURL: "https://app.aweb.ai"}},
+		{name: "created team", result: &initResult{ServerName: "aweb.ai", ExportBaseURL: "https://app.aweb.ai", Path: initPathNewTeam}, created: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			commands := initNextStepCommands(initNextStepsAfter(tc.result, t.TempDir(), initSetupDone{DocsInjected: true, ChannelSetUp: true}))
+			if strings.Contains(commands, "aw init --join-from") != tc.created {
+				t.Fatalf("creation guidance without its outcome: %s", commands)
+			}
+		})
+	}
+}
