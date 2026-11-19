@@ -2,14 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -134,8 +137,14 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 				}
 			}
 			readsBefore := usernameReads
-			if _, err := executeGuidedOnboardingWizard(request); err != nil {
-				t.Fatalf("resume: %v", err)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			binary := filepath.Join(t.TempDir(), "aw")
+			buildAwBinary(t, ctx, binary)
+			command := exec.CommandContext(ctx, binary, "init", "--json", "--do-not-touch-agents-md")
+			command.Dir, command.Env = directory, idCreateCommandEnv(directory)
+			if raw, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("command resume: %v %s", err, raw)
 			}
 			if usernameReads != readsBefore {
 				t.Fatal("resume rechecked a now-allocated username")
