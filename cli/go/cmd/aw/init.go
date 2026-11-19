@@ -454,7 +454,10 @@ func runInitJoinFrom(cmd *cobra.Command) error {
 }
 
 func runInitAdmissionTeamID(cmd *cobra.Command) error {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	if err := ensureInitInviteTarget(wd); err != nil {
 		return err
 	}
@@ -665,8 +668,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 
 	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
 	// operate on the existing workspace without running the full init flow.
-	if (initInjectDocs || initSetupHooks || initSetupChannel) && !initNeedsFullInitForAddonOnly() {
-		return runInitAddons()
+	if initInjectDocs || initSetupHooks || initSetupChannel {
+		needsFullInit, err := initNeedsFullInitForAddonOnly()
+		if err != nil {
+			return err
+		}
+		if !needsFullInit {
+			return runInitAddons()
+		}
 	}
 
 	creationDir, err := os.Getwd()
@@ -925,8 +934,12 @@ func runInitFromExistingCertificate(cmd *cobra.Command) (initDispatchResult, err
 		return initDispatchComplete, err
 	}
 	if hasCertificateForInit(wd) {
+		firstConnect, err := initWorkspaceMissing(wd)
+		if err != nil {
+			return initDispatchComplete, err
+		}
 		path := initPathReconnect
-		if firstConnect, err := initWorkspaceMissing(wd); err == nil && firstConnect {
+		if firstConnect {
 			path = initPathJoined
 		}
 		awebURL, err := resolveExplicitInitAwebURL()
@@ -1102,9 +1115,8 @@ func initShouldUseImplicitLocalFlow(registryURL string) bool {
 	if !initRegistryIsLocalhost(registryURL) {
 		return false
 	}
-	// The implicit local flow is the compatibility path for a local aweb+awid
-	// stack. Explicit onboarding inputs mean the user is asking for hosted/BYOD
-	// semantics even if the test or dev stack happens to be on localhost.
+	// A local registry selects local team creation only when the command has
+	// no explicit hosted/BYOD onboarding inputs.
 	return !initBYOD &&
 		strings.TrimSpace(initUsername) == "" &&
 		strings.TrimSpace(initDomain) == "" &&
@@ -1114,13 +1126,15 @@ func initShouldUseImplicitLocalFlow(registryURL string) bool {
 // initNeedsFullInitForAddonOnly returns true when an add-on request must
 // escalate to full init because it changes identity/team state or has no
 // existing workspace to operate on.
-func initNeedsFullInitForAddonOnly() bool {
+func initNeedsFullInitForAddonOnly() (bool, error) {
 	if initBYOD || initUsername != "" || initDomain != "" || initAlias != "" || initName != "" || initRole != "" || initGlobal {
-		return true
+		return true, nil
 	}
-	wd, _ := os.Getwd()
-	missing, _ := initWorkspaceMissing(wd)
-	return missing
+	wd, err := os.Getwd()
+	if err != nil {
+		return false, err
+	}
+	return initWorkspaceMissing(wd)
 }
 
 func initWorkspaceMissing(workingDir string) (bool, error) {
