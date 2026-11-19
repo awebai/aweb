@@ -23,10 +23,13 @@ func TestEnrollmentTransportPreservesSharedAnswerDecisions(t *testing.T) {
 			continue
 		}
 		count++
-		t.Run(vector["id"].(string), func(t *testing.T) {
-			purpose := RequestPurpose(vector["kind"].(string))
-			answer := decoded(t, vector["answer"].(string))
-			intent := vector["intent"].(map[string]any)
+		t.Run(fixtureText(t, vector["id"]), func(t *testing.T) {
+			purpose, err := checkedPurpose(fixtureText(t, vector["kind"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			answer := decoded(t, fixtureText(t, vector["answer"]))
+			intent := fixtureObject(t, vector["intent"])
 			var requestBytes []byte
 			if encoded, ok := vector["request_bytes"].(string); ok {
 				requestBytes = decoded(t, encoded)
@@ -56,7 +59,7 @@ func TestEnrollmentTransportPreservesSharedAnswerDecisions(t *testing.T) {
 					t.Errorf("covering request: %v", err)
 				}
 				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(int(num(vector["response_status"])))
+				w.WriteHeader(int(fixtureInteger(t, vector["response_status"])))
 				if _, err := w.Write(answer); err != nil {
 					t.Error(err)
 				}

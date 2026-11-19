@@ -85,16 +85,16 @@ func TestLaterEnrollmentKeepsUnsupportedAndInvalidEvidenceDistinct(t *testing.T)
 	vector := find(t, cases(t, "later-enrollment"), func(value map[string]any) bool {
 		return value["id"] == "existing-person-activates"
 	})
-	trustInput := vector["trust"].(map[string]any)
+	trustInput := fixtureObject(t, vector["trust"])
 	trust := &proof.Trust{
-		Person: trustInput["person"].(string), Organisation: trustInput["organisation"].(string),
-		IdentityKey: trustInput["identity_key"].(string), Certificate: trustInput["certificate"].(string),
-		Issuer: trustInput["issuer"].(string), IssuerPublicKey: decoded(t, trustInput["issuer_public_key"].(string)),
-		NamespaceIssuer: trustInput["namespace_issuer"].(string), ObservedAt: num(trustInput["observed_at"]),
+		Person: fixtureText(t, trustInput["person"]), Organisation: fixtureText(t, trustInput["organisation"]),
+		IdentityKey: fixtureText(t, trustInput["identity_key"]), Certificate: fixtureText(t, trustInput["certificate"]),
+		Issuer: fixtureText(t, trustInput["issuer"]), IssuerPublicKey: decoded(t, fixtureText(t, trustInput["issuer_public_key"])),
+		NamespaceIssuer: fixtureText(t, trustInput["namespace_issuer"]), ObservedAt: fixtureInteger(t, trustInput["observed_at"]),
 	}
 	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
-	activation := vector["activation"].(map[string]any)
-	statement := activation["evidence"].(map[string]any)
+	activation := fixtureObject(t, vector["activation"])
+	statement := fixtureObject(t, activation["evidence"])
 	valid := CheckHumanEvidence(link, statement, nil, trust, trust, trust.ObservedAt)
 	if valid.Statement != (Check{Status: "valid", Reason: "checked"}) || valid.IssuerAuthenticatedGrade == nil {
 		t.Fatalf("signed valid neighbor: %+v", valid)
@@ -108,8 +108,8 @@ func TestLaterEnrollmentKeepsUnsupportedAndInvalidEvidenceDistinct(t *testing.T)
 		edit func(map[string]any)
 		want Check
 	}{
-		{"unsupported_version", func(e map[string]any) { e["evidence"].(map[string]any)["version"] = json.Number("2") }, Check{"unsupported", "enrollment_evidence_unsupported"}},
-		{"invalid_body", func(e map[string]any) { delete(e["evidence"].(map[string]any), "enrollment") }, Check{"invalid", "enrollment_evidence_invalid"}},
+		{"unsupported_version", func(e map[string]any) { fixtureObject(t, e["evidence"])["version"] = json.Number("2") }, Check{"unsupported", "enrollment_evidence_unsupported"}},
+		{"invalid_body", func(e map[string]any) { delete(fixtureObject(t, e["evidence"]), "enrollment") }, Check{"invalid", "enrollment_evidence_invalid"}},
 		{"invalid_signature", func(e map[string]any) { e["signature"] = "AA" }, Check{"invalid", "signature_invalid"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

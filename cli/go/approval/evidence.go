@@ -21,6 +21,13 @@ type Link struct {
 	Certificate string `json:"certificate"`
 	Key         string `json:"key,omitempty"`
 }
+type evidenceStatus string
+
+const (
+	evidenceInvalid     evidenceStatus = "invalid"
+	evidenceUnsupported evidenceStatus = "unsupported"
+)
+
 type Check struct {
 	Status string `json:"status"`
 	Reason string `json:"reason"`
@@ -61,12 +68,12 @@ func CheckHumanEvidence(link Link, statement, receipt map[string]any, trust, cur
 	}
 	claimed, err := proof.VerifyEnrollmentEvidence(statement, nil, *trust)
 	if err != nil {
-		status := "invalid"
+		status := evidenceInvalid
 		var refusal *proof.RefusalError
 		if errors.As(err, &refusal) && refusal.Code == proof.EnrollmentEvidenceUnsupported {
-			status = "unsupported"
+			status = evidenceUnsupported
 		}
-		r.Statement = Check{status, err.Error()}
+		r.Statement = Check{string(status), err.Error()}
 		return r
 	}
 	r.Statement = Check{"valid", "checked"}
