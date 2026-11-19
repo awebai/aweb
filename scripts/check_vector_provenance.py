@@ -995,7 +995,7 @@ def _python_tokens(source: str) -> tuple[tuple[int, str], ...] | None:
     return tuple(result)
 
 
-def _root_marker_present(consumer: PurePosixPath, source: str, marker: str) -> bool:
+def _root_marker_present(consumer: PurePosixPath, *, source: str, marker: str) -> bool:
     """Require the inventoried root expression without depending on quote style."""
     if consumer.suffix != ".py":
         return marker in source
@@ -1111,7 +1111,7 @@ def check(
                 f"{consumer} has unclassified public vector references: {', '.join(unexpected_names)}"
             )
         for marker in spec.root_markers:
-            if not _root_marker_present(consumer, source, marker):
+            if not _root_marker_present(consumer, source=source, marker=marker):
                 failures.append(
                     f"{consumer} does not resolve the repository-root authority: {marker}"
                 )
@@ -1230,11 +1230,23 @@ def self_test(root: Path) -> None:
 
     formatted_consumer = PurePosixPath("server/tests/test_id_chain_request_auth.py")
     original = read_bytes(root, formatted_consumer)
-    for quoted in (b'"docs/vectors/id-certificates-v1.json"', b"'docs/vectors/id-certificates-v1.json'"):
-        alternate = original.replace(b'"docs/vectors/id-certificates-v1.json"', quoted)
+    spellings = (b'"docs/vectors/id-certificates-v1.json"', b"'docs/vectors/id-certificates-v1.json'")
+    for quoted, opposite in (spellings, tuple(reversed(spellings))):
+        # Start each variant from the other spelling, whichever source this
+        # shared guard is composed with. Neither positive can be a no-op.
+        base = original.replace(spellings[0], opposite).replace(spellings[1], opposite)
+        alternate = base.replace(opposite, quoted)
+        if alternate == base or ast.dump(ast.parse(alternate)) != ast.dump(ast.parse(base)):
+            raise AssertionError("quote control must change bytes while preserving Python syntax")
         failures = check(root, tracked, {formatted_consumer: alternate})
         if failures:
             raise AssertionError(f"equivalent formatted vector root refused: {failures}")
+    spaced = original.replace(b"Path(__file__).resolve().parents[2]",
+                              b"Path(\n    __file__\n).resolve().parents[2]")
+    if spaced == original or ast.dump(ast.parse(spaced)) != ast.dump(ast.parse(original)):
+        raise AssertionError("whitespace control must change bytes while preserving Python syntax")
+    if failures := check(root, tracked, {formatted_consumer: spaced}):
+        raise AssertionError(f"equivalent whitespace in vector root refused: {failures}")
     with_fstring = original + b'\ndiagnostic = f"vector {len(ALICE)}"\n'
     if failures := check(root, tracked, {formatted_consumer: with_fstring}):
         raise AssertionError(f"ordinary f-string refused: {failures}")
