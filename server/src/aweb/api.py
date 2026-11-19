@@ -187,7 +187,9 @@ async def _mount_mcp_app(
     if any(isinstance(r, Mount) and r.path == "/mcp" for r in app.router.routes):
         return
     app.mount("/mcp", mcp_app)
-    app.state.native_mcp_mount = next(r for r in app.router.routes if isinstance(r, Mount) and r.path == "/mcp")
+    app.state.native_mcp_mount = next(
+        r for r in app.router.routes if isinstance(r, Mount) and r.path == "/mcp"
+    )
     move_mount_before_spa_fallback(app, "/mcp")
     logger.info("MCP endpoint mounted at /mcp/")
 
@@ -264,15 +266,24 @@ def _is_unhealthy_report(exc: Exception) -> bool:
 
 def _make_standalone_lifespan(*, host_runs_outbox_recovery: bool = False):
     """Own standalone connections; share the native serving-resource owner."""
-    from .embedding import OutboxRecoveryOwnership, default_mcp_factory, start_native_resources
+    from .embedding import (
+        OutboxRecoveryOwnership,
+        default_mcp_factory,
+        start_native_resources,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         settings = get_settings()
-        configure_logging(log_level=settings.log_level, json_format=os.getenv("AWEB_LOG_JSON", "true").lower() == "true")
+        configure_logging(
+            log_level=settings.log_level,
+            json_format=os.getenv("AWEB_LOG_JSON", "true").lower() == "true",
+        )
         logger.info("Starting aweb coordination server (standalone mode)")
         async with AsyncExitStack() as cleanup:
-            redis = await async_redis_from_url(settings.redis_url, decode_responses=True)
+            redis = await async_redis_from_url(
+                settings.redis_url, decode_responses=True
+            )
             cleanup.push_async_callback(redis.aclose)
             await redis.ping()
             cleanup.push_async_callback(default_db_infra.close)
@@ -286,9 +297,14 @@ def _make_standalone_lifespan(*, host_runs_outbox_recovery: bool = False):
             registry = _build_awid_registry_client(app, redis)
             cleanup.push_async_callback(registry.aclose)
             async with start_native_resources(
-                api_app=app, db_infra=default_db_infra, redis=redis, registry_client=registry,
+                api_app=app,
+                db_infra=default_db_infra,
+                redis=redis,
+                registry_client=registry,
                 mcp_factory=default_mcp_factory,
-                outbox_recovery=OutboxRecoveryOwnership.HOST if host_runs_outbox_recovery else OutboxRecoveryOwnership.NATIVE,
+                outbox_recovery=OutboxRecoveryOwnership.HOST
+                if host_runs_outbox_recovery
+                else OutboxRecoveryOwnership.NATIVE,
             ) as resources:
                 await _mount_mcp_app(app, resources.mcp_app)
                 yield
@@ -301,21 +317,33 @@ def _make_library_lifespan(
     redis: Redis,
     awid_transport: httpx.AsyncBaseTransport | None,
     domain_verifier: DomainVerifier | None,
-    *, host_runs_outbox_recovery: bool = False,
+    *,
+    host_runs_outbox_recovery: bool = False,
 ):
     """Borrow host connections; close only this lifespan's registry client."""
-    from .embedding import OutboxRecoveryOwnership, default_mcp_factory, start_native_resources
+    from .embedding import (
+        OutboxRecoveryOwnership,
+        default_mcp_factory,
+        start_native_resources,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         logger.info("Starting aweb coordination server (library mode)")
         async with AsyncExitStack() as cleanup:
-            registry = _build_awid_registry_client(app, redis, awid_transport, domain_verifier)
+            registry = _build_awid_registry_client(
+                app, redis, awid_transport, domain_verifier
+            )
             cleanup.push_async_callback(registry.aclose)
             async with start_native_resources(
-                api_app=app, db_infra=db_infra, redis=redis, registry_client=registry,
+                api_app=app,
+                db_infra=db_infra,
+                redis=redis,
+                registry_client=registry,
                 mcp_factory=default_mcp_factory,
-                outbox_recovery=OutboxRecoveryOwnership.HOST if host_runs_outbox_recovery else OutboxRecoveryOwnership.NATIVE,
+                outbox_recovery=OutboxRecoveryOwnership.HOST
+                if host_runs_outbox_recovery
+                else OutboxRecoveryOwnership.NATIVE,
             ) as resources:
                 await _mount_mcp_app(app, resources.mcp_app)
                 yield
@@ -406,9 +434,17 @@ def create_app(
                 "Call 'await db_infra.initialize()' before creating the app."
             )
         assert redis is not None  # Required when db_infra is provided
-        lifespan = _make_library_lifespan(db_infra, redis, awid_transport, domain_verifier, host_runs_outbox_recovery=host_runs_outbox_recovery)
+        lifespan = _make_library_lifespan(
+            db_infra,
+            redis,
+            awid_transport,
+            domain_verifier,
+            host_runs_outbox_recovery=host_runs_outbox_recovery,
+        )
     else:
-        lifespan = _make_standalone_lifespan(host_runs_outbox_recovery=host_runs_outbox_recovery)
+        lifespan = _make_standalone_lifespan(
+            host_runs_outbox_recovery=host_runs_outbox_recovery
+        )
 
     from aweb.attachment_service import router as attachment_router
 
@@ -521,7 +557,9 @@ def create_app(
         resources = getattr(request.app.state, "native_resources", None)
         resource_readiness = resources.readiness if resources is not None else None
         if resource_readiness is not None:
-            checks["native_resources"] = "ok" if resource_readiness.ready else "unavailable"
+            checks["native_resources"] = (
+                "ok" if resource_readiness.ready else "unavailable"
+            )
             healthy = resource_readiness.ready
 
         # Check Redis
