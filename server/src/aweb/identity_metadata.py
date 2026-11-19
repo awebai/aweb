@@ -8,7 +8,12 @@ from aweb.identity_binding import (
 
 from awid.team_ids import parse_team_id
 from awid.signing import canonical_json_bytes
-from aweb.human_channels.contract import ContractError, ContractRecord, canonical_record, decode_record
+from aweb.human_channels.contract import (
+    ContractError,
+    ContractRecord,
+    canonical_record,
+    decode_record,
+)
 
 
 def native_participant_reference(did: str) -> dict[str, str] | None:
@@ -19,30 +24,40 @@ def native_participant_reference(did: str) -> dict[str, str] | None:
     A reference itself makes no claim of verified current identity.
     """
     try:
-        return decode_record('NativeParticipant', canonical_json_bytes(dict(kind='native', did=did))).value
+        return decode_record(
+            "NativeParticipant", canonical_json_bytes(dict(kind="native", did=did))
+        ).value
     except ContractError:
         return None
 
 
-async def lookup_participant_identity_metadata(db_or_manager, participant: ContractRecord) -> dict[str, str]:
+async def lookup_participant_identity_metadata(
+    db_or_manager, participant: ContractRecord
+) -> dict[str, str]:
     """Typed metadata only; a guest never resolves as its bridge's agent row."""
-    if participant.schema not in ('NativeParticipant', 'BridgedParticipant'):
-        raise ContractError('invalid', 'participant reference')
+    if participant.schema not in ("NativeParticipant", "BridgedParticipant"):
+        raise ContractError("invalid", "participant reference")
     ref = decode_record(participant.schema, canonical_record(participant)).value
-    if ref['kind'] == 'bridged':
-        return {'participant_kind':'bridged', 'author_assurance':'platform_attested'}
-    values = await lookup_identity_metadata_by_did(db_or_manager, [ref['did']])
-    return {**values.get(ref['did'], {}), 'participant_kind':'native'}
+    if ref["kind"] == "bridged":
+        return {"participant_kind": "bridged", "author_assurance": "platform_attested"}
+    values = await lookup_identity_metadata_by_did(db_or_manager, [ref["did"]])
+    return {**values.get(ref["did"], {}), "participant_kind": "native"}
 
 
 def _aweb_db(db_or_manager):
-    return db_or_manager.get_manager("aweb") if hasattr(db_or_manager, "get_manager") else db_or_manager
+    return (
+        db_or_manager.get_manager("aweb")
+        if hasattr(db_or_manager, "get_manager")
+        else db_or_manager
+    )
 
 
-def routable_chat_address(meta: dict[str, str] | None, viewer_team_id: str | None, fallback_alias: str) -> str:
+def routable_chat_address(
+    meta: dict[str, str] | None, viewer_team_id: str | None, fallback_alias: str
+) -> str:
     meta = meta or {}
-    if meta.get('participant_kind') == 'bridged':
-        return ''  # Typed session/participant route only, never the display name.
+    if meta.get("participant_kind") == "bridged":
+        return ""  # Typed session/participant route only, never the display name.
     address = (meta.get("address") or "").strip()
     if address:
         return address
@@ -68,7 +83,9 @@ def routable_chat_address(meta: dict[str, str] | None, viewer_team_id: str | Non
     return alias
 
 
-async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dict[str, dict[str, str]]:
+async def lookup_identity_metadata_by_did(
+    db_or_manager, dids: list[str]
+) -> dict[str, dict[str, str]]:
     unique_dids = sorted({(did or "").strip() for did in dids if (did or "").strip()})
     if not unique_dids:
         return {}
@@ -113,7 +130,9 @@ async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dic
 async def lookup_identity_metadata_by_agent_id(
     db_or_manager, agent_ids: list[str]
 ) -> dict[str, dict[str, str]]:
-    unique_agent_ids = sorted({(agent_id or "").strip() for agent_id in agent_ids if (agent_id or "").strip()})
+    unique_agent_ids = sorted(
+        {(agent_id or "").strip() for agent_id in agent_ids if (agent_id or "").strip()}
+    )
     if not unique_agent_ids:
         return {}
 
