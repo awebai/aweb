@@ -154,7 +154,7 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 			if awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) != didKey {
 				t.Fatal("resume replaced the original signer")
 			}
-			workspace, err := awconfig.LoadWorktreeWorkspace(directory)
+			workspace, err := awconfig.LoadWorktreeWorkspaceFrom(awconfig.WorktreeWorkspacePath(directory))
 			if err != nil {
 				t.Fatal(err)
 			}
