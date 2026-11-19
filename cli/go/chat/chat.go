@@ -126,38 +126,20 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 			_ = json.Unmarshal(encoded, &ev.SenderMembership)
 		}
 	}
-	if v, ok := data["agent"].(string); ok {
-		ev.Agent = v
-	}
-	if v, ok := data["session_id"].(string); ok {
-		ev.SessionID = v
-	}
-	if v, ok := data["seq"].(float64); ok {
-		ev.Seq = int64(v)
-	}
-	if v, ok := data["message_id"].(string); ok {
-		ev.MessageID = v
-	}
+	ev.Agent = stringField(data, "agent")
+	ev.SessionID = stringField(data, "session_id")
+	ev.Seq = int64(numberField(data, "seq"))
+	ev.MessageID = stringField(data, "message_id")
 	if v, ok := data["from_agent"].(string); ok {
 		ev.FromAgent = v
-	} else if v, ok := data["from"].(string); ok {
-		ev.FromAgent = v
+	} else {
+		ev.FromAgent = stringField(data, "from")
 	}
-	if v, ok := data["from_address"].(string); ok {
-		ev.FromAddress = v
-	}
-	if v, ok := data["to_address"].(string); ok {
-		ev.ToAddress = v
-	}
-	if v, ok := data["body"].(string); ok {
-		ev.Body = v
-	}
-	if v, ok := data["content_mode"].(string); ok {
-		ev.ContentMode = v
-	}
-	if v, ok := data["message_version"].(float64); ok {
-		ev.MessageVersion = int(v)
-	}
+	ev.FromAddress = stringField(data, "from_address")
+	ev.ToAddress = stringField(data, "to_address")
+	ev.Body = stringField(data, "body")
+	ev.ContentMode = stringField(data, "content_mode")
+	ev.MessageVersion = int(numberField(data, "message_version"))
 	if encryptedData, ok := data["encrypted_envelope"].(map[string]any); ok {
 		raw, err := json.Marshal(encryptedData)
 		if err == nil {
@@ -167,100 +149,66 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 			}
 		}
 	}
-	if v, ok := data["by"].(string); ok {
-		ev.By = v
-	}
-	if v, ok := data["reason"].(string); ok {
-		ev.Reason = v
-	}
+	ev.By = stringField(data, "by")
+	ev.Reason = stringField(data, "reason")
 	if ev.Reason == "" {
-		if v, ok := data["detail"].(string); ok {
-			ev.Reason = v
-		}
+		ev.Reason = stringField(data, "detail")
 	}
-	if v, ok := data["timestamp"].(string); ok {
-		ev.Timestamp = v
-	}
-	if v, ok := data["sender_leaving"].(bool); ok {
-		ev.SenderLeaving = v
-	}
-	if v, ok := data["sender_waiting"].(bool); ok {
-		ev.SenderWaiting = v
-	}
-	if v, ok := data["reader_alias"].(string); ok {
-		ev.ReaderAlias = v
-	}
-	if v, ok := data["hang_on"].(bool); ok {
-		ev.ExtendWait = v
-	}
-	if v, ok := data["extends_wait_seconds"].(float64); ok {
-		ev.ExtendsWaitSeconds = int(v)
-	}
-	if v, ok := data["reply_to_message_id"].(string); ok {
-		ev.ReplyToMessageID = v
-	}
-	if v, ok := data["from_did"].(string); ok {
-		ev.FromDID = v
-	}
-	if v, ok := data["to_did"].(string); ok {
-		ev.ToDID = v
-	}
-	if v, ok := data["from_stable_id"].(string); ok {
-		ev.FromStableID = v
-	}
-	if v, ok := data["to_stable_id"].(string); ok {
-		ev.ToStableID = v
-	}
-	if v, ok := data["signature"].(string); ok {
-		ev.Signature = v
-	}
-	if v, ok := data["signing_key_id"].(string); ok {
-		ev.SigningKeyID = v
-	}
-	if v, ok := data["signed_payload"].(string); ok {
-		ev.SignedPayload = v
-	}
+	ev.Timestamp = stringField(data, "timestamp")
+	ev.SenderLeaving = boolField(data, "sender_leaving")
+	ev.SenderWaiting = boolField(data, "sender_waiting")
+	ev.ReaderAlias = stringField(data, "reader_alias")
+	ev.ExtendWait = boolField(data, "hang_on")
+	ev.ExtendsWaitSeconds = int(numberField(data, "extends_wait_seconds"))
+	ev.ReplyToMessageID = stringField(data, "reply_to_message_id")
+	ev.FromDID = stringField(data, "from_did")
+	ev.ToDID = stringField(data, "to_did")
+	ev.FromStableID = stringField(data, "from_stable_id")
+	ev.ToStableID = stringField(data, "to_stable_id")
+	ev.Signature = stringField(data, "signature")
+	ev.SigningKeyID = stringField(data, "signing_key_id")
+	ev.SignedPayload = stringField(data, "signed_payload")
 	if v, ok := data["is_contact"].(bool); ok {
 		ev.IsContact = &v
 	}
-	if raData, ok := data["rotation_announcement"].(map[string]any); ok {
-		ev.RotationAnnouncement = &awid.RotationAnnouncement{}
-		if v, ok := raData["old_did"].(string); ok {
-			ev.RotationAnnouncement.OldDID = v
-		}
-		if v, ok := raData["new_did"].(string); ok {
-			ev.RotationAnnouncement.NewDID = v
-		}
-		if v, ok := raData["timestamp"].(string); ok {
-			ev.RotationAnnouncement.Timestamp = v
-		}
-		if v, ok := raData["old_key_signature"].(string); ok {
-			ev.RotationAnnouncement.OldKeySignature = v
+	if announcement, ok := data["rotation_announcement"].(map[string]any); ok {
+		ev.RotationAnnouncement = &awid.RotationAnnouncement{
+			OldDID:          stringField(announcement, "old_did"),
+			NewDID:          stringField(announcement, "new_did"),
+			Timestamp:       stringField(announcement, "timestamp"),
+			OldKeySignature: stringField(announcement, "old_key_signature"),
 		}
 	}
-	if replData, ok := data["replacement_announcement"].(map[string]any); ok {
-		ev.ReplacementAnnouncement = &awid.ReplacementAnnouncement{}
-		if v, ok := replData["address"].(string); ok {
-			ev.ReplacementAnnouncement.Address = v
-		}
-		if v, ok := replData["old_did"].(string); ok {
-			ev.ReplacementAnnouncement.OldDID = v
-		}
-		if v, ok := replData["new_did"].(string); ok {
-			ev.ReplacementAnnouncement.NewDID = v
-		}
-		if v, ok := replData["controller_did"].(string); ok {
-			ev.ReplacementAnnouncement.ControllerDID = v
-		}
-		if v, ok := replData["timestamp"].(string); ok {
-			ev.ReplacementAnnouncement.Timestamp = v
-		}
-		if v, ok := replData["controller_signature"].(string); ok {
-			ev.ReplacementAnnouncement.ControllerSignature = v
+	if announcement, ok := data["replacement_announcement"].(map[string]any); ok {
+		ev.ReplacementAnnouncement = &awid.ReplacementAnnouncement{
+			Address:             stringField(announcement, "address"),
+			OldDID:              stringField(announcement, "old_did"),
+			NewDID:              stringField(announcement, "new_did"),
+			ControllerDID:       stringField(announcement, "controller_did"),
+			Timestamp:           stringField(announcement, "timestamp"),
+			ControllerSignature: stringField(announcement, "controller_signature"),
 		}
 	}
 
 	return ev
+}
+
+// stringField, numberField and boolField read one SSE event field leniently:
+// a missing field or one of another JSON type reads as the zero value, so one
+// malformed field does not discard the rest of the event.
+func stringField(data map[string]any, key string) string {
+	v, _ := data[key].(string)
+	return v
+}
+
+func numberField(data map[string]any, key string) float64 {
+	v, _ := data[key].(float64)
+	return v
+}
+
+func boolField(data map[string]any, key string) bool {
+	v, _ := data[key].(bool)
+	return v
 }
 
 // verifyStreamMessage verifies a message received on the live stream with the
@@ -1417,70 +1365,29 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 		return result, nil
 	}
 
-	// Check if any target has left
+	leftNames := chatNameLists(ctx, client, resp.TargetsLeft, resp.Participants)
 	targetHasLeft := false
-	for _, leftAlias := range resp.TargetsLeft {
-		leftNames := normalizedChatTargetNames(ctx, client, leftAlias, resp.Participants)
-		for _, targetNames := range targetStatusNames {
-			if chatTargetNameListsOverlap(targetNames, leftNames) {
-				targetHasLeft = true
-				break
-			}
-		}
-		if targetHasLeft {
+	for _, targetNames := range targetStatusNames {
+		if overlapsAny(targetNames, leftNames) {
+			targetHasLeft = true
 			break
 		}
 	}
-
 	if targetHasLeft && !opts.StartConversation {
 		result.Status = SendTargetsLeft
 		return result, nil
 	}
 
-	// Check target connection status (informational)
-	allTargetsConnected := true
+	// Target connection status is informational.
+	connectedNames := chatNameLists(ctx, client, resp.TargetsConnected, resp.Participants)
 	for _, targetNames := range targetStatusNames {
-		found := false
-		for _, alias := range resp.TargetsConnected {
-			connectedNames := normalizedChatTargetNames(ctx, client, alias, resp.Participants)
-			if chatTargetNameListsOverlap(targetNames, connectedNames) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			allTargetsConnected = false
+		if !overlapsAny(targetNames, connectedNames) {
+			result.TargetNotConnected = true
 			break
 		}
 	}
-	if !allTargetsConnected {
-		result.TargetNotConnected = true
-	}
 
-	// Build message acceptor: skip replays, accept only from targets.
-	// The gate opens when we see our sent message by ID. If the server
-	// didn't return a message ID (sentMessageID==""), the gate starts open.
-	sentMessageID := resp.MessageID
-	seenSentMessage := sentMessageID == ""
-	acceptor := func(ev Event) eventDisposition {
-		if !seenSentMessage {
-			if ev.MessageID == sentMessageID {
-				seenSentMessage = true
-			}
-			return skipEvent
-		}
-		if !eventMayBeTargetReply(ev, opts) {
-			return collectEvent
-		}
-		eventNames := normalizedChatEventNames(ev, resp.Participants)
-		for _, targetNames := range targetStatusNames {
-			if chatTargetNameListsOverlap(targetNames, eventNames) {
-				return acceptEvent
-			}
-		}
-		return collectEvent
-	}
-
+	acceptor := targetReplyAcceptor(resp.MessageID, opts, resp.Participants, targetStatusNames)
 	waitResult, err := waitForMessage(ctx, client, openStream, resp.SessionID, resp.Participants, myAlias, resolvedWait, after, callback, acceptor)
 	if err != nil {
 		return nil, err
@@ -1494,6 +1401,50 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	result.SenderWaiting = waitResult.SenderWaiting
 	result.WaitedSeconds = waitResult.WaitedSeconds
 	return result, nil
+}
+
+// chatNameLists resolves each alias to its normalized chat names once.
+func chatNameLists(ctx context.Context, client *awid.Client, aliases []string, participants []awid.ChatParticipant) [][]string {
+	lists := make([][]string, 0, len(aliases))
+	for _, alias := range aliases {
+		lists = append(lists, normalizedChatTargetNames(ctx, client, alias, participants))
+	}
+	return lists
+}
+
+// overlapsAny reports whether names shares a name with any of lists.
+func overlapsAny(names []string, lists [][]string) bool {
+	for _, other := range lists {
+		if chatTargetNameListsOverlap(names, other) {
+			return true
+		}
+	}
+	return false
+}
+
+// targetReplyAcceptor skips replays and accepts only a reply from a target.
+// The gate opens when the stream shows the sent message by ID; with no
+// message ID from the server it starts open.
+func targetReplyAcceptor(sentMessageID string, opts SendOptions, participants []awid.ChatParticipant, targetStatusNames [][]string) func(Event) eventDisposition {
+	seenSentMessage := sentMessageID == ""
+	return func(ev Event) eventDisposition {
+		if !seenSentMessage {
+			if ev.MessageID == sentMessageID {
+				seenSentMessage = true
+			}
+			return skipEvent
+		}
+		if !eventMayBeTargetReply(ev, opts) {
+			return collectEvent
+		}
+		eventNames := normalizedChatEventNames(ev, participants)
+		for _, targetNames := range targetStatusNames {
+			if chatTargetNameListsOverlap(targetNames, eventNames) {
+				return acceptEvent
+			}
+		}
+		return collectEvent
+	}
 }
 
 // eventMayBeTargetReply reports whether ev can be the reply the sender waits
