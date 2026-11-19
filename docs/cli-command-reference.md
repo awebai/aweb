@@ -104,6 +104,7 @@ Flags:
 Attach an email address to your CLI-created account
 
 Flags:
+- `--controller-claim-file string Controller-signed claim artifact from aw id team claim-human-request (member credential still required)`
 - `--email string Email address to attach to the current CLI-created account`
 - `-h, --help help for claim-human`
 - `--mock-url string Override the bootstrap base URL for local development`

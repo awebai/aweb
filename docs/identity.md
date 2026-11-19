@@ -374,6 +374,28 @@ account, then remove `.aw/signup-recovery.json`; removing it does not delete the
 account. A completed signup removes the record after installing its key,
 membership and API key and completing connect.
 
+### Controller authorization for a fully unowned team
+
+`aw claim-human --controller-claim-file <file>` carries the artifact produced by
+`aw id team claim-human-request`. Use the same normalized username and email
+that the controller signed. Both CLI adapters trim and lowercase these supplied
+account values; account syntax and reserved-name policy remain with Cloud.
+The artifact also binds the canonical team and a timestamp within 300 seconds.
+
+The consumer uses the shared [team-control reader](team-control-requests.md),
+checks signature integrity and target/time matching, then includes the artifact
+as `controller_claim` in its existing member-signed request. The member credential
+is still required. The embedded signer does not establish controller authority:
+Cloud checks the registry's current controller, exact email and freshness before
+any ownership effects. Malformed, mismatched or stale files refuse locally and
+name the producer command to regenerate the artifact.
+
+Without the flag, the released member-signed request is unchanged. Cloud retains
+the organisation-owned original-signup lane; a member credential alone cannot
+claim a fully unowned team and receives `403 claim_controller_required`.
+The producer and consumer must ship with the Cloud change that names these
+commands in its refusal.
+
 ### Hosted organization setup (including Omarchy)
 
 A person already signed in can create a managed organization without a namespace

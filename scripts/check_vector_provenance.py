@@ -45,6 +45,10 @@ def _consumer(names: str | Iterable[str], *root_markers: str) -> ConsumerSpec:
 SERVER_CONSUMER = PurePosixPath("server/tests/test_identity_conformance_vectors.py")
 GO_CONSUMER = PurePosixPath("cli/go/internal/conformance/conformance_test.go")
 ROOT_CONSUMERS = {
+    PurePosixPath("cli/go/cmd/aw/claim_human_controller_test.go"): _consumer(
+        "team-control-requests-v1.json",
+        '"docs", "vectors", "team-control-requests-v1.json"',
+    ),
     PurePosixPath("awid/tests/test_team_control_requests.py"): _consumer(
         "team-control-requests-v1.json",
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',

@@ -19,6 +19,9 @@ type ClaimHumanRequest struct {
 	Username string `json:"username"`
 	Email    string `json:"email"`
 	DIDKey   string `json:"did_key"`
+	// ControllerClaim carries the shared artifact; the member's transport
+	// signature still authenticates this request. Cloud alone checks authority.
+	ControllerClaim *SignedUnownedTeamClaim `json:"controller_claim,omitempty"`
 }
 
 // ClaimHumanStatus names the account/email outcome without treating it as a

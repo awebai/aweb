@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -16,9 +17,10 @@ import (
 )
 
 var (
-	claimHumanEmail    string
-	claimHumanMockURL  string
-	claimHumanUsername string
+	claimHumanEmail          string
+	claimHumanMockURL        string
+	claimHumanUsername       string
+	claimHumanControllerFile string
 )
 
 var claimHumanCmd = &cobra.Command{
@@ -32,6 +34,7 @@ func init() {
 	claimHumanCmd.Flags().StringVar(&claimHumanEmail, "email", "", "Email address to attach to the current CLI-created account")
 	claimHumanCmd.Flags().StringVar(&claimHumanUsername, "username", "", "Override the default dashboard username derived from the registered domain")
 	claimHumanCmd.Flags().StringVar(&claimHumanMockURL, "mock-url", "", "Override the bootstrap base URL for local development")
+	claimHumanCmd.Flags().StringVar(&claimHumanControllerFile, "controller-claim-file", "", "Controller-signed claim artifact from aw id team claim-human-request (member credential still required)")
 	rootCmd.AddCommand(claimHumanCmd)
 }
 
@@ -39,6 +42,10 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 	email := strings.TrimSpace(claimHumanEmail)
 	if email == "" {
 		return usageError("missing required flag: --email")
+	}
+
+	if cmd.Flags().Changed("controller-claim-file") && strings.TrimSpace(claimHumanControllerFile) == "" {
+		return usageError("--controller-claim-file requires a file from aw id team claim-human-request")
 	}
 
 	baseURL, err := resolveClaimHumanBaseURL(claimHumanMockURL)
@@ -56,11 +63,12 @@ func runClaimHuman(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	resp, username, err := claimHumanWithOptions(claimHumanOptions{
-		WorkingDir:   workingDir,
-		IdentityHome: externalIdentityHomeRoot(home),
-		BaseURL:      baseURL,
-		Email:        email,
-		Username:     strings.TrimSpace(claimHumanUsername),
+		WorkingDir:          workingDir,
+		IdentityHome:        externalIdentityHomeRoot(home),
+		BaseURL:             baseURL,
+		Email:               email,
+		Username:            strings.TrimSpace(claimHumanUsername),
+		ControllerClaimFile: claimHumanControllerFile,
 	})
 	if err != nil {
 		return err
@@ -84,11 +92,12 @@ type claimHumanCommandOutput struct {
 }
 
 type claimHumanOptions struct {
-	WorkingDir   string
-	IdentityHome string
-	BaseURL      string
-	Email        string
-	Username     string
+	ControllerClaimFile string
+	WorkingDir          string
+	IdentityHome        string
+	BaseURL             string
+	Email               string
+	Username            string
 }
 
 func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, string, error) {
@@ -105,6 +114,16 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 	if err != nil {
 		return nil, "", err
 	}
+	var controllerClaim *awid.SignedUnownedTeamClaim
+	if strings.TrimSpace(opts.ControllerClaimFile) != "" {
+		target := normalizeClaimHumanTarget(claimHumanTarget{Username: username, Email: email})
+		artifact, err := readClaimHumanControllerFile(claimHumanControllerInput{Path: opts.ControllerClaimFile, Target: target, Now: time.Now()})
+		if err != nil {
+			return nil, "", err
+		}
+		controllerClaim = &artifact
+		username, email = target.Username, target.Email
+	}
 	client, err := awid.NewWithIdentity(strings.TrimSpace(opts.BaseURL), signingKey, didKey)
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid identity configuration: %w", err)
@@ -114,9 +133,10 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 	defer cancel()
 
 	resp, err := client.ClaimHuman(ctx, &awid.ClaimHumanRequest{
-		Username: username,
-		Email:    email,
-		DIDKey:   didKey,
+		Username:        username,
+		Email:           email,
+		DIDKey:          didKey,
+		ControllerClaim: controllerClaim,
 	})
 	if err != nil {
 		return nil, "", mapClaimHumanError(err)
