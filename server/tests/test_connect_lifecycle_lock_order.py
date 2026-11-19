@@ -45,17 +45,17 @@ async def test_reconnect_locks_its_workspace_before_waiting_for_its_member(priva
             assert len(waiters) == 1
             reconnect_pid = waiters[0]["pid"]
             assert reconnect_pid != holder_pid
-            async with env.db.transaction() as probe:
-                probe_pid = await probe.fetch_value("SELECT pg_backend_pid()")
-                assert probe_pid not in (holder_pid, reconnect_pid)
-                with pytest.raises(QueryError) as refused:
+            with pytest.raises(QueryError) as refused:
+                async with env.db.transaction() as probe:
+                    probe_pid = await probe.fetch_value("SELECT pg_backend_pid()")
+                    assert probe_pid not in (holder_pid, reconnect_pid)
                     await probe.fetch_one(
                         "SELECT workspace_id FROM {{tables.workspaces}} "
                         "WHERE team_id=$1 AND workspace_id=$2 FOR UPDATE NOWAIT",
                         TEAM,
                         workspace_id,
                     )
-                assert getattr(refused.value.__cause__, "sqlstate", None) == "55P03"
+            assert getattr(refused.value.__cause__, "sqlstate", None) == "55P03"
     finally:
         # Releasing the actual agent lock must let the real request finish.
         if reconnect is not None:
