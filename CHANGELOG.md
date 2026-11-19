@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- `aw claim-human --controller-claim-file` carries a shared controller-signed claim artifact after checking integrity, normalized target and timestamp. Member authentication remains required; Cloud alone checks current controller authority.
+- `aw claim-human --controller-claim-file` carries a shared controller-signed claim artifact after checking integrity, normalized target and timestamp. Member authentication remains required; Cloud alone checks current controller authority. Controller pin refusals preserve the server's administrator and key-change recovery guidance.
 
 - `aw init --write-context=false` leaves the context pointer untouched through signup, joins, API-key bootstrap and reconnect. `--server-name` help distinguishes a workspace server label from auth/admission service selection.
 

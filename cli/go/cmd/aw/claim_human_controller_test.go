@@ -92,8 +92,11 @@ func TestClaimHumanControllerFilePreservesReadFailures(t *testing.T) {
 
 // The controller pin refusal is a diagnostic from the server's authority
 // decision. This exercises the CLI mapper/display owners, not that authority.
+const controllerPinDetailForDisplayTest = "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+
 func TestClaimHumanControllerPinRefusalKeepsServerAction(t *testing.T) {
-	const detail = "team_key_unverified: The team key change could not be verified. Ask the team administrator to verify the namespace controller's current key-change record, then retry."
+	_, artifact := controllerClaimVectorForCarrier(t)
+	const detail = controllerPinDetailForDisplayTest
 	body, err := json.Marshal(struct {
 		Detail string `json:"detail"`
 	}{Detail: detail})
@@ -101,7 +104,7 @@ func TestClaimHumanControllerPinRefusalKeepsServerAction(t *testing.T) {
 		t.Fatal(err)
 	}
 	refusal := &awid.APIError{StatusCode: 401, Body: string(body)}
-	mapped := mapClaimHumanError(refusal)
+	mapped := mapClaimHumanError(claimHumanErrorInput{Cause: refusal, ControllerClaim: &artifact})
 	if mapped != refusal {
 		t.Fatalf("controller pin refusal lost its server cause/action: %v", mapped)
 	}
@@ -112,9 +115,29 @@ func TestClaimHumanControllerPinRefusalKeepsServerAction(t *testing.T) {
 }
 
 func TestClaimHumanMemberAuthenticationRefusalKeepsReleasedAdvice(t *testing.T) {
-	refusal := &awid.APIError{StatusCode: 401, Body: `{"detail":"did:key mismatch"}`}
-	mapped := mapClaimHumanError(refusal)
-	if mapped.Error() != "Your signing key does not match the registered agent. Check .aw/signing.key is intact." {
-		t.Fatalf("member-authentication advice changed: %v", mapped)
+	_, artifact := controllerClaimVectorForCarrier(t)
+	for _, sample := range []struct {
+		Name            string
+		ControllerClaim *awid.SignedUnownedTeamClaim
+		Detail          string
+	}{
+		{Name: "member without artifact", Detail: "did:key mismatch"},
+		{Name: "member with artifact", ControllerClaim: &artifact, Detail: "did:key mismatch"},
+		{Name: "pin refusal without artifact", Detail: controllerPinDetailForDisplayTest},
+		{Name: "different refusal label", ControllerClaim: &artifact, Detail: "team_key_unverified_other: another refusal"},
+	} {
+		t.Run(sample.Name, func(t *testing.T) {
+			body, err := json.Marshal(struct {
+				Detail string `json:"detail"`
+			}{Detail: sample.Detail})
+			if err != nil {
+				t.Fatal(err)
+			}
+			refusal := &awid.APIError{StatusCode: 401, Body: string(body)}
+			mapped := mapClaimHumanError(claimHumanErrorInput{Cause: refusal, ControllerClaim: sample.ControllerClaim})
+			if mapped.Error() != "Your signing key does not match the registered agent. Check .aw/signing.key is intact." {
+				t.Fatalf("member-authentication advice changed: %v", mapped)
+			}
+		})
 	}
 }

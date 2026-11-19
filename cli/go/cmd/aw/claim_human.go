@@ -139,7 +139,7 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 		ControllerClaim: controllerClaim,
 	})
 	if err != nil {
-		return nil, "", mapClaimHumanError(err)
+		return nil, "", mapClaimHumanError(claimHumanErrorInput{Cause: err, ControllerClaim: controllerClaim})
 	}
 	return resp, username, nil
 }
@@ -299,7 +299,16 @@ func usernameFromManagedDomain(domain string) (string, error) {
 	return username, nil
 }
 
-func mapClaimHumanError(err error) error {
+type claimHumanErrorInput struct {
+	Cause           error
+	ControllerClaim *awid.SignedUnownedTeamClaim
+}
+
+// mapClaimHumanError preserves controller pin refusal evidence for a submitted
+// controller claim (docs/trust-model.md:476; docs/team-control-requests.md:36-43).
+// Other 401s retain the member-key remedy, including the released no-file path.
+func mapClaimHumanError(input claimHumanErrorInput) error {
+	err := input.Cause
 	status, ok := awid.HTTPStatusCode(err)
 	if !ok {
 		return err
@@ -308,6 +317,12 @@ func mapClaimHumanError(err error) error {
 	case 404:
 		return errors.New("Username not registered. Run aw init first.")
 	case 401:
+		if input.ControllerClaim != nil {
+			detail := awid.DescribeError(err).Detail
+			if detail == "team_key_unverified" || strings.HasPrefix(detail, "team_key_unverified:") {
+				return err
+			}
+		}
 		return errors.New("Your signing key does not match the registered agent. Check .aw/signing.key is intact.")
 	case 409:
 		if msg := claimHumanServerMessage(err); msg != "" {
