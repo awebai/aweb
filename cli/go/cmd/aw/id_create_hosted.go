@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -178,6 +179,31 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 		}
 		association.RegistryURL = origin
 	}
+	return createHostedIdentity(hostedIdentityCreation{
+		Context: ctx, Command: cmd, Home: home, Config: cfg, Owner: owner,
+		Issuer: selectedIssuer, Human: human, Registry: registry, APIBase: apiBase, Association: association,
+	})
+}
+
+type hostedIdentityCreation struct {
+	Context     context.Context
+	Command     *cobra.Command
+	Home        awconfig.IdentityHome
+	Config      cliAuthConfig
+	Owner       *hostedOwnerAuthority
+	Issuer      *selectedChildIssuer
+	Human       *hostedHumanParent
+	Registry    *awid.RegistryClient
+	APIBase     string
+	Association hostedIdentityContext
+}
+
+func createHostedIdentity(operation hostedIdentityCreation) error {
+	ctx, cmd := operation.Context, operation.Command
+	home, cfg, owner := operation.Home, operation.Config, operation.Owner
+	selectedIssuer, human := operation.Issuer, operation.Human
+	registry, apiBase, association := operation.Registry, operation.APIBase, operation.Association
+	org, teamID, name, mode := association.Org, association.TeamID, association.Name, association.InboundMode
 	statePath := filepath.Join(home.Root, "hosted-identity-create.json")
 	if err := pathpreflight.PreflightDir(home.Root, "hosted identity credential root", pathpreflight.Options{}); err != nil {
 		return err
