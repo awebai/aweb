@@ -7,9 +7,16 @@ import (
 	"github.com/awebai/aw/awid"
 	"io"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 )
+
+func TestBindingRefreshHasOneNamedPurpose(t *testing.T) {
+	if reflect.TypeOf(PurposeBindingRefresh) != reflect.TypeOf(RequestPurpose("")) {
+		t.Fatal("binding refresh must use the shared named request-purpose type")
+	}
+}
 
 func TestBindingRefreshUsesTheSharedOwnPersonHTTPProof(t *testing.T) {
 	key := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{3}, 32))
