@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/awebai/aw/awid"
 )
 
 func TestIDIssuanceRequestLookupDoesNotReadUnrelatedHistory(t *testing.T) {

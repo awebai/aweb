@@ -98,11 +98,65 @@ func TestInvitationRequestIndexRefusesCorruptionAndDuplicateBindings(t *testing.
 	if err := store.PutInvitation(second); err == nil {
 		t.Fatal("second invitation accepted the same request")
 	}
-	indexPath := filepath.Join(store.Dir, invitationRequestIndexDir, invitationRequestIndexName("same"))
+	indexPath := filepath.Join(store.Dir, requestFileIndexDir, requestFileIndexBindingName("same"))
 	if err := os.WriteFile(indexPath, []byte("malformed"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.InvitationForRequest("same"); err == nil {
 		t.Fatal("corrupt binding was absence")
+	}
+}
+
+func TestInvitationRequestIndexRecoversIncompleteBuildAndKeepsBindingsPrivate(t *testing.T) {
+	store := IDInvitationFileStore{Dir: filepath.Join(t.TempDir(), "invitations")}
+	inv := testInvitation("10000000-0000-4000-8000-000000000001")
+	inv.Request = &awid.IDRequestRecord{RequestID: "request"}
+	if err := store.PutInvitation(inv); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(store.Dir, requestFileIndexDir)
+	// An interrupted rebuild has no completeness marker. A lookup must rebuild
+	// from the authoritative record rather than treat its missing binding as absent.
+	if err := os.Remove(filepath.Join(directory, requestFileIndexGenerationFile)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(directory, requestFileIndexBindingName("request"))); err != nil {
+		t.Fatal(err)
+	}
+	if found, err := store.InvitationForRequest("request"); err != nil || found == nil {
+		t.Fatalf("partial index was absence: %v %v", found, err)
+	}
+	if err := filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		expected := fs.FileMode(0600)
+		if entry.IsDir() {
+			expected = 0700
+		}
+		if info.Mode().Perm() != expected {
+			return fmt.Errorf("index mode %s: %o", path, info.Mode().Perm())
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInvitationRequestIndexRefusesSymlinkDirectory(t *testing.T) {
+	store := IDInvitationFileStore{Dir: filepath.Join(t.TempDir(), "invitations")}
+	inv := testInvitation("10000000-0000-4000-8000-000000000001")
+	if err := store.PutInvitation(inv); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(store.Dir, requestFileIndexDir)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InvitationForRequest("request"); err == nil {
+		t.Fatal("followed a symlink index directory")
 	}
 }

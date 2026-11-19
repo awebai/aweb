@@ -110,14 +110,12 @@ func ReceiveIDChildRequest(store IDInvitationStore, issuer map[string]any, raw [
 	}
 	// A request id names one request for the whole issuer, so approve and
 	// refuse by request id are never ambiguous.
-	all, err := store.Invitations()
+	other, err := FindIDInvitationForRequest(store, requestID)
 	if err != nil {
 		return nil, err
 	}
-	for _, other := range all {
-		if other.InvitationID != inv.InvitationID && other.Request != nil && other.Request.RequestID == requestID {
-			return nil, idCertificateRefusal(IDRefusalRequestConflict)
-		}
+	if other != nil && other.InvitationID != inv.InvitationID {
+		return nil, idCertificateRefusal(IDRefusalRequestConflict)
 	}
 	if inv.Void {
 		return nil, idCertificateRefusal(IDRefusalInvitationConflict)
@@ -361,14 +359,12 @@ func IDChildRequests(invitations IDInvitationStore) ([]IDChildRequest, error) {
 }
 
 func idInvitationForRequest(invitations IDInvitationStore, requestID string) (*IDInvitation, error) {
-	all, err := invitations.Invitations()
+	inv, err := FindIDInvitationForRequest(invitations, requestID)
 	if err != nil {
 		return nil, err
 	}
-	for _, inv := range all {
-		if inv.Request != nil && inv.Request.RequestID == requestID {
-			return inv, nil
-		}
+	if inv != nil {
+		return inv, nil
 	}
 	return nil, fmt.Errorf("no child request %s", requestID)
 }

@@ -495,14 +495,12 @@ func findReceivedRequest(issuer *selectedChildIssuer, requestID string) (receive
 }
 
 func lookupReceivedRequest(issuer *selectedChildIssuer, requestID string) (receivedRequest, bool, error) {
-	all, err := issuer.invitations.Invitations()
+	inv, err := awid.FindIDInvitationForRequest(issuer.invitations, requestID)
 	if err != nil {
 		return receivedRequest{}, false, err
 	}
-	for _, inv := range all {
-		if inv.Request != nil && inv.Request.RequestID == requestID {
-			return receivedRequest{invitation: inv}, true, nil
-		}
+	if inv != nil {
+		return receivedRequest{invitation: inv}, true, nil
 	}
 	entry, err := issuer.issuance.EntryForRequest(requestID)
 	if err != nil || entry == nil {
