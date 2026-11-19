@@ -625,7 +625,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 				}
 			}
 		}
-		teamOut, err := foundTeamWithNamespaceControllerAuthority(wd, name, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope)
+		teamOut, err := foundTeamWithNamespaceControllerAuthority(namespaceTeamFounding{WorkingDir: wd, Name: name, CreatorAlias: alias, Domain: domain, RegistryURL: strings.TrimSpace(teamHumanCreateRegistryURL), DisplayName: strings.TrimSpace(teamHumanCreateDisplayName), CreatorScope: awid.IdentityScope(firstAgentScope)})
 		if err != nil {
 			return err
 		}
@@ -1059,12 +1059,25 @@ func runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope 
 	if selector != nil {
 		return nil, usageError("aw team admin create --profile for an existing identity is not supported yet; use aw team admin add NAME@BLUEPRINT/PROFILE after creating the team")
 	}
-	return foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope)
+	return foundTeamWithNamespaceControllerAuthority(namespaceTeamFounding{WorkingDir: wd, Name: teamName, CreatorAlias: alias, DisplayName: strings.TrimSpace(teamHumanCreateDisplayName), CreatorScope: awid.IdentityScope(firstAgentScope)})
 }
 
-func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDomain, explicitRegistryURL, displayName, firstAgentScope string) (*teamCreateOutput, error) {
-	domain := awconfig.NormalizeDomain(explicitDomain)
-	identity, _, identityErr := awconfig.LoadWorktreeIdentityFromDir(wd)
+type namespaceTeamFounding struct {
+	WorkingDir   string
+	Name         string
+	CreatorAlias string
+	Domain       string
+	RegistryURL  string
+	DisplayName  string
+	CreatorScope awid.IdentityScope
+}
+
+// foundTeamWithNamespaceControllerAuthority uses namespace authority to found
+// the team and controller authority to admit its creator as a member
+// (docs/identity.md#2-create-team). Identity ancestry is independent.
+func foundTeamWithNamespaceControllerAuthority(input namespaceTeamFounding) (*teamCreateOutput, error) {
+	domain := awconfig.NormalizeDomain(input.Domain)
+	identity, _, identityErr := awconfig.LoadWorktreeIdentityFromDir(input.WorkingDir)
 	if domain == "" {
 		if identityErr != nil {
 			if errors.Is(identityErr, os.ErrNotExist) {
@@ -1089,7 +1102,7 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 	if err != nil {
 		return nil, fmt.Errorf("load controller key for %s: %w", domain, err)
 	}
-	registryURL := strings.TrimSpace(explicitRegistryURL)
+	registryURL := strings.TrimSpace(input.RegistryURL)
 	if registryURL == "" && identityErr == nil && identity != nil {
 		registryURL = strings.TrimSpace(identity.RegistryURL)
 	}
@@ -1111,15 +1124,15 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	firstAgentAddress := ""
-	if firstAgentScope == awid.IdentityModeGlobal && identityErr == nil && identity != nil {
+	if input.CreatorScope == awid.IdentityScopeGlobal && identityErr == nil && identity != nil {
 		firstAgentAddress = strings.TrimSpace(identity.Address)
 	}
 	plan, err := resolveTeamMemberEnrollment(ctx, teamMemberEnrollmentResolveOptions{
-		WorkingDir:        wd,
+		WorkingDir:        input.WorkingDir,
 		TeamDomain:        domain,
-		Name:              alias,
+		Name:              input.CreatorAlias,
 		Address:           firstAgentAddress,
-		Scope:             firstAgentScope,
+		Scope:             string(input.CreatorScope),
 		RegistryURL:       strings.TrimSpace(registry.DefaultRegistryURL),
 		Registry:          registry,
 		AllowLocalMint:    true,
@@ -1128,7 +1141,7 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 	if err != nil {
 		return nil, err
 	}
-	registration, err := ensureLocalTeamRegistered(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), strings.TrimSpace(displayName), controllerKey)
+	registration, err := ensureLocalTeamRegistered(ctx, registry, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(input.Name)), strings.TrimSpace(input.DisplayName), controllerKey)
 	if err != nil {
 		return nil, err
 	}
@@ -1143,25 +1156,25 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 	if err != nil {
 		return nil, err
 	}
-	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
+	if err := registry.RegisterCertificate(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, strings.ToLower(strings.TrimSpace(input.Name)), cert, registration.TeamKey); err != nil {
 		if isAliasConflict(err) {
 			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(plan.Name), registration.TeamID, "--first-agent-name"), err: err}
 		}
 		return nil, fmt.Errorf("register certificate at registry: %w", err)
 	}
 	bootstrap := &localTeamBootstrapResult{TeamID: registration.TeamID, TeamDIDKey: registration.TeamDIDKey, TeamKeyPath: registration.TeamKeyPath, Certificate: cert}
-	certPath, err := awconfig.SaveTeamCertificateForTeam(wd, bootstrap.TeamID, bootstrap.Certificate)
+	certPath, err := awconfig.SaveTeamCertificateForTeam(input.WorkingDir, bootstrap.TeamID, bootstrap.Certificate)
 	if err != nil {
 		return nil, err
 	}
-	accepted := &teamAcceptInviteOutput{Status: "accepted", TeamID: bootstrap.TeamID, Alias: alias, CertPath: certPath}
+	accepted := &teamAcceptInviteOutput{Status: "accepted", TeamID: bootstrap.TeamID, Alias: input.CreatorAlias, CertPath: certPath}
 	awebURL, err := resolveInitAwebURL()
 	if err != nil {
 		return nil, err
 	}
 	// The creator self-enrolls as the team's first member and produces a
 	// ready-to-run identity, so the worktree binding is written now.
-	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: wd, Output: accepted, Certificate: bootstrap.Certificate, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL), AwebURL: awebURL, IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{WorkingDir: input.WorkingDir, Output: accepted, Certificate: bootstrap.Certificate, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL), AwebURL: awebURL, IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive, Binding: membershipWriteWorkspaceBinding}); err != nil {
 		return nil, err
 	}
 	return &teamCreateOutput{Status: "created", TeamID: bootstrap.TeamID, TeamDIDKey: bootstrap.TeamDIDKey, TeamKeyPath: bootstrap.TeamKeyPath, RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL)}, nil
