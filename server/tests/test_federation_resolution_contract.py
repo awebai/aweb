@@ -48,6 +48,12 @@ async def test_outbound_resolution_reuses_fresh_cohort_and_refreshes_expired(
             "foreign.test/bob", source_ip="203.0.113.2"
         )
         assert second == first
+        assert (
+            await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.federation_authority_leases}}"
+            )
+            == 0
+        )
         sources = await env.db.fetch_all(
             "SELECT bucket_key FROM {{tables.federation_authority_token_buckets}} WHERE bucket_kind='source_ip'",
         )
@@ -117,7 +123,7 @@ async def test_outbound_budget_uses_the_same_configured_client_address(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["mail", "chat", "contact"])
 @pytest.mark.parametrize("trusted", [True, False])
-async def test_mounted_mcp_budget_uses_the_shared_request_client_address(
+async def test_mounted_mcp_budget_uses_authenticated_sender_regardless_of_proxy_header(
     privacy_app,
     monkeypatch,
     surface,
@@ -167,13 +173,14 @@ async def test_mounted_mcp_budget_uses_the_shared_request_client_address(
                     },
                 )
                 assert response.status_code == 200, response.text
-                assert "recipient_identity_not_found" in response.text, response.text
+                result = json.loads(response.json()["result"]["content"][0]["text"])
+                assert result["error"] == (
+                    f"{address} is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry."
+                )
             sources = await env.db.fetch_all(
                 "SELECT bucket_key FROM {{tables.federation_authority_token_buckets}} "
                 "WHERE bucket_kind='source_ip' ORDER BY bucket_key",
             )
-            assert [row["bucket_key"] for row in sources] == (
-                ["203.0.113.1", "203.0.113.2"] if trusted else ["127.0.0.1"]
-            )
+            assert [row["bucket_key"] for row in sources] == [f"mcp:{actor.did}"]
         finally:
             await mcp.shutdown()

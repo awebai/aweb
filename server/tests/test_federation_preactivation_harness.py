@@ -1338,7 +1338,10 @@ async def test_mcp_cross_registry_uses_production_strict_authority_not_home_regi
                     channel=channel,
                 )
             )
-            assert reassigned == {"error": "contact_identity_binding_required"}
+            assert reassigned == {
+                "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+                "reason": "contact_identity_binding_required",
+            }
             if channel == "mail":
                 result = json.loads(
                     await mcp_mail_tools.send_mail(

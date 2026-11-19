@@ -14,7 +14,7 @@ async def test_managed_attachment_exact_retry_never_binds_or_emits_twice(
     privacy_app, kind
 ):
     env = privacy_app
-    _, _, wire, conversation_id = await managed_fixture(env, kind)
+    _, descriptor, wire, conversation_id = await managed_fixture(env, kind)
     path = (
         "/v1/messages"
         if kind == "mail"
@@ -29,17 +29,42 @@ async def test_managed_attachment_exact_retry_never_binds_or_emits_twice(
     changed = deepcopy(wire)
     changed["encrypted_envelope"]["ciphertext"] += "A"
     refused = await _request(env, "alice", "POST", path, changed)
-    assert refused.status_code == 409, refused.text
-    assert refused.json()["detail"] == {
-        "code": "attachment_conflict",
-        "message": "This message ID already has a different attachment request. Retry the original request unchanged, or choose a new message ID for a new message.",
+    # Corruption fails ordinary integrity before the replay comparison.
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"] == (
+        "ciphertext hash mismatch. Check whether the original message was delivered before preparing a new encrypted message."
+    )
+    # A valid new artifact under that ID reaches the shared collision rule.
+    from datetime import datetime
+    from aweb.e2ee_messages import encrypt_e2ee_message
+
+    recipient = {
+        key: value
+        for key, value in env.attachment_keys["bob"].items()
+        if key not in {"private_key", "signing_key"}
     }
+    changed = deepcopy(wire)
+    changed["encrypted_envelope"] = encrypt_e2ee_message(
+        kind=kind,
+        sender=env.attachment_keys["alice"],
+        recipients=[recipient],
+        body="different message",
+        attachments=[descriptor],
+        message_id=wire["message_id"],
+        conversation_id=conversation_id,
+        created_at=datetime.fromisoformat(wire["timestamp"].replace("Z", "+00:00")),
+    )
+    refused = await _request(env, "alice", "POST", path, changed)
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"] == (
+        "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
+    )
     if kind == "chat":
         changed = {**wire, "hang_on": not wire.get("hang_on", False)}
         refused = await _request(env, "alice", "POST", path, changed)
         assert refused.status_code == 409, refused.text
-        assert refused.json()["detail"]["message"].endswith(
-            "choose a new message ID for a new message."
+        assert refused.json()["detail"] == (
+            "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
         )
     assert len(env.dispatched) == event_count
     assert (

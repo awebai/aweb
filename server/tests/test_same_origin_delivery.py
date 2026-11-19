@@ -1531,7 +1531,7 @@ async def test_stored_own_route_rotation_requires_current_target(
             if api == "mcp"
             else "identity_binding_mismatch"
             if kind == "mail"
-            else "signed_payload recipient must match the chat target"
+            else "signed_payload recipient must match the chat target. Check the recipient and sign the message again."
         )
         assert result.get("error", result.get("detail")) == expected, result
         if api == "http":

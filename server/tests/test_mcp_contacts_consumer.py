@@ -951,6 +951,11 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
         bob_agent_id,
     )
 
+    # Historical fixtures inserted after setup must cross the shipped migration.
+    from chat_coverage_support import migrate_chat_conversation_coverage
+
+    await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
+
     class NoRegistry:
         async def resolve_address(self, *_args, **_kwargs):
             raise AssertionError("existing chat continuation must not rediscover")

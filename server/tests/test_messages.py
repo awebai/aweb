@@ -509,6 +509,15 @@ async def test_deliver_message_team_and_contacts_allows_verified_same_team_non_c
         inbound_mode="team_and_contacts",
     )
 
+    await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_key=_make_did_key(),
+        did_aw="did:aw:alice-team-and-contacts",
+        address="acme.com/alice",
+    )
+
     msg_id, _ = await _deliver_fixture_mail(
         db_shim,
         from_did="did:aw:alice-team-and-contacts",
@@ -626,6 +635,12 @@ async def test_deliver_message_local_recipient_same_team_behavior_unchanged(
         RETURNING agent_id
         """,
         bob_did_key,
+    )
+
+    await aweb_cloud_db.aweb_db.execute(
+        "INSERT INTO {{tables.agents}} (team_id, did_key, alias, identity_scope, role, inbound_mode) "
+        "VALUES ('default:local', $1, 'alice', 'local', 'developer', 'open')",
+        alice_did_key,
     )
 
     msg_id, _ = await _deliver_fixture_mail(
