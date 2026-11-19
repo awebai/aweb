@@ -247,7 +247,7 @@ async def harness(privacy_app, monkeypatch):
         for module in (chat, events, status, grant_streams):
             scoped.setattr(module, "datetime", Clock)
         scoped.setattr(chat, "time", SimpleNamespace(monotonic=lambda: clock.seconds))
-        for module in (chat, events, status):
+        for module in (chat, events):
             scoped.setattr(module, "asyncio", StreamLoop())
         scoped.setattr(sdk, "get_team_revocations_for_certificates", observed_revocations)
         yield SimpleNamespace(clock=clock, registry=controls, db=db, redis=redis, open=open_stream)
