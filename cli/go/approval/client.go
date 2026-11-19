@@ -15,7 +15,6 @@ import (
 	"time"
 
 	proof "github.com/awebai/approval-service/verify"
-	"github.com/awebai/aw/awid"
 )
 
 // Client carries the shared awsign protocol over HTTPS. The shared verifier
@@ -32,7 +31,9 @@ type Client struct {
 	HTTP         *http.Client
 	Now          func() time.Time
 	PollInterval time.Duration
-	Notify       io.Writer
+	// ResponseLimit bounds a service answer; zero retains the released 1 MiB default.
+	ResponseLimit int64
+	Notify        io.Writer
 	// Retain stores original request bytes before submission, and the complete
 	// receipt before presentation. A failed write prevents the next exchange.
 	Retain func(kind string, raw []byte) error
@@ -99,7 +100,7 @@ type Session struct {
 	Locator            string
 	answer             map[string]any
 	status             int
-	answerKind         requestPurpose
+	answerKind         RequestPurpose
 	answerState        answerState
 	notBefore          int64
 	deadline           int64
@@ -208,26 +209,17 @@ func (c *Client) exchange(ctx context.Context, purpose string, body map[string]a
 	if e != nil {
 		return nil, 0, e
 	}
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}
+	limit := c.ResponseLimit
+	if limit <= 0 {
+		limit = 1 << 20
 	}
-	bounded := *client
-	bounded.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	response, e := bounded.Do(req)
-	if e != nil {
-		return nil, 0, e
+	answer, err := sendApprovalRequest(approvalHTTPRequest{Request: req, Client: c.HTTP, ResponseLimit: limit})
+	if err != nil {
+		return nil, 0, err
 	}
-	raw, readErr := awid.ReadAllBounded(response.Body, 1<<20)
-	closeErr := response.Body.Close()
-	if readErr != nil {
-		return nil, response.StatusCode, readErr
-	}
-	if closeErr != nil {
-		return nil, response.StatusCode, closeErr
-	}
-	return raw, response.StatusCode, nil
+	return answer.Body, answer.Status, nil
 }
+
 func (s *Session) live() error {
 	now := s.client.now().Unix()
 	if now < s.notBefore || now >= s.deadline {
