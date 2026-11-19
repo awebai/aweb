@@ -27,8 +27,14 @@ pytestmark = pytest.mark.asyncio
 
 def identity(**changes):
     original = TeamIdentity(
-        team_id=TEAM, alias="alice", did_key="did:key:alice", did_aw="did:aw:alice",
-        address="example.com/alice", agent_id=ACTOR, identity_scope="global", certificate_id="cert-1",
+        team_id=TEAM,
+        alias="alice",
+        did_key="did:key:alice",
+        did_aw="did:aw:alice",
+        address="example.com/alice",
+        agent_id=ACTOR,
+        identity_scope="global",
+        certificate_id="cert-1",
     )
     return replace(original, **changes)
 
@@ -37,10 +43,15 @@ def request(*, headers=None, policy=None):
     app = FastAPI()
     if policy is not None:
         app.state.install_admin_policy = policy
-    return Request({
-        "type": "http", "app": app, "method": "POST", "path": "/v1/apps/install",
-        "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
-    })
+    return Request(
+        {
+            "type": "http",
+            "app": app,
+            "method": "POST",
+            "path": "/v1/apps/install",
+            "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+        }
+    )
 
 
 class Policy:
@@ -55,17 +66,24 @@ class Policy:
             if subject.principal_type != "u":
                 return False
             subject_id = subject.principal_id
-        return bool(await tx.fetch_value(
-            "SELECT EXISTS (SELECT 1 FROM aweb.test_install_admins WHERE team_id = $1 AND subject_id = $2)",
-            subject.team_id, subject_id,
-        ))
+        return bool(
+            await tx.fetch_value(
+                "SELECT EXISTS (SELECT 1 FROM aweb.test_install_admins WHERE team_id = $1 AND subject_id = $2)",
+                subject.team_id,
+                subject_id,
+            )
+        )
 
 
 @pytest_asyncio.fixture
 async def db(test_db_factory):
     db = await test_db_factory.create_db(suffix="install_authority", schema="aweb")
-    await db.execute("CREATE TABLE aweb.test_install_admins (team_id TEXT NOT NULL, subject_id TEXT NOT NULL)")
-    await db.execute("CREATE TABLE aweb.team_app_install_admins (team_id TEXT, principal_did TEXT, role TEXT, revoked_at TIMESTAMPTZ)")
+    await db.execute(
+        "CREATE TABLE aweb.test_install_admins (team_id TEXT NOT NULL, subject_id TEXT NOT NULL)"
+    )
+    await db.execute(
+        "CREATE TABLE aweb.team_app_install_admins (team_id TEXT, principal_did TEXT, role TEXT, revoked_at TIMESTAMPTZ)"
+    )
     # The columns a forwarded actor is read by (aweb.internal_auth.resolve_internal_actor).
     await db.execute(
         "CREATE TABLE aweb.agents (agent_id UUID PRIMARY KEY, team_id TEXT, status TEXT, deleted_at TIMESTAMPTZ, "
@@ -76,7 +94,9 @@ async def db(test_db_factory):
 
 async def require(db, req, caller=None, team_id=TEAM):
     async with db.transaction() as tx:
-        await require_install_admin(tx, req, caller, team_id, action="apps.install", app_id="fixture")
+        await require_install_admin(
+            tx, req, caller, team_id, action="apps.install", app_id="fixture"
+        )
 
 
 async def test_absent_policy_and_role_claims_never_grant_admin(db):
@@ -95,7 +115,10 @@ async def test_current_authoritative_policy_is_read_inside_each_transaction(db):
     await require(db, req, identity())
     subject, action, app_id = policy.seen[-1]
     assert subject == CertificateInstallAdminSubject(
-        team_id=TEAM, agent_id=ACTOR, certificate_id="cert-1", did_key="did:key:alice",
+        team_id=TEAM,
+        agent_id=ACTOR,
+        certificate_id="cert-1",
+        did_key="did:key:alice",
     )
     assert (action, app_id) == ("apps.install", "fixture")
     await db.execute("DELETE FROM aweb.test_install_admins")
@@ -117,10 +140,15 @@ async def test_another_team_cannot_borrow_a_policy_delegation(db):
 async def test_identity_grants_cannot_acquire_install_admin_authority(db):
     policy = Policy()
     await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, "did:key:alice")
-    caller = identity(grant=GrantContext(
-        grant_id=str(uuid4()), session_did_key="did:key:session", issuing_certificate_id="cert-1",
-        scopes=("coord.write",), expires_at=datetime.now(UTC) + timedelta(hours=1),
-    ))
+    caller = identity(
+        grant=GrantContext(
+            grant_id=str(uuid4()),
+            session_did_key="did:key:session",
+            issuing_certificate_id="cert-1",
+            scopes=("coord.write",),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
     with pytest.raises(HTTPException) as exc:
         await require(db, request(policy=policy), caller)
     assert (exc.value.status_code, exc.value.detail["code"]) == (403, "admin_required")
@@ -133,7 +161,11 @@ def proxy_headers(principal_type="u"):
         "X-User-ID" if principal_type == "u" else "X-API-Key": PRINCIPAL,
         "X-AWEB-Actor-ID": ACTOR,
         "X-AWEB-Auth": build_internal_auth_header_value(
-            secret=SECRET, team_id=TEAM, principal_type=principal_type, principal_id=PRINCIPAL, actor_id=ACTOR,
+            secret=SECRET,
+            team_id=TEAM,
+            principal_type=principal_type,
+            principal_id=PRINCIPAL,
+            actor_id=ACTOR,
         ),
     }
 
@@ -153,18 +185,25 @@ async def test_verified_internal_subject_reaches_host_policy(db, monkeypatch, pr
         assert exc.value.detail["code"] == "admin_required"
     subject, _, _ = policy.seen[-1]
     assert subject == InternalInstallAdminSubject(
-        team_id=TEAM, principal_type=principal_type, principal_id=PRINCIPAL, actor_id=ACTOR,
+        team_id=TEAM,
+        principal_type=principal_type,
+        principal_id=PRINCIPAL,
+        actor_id=ACTOR,
     )
 
 
 @pytest.mark.parametrize("state", ["retired", "removed", "other-team"])
-async def test_forwarded_actor_that_names_a_non_member_agent_never_reaches_policy(db, monkeypatch, state):
+async def test_forwarded_actor_that_names_a_non_member_agent_never_reaches_policy(
+    db, monkeypatch, state
+):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
     await db.execute(
         "INSERT INTO aweb.agents (agent_id, team_id, status, deleted_at) VALUES ($1, $2, $3, CASE WHEN $4 THEN NOW() END)",
-        ACTOR, "elsewhere:example.com" if state == "other-team" else TEAM,
-        "retired" if state == "retired" else "active", state == "removed",
+        ACTOR,
+        "elsewhere:example.com" if state == "other-team" else TEAM,
+        "retired" if state == "retired" else "active",
+        state == "removed",
     )
     await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, PRINCIPAL)
     policy = Policy()
@@ -177,7 +216,9 @@ async def test_forwarded_actor_that_names_a_non_member_agent_never_reaches_polic
 async def test_forwarded_actor_that_is_an_active_member_reaches_policy(db, monkeypatch):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", SECRET)
-    await db.execute("INSERT INTO aweb.agents (agent_id, team_id, status) VALUES ($1, $2, 'active')", ACTOR, TEAM)
+    await db.execute(
+        "INSERT INTO aweb.agents (agent_id, team_id, status) VALUES ($1, $2, 'active')", ACTOR, TEAM
+    )
     await db.execute("INSERT INTO aweb.test_install_admins VALUES ($1, $2)", TEAM, PRINCIPAL)
     policy = Policy()
     await require(db, request(headers=proxy_headers(), policy=policy))
