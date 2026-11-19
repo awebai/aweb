@@ -133,9 +133,9 @@ def _sigv4(
             **dict(headers),
         },
     )
-    SigV4Auth(Credentials(access_key_id, secret_access_key, session_token), service, region).add_auth(
-        request
-    )
+    SigV4Auth(
+        Credentials(access_key_id, secret_access_key, session_token), service, region
+    ).add_auth(request)
     injected = [(name, request.headers[name]) for name in _SIGV4_HEADERS if name in request.headers]
     return Injection(
         url=str(canonical),

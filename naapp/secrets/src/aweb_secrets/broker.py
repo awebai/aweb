@@ -124,7 +124,9 @@ async def _exchange(
             body=urlencode(form).encode(),
         )
     except (EgressNotSent, EgressOutcomeUnknown) as error:
-        raise TokenExchangeFailed(f"the token endpoint could not be reached ({type(error).__name__})") from None
+        raise TokenExchangeFailed(
+            f"the token endpoint could not be reached ({type(error).__name__})"
+        ) from None
     if response.status != 200 or response.truncated:
         raise TokenExchangeFailed(f"the token endpoint answered {response.status}")
     try:
@@ -287,7 +289,9 @@ async def broker_operation(
     Refusal precedes even an OAuth token exchange."""
     if request.token_issuing and request.result_handling != "withhold":
         raise EgressRefused(
-            "token_issuing_denied", "result_handling", "token issuance requires supported result handling"
+            "token_issuing_denied",
+            "result_handling",
+            "token issuance requires supported result handling",
         )
     return await broker(
         egress,
