@@ -7,12 +7,15 @@ import httpx
 import pytest
 from awid.dns_verify import DomainAuthority
 from awid.registry import CachedRegistryClient
-from awid.team_certificate import issue_team_certificate
 from awid_service.deps import get_domain_verifier
-
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import privacy_app as privacy_app
-from test_messages_http import _make_keypair, _signed_team_headers
+from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
+    _make_keypair,
+    _signed_team_headers,
+)
 
 
 @pytest.mark.asyncio
@@ -29,9 +32,7 @@ async def test_three_registered_members_connect_back_to_back_without_sleep(
             assert domain == "example.test"
             return DomainAuthority(env.team_did, origin, "_awid.example.test")
 
-        env.registry_app.dependency_overrides[get_domain_verifier] = lambda: (
-            namespace_authority
-        )
+        env.registry_app.dependency_overrides[get_domain_verifier] = lambda: namespace_authority
         await writer.register_namespace("example.test", env.team_did, env.team_sk)
         name = "join-" + uuid4().hex[:12]
         team_id = name + ":example.test"
@@ -53,22 +54,22 @@ async def test_three_registered_members_connect_back_to_back_without_sleep(
         ) as reader:
             env.app.state.awid_registry_client = reader
             assert (
-                await reader.list_team_certificates(
-                    "example.test", name, active_only=False
-                )
-                == []
+                await reader.list_team_certificates("example.test", name, active_only=False) == []
             )
             connected_ids = []
             try:
                 for alias in ("alice", "bob", "carol"):
                     signing_key, _, did_key = _make_keypair()
-                    cert, header = issue_team_certificate(
+                    cert = _make_certificate(
+                        env.team_sk,
+                        env.team_did,
+                        did_key,
                         team_id=team_id,
-                        team_signing_key=env.team_sk,
-                        member_did_key=did_key,
                         alias=alias,
                         identity_scope="local",
+                        certificate_id="join-" + uuid4().hex,
                     )
+                    header = _encode_certificate(cert)
                     await writer.register_team_certificate(
                         "example.test",
                         name,
@@ -86,9 +87,7 @@ async def test_three_registered_members_connect_back_to_back_without_sleep(
                         "/v1/connect",
                         content=body,
                         headers={
-                            **_signed_team_headers(
-                                signing_key, did_key, team_id, header, body
-                            ),
+                            **_signed_team_headers(signing_key, did_key, team_id, header, body),
                             "Content-Type": "application/json",
                         },
                     )
@@ -113,20 +112,21 @@ async def test_three_registered_members_connect_back_to_back_without_sleep(
                 # A different, correctly signed but unregistered certificate is
                 # a definite refusal, not another member's refresh suppression.
                 signing_key, _, did_key = _make_keypair()
-                cert, header = issue_team_certificate(
+                cert = _make_certificate(
+                    env.team_sk,
+                    env.team_did,
+                    did_key,
                     team_id=team_id,
-                    team_signing_key=env.team_sk,
-                    member_did_key=did_key,
                     alias="unregistered",
                     identity_scope="local",
+                    certificate_id="unregistered-" + uuid4().hex,
                 )
+                header = _encode_certificate(cert)
                 refused = await env.client.post(
                     "/v1/connect",
                     content=b"{}",
                     headers={
-                        **_signed_team_headers(
-                            signing_key, did_key, team_id, header, b"{}"
-                        ),
+                        **_signed_team_headers(signing_key, did_key, team_id, header, b"{}"),
                         "Content-Type": "application/json",
                     },
                 )
