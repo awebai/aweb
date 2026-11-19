@@ -172,6 +172,8 @@ Flags:
 - `--setup-channel Set up Claude Code aweb-channel plugin for real-time coordination`
 - `--setup-hooks Enable Claude Code chat-only polling after tool calls (explicit fallback; no mail or idle wake-ups)`
 - `--team string Name of the team --new-team creates on a local (localhost) awid registry (default: default)`
+- `--token-file string Read the join invitation from this private file instead of --invite`
+- `--token-stdin Read one join invitation from stdin through EOF (max 65536 bytes)`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
 - `--username string Hosted username to create`
 - `--workspace-key string OATS canonical format-1 workspace key for --workspace-team`
