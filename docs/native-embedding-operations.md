@@ -440,3 +440,9 @@ Hosts do not mutate/restore process environment to configure native serving.
 Two independently configured native apps must reject each other's signed proxy
 material; a failed third startup leaves both existing apps and process
 configuration unchanged.
+
+Retention `MessageReference` accepts the existing exact `"mail"`/`"chat"`
+constructor strings and the canonical `aweb.messaging.kinds.MessageKind` values.
+It stores the canonical enum while SQL and preview snapshots keep the same
+plain wire strings. This changes no ownership, eligibility, preview/apply or
+activation policy.

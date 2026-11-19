@@ -1,6 +1,7 @@
 """Native ownership/interest retention; hosted plan classification is separate."""
 
 import asyncio
+import json
 import shutil
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,7 @@ from aweb.message_retention import (
     MessageReference, RetentionSweepScope, apply_team_message_retention,
     preview_team_message_retention, record_message_retention_owners,
 )
+from aweb.messaging.kinds import MessageKind
 from aweb.messaging.chat import ensure_session
 from aweb.messaging.conversations import ConversationParticipant, create_conversation
 from aweb.service_errors import ConflictError, ValidationError
@@ -80,6 +82,32 @@ async def _counts(db):
         await db.fetch_value("SELECT count(*) FROM {{tables.messages}}"),
         await db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}"),
     )
+
+
+@pytest.mark.parametrize("kind", ["mail", "chat", MessageKind.MAIL, MessageKind.CHAT])
+def test_message_reference_uses_canonical_kind_and_preserves_constructor_strings(kind):
+    message_id = uuid4()
+    reference = MessageReference(kind, message_id)
+    assert reference.kind is MessageKind(kind)
+    assert json.loads(json.dumps({"kind": reference.kind, "message_id": str(reference.message_id)})) == {
+        "kind": str(kind), "message_id": str(message_id),
+    }
+
+
+@pytest.mark.parametrize("kind", ["room", "MAIL", "mail ", None])
+def test_message_reference_keeps_unsupported_kind_refusal(kind):
+    with pytest.raises(ValidationError) as refused:
+        MessageReference(kind, uuid4())
+    assert str(refused.value) == "Unknown message kind. Select a native mail or chat message, then retry."
+
+
+@pytest.mark.asyncio
+async def test_retention_rejects_a_boolean_lock_mode_before_any_database_read():
+    from aweb.message_retention import _load
+
+    with pytest.raises(TypeError) as refused:
+        await _load(None, MessageReference("mail", uuid4()), lock=True)
+    assert str(refused.value) == "Select RetentionReadLock.NONE or UPDATE before reading message state."
 
 
 def test_cutoff_must_be_timezone_aware():
