@@ -15,6 +15,15 @@ import (
 	"time"
 )
 
+// stackOperation names a fixture command as it travels on the wire.
+type stackOperation string
+
+const (
+	stackZone            stackOperation = "zone"
+	stackPublicOrigin    stackOperation = "public_origin"
+	stackResetRateLimits stackOperation = "reset_rate_limits"
+)
+
 // commandStackDeadlines bound each stage of a stack process, so a stack that
 // stops answering fails the tests that meet it instead of hanging the package.
 type commandStackDeadlines struct {
@@ -34,10 +43,11 @@ type commandStackProcess struct {
 	exited    chan error
 	exitErr   error
 	// lines carries stdout lines; the reader closes it when it returns,
-	// after setting readErr.
-	lines    chan string
-	readErr  error
-	released chan struct{}
+	// after setting readErr, and then closes readerDone.
+	lines      chan string
+	readErr    error
+	released   chan struct{}
+	readerDone chan struct{}
 	// mu holds one command and its acknowledgement together.
 	mu     sync.Mutex
 	nextID int
@@ -69,6 +79,7 @@ func startCommandStackProcess(command *exec.Cmd, deadlines commandStackDeadlines
 	process := &commandStackProcess{
 		deadlines: deadlines, command: command, input: input, output: output,
 		exited: make(chan error, 1), lines: make(chan string), released: make(chan struct{}),
+		readerDone: make(chan struct{}),
 	}
 	go func() { process.exited <- command.Wait() }()
 	go process.read()
@@ -84,6 +95,7 @@ func startCommandStackProcess(command *exec.Cmd, deadlines commandStackDeadlines
 }
 
 func (process *commandStackProcess) read() {
+	defer close(process.readerDone)
 	defer close(process.lines)
 	scanner := bufio.NewScanner(process.output)
 	for scanner.Scan() {
@@ -114,7 +126,8 @@ func (process *commandStackProcess) nextLine(timeout time.Duration) (string, err
 // send sends one command and waits for its own acknowledgement. A refusal is
 // returned as an error and leaves the process serving; a transport or
 // protocol failure terminates it.
-func (process *commandStackProcess) send(name string, value any) error {
+func (process *commandStackProcess) send(operation stackOperation, value any) error {
+	name := string(operation)
 	process.mu.Lock()
 	defer process.mu.Unlock()
 	if process.failed != nil {
@@ -164,14 +177,18 @@ func (process *commandStackProcess) fail(err error) error {
 	return err
 }
 
-// terminate kills the whole process tree, releases the reader and waits a
-// bounded time for both. It runs once; later calls return its result.
+// terminate kills the whole process tree, closes both pipes, releases the
+// reader and waits a bounded time for the process and the reader to end. It
+// runs once; later calls return its result.
 func (process *commandStackProcess) terminate() error {
 	process.terminated.Do(func() {
 		var errs []error
 		close(process.released)
 		if err := killProcessTree(process.command.Process); err != nil {
 			errs = append(errs, fmt.Errorf("kill stack process tree: %w", err))
+		}
+		if err := process.input.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			errs = append(errs, fmt.Errorf("close stack input: %w", err))
 		}
 		if err := process.output.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close stack output: %w", err))
@@ -181,9 +198,24 @@ func (process *commandStackProcess) terminate() error {
 				errs = append(errs, err)
 			}
 		}
+		if err := process.awaitReader(); err != nil {
+			errs = append(errs, err)
+		}
 		process.terminateErr = errors.Join(errs...)
 	})
 	return process.terminateErr
+}
+
+// awaitReader waits a bounded time for the stdout reader to return.
+func (process *commandStackProcess) awaitReader() error {
+	timer := time.NewTimer(process.deadlines.Stop)
+	defer timer.Stop()
+	select {
+	case <-process.readerDone:
+		return nil
+	case <-timer.C:
+		return fmt.Errorf("stack output reader did not return within %s", process.deadlines.Stop)
+	}
 }
 
 // awaitExit waits a bounded time for the process to exit.

@@ -85,16 +85,16 @@ type commandZone struct {
 // publishCommandZone publishes zone's record. It writes nothing to the
 // registry.
 func publishCommandZone(zone commandZone) error {
-	return sendStackCommand("zone", zone)
+	return sendStackCommand(stackZone, zone)
 }
 
 // sendStackCommand sends one command to the package stack and waits for its
 // own acknowledgement.
-func sendStackCommand(name string, value any) error {
+func sendStackCommand(operation stackOperation, value any) error {
 	if sharedCommandStack.process == nil {
 		return fmt.Errorf("real command stack is not running: %v", sharedCommandStack.err)
 	}
-	return sharedCommandStack.process.send(name, value)
+	return sharedCommandStack.process.send(operation, value)
 }
 
 // stopSharedCommandStack shuts the package stack down, which stops its
@@ -144,7 +144,7 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	world.Stack = packageCommandStack(t)
 	// Fresh production rate-limit buckets: every test reaches the shared
 	// registry from the same address (see commandWorldAdmission).
-	if err := sendStackCommand("reset_rate_limits", map[string]any{}); err != nil {
+	if err := sendStackCommand(stackResetRateLimits, map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := publishCommandZone(commandZone{Domain: world.Domain, Controller: didOf(world.NamespaceKey)}); err != nil {
@@ -308,7 +308,7 @@ func (world *realCommandWorld) frontRegistry(t *testing.T, fault registryFault) 
 	t.Cleanup(server.Close)
 	// Controller envelopes name the origin the client writes to, as they do
 	// through a deployment's proxy.
-	if err := sendStackCommand("public_origin", server.URL); err != nil {
+	if err := sendStackCommand(stackPublicOrigin, server.URL); err != nil {
 		t.Fatal(err)
 	}
 	return server.URL
@@ -398,18 +398,20 @@ func TestRealServerStackRefusesMalformedConfigurationCommands(t *testing.T) {
 	newRealCommandWorld(t)
 	const notLoopback = "public_origin is not a canonical http://127.0.0.1 origin. Send the front's origin as http://127.0.0.1:<port>."
 	for _, refused := range []struct {
-		name   string
-		value  any
-		reason string
+		operation stackOperation
+		value     any
+		reason    string
 	}{
-		{name: "public_origin", value: "https://registry.example", reason: notLoopback},
-		{name: "public_origin", value: "http://127.0.0.1:8080/path", reason: notLoopback},
-		{name: "reset_rate_limits", value: map[string]any{"bucket": "all"}, reason: "reset_rate_limits takes an empty object. Send {'reset_rate_limits': {}}."},
-		{name: "seed_certificate", value: map[string]any{}, reason: "command names no single known operation. Send exactly one of zone, public_origin or reset_rate_limits."},
+		{operation: stackPublicOrigin, value: "https://registry.example", reason: notLoopback},
+		{operation: stackPublicOrigin, value: "http://127.0.0.1:8080/path", reason: notLoopback},
+		{operation: stackResetRateLimits, value: map[string]any{"bucket": "all"}, reason: "reset_rate_limits takes an empty object. Send {'reset_rate_limits': {}}."},
+		// An operation the fixture does not define, as an older or newer
+		// harness could send.
+		{operation: stackOperation("seed_certificate"), value: map[string]any{}, reason: "command names no single known operation. Send exactly one of zone, public_origin or reset_rate_limits."},
 	} {
-		err := sendStackCommand(refused.name, refused.value)
-		if err == nil || err.Error() != refused.name+" command refused: "+refused.reason {
-			t.Fatalf("%s %v: got %v, want refusal %q", refused.name, refused.value, err, refused.reason)
+		err := sendStackCommand(refused.operation, refused.value)
+		if err == nil || err.Error() != string(refused.operation)+" command refused: "+refused.reason {
+			t.Fatalf("%s %v: got %v, want refusal %q", refused.operation, refused.value, err, refused.reason)
 		}
 	}
 }

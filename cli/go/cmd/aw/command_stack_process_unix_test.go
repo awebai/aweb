@@ -38,6 +38,17 @@ func stackWithChild(t *testing.T, body string) (*exec.Cmd, string) {
 func startStack(t *testing.T, command *exec.Cmd, pidFile string, deadlines commandStackDeadlines) (*commandStackProcess, string, error) {
 	t.Helper()
 	command.Env = append(os.Environ(), "CHILD_PID="+pidFile)
+	// Whatever an assertion concludes, nothing this test started outlives it.
+	t.Cleanup(func() {
+		if command.Process != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		}
+		if data, err := os.ReadFile(pidFile); err == nil {
+			if child, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				_ = syscall.Kill(child, syscall.SIGKILL)
+			}
+		}
+	})
 	return startCommandStackProcess(command, deadlines)
 }
 
@@ -71,18 +82,14 @@ func requireTreeGone(t *testing.T, command *exec.Cmd, pidFile string) {
 	requireGone(t, "stack child", child)
 }
 
-// requireReaderReleased fails unless the stdout reader has returned. It
-// receives once without draining: a released reader has closed its channel,
-// while one still blocked delivering a line hands that line over.
+// requireReaderReleased fails unless the stdout reader has returned, read
+// from its own done signal rather than from the data it delivers.
 func requireReaderReleased(t *testing.T, process *commandStackProcess) {
 	t.Helper()
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 	select {
-	case line, open := <-process.lines:
-		if open {
-			t.Fatalf("the stack's stdout reader was still delivering %q after termination", line)
-		}
+	case <-process.readerDone:
 	case <-timer.C:
 		t.Fatal("the stack's stdout reader is still running after termination")
 	}
@@ -98,7 +105,7 @@ func TestStackProcessAnswersCommandsAndStopsWhenItsInputCloses(t *testing.T) {
 		t.Fatalf("readiness line = %q", ready)
 	}
 	for range 3 {
-		if err := process.send("zone", commandZone{Domain: "a.test", Controller: "did:key:z"}); err != nil {
+		if err := process.send(stackZone, commandZone{Domain: "a.test", Controller: "did:key:z"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -129,13 +136,13 @@ cat > /dev/null`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = process.send("reset_rate_limits", map[string]any{})
+	err = process.send(stackResetRateLimits, map[string]any{})
 	if err == nil || !strings.Contains(err.Error(), "reset_rate_limits command 1: no answer within 200ms") {
 		t.Fatalf("unanswered command: got %v", err)
 	}
 	requireTreeGone(t, command, pidFile)
 	requireReaderReleased(t, process)
-	err = process.send("reset_rate_limits", map[string]any{})
+	err = process.send(stackResetRateLimits, map[string]any{})
 	if err == nil || !strings.Contains(err.Error(), "stack stopped after an earlier failure") {
 		t.Fatalf("a command after the failure was sent: %v", err)
 	}
@@ -154,7 +161,7 @@ exec sleep 300`)
 		t.Fatal(err)
 	}
 	// Larger than any pipe buffer, so the write cannot complete unread.
-	err = process.send("public_origin", strings.Repeat("x", 4<<20))
+	err = process.send(stackPublicOrigin, strings.Repeat("x", 4<<20))
 	if err == nil || !strings.Contains(err.Error(), "send public_origin command 1: not accepted within 200ms") {
 		t.Fatalf("blocked write: got %v", err)
 	}
@@ -190,7 +197,7 @@ cat > /dev/null`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = process.send("reset_rate_limits", map[string]any{})
+	err = process.send(stackResetRateLimits, map[string]any{})
 	if err == nil || !strings.Contains(err.Error(), "has content after its object") {
 		t.Fatalf("malformed acknowledgement: got %v", err)
 	}
@@ -210,7 +217,7 @@ cat > /dev/null`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := process.send("reset_rate_limits", map[string]any{}); err != nil {
+	if err := process.send(stackResetRateLimits, map[string]any{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := process.stop(); err != nil {
