@@ -27,7 +27,15 @@ _worker_spec.loader.exec_module(_worker_module)
 service_plan = _worker_module.service_plan
 
 
-def runner_args(token, dns_ip, image, profile="portable", server_workers=0):
+def runner_args(
+    token,
+    dns_ip,
+    image,
+    profile="portable",
+    server_workers=0,
+    *,
+    evidence: Path | None = None,
+):
     # Portable direct callers retain their limits; the CCX33 unit stage selects 7.
     cpus, memory = {"portable": ("2", "8g"), "ccx33": ("7", "16g")}[profile]
     worker_env = (
@@ -65,6 +73,13 @@ def runner_args(token, dns_ip, image, profile="portable", server_workers=0):
         "PGPASSWORD=postgres",
         "-e",
         "REDIS_URL=redis://127.0.0.1:6379/0",
+        "-e",
+        "AWEB_TEST_SERVICES=1",
+        *(
+            ["-v", f"{evidence}:/evidence", "-e", "AWEB_UNIT_EVIDENCE_DIR=/evidence"]
+            if evidence is not None
+            else []
+        ),
         *worker_env,
         image,
         "sleep",
@@ -307,6 +322,12 @@ def main():
         parser.error("seven server workers require --profile ccx33")
     args.evidence.mkdir(parents=True, exist_ok=False)
     evidence = args.evidence.resolve()
+    # The runner is UID1000 even on a Mac owned by UID501. Give only its
+    # dedicated output mount write access; the private host parent protects it.
+    evidence.chmod(0o700)
+    service_evidence = evidence / "service"
+    service_evidence.mkdir()
+    service_evidence.chmod(0o777)
     (evidence / "source-sha").write_text(
         subprocess.check_output(
             ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True
@@ -409,7 +430,14 @@ def main():
         info = json.loads(docker("inspect", dns))[0]
         dns_ip = info["NetworkSettings"]["Networks"][token]["IPAddress"]
         runner = docker(
-            *runner_args(token, dns_ip, image, args.profile, args.server_workers)
+            *runner_args(
+                token,
+                dns_ip,
+                image,
+                args.profile,
+                args.server_workers,
+                evidence=service_evidence,
+            )
         )
         containers.append(runner)
         services = []

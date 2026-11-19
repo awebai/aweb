@@ -9,6 +9,7 @@ if [[ "${1:-}" == "--isolated-suites" ]]; then
   run test-server
   run test-awid
   run test-key-holder
+  run test-approval-service
   run test-naapp
   run test-cli
   run test-cli-auth-v2

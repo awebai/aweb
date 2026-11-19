@@ -11,6 +11,8 @@ RUN uv sync --frozen --project server && uv sync --frozen --project awid \
     && uv sync --frozen --project key-holder \
     && make production-awid-sync \
     && cd cli/go && go mod download
+RUN python3 scripts/test-egress/approval_service.py prepare \
+    --source /src --destination /opt/approval-service
 # The isolated runner's Postgres is 17, and pg_dump refuses a newer server, so
 # the tests get the client of the same major version from PGDG.
 RUN bash /src/scripts/test-egress/install-pgdg-key.sh \
@@ -35,5 +37,5 @@ RUN uv build --project server --out-dir /tmp/server-test-build && rm -rf /tmp/se
 RUN cd channel-core && npm ci --no-audit --no-fund \
     && cd ../channel && npm ci --no-audit --no-fund \
     && cd ../pi-extension && npm ci --no-audit --no-fund
-RUN chown -R 1000:1000 /src /home/test-runner
+RUN chown -R 1000:1000 /src /home/test-runner /opt/approval-service
 ENV UV_OFFLINE=1 GOPROXY=off GOSUMDB=off NPM_CONFIG_OFFLINE=true

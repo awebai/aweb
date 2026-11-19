@@ -367,6 +367,19 @@ test-naapp: production-awid-sync
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
+# docs/release.md:165-169 requires the complete product suites at frozen inputs.
+# The isolated image prepares this repository from the committed holder lock.
+APPROVAL_SERVICE_SOURCE ?= /opt/approval-service
+.PHONY: test-approval-service
+test-approval-service:
+	@test -n "$(AWEB_UNIT_EVIDENCE_DIR)" || { echo 'Service evidence directory is missing; run the isolated unit gate.' >&2; exit 2; }
+	python3 scripts/test-egress/approval_service.py verify --source "$(CURDIR)" --destination "$(APPROVAL_SERVICE_SOURCE)"
+	cp "$(APPROVAL_SERVICE_SOURCE)/.gate-prepared.json" "$(AWEB_UNIT_EVIDENCE_DIR)/service-prepared.json"
+	APPROVAL_TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/postgres" \
+		APPROVAL_TEST_REDIS_URL="redis://127.0.0.1:6379/0" \
+		APPROVAL_TEST_COREDNS_BINARY="$(APPROVAL_SERVICE_SOURCE)/.gate-coredns" \
+		$(MAKE) -C "$(APPROVAL_SERVICE_SOURCE)" test JUNIT_XML="$(AWEB_UNIT_EVIDENCE_DIR)/service.xml"
+
 test-awid:
 	cd awid && uv sync --frozen
 	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
