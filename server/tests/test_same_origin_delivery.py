@@ -38,7 +38,7 @@ from aweb.testing import running_server
 from identity_binding_support import register_global_identity
 from test_cli_never_grants import registry_listener
 from test_cli_human_reply import _pem
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -58,7 +58,7 @@ def same_origin_registry_socket():
 
 
 @pytest_asyncio.fixture
-async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):  # noqa: F811
+async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
     env = privacy_app
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "disposable-acst-proxy-secret")
