@@ -19,8 +19,11 @@ _IDENTITY_VECTOR = _ROOT / "docs" / "vectors" / "identity-log-v1.json"
 
 
 @pytest.fixture(autouse=True)
-def _allow_static_vector_timestamps(monkeypatch):
-    monkeypatch.setattr(did_routes, "enforce_timestamp_skew", lambda _timestamp: None)
+def _pin_vector_admission_clock(monkeypatch, register_vector):
+    admission_time = datetime.fromisoformat(
+        register_vector["entry_payload"]["timestamp"].replace("Z", "+00:00")
+    )
+    monkeypatch.setattr(dns_auth, "_utc_now", lambda: admission_time)
     monkeypatch.setattr(
         did_routes,
         "_now",

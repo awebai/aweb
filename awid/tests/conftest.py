@@ -15,6 +15,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from pgdbm import AsyncDatabaseManager
 
+import awid.dns_auth as dns_auth
 from awid.did import did_from_public_key, generate_keypair
 from awid.signing import canonical_json_bytes, sign_message
 from awid.db_config import build_database_config
@@ -115,12 +116,7 @@ async def client(awid_db_infra, fake_redis, fake_domain_verifier):
 
 def build_signed_headers(signing_key, did_key, *, domain, operation, **extra):
     """Build DIDKey Authorization + Timestamp headers for a signed request."""
-    ts = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    ts = dns_auth._utc_now().replace(microsecond=0).isoformat().replace("+00:00", "Z")
     payload = {"domain": domain, "operation": operation, "timestamp": ts}
     payload.update(extra)
     sig = sign_message(signing_key, canonical_json_bytes(payload))

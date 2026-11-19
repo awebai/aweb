@@ -5,9 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
 
-import awid_service.routes.did as did_routes
 import awid.dns_auth as dns_auth
 import awid_service.routes.dns_addresses as dns_addresses_routes
 from awid.atomic_claim import (
@@ -29,11 +27,9 @@ _ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
-def _allow_static_atomic_claim_timestamp(monkeypatch):
-    monkeypatch.setattr(
-        dns_addresses_routes, "enforce_timestamp_skew", lambda _timestamp: None
-    )
-    monkeypatch.setattr(did_routes, "enforce_timestamp_skew", lambda _timestamp: None)
+def _pin_atomic_claim_admission_clock(monkeypatch):
+    now = datetime.fromisoformat(_TS.replace("Z", "+00:00"))
+    monkeypatch.setattr(dns_auth, "_utc_now", lambda: now)
 
 
 def test_atomic_claim_conflict_codes_match_shared_vector():
@@ -672,12 +668,12 @@ async def test_atomic_claim_stale_timestamp_fails_before_writes(
         identity_signing_key=identity_signing_key,
         identity_did_key=identity_did_key,
         controller_signing_key=controller_signing_key,
+        timestamp=(
+            datetime.fromisoformat(_TS.replace("Z", "+00:00")) - timedelta(seconds=301)
+        )
+        .isoformat()
+        .replace("+00:00", "Z"),
     )
-
-    def stale_timestamp(_timestamp):
-        raise HTTPException(status_code=401, detail="stale timestamp")
-
-    monkeypatch.setattr(dns_addresses_routes, "enforce_timestamp_skew", stale_timestamp)
 
     resp = await client.post("/v1/namespaces/example.com/addresses/claims", json=body)
 
