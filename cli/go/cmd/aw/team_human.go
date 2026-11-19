@@ -790,10 +790,14 @@ func finishTeamHumanCreateFounding(result teamHumanCreateFoundingResult, rosterS
 		}
 	}
 	if result.HumanOutput != nil {
-		printOutput(*result.HumanOutput, formatTeamHumanCreate)
+		if err := printOutput(*result.HumanOutput, formatTeamHumanCreate); err != nil {
+			return err
+		}
 	}
 	if result.TeamOutput != nil {
-		printOutput(*result.TeamOutput, formatTeamCreate)
+		if err := printOutput(*result.TeamOutput, formatTeamCreate); err != nil {
+			return err
+		}
 	}
 	if result.GuidedResult != nil && !jsonFlag {
 		initPrintGuidedOnboardingReady(result.GuidedResult)
@@ -1611,7 +1615,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	createdTeamID := ""
 	reportRosterFailure := func(failedIndex int, failure error) error {
 		failedPlans := teamHumanAddFailurePlans(plans, failedIndex, failure)
-		printOutput(teamHumanAddOutput{
+		if err := printOutput(teamHumanAddOutput{
 			Status:        "failed",
 			AgentsRoot:    agentsRoot,
 			TeamID:        teamHumanAddResolvedTeamID(createdTeamID, failedPlans),
@@ -1621,7 +1625,9 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			NoLibrary:     noLibrary,
 			NoProfile:     noProfile,
 			Agents:        failedPlans,
-		}, formatTeamHumanAdd)
+		}, formatTeamHumanAdd); err != nil {
+			return errors.Join(failure, err)
+		}
 		return failure
 	}
 	for i := range plans {
@@ -1717,7 +1723,9 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		status = "added"
 	}
 	outputTeamID := teamHumanAddResolvedTeamID(createdTeamID, plans)
-	printOutput(teamHumanAddOutput{Status: status, AgentsRoot: agentsRoot, TeamID: outputTeamID, AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier), HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd)
+	if err := printOutput(teamHumanAddOutput{Status: status, AgentsRoot: agentsRoot, TeamID: outputTeamID, AuthorityTier: strings.TrimSpace(opts.OutputAuthorityTier), HomeOverride: explicitHome != "", LayoutOnly: teamHumanAddLayoutOnly, NoLibrary: noLibrary, NoProfile: noProfile, Agents: plans}, formatTeamHumanAdd); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -2545,7 +2553,9 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 			if listErr != nil {
 				return listErr
 			}
-			printOutput(operations, formatHostedRemovalList)
+			if err := printOutput(operations, formatHostedRemovalList); err != nil {
+				return err
+			}
 			return nil
 		case strings.TrimSpace(teamHumanRemoveAbortOperation) != "":
 			operationID := strings.TrimSpace(teamHumanRemoveAbortOperation)
@@ -2572,14 +2582,18 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 			if err := clearHostedRemovalRecovery(workingDir, operationID); err != nil {
 				return fmt.Errorf("hosted removal %s reached %s but local recovery cleanup failed: %w", operationID, aborted.Status, err)
 			}
-			printOutput(aborted, formatHostedRemovalOperation)
+			if err := printOutput(aborted, formatHostedRemovalOperation); err != nil {
+				return err
+			}
 			return nil
 		default:
 			operation, resumeErr := resumeHostedRemoval(ctx, client, workingDir, teamID, strings.TrimSpace(teamHumanRemoveResumeOperation))
 			if resumeErr != nil {
 				return resumeErr
 			}
-			printOutput(operation, formatHostedRemovalOperation)
+			if err := printOutput(operation, formatHostedRemovalOperation); err != nil {
+				return err
+			}
 			return nil
 		}
 	}
@@ -2611,7 +2625,9 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 			}
 			out, hostedErr := runHostedLocalRemoval(ctx, client, workingDir, teamID, teamRemoveMember, *workspace)
 			if out.TeamID != "" {
-				printOutput(out, formatTeamRemoveAgent)
+				if err := printOutput(out, formatTeamRemoveAgent); err != nil {
+					return err
+				}
 			}
 			if hostedErr != nil || !retirementSucceeded(out.Status) {
 				if hostedErr != nil {
@@ -2645,7 +2661,9 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	out := retireTeamAgent(ctx, client, teamID, teamRemoveMember, alias, verified != nil, func(ctx context.Context) (certificateStoreResult, error) {
 		return revokeTeamCertificate(ctx, domain, name, teamID, teamRemoveMember, verified)
 	})
-	printOutput(out, formatTeamRemoveAgent)
+	if err := printOutput(out, formatTeamRemoveAgent); err != nil {
+		return err
+	}
 	if !retirementSucceeded(out.Status) {
 		return &cliError{code: 1, msg: fmt.Sprintf("%s is not fully retired; see the per-store results above", teamRemoveMember)}
 	}

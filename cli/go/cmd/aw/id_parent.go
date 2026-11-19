@@ -417,7 +417,9 @@ func runIDParentImport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDParentImport)
+	if err := printOutput(out, formatIDParentImport); err != nil {
+		return err
+	}
 	return nil
 }
 

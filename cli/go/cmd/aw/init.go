@@ -1386,16 +1386,20 @@ func printInitOutcome(out connectOutput, result *initResult, workingDir string, 
 		}
 		out.NextSteps = initNextStepsAfter(result, workingDir, done)
 		out.Guide = initGuideURL
-		printOutput(out, formatConnect)
+		if err := printOutput(out, formatConnect); err != nil {
+			return err
+		}
 		return nil
 	}
-	printOutput(out, formatConnect)
+	if err := printOutput(out, formatConnect); err != nil {
+		return err
+	}
 	done, err := setup()
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(commandStdout, formatInitNextSteps(initNextStepsAfter(result, workingDir, done), !done.ChannelGuidancePrinted))
-	return nil
+	_, err = fmt.Fprint(commandStdout, formatInitNextSteps(initNextStepsAfter(result, workingDir, done), !done.ChannelGuidancePrinted))
+	return err
 }
 
 // initDefaultSetup injects the default docs and runs the requested post-init

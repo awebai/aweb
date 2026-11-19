@@ -79,7 +79,9 @@ func runServiceInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(result, formatConnect)
+	if err := printOutput(result, formatConnect); err != nil {
+		return err
+	}
 	return nil
 }
 

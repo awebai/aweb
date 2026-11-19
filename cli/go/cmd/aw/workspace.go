@@ -278,7 +278,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	printOutput(workspaceStatusOutput{
+	if err := printOutput(workspaceStatusOutput{
 		SelectedTeam:       strings.TrimSpace(sel.TeamID),
 		Memberships:        membershipItemsForWorkspaceState(state, teamState, strings.TrimSpace(sel.TeamID), workspaceStatusAll),
 		Workspace:          self,
@@ -290,7 +290,9 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		TeamLocks:          teamLocks,
 		EscalationsPending: statusResp.EscalationsPending,
 		ConflictCount:      len(statusResp.Conflicts),
-	}, formatWorkspaceStatus)
+	}, formatWorkspaceStatus); err != nil {
+		return err
+	}
 
 	// Opportunistically clean up workspaces whose directories have disappeared.
 	if gone := detectGoneWorkspaces(client, workspaceID); len(gone) > 0 {
@@ -396,7 +398,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 				retired.AliasReleasedReason,
 			)
 		}
-		printOutput(workspaceDeleteOutput{
+		if err := printOutput(workspaceDeleteOutput{
 			WorkspaceID: retired.WorkspaceID,
 			Alias:       retired.Alias,
 			// Empty on purpose: the retirement response does not carry the
@@ -407,7 +409,9 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 			IdentityDeleted:     true,
 			AliasReleased:       true,
 			AliasReleasedReason: retired.AliasReleasedReason,
-		}, formatWorkspaceDelete)
+		}, formatWorkspaceDelete); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -423,7 +427,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	if deleteResp == nil {
 		return fmt.Errorf("workspace %s not found or already deleted", workspaceID)
 	}
-	printOutput(workspaceDeleteOutput{
+	if err := printOutput(workspaceDeleteOutput{
 		WorkspaceID: deleteResp.WorkspaceID,
 		Alias:       deleteResp.Alias,
 		DeletedAt:   deleteResp.DeletedAt,
@@ -433,7 +437,9 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		IdentityDeleted:     deleteResp.IdentityDeleted,
 		AliasReleased:       false,
 		AliasReleasedReason: plan.reason,
-	}, formatWorkspaceDelete)
+	}, formatWorkspaceDelete); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -604,9 +610,13 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		WorktreePath: worktreePath,
 	}
 	if jsonFlag {
-		printJSON(output)
+		if err := printJSON(output); err != nil {
+			return err
+		}
 	} else {
-		printOutput(output, formatWorkspaceAddWorktree)
+		if err := printOutput(output, formatWorkspaceAddWorktree); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -645,7 +655,9 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 		if activeMembership := awconfig.ActiveMembershipFor(workspace, teamState); activeMembership != nil {
 			output.CertPath = strings.TrimSpace(activeMembership.CertPath)
 		}
-		printOutput(output, formatWorkspaceMigrateMultiTeam)
+		if err := printOutput(output, formatWorkspaceMigrateMultiTeam); err != nil {
+			return err
+		}
 		return nil
 	} else if err != nil && !errors.Is(err, awconfig.ErrLegacyWorkspaceSingleTeam) {
 		return err
@@ -655,7 +667,9 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(output, formatWorkspaceMigrateMultiTeam)
+	if err := printOutput(output, formatWorkspaceMigrateMultiTeam); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -300,7 +300,9 @@ func runIDChildInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDChildInvite)
+	if err := printOutput(out, formatIDChildInvite); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -360,7 +362,9 @@ func runIDChildReceive(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDChildRequest)
+	if err := printOutput(out, formatIDChildRequest); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -574,7 +578,9 @@ func runIDChildPending(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(listed, formatIDChildPending)
+	if err := printOutput(listed, formatIDChildPending); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -583,7 +589,9 @@ func runIDChildShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatIDChildRequest)
+	if err := printOutput(out, formatIDChildRequest); err != nil {
+		return err
+	}
 	return nil
 }
 
