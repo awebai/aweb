@@ -30,10 +30,9 @@ async def test_three_registered_members_connect_back_to_back_without_sleep(
 
         async def namespace_authority(domain: str) -> DomainAuthority:
             assert domain == "example.test"
-            return DomainAuthority(env.team_did, origin, "_awid.example.test")
+            return DomainAuthority(env.namespace_did, origin, "_awid.example.test")
 
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: namespace_authority
-        await writer.register_namespace("example.test", env.team_did, env.team_sk)
         name = "join-" + uuid4().hex[:12]
         team_id = name + ":example.test"
         await writer.register_team(
@@ -42,7 +41,7 @@ async def test_three_registered_members_connect_back_to_back_without_sleep(
             display_name="Join together",
             team_did_key=env.team_did,
             visibility="public",
-            namespace_controller_signing_key=env.team_sk,
+            namespace_controller_signing_key=env.namespace_sk,
         )
         async with aclosing(
             CachedRegistryClient(
