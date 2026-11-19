@@ -27,6 +27,48 @@ PUBLIC_REGISTRY_ORIGIN = "https://api.awid.ai"
 AUTHORITY_STATEMENT_VERSION = "aweb.federation-authority.dns.v1"
 _DNS_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
 
+# docs/aweb-sot.md, Outbound delivery transport, defines these conservative
+# tables; federation-origin-ip-v1.json freezes the Python/Go contract. Parsing
+# addresses is a stdlib task, but runtime classification metadata is not policy.
+_NONPUBLIC_IPV4 = tuple(
+    ipaddress.IPv4Network(value)
+    for value in (
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.0.0.0/24",
+        "192.0.2.0/24",
+        "192.168.0.0/16",
+        "198.18.0.0/15",
+        "198.51.100.0/24",
+        "203.0.113.0/24",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+    )
+)
+_PUBLIC_IPV4_EXCEPTIONS = frozenset(
+    (ipaddress.IPv4Address("192.0.0.9"), ipaddress.IPv4Address("192.0.0.10"))
+)
+_GLOBAL_UNICAST_IPV6 = ipaddress.IPv6Network("2000::/3")
+_NONPUBLIC_IPV6 = tuple(
+    ipaddress.IPv6Network(value)
+    for value in ("2001::/23", "2001:db8::/32", "2002::/16", "3fff::/20")
+)
+_PUBLIC_IPV6_EXCEPTIONS = tuple(
+    ipaddress.IPv6Network(value)
+    for value in (
+        "2001:1::1/128",
+        "2001:1::2/128",
+        "2001:3::/32",
+        "2001:4:112::/48",
+        "2001:20::/28",
+        "2001:30::/28",
+    )
+)
+
 
 @dataclass(frozen=True)
 class DNSLookup:
@@ -312,15 +354,13 @@ def _is_allowed_external_ip(value: str) -> bool:
         return False
     if address.version == 6 and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
-    # Deprecated IPv6 site-local fec0::/10 is not globally routable, though
-    # ipaddress reports it global.
-    if address.version == 6 and address.is_site_local:
-        return False
-    return (
-        address.is_global
-        and not address.is_multicast
-        and not address.is_reserved
-        and not address.is_unspecified
+    if address.version == 4:
+        return address in _PUBLIC_IPV4_EXCEPTIONS or not any(
+            address in network for network in _NONPUBLIC_IPV4
+        )
+    return address in _GLOBAL_UNICAST_IPV6 and (
+        any(address in network for network in _PUBLIC_IPV6_EXCEPTIONS)
+        or not any(address in network for network in _NONPUBLIC_IPV6)
     )
 
 
