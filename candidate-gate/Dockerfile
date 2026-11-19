@@ -55,7 +55,9 @@ RUN uv run --frozen --no-sync --project naapp-lib \
 # no image builds, dependency installs or registry pulls.
 RUN uv sync --frozen --no-dev --project server
 COPY cli/go /opt/user-paths/go
-RUN cd /opt/user-paths/go && CGO_ENABLED=0 go build -trimpath -o /opt/user-paths/aw ./cmd/aw
+ARG USER_PATHS_SOURCE_SHA
+RUN cd /opt/user-paths/go && CGO_ENABLED=0 go build -trimpath \
+    -ldflags "-X main.commit=${USER_PATHS_SOURCE_SHA}" -o /opt/user-paths/aw ./cmd/aw
 COPY channel-core/package.json channel-core/package-lock.json /journey/channel-core/
 WORKDIR /journey/channel-core
 RUN npm ci
@@ -63,6 +65,8 @@ COPY channel-core/tsconfig.json ./
 COPY channel-core/src ./src
 RUN npm run build
 COPY --from=coredns/coredns:1.11.3 /coredns /opt/user-paths/coredns
+# Public runtime code is consumed by the host UID, not the image builder UID.
+RUN chmod -R a+rX /opt/candidate-browser /opt/user-paths /journey/channel-core
 ARG USER_PATHS_SOURCE_TREE
-LABEL aweb.user-paths-ready="1" aweb.user-paths-source-tree="${USER_PATHS_SOURCE_TREE}"
+LABEL aweb.user-paths-ready="1" aweb.user-paths-source-tree="${USER_PATHS_SOURCE_TREE}" aweb.user-paths-source-sha="${USER_PATHS_SOURCE_SHA}"
 WORKDIR /

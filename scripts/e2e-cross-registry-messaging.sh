@@ -529,6 +529,8 @@ ALICE_DID_AW="$(printf '%s' "$alice_create" | json_field did_aw)"
 BOB_DID_AW="$(printf '%s' "$bob_create" | json_field did_aw)"
 compose run --rm -T --no-deps --entrypoint id-tree-verifier cli
 compose cp "$ROOT/scripts/cross-registry-python-verifier.py" awid-b:/tmp/cross-registry-python-verifier.py
+# docker cp preserves host modes but the verifier runs as the registry UID.
+compose exec -T --user root awid-b chmod 0644 /tmp/cross-registry-python-verifier.py
 compose exec -T awid-b python /tmp/cross-registry-python-verifier.py < "$WORK_DIR/journey-public.json"
 # Membership and connection are not ancestry: joining a team, connecting to
 # aweb and later leaving the team keep each identity and its exact chain.
