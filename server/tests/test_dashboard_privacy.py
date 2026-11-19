@@ -109,6 +109,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, outbox_recov
                 registry_url="http://registry.test",
                 transport=httpx.ASGITransport(app=registry_app),
                 service_token=service_token,
+                domain_verifier=fixture_registry.namespace_authority,
             )
             app = create_app(
                 host_runs_outbox_recovery=outbox_recovery is OutboxRecoveryOwnership.HOST,
