@@ -20,12 +20,30 @@
     detail.textContent = String(value);
     list.append(term, detail);
   }
-  function textBlock(parent, title, value) {
+  function appendTextBlock({parent, title, value}) {
     const heading = document.createElement("h3");
     const text = document.createElement("pre");
     heading.textContent = title;
     text.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
     parent.append(heading, text);
+  }
+  function renderFrozenHeaders({action, headers}) {
+    // Frozen request disclosure: docs/design/secrets.md §10.4, line 1768.
+    const lines = headers.map(({name, value}) => `${name}: ${value}`);
+    appendTextBlock({parent: action, title: "Headers", value: lines.join("\n")});
+  }
+  function renderOpenRequest({facts, action, request}) {
+    // Full open-request disclosure: docs/design/secrets.md §10.4, line 1768.
+    fact(facts, "Method", request.method);
+    fact(facts, "Host (Unicode)", request.host_unicode);
+    fact(facts, "Host (A-label)", request.host);
+    const url = document.createElement("p");
+    const host = document.createElement("strong");
+    host.textContent = request.host;
+    url.append(document.createTextNode(request.url_before_host), host, document.createTextNode(request.url_after_host));
+    action.append(url);
+    renderFrozenHeaders({action, headers: request.headers});
+    appendTextBlock({parent: action, title: "Complete request body", value: request.body_text});
   }
   function render(result) {
     const v = result.view;
@@ -42,20 +60,11 @@
     if (v.operation) {
       fact(facts, "Operation", v.operation.operation_id);
       fact(facts, "Operation digest", v.operation.operation_digest);
-      textBlock(action, "Parameters", v.operation.params);
+      appendTextBlock({parent: action, title: "Parameters", value: v.operation.params});
+      renderFrozenHeaders({action, headers: v.operation.headers});
     }
     if (v.open_request) {
-      const r = v.open_request;
-      fact(facts, "Method", r.method);
-      fact(facts, "Host (Unicode)", r.host_unicode);
-      fact(facts, "Host (A-label)", r.host);
-      const url = document.createElement("p");
-      const host = document.createElement("strong");
-      host.textContent = r.host;
-      url.append(document.createTextNode(r.url_before_host), host, document.createTextNode(r.url_after_host));
-      action.append(url);
-      fact(facts, "Header names", r.header_names.join(", "));
-      textBlock(action, "Complete request body", r.body_text);
+      renderOpenRequest({facts, action, request: v.open_request});
     }
     if (v.job) {
       const j = v.job;
@@ -72,10 +81,10 @@
         warning.append(strong);
         action.append(warning);
       }
-      textBlock(action, "Job parameters", j.params);
-      if (j.frozen_plan) textBlock(action, "Frozen job and credential slots", j.frozen_plan);
-      if (j.mint_params) textBlock(action, "Credential operation parameters", j.mint_params);
-      if (j.child_grant_template) textBlock(action, "Resulting credential grant", j.child_grant_template);
+      appendTextBlock({parent: action, title: "Job parameters", value: j.params});
+      if (j.frozen_plan) appendTextBlock({parent: action, title: "Frozen job and credential slots", value: j.frozen_plan});
+      if (j.mint_params) appendTextBlock({parent: action, title: "Credential operation parameters", value: j.mint_params});
+      if (j.child_grant_template) appendTextBlock({parent: action, title: "Resulting credential grant", value: j.child_grant_template});
     }
     panel.querySelector("#request-reason").textContent = v.untrusted_reason;
     review.hidden = false;

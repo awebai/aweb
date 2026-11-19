@@ -11,6 +11,7 @@ from aweb_naapp.runtime.approvals import Decision
 
 from aweb_secrets import records
 from aweb_secrets.runner_protocol import canonical
+from tests.run_world import RunApproval
 from tests.test_broker_audit import envelopes
 from tests.test_run_dispatch_service import decide, report, setup
 from tests.test_use_approvals import uses as uses
@@ -26,7 +27,7 @@ def changed(context, **changes):
 
 
 async def test_run_approval_assignment_result_replay_and_distinct_execution_refs(uses):
-    context = await setup(uses, approval_required=True)
+    context = await setup(uses, approval=RunApproval.PER_USE)
     marker = secrets.token_urlsafe(32)
     request = changed(context, request_id=marker)
     first = await context.service.submit(job=context.job.job_id, submission=request)

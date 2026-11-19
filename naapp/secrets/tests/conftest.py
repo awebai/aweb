@@ -54,6 +54,18 @@ def production_settings():
 
 
 @pytest.fixture
+def onepassword_values(monkeypatch):
+    """Replace only the official SDK edge; each test retains its own Item state."""
+    from onepassword import Client
+
+    from tests.value_sources import OnePasswordValues
+
+    values = OnePasswordValues()
+    monkeypatch.setattr(Client, "authenticate", values.authenticate)
+    return values
+
+
+@pytest.fixture
 def console_listener(console_tls):
     import socket
     from types import SimpleNamespace

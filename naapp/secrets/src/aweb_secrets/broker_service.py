@@ -66,8 +66,9 @@ from aweb_secrets.broker_audit import (
 )
 from aweb_secrets.broker_fence import BrokerFence, PreparedBrokerCall
 from aweb_secrets.broker_input import BrokerInput
-from aweb_secrets.broker_outcomes import durable_broker_receipt
+from aweb_secrets.broker_outcomes import NOT_SENT_MESSAGE, durable_broker_receipt
 from aweb_secrets.custody import CustodyUnavailable, SealContext, ValueInvalid, decode_value
+from aweb_secrets.custody.onepassword import SecretValueInvalid
 from aweb_secrets.custody.opening import BackendObservation, UseSecretOpener
 from aweb_secrets.member_types import MemberSubmission, ToolReply, broker_result_reply
 from aweb_secrets.onepassword_reconciliation import BackendReconciler
@@ -110,6 +111,13 @@ class _PreparedUse:
     inputs: BrokerInput
     dispatch_id: UUID
     call: PreparedBrokerCall
+
+
+@dataclass(frozen=True, kw_only=True)
+class _BrokerSendOutcome:
+    state: State
+    reply: ToolReply
+    audit: dict[str, Any] | None
 
 
 class _PublicationFence:
@@ -551,9 +559,10 @@ class BrokerRequests:
                                 opened
                                 if opened is not None
                                 else BrokerOperation(
-                                    inputs.request.operation_id or "",
-                                    inputs.operation_digest or "",
-                                    inputs.request.params or {},
+                                    operation_id=inputs.request.operation_id or "",
+                                    operation_digest=inputs.operation_digest or "",
+                                    params=inputs.request.params or {},
+                                    headers=inputs.headers,
                                 )
                             )
                             if self._use_audit is None:
@@ -817,8 +826,42 @@ class BrokerRequests:
                 )
                 await self._fence.check(tx, scope)
                 return reply
-        request_id, request_ref = use.inputs.request.request_id, use.admission.intent_id
+        outcome = await self._send_outcome(
+            call=call,
+            request_id=use.inputs.request.request_id,
+            request_ref=use.admission.intent_id,
+            send_until=send_until,
+        )
+        async with self._db.transaction() as tx:
+            approval = await self._lock_outcome(tx, use.dispatch_id)
+            committed = await self._settle_locked(
+                tx,
+                use.dispatch_id,
+                outcome.state,
+                outcome.reply,
+                outcome.audit,
+                approval,
+                expected_attempt=current.attempts,
+            )
+            if not committed:
+                return await self._receipt(tx, use.admission, use.dispatch_id)
+        return outcome.reply
+
+    async def _send_outcome(
+        self,
+        *,
+        call: PreparedBrokerCall,
+        request_id: str,
+        request_ref: str,
+        send_until: float,
+    ) -> _BrokerSendOutcome:
+        """Classify the committed attempt's external work before settlement (§7.6).
+
+        This performs custody and egress I/O, retaining no database transaction.
+        The caller settles this result against the original dispatch attempt.
+        """
         audit = None
+        message = NOT_SENT_MESSAGE
         sending = False
         try:
             async with asyncio.timeout_at(send_until):
@@ -845,7 +888,9 @@ class BrokerRequests:
             state = State.OUTCOME_UNKNOWN
         except TimeoutError:
             state = State.OUTCOME_UNKNOWN if sending else State.NOT_SENT
-        except (CustodyUnavailable, ValueInvalid, EgressRefused, EgressNotSent):
+        except (ValueInvalid, SecretValueInvalid) as invalid:
+            state, message = State.NOT_SENT, str(invalid)
+        except (CustodyUnavailable, EgressRefused, EgressNotSent):
             state = State.NOT_SENT
         if state is State.OUTCOME_UNKNOWN:
             reply = ToolReply(
@@ -855,26 +900,14 @@ class BrokerRequests:
             reply = ToolReply(
                 503,
                 {
-                    "state": "not_sent",
+                    "state": State.NOT_SENT.value,
+                    "message": message,
                     "request_id": request_id,
                     "request_ref": request_ref,
                     "next": "resubmit",
                 },
             )
-        async with self._db.transaction() as tx:
-            approval = await self._lock_outcome(tx, use.dispatch_id)
-            committed = await self._settle_locked(
-                tx,
-                use.dispatch_id,
-                state,
-                reply,
-                audit,
-                approval,
-                expected_attempt=current.attempts,
-            )
-            if not committed:
-                return await self._receipt(tx, use.admission, use.dispatch_id)
-        return reply
+        return _BrokerSendOutcome(state=state, reply=reply, audit=audit)
 
     async def _lock_outcome(self, tx: TransactionManager, dispatch_id: UUID) -> Approval | None:
         row = await tx.fetch_one(

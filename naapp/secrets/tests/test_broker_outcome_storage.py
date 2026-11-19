@@ -57,11 +57,13 @@ def _create_route(upstream, document):
         return JSONResponse(document, status_code=201)
 
 
-async def test_provider_password_reaches_neither_the_agent_nor_any_table(db, fence, tmp_path):
+async def test_provider_password_reaches_neither_the_agent_nor_any_table(
+    onepassword_values, db, fence, tmp_path
+):
     password = secrets.token_urlsafe(24)
     async with running_upstream(tmp_path) as upstream:
         _create_route(upstream, {"server": {"id": 7}, "root_password": password})
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         reply = await service.submit(
             secret=SECRET["ref"],
             submission=submission(upstream, url=upstream.url("/bearer/create-server")),
@@ -75,11 +77,13 @@ async def test_provider_password_reaches_neither_the_agent_nor_any_table(db, fen
         assert upstream.paths == ["/bearer/create-server"]
 
 
-async def test_even_a_harmless_live_body_is_not_persisted_or_replayed(db, fence, tmp_path):
+async def test_even_a_harmless_live_body_is_not_persisted_or_replayed(
+    onepassword_values, db, fence, tmp_path
+):
     marker = secrets.token_hex(24)
     async with running_upstream(tmp_path) as upstream:
         _create_route(upstream, {"server": {"id": 7}, "message": marker})
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         original = submission(upstream, url=upstream.url("/bearer/create-server"))
         live = await service.submit(secret=SECRET["ref"], submission=original)
         assert live.body["state"] == "completed"
@@ -92,9 +96,11 @@ async def test_even_a_harmless_live_body_is_not_persisted_or_replayed(db, fence,
         assert upstream.paths == ["/bearer/create-server"]
 
 
-async def test_a_recorded_dispatch_outcome_cannot_be_overwritten(db, fence, tmp_path):
+async def test_a_recorded_dispatch_outcome_cannot_be_overwritten(
+    onepassword_values, db, fence, tmp_path
+):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         reply = await service.submit(secret=SECRET["ref"], submission=submission(upstream))
         assert reply.body["state"] == "completed"
         with pytest.raises(asyncpg.PostgresError):
@@ -103,7 +109,7 @@ async def test_a_recorded_dispatch_outcome_cannot_be_overwritten(db, fence, tmp_
 
 
 async def test_a_late_live_response_is_metadata_only_and_cannot_replace_unknown(
-    db, fence, tmp_path
+    onepassword_values, db, fence, tmp_path
 ):
     marker, header = (secrets.token_hex(24) for _ in range(2))
     entered, release = asyncio.Event(), asyncio.Event()
@@ -117,7 +123,7 @@ async def test_a_late_live_response_is_metadata_only_and_cannot_replace_unknown(
             await release.wait()
             return JSONResponse({"message": marker}, status_code=201, headers={"ETag": header})
 
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         task = asyncio.create_task(
             service.submit(
                 secret=SECRET["ref"],

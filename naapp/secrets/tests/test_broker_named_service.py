@@ -38,10 +38,10 @@ def named(upstream, *, request_id="named-use", amount=10):
 
 
 async def test_named_effects_are_pinned_but_terminal_replay_never_renders_an_edited_template(
-    db, fence, tmp_path
+    onepassword_values, db, fence, tmp_path
 ):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         after = copy.deepcopy(REFUND)
         after.update(
             operation_id="echo",

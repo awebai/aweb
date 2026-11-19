@@ -12,11 +12,10 @@ from nacl.signing import SigningKey
 from aweb_secrets import records
 from aweb_secrets.app import create_app
 from aweb_secrets.containment_routes import containment_api_router
-from aweb_secrets.custody import encode_value
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.policy import Policy
-from aweb_secrets.secret import SecretRecord
+from aweb_secrets.secret import SecretBackend, SecretKind, SecretRecord
 from aweb_secrets.tokens import TokenKey
 from aweb_secrets.use_routes import UseServices, use_router
 from tests.harness import running_upstream
@@ -55,7 +54,8 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
                 **SECRET,
                 "secret_id": "sec_oauth001",
                 "ref": "oauth-service",
-                "kind": "oauth2-client-credentials",
+                "kind": SecretKind.OAUTH2_CLIENT_CREDENTIALS,
+                "backend": SecretBackend.ONEPASSWORD,
                 "kind_params": {
                     "token_endpoint": upstream.url("/oauth2/token"),
                     "client_auth": "client_secret_basic",
@@ -66,22 +66,20 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
         policy = Policy.from_body(POLICY_BODY)
         async with db.transaction() as tx:
             await records.create_secret(tx, scope.installation_id, TEAM, record)
-            version = await uses.world.custody.sealer.ingest(
-                tx,
-                installation_id=scope.installation_id,
-                team_id=TEAM,
-                secret_id=record.secret_id,
-                value=encode_value(
-                    record.kind,
-                    {
-                        "client_id": upstream.creds.oauth_client_id,
-                        "client_secret": upstream.creds.oauth_client_secret,
-                    },
-                ),
-            )
-            await records.set_active_version(
-                tx, scope.installation_id, TEAM, record.secret_id, version
-            )
+        if uses.values is None:
+            raise AssertionError("the broker world requires its SDK boundary")
+        context = await uses.values.activate(
+            db=db,
+            custody=uses.world.custody,
+            installation_id=scope.installation_id,
+            team_id=TEAM,
+            record=record,
+            values={
+                "client_id": upstream.creds.oauth_client_id,
+                "client_secret": upstream.creds.oauth_client_secret,
+            },
+        )
+        async with db.transaction() as tx:
             await records.create_policy(tx, scope.installation_id, policy, team_id=TEAM)
             await records.create_grant(
                 tx,
@@ -199,7 +197,7 @@ async def test_disable_worker_a_stops_worker_b_while_its_actual_token_remains_ca
                     scope.installation_id,
                     TEAM,
                     record.secret_id,
-                    version,
+                    context.version,
                     upstream.url("/oauth2/token"),
                     upstream.creds.oauth_scope,
                 )

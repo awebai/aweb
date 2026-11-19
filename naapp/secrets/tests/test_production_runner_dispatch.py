@@ -45,9 +45,11 @@ def runner_headers(request, origin, path, body=b"{}"):
     }
 
 
-async def test_approved_production_run_reaches_signed_sealed_assignment_and_member_result(root):
+async def test_approved_production_run_reaches_signed_sealed_assignment_and_member_result(
+    onepassword_values, root
+):
     service, client, configured, member, *_ = root
-    request = await admitted_run(root)
+    request = await admitted_run(root, onepassword_values=onepassword_values)
     origin = configured.public_origin
     db = service.runtime.db()
     claim_path = "/runner/v1/claim"

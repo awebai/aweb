@@ -185,6 +185,30 @@ human_app.include_router(
 )
 ```
 
+The production human console offers native entry at `/secrets/native/new`, also
+linked from `/secrets/new`. The form supports each authentication kind's
+structured value and shares the non-secret parameter controls with reference
+entry. It clears entered values before sending, retains them in no browser
+storage, and shows only the staged version and creation time.
+
+`POST /installations/{installation_id}/native/versions` takes exactly
+`{secret, value}`: a complete native secret record and the kind's structured
+value. The current owner passkey session and tab CSRF are required. The sole
+native ingress writer reuses the shared codec and sealer, then rechecks the
+installation and session after allocation. It returns only
+`{secret_id, version, created_at}`. Staging creates no active secret or grant.
+The form drafts `secret/create` and `secret_value/create` with the sealed locator;
+the existing fresh passkey approval and confirmation activate the value and
+record its governance events. Granting an agent access remains a separate
+owner-confirmed change.
+
+If saving a draft is not confirmed, the form prevents another submission.
+Check the approval email for its review link before re-entering the value.
+If no link arrived, reload the entry page to start with a fresh secret ID;
+unused sealed copies remain inactive. A custody refusal can reflect deployment
+readiness or a transient provider failure; the operator checks readiness before
+the owner enters the value again.
+
 `POST /installations/{installation_id}/backend-credentials/onepassword/versions`
 accepts a JSON object with one `value` string and the current tab's
 `X-CSRF-Token`. It uses the authoritative installation lookup, current owner
@@ -407,7 +431,7 @@ reason=...)` accepts only the internal planner's `PreparedRun`. The planner
 already holds installation, requester roles, full ancestry/grant unions and
 CURRENT runner/job/operation/template locks. S12 locks one sorted covering-record
 union for the run, intersects parent/template policy scopes per slot, and mints
-one approval for each required slot. The signed use-approval/1 `run_job` keeps
+one approval for each required slot. The signed use-approval/2 `run_job` keeps
 exactly its existing five fields. After authorizing the B2 ceremony, the console
 calls `run_approval_view(tx, installation_id=..., team_id=..., approval_id=...)`
 to read the complete plan, original ordinal, actual mapped issuer values and

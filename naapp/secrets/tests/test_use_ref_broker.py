@@ -57,9 +57,11 @@ async def snapshot(db):
     }
 
 
-async def test_broker_public_ref_is_stable_through_send_and_stored_replay(db, fence, tmp_path):
+async def test_broker_public_ref_is_stable_through_send_and_stored_replay(
+    onepassword_values, db, fence, tmp_path
+):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         marker = secrets.token_urlsafe(32)
         original = submission(upstream, request_id=marker)
         reply = await service.submit(secret=SECRET["ref"], submission=original)
@@ -77,10 +79,10 @@ async def test_broker_public_ref_is_stable_through_send_and_stored_replay(db, fe
 
 @pytest.mark.parametrize("injected", [False, True])
 async def test_each_committed_pre_admission_refusal_has_a_new_public_ref(
-    db, fence, tmp_path, injected
+    onepassword_values, db, fence, tmp_path, injected
 ):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         if not injected:
             async with db.transaction() as tx:
                 await records.revoke_grant(tx, INSTALLATION, "grt_alice001")
@@ -108,9 +110,11 @@ async def test_each_committed_pre_admission_refusal_has_a_new_public_ref(
         assert upstream.paths == []
 
 
-async def test_broker_refusal_of_an_existing_use_retains_the_original_ref(db, fence, tmp_path):
+async def test_broker_refusal_of_an_existing_use_retains_the_original_ref(
+    onepassword_values, db, fence, tmp_path
+):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         original = submission(upstream)
         completed = await service.submit(secret=SECRET["ref"], submission=original)
         async with db.transaction() as tx:
@@ -125,10 +129,10 @@ async def test_broker_refusal_of_an_existing_use_retains_the_original_ref(db, fe
 
 
 async def test_failed_refusal_recording_rolls_back_both_records_and_presents_no_ref(
-    db, fence, tmp_path
+    onepassword_values, db, fence, tmp_path
 ):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         async with db.transaction() as tx:
             await records.revoke_grant(tx, INSTALLATION, "grt_alice001")
         await db.execute(
@@ -143,9 +147,11 @@ async def test_failed_refusal_recording_rolls_back_both_records_and_presents_no_
         assert await snapshot(db) == before
 
 
-async def test_unattributed_submission_presents_no_audit_ref(db, fence, tmp_path):
+async def test_unattributed_submission_presents_no_audit_ref(
+    onepassword_values, db, fence, tmp_path
+):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         original = submission(upstream)
         invalid = replace(
             original,

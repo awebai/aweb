@@ -11,21 +11,42 @@ import re
 import secrets as random
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 from aweb_naapp.egress import EgressRefused, canonical_url
+from aweb_secrets_values import ValueKind as SecretKind
 
-KINDS = (
-    "bearer",
-    "basic",
-    "header",
-    "query",
-    "oauth2-client-credentials",
-    "aws-sigv4",
+
+class SecretBackend(StrEnum):
+    NATIVE = "native"
+    ONEPASSWORD = "onepassword"
+
+
+class SecretSensitivity(StrEnum):
+    STANDARD = "standard"
+    SENSITIVE = "sensitive"
+
+
+class ClientAuthentication(StrEnum):
+    BASIC = "client_secret_basic"
+    POST = "client_secret_post"
+
+
+KINDS = tuple(
+    kind.value
+    for kind in (
+        SecretKind.BEARER,
+        SecretKind.BASIC,
+        SecretKind.HEADER,
+        SecretKind.QUERY,
+        SecretKind.OAUTH2_CLIENT_CREDENTIALS,
+        SecretKind.AWS_SIGV4,
+    )
 )
-SENSITIVITIES = ("standard", "sensitive")
-BACKENDS = ("native", "onepassword")
-CLIENT_AUTHS = ("client_secret_basic", "client_secret_post")
+SENSITIVITIES = tuple(level.value for level in SecretSensitivity)
+BACKENDS = tuple(backend.value for backend in SecretBackend)
+CLIENT_AUTHS = tuple(method.value for method in ClientAuthentication)
 FIELDS = frozenset(
     {
         "v",

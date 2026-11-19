@@ -9,6 +9,7 @@ from aweb_secrets.approval_kind import approval_kind
 from aweb_secrets.reconciliation_control_audit import apply_reconciliation_migrations
 from aweb_secrets.reconciliation_policy import reconciliation_policy_ref
 from aweb_secrets.use_audit import UseAuditUnavailable
+from tests.run_world import RunApproval
 from tests.test_change_sets import ALICE
 from tests.test_reconciliation_control_audit import control_world
 from tests.test_run_dispatch_service import setup
@@ -22,7 +23,7 @@ async def linked(uses, kind):
         _, _, pending, _, _ = await composition(uses)
         pending = pending.pending
     elif kind == "run":
-        context = await setup(uses, approval_required=True)
+        context = await setup(uses, approval=RunApproval.PER_USE)
         reply = await context.service.submit(job=context.job.job_id, submission=context.submission)
         approval_id = await uses.world.db.fetch_value(
             "SELECT approval_id FROM {{tables.run_slot_approvals}} WHERE approval_ref=$1",

@@ -66,6 +66,7 @@ from tests.test_change_sets import (
     enrol_owner,
     world,  # noqa: F401  (the fixture this module builds on)
 )
+from tests.value_sources import OnePasswordValues
 
 SECRET_ID = "sec_19ab42"
 GRANT_ID = "grt_req001"
@@ -101,6 +102,7 @@ class Uses:
     approvals: Approvals
     clock: Clock
     grant: Any
+    values: OnePasswordValues | None = None
 
 
 def designate_approver(ref: str, contact: str, covers: list[str], principal: str | None = None):
@@ -173,9 +175,11 @@ SECRET: dict[str, Any] = {
 }
 
 
-async def install(uses: Uses, **policy_changes) -> Policy:
+async def install(
+    uses: Uses, *, secret_record: SecretRecord | None = None, **policy_changes
+) -> Policy:
     policy = Policy.from_body({**POLICY_BODY, **policy_changes})
-    record = SecretRecord.from_after(SECRET)
+    record = secret_record or SecretRecord.from_after(SECRET)
     async with uses.world.db.transaction() as tx:
         if await records.secret_by_ref(tx, INSTALLATION_ID, TEAM, record.ref) is None:
             await records.create_secret(tx, INSTALLATION_ID, TEAM, record)
@@ -204,7 +208,7 @@ async def install(uses: Uses, **policy_changes) -> Policy:
 
 
 @pytest.fixture
-async def uses(world: World) -> Uses:  # noqa: F811
+async def uses(world: World, onepassword_values) -> Uses:  # noqa: F811
     db = world.db
     await apply_idempotency_migrations(db)
     await apply_ratelimit_migrations(db)
@@ -223,7 +227,7 @@ async def uses(world: World) -> Uses:  # noqa: F811
         clock=clock,
     )
     await enrol_owner(world, ALICE, "alice@acme.com")
-    return Uses(world, approvals, clock, Installations().grant)
+    return Uses(world, approvals, clock, Installations().grant, values=onepassword_values)
 
 
 BODY = b'{"amount_minor_units":1250}'
@@ -243,7 +247,7 @@ def open_action(body: bytes = BODY) -> BrokerOpen:
     return BrokerOpen(
         method="POST",
         canonical_url="https://api.payments.example/v1/refunds",
-        header_names=("content-type",),
+        headers=(("content-type", "application/json"),),
         body=body,
     )
 

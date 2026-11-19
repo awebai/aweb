@@ -19,6 +19,7 @@ from aweb_secrets import records
 from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.reconciliation_service import ReconciliationRefused
 from tests.reconciliation_world import OwnerFence, service_world
+from tests.run_world import RunApproval
 from tests.test_broker_audit import envelopes
 from tests.test_change_sets import ALICE
 from tests.test_run_status import snapshot as run_snapshot
@@ -69,7 +70,7 @@ async def approve(uses, pending):
     )
 
 
-@pytest.mark.parametrize("approval_required", [False, True])
+@pytest.mark.parametrize("approval", [RunApproval.NONE, RunApproval.PER_USE])
 @pytest.mark.parametrize(
     "outcome,state",
     [
@@ -79,11 +80,9 @@ async def approve(uses, pending):
     ],
 )
 async def test_exact_fresh_approve_settles_once_without_open_send_or_availability_gate(
-    uses, outcome, state, approval_required
+    uses, outcome, state, approval
 ):
-    context, original, service, console, session = await service_world(
-        uses, approval_required=approval_required
-    )
+    context, original, service, console, session = await service_world(uses, approval=approval)
     db, scope = uses.world.db, uses.world.admitted
     pending = await mint(uses, service, console, session, original.original.reconcile_ref, outcome)
     async with db.transaction() as tx:
@@ -138,7 +137,7 @@ async def test_exact_fresh_approve_settles_once_without_open_send_or_availabilit
         originals = await context.arguments["use_audit"].dispatch_approvals(
             tx, original.original.dispatch_id
         )
-        if approval_required:
+        if approval is RunApproval.PER_USE:
             assert len(originals) == 1
         assert all(approval.dispatch_outcome.value == state.value for approval in originals)
     settled = await snapshot(db)

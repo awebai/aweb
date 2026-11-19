@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, quote, urlsplit
 
 from aweb_naapp.egress import EgressRefused, canonical_url
+from aweb_secrets_values import ValueInvalid, ValueInvalidReason, ValueKind, validate_value
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
 from botocore.credentials import Credentials
@@ -62,16 +63,16 @@ class Injection:
     known: KnownValues = field(repr=False)
 
 
-def _required(values: Mapping[str, str], name: str) -> str:
+def required_kind_parameter(values: Mapping[str, str], *, name: str) -> str:
     value = values.get(name)
     if not isinstance(value, str) or not value:
-        raise ValueError(f"the secret has no {name}")
+        raise ValueInvalid(ValueInvalidReason.INJECTION_CONFIGURATION)
     return value
 
 
-def _header(name: str, value: str, *, url: str, known: KnownValues) -> Injection:
+def _header(*, name: str, value: str, url: str, known: KnownValues) -> Injection:
     if not _TOKEN.match(name) or name.lower() in _GUARD_HEADERS:
-        raise ValueError(f"{name!r} cannot carry a credential")
+        raise ValueInvalid(ValueInvalidReason.INJECTION_CONFIGURATION)
     return Injection(
         url=url,
         recorded_url=url,
@@ -81,7 +82,7 @@ def _header(name: str, value: str, *, url: str, known: KnownValues) -> Injection
     )
 
 
-def _query(param: str, value: str, *, url: str, known: KnownValues) -> Injection:
+def _query(*, param: str, value: str, url: str, known: KnownValues) -> Injection:
     query = urlsplit(url).query
     if any(name == param for name, _ in parse_qsl(query, keep_blank_values=True)):
         raise EgressRefused("params_invalid", "query", f"the request may not set {param}")
@@ -99,10 +100,21 @@ def _query(param: str, value: str, *, url: str, known: KnownValues) -> Injection
 _SIGV4_HEADERS = ("Authorization", "X-Amz-Date", "X-Amz-Content-SHA256", "X-Amz-Security-Token")
 
 
+def injected_header_names(kind: str, *, kind_params: Mapping[str, str]) -> frozenset[str]:
+    """The injector's reserved names, available before custody opens (§7.4)."""
+    if kind == ValueKind.HEADER:
+        return frozenset({required_kind_parameter(kind_params, name="name").lower()})
+    if kind == ValueKind.QUERY:
+        return frozenset()
+    if kind == ValueKind.AWS_SIGV4:
+        return frozenset(name.lower() for name in _SIGV4_HEADERS)
+    return frozenset({"authorization"})
+
+
 def _sigv4(
+    *,
     value: Mapping[str, str],
     kind_params: Mapping[str, str],
-    *,
     secret_ref: str,
     url: str,
     method: str,
@@ -110,11 +122,11 @@ def _sigv4(
     headers: Sequence[tuple[str, str]],
     known: KnownValues,
 ) -> Injection:
-    access_key_id = _required(value, "access_key_id")
-    secret_access_key = _required(value, "secret_access_key")
+    access_key_id = value["access_key_id"]
+    secret_access_key = value["secret_access_key"]
     session_token = value.get("session_token") or None
-    region = _required(kind_params, "region")
-    service = _required(kind_params, "service")
+    region = required_kind_parameter(kind_params, name="region")
+    service = required_kind_parameter(kind_params, name="service")
     signed_names = {name.lower() for name in _SIGV4_HEADERS}
     for name, _ in headers:
         if name.lower() in signed_names:
@@ -133,9 +145,9 @@ def _sigv4(
             **dict(headers),
         },
     )
-    SigV4Auth(Credentials(access_key_id, secret_access_key, session_token), service, region).add_auth(
-        request
-    )
+    SigV4Auth(
+        Credentials(access_key_id, secret_access_key, session_token), service, region
+    ).add_auth(request)
     injected = [(name, request.headers[name]) for name in _SIGV4_HEADERS if name in request.headers]
     return Injection(
         url=str(canonical),
@@ -148,9 +160,9 @@ def _sigv4(
 
 def inject(
     kind: str,
+    *,
     value: Mapping[str, str],
     kind_params: Mapping[str, str],
-    *,
     secret_ref: str,
     url: str,
     method: str = "GET",
@@ -162,34 +174,38 @@ def inject(
     ``method``, ``body`` and the agent's ``headers`` are what a signing kind
     signs; the other kinds do not read them.
     """
+    value = validate_value(kind, value)
     known = KnownValues()
-    if kind == "aws-sigv4":
-        return _sigv4(
-            value,
-            kind_params,
-            secret_ref=secret_ref,
-            url=url,
-            method=method,
-            body=body,
-            headers=headers,
-            known=known,
-        )
-    if kind == "basic":
-        username = value.get("username", "")
-        password = _required(value, "password")
-        if ":" in username:
-            raise ValueError("a basic username cannot contain ':'")
+    if kind == ValueKind.AWS_SIGV4:
+        try:
+            return _sigv4(
+                value=value,
+                kind_params=kind_params,
+                secret_ref=secret_ref,
+                url=url,
+                method=method,
+                body=body,
+                headers=headers,
+                known=known,
+            )
+        except ValueError:
+            raise ValueInvalid(ValueInvalidReason.INJECTION_CONFIGURATION) from None
+    if kind == ValueKind.BASIC:
+        username = value["username"]
+        password = value["password"]
         known.add_basic(secret_ref, username, password)
         composite = base64.b64encode(f"{username}:{password}".encode()).decode()
-        return _header("Authorization", f"Basic {composite}", url=url, known=known)
-    if kind not in ("bearer", "header", "query"):
-        raise ValueError(f"{kind!r} is not injected here")
-    raw = _required(value, "value")
+        return _header(name="Authorization", value=f"Basic {composite}", url=url, known=known)
+    if kind not in (ValueKind.BEARER, ValueKind.HEADER, ValueKind.QUERY):
+        raise ValueInvalid(ValueInvalidReason.INJECTION_CONFIGURATION)
+    raw = value["value"]
     known.add(secret_ref, raw)
-    if kind == "bearer":
-        return _header("Authorization", f"Bearer {raw}", url=url, known=known)
-    if kind == "header":
-        name = _required(kind_params, "name")
+    if kind == ValueKind.BEARER:
+        return _header(name="Authorization", value=f"Bearer {raw}", url=url, known=known)
+    if kind == ValueKind.HEADER:
+        name = required_kind_parameter(kind_params, name="name")
         prefix = kind_params.get("prefix", "")
-        return _header(name, f"{prefix}{raw}", url=url, known=known)
-    return _query(_required(kind_params, "param"), raw, url=url, known=known)
+        return _header(name=name, value=f"{prefix}{raw}", url=url, known=known)
+    return _query(
+        param=required_kind_parameter(kind_params, name="param"), value=raw, url=url, known=known
+    )

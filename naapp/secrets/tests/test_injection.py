@@ -11,6 +11,7 @@ import secrets
 
 import pytest
 from aweb_naapp.egress import EgressRefused
+from aweb_secrets_values import ValueInvalid, ValueInvalidReason
 
 from aweb_secrets.injection import inject
 
@@ -23,7 +24,7 @@ def value() -> str:
 
 
 def test_bearer_sets_the_authorization_header(value: str) -> None:
-    injection = inject("bearer", {"value": value}, {}, secret_ref="gh", url=URL)
+    injection = inject("bearer", value={"value": value}, kind_params={}, secret_ref="gh", url=URL)
     assert injection.headers == [("Authorization", f"Bearer {value}")]
     assert injection.injected_names == frozenset({"authorization"})
     assert injection.url == URL
@@ -32,7 +33,11 @@ def test_bearer_sets_the_authorization_header(value: str) -> None:
 
 def test_basic_sets_the_composite_and_redacts_it(value: str) -> None:
     injection = inject(
-        "basic", {"username": "svc", "password": value}, {}, secret_ref="db", url=URL
+        "basic",
+        value={"username": "svc", "password": value},
+        kind_params={},
+        secret_ref="db",
+        url=URL,
     )
     composite = base64.b64encode(f"svc:{value}".encode()).decode()
     assert injection.headers == [("Authorization", f"Basic {composite}")]
@@ -41,27 +46,48 @@ def test_basic_sets_the_composite_and_redacts_it(value: str) -> None:
     assert count == 2
 
 
-def test_a_basic_username_with_a_colon_is_refused(value: str) -> None:
-    with pytest.raises(ValueError):
-        inject("basic", {"username": "a:b", "password": value}, {}, secret_ref="db", url=URL)
+def test_basic_injection_preserves_the_codecs_username_refusal(value: str) -> None:
+    with pytest.raises(ValueInvalid) as refused:
+        inject(
+            "basic",
+            value={"username": "a:b", "password": value},
+            kind_params={},
+            secret_ref="db",
+            url=URL,
+        )
+    assert refused.value.reason is ValueInvalidReason.BASIC_USERNAME
 
 
 def test_header_uses_the_owner_set_name_and_prefix(value: str) -> None:
     injection = inject(
-        "header", {"value": value}, {"name": "X-Upstream-Key", "prefix": "Key "}, secret_ref="u", url=URL
+        "header",
+        value={"value": value},
+        kind_params={"name": "X-Upstream-Key", "prefix": "Key "},
+        secret_ref="u",
+        url=URL,
     )
     assert injection.headers == [("X-Upstream-Key", f"Key {value}")]
     assert injection.injected_names == frozenset({"x-upstream-key"})
 
 
-@pytest.mark.parametrize("name", ["Host", "Content-Length", "User-Agent", "Connection", "Bad Name", ""])
+@pytest.mark.parametrize(
+    "name", ["Host", "Content-Length", "User-Agent", "Connection", "Bad Name", ""]
+)
 def test_a_header_kind_cannot_set_a_guard_header_or_a_malformed_name(value: str, name: str) -> None:
-    with pytest.raises(ValueError):
-        inject("header", {"value": value}, {"name": name, "prefix": ""}, secret_ref="u", url=URL)
+    with pytest.raises(ValueInvalid):
+        inject(
+            "header",
+            value={"value": value},
+            kind_params={"name": name, "prefix": ""},
+            secret_ref="u",
+            url=URL,
+        )
 
 
 def test_query_adds_the_owner_set_param_and_records_it_redacted(value: str) -> None:
-    injection = inject("query", {"value": value}, {"param": "key"}, secret_ref="maps", url=URL)
+    injection = inject(
+        "query", value={"value": value}, kind_params={"param": "key"}, secret_ref="maps", url=URL
+    )
     assert injection.headers == []
     assert injection.url == f"{URL}&key={value}"
     assert injection.recorded_url == f"{URL}&key=[REDACTED]"
@@ -70,20 +96,37 @@ def test_query_adds_the_owner_set_param_and_records_it_redacted(value: str) -> N
 
 def test_query_adds_the_param_to_a_url_without_a_query(value: str) -> None:
     injection = inject(
-        "query", {"value": value}, {"param": "key"}, secret_ref="maps", url="https://api.example.com/v1"
+        "query",
+        value={"value": value},
+        kind_params={"param": "key"},
+        secret_ref="maps",
+        url="https://api.example.com/v1",
     )
     assert injection.url == f"https://api.example.com/v1?key={value}"
 
 
 def test_query_percent_encodes_the_value() -> None:
-    injection = inject("query", {"value": "a b&c=d"}, {"param": "key"}, secret_ref="m", url=URL)
+    injection = inject(
+        "query", value={"value": "a b&c=d"}, kind_params={"param": "key"}, secret_ref="m", url=URL
+    )
     assert injection.url == f"{URL}&key=a%20b%26c%3Dd"
 
 
-@pytest.mark.parametrize("url", [f"{URL}&key=mine", "https://api.example.com/v1?key=", "https://api.example.com/v1?Key=x&key"])
-def test_an_agent_url_that_already_carries_the_injected_param_is_refused(value: str, url: str) -> None:
+@pytest.mark.parametrize(
+    "url",
+    [f"{URL}&key=mine", "https://api.example.com/v1?key=", "https://api.example.com/v1?Key=x&key"],
+)
+def test_an_agent_url_that_already_carries_the_injected_param_is_refused(
+    value: str, url: str
+) -> None:
     with pytest.raises(EgressRefused) as refused:
-        inject("query", {"value": value}, {"param": "key"}, secret_ref="maps", url=url)
+        inject(
+            "query",
+            value={"value": value},
+            kind_params={"param": "key"},
+            secret_ref="maps",
+            url=url,
+        )
     assert refused.value.code == "params_invalid"
 
 
@@ -93,18 +136,18 @@ def test_every_injected_value_is_a_known_value(value: str) -> None:
         ("header", {"value": value}, {"name": "X-K", "prefix": ""}),
         ("query", {"value": value}, {"param": "key"}),
     ):
-        injection = inject(kind, secret_value, params, secret_ref="r", url=URL)
+        injection = inject(kind, value=secret_value, kind_params=params, secret_ref="r", url=URL)
         assert injection.known.redact(value.encode()) == (b"[REDACTED:r]", 1)
 
 
 def test_an_unknown_kind_is_refused(value: str) -> None:
-    with pytest.raises(ValueError):
-        inject("mtls-client-cert", {"value": value}, {}, secret_ref="r", url=URL)
+    with pytest.raises(ValueInvalid):
+        inject("mtls-client-cert", value={"value": value}, kind_params={}, secret_ref="r", url=URL)
 
 
 def test_an_empty_value_is_refused() -> None:
-    with pytest.raises(ValueError):
-        inject("bearer", {"value": ""}, {}, secret_ref="r", url=URL)
+    with pytest.raises(ValueInvalid):
+        inject("bearer", value={"value": ""}, kind_params={}, secret_ref="r", url=URL)
 
 
 # --- aws-sigv4 -------------------------------------------------------------------
@@ -115,8 +158,8 @@ SIGV4_PARAMS = {"region": "eu-west-1", "service": "execute-api"}
 def _sigv4(value_: dict, *, url: str = URL, headers=(), body: bytes = b'{"q":1}', params=None):
     return inject(
         "aws-sigv4",
-        value_,
-        params or SIGV4_PARAMS,
+        value=value_,
+        kind_params=params or SIGV4_PARAMS,
         secret_ref="aws",
         url=url,
         method="POST",
@@ -161,7 +204,10 @@ def test_sigv4_signs_the_agent_headers_it_sends() -> None:
         headers=[("Content-Type", "application/x-amz-json-1.1"), ("X-Amz-Target", "Things.Get")],
     )
     authorization = dict(injection.headers)["Authorization"]
-    assert "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-target" in authorization
+    assert (
+        "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date;x-amz-target"
+        in authorization
+    )
 
 
 def test_sigv4_with_a_session_token_sends_and_signs_it() -> None:
@@ -183,7 +229,7 @@ def test_sigv4_redacts_the_secret_key() -> None:
 @pytest.mark.parametrize("missing", ["region", "service"])
 def test_sigv4_needs_the_owner_set_region_and_service(missing: str) -> None:
     params = {k: v for k, v in SIGV4_PARAMS.items() if k != missing}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueInvalid):
         _sigv4(_aws_value(), params=params)
 
 

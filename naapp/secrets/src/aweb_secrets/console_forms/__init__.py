@@ -10,9 +10,11 @@ from fastapi.responses import HTMLResponse, Response
 
 from aweb_secrets.console_changes import ConsoleChanges, _errors
 from aweb_secrets.console_forms.grants import grant_forms_router
+from aweb_secrets.console_forms.kinds import CONSOLE_KINDS, KIND_NAMES, kind_parameter_controls
+from aweb_secrets.console_forms.native import native_value_forms_router
 from aweb_secrets.console_ui import _login_redirect, _page, console_page
 from aweb_secrets.operation import CAPTURE_FIELDS
-from aweb_secrets.secret import KINDS, mint_secret_id
+from aweb_secrets.secret import SecretKind, mint_secret_id
 
 _ASSETS = Path(__file__).parent
 _SCRIPT = (
@@ -31,47 +33,13 @@ _REVIEW = (
     '<button id="confirm-change" type="button" disabled>Confirm with your passkey</button></section>'
 )
 
-_KIND_NAMES = {
-    "bearer": "Bearer token",
-    "basic": "Basic credentials",
-    "header": "Custom header",
-    "query": "Query parameter",
-    "oauth2-client-credentials": "OAuth2 client credentials",
-    "aws-sigv4": "AWS Signature Version 4",
-}
-
 
 def _reference_kinds() -> str:
     fields = []
-    params = {
-        "header": (("name", "Header name", True), ("prefix", "Header prefix", False)),
-        "query": (("param", "Query parameter name", True),),
-        "oauth2-client-credentials": (
-            ("token_endpoint", "Token endpoint URL", True),
-            ("scope", "OAuth scopes", False),
-        ),
-        "aws-sigv4": (("region", "AWS region", True), ("service", "AWS service", True)),
-    }
-    for kind in KINDS:
-        inactive = " hidden disabled" if kind != "bearer" else ""
-        fields.append(
-            f'<fieldset data-kind="{kind}"{inactive}><legend>{_KIND_NAMES[kind]}</legend>'
-        )
-        for name, label, needed in params.get(kind, ()):
-            identity = f"reference-{kind}-{name}"
-            fields.append(
-                f'<label for="{identity}">{label}</label><input id="{identity}" '
-                f'data-param="{name}" autocomplete="off" spellcheck="false"'
-                + (" required" if needed else "")
-                + ">"
-            )
-        if kind == "oauth2-client-credentials":
-            fields.append(
-                '<label for="reference-client-auth">Client authentication</label>'
-                '<select id="reference-client-auth" data-param="client_auth">'
-                '<option value="client_secret_basic">HTTP Basic authentication</option>'
-                '<option value="client_secret_post">Form body</option></select>'
-            )
+    for kind in CONSOLE_KINDS:
+        inactive = " hidden disabled" if kind != SecretKind.BEARER else ""
+        fields.append(f'<fieldset data-kind="{kind}"{inactive}><legend>{KIND_NAMES[kind]}</legend>')
+        fields.append(kind_parameter_controls(kind, prefix="reference"))
         required, optional = CAPTURE_FIELDS[kind]
         for name in sorted(required | optional):
             identity = f"reference-{kind}-{name}-field"
@@ -92,7 +60,8 @@ def _reference_kinds() -> str:
 def _reference_form(installation_id: str, credential_version: int) -> str:
     action = "/installations/" + installation_id + "/onepassword/references"
     options = "".join(
-        f'<option value="{kind}" data-auth-kind>{_KIND_NAMES[kind]}</option>' for kind in KINDS
+        f'<option value="{kind}" data-auth-kind>{KIND_NAMES[kind]}</option>'
+        for kind in CONSOLE_KINDS
     )
     return (
         "<p>Select the item and field IDs from your connected vault. Enter references here; "
@@ -125,14 +94,13 @@ def _reference_form(installation_id: str, credential_version: int) -> str:
     )
 
 
-def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
+def _reference_review_forms_router(*, changes: ConsoleChanges) -> APIRouter:
     """Mount on the human app with the same ConsoleChanges and value routers.
 
     No values go into page templates, URLs, browser storage or returned results.
     The forms use only the shared POST and WebAuthn assertion helpers.
     """
     router = APIRouter(route_class=ConsoleRoute)
-    router.include_router(grant_forms_router(changes=changes))
 
     async def session(request: Request):
         return await changes.console.sessions.current(request)
@@ -165,7 +133,11 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
         return console_page(
             title="Link a 1Password secret",
             session=current,
-            body_html="<h1>Link a 1Password secret</h1>" + body + _STATUS + _SCRIPT,
+            body_html="<h1>Link a 1Password secret</h1>"
+            '<p><a href="/secrets/native/new">Store the value here instead of linking 1Password</a></p>'
+            + body
+            + _STATUS
+            + _SCRIPT,
         )
 
     @router.get("/secrets/new", response_class=HTMLResponse)
@@ -254,4 +226,13 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
     async def script() -> Response:
         return Response((_ASSETS / "forms.js").read_text(), media_type="text/javascript")
 
+    return router
+
+
+def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
+    """Compose the console's entry and frozen-review pages."""
+    router = APIRouter(route_class=ConsoleRoute)
+    router.include_router(grant_forms_router(changes=changes))
+    router.include_router(_reference_review_forms_router(changes=changes))
+    router.include_router(native_value_forms_router(changes=changes))
     return router

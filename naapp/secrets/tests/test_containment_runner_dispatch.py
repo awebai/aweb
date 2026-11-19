@@ -18,7 +18,7 @@ from aweb_secrets.policy import Policy
 from tests.test_containment_service import act
 from tests.test_containment_service import service as containment_service
 from tests.test_jobs import after as job_after
-from tests.test_production_bootstrap import approval_request, envelopes
+from tests.test_production_bootstrap import ApprovalAction, approval_request, envelopes
 from tests.test_production_bootstrap import root as root
 from tests.test_production_dispatch import admitted_run
 from tests.test_production_runner_dispatch import runner_headers
@@ -130,12 +130,14 @@ async def independent_run(root, original):
 
 
 @pytest.mark.parametrize("state", ["awaiting_approval", "admitted", "dispatching"])
-async def test_deregistration_settles_original_runs_before_returning(root, state):
+async def test_deregistration_settles_original_runs_before_returning(
+    onepassword_values, root, state
+):
     service, _, _, member, *_ = root
     request = (
-        await approval_request(root, "run")
+        await approval_request(root, kind=ApprovalAction.RUN, onepassword_values=onepassword_values)
         if state == "awaiting_approval"
-        else await admitted_run(root)
+        else await admitted_run(root, onepassword_values=onepassword_values)
     )
     db = service.runtime.db()
     if state == "dispatching":
@@ -210,11 +212,13 @@ async def test_deregistration_settles_original_runs_before_returning(root, state
 
 
 @pytest.mark.parametrize("claimed", [False, True])
-async def test_local_containment_commit_failure_rolls_back_keys_runs_and_audit(root, claimed):
+async def test_local_containment_commit_failure_rolls_back_keys_runs_and_audit(
+    onepassword_values, root, claimed
+):
     import asyncpg
 
     service, _, _, member, *_ = root
-    request = await admitted_run(root)
+    request = await admitted_run(root, onepassword_values=onepassword_values)
     db = service.runtime.db()
     if claimed:
         assert (await claim(root, request)).status_code == 200
@@ -242,9 +246,11 @@ async def test_local_containment_commit_failure_rolls_back_keys_runs_and_audit(r
     assert await db.fetch_value("SELECT count(*) FROM containment_receipts") == 0
 
 
-async def test_deregistration_does_not_touch_another_runner_or_its_dispatch(root):
+async def test_deregistration_does_not_touch_another_runner_or_its_dispatch(
+    onepassword_values, root
+):
     service, *_ = root
-    request = await admitted_run(root)
+    request = await admitted_run(root, onepassword_values=onepassword_values)
     other = await independent_run(root, request)
     db = service.runtime.db()
     preserved = await db.fetch_one("SELECT * FROM runners WHERE runner_id=$1", other.runner_id)
@@ -262,9 +268,13 @@ async def test_deregistration_does_not_touch_another_runner_or_its_dispatch(root
     assert (await claim(root, other)).status_code == 200
 
 
-async def test_no_approval_job_cancels_without_inventing_an_approval_decision(root):
+async def test_no_approval_job_cancels_without_inventing_an_approval_decision(
+    onepassword_values, root
+):
     service, _, _, member, *_ = root
-    first = await approval_request(root, "run")
+    first = await approval_request(
+        root, kind=ApprovalAction.RUN, onepassword_values=onepassword_values
+    )
     target = await independent_run(root, first)
     db = service.runtime.db()
     before = await envelopes(db, member.team_id)
@@ -298,9 +308,9 @@ async def wait_for_blocker(db, blocker, task):
             await asyncio.sleep(0.01)
 
 
-async def test_complete_approval_union_is_held_before_any_dispatch_row(root):
+async def test_complete_approval_union_is_held_before_any_dispatch_row(onepassword_values, root):
     service, client, configured, member, *_ = root
-    request = await admitted_run(root)
+    request = await admitted_run(root, onepassword_values=onepassword_values)
     body = {**json.loads(request.raw), "request_id": uuid4().hex}
     raw = json.dumps(body).encode()
     second = await client.post(
@@ -348,9 +358,11 @@ async def test_complete_approval_union_is_held_before_any_dispatch_row(root):
 
 
 @pytest.mark.parametrize("first", ["claim", "deregister"])
-async def test_competing_claim_and_deregistration_do_not_leave_live_runs(root, first):
+async def test_competing_claim_and_deregistration_do_not_leave_live_runs(
+    onepassword_values, root, first
+):
     service, *_ = root
-    request = await admitted_run(root)
+    request = await admitted_run(root, onepassword_values=onepassword_values)
     db = service.runtime.db()
     tasks = []
     try:

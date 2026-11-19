@@ -23,12 +23,12 @@ from aweb_secrets.custody import (
     Custody,
     LocalKeyFileProvider,
     apply_custody_migrations,
-    encode_value,
 )
 from aweb_secrets.custody.opening import UseSecretOpener
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.member_types import MemberSubmission, ToolReply
 from aweb_secrets.response_audit import ResponseKey
+from aweb_secrets.secret import SecretBackend, SecretRecord
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import apply_use_approval_migrations
 from aweb_secrets.use_context import UseCommitter, apply_use_context_migrations
@@ -72,6 +72,7 @@ async def setup(
     tmp_path,
     upstream,
     *,
+    onepassword_values,
     max_dispatch=timedelta(seconds=30),
     registration_view=None,
     clock=None,
@@ -79,7 +80,14 @@ async def setup(
     response_budget_bytes=None,
     policy_body=None,
 ):
-    await _install(db, installation_id=INSTALLATION, active_version=None, policy_body=policy_body)
+    record = SecretRecord.from_after({**SECRET, "backend": SecretBackend.ONEPASSWORD})
+    await _install(
+        db,
+        secret=record.after,
+        installation_id=INSTALLATION,
+        active_version=None,
+        policy_body=policy_body,
+    )
     for migration in (
         apply_dispatch_migrations,
         apply_outbox_migrations,
@@ -109,15 +117,15 @@ async def setup(
         },
         internal_destinations=InternalDestinations.ALLOWED,
     )
+    await onepassword_values.activate(
+        db=db,
+        custody=custody,
+        installation_id=INSTALLATION,
+        team_id=TEAM,
+        record=record,
+        values={"value": upstream.creds.bearer},
+    )
     async with db.transaction() as tx:
-        version = await custody.sealer.ingest(
-            tx,
-            installation_id=INSTALLATION,
-            team_id=TEAM,
-            secret_id=SECRET["secret_id"],
-            value=encode_value("bearer", {"value": upstream.creds.bearer}),
-        )
-        await records.set_active_version(tx, INSTALLATION, TEAM, SECRET["secret_id"], version)
         await records.create_destination(tx, INSTALLATION, TEAM, destination)
 
     def producer(*, installation_id, generation):
@@ -216,10 +224,10 @@ async def completed_receipt(db, live: ToolReply) -> ToolReply:
 
 
 async def test_fresh_authenticated_submission_sends_once_and_replays_stored_result(
-    db, fence, tmp_path
+    onepassword_values, db, fence, tmp_path
 ):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         original = submission(upstream)
         first = await service.submit(secret=SECRET["ref"], submission=original)
         assert first.status == 200 and first.body["state"] == "completed", (
@@ -227,6 +235,11 @@ async def test_fresh_authenticated_submission_sends_once_and_replays_stored_resu
             first.body.get("state"),
             first.body.get("code"),
         )
+        item = onepassword_values.item(
+            installation_id=INSTALLATION, team_id=TEAM, secret_id=SECRET["secret_id"]
+        )
+        # Staging, pre-dispatch observation and the pinned reopen each read the SDK Item.
+        assert item.reads == [7, 7, 7]
         renewed = replace(
             original,
             authorization=replace(
@@ -256,10 +269,10 @@ async def test_fresh_authenticated_submission_sends_once_and_replays_stored_resu
 
 
 async def test_changed_effect_with_same_request_id_refuses_without_a_second_send(
-    db, fence, tmp_path
+    onepassword_values, db, fence, tmp_path
 ):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         await service.submit(secret=SECRET["ref"], submission=submission(upstream))
         result = await service.submit(
             secret=SECRET["ref"],
@@ -271,10 +284,10 @@ async def test_changed_effect_with_same_request_id_refuses_without_a_second_send
 
 
 async def test_revoked_use_grant_prevents_replay_and_other_principal_cannot_read_receipt(
-    db, fence, tmp_path
+    onepassword_values, db, fence, tmp_path
 ):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         await service.submit(secret=SECRET["ref"], submission=submission(upstream))
         async with db.transaction() as tx:
             await records.revoke_grant(tx, INSTALLATION, "grt_alice001")
@@ -284,10 +297,10 @@ async def test_revoked_use_grant_prevents_replay_and_other_principal_cannot_read
 
 
 async def test_failed_initial_destination_rolls_back_idempotency_intent_and_rate_charge(
-    db, fence, tmp_path
+    onepassword_values, db, fence, tmp_path
 ):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         reply = await service.submit(
             secret=SECRET["ref"],
             submission=submission(upstream, url=upstream.url("/basic/echo")),
@@ -300,13 +313,20 @@ async def test_failed_initial_destination_rolls_back_idempotency_intent_and_rate
 
 
 async def test_missing_audit_target_is_unavailable_without_retaining_an_admission(
-    db, fence, tmp_path
+    onepassword_values, db, fence, tmp_path
 ):
     async def no_targets(team_id):
         return replace(await _view(team_id), registrations=())
 
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream, registration_view=no_targets)
+        service = await setup(
+            db,
+            fence,
+            tmp_path,
+            upstream,
+            registration_view=no_targets,
+            onepassword_values=onepassword_values,
+        )
         reply = await service.submit(secret=SECRET["ref"], submission=submission(upstream))
         assert reply.status == 503 and reply.body["code"] == "audit_target_unavailable"
         for table in ("intents", "dispatches", "idempotency_keys", "rate_buckets"):
@@ -317,7 +337,7 @@ async def test_missing_audit_target_is_unavailable_without_retaining_an_admissio
 
 @pytest.mark.parametrize("next_call", ["same-pair", "different-url", "different-principal"])
 async def test_real_transport_deadline_records_unknown_and_never_resends(
-    db, fence, tmp_path, next_call
+    onepassword_values, db, fence, tmp_path, next_call
 ):
     async with running_upstream(tmp_path) as upstream:
         entered, release = asyncio.Event(), asyncio.Event()
@@ -331,7 +351,14 @@ async def test_real_transport_deadline_records_unknown_and_never_resends(
                 await release.wait()
             return Response(status_code=204)
 
-        service = await setup(db, fence, tmp_path, upstream, max_dispatch=timedelta(seconds=3))
+        service = await setup(
+            db,
+            fence,
+            tmp_path,
+            upstream,
+            max_dispatch=timedelta(seconds=3),
+            onepassword_values=onepassword_values,
+        )
         original = submission(upstream, url=upstream.url("/bearer/blocked-response"))
         try:
             first = await service.submit(secret=SECRET["ref"], submission=original)
@@ -380,7 +407,9 @@ async def test_real_transport_deadline_records_unknown_and_never_resends(
             release.set()
 
 
-async def test_tls_not_sent_retry_keeps_its_original_total_time_bound(db, fence, tmp_path):
+async def test_tls_not_sent_retry_keeps_its_original_total_time_bound(
+    onepassword_values, db, fence, tmp_path
+):
     async with running_upstream(tmp_path) as upstream:
         wrong_directory = tmp_path / "wrong-trust"
         wrong_directory.mkdir()
@@ -394,6 +423,7 @@ async def test_tls_not_sent_retry_keeps_its_original_total_time_bound(db, fence,
             tmp_path,
             replace(upstream, egress=replace(upstream.egress, ca_file=trust)),
             clock=lambda: at[0],
+            onepassword_values=onepassword_values,
         )
         original = submission(upstream)
         first = await service.submit(secret=SECRET["ref"], submission=original)
@@ -412,7 +442,9 @@ async def test_tls_not_sent_retry_keeps_its_original_total_time_bound(db, fence,
         )
 
 
-async def test_cancelled_sender_is_recovered_only_after_its_dispatch_bound(db, fence, tmp_path):
+async def test_cancelled_sender_is_recovered_only_after_its_dispatch_bound(
+    onepassword_values, db, fence, tmp_path
+):
     async with running_upstream(tmp_path) as upstream:
         entered, release = asyncio.Event(), asyncio.Event()
 
@@ -431,6 +463,7 @@ async def test_cancelled_sender_is_recovered_only_after_its_dispatch_bound(db, f
             upstream,
             max_dispatch=timedelta(seconds=1),
             sweep_margin=timedelta(milliseconds=100),
+            onepassword_values=onepassword_values,
         )
         original = submission(upstream, url=upstream.url("/bearer/crash"))
         sender = asyncio.create_task(service.submit(secret=SECRET["ref"], submission=original))

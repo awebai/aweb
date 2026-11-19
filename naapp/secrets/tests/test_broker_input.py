@@ -140,14 +140,14 @@ def test_each_open_effect_input_changes_the_equality_commitment(field):
     )
 
 
-def test_open_call_and_header_names_are_built_from_the_same_detached_bytes():
+def test_open_call_and_header_values_are_built_from_the_same_detached_bytes():
     body = opened()
     submitted = BrokerInput.from_body(SECRET["ref"], body)
     body["headers"][1] = "X-Request-Id: changed"
     body["data"]["amount"] = 1
     call = submitted.open_call
     assert call.body == b'{"amount":50}'
-    assert tuple(call.header_names) == tuple(name for name, _ in submitted.headers)
+    assert tuple(call.headers) == submitted.headers
     assert submitted.headers[-1] == ("X-Request-Id", "original")
 
 

@@ -99,7 +99,7 @@
 
   // An app's own forms use this same helper so stale cookies/tokens recover
   // in exactly the same way as the shell's logout, without duplicated fetch code.
-  window.awebConsole = Object.freeze({post, assertion, csrfKey});
+  window.awebConsole = Object.freeze({post, assertion, csrfKey, SessionRequired});
 
   const login = document.querySelector("#login");
   if (login) login.addEventListener("submit", async event => {

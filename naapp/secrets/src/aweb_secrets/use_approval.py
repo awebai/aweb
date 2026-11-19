@@ -1,6 +1,6 @@
 """The frozen request an approve_only use is approved on (secrets §10.4).
 
-`use_approval_request` builds the `aweb.secrets.use-approval/1` object B2
+`use_approval_request` builds the `aweb.secrets.use-approval/2` object B2
 freezes and its approver signs: who asks, for which secret at which version,
 to do exactly what, under which grant and policy, and until when. The console
 renders the approval from these bytes alone, so an open request is approvable
@@ -13,6 +13,7 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 from aweb_naapp.roles import principal_key
@@ -21,7 +22,22 @@ from aweb_naapp.runtime.team_auth import Principal
 from aweb_secrets.secret import SecretRecord
 
 REQUEST_TYPE = "aweb.secrets.use-approval"
-REQUEST_VERSION = 1
+REQUEST_VERSION = 2
+
+
+class UseApprovalRefusalCode(StrEnum):
+    UNRENDERABLE = "approval_unrenderable"
+    PARAMS_INVALID = "params_invalid"
+
+
+UNRENDERABLE_MESSAGE = "The approval cannot show the complete request. Submit a new request ID with UTF-8 text within the published limits."
+
+
+class UseAction(StrEnum):
+    BROKER = "broker"
+    RUN_JOB = "run_job"
+
+
 # The console shows an open request's body in full or not at all (§10.4).
 MAX_RENDERED_BODY_BYTES = 64 * 1024
 # The requester's reason is untrusted text shown to the approver.
@@ -32,34 +48,36 @@ _TIME = "%Y-%m-%dT%H:%M:%SZ"
 class UseApprovalRefused(Exception):
     """The use cannot be put to an approver. `code` is the refusal code."""
 
-    def __init__(self, code: str, detail: str) -> None:
+    def __init__(self, *, code: str, detail: str) -> None:
         super().__init__(f"{code}: {detail}")
-        self.code = code
+        self.code = str(code)
+        self.detail = detail
 
 
 class ApprovalUnrenderable(UseApprovalRefused):
     """An open request whose body the console cannot show in full."""
 
     def __init__(self, detail: str) -> None:
-        super().__init__("approval_unrenderable", detail)
+        super().__init__(code=UseApprovalRefusalCode.UNRENDERABLE, detail=detail)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class BrokerOperation:
     """A named operation at its current digest, with its typed parameters."""
 
     operation_id: str
     operation_digest: str
     params: Mapping[str, Any]
+    headers: Sequence[tuple[str, str]]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class BrokerOpen:
-    """An open request: the exact method, URL, header names and body."""
+    """An open request: the exact method, URL, headers and body."""
 
     method: str
     canonical_url: str
-    header_names: Sequence[str]
+    headers: Sequence[tuple[str, str]]
     body: bytes
 
 
@@ -96,39 +114,49 @@ def _rendered_body(body: bytes) -> str:
     """The body as the text the approver reads in full: UTF-8 JSON or text of
     at most 64 KiB, or the request is unrenderable."""
     if len(body) > MAX_RENDERED_BODY_BYTES:
-        raise ApprovalUnrenderable("the body is larger than the console shows in full")
+        raise ApprovalUnrenderable(
+            "Send a body of at most 64 KiB and submit a new request ID so it can be shown in full."
+        )
     try:
         return body.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise ApprovalUnrenderable("the body is not UTF-8 text") from exc
+        raise ApprovalUnrenderable(
+            "Encode the body as UTF-8 text and submit a new request ID so it can be reviewed."
+        ) from exc
+
+
+def _frozen_headers(headers: Sequence[tuple[str, str]]) -> list[dict[str, str]]:
+    """Freeze accepted agent headers as sent, in submitted order (§10.4)."""
+    return [{"name": name.lower(), "value": value} for name, value in headers]
 
 
 def _action(action: BrokerOperation | BrokerOpen | RunJob) -> tuple[str, str, dict[str, Any]]:
     if isinstance(action, BrokerOperation):
         return (
-            "broker",
-            "broker",
+            UseAction.BROKER.value,
+            UseAction.BROKER.value,
             {
                 "operation_id": action.operation_id,
                 "operation_digest": action.operation_digest,
                 "params": dict(action.params),
+                "headers": _frozen_headers(action.headers),
             },
         )
     if isinstance(action, BrokerOpen):
         return (
-            "broker",
-            "broker",
+            UseAction.BROKER.value,
+            UseAction.BROKER.value,
             {
                 "method": action.method,
                 "canonical_url": action.canonical_url,
-                "header_names": sorted({name.lower() for name in action.header_names}),
+                "headers": _frozen_headers(action.headers),
                 "body_sha256": hashlib.sha256(action.body).hexdigest(),
                 "body_preview": _rendered_body(action.body),
             },
         )
     return (
-        "run_job",
-        "run_job",
+        UseAction.RUN_JOB.value,
+        UseAction.RUN_JOB.value,
         {
             "runner_id": action.runner_id,
             "job_id": action.job_id,
@@ -155,14 +183,17 @@ def use_approval_request(
     ttl: timedelta,
     action: BrokerOperation | BrokerOpen | RunJob,
 ) -> dict[str, Any]:
-    """The `aweb.secrets.use-approval/1` object for one use, as B2 freezes it.
+    """The `aweb.secrets.use-approval/2` object for one use, as B2 freezes it.
 
     Times are whole seconds in UTC; the approval expires `ttl` after it is
     issued. The reason is refused, never truncated, past its bound."""
     if ttl <= timedelta(0):
         raise ValueError("an approval's ttl must be positive")
     if len(reason) > MAX_REASON_LENGTH:
-        raise UseApprovalRefused("params_invalid", "the reason is longer than its bound")
+        raise UseApprovalRefused(
+            code=UseApprovalRefusalCode.PARAMS_INVALID,
+            detail="Shorten the reason to at most 1024 characters and submit it again.",
+        )
     issued = issued_at.replace(microsecond=0)
     kind, key, body = _action(action)
     return {
@@ -190,14 +221,21 @@ def use_approval_request(
     }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
+class AgentHeader:
+    name: str
+    value: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class OperationShown:
     operation_id: str
     operation_digest: str
     params: Mapping[str, Any]
+    headers: tuple[AgentHeader, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class OpenRequestShown:
     """The full canonical URL, split so the console can emphasise its host."""
 
@@ -205,7 +243,7 @@ class OpenRequestShown:
     url_before_host: str
     host: str
     url_after_host: str
-    header_names: tuple[str, ...]
+    headers: tuple[AgentHeader, ...]
     body_text: str
 
 
@@ -255,13 +293,37 @@ def _split_host(url: str) -> tuple[str, str, str]:
     return scheme + separator, host, slash + path
 
 
+def _shown_headers(frozen: Mapping[str, Any]) -> tuple[AgentHeader, ...]:
+    """Require complete header terms; never render a names-only approval (§10.4)."""
+    headers = frozen.get("headers")
+    if not isinstance(headers, list):
+        raise ApprovalUnrenderable(
+            "Ask the requester to submit a new request with complete header details."
+        )
+    shown = []
+    for header in headers:
+        if (
+            not isinstance(header, dict)
+            or set(header) != {"name", "value"}
+            or not isinstance(header["name"], str)
+            or not isinstance(header["value"], str)
+        ):
+            raise ApprovalUnrenderable(
+                "Ask the requester to submit a new request with complete header details."
+            )
+        shown.append(AgentHeader(name=header["name"], value=header["value"]))
+    return tuple(shown)
+
+
 def use_approval_view(request: Mapping[str, Any]) -> UseApprovalView:
     """The console's view of a frozen use-approval request."""
     if request.get("type") != REQUEST_TYPE or request.get("v") != REQUEST_VERSION:
-        raise ApprovalUnrenderable("not a use-approval request this console renders")
+        raise ApprovalUnrenderable(
+            "This approval uses an unsupported format. Ask the requester to submit a new request ID."
+        )
     secret, requester = request["secret"], request["requester"]
     operation = open_request = job = None
-    if request["action"] == "run_job":
+    if request["action"] == UseAction.RUN_JOB:
         frozen = request["run_job"]
         job = JobShown(
             runner_id=frozen["runner_id"],
@@ -276,6 +338,7 @@ def use_approval_view(request: Mapping[str, Any]) -> UseApprovalView:
             operation_id=frozen["operation_id"],
             operation_digest=frozen["operation_digest"],
             params=frozen["params"],
+            headers=_shown_headers(frozen),
         )
     else:
         frozen = request["broker"]
@@ -285,7 +348,7 @@ def use_approval_view(request: Mapping[str, Any]) -> UseApprovalView:
             url_before_host=before,
             host=host,
             url_after_host=after,
-            header_names=tuple(frozen["header_names"]),
+            headers=_shown_headers(frozen),
             body_text=frozen["body_preview"],
         )
     return UseApprovalView(

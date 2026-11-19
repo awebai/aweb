@@ -1,4 +1,4 @@
-"""aweb.secrets.use-approval/1 (secrets §10.4) against B2's frozen request.
+"""aweb.secrets.use-approval/2 (secrets §10.4) against B2's frozen request.
 
 The positive cases are approval requests whose bytes B2 must cover exactly:
 B2's public canonical form reproduces them, and B2's real mint on PostgreSQL
@@ -29,7 +29,7 @@ from aweb_naapp.runtime.approvals import (
 from aweb_naapp.runtime.approvals.request import DOMAIN_PREFIX, parse_request_json
 from pgdbm.core import TransactionManager
 
-VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "use-approval-v1.json").read_text())
+VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "use-approval-v2.json").read_text())
 POSITIVE = VECTOR["positive_cases"]
 NEGATIVE = VECTOR["negative_cases"]
 DESIGN = Path(__file__).resolve().parents[3] / "docs" / "design" / "secrets.md"
@@ -70,10 +70,15 @@ def test_secret_kinds_are_the_auth_schemes():
 def test_use_policy_reference_binds_the_installation_team_grant_and_digest(case):
     request = case["request"]
     assert case["policy"] == {
-        "ref": "|".join((
-            "secrets.use", request["installation_id"], request["team_id"],
-            request["grant_id"], request["policy_digest"],
-        )),
+        "ref": "|".join(
+            (
+                "secrets.use",
+                request["installation_id"],
+                request["team_id"],
+                request["grant_id"],
+                request["policy_digest"],
+            )
+        ),
         "version": 1,
     }
 
@@ -89,7 +94,7 @@ def test_b2_canonical_form_reproduces_the_covered_bytes(case):
 def test_positive_requests_have_exactly_the_frozen_fields(case):
     fields = VECTOR["fields"]
     request = case["request"]
-    assert request["type"] == "aweb.secrets.use-approval" and request["v"] == 1
+    assert request["type"] == "aweb.secrets.use-approval" and request["v"] == 2
     assert set(request) == set(fields["request"]) | {request["action"]}
     requester = set(request["requester"])
     assert (
