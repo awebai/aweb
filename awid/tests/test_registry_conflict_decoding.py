@@ -4,7 +4,6 @@ from contextlib import aclosing
 
 import httpx
 import pytest
-
 from awid.registry import (
     AddressAlreadyBoundError,
     DIDCurrentKeyMismatchError,
