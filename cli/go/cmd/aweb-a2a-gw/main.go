@@ -705,6 +705,18 @@ type managedRuntimeCard struct {
 	Skills             []skillYAML  `json:"skills"`
 }
 
+// providerConnectionFailure retains the transport cause without a credential
+// URL from net/http's wrapper. Response bodies are not public error text.
+func providerConnectionFailure(err error) string {
+	for {
+		var endpointError *url.Error
+		if !errors.As(err, &endpointError) {
+			return err.Error()
+		}
+		err = endpointError.Err
+	}
+}
+
 var errManagedBearerRequired = errors.New("managed config bearer token is required. Configure managed_config.bearer_token or bearer_token_env and retry")
 
 type managedRuntimeConfigFetchError struct {
@@ -736,7 +748,7 @@ func applyManagedRuntimeConfig(cfg *fileConfig) error {
 	req.Header.Set("Accept", "application/json")
 	resp, err := a2a.CredentialHTTPClient(&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return &managedRuntimeConfigFetchError{Message: fmt.Sprintf("fetch managed runtime config: %v", err)}
+		return &managedRuntimeConfigFetchError{Message: fmt.Sprintf("fetch managed runtime config: %s. Check the provider connection and retry", providerConnectionFailure(err))}
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -744,7 +756,7 @@ func applyManagedRuntimeConfig(cfg *fileConfig) error {
 		return &managedRuntimeConfigFetchError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("read managed runtime config: %v. Check the provider connection and retry", err)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &managedRuntimeConfigFetchError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("fetch managed runtime config: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))}
+		return &managedRuntimeConfigFetchError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("fetch managed runtime config: HTTP %d. Check the provider authentication and availability, then retry", resp.StatusCode)}
 	}
 	var payload managedRuntimeConfigPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -926,7 +938,7 @@ func validateManagedReplyIdentity(cfg *fileConfig, payload managedRuntimeConfigP
 	}
 	for _, route := range cfg.Routes {
 		if !route.Disabled {
-			return fmt.Errorf("A2A provider %s does not advertise recipient_identity_v1. Upgrade the provider before enabling routes that require verified replies.", cfg.ManagedConfig.ConfigURL)
+			return fmt.Errorf("A2A provider %s does not advertise recipient_identity_v1. Upgrade the provider before enabling routes that require verified replies.", a2agw.ProviderDisplayName(cfg.ManagedConfig.ConfigURL))
 		}
 	}
 	return nil
@@ -1629,7 +1641,7 @@ func (t *managedBridgeTransport) doJSONWithSnapshot(ctx context.Context, input m
 	}
 	resp, err := a2a.CredentialHTTPClient(t.httpClient).Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("managed bridge request failed: %s. Check the provider connection and retry", providerConnectionFailure(err))
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -1637,7 +1649,7 @@ func (t *managedBridgeTransport) doJSONWithSnapshot(ctx context.Context, input m
 		return fmt.Errorf("read managed bridge response: %w. Check the provider connection and retry", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("managed bridge %s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(data)))
+		return fmt.Errorf("managed bridge %s %s: HTTP %d. Check the provider authentication and availability, then retry", method, path, resp.StatusCode)
 	}
 	if out == nil {
 		return nil

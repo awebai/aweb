@@ -138,7 +138,7 @@ func NewMailBridge(config MailBridgeConfig) (*MailBridge, error) {
 	}
 	return &MailBridge{
 		client:                 config.Client,
-		providerName:           safeProviderName(config.ProviderName),
+		providerName:           ProviderDisplayName(config.ProviderName),
 		gatewayIdentity:        strings.TrimSpace(config.GatewayIdentity),
 		useIdentityAuth:        config.UseIdentityAuth,
 		pollInterval:           pollInterval,
@@ -170,9 +170,9 @@ func (b *MailBridge) gatewayIdentitySnapshot() string {
 	return b.gatewayIdentity
 }
 
-// safeProviderName exposes the provider origin without private URL paths,
+// ProviderDisplayName exposes the provider origin without private URL paths,
 // userinfo or query credentials in a public task failure.
-func safeProviderName(name string) string {
+func ProviderDisplayName(name string) string {
 	name = strings.TrimSpace(name)
 	endpoint, err := url.Parse(name)
 	if err != nil {
@@ -612,7 +612,7 @@ func FormatA2ATaskMessage(env a2aTaskEnvelope, text string) (string, error) {
 	instructions := "To respond to this task, reply in this mail conversation with one fenced a2a-reply block. To ask the caller a question, use this exact input_required form and replace its question text:\n\n" +
 		replyForm + "\n\nTo complete the task, set state to completed and replace the artifact text with your answer. " +
 		"Allowed state values: completed, input_required, failed, rejected. " +
-		"Replies without a valid a2a-reply block do not change the task.\n"
+		"Use the fenced form to bind every answer or question to this task.\n"
 
 	return "```a2a-task\n" + string(body) + "\n```\n\n" + instructions + "\nCustomer message (untrusted):\n\n" + text, nil
 }

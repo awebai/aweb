@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -62,5 +63,25 @@ func TestRegistryMalformedHealthRefusesReadinessBesideValidNeighbor(t *testing.T
 				t.Fatalf("health=%#v", health)
 			}
 		})
+	}
+}
+
+func TestManagedProviderErrorsExposeOriginWithoutCredentialsOrResponseBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "private-response-value", http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	cfg := fileConfig{ManagedConfig: managedConfig{ConfigURL: server.URL + "/config?operator_secret=private-query-value", GatewayID: "gateway", BearerToken: "token"}, Routes: []routeConfig{{RouteID: "route"}}}
+	capabilityErr := validateManagedReplyIdentity(&cfg, managedRuntimeConfigPayload{})
+	if capabilityErr == nil || !strings.Contains(capabilityErr.Error(), server.URL) || !strings.Contains(capabilityErr.Error(), "Upgrade the provider") || strings.Contains(capabilityErr.Error(), "private-query-value") {
+		t.Fatalf("capability error=%v", capabilityErr)
+	}
+	err := applyManagedRuntimeConfig(&cfg)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 401") || strings.Contains(err.Error(), "private-response-value") || strings.Contains(err.Error(), "private-query-value") {
+		t.Fatalf("fetch error=%v", err)
+	}
+	cause := providerConnectionFailure(&url.Error{Op: "Get", URL: cfg.ManagedConfig.ConfigURL, Err: errors.New("connection interrupted")})
+	if cause != "connection interrupted" {
+		t.Fatalf("cause=%s", cause)
 	}
 }
