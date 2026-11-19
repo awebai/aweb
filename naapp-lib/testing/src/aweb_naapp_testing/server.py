@@ -30,11 +30,11 @@ from dataclasses import dataclass
 
 import httpx
 import pytest_asyncio
-from nacl.signing import SigningKey
 from aweb.testing import Server, running_server
 from awid.dns_verify import DnsVerificationError, DomainAuthority
 from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry, running_registry
+from nacl.signing import SigningKey
 from redis.asyncio import Redis
 
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
