@@ -34,6 +34,22 @@ fetching or changing it. Main's first reviewed baseline bootstraps the counts;
 later heads cannot add or enlarge groups, even when the source would fit a
 manually raised budget. Missing Git/reference evidence fails as setup.
 
+## Source exemptions
+
+Mypy source exemptions are findings under the same reviewed ceiling. Python's
+parsed `type: ignore` entries count as `source-type-ignore`; module `# mypy:`
+directives count as `source-mypy-directive`. Module directives are counted by
+mypy's pinned lexical rule, including directive lines inside multiline strings.
+This keeps source-level overrides visible without copying or rewriting product
+source. The first main baseline retains its five existing type-ignore entries;
+new per-file exemption counts have zero allowance.
+
+Mypy runs with unused-ignore warnings off: an existing exemption stays counted
+even when the underlying code is valid. Removing one lowers its allowance in
+the same change. No source comment can add a budget. Ruff's `--ignore-noqa`
+acquires the underlying lint findings despite inline or file-level `noqa`.
+Real CLI controls cover all these forms and valid neighbors.
+
 When clearing findings, lower or remove the affected counts in the same
 reviewed change. Do not raise a ceiling, move an allowance to another file or
 regenerate this data during a gate run. An initial inventory does not make an

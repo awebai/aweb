@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.metadata
 import json
 import subprocess
 import sys
+import tokenize
 from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
@@ -23,6 +25,11 @@ class Tool(StrEnum):
 class MypyDiagnosticSeverity(StrEnum):
     ERROR = "error"
     NOTE = "note"
+
+
+class SourceSuppressionCode(StrEnum):
+    TYPE_IGNORE = "source-type-ignore"
+    MYPY_DIRECTIVE = "source-mypy-directive"
 
 
 VERSIONS = {Tool.RUFF: "0.15.0", Tool.MYPY: "1.19.1"}
@@ -264,6 +271,7 @@ def run_tool(
             "--python-executable",
             str(package.interpreter),
             "--no-incremental",
+            "--no-warn-unused-ignores",
             "--output",
             "json",
             *targets,
@@ -318,11 +326,51 @@ def production_files(*, package: Package, files: tuple[Path, ...]) -> tuple[Path
     )
 
 
+def source_suppression_counts(path: Path) -> Counter[SourceSuppressionCode]:
+    """Count source opt-outs (docs/python-static-analysis.md, Source exemptions)."""
+    try:
+        with tokenize.open(path) as stream:
+            source = stream.read()
+        parsed = ast.parse(source, type_comments=True)
+    except (OSError, UnicodeError, SyntaxError) as exc:
+        raise StaticCheckError(
+            f"cannot inspect source exemptions in {path}: {exc}"
+        ) from exc
+    counts: Counter[SourceSuppressionCode] = Counter()
+    if parsed.type_ignores:
+        counts[SourceSuppressionCode.TYPE_IGNORE] = len(parsed.type_ignores)
+    # Pinned mypy reads these lines lexically, even inside a multiline string.
+    directives = sum(line.startswith("# mypy: ") for line in source.splitlines())
+    if directives:
+        counts[SourceSuppressionCode.MYPY_DIRECTIVE] = directives
+    return counts
+
+
+def package_source_suppressions(
+    *, root: Path, package: Package, files: tuple[Path, ...]
+) -> Counter[DiagnosticGroup]:
+    targets = (
+        production_files(package=package, files=files)
+        if files
+        else tuple(
+            path
+            for directory in SOURCE_ROOTS[package.directory.name]
+            for path in sorted((package.directory / directory).rglob("*.py"))
+        )
+    )
+    counts: Counter[DiagnosticGroup] = Counter()
+    for path in targets:
+        file = diagnostic_path(root=root, package=package, value=str(path))
+        for code, count in source_suppression_counts(path).items():
+            counts[DiagnosticGroup(tool=Tool.MYPY, file=file, code=code)] += count
+    return counts
+
+
 def scan_package(
     *, root: Path, package: Package, files: tuple[Path, ...] = ()
 ) -> Counter[DiagnosticGroup]:
     verify_package_configuration(package)
-    counts: Counter[DiagnosticGroup] = Counter()
+    counts = package_source_suppressions(root=root, package=package, files=files)
     for tool in Tool:
         targets = (
             production_files(package=package, files=files)

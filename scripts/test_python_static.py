@@ -367,6 +367,98 @@ class PythonStaticControls(unittest.TestCase):
                     refused.stderr,
                 )
 
+    def test_source_suppressions_cannot_hide_a_new_missing_attribute(self) -> None:
+        self.prepare_cli_packages()
+        self.write_budget([])
+        self.prepare_reviewed_reference()
+        path = self.source / "mail.py"
+        invalid = "class MailSender:\n    did: str\n\ndef deliver(sender: MailSender):\n    return sender.team_id\n"
+        variants = [
+            (
+                invalid.rstrip() + "  # type: ignore[attr-defined]\n",
+                "source-type-ignore",
+            ),
+            ("# mypy: ignore-errors\n" + invalid, "source-mypy-directive"),
+            (
+                '# mypy: disable-error-code="attr-defined"\n' + invalid,
+                "source-mypy-directive",
+            ),
+            ('"""\n# mypy: ignore-errors\n"""\n' + invalid, "source-mypy-directive"),
+        ]
+        for source, code in variants:
+            with self.subTest(code=code, source=source):
+                path.write_text(source)
+                refused = self.run_selected_file(path)
+                self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+                self.assertIn(f"[{code}]: 1 > 0", refused.stderr)
+                self.assertTrue(
+                    refused.stderr.rstrip().endswith(
+                        "Fix the reported findings and lower cleared ceilings in the same change."
+                    ),
+                    refused.stderr,
+                )
+                path.write_text(invalid.replace("sender.team_id", "sender.did"))
+                accepted = self.run_selected_file(path)
+                self.assertEqual(
+                    accepted.returncode, 0, accepted.stdout + accepted.stderr
+                )
+
+    def test_reviewed_type_ignore_is_counted_without_unused_ignore_noise(self) -> None:
+        self.prepare_cli_packages()
+        path = self.source / "mail.py"
+        path.write_text(
+            "class MailSender:\n    did: str\n\ndef deliver(sender: MailSender):\n    return sender.did  # type: ignore[attr-defined]\n"
+        )
+        self.write_budget(
+            [
+                {
+                    "tool": "mypy",
+                    "file": "server/src/aweb/mail.py",
+                    "code": "source-type-ignore",
+                    "count": 1,
+                }
+            ]
+        )
+        self.prepare_reviewed_reference()
+        accepted = self.run_selected_file(path)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        self.assertIn("1 diagnostics in 1 groups", accepted.stdout)
+
+    def test_real_cli_ignores_inline_and_module_ruff_noqa(self) -> None:
+        self.prepare_cli_packages()
+        self.write_budget([])
+        self.prepare_reviewed_reference()
+        path = self.source / "defaults.py"
+        for source in (
+            "def first(value=[]):  # noqa: B006\n    return value\n",
+            "# ruff: noqa: B006\ndef first(value=[]):\n    return value\n",
+        ):
+            with self.subTest(source=source):
+                path.write_text(source)
+                refused = self.run_selected_file(path)
+                self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+                self.assertIn("[B006]: 1 > 0", refused.stderr)
+                path.write_text(source.replace("value=[]", "value=None"))
+                accepted = self.run_selected_file(path)
+                self.assertEqual(
+                    accepted.returncode, 0, accepted.stdout + accepted.stderr
+                )
+
+    def run_selected_file(self, path: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/python_static.py"),
+                "--root",
+                str(self.root),
+                "--files",
+                str(path.relative_to(self.root)),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=90,
+        )
+
     def test_raising_reviewed_allowance_refuses_even_when_tools_fit_the_new_budget(
         self,
     ) -> None:
