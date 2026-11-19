@@ -1,7 +1,5 @@
 """One count per incoming unread message, independent of peer multiplicity."""
 
-from uuid import UUID, uuid4
-
 import pytest
 from test_messages_http import _make_keypair, _signed_identity_headers
 from test_mcp_mail_conversation_parity import mail_server  # noqa: F401
@@ -21,12 +19,14 @@ async def test_total_unread_is_distinct_scoped_historical_and_read_only(mail_ser
     )
     await db.execute(
         """INSERT INTO {{tables.messages}} (from_did,to_did,body,conversation_id)
-        VALUES ($1,'did:aw:human','own send',$2),('did:aw:human','did:aw:pilot','already read',$2)""",
+        VALUES ($1,$2,'own send',$3),($2,$4,'already read',$3)""",
         env.pilot_did,
+        env.human_stable,
         cid,
+        env.pilot_stable,
     )
     await db.execute("UPDATE {{tables.messages}} SET read_at=now() WHERE body='already read'")
-    headers = _signed_identity_headers(env.pilot_key, env.pilot_did, "did:aw:pilot", b"")
+    headers = _signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, b"")
     before = [
         dict(r) for r in await db.fetch_all("SELECT * FROM {{tables.messages}} ORDER BY message_id")
     ]
@@ -34,7 +34,8 @@ async def test_total_unread_is_distinct_scoped_historical_and_read_only(mail_ser
     assert count.status_code == 200, count.text
     assert count.json() == {"unread_count": 2}
     peers = await env.client.get(
-        "/v1/conversations/unread-counts?participant_did=did:aw:human&participant_did=did:aw:third",
+        "/v1/conversations/unread-counts",
+        params=[("participant_did", env.human_stable), ("participant_did", "did:aw:third")],
         headers=headers,
     )
     assert sum(row["unread_count"] for row in peers.json()["counts"]) == 3
