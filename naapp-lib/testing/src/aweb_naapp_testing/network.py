@@ -1,4 +1,5 @@
-"""Real local DNS and TLS servers for network tests through the egress guard.
+"""Real local DNS and TLS servers for network tests through the egress guard,
+and the process DNS a test points at its DNS server.
 
 The DNS server answers A and AAAA queries from a table the test controls and
 counts every query, so a test can change an answer between two lookups. The
@@ -17,10 +18,12 @@ import json
 import socket
 import ssl
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import dns.asyncresolver
 import dns.flags
 import dns.message
 import dns.rcode
@@ -71,7 +74,9 @@ def _named_addresses() -> list[str]:
 
 @dataclass
 class DnsServer:
-    """Answers ``records[(name, "A"|"AAAA")]``; a callable gets the query count."""
+    """Answers ``records[(name, type)]``, for example ``"A"``, ``"AAAA"`` or
+    ``"TXT"``; a callable gets the query count. A name with no record of any
+    type answers NXDOMAIN."""
 
     records: dict[tuple[str, str], Answer] = field(default_factory=dict)
     queries: Counter[tuple[str, str]] = field(default_factory=Counter)
@@ -291,3 +296,27 @@ async def _respond(
     head += [f"{name}: {value}" for name, value in headers]
     writer.write(("\r\n".join(head) + "\r\n\r\n").encode("latin-1") + body)
     await writer.drain()
+
+
+@asynccontextmanager
+async def process_dns() -> AsyncIterator[DnsServer]:
+    """A real local DnsServer that this process's DNS asks, as a deployment's
+    resolv.conf names its nameserver.
+
+    dnspython's default resolver, which AWID's ``_awid`` discovery and the
+    coordination server's namespace checks use, asks only this server until
+    the context exits; the previous resolver is then restored. The test puts
+    the records it publishes in ``records``."""
+    server = DnsServer()
+    await server.start()
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = ["127.0.0.1"]
+    resolver.port = server.port
+    resolver.timeout = resolver.lifetime = 1
+    previous = dns.asyncresolver.default_resolver
+    dns.asyncresolver.default_resolver = resolver  # type: ignore[assignment]
+    try:
+        yield server
+    finally:
+        dns.asyncresolver.default_resolver = previous
+        server.close()

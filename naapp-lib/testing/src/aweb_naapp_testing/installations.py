@@ -1,10 +1,11 @@
 """A naapp installed into a team's coordination server, the way ``aw plugin install`` does it.
 
-:func:`app_origin` serves a naapp's ASGI app at a real local HTTPS origin,
-behind a throwaway CA, and points the coordination server's manifest fetcher
-at it through the destination and egress that ``aweb.app_manifests.ManifestFetcher``
-takes from a host. The server then fetches, verifies and pins the naapp's own
-manifest, as it does for an app on the internet.
+:func:`app_origin` serves a naapp's ASGI app at a real local HTTPS origin
+behind a throwaway CA. As a deployment's operator does for an app on its own
+network, it lists that one origin in the server's ``AWEB_APP_INTERNAL_ORIGINS``
+and ``AWEB_APP_INTERNAL_CIDR``, and makes the CA the process's trust anchor
+through ``SSL_CERT_FILE``. The server's own manifest fetcher then fetches,
+verifies and pins the naapp's manifest; every other origin stays refused.
 
 :class:`Installations` is the one place tests install, uninstall and reinstall
 a naapp. Each act is a team-signed request to the server's public routes
@@ -12,7 +13,7 @@ a naapp. Each act is a team-signed request to the server's public routes
 member the server operator made an install admin through ``aweb install-admin
 grant``. Nothing here writes the server's tables.
 
-Load it beside the ``coordination`` fixture (the ``server`` extra).
+Load it beside the ``listening_coordination`` fixture (the ``server`` extra).
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -28,17 +30,9 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from aweb.app_manifests import ManifestFetcher
 from aweb.cli import app as aweb_cli
 from typer.testing import CliRunner
 
-from aweb_naapp.egress import (
-    AddressPolicy,
-    DnsResolver,
-    Egress,
-    InternalDestinations,
-    parse_destination,
-)
 from aweb_naapp_testing import Member
 from aweb_naapp_testing.network import Seen, TlsServer, local_address, make_certificates
 from aweb_naapp_testing.server import Coordination
@@ -75,13 +69,15 @@ class AppOrigin:
         return response.status_code, response.content, passed
 
 
+_OPERATOR_SETTINGS = ("AWEB_APP_INTERNAL_ORIGINS", "AWEB_APP_INTERNAL_CIDR", "SSL_CERT_FILE")
+
+
 @asynccontextmanager
-async def app_origin(coordination: Coordination, directory: Path) -> AsyncIterator[AppOrigin]:
-    """A local HTTPS origin whose manifests ``coordination``'s server fetches.
+async def app_origin(directory: Path) -> AsyncIterator[AppOrigin]:
+    """A local HTTPS origin the coordination server fetches app manifests from.
 
     The egress guard refuses loopback, so the origin listens on this host's own
-    address; it is the server's one internal destination, and every other
-    origin stays refused."""
+    address. The settings it sets are restored when it exits."""
     host = local_address()
     certificates = make_certificates(directory, [host], [host])
     origin = AppOrigin(url="", ca_file=certificates.ca_file)
@@ -89,29 +85,18 @@ async def app_origin(coordination: Coordination, directory: Path) -> AsyncIterat
     await server.start()
     origin.url = f"https://{host}:{server.port}"
     origin._server = server
-    destination = parse_destination(
-        {
-            "host": host,
-            "port": server.port,
-            "path": "/**",
-            "methods": ["GET"],
-            "network": "internal",
-            "cidr": host + "/32",
-        },
-        internal_destinations=InternalDestinations.ALLOWED,
-    )
-    coordination.server.app.state.manifest_fetcher = ManifestFetcher(
-        destination=destination,
-        egress=Egress(
-            addresses=AddressPolicy(internal_destinations=InternalDestinations.ALLOWED),
-            resolver=DnsResolver(),
-            user_agent="aweb-naapp-testing/installations",
-            ca_file=certificates.ca_file,
-        ),
-    )
+    previous = {name: os.environ.get(name) for name in _OPERATOR_SETTINGS}
+    os.environ["AWEB_APP_INTERNAL_ORIGINS"] = json.dumps([origin.url])
+    os.environ["AWEB_APP_INTERNAL_CIDR"] = host + "/32"
+    os.environ["SSL_CERT_FILE"] = str(certificates.ca_file)
     try:
         yield origin
     finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         await server.close()
 
 

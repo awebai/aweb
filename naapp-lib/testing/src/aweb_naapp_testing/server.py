@@ -19,19 +19,31 @@ is visible to both, and nothing reaches real DNS.
 The server reads the AWID ``coordination_registry`` gives: this repository's,
 in-process. A test module overrides that fixture to run against another AWID,
 for example the release production runs (``production_registry``).
+
+``listening_coordination`` composes the same two services as a deployment
+does instead: each serves real HTTP on a local socket, the naapp names AWID by
+its ``awid_registry_url`` setting, and every `_awid` lookup in the process asks
+a real local DNS server (:func:`aweb_naapp_testing.network.process_dns`) that
+publishes each registered team's namespace record. No transport is handed to
+the naapp and no private state is set on it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import socket
 from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 import pytest_asyncio
+import uvicorn
 from aweb.testing import Server, running_server
-from awid.dns_verify import DnsVerificationError, DomainAuthority
+from awid.dns_verify import DnsVerificationError, DomainAuthority, awid_txt_value
 from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry, running_registry
 from redis.asyncio import Redis
@@ -39,6 +51,7 @@ from redis.asyncio import Redis
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 from aweb_naapp.runtime.team_server import TeamServerDirectory
 from aweb_naapp_testing import Member
+from aweb_naapp_testing.network import DnsServer, process_dns
 
 
 @dataclass
@@ -151,3 +164,95 @@ async def coordination(
                 server=server,
                 server_database_url=server_db.config.get_dsn(),
             )
+
+
+class Listener:
+    """A local socket, bound now so its origin is known before the app it will
+    serve exists (a service names its own public origin at construction)."""
+
+    def __init__(self, host: str = "127.0.0.1") -> None:
+        self._socket = socket.socket()
+        self._socket.bind((host, 0))
+        self.origin = f"http://{host}:{self._socket.getsockname()[1]}"
+
+    @asynccontextmanager
+    async def serving(self, app: Any) -> AsyncIterator[str]:
+        """Serves ``app`` over real HTTP on this socket; yields its origin."""
+        server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error", ws="none"))
+        serving = asyncio.create_task(server.serve(sockets=[self._socket]))
+        try:
+            for _ in range(250):
+                if server.started or serving.done():
+                    break
+                await asyncio.sleep(0.02)
+            if not server.started:
+                serving.result() if serving.done() else None
+                raise RuntimeError(f"the listener at {self.origin} did not start")
+            yield self.origin
+        finally:
+            server.should_exit = True
+            await asyncio.wait_for(serving, 5)
+            self._socket.close()
+
+
+@dataclass
+class ListeningCoordination(Coordination):
+    """:class:`Coordination` served over real HTTP: AWID at ``registry_url`` and
+    the server at ``server.url``, both found through ``dns``."""
+
+    registry_url: str = ""
+    dns: DnsServer | None = None
+
+    async def add_member(self, member: Member) -> None:
+        """Registers the member as :meth:`Coordination.add_member` does, and
+        publishes its team namespace's `_awid` record, naming this AWID."""
+        await super().add_member(member)
+        assert self.dns is not None
+        domain = member.team_id.split(":", 1)[1]
+        record = awid_txt_value(member.team_did_key, self.registry_url)
+        self.dns.records[(f"_awid.{domain}", "TXT")] = [json.dumps(record)]
+
+
+@pytest_asyncio.fixture
+async def listening_coordination(
+    test_db_factory, monkeypatch
+) -> AsyncIterator[ListeningCoordination]:
+    async with AsyncExitStack() as stack:
+        dns = await stack.enter_async_context(process_dns())
+        redis = await stack.enter_async_context(
+            Redis.from_url(
+                os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+            )
+        )
+        awid_db = await test_db_factory.create_db(suffix="coordination_awid")
+        registry = await stack.enter_async_context(
+            running_registry(awid_db.config.get_dsn(), redis=redis)
+        )
+        registry_listener = Listener()
+        # Served there, AWID answers to that origin too.
+        registry.app.state.awid_public_origins = (
+            *registry.app.state.awid_public_origins,
+            registry_listener.origin,
+        )
+        registry_url = await stack.enter_async_context(registry_listener.serving(registry.app))
+        monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/aweb")
+        monkeypatch.setenv("AWID_SERVICE_TOKEN", SERVICE_TOKEN)
+        monkeypatch.setenv("AWID_REGISTRY_URL", registry_url)
+        server_db = await test_db_factory.create_db(suffix="coordination_aweb")
+        server_listener = Listener()
+        server = await stack.enter_async_context(
+            running_server(
+                server_db.config.get_dsn(),
+                redis,
+                awid_transport=httpx.AsyncHTTPTransport(),
+                public_origin=server_listener.origin,
+            )
+        )
+        await stack.enter_async_context(server_listener.serving(server.app))
+        yield ListeningCoordination(
+            registry=registry,
+            server=server,
+            server_database_url=server_db.config.get_dsn(),
+            registry_url=registry_url,
+            dns=dns,
+        )
