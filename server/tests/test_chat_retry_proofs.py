@@ -89,7 +89,7 @@ def retained_request(request_model):
         signed_payload=request.signed_payload,
     )
     auth = MessagingAuth(did_key=sender, did_aw=None, address=None)
-    return StoredChatSnapshot(row, recipient), request, auth, session_id, recipient
+    return StoredChatSnapshot(row, recipient), request, auth, session_id, recipient, key
 
 
 async def stored_answer(snapshot, request, auth, session_id, recipient):
@@ -100,14 +100,15 @@ async def stored_answer(snapshot, request, auth, session_id, recipient):
         session_id=session_id,
         recipient_rows=[{"did": recipient, "did_key": recipient}],
         actor_dids=[auth.did_key],
-        target_dids=[recipient],
     )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("request_model", [CreateSessionRequest, SendMessageRequest])
 async def test_exact_plaintext_chat_artifact_retains_answer_after_age(request_model):
-    snapshot, request, auth, session_id, recipient = retained_request(request_model)
+    snapshot, request, auth, session_id, recipient, key = retained_request(
+        request_model
+    )
     result = await stored_answer(snapshot, request, auth, session_id, recipient)
     assert result["message_id"] == UUID(request.message_id)
     assert result["session_id"] == session_id
@@ -119,7 +120,9 @@ async def test_exact_plaintext_chat_artifact_retains_answer_after_age(request_mo
 async def test_legacy_stored_signature_never_becomes_verified_by_being_stored(
     request_model,
 ):
-    snapshot, request, auth, session_id, recipient = retained_request(request_model)
+    snapshot, request, auth, session_id, recipient, key = retained_request(
+        request_model
+    )
     invalid = base64.b64encode(bytes(64)).decode().rstrip("=")
     snapshot.row["signature"] = invalid
     request = request.model_copy(update={"signature": invalid})
@@ -134,9 +137,22 @@ async def test_legacy_stored_signature_never_becomes_verified_by_being_stored(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("request_model", [CreateSessionRequest, SendMessageRequest])
 async def test_changed_chat_artifact_has_no_plaintext_age_exemption(request_model):
-    snapshot, request, auth, session_id, recipient = retained_request(request_model)
+    snapshot, request, auth, session_id, recipient, key = retained_request(
+        request_model
+    )
     field = "message" if request_model is CreateSessionRequest else "body"
-    request = request.model_copy(update={field: "changed request"})
+    import json
+
+    signed = json.loads(request.signed_payload)
+    signed["body"] = "changed request"
+    encoded = canonical_json_bytes(signed)
+    request = request.model_copy(
+        update={
+            field: "changed request",
+            "signed_payload": encoded.decode(),
+            "signature": sign_message(key, encoded),
+        }
+    )
     with pytest.raises(DeliveryRefusal) as refused:
         await stored_answer(snapshot, request, auth, session_id, recipient)
     assert refused.value.status_code == 422

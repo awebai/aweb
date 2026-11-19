@@ -13,6 +13,7 @@ from awid.did import generate_keypair
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.messaging.kinds import MessageKind
 from aweb.messaging.message_replay import (
+    ChatReplayControls,
     EncryptedReplayArtifact,
     PlaintextReplayArtifact,
     StoredMessageClaim,
@@ -287,3 +288,113 @@ async def test_named_mail_id_availability_reaches_the_canonical_writer(availabil
     )
     with pytest.raises(AssertionError, match="unnamed claim reached a database read"):
         await store_mail(LookupTrap(), message=message)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"sender_leaving": True},
+        {"hang_on": True},
+        {"reply_to": OTHER_CONVERSATION},
+    ],
+)
+async def test_changed_persisted_chat_controls_are_not_the_same_accepted_message(
+    change,
+):
+    claim, row = signed_artifact(MessageKind.CHAT)
+    claim = replace(
+        claim,
+        chat_controls=ChatReplayControls(
+            sender_leaving=False,
+            hang_on=False,
+            reply_to=None,
+        ),
+    )
+    row.update(sender_leaving=False, hang_on=False, reply_to=None)
+    exact = await read_stored_message(StoredArtifactReader(row), claim=claim)
+    assert exact.state is StoredMessageState.EXACT
+    changed = await read_stored_message(
+        StoredArtifactReader({**row, **change}), claim=claim
+    )
+    assert changed.state is StoredMessageState.CONFLICT
+
+
+class StoredChatParties(StoredArtifactReader):
+    async def fetch_all(self, query, session_id):
+        assert session_id == CONVERSATION_ID
+        return [
+            {"did": "did:key:accepted-sender"},
+            {"did": "did:key:original-recipient"},
+        ]
+
+
+@pytest.mark.asyncio
+async def test_optional_signed_recipient_claim_cannot_move_a_stored_chat_to_other_parties():
+    claim, row = signed_artifact(MessageKind.CHAT)
+    claim = replace(
+        claim,
+        chat_participant_dids=frozenset(
+            {
+                "did:key:accepted-sender",
+                "did:key:original-recipient",
+            }
+        ),
+    )
+    original = await read_stored_message(StoredChatParties(row), claim=claim)
+    assert original.state is StoredMessageState.EXACT
+    changed = await read_stored_message(
+        StoredChatParties(row),
+        claim=replace(
+            claim,
+            chat_participant_dids=frozenset(
+                {
+                    "did:key:accepted-sender",
+                    "did:key:different-recipient",
+                }
+            ),
+        ),
+    )
+    assert changed.state is StoredMessageState.CONFLICT
+
+
+def test_attachment_retry_conflict_keeps_its_code_and_explains_the_next_action():
+    from aweb.attachment_service import _attachment_retry_conflict
+
+    refused = _attachment_retry_conflict()
+    assert refused.status_code == 409
+    assert refused.detail == {
+        "code": "attachment_conflict",
+        "message": "This message ID already has a different attachment request. Retry the original request unchanged, or choose a new message ID for a new message.",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "controls",
+    [
+        ChatReplayControls(
+            sender_leaving=False, hang_on=False, reply_to=None, timestamp="changed-time"
+        ),
+        ChatReplayControls(
+            sender_leaving=False,
+            hang_on=False,
+            reply_to=None,
+            signing_did="did:key:changed-key",
+        ),
+    ],
+)
+async def test_encrypted_chat_retry_retains_its_original_attestation_fields(controls):
+    claim, row = signed_artifact(MessageKind.CHAT)
+    envelope = {
+        "created_at": "accepted-time",
+        "from": {"did": "did:key:accepted-sender"},
+    }
+    row.update(content_mode="encrypted_v2", encrypted_envelope=envelope)
+    claim = replace(
+        claim,
+        artifact=EncryptedReplayArtifact(envelope=envelope),
+        chat_controls=controls,
+    )
+    result = await read_stored_message(StoredArtifactReader(row), claim=claim)
+    assert result.state is StoredMessageState.CONFLICT

@@ -34,12 +34,25 @@ class EncryptedReplayArtifact:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ChatReplayControls:
+    """Persisted chat controls outside the encrypted message envelope."""
+
+    sender_leaving: bool
+    hang_on: bool
+    reply_to: UUID | None
+    timestamp: str | None = None
+    signing_did: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class StoredMessageClaim:
     kind: MessageKind
     message_id: UUID
     sender_did: str
     conversation_id: UUID | None
     artifact: PlaintextReplayArtifact | EncryptedReplayArtifact
+    chat_controls: ChatReplayControls | None = None
+    chat_participant_dids: frozenset[str] | None = None
 
 
 def replay_artifact(
@@ -58,6 +71,16 @@ def replay_artifact(
 def _require_named_claim(claim: StoredMessageClaim) -> None:
     if not isinstance(claim.kind, MessageKind):
         raise TypeError("Select a named MessageKind before reading a stored message.")
+    if claim.chat_participant_dids is not None and (
+        claim.kind is not MessageKind.CHAT
+        or not isinstance(claim.chat_participant_dids, frozenset)
+    ):
+        raise TypeError("Supply a frozen participant DID set only for a chat retry.")
+    if claim.chat_controls is not None and (
+        claim.kind is not MessageKind.CHAT
+        or not isinstance(claim.chat_controls, ChatReplayControls)
+    ):
+        raise TypeError("Use named ChatReplayControls only for a chat retry.")
     if not isinstance(
         claim.artifact, (PlaintextReplayArtifact, EncryptedReplayArtifact)
     ):
@@ -116,7 +139,31 @@ def stored_message_matches(row: Mapping, *, claim: StoredMessageClaim) -> bool:
         )
     ):
         return False
+    if claim.chat_controls is not None:
+        controls = claim.chat_controls
+        if (
+            bool(row.get("sender_leaving")) != controls.sender_leaving
+            or bool(row.get("hang_on")) != controls.hang_on
+            or row.get("reply_to") != controls.reply_to
+        ):
+            return False
+    # wait_seconds changes session wait state, not a stored message field;
+    # acknowledging a retry never reapplies that state transition.
     if isinstance(claim.artifact, EncryptedReplayArtifact):
+        if claim.chat_controls is not None:
+            controls = claim.chat_controls
+            sender = claim.artifact.envelope.get("from")
+            if (
+                controls.timestamp is not None
+                and controls.timestamp != claim.artifact.envelope.get("created_at")
+            ) or (
+                controls.signing_did is not None
+                and (
+                    not isinstance(sender, Mapping)
+                    or controls.signing_did != sender.get("did")
+                )
+            ):
+                return False
         return (
             row.get("content_mode") == ContentMode.ENCRYPTED
             and _stored_object(row.get("encrypted_envelope")) == claim.artifact.envelope
@@ -141,6 +188,13 @@ async def read_stored_message(db, *, claim: StoredMessageClaim) -> StoredMessage
         return StoredMessageLookup(state=StoredMessageState.MISSING)
     if not stored_message_matches(row, claim=claim):
         return StoredMessageLookup(state=StoredMessageState.CONFLICT)
+    if claim.chat_participant_dids is not None:
+        participants = await db.get_manager("aweb").fetch_all(
+            "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
+            row["session_id"],
+        )
+        if {party["did"] for party in participants} != claim.chat_participant_dids:
+            return StoredMessageLookup(state=StoredMessageState.CONFLICT)
     return StoredMessageLookup(state=StoredMessageState.EXACT, message=dict(row))
 
 

@@ -11,6 +11,13 @@ import logging
 import uuid as uuid_mod
 from pgdbm.errors import QueryError
 from aweb.messaging.write_conflicts import is_unique_write_conflict
+from aweb.messaging.message_replay import (
+    ChatReplayControls,
+    StoredMessageClaim,
+    StoredMessageState,
+    read_stored_message,
+    replay_artifact,
+)
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -726,78 +733,48 @@ async def _stored_exact_chat_send(
     session_id: UUID | None,
     recipient_rows: Sequence[Mapping[str, Any]],
     actor_dids: list[str],
-    target_dids: list[str],
 ):
-    """Return the accepted chat artifact after current admission, without effects.
+    """Acknowledge one accepted artifact after ordinary request validation.
 
-    docs/identity-messaging-contract.md:354-365 exempts exact plaintext retries
-    from freshness only. Integrity and encrypted expiry remain required.
+    docs/identity-messaging-contract.md:354-370 exempts exact plaintext retries
+    from age only. The shared owner decides sameness; this adapter retains chat
+    request binding, current sender key and encrypted expiry checks.
     """
     if payload.message_id is None:
         return None
-    manager = db.get_manager("aweb")
-    row = await manager.fetch_one(
-        "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1",
-        UUID(payload.message_id),
+    lookup = await read_stored_message(
+        db,
+        claim=StoredMessageClaim(
+            kind=MessageKind.CHAT,
+            message_id=UUID(payload.message_id),
+            sender_did=actor_dids[0],
+            conversation_id=session_id,
+            chat_participant_dids=frozenset(actor_dids)
+            | frozenset(_target_did(row) for row in recipient_rows),
+            chat_controls=ChatReplayControls(
+                sender_leaving=payload.leaving,
+                hang_on=payload.hang_on,
+                reply_to=UUID(payload.reply_to) if payload.reply_to else None,
+                timestamp=payload.timestamp,
+                signing_did=payload.from_did,
+            ),
+            artifact=replay_artifact(
+                content_mode=payload.content_mode,
+                encrypted_envelope=payload.encrypted_envelope,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+            ),
+        ),
     )
-    if row is None:
+    if lookup.state is StoredMessageState.MISSING:
         return None
-    envelope = row.get("encrypted_envelope")
-    if isinstance(envelope, str):
-        envelope = json.loads(envelope)
-    matches = (
-        row["from_did"] in actor_dids
-        and (session_id is None or row["session_id"] == session_id)
-        and row["body"] == _chat_payload_body(payload)
-        and row.get("signature") == payload.signature
-        and row.get("signed_payload") == payload.signed_payload
-        and envelope == payload.encrypted_envelope
-        and row["content_mode"] == payload.content_mode
-        and row["message_version"] == payload.message_version
-        and bool(row["sender_leaving"]) == payload.leaving
-        and bool(row["hang_on"]) == payload.hang_on
-        and (str(row["reply_to"]) if row.get("reply_to") else None) == payload.reply_to
-    )
-    signed = (
-        envelope
-        if envelope is not None
-        else json.loads(row.get("signed_payload") or "{}")
-    )
-    timestamp = signed.get("created_at" if envelope is not None else "timestamp")
-    signer = (
-        (signed.get("from") or {}).get("did")
-        if envelope is not None
-        else signed.get("from_did")
-    )
-    matches = (
-        matches
-        and payload.timestamp == timestamp
-        and (
-            payload.from_did == signer
-            or (envelope is not None and payload.from_did is None)
-        )
-        and (envelope is not None or payload.wait_seconds == signed.get("wait_seconds"))
-    )
-    # Encrypted wait_seconds is an outer request option, not stored message
-    # evidence. Acknowledge the matching envelope without applying a wait again;
-    # the session's current wait may belong to a later accepted request.
-    participants = await manager.fetch_all(
-        "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1",
-        row["session_id"],
-    )
-    matches = matches and {p["did"] for p in participants} == set(actor_dids) | set(
-        target_dids
-    )
-    if not matches:
+    if lookup.message is None:
         if payload.signature is not None and not _payload_is_encrypted(payload):
             _parse_signed_timestamp(str(payload.timestamp))
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.CONFLICT,
-            detail=(
-                "This message ID has already been used for a different chat request. "
-                "Retry the original request unchanged. Use a new message ID only if you intend to send a new message."
-            ),
-        )
+        lookup.refuse_conflicting_message_id()
+    row = lookup.message
+    if row is None:
+        return None
     if _payload_is_encrypted(payload):
         validate_encrypted_chat_payload(
             payload,
@@ -807,11 +784,35 @@ async def _stored_exact_chat_send(
             recipient_rows=recipient_rows,
         )
         _parse_signed_timestamp(str(payload.timestamp))
-    elif payload.signature is not None:
-        require_verified_message_signature(
-            signed_payload=payload.signed_payload or "",
+    else:
+        if payload.from_did not in auth_dids(auth):
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="from_did must match the authenticated sender. Use the authenticated sender identity and sign the message again.",
+            )
+        _validate_signed_chat_payload(
+            signer_did_key=auth.did_key,
             signature=payload.signature,
-            did_key=auth.did_key,
+            signed_payload=payload.signed_payload,
+            recipient_rows=recipient_rows,
+            requested_to_aliases=getattr(payload, "to_aliases", None),
+            from_alias=auth.alias,
+            from_address=_sender_address(auth),
+            from_stable_id=auth.did_aw,
+            body=_chat_payload_body(payload),
+            from_did=payload.from_did,
+            message_id=payload.message_id,
+            timestamp=payload.timestamp,
+            wait_seconds=payload.wait_seconds,
+            reply_to=payload.reply_to,
+            conversation_id=(
+                str(row["session_id"])
+                if session_id is not None
+                or _signed_payload_conversation_id(payload.signed_payload)
+                else None
+            ),
+            sender_leaving=payload.leaving,
+            hang_on=payload.hang_on,
         )
     return row
 
@@ -1656,7 +1657,6 @@ async def _send_local_chat(
                 session_id=target.session_id,
                 recipient_rows=target.recipients,
                 actor_dids=participant_dids(auth),
-                target_dids=[_target_did(row) for row in target.recipients],
             )
             if stored is None:
                 raise
@@ -1765,7 +1765,6 @@ async def _send_to_named_recipients(
         session_id=requested_session_id,
         recipient_rows=target_rows,
         actor_dids=actor_dids,
-        target_dids=target_dids,
     )
     if existing_message is not None:
         return SentChat(
@@ -2316,7 +2315,6 @@ async def _send_in_continued_session(
         session_id=session_uuid,
         recipient_rows=recipient_rows,
         actor_dids=actor_dids,
-        target_dids=[_target_did(row) for row in recipient_rows],
     )
     if existing_message is not None:
         return SentChat(session_id=session_uuid, message=dict(existing_message))
@@ -2424,7 +2422,6 @@ async def _send_in_continued_session(
             session_id=session_uuid,
             recipient_rows=recipient_rows,
             actor_dids=actor_dids,
-            target_dids=[_target_did(row) for row in recipient_rows],
         )
         if stored is None:
             raise

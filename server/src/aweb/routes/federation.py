@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-import json
+from aweb.messaging.kinds import MessageKind
+from aweb.messaging.message_replay import (
+    StoredFederationReceipt,
+    established_federation_receipt,
+)
+
 import logging
 from uuid import UUID, uuid4
 
@@ -212,7 +217,7 @@ async def _established_replay_receipt(
     *,
     envelope: FederationEnvelope,
     envelope_hash: str,
-) -> dict | None:
+) -> StoredFederationReceipt | None:
     try:
         row = await db.get_manager("aweb").fetch_one(
             """
@@ -227,27 +232,9 @@ async def _established_replay_receipt(
         raise FederationAuthorityError(
             "federation_authority_coordination_unavailable"
         ) from exc
-    if row is None:
-        return None
-    if (
-        row["legacy_unreplayable"]
-        or row["envelope_hash"] != envelope_hash
-        or row["storage_kind"] != envelope.type
-        or row["established_result"] is None
-    ):
-        raise FederationAuthorityError("federation_message_replay_conflict")
-    metadata = row["canonical_metadata"]
-    result = row["established_result"]
-    try:
-        if isinstance(metadata, str):
-            metadata = json.loads(metadata)
-        if isinstance(result, str):
-            result = json.loads(result)
-    except (TypeError, ValueError) as exc:
-        raise FederationAuthorityError("federation_message_replay_conflict") from exc
-    if not isinstance(metadata, dict) or not isinstance(result, dict):
-        raise FederationAuthorityError("federation_message_replay_conflict")
-    return {"metadata": metadata, "result": result}
+    return established_federation_receipt(
+        row, envelope_hash=envelope_hash, kind=MessageKind(envelope.type)
+    )
 
 
 def _stable_envelope_error(exc: FederationEnvelopeError) -> FederationAuthorityError:
@@ -348,7 +335,7 @@ async def receive_federated_message(
             established_replay,
         ) = await _verified_delivery_replay(request, payload=payload, db=db)
         if established_replay is not None:
-            metadata = established_replay["metadata"]
+            metadata = established_replay.metadata
             envelope = envelope.model_copy(
                 update={
                     "sender_address": metadata.get("sender_address"),

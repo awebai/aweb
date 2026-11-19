@@ -532,8 +532,12 @@ block later UUID reuse after message deletion; existing local API idempotency
 may still return its row before attempting an insert.
 
 For local mail, an exact retry is a stored `message_id` resent by the same
-sender with the identical nonempty `signed_payload` (plaintext) or the identical
-encrypted envelope. It returns the original message ID, conversation ID and
+sender with the identical nonempty signature and `signed_payload` (plaintext)
+or the identical complete encrypted envelope. The same stored-artifact rule is
+used by native send retries, mail storage, outbound projections and attachment
+retries. Stored chat controls and supplied participants must also match;
+attachment reference ownership and order remain additional admission checks.
+It returns the original message ID, conversation ID and
 receipt time with no second effect: no new conversation, no second
 `message.sent`, no second count against the sender's allowance. A different
 sender or payload under that ID (including unsigned ID reuse) returns HTTP 409.
