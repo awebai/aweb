@@ -22,7 +22,10 @@ from ..test_manifest_v2_vectors import RESERVED, V2, _manifest_bytes
 
 # Valid manifests whose tool routes overlap: the runtime refuses them, because
 # each request must authorize as exactly one tool.
-OVERLAPPING_ROUTES = {"agent_catch_all_other_method_allowed", "surface_tool_on_answer_route_allowed"}
+OVERLAPPING_ROUTES = {
+    "agent_catch_all_other_method_allowed",
+    "surface_tool_on_answer_route_allowed",
+}
 
 
 class ExampleSettings(NaappSettings):
@@ -47,7 +50,9 @@ def _as_template(data: bytes, keys: Path) -> tuple[dict[str, Any], dict[str, Pat
         path.write_text(seed + "\n", encoding="utf-8")
         path.chmod(0o600)
         files[entry["kid"]] = path
-        did_keys[entry["kid"]] = did_from_public_key(bytes(SigningKey(bytes.fromhex(seed)).verify_key))
+        did_keys[entry["kid"]] = did_from_public_key(
+            bytes(SigningKey(bytes.fromhex(seed)).verify_key)
+        )
     return document, files, did_keys
 
 
@@ -70,7 +75,10 @@ def _localize_event_types(document: dict[str, Any]) -> None:
 def _names_a_foreign_event_type(data: bytes) -> bool:
     document = json.loads(data)
     _localize_event_types(document)
-    return any(isinstance(event.get("type"), str) and "/" in event["type"] for event in _event_bindings(document))
+    return any(
+        isinstance(event.get("type"), str) and "/" in event["type"]
+        for event in _event_bindings(document)
+    )
 
 
 def _runtime(tmp_path: Path, document: dict[str, Any], files: dict[str, Path]) -> NaappRuntime:
@@ -80,7 +88,9 @@ def _runtime(tmp_path: Path, document: dict[str, Any], files: dict[str, Path]) -
     migrations.mkdir()
     runtime = NaappRuntime(
         ExampleSettings(
-            _env_file=None, app_id=document["app"]["id"], public_origin=document["app"]["origin"],
+            _env_file=None,
+            app_id=document["app"]["id"],
+            public_origin=document["app"]["origin"],
             app_key_files=files,
         ),
         module_name="fixture",
@@ -112,7 +122,9 @@ def test_the_runtime_serves_each_vector_template_as_the_shared_reader_resolves_i
     if any("did_key" in mutation["path"] for mutation in case.get("mutations", [])):
         pytest.skip("did:keys come from the deployment's configured keys, not the template")
     if _names_a_foreign_event_type(data):
-        pytest.skip("a template names its event types locally; another app's prefix cannot be written in one")
+        pytest.skip(
+            "a template names its event types locally; another app's prefix cannot be written in one"
+        )
     document, files, did_keys = _as_template(data, tmp_path / "keys")
     if not expected["accepted"]:
         with pytest.raises(ManifestError) as refused:
@@ -126,7 +138,9 @@ def test_the_runtime_serves_each_vector_template_as_the_shared_reader_resolves_i
     runtime = _runtime(tmp_path, document, files)
     resolved = {
         **expected["resolved"],
-        "app_keys": [{**key, "did_key": did_keys[key["kid"]]} for key in expected["resolved"]["app_keys"]],
+        "app_keys": [
+            {**key, "did_key": did_keys[key["kid"]]} for key in expected["resolved"]["app_keys"]
+        ],
     }
     for context in ("agent", "surface", "hook"):
         declared = sorted(tool.name for tool in runtime.declared_tools if context in tool.contexts)

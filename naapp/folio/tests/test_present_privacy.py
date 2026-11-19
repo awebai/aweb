@@ -30,20 +30,32 @@ OWNER = Principal(
 async def present_world(test_db_factory, monkeypatch):
     # Isolate only AWID's external registry in these local PG/HTTP/browser tests.
     # Docker e2e uses the real registry and signatures.
-    async def current(self, team_id, *, certificate_id, team_did_key, principal=None, member_alias=None):
+    async def current(
+        self, team_id, *, certificate_id, team_did_key, principal=None, member_alias=None
+    ):
         now = time.monotonic_ns()
         return MembershipProof(team_id, certificate_id, team_did_key, now, now + seconds_to_ns(60))
+
     monkeypatch.setattr(NaappRuntime, "check_current_member", current)
+
     class TestGrants:
         state = "active"
         installation_id = "test-installation"
         generation = 1
         installed_at = datetime.now(UTC) - timedelta(days=1)
+
         async def status_for(self, team_id):
-            return SimpleNamespace(team_id=team_id, app_id=settings.app_id, state=self.state,
-                installation_id=self.installation_id, generation=self.generation,
-                installed_at=self.installed_at, granted_scopes=frozenset({"folio:read", "folio:write"}),
-                fresh_until=time.monotonic_ns()+seconds_to_ns(60))
+            return SimpleNamespace(
+                team_id=team_id,
+                app_id=settings.app_id,
+                state=self.state,
+                installation_id=self.installation_id,
+                generation=self.generation,
+                installed_at=self.installed_at,
+                granted_scopes=frozenset({"folio:read", "folio:write"}),
+                fresh_until=time.monotonic_ns() + seconds_to_ns(60),
+            )
+
     grants = TestGrants()
     monkeypatch.setattr(NaappRuntime, "installation_grants", lambda self: grants)
     database = await test_db_factory.create_db(suffix="folio_present")
@@ -162,7 +174,9 @@ async def test_read_only_ttl_default_and_thirty_day_maximum(present_world, ttl_s
 
 
 @pytest.mark.parametrize("maximum,requested", [(2_592_000, 2_592_001), (604_800, 604_801)])
-async def test_read_only_ttl_over_maximum_refuses_without_minting(present_world, maximum, requested):
+async def test_read_only_ttl_over_maximum_refuses_without_minting(
+    present_world, maximum, requested
+):
     from fastapi import HTTPException
 
     _, db, settings = present_world
@@ -195,6 +209,7 @@ async def test_present_responses_are_private_and_legacy_edit_links_refuse(presen
             link["token"],
         )
     from urllib.parse import parse_qs, urlsplit
+
     parts = urlsplit(link["url"])
     prefix = parts.path
     async with httpx.AsyncClient(
@@ -203,14 +218,20 @@ async def test_present_responses_are_private_and_legacy_edit_links_refuse(presen
         shell = await client.get(prefix)
         assert shell.status_code == 200
         assert_private(shell)
-        opened = await client.post(prefix + "/session", json={"opener": parse_qs(parts.fragment)["k"][0]})
+        opened = await client.post(
+            prefix + "/session", json={"opener": parse_qs(parts.fragment)["k"][0]}
+        )
         assert opened.status_code == (200 if state == "valid" else 404)
         assert_private(opened)
-        headers = {"X-Folio-Edit-Session": opened.json()["session_secret"]} if state == "valid" else {}
+        headers = (
+            {"X-Folio-Edit-Session": opened.json()["session_secret"]} if state == "valid" else {}
+        )
         responses = [
             await client.get(prefix + "/state?after_version=1", headers=headers),
             await client.post(prefix + "/preview", headers=headers, json={"body": "Draft"}),
-            await client.post(prefix + "/edit", headers=headers, json={"body": "Changed", "base_version": 1}),
+            await client.post(
+                prefix + "/edit", headers=headers, json={"body": "Changed", "base_version": 1}
+            ),
         ]
         assert [r.status_code for r in responses] == ([200] * 3 if state == "valid" else [404] * 3)
         for response in responses:

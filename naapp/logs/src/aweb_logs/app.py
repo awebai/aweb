@@ -242,7 +242,9 @@ def create_app(
         try:
             return await ingestor.admit(request, received_at=now())
         except IngestRefused as refused:
-            raise HTTPException(status_code=refused.status, detail={"code": refused.code}) from refused
+            raise HTTPException(
+                status_code=refused.status, detail={"code": refused.code}
+            ) from refused
 
     return OriginApps(
         api, console, agent_origin=settings.public_origin, human_origin=settings.console_origin

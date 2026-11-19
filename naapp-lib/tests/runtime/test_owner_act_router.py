@@ -539,6 +539,7 @@ async def test_missing_or_failing_membership_certificate_refuses_without_effect(
     assert (response.status_code, response.json()["detail"]) == (403, "principal_not_member")
     assert await world.counts() == (0, 0, 0)
 
+
 async def test_revoke_needs_no_principal_membership_and_refuses_a_carried_certificate(world):
     assert (await world.post(world.body())).status_code == 200
     await world.coordination.registry.revoke(world.member.certificate_id)
