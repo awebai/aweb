@@ -919,6 +919,9 @@ PACKAGE_GUARDS = {
     ),
 }
 NON_CONSUMING_CODE_REFERENCES = {
+    PurePosixPath("cli/go/awid/registry_origin.go"): (
+        "vectors/atomic-address-claim-v1.json",
+    ),
     PurePosixPath("scripts/generate_owner_act_delivery_vector.py"): (
         "docs/vectors/owner-act-delivery-v1.json",
     ),
