@@ -113,6 +113,16 @@ func LoadPendingTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 	return decodeTeamKey(data)
 }
 
+// RemoveTeamKey deletes the team key file. It is for a key that was never
+// registered; a registered team key is never removed by the CLI.
+func RemoveTeamKey(domain, name string) error {
+	path, err := TeamKeyPath(domain, name)
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
 // PromotePendingTeamKey makes the pending key the team key and removes it.
 func PromotePendingTeamKey(domain, name string) error {
 	key, err := LoadPendingTeamKey(domain, name)

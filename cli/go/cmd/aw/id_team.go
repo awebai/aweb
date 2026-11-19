@@ -4401,6 +4401,14 @@ func ensureLocalTeamRegistered(
 	}
 	teamDIDKey := awid.ComputeDIDKey(teamPriv.Public().(ed25519.PublicKey))
 
+	// The key is in local custody before the registry pins the team to it,
+	// so an interrupted run is completed by a retry that reuses it.
+	if !exists {
+		if err := awconfig.SaveTeamKey(domain, name, teamPriv); err != nil {
+			return nil, err
+		}
+	}
+
 	_, err = registry.CreateTeam(ctx, registryURL, domain, name, strings.TrimSpace(displayName), teamDIDKey, controllerKey)
 	if err != nil {
 		if code, ok := registryStatusCode(err); !ok || code != http.StatusConflict {
@@ -4411,15 +4419,17 @@ func ensureLocalTeamRegistered(
 			return nil, fmt.Errorf("create team at registry: %w", err)
 		}
 		if strings.TrimSpace(existingTeam.TeamDIDKey) != teamDIDKey {
+			// The key this run generated was never registered; keep no key
+			// file for a team pinned to another key.
+			if !exists {
+				if removeErr := awconfig.RemoveTeamKey(domain, name); removeErr != nil {
+					return nil, fmt.Errorf("team %s/%s is already pinned to %s; remove the unregistered local team key: %w", domain, name, existingTeam.TeamDIDKey, removeErr)
+				}
+			}
 			return nil, fmt.Errorf("team %s/%s is already pinned to %s", domain, name, existingTeam.TeamDIDKey)
 		}
 	}
 
-	if !exists {
-		if err := awconfig.SaveTeamKey(domain, name, teamPriv); err != nil {
-			return nil, err
-		}
-	}
 	teamKeyPath, err := awconfig.TeamKeyPath(domain, name)
 	if err != nil {
 		return nil, err
