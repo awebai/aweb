@@ -45,6 +45,7 @@ async def raw_subscription(redis: Redis, *channels: str) -> AsyncIterator[PubSub
         pubsub = await open_subscription(client, *channels)
         yield pubsub
     finally:
+
         async def close() -> None:
             try:
                 await release_subscription(pubsub, *channels)
