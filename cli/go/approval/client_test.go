@@ -311,3 +311,37 @@ func TestRequesterPollRetriesKeepOriginalSelectionAndDeadline(t *testing.T) {
 		})
 	}
 }
+
+// A caller's data view cannot extend the checked request window or replace its
+// requester. These facts are admitted once from the shared 428 reader.
+func TestCheckedSessionDoesNotTakeAuthorityFromTheMutableRequestView(t *testing.T) {
+	vector := find(t, cases(t, "enforcer-requester"), func(value map[string]any) bool {
+		return value["id"] == "needs-human-exact-R"
+	})
+	now := num(vector["now"])
+	client := &Client{Origin: vector["origin"].(string), Requester: vector["presenter"].(map[string]any), Now: func() time.Time { return time.Unix(now, 0) }}
+	raw, err := proof.Canonical(vector["needs_human"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := client.From428(raw, int(num(vector["http_status"])))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := session.live(); err != nil {
+		t.Fatalf("checked live neighbor: %v", err)
+	}
+	deadline := num(session.Request["deadline"])
+	session.Request["deadline"] = json.Number(strconv.FormatInt(deadline+3600, 10))
+	now = deadline
+	if err := session.live(); err == nil || err.Error() != "request_expired" {
+		t.Fatalf("mutable view extended the checked deadline: %v", err)
+	}
+	now = num(vector["now"])
+	requester := session.Request["requester"].(map[string]any)
+	requester["id"] = "did:aw:other"
+	client.Requester = requester
+	if err := session.live(); err == nil || err.Error() != "requester_mismatch" {
+		t.Fatalf("mutable view supplied another requester: %v", err)
+	}
+}
