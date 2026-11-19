@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from aweb.internal_auth import ProxyVerificationConfig
 from aweb.auth_context import GrantContext
 from aweb.install_authority import (
     CertificateInstallAdminSubject,
@@ -35,6 +36,7 @@ def identity(**changes):
 
 def request(*, headers=None, policy=None):
     app = FastAPI()
+    ProxyVerificationConfig.capture().install(app)
     if policy is not None:
         app.state.install_admin_policy = policy
     return Request({

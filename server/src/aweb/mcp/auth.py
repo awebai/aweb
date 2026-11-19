@@ -20,6 +20,7 @@ from aweb.service_errors import IdentityBindingError
 from aweb.application_state import RegistryClientUnavailable
 from aweb.auth_error_transport import mcp_auth_error_response
 from aweb.internal_auth import (
+    ProxyVerificationConfig,
     parse_internal_auth_context,
     read_internal_actor_projection,
 )
@@ -122,7 +123,8 @@ def get_auth() -> AuthContext:
 class MCPAuthMiddleware:
     """ASGI middleware that resolves identity for MCP requests."""
 
-    def __init__(self, app: ASGIApp, db_infra: Any) -> None:
+    def __init__(self, app: ASGIApp, db_infra: Any, *, proxy_verification: ProxyVerificationConfig | None = None) -> None:
+        self.proxy_verification = ProxyVerificationConfig.capture(proxy_verification)
         self.app = app
         self.db_infra = db_infra
 
@@ -165,7 +167,7 @@ class MCPAuthMiddleware:
             _auth_context.reset(cv_token)
 
     async def _resolve_auth(self, request: Request) -> AuthContext | None:
-        internal = parse_internal_auth_context(request)
+        internal = parse_internal_auth_context(request, proxy_verification=self.proxy_verification)
         if internal is not None:
             return await self._resolve_proxy_auth(internal, request=request)
 

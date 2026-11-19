@@ -6,6 +6,7 @@ from starlette.requests import Request
 from redis.asyncio import Redis
 
 from awid.registry import RegistryClient
+from aweb.internal_auth import application_proxy_verification
 from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
 from aweb.embedding import EmbeddedResources, OutboxRecoveryOwnership
 from aweb.federation.origins import application_public_origins
@@ -32,6 +33,7 @@ async def test_host_reference_selects_same_native_serving_facts():
     api.state.public_origin = "https://native.example.test"
     resources = EmbeddedResources(
         api, None, redis, registry, api.state.public_origin, OutboxRecoveryOwnership.HOST, on_mutation,
+        proxy_verification=application_proxy_verification(api.state),
     )
     host.state.native_resources = resources
     try:

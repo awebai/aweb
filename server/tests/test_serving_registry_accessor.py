@@ -2,6 +2,7 @@
 
 import httpx
 import pytest
+from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig
 from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.embedding import EmbeddedResources, OutboxRecoveryOwnership, native_resources
 from aweb.service_errors import ServiceError
@@ -40,6 +41,7 @@ async def test_native_registry_reference_wins_over_all_conflicting_shadow_fields
         api_app=api, db_infra=None, redis=redis, registry_client=client,
         public_origin="https://native.example.test", outbox_recovery=OutboxRecoveryOwnership.HOST,
         on_mutation=None,
+        proxy_verification=ProxyVerificationConfig(trust=ProxyHeaderTrust.DISABLED),
     )
     for app in (api, host):
         app.state.native_resources = resources
@@ -71,6 +73,7 @@ async def test_missing_selected_registry_is_one_typed_actionable_503(resource_re
             api_app=FastAPI(), db_infra=None, redis=redis, registry_client=selected_client,
             public_origin="https://native.example.test", outbox_recovery=OutboxRecoveryOwnership.HOST,
             on_mutation=None,
+        proxy_verification=ProxyVerificationConfig(trust=ProxyHeaderTrust.DISABLED),
         )
     else:
         app.state.awid_registry_client = selected_client

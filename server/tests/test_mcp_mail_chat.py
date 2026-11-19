@@ -517,19 +517,16 @@ async def test_mcp_auth_rejects_bad_trusted_proxy_signature(aweb_cloud_db, monke
     assert exc_info.value.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_mcp_auth_fails_when_proxy_trust_enabled_without_secret(aweb_cloud_db, monkeypatch):
+def test_mcp_auth_refuses_construction_when_proxy_enabled_without_secret(monkeypatch):
+    from aweb.internal_auth import ProxyVerificationConfigurationError
+
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.delenv("AWEB_INTERNAL_AUTH_SECRET", raising=False)
-
-    middleware = mcp_auth.MCPAuthMiddleware(
-        app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db)
+    with pytest.raises(ProxyVerificationConfigurationError) as refused:
+        mcp_auth.MCPAuthMiddleware(app=lambda *_args, **_kwargs: None, db_infra=None)
+    assert str(refused.value) == (
+        "Configure a nonempty shared secret or disable proxy header trust before constructing the application."
     )
-    with pytest.raises(HTTPException) as exc_info:
-        await middleware._resolve_auth(_request_with_headers({}))
-
-    assert exc_info.value.status_code == 500
-    assert "misconfigured" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio

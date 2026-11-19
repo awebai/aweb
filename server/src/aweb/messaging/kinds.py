@@ -7,7 +7,6 @@ from typing import TypeAlias
 class MessageKind(StrEnum):
     MAIL = "mail"
     CHAT = "chat"
-    ROOM = "room"
 
 
 class ContentMode(StrEnum):
