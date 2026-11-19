@@ -208,3 +208,28 @@ async def test_agent_heartbeat_preserves_workspace_metadata(privacy_app):
     for field in ("human_name", "program", "role", "repo_id", "current_branch"):
         assert after.get(field) == before.get(field), field
     assert after["last_seen"] >= before["last_seen"]
+
+
+@pytest.mark.asyncio
+async def test_root_activity_without_a_redis_beat_is_visible_on_every_http_reader(
+    privacy_app,
+):
+    env = privacy_app
+    for alias in env.actors:
+        await env.redis.delete(f"presence:{env.actors[alias].workspace}")
+    for path in (
+        "/v1/agents",
+        "/v1/status",
+        "/v1/workspaces",
+        "/v1/workspaces/online",
+        "/v1/workspaces/team?only_with_claims=false",
+    ):
+        response = await request_as(env, alias="alice", method="GET", path=path)
+        assert response.status_code == 200, response.text
+        entries = response.json().get("agents", response.json().get("workspaces"))
+        alice = next(item for item in entries if item["alias"] == "alice")
+        if "online" in alice:
+            assert alice["online"] is True, path
+        else:
+            assert alice["status"] == "active", path
+        assert alice.get("last_seen"), path
