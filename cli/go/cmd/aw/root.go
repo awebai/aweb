@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -346,7 +347,7 @@ func Execute() {
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint
 		}
-		reportCLIError(err, msg, jsonFlag)
+		reportCLIError(err, msg, jsonErrorsRequested(errorPresentationInput{ParsedJSON: jsonFlag, Arguments: os.Args[1:]}))
 		os.Exit(exitCode(err))
 	}
 }
@@ -509,15 +510,48 @@ func (t *trackedStdout) Fd() uintptr {
 
 // argsContainJSONFlag reads --json before flags are parsed.
 func argsContainJSONFlag(args []string) bool {
+	return readJSONPresentation(args).Requested
+}
+
+type errorPresentationInput struct {
+	ParsedJSON bool
+	Arguments  []string
+}
+
+type jsonPresentationFlag struct {
+	Specified bool
+	Requested bool
+}
+
+// jsonErrorsRequested retains the requested output when flag parsing fails,
+// including an explicit false value and the end-of-flags separator.
+func jsonErrorsRequested(in errorPresentationInput) bool {
+	choice := readJSONPresentation(in.Arguments)
+	if choice.Specified {
+		return choice.Requested
+	}
+	return in.ParsedJSON
+}
+
+func readJSONPresentation(args []string) jsonPresentationFlag {
+	choice := jsonPresentationFlag{}
 	for _, arg := range args {
 		if arg == "--" {
-			return false
+			break
 		}
 		if arg == "--json" {
-			return true
+			choice = jsonPresentationFlag{Specified: true, Requested: true}
+			continue
+		}
+		if value, found := strings.CutPrefix(arg, "--json="); found {
+			requested, err := strconv.ParseBool(value)
+			if err != nil {
+				continue
+			}
+			choice = jsonPresentationFlag{Specified: true, Requested: requested}
 		}
 	}
-	return false
+	return choice
 }
 
 // writeCLIError prints a command's error, which may carry a server's text.
