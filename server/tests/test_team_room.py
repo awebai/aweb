@@ -137,7 +137,15 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
             ),
         ),
     ],
-    ids=['recipient', 'conversation', 'from-did', 'from-stable-id', 'type', 'recipient-did', 'expired-time'],
+    ids=[
+        "recipient",
+        "conversation",
+        "from-did",
+        "from-stable-id",
+        "type",
+        "recipient-did",
+        "expired-time",
+    ],
 )
 async def test_room_refuses_wrong_signed_bindings(privacy_app, field, value):
     room = await metadata(privacy_app)
@@ -646,7 +654,6 @@ async def test_real_cli_room_post_read_and_who(
         command_env,
         _,
     ):
-
         if grant:
             await env.db.execute(
                 "UPDATE {{tables.identity_session_grants}} SET scopes=ARRAY['chat.read','chat.send']"
