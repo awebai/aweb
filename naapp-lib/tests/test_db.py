@@ -11,7 +11,7 @@ import asyncpg
 import pytest
 import pytest_asyncio
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig
-from pgdbm.errors import MigrationError
+from pgdbm.errors import MigrationError, QueryError
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
 from pydantic_settings import SettingsConfigDict
 
@@ -357,8 +357,9 @@ async def test_prepared_runtime_connects_without_create_and_closes_its_owned_poo
         assert (
             await admin.fetchval("SELECT count(*) FROM pg_stat_activity WHERE usename=$1", role) > 0
         )
-        with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        with pytest.raises(QueryError) as denied:
             await database.db.execute("CREATE TABLE public.runtime_must_not_create (id integer)")
+        assert isinstance(denied.value.__cause__, asyncpg.InsufficientPrivilegeError)
     finally:
         await database.disconnect()
     assert await admin.fetchval("SELECT count(*) FROM pg_stat_activity WHERE usename=$1", role) == 0
