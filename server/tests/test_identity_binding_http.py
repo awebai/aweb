@@ -317,10 +317,14 @@ async def test_old_projections_require_verification_before_stable_resolution(
         assert not metadata[other_key].get("address")
 
         async with env.db.transaction() as tx:
+            # The verified projection supplies the target facts after this
+            # request authenticated them; a row ID alone grants no identity.
             current = await _lock_current_recipient(
-                tx, envelope=envelope, recipient={"agent_id": bob.id}
+                tx,
+                envelope=envelope,
+                recipient=await resolve_agent_by_did(env.infra, stable),
             )
-            assert current["did_aw"] == stable
+            assert current.recipient["did_aw"] == stable
 
 
 @pytest.mark.asyncio

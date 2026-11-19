@@ -272,9 +272,9 @@ async def _lock_current_recipient(
     target_key = envelope.target_current_did_key
     global_did = target_did if target_did.startswith("did:aw:") else None
     if global_did:
-        if recipient.get("did_aw") not in (None, global_did):
+        if recipient.get("did_aw") != global_did:
             raise FederationAuthorityError("recipient_identity_not_found")
-        if recipient.get("did_key") not in (None, target_key):
+        if recipient.get("did_key") != target_key:
             raise FederationAuthorityError("recipient_current_key_mismatch")
     elif target_did != target_key:
         raise FederationAuthorityError("recipient_current_key_mismatch")
