@@ -1,6 +1,7 @@
 """Lifecycle cleanup through the real SQL transaction and Redis outbox."""
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from uuid import uuid4
@@ -454,4 +455,52 @@ async def test_omitted_team_retry_uses_retained_workspace_team_binding(
             "SELECT team_id FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
         )
         == team
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_workspace_cannot_select_another_agent_for_cleanup(privacy_app):
+    """The exact agent binding, not a supplied workspace id, chooses the target."""
+    env = privacy_app
+    alice = env.actors["alice"]
+    bob = env.actors["bob"]
+    request = LifecycleCascadeRequest(
+        operation="cleanup_agent_coordination_state",
+        actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+        team_id=TEAM,
+        target_agent_id=str(alice.id).upper(),
+        target_workspace_ids=(str(bob.workspace),),
+        agent_disposition=AgentDisposition.PRESERVED,
+    )
+    refused = await apply_lifecycle_cascade(env.db, env.redis, request)
+    assert [error.code for error in refused.errors] == ["lifecycle_workspace_target_mismatch"]
+    for actor in (alice, bob):
+        assert (
+            await env.db.fetch_value(
+                "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+                actor.workspace,
+            )
+            is None
+        )
+    accepted = await apply_lifecycle_cascade(
+        env.db,
+        env.redis,
+        replace(request, target_workspace_ids=(str(alice.workspace),)),
+    )
+    assert accepted.errors == ()
+    assert await env.db.fetch_value(
+        "SELECT deleted_at IS NOT NULL FROM {{tables.workspaces}} WHERE workspace_id=$1",
+        alice.workspace,
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", alice.id
+        )
+        is None
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", bob.workspace
+        )
+        is None
     )

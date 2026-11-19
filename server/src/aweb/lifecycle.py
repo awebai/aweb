@@ -461,6 +461,18 @@ def _precondition_errors(
     errors: list[LifecycleError] = []
     for workspace in workspaces:
         workspace_id = str(workspace["workspace_id"])
+        bound_agent = workspace.get("agent_id")
+        if request.target_agent_id and (
+            bound_agent is None or UUID(str(bound_agent)) != UUID(str(request.target_agent_id))
+        ):
+            errors.append(
+                LifecycleError(
+                    code="lifecycle_workspace_target_mismatch",
+                    message="Explicit workspace targets must belong to the selected agent.",
+                    target=workspace_id,
+                )
+            )
+            continue
         identity_scope = str(workspace.get("agent_identity_scope") or "").strip()
         required_scope = request.require_identity_scope or (
             normalize_identity_scope(request.require_lifetime) if request.require_lifetime else None
@@ -639,139 +651,87 @@ def _target_agent_ids(request: LifecycleCascadeRequest, workspaces: list[dict]) 
     return agent_ids
 
 
-async def _plan_reservation_count(db, agent_ids: list[UUID], team_id: str | None) -> int:
+async def _plan_reservation_count(db, agent_ids: list[UUID], team_id: str) -> int:
     if not agent_ids:
         return 0
-    if team_id is None:
-        count = await db.fetch_value(
-            """
-            SELECT COUNT(*)
-            FROM {{tables.reservations}}
-            WHERE holder_agent_id = ANY($1::uuid[])
-            """,
-            agent_ids,
-        )
-    else:
-        count = await db.fetch_value(
-            """
-            SELECT COUNT(*)
-            FROM {{tables.reservations}}
-            WHERE holder_agent_id = ANY($1::uuid[])
-              AND team_id = $2
-            """,
-            agent_ids,
-            team_id,
-        )
+    count = await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.reservations}}
+        WHERE holder_agent_id = ANY($1::uuid[])
+          AND team_id = $2
+        """,
+        agent_ids,
+        team_id,
+    )
     return int(count or 0)
 
 
-async def _plan_chat_participant_count(db, agent_ids: list[UUID], team_id: str | None) -> int:
+async def _plan_chat_participant_count(db, agent_ids: list[UUID], team_id: str) -> int:
     if not agent_ids:
         return 0
-    if team_id is None:
-        count = await db.fetch_value(
-            """
-            SELECT COUNT(*)
-            FROM {{tables.chat_participants}}
-            WHERE agent_id = ANY($1::uuid[]) AND left_at IS NULL
-            """,
-            agent_ids,
-        )
-    else:
-        count = await db.fetch_value(
-            """
-            SELECT COUNT(*)
-            FROM {{tables.chat_participants}} p
-            JOIN {{tables.chat_sessions}} s
-              ON s.session_id = p.session_id
-            WHERE p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
-              AND s.team_id = $2
-            """,
-            agent_ids,
-            team_id,
-        )
+    count = await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.chat_participants}} p
+        JOIN {{tables.chat_sessions}} s
+          ON s.session_id = p.session_id
+        WHERE p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
+          AND s.team_id = $2
+        """,
+        agent_ids,
+        team_id,
+    )
     return int(count or 0)
 
 
-async def _release_reservations(db, agent_ids: list[UUID], team_id: str | None) -> int:
+async def _release_reservations(db, agent_ids: list[UUID], team_id: str) -> int:
     if not agent_ids:
         return 0
-    if team_id is None:
-        rows = await db.fetch_all(
-            """
-            DELETE FROM {{tables.reservations}}
-            WHERE holder_agent_id = ANY($1::uuid[])
-            RETURNING resource_key
-            """,
-            agent_ids,
-        )
-    else:
-        rows = await db.fetch_all(
-            """
-            DELETE FROM {{tables.reservations}}
-            WHERE holder_agent_id = ANY($1::uuid[])
-              AND team_id = $2
-            RETURNING resource_key
-            """,
-            agent_ids,
-            team_id,
-        )
+    rows = await db.fetch_all(
+        """
+        DELETE FROM {{tables.reservations}}
+        WHERE holder_agent_id = ANY($1::uuid[])
+          AND team_id = $2
+        RETURNING resource_key
+        """,
+        agent_ids,
+        team_id,
+    )
     return len(rows)
 
 
 async def _cleanup_chat_participants(
-    db, agent_ids: list[UUID], team_id: str | None
+    db, agent_ids: list[UUID], team_id: str
 ) -> tuple[tuple[tuple[str, str], ...], int]:
     if not agent_ids:
         return (), 0
-    if team_id is None:
-        rows = await db.fetch_all(
-            """
-            UPDATE {{tables.chat_participants}}
-            SET left_at = NOW()
-            WHERE agent_id = ANY($1::uuid[]) AND left_at IS NULL
-            RETURNING session_id, did
-            """,
-            agent_ids,
-        )
-        wait_rows = await db.fetch_all(
-            """
-            UPDATE {{tables.chat_sessions}}
-            SET wait_seconds = NULL,
-                wait_started_at = NULL,
-                wait_started_by = NULL
-            WHERE wait_started_by = ANY($1::uuid[])
-            RETURNING session_id
-            """,
-            agent_ids,
-        )
-    else:
-        rows = await db.fetch_all(
-            """
-            UPDATE {{tables.chat_participants}} p
-            SET left_at = NOW()
-            FROM {{tables.chat_sessions}} s
-            WHERE p.session_id = s.session_id
-              AND p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
-              AND s.team_id = $2
-            RETURNING p.session_id, p.did
-            """,
-            agent_ids,
-            team_id,
-        )
-        wait_rows = await db.fetch_all(
-            """
-            UPDATE {{tables.chat_sessions}}
-            SET wait_seconds = NULL,
-                wait_started_at = NULL,
-                wait_started_by = NULL
-            WHERE wait_started_by = ANY($1::uuid[])
-              AND team_id = $2
-            RETURNING session_id
-            """,
-            agent_ids,
-            team_id,
-        )
+    rows = await db.fetch_all(
+        """
+        UPDATE {{tables.chat_participants}} p
+        SET left_at = NOW()
+        FROM {{tables.chat_sessions}} s
+        WHERE p.session_id = s.session_id
+          AND p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
+          AND s.team_id = $2
+        RETURNING p.session_id, p.did
+        """,
+        agent_ids,
+        team_id,
+    )
+    wait_rows = await db.fetch_all(
+        """
+        UPDATE {{tables.chat_sessions}}
+        SET wait_seconds = NULL,
+            wait_started_at = NULL,
+            wait_started_by = NULL
+        WHERE wait_started_by = ANY($1::uuid[])
+          AND team_id = $2
+        RETURNING session_id
+        """,
+        agent_ids,
+        team_id,
+    )
     participants = tuple((str(row["session_id"]), str(row["did"])) for row in rows)
     return participants, len(wait_rows)
 
@@ -1398,14 +1358,12 @@ async def _soft_delete_workspaces_on(
     return _WorkspaceCleanup(claim_count=claim_count, events=tuple(events))
 
 
-async def _removed_claim_workspaces(
-    db, *, agent_ids: list[UUID], team_id: str | None
-) -> list[dict]:
+async def _removed_claim_workspaces(db, *, agent_ids: list[UUID], team_id: str) -> list[dict]:
     rows = await db.fetch_all(
         """SELECT w.workspace_id,w.agent_id,w.team_id,w.alias
         FROM {{tables.workspaces}} w
         WHERE w.agent_id=ANY($1::uuid[]) AND w.deleted_at IS NOT NULL
-          AND ($2::text IS NULL OR w.team_id=$2)
+          AND w.team_id=$2
           AND EXISTS (SELECT 1 FROM {{tables.task_claims}} c WHERE c.workspace_id=w.workspace_id)
         ORDER BY w.workspace_id""",
         agent_ids,
@@ -1660,17 +1618,15 @@ async def apply_lifecycle_cascade(
             workspace_ids = [change.workspace_id for change in workspace_changes]
             presence_rows = await tx.fetch_all(
                 "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=ANY($1::uuid[]) "
-                "AND ($2::text IS NULL OR team_id=$2)",
+                "AND team_id=$2",
                 agent_ids,
-                request.team_id,
+                targets.team_id,
             )
             presence_ids = workspace_ids + [str(row["workspace_id"]) for row in presence_rows]
             # Agent-keyed compatibility presence also disappears with coordination.
             presence_ids.extend(str(agent_id) for agent_id in agent_ids)
             presence_ids = list(dict.fromkeys(presence_ids))
-            outbox_team_id = str(
-                targets.team_id or (workspace_changes[0].team_id if workspace_changes else "")
-            )
+            outbox_team_id = targets.team_id
             effects = _lifecycle_side_effects(
                 tuple(event_intents),
                 chat_participants,
