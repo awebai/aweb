@@ -44,9 +44,7 @@ class _ContactRegistry(_TLSRegistry):
         self.requests.append(request)
         path = request.split(b" ", 2)[1].decode()
         status = b"200 OK" if path in self.responses else b"404 Not Found"
-        body = json.dumps(
-            self.responses.get(path, {"detail": "target.not_found"})
-        ).encode()
+        body = json.dumps(self.responses.get(path, {"detail": "target.not_found"})).encode()
         writer.write(
             b"HTTP/1.1 "
             + status
@@ -113,9 +111,7 @@ def _build_test_app(aweb_db, registry):
                 message = await original_receive()
                 if message["type"] == "http.disconnect":
                     return message
-                if message["type"] == "http.request" and not message.get(
-                    "more_body", False
-                ):
+                if message["type"] == "http.request" and not message.get("more_body", False):
                     continue
                 return message
 
@@ -180,9 +176,7 @@ async def test_contact_add_unregistered_cross_namespace_target(aweb_cloud_db, mi
     )
     del responses[missing_path]
     if missing == "log":
-        key_row = next(
-            value for path, value in responses.items() if path.endswith("/key")
-        )
+        key_row = next(value for path, value in responses.items() if path.endswith("/key"))
         key_row["status"] = "OK_DEGRADED"
     async with _ContactRegistry("registry.test", responses) as external:
         dns = _RecordedDNS("juan.aweb.ai", controller_key, external.origin)
@@ -202,9 +196,7 @@ async def test_contact_add_unregistered_cross_namespace_target(aweb_cloud_db, mi
             resolver=resolver,
             txt_resolver=dns,
         )
-        body = json.dumps(
-            {"contact_address": target, "label": "ho6-secrets-root"}
-        ).encode()
+        body = json.dumps({"contact_address": target, "label": "ho6-secrets-root"}).encode()
         timestamp = datetime.now(timezone.utc).isoformat()
         signed_payload = canonical_json_bytes(
             {
@@ -220,9 +212,7 @@ async def test_contact_add_unregistered_cross_namespace_target(aweb_cloud_db, mi
         headers = {
             "Authorization": f"DIDKey {owner_key} {sign_message(owner_sk, signed_payload)}",
             "X-AWEB-Timestamp": timestamp,
-            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(signed_payload)
-            .rstrip(b"=")
-            .decode(),
+            "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(signed_payload).rstrip(b"=").decode(),
             "X-AWID-Team-Certificate": _encode_certificate(certificate),
             "Content-Type": "application/json",
         }
@@ -230,19 +220,15 @@ async def test_contact_add_unregistered_cross_namespace_target(aweb_cloud_db, mi
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="https://jro.aweb.ai"
             ) as client:
-                response = await client.post(
-                    "/v1/contacts", content=body, headers=headers
-                )
+                response = await client.post("/v1/contacts", content=body, headers=headers)
         finally:
             await resolver.aclose()
-        assert any(
-            missing_path.encode() + b" " in request for request in external.requests
-        ), response.text
+        assert any(missing_path.encode() + b" " in request for request in external.requests), (
+            response.text
+        )
     assert response.status_code == (503 if missing == "log" else 404), response.text
     expected_reason = (
-        "sender_identity_unverifiable"
-        if missing == "log"
-        else "recipient_identity_not_found"
+        "sender_identity_unverifiable" if missing == "log" else "recipient_identity_not_found"
     )
     assert response.json()["reason"] == expected_reason
     assert response.json()["retryable"] is (missing == "log")
@@ -273,9 +259,7 @@ async def test_contacts_routes_accept_equivalent_identity_owner_did(aweb_cloud_d
     )
 
     headers = _signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob")
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         list_resp = await client.get("/v1/contacts", headers=headers)
         assert list_resp.status_code == 200, list_resp.text
         body = list_resp.json()
@@ -323,9 +307,7 @@ async def test_contacts_route_normalizes_hosted_handle_address(aweb_cloud_db):
         **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/contacts", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
@@ -406,9 +388,7 @@ async def test_contact_reassignment_requires_signed_explicit_acceptance(aweb_clo
         **_signed_identity_headers(bob_sk, bob_did_key, "did:aw:bob", rejected_body),
         "Content-Type": "application/json",
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         with pytest.raises(FederationAuthorityError) as rejected:
             await client.post(
                 f"/v1/contacts/{contact_id}/bind",
@@ -431,9 +411,7 @@ async def test_contact_reassignment_requires_signed_explicit_acceptance(aweb_clo
     "published_reason", ["sender_identity_not_found", "recipient_identity_not_found"]
 )
 @pytest.mark.parametrize("contact", [False, True])
-async def test_shared_not_found_result_uses_current_lookup_role(
-    published_reason, contact
-):
+async def test_shared_not_found_result_uses_current_lookup_role(published_reason, contact):
     # Sender authorization and contact resolution share the same singleflight key.
     activation = FederationAuthorityActivation(
         core=None, work=None, resolver=None, txt_resolver=None
@@ -454,7 +432,5 @@ async def test_shared_not_found_result_uses_current_lookup_role(
                 result,
                 lookup=SENDER_LOOKUP,
             )
-    expected_reason = (
-        "recipient_identity_not_found" if contact else "sender_identity_not_found"
-    )
+    expected_reason = "recipient_identity_not_found" if contact else "sender_identity_not_found"
     assert raised.value.reason == expected_reason
