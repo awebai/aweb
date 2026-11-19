@@ -105,8 +105,13 @@ func resolveBeadsMailMessageRef(sel *awconfig.Selection, ref string) (string, er
 
 // beadsMailSenderLabel shows the local rig name where the map knows the
 // sender, always alongside the verifiable identity (§5: attribution is a
-// feature — show it).
+// feature — show it), and what verification concluded, tagged as aw mail
+// tags it.
 func beadsMailSenderLabel(m beadsMailAddressMap, msg *awid.InboxMessage) string {
+	return beadsMailSenderName(m, msg) + formatVerificationTag(msg.VerificationStatus)
+}
+
+func beadsMailSenderName(m beadsMailAddressMap, msg *awid.InboxMessage) string {
 	identity := strings.TrimSpace(msg.FromAddress)
 	if identity == "" {
 		identity = strings.TrimSpace(msg.FromDID)
