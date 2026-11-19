@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
 	"testing"
@@ -95,5 +97,11 @@ func TestOATSNativeInviteConnectionFailureRetainsTheExactAttempt(t *testing.T) {
 	}
 	if err := awid.VerifyTeamCertificate(&record.Issuance.Effect, controller.Public().(ed25519.PublicKey)); err != nil {
 		t.Fatal(err)
+	}
+	// The provisioning driver receives a wrapped error. It must see the retained
+	// fence before deciding whether it may discard this recipient's credentials.
+	var retention interface{ RetainsIdentity() bool }
+	if !errors.As(fmt.Errorf("provisioning acceptance: %w", acceptErr), &retention) || !retention.RetainsIdentity() {
+		t.Fatalf("retained native issuance did not protect its recipient through outer cleanup: %v", acceptErr)
 	}
 }
