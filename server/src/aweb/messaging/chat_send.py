@@ -2155,25 +2155,17 @@ async def _send_to_local_named_chat(
     return SentChat(session_id=session_id, message=msg_row, participants=participants)
 
 
-async def _send_in_continued_session(
+async def _validate_continued_chat_attestation(
     db,
     auth: MessagingAuth,
-    target: ChatTarget,
+    *,
     payload: SendMessageRequest,
-    runtime: MessagingRuntime,
-) -> SentChat:
-    registry_client = runtime.registry_client
-    id_chain = auth.id_chain
-    actor_dids = participant_dids(auth)
-    actor_agent = await resolve_actor_agent(db, actor_dids)
-    actor_agent_id = auth.agent_id or (
-        str(actor_agent["agent_id"]) if actor_agent else None
-    )
-    sender_address = _sender_address(auth)
-    session_uuid = target.session_id
-    actor_did = target.actor_did
-    recipient_rows = target.recipients
-
+    actor_did: str,
+    sender_address: str | None,
+    session_uuid: UUID,
+    recipient_rows: Sequence[Mapping[str, Any]],
+) -> tuple[UUID, dict | None]:
+    """Validate the continued message's signature or encrypted sender artifact."""
     pre_message_id = uuid_mod.uuid4()
     if _payload_is_encrypted(payload):
         await require_non_custodial_recipients(
@@ -2232,6 +2224,38 @@ async def _send_in_continued_session(
         # so the two values may disagree.
         _parse_signed_timestamp(payload.timestamp)
         pre_message_id = uuid_mod.UUID(payload.message_id)
+
+    return pre_message_id, encrypted_metadata
+
+
+async def _send_in_continued_session(
+    db,
+    auth: MessagingAuth,
+    target: ChatTarget,
+    payload: SendMessageRequest,
+    runtime: MessagingRuntime,
+) -> SentChat:
+    registry_client = runtime.registry_client
+    id_chain = auth.id_chain
+    actor_dids = participant_dids(auth)
+    actor_agent = await resolve_actor_agent(db, actor_dids)
+    actor_agent_id = auth.agent_id or (
+        str(actor_agent["agent_id"]) if actor_agent else None
+    )
+    sender_address = _sender_address(auth)
+    session_uuid = target.session_id
+    actor_did = target.actor_did
+    recipient_rows = target.recipients
+
+    pre_message_id, encrypted_metadata = await _validate_continued_chat_attestation(
+        db,
+        auth,
+        payload=payload,
+        actor_did=actor_did,
+        sender_address=sender_address,
+        session_uuid=session_uuid,
+        recipient_rows=recipient_rows,
+    )
 
     remote_recipients = [row for row in recipient_rows if _target_delivery_origin(row)]
     if remote_recipients:
