@@ -235,4 +235,7 @@ def test_cli_refuses_bad_approval_audience_before_starting_a_listener(tmp_path, 
         timeout=3,
     )
     assert result.returncode == 1
-    assert json.loads(result.stderr) == {"error": "enforcer_origin_invalid"}
+    assert json.loads(result.stderr) == {
+        "error": "enforcer_origin_invalid",
+        "message": "Ask the operator to configure --origin as the exact HTTPS origin of this holder, without a path, then restart it.",
+    }

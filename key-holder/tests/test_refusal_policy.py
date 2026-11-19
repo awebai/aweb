@@ -154,3 +154,52 @@ async def test_signed_nonobject_json_is_input_failure_before_any_effect(tmp_path
         unauthenticated = await client.post("/v1/humans", content=body)
         assert unauthenticated.status_code == 401
     assert holder.store.audit() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code,status,message",
+    [
+        (
+            "certificate_mismatch",
+            400,
+            "Ask the operator to check the requested certificate and current issuer, then start a new approval request.",
+        ),
+        (
+            "controller_mismatch",
+            403,
+            "Ask the operator to reload the current holder descriptor and retry with its current controller.",
+        ),
+        (
+            "approver_not_active",
+            403,
+            "Use an activated approver; ask the operator to check this person's enrollment before retrying.",
+        ),
+        (
+            "bootstrap_closed",
+            403,
+            "Finish the first person's existing enrollment, or ask the operator to use the normal issuance flow for another person.",
+        ),
+    ],
+)
+async def test_person_facing_refusal_response_includes_its_exact_next_step(
+    tmp_path, code, status, message
+):
+    import json
+
+    from aweb_key_holder.enrollment import Holder
+    from aweb_key_holder.http import create_app
+    from aweb_key_holder.keys import KeyStore
+    from aweb_key_holder.refusals import Refusal
+
+    holder = Holder(
+        KeyStore.create(tmp_path / "private", organisation="example.test"),
+        registry=None,
+        origin="https://holder.example",
+    )
+    response = await create_app(holder).exception_handlers[Refused](
+        None, Refused(Refusal(code))
+    )
+    assert response.status_code == status
+    assert json.loads(response.body) == {"error": {"code": code, "message": message}}
+    assert holder.store.audit() == []

@@ -17,19 +17,35 @@ class Refusal(StrEnum):
     """Closed holder wire codes with their HTTP meanings beside their names."""
 
     http_status: HTTPStatus
-    advice: str | None
+    advice: str
 
-    def __new__(cls, code: str, status: HTTPStatus, advice: str | None = None) -> Self:
+    def __new__(cls, code: str, status: HTTPStatus, advice: str) -> Self:
         member = str.__new__(cls, code)
         member._value_ = code
         member.http_status = status
         member.advice = advice
         return member
 
-    ALREADY_INITIALIZED = ("already_initialized", HTTPStatus.CONFLICT)
-    APPROVAL_NOT_CONFIGURED = ("approval_not_configured", HTTPStatus.FORBIDDEN)
-    APPROVER_NOT_ACTIVE = ("approver_not_active", HTTPStatus.FORBIDDEN)
-    AUDIT_PAGE_INVALID = ("audit_page_invalid", HTTPStatus.BAD_REQUEST)
+    ALREADY_INITIALIZED = (
+        "already_initialized",
+        HTTPStatus.CONFLICT,
+        "Use the existing holder state directory, or choose a new empty directory to initialize another holder.",
+    )
+    APPROVAL_NOT_CONFIGURED = (
+        "approval_not_configured",
+        HTTPStatus.FORBIDDEN,
+        "Ask the operator to configure this holder and approval service before starting enrollment.",
+    )
+    APPROVER_NOT_ACTIVE = (
+        "approver_not_active",
+        HTTPStatus.FORBIDDEN,
+        "Use an activated approver; ask the operator to check this person's enrollment before retrying.",
+    )
+    AUDIT_PAGE_INVALID = (
+        "audit_page_invalid",
+        HTTPStatus.BAD_REQUEST,
+        "Run audit with --after at least 0 and --limit between 1 and 1000, then retry.",
+    )
     BINDING_REFRESH_ENROLLMENT_CHANGED = (
         "binding_refresh_enrollment_changed",
         HTTPStatus.CONFLICT,
@@ -50,50 +66,116 @@ class Refusal(StrEnum):
         HTTPStatus.BAD_REQUEST,
         "Use the current live binding commitment saved by the person's approval client.",
     )
-    BOOTSTRAP_CLOSED = ("bootstrap_closed", HTTPStatus.FORBIDDEN)
-    CALLER_REQUIRED = ("caller_required", HTTPStatus.UNAUTHORIZED)
-    CERTIFICATE_MISMATCH = ("certificate_mismatch", HTTPStatus.BAD_REQUEST)
-    CONTROLLER_MISMATCH = ("controller_mismatch", HTTPStatus.FORBIDDEN)
-    CREATION_CHANGED = ("creation_changed", HTTPStatus.CONFLICT)
-    CREATION_MISMATCH = ("creation_mismatch", HTTPStatus.BAD_REQUEST)
+    BOOTSTRAP_CLOSED = (
+        "bootstrap_closed",
+        HTTPStatus.FORBIDDEN,
+        "Finish the first person's existing enrollment, or ask the operator to use the normal issuance flow for another person.",
+    )
+    CALLER_REQUIRED = (
+        "caller_required",
+        HTTPStatus.UNAUTHORIZED,
+        "Run the operation through the person's signed approval client or the holder's private operator command.",
+    )
+    CERTIFICATE_MISMATCH = (
+        "certificate_mismatch",
+        HTTPStatus.BAD_REQUEST,
+        "Ask the operator to check the requested certificate and current issuer, then start a new approval request.",
+    )
+    CONTROLLER_MISMATCH = (
+        "controller_mismatch",
+        HTTPStatus.FORBIDDEN,
+        "Ask the operator to reload the current holder descriptor and retry with its current controller.",
+    )
+    CREATION_CHANGED = (
+        "creation_changed",
+        HTTPStatus.CONFLICT,
+        "Keep the original enrollment evidence and ask the operator to check this enrollment before retrying.",
+    )
+    CREATION_MISMATCH = (
+        "creation_mismatch",
+        HTTPStatus.BAD_REQUEST,
+        "Use this person's original enrollment evidence and confirmation receipt, then retry.",
+    )
     CREATION_REQUIRED = (
         "creation_required",
         HTTPStatus.CONFLICT,
         "Finish the person's existing enrollment in the approval client before retrying activation.",
     )
-    CREDENTIAL_DUPLICATE = ("credential_duplicate", HTTPStatus.BAD_REQUEST)
-    ENFORCER_MISMATCH = ("enforcer_mismatch", HTTPStatus.BAD_REQUEST)
+    CREDENTIAL_DUPLICATE = (
+        "credential_duplicate",
+        HTTPStatus.BAD_REQUEST,
+        "Register a different security key; the same credential cannot be registered twice.",
+    )
+    ENFORCER_MISMATCH = (
+        "enforcer_mismatch",
+        HTTPStatus.BAD_REQUEST,
+        "Use the holder and origin named by the approval request, then retry through the approval client.",
+    )
     ENFORCER_ORIGIN_INVALID = (
         "enforcer_origin_invalid",
         HTTPStatus.SERVICE_UNAVAILABLE,
+        "Ask the operator to configure --origin as the exact HTTPS origin of this holder, without a path, then restart it.",
     )
-    ENROLLMENT_CHANGED = ("enrollment_changed", HTTPStatus.CONFLICT)
-    ENROLLMENT_EXPIRED = ("enrollment_expired", HTTPStatus.CONFLICT)
+    ENROLLMENT_CHANGED = (
+        "enrollment_changed",
+        HTTPStatus.CONFLICT,
+        "Reload the current enrollment material in the approval client; ask the operator to inspect the attempt if it has changed.",
+    )
+    ENROLLMENT_EXPIRED = (
+        "enrollment_expired",
+        HTTPStatus.CONFLICT,
+        "Restart enrollment explicitly in the approval client; keep the expired attempt for inspection.",
+    )
     ENROLLMENT_IDENTITY_MISMATCH = (
         "enrollment_identity_mismatch",
         HTTPStatus.BAD_REQUEST,
+        "Use the exact person and identity key named by the enrollment intent, then retry.",
     )
     ENROLLMENT_REPLACEMENT_UNAVAILABLE = (
         "enrollment_replacement_unavailable",
         HTTPStatus.CONFLICT,
         "Replacing a lost enrolled key is not implemented. Ask the operator to revoke the old ID, issue a new ID and enrol again. Enrol two keys.",
     )
-    ENROLLMENT_UNKNOWN = ("enrollment_unknown", HTTPStatus.NOT_FOUND)
-    FRESH_ENROLLMENT_REQUIRED = ("fresh_enrollment_required", HTTPStatus.CONFLICT)
+    ENROLLMENT_UNKNOWN = (
+        "enrollment_unknown",
+        HTTPStatus.NOT_FOUND,
+        "Start this person's enrollment with the issuer before submitting enrollment material.",
+    )
+    FRESH_ENROLLMENT_REQUIRED = (
+        "fresh_enrollment_required",
+        HTTPStatus.CONFLICT,
+        "This ID is already registered. Use aw id human enroll under that person's own key for existing-person enrollment instead of starting a new-ID enrollment.",
+    )
     HUMAN_APPROVAL_HARDWARE_GRADING_REQUIRED = (
         "human_approval_hardware_grading_required",
         HTTPStatus.SERVICE_UNAVAILABLE,
         "The hardware requirement needs --grading hardware and --mds-cache DIR. Passkey-only grading cannot satisfy it.",
     )
-    HUMAN_APPROVAL_INVALID = ("human_approval_invalid", HTTPStatus.SERVICE_UNAVAILABLE)
-    HUMAN_APPROVAL_REQUIRED = ("human_approval_required", HTTPStatus.FORBIDDEN)
+    HUMAN_APPROVAL_INVALID = (
+        "human_approval_invalid",
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "Ask the operator to correct the rendered human approval policy and matching holder service configuration, then retry.",
+    )
+    HUMAN_APPROVAL_REQUIRED = (
+        "human_approval_required",
+        HTTPStatus.FORBIDDEN,
+        "Complete the requested human approval through the approval client before retrying issuance.",
+    )
     HUMAN_APPROVAL_SOURCE_REQUIRED = (
         "human_approval_source_required",
         HTTPStatus.SERVICE_UNAVAILABLE,
         "The last applied policy required approval. Pass the rendered file with --human-approval-config FILE or HUMAN_APPROVAL_CONFIG_FILE. To turn approval off, explicitly render an empty human_approval section.",
     )
-    IDENTITY_CHAIN_REQUIRED = ("identity_chain_required", HTTPStatus.UNAUTHORIZED)
-    IDENTITY_KEY_MISMATCH = ("identity_key_mismatch", HTTPStatus.BAD_REQUEST)
+    IDENTITY_CHAIN_REQUIRED = (
+        "identity_chain_required",
+        HTTPStatus.UNAUTHORIZED,
+        "Use the person's approval client with its registered ID certificate chain, then retry.",
+    )
+    IDENTITY_KEY_MISMATCH = (
+        "identity_key_mismatch",
+        HTTPStatus.BAD_REQUEST,
+        "Use the identity key named by the certificate or enrollment intent; ask the operator about recovery if that key is unavailable.",
+    )
     IDENTITY_UNAVAILABLE = (
         "identity_unavailable",
         HTTPStatus.SERVICE_UNAVAILABLE,
@@ -104,41 +186,106 @@ class Refusal(StrEnum):
         HTTPStatus.INTERNAL_SERVER_ERROR,
         "Ask the operator to inspect the holder error log, then retry.",
     )
-    ISSUER_CHANGED = ("issuer_changed", HTTPStatus.CONFLICT)
-    KEY_ALREADY_EXISTS = ("key_already_exists", HTTPStatus.CONFLICT)
-    KEY_UNAVAILABLE = ("key_unavailable", HTTPStatus.SERVICE_UNAVAILABLE)
+    ISSUER_CHANGED = (
+        "issuer_changed",
+        HTTPStatus.CONFLICT,
+        "Ask the operator to check this holder's current namespace authority, then obtain a new enrollment intent from the current issuer.",
+    )
+    KEY_ALREADY_EXISTS = (
+        "key_already_exists",
+        HTTPStatus.CONFLICT,
+        "Use the existing key descriptor, or choose a different name when creating another team key.",
+    )
+    KEY_UNAVAILABLE = (
+        "key_unavailable",
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "Ask the operator to check the selected holder state directory and key descriptor before retrying.",
+    )
     POLICY_MIGRATION_REQUIRED = (
         "legacy_human_issuance_write_human_approval",
         HTTPStatus.SERVICE_UNAVAILABLE,
         "human_issuance is retired. For an old approved store, write the human_approval section in deployment.yaml, render it, then run aweb-key-holder --state DIR --human-approval-config FILE migrate. The old approved setting cannot be silently disabled. An old operator store can run migrate without a requirement.",
     )
-    NONCE_CONFLICT = ("nonce_conflict", HTTPStatus.CONFLICT)
-    OPERATION_INVALID = ("operation_invalid", HTTPStatus.BAD_REQUEST)
-    OPERATION_NOT_SERVED = ("operation_not_served", HTTPStatus.FORBIDDEN)
-    ORGANISATION_MISMATCH = ("organisation_mismatch", HTTPStatus.FORBIDDEN)
-    PERSON_ALREADY_EXISTS = ("person_already_exists", HTTPStatus.CONFLICT)
-    PERSON_RETIRED = ("person_retired", HTTPStatus.FORBIDDEN)
-    REGISTRATION_CHANGED = ("registration_changed", HTTPStatus.CONFLICT)
+    NONCE_CONFLICT = (
+        "nonce_conflict",
+        HTTPStatus.CONFLICT,
+        "Keep the original approval request and receipt together; start a new request instead of reusing its nonce for another operation.",
+    )
+    OPERATION_INVALID = (
+        "operation_invalid",
+        HTTPStatus.BAD_REQUEST,
+        "Submit a documented typed controller operation through the supported client, then retry.",
+    )
+    OPERATION_NOT_SERVED = (
+        "operation_not_served",
+        HTTPStatus.FORBIDDEN,
+        "Use the holder's dedicated operator or human approval flow for this operation instead of its routine signing path.",
+    )
+    ORGANISATION_MISMATCH = (
+        "organisation_mismatch",
+        HTTPStatus.FORBIDDEN,
+        "Use the holder and registry for the person's organisation, then retry.",
+    )
+    PERSON_ALREADY_EXISTS = (
+        "person_already_exists",
+        HTTPStatus.CONFLICT,
+        "Resume this person's existing pending enrollment rather than creating another one; ask the operator to inspect a stuck attempt.",
+    )
+    PERSON_RETIRED = (
+        "person_retired",
+        HTTPStatus.FORBIDDEN,
+        "Ask the operator to issue a new ID and revoke the old ID before enrolling again.",
+    )
+    REGISTRATION_CHANGED = (
+        "registration_changed",
+        HTTPStatus.CONFLICT,
+        "Use the original saved registration material for this enrollment; ask the operator to inspect it if it no longer matches.",
+    )
     REGISTRATION_COUNT_MISMATCH = (
         "registration_count_mismatch",
         HTTPStatus.BAD_REQUEST,
+        "Review the registered keys in the approval client and confirm their actual count before retrying.",
     )
     REQUEST_INVALID = (
         "request_invalid",
         HTTPStatus.BAD_REQUEST,
         "Submit the documented JSON object using the person's approval client, then retry.",
     )
-    REQUESTER_MISMATCH = ("requester_mismatch", HTTPStatus.FORBIDDEN)
-    SCHEMA_UNAVAILABLE = ("schema_unavailable", HTTPStatus.SERVICE_UNAVAILABLE)
-    STATE_CHANGED = ("state_changed", HTTPStatus.CONFLICT)
-    STATUS_UNAVAILABLE = ("status_unavailable", HTTPStatus.SERVICE_UNAVAILABLE)
-    STORAGE_PERMISSIONS = ("storage_permissions", HTTPStatus.SERVICE_UNAVAILABLE)
+    REQUESTER_MISMATCH = (
+        "requester_mismatch",
+        HTTPStatus.FORBIDDEN,
+        "Carry the enrollment intent with the requester key named in that intent, then retry.",
+    )
+    SCHEMA_UNAVAILABLE = (
+        "schema_unavailable",
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "Ask the operator to run aweb-key-holder --state DIR migrate before starting this holder, then retry.",
+    )
+    STATE_CHANGED = (
+        "state_changed",
+        HTTPStatus.CONFLICT,
+        "Start a new approval request against the current person and policy, then retry.",
+    )
+    STATUS_UNAVAILABLE = (
+        "status_unavailable",
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "Ask the operator to restore current registry and namespace authority checks, then retry.",
+    )
+    STORAGE_PERMISSIONS = (
+        "storage_permissions",
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "Ask the operator to restore private holder directory mode 0700 and file mode 0600, then retry.",
+    )
     STORAGE_UNAVAILABLE = (
         "storage_unavailable",
         HTTPStatus.SERVICE_UNAVAILABLE,
         "Ask the operator to check this holder's private storage and schema, then retry the command.",
     )
-    TARGET_IS_APPROVER = ("target_is_approver", HTTPStatus.FORBIDDEN)
+    TARGET_IS_APPROVER = (
+        "target_is_approver",
+        HTTPStatus.FORBIDDEN,
+        "Choose a different activated person to approve this issuance; a person cannot approve their own addition.",
+    )
 
 
 class Refused(ApprovalRefused):
@@ -308,10 +455,13 @@ def describe_refusal(error: ApprovalRefused) -> RefusalDescription:
                 code=code, status=reason.http_status, advice=reason.advice
             )
     status = _APPROVAL_STATUSES.get(code, HTTPStatus.INTERNAL_SERVER_ERROR)
-    return RefusalDescription(
-        code=code,
-        status=status,
-        advice=Refusal.INTERNAL_ERROR.advice
-        if status >= HTTPStatus.INTERNAL_SERVER_ERROR
-        else None,
-    )
+    if status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+        advice = Refusal.INTERNAL_ERROR.advice
+    elif status == HTTPStatus.TOO_MANY_REQUESTS:
+        advice = "Wait for pending approval attempts to finish or expire, then retry."
+    else:
+        advice = (
+            "The approval packet could not be verified. Reopen the approval client and retry; "
+            "if it repeats, ask the operator to check the issuer and registered keys."
+        )
+    return RefusalDescription(code=code, status=status, advice=advice)
