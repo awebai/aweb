@@ -282,6 +282,34 @@ def _stable_error_response(
     )
 
 
+async def _verified_delivery_replay(
+    request: Request, *, payload: FederatedDeliveryRequest, db
+) -> tuple[FederationEnvelope, str, dict | None]:
+    """Verify the signed envelope and find its exact established delivery receipt."""
+    try:
+        envelope = verify_federation_envelope(
+            payload.envelope,
+            payload.signature,
+        )
+    except FederationEnvelopeError as exc:
+        raise _stable_envelope_error(exc) from exc
+    observe_message_vocabulary(
+        source=MessageInputSource.FEDERATION_INGRESS,
+        content_mode=envelope.content_mode,
+        priority=envelope.priority,
+    )
+    if envelope.target_delivery_origin not in _public_origins(request):
+        raise FederationAuthorityError("target_route_mismatch")
+
+    ingress_envelope_hash = federation_envelope_hash(envelope, payload.signature)
+    established_replay = await _established_replay_receipt(
+        db,
+        envelope=envelope,
+        envelope_hash=ingress_envelope_hash,
+    )
+    return envelope, ingress_envelope_hash, established_replay
+
+
 @router.post("/messages")
 async def receive_federated_message(
     request: Request,
@@ -294,27 +322,11 @@ async def receive_federated_message(
             raise FederationAuthorityError(
                 "federation_authority_coordination_unavailable"
             )
-        try:
-            envelope = verify_federation_envelope(
-                payload.envelope,
-                payload.signature,
-            )
-        except FederationEnvelopeError as exc:
-            raise _stable_envelope_error(exc) from exc
-        observe_message_vocabulary(
-            source=MessageInputSource.FEDERATION_INGRESS,
-            content_mode=envelope.content_mode,
-            priority=envelope.priority,
-        )
-        if envelope.target_delivery_origin not in _public_origins(request):
-            raise FederationAuthorityError("target_route_mismatch")
-
-        ingress_envelope_hash = federation_envelope_hash(envelope, payload.signature)
-        established_replay = await _established_replay_receipt(
-            db,
-            envelope=envelope,
-            envelope_hash=ingress_envelope_hash,
-        )
+        (
+            envelope,
+            ingress_envelope_hash,
+            established_replay,
+        ) = await _verified_delivery_replay(request, payload=payload, db=db)
         if established_replay is not None:
             metadata = established_replay["metadata"]
             envelope = envelope.model_copy(
