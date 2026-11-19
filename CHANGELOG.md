@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Local child creation uses indexed request lookup instead of rereading the issuer's invitation and re-sign history. Existing records and older writers remain readable.
+
 - Hosted invites prepare their creator exchange before minting; a later local link-save failure warns while preserving the created token.
 
 - `aw claim-human` reports an observed email delivery failure with retry guidance; JSON output retains the optional delivery fields.
