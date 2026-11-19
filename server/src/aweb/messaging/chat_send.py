@@ -42,7 +42,7 @@ from aweb.identity_address import require_address_evidence
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.agent_wake import agent_wake_scope
-from aweb.attachment_service import attachment_retry, refuse_remote_attachments
+from aweb.attachment_service import confirm_accepted_attachment_refs, refuse_remote_attachments
 from aweb.db import TransactionInfra
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -823,7 +823,9 @@ async def _stored_exact_chat_send(
             hang_on=payload.hang_on,
         )
     # Only an admitted, integrity-checked exact retry may consume its bound refs.
-    await attachment_retry(db, payload, MessageKind.CHAT)
+    await confirm_accepted_attachment_refs(
+        db, kind=MessageKind.CHAT, message_id=row["message_id"]
+    )
     return row
 
 

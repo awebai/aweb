@@ -43,7 +43,7 @@ from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.agent_wake import agent_wake_scope
-from aweb.attachment_service import attachment_retry, refuse_remote_attachments
+from aweb.attachment_service import confirm_accepted_attachment_refs, refuse_remote_attachments
 from aweb.db import TransactionInfra
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -918,7 +918,9 @@ async def _stored_exact_send(db, *, payload, sender_did: str) -> MailReplayLooku
     row = lookup.message
     # All callers validate encryption and current delivery policy before this
     # lookup. Bound attachment refs therefore cannot bypass ordinary admission.
-    await attachment_retry(db, payload, MessageKind.MAIL)
+    await confirm_accepted_attachment_refs(
+        db, kind=MessageKind.MAIL, message_id=row["message_id"]
+    )
     return MailReplayLookup(
         stored=SentMail(
             message_id=str(row["message_id"]),
