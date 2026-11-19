@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from jsonschema import ValidationError
 
 from .auth import authenticate
-from .binding_refresh import HolderBindingRefresher, REFRESH_ADVICE, RefreshFailure
+from .binding_refresh import REFRESH_ADVICE, HolderBindingRefresher, RefreshFailure
 from .keys import HUMAN_APPROVAL_MESSAGES, Refused
 
 logger = logging.getLogger(__name__)
