@@ -69,26 +69,81 @@ type hostedIdentityResponse struct {
 	APIKey          string `json:"api_key"`
 }
 
-func runHostedIdentityCreate(cmd *cobra.Command) error {
-	org, _ := cmd.Flags().GetString("org")
-	teamID, _ := cmd.Flags().GetString("team-id")
-	rawMode, _ := cmd.Flags().GetString("inbound-mode")
-	org, teamID, name := strings.TrimSpace(org), strings.TrimSpace(teamID), strings.TrimSpace(idCreateName)
-	_, _, canonicalErr := awid.ParseTeamID(teamID)
-	if org == "" || name == "" || (!hostedIdentityTeamUUID.MatchString(teamID) && canonicalErr != nil) {
-		return usageError("--org, --name and --team-id (a service UUID or canonical name:namespace) are required")
+type hostedCreationAuthority uint8
+
+const (
+	hostedHumanCLIAccount hostedCreationAuthority = iota
+	hostedNativeOwner
+)
+
+type hostedIdentityOptions struct {
+	Org               string
+	TeamID            string
+	Name              string
+	InboundMode       string
+	RegistryURL       string
+	HumanParent       string
+	RootParent        bool
+	Authority         hostedCreationAuthority
+	OwnerIdentityHome string
+	ServerName        string
+}
+
+func hostedIdentityOptionsFromCommand(cmd *cobra.Command) (hostedIdentityOptions, error) {
+	options := hostedIdentityOptions{ServerName: strings.TrimSpace(serverFlag)}
+	fields := []struct {
+		name  string
+		value *string
+	}{
+		{"org", &options.Org}, {"team-id", &options.TeamID}, {"name", &options.Name},
+		{"inbound-mode", &options.InboundMode}, {"registry", &options.RegistryURL},
+		{"human-parent", &options.HumanParent}, {"owner-identity-home", &options.OwnerIdentityHome},
+	}
+	for _, field := range fields {
+		value, err := cmd.Flags().GetString(field.name)
+		if err != nil {
+			return hostedIdentityOptions{}, fmt.Errorf("read --%s: %w. Check aw id create --help and retry", field.name, err)
+		}
+		*field.value = value
+	}
+	options.Org = strings.TrimSpace(options.Org)
+	options.TeamID = strings.TrimSpace(options.TeamID)
+	options.Name = strings.TrimSpace(options.Name)
+	var err error
+	options.RootParent, err = cmd.Flags().GetBool("root-parent")
+	if err != nil {
+		return hostedIdentityOptions{}, fmt.Errorf("read --root-parent: %w. Check aw id create --help and retry", err)
+	}
+	if cmd.Flags().Changed("owner-identity-home") {
+		options.Authority = hostedNativeOwner
+	}
+	_, _, canonicalErr := awid.ParseTeamID(options.TeamID)
+	if options.Org == "" || options.Name == "" || (!hostedIdentityTeamUUID.MatchString(options.TeamID) && canonicalErr != nil) {
+		return hostedIdentityOptions{}, usageError("--org, --name and --team-id (a service UUID or canonical name:namespace) are required")
 	}
 	if cmd.Flags().Changed("domain") || cmd.Flags().Changed("skip-dns-verify") {
-		return usageError("--domain and --skip-dns-verify cannot be combined with --org")
+		return hostedIdentityOptions{}, usageError("--domain and --skip-dns-verify cannot be combined with --org")
 	}
-	mode := "team_and_contacts"
 	if cmd.Flags().Changed("inbound-mode") {
-		var err error
-		mode, err = normalizeInboundModeCLIValue(rawMode)
+		options.InboundMode, err = normalizeInboundModeCLIValue(options.InboundMode)
 		if err != nil {
-			return err
+			return hostedIdentityOptions{}, err
 		}
+	} else {
+		options.InboundMode = "team_and_contacts"
 	}
+	return options, nil
+}
+
+func runHostedIdentityCreate(cmd *cobra.Command) error {
+	options, err := hostedIdentityOptionsFromCommand(cmd)
+	if err != nil {
+		return err
+	}
+	return prepareHostedIdentityCreation(cmd, options)
+}
+
+func prepareHostedIdentityCreation(cmd *cobra.Command, options hostedIdentityOptions) error {
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -105,12 +160,11 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	var cfg cliAuthConfig
 	var account cliAuthAccount
 	var owner *hostedOwnerAuthority
-	if cmd.Flags().Changed("owner-identity-home") {
-		if strings.TrimSpace(serverFlag) != "" {
+	if options.Authority == hostedNativeOwner {
+		if options.ServerName != "" {
 			return usageError("the owner root's workspace binding selects the service; omit --server-name")
 		}
-		rawOwner, _ := cmd.Flags().GetString("owner-identity-home")
-		owner, err = loadHostedOwnerAuthority(wd, home, rawOwner)
+		owner, err = loadHostedOwnerAuthority(wd, home, options.OwnerIdentityHome)
 		if err != nil {
 			return err
 		}
@@ -135,20 +189,20 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(idCreateRegistryURL) != "" {
-		if err := registry.SetFallbackRegistryURL(strings.TrimSpace(idCreateRegistryURL)); err != nil {
+	if strings.TrimSpace(options.RegistryURL) != "" {
+		if err := registry.SetFallbackRegistryURL(strings.TrimSpace(options.RegistryURL)); err != nil {
 			return err
 		}
 	}
 	var selectedIssuer *selectedChildIssuer
 	var human *hostedHumanParent
 	if owner != nil {
-		if idCreateHumanParent != "" || idCreateRootParent {
+		if options.HumanParent != "" || options.RootParent {
 			return usageError("the selected native owner is the parent; omit --human-parent and --root-parent")
 		}
 		selectedIssuer, err = hostedOwnerIssuer(ctx, wd, owner, registry, nil)
 	} else {
-		human, err = selectHostedPersonParent(account, strings.TrimSpace(idCreateHumanParent), idCreateRootParent)
+		human, err = selectHostedPersonParent(account, strings.TrimSpace(options.HumanParent), options.RootParent)
 	}
 	if err != nil {
 		return err
@@ -158,14 +212,18 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 			return err
 		}
 	}
-	association := hostedIdentityContext{Issuer: cfg.Issuer, AccountID: account.ID, Org: org, TeamID: teamID, Name: name, InboundMode: mode, RegistryURL: registry.DefaultRegistryURL}
+	association := hostedIdentityContext{Issuer: cfg.Issuer, AccountID: account.ID, Org: options.Org, TeamID: options.TeamID, Name: options.Name, InboundMode: options.InboundMode, RegistryURL: registry.DefaultRegistryURL}
 	if owner != nil {
 		association.OwnerDIDKey = owner.did
 	}
 	if selectedIssuer != nil {
 		association.Domain = selectedIssuer.domain
 		association.ParentKind = "identity"
-		association.ParentID = selectedIssuer.parent["id"].(string)
+		parentID, valid := selectedIssuer.parent["id"].(string)
+		if !valid || strings.TrimSpace(parentID) == "" {
+			return errors.New("selected owner certificate has no parent ID; inspect the owner's identity with aw doctor before retrying")
+		}
+		association.ParentID = parentID
 	}
 	if human != nil {
 		association.Domain = human.Domain
@@ -173,7 +231,7 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 		association.ParentID = human.ID
 	}
 	if association.Domain != "" {
-		_, origin, routeErr := childIssuerRegistry(ctx, idChildOptions{RegistryURL: idCreateRegistryURL}, association.Domain)
+		_, origin, routeErr := childIssuerRegistry(ctx, idChildOptions{RegistryURL: options.RegistryURL}, association.Domain)
 		if routeErr != nil {
 			return routeErr
 		}
@@ -198,7 +256,7 @@ type hostedIdentityCreation struct {
 	Association hostedIdentityContext
 }
 
-func createHostedIdentity(operation hostedIdentityCreation) error {
+func createHostedIdentity(operation hostedIdentityCreation) (resultErr error) {
 	ctx, cmd := operation.Context, operation.Command
 	home, cfg, owner := operation.Home, operation.Config, operation.Owner
 	selectedIssuer, human := operation.Issuer, operation.Human
@@ -215,7 +273,11 @@ func createHostedIdentity(operation hostedIdentityCreation) error {
 	if err != nil {
 		return fmt.Errorf("hosted identity creation already in progress or recovery lock unavailable: %w", err)
 	}
-	defer lock.Close()
+	defer func() {
+		if err := lock.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close hosted identity recovery lock: %w. Run aw doctor on the selected identity home before retrying", err))
+		}
+	}()
 	material, err := prepareHostedIdentity(home.Root, statePath, association)
 	if err != nil {
 		return err
@@ -356,11 +418,9 @@ func createHostedIdentity(operation hostedIdentityCreation) error {
 	if human != nil {
 		out["human_parent"] = human.ID
 	}
-	if jsonFlag {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
-	}
-	_, err = fmt.Fprintf(cmd.OutOrStdout(), "Status: %s\nAddress: %s\nTeam: %s\nIdentity home: %s\nInbound mode: %s\nID registration: %s\n", status, response.Address, response.CanonicalTeamID, home.Root, mode, out["id_registration"])
-	return err
+	return writeOutput(cmd.OutOrStdout(), out, func(any) string {
+		return fmt.Sprintf("Status: %s\nAddress: %s\nTeam: %s\nIdentity home: %s\nInbound mode: %s\nID registration: %s\n", status, response.Address, response.CanonicalTeamID, home.Root, mode, out["id_registration"])
+	})
 }
 
 func prepareHostedIdentity(root, statePath string, association hostedIdentityContext) (workspaceTeamIdentityMaterial, error) {
