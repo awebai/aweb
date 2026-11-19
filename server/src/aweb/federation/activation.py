@@ -357,8 +357,22 @@ class FederationAuthorityActivation:
                 # A cohort that expires may immediately elect its next reader.
                 for lease in (evidence_lease, discovery):
                     if lease is not None and lease.acquired:
-                        await self.work.release_lease(lease)
-            await self.work.release_permits(owner_id=owner_id)
+                        try:
+                            await self.work.release_lease(lease)
+                        except FederationAuthorityError as exc:
+                            # A published answer survives cleanup; this lease
+                            # remains bounded by its original database TTL.
+                            logger.warning(
+                                "federation_authority_cleanup_failed stage=lease failure_type=%s",
+                                type(exc).__name__,
+                            )
+            try:
+                await self.work.release_permits(owner_id=owner_id)
+            except FederationAuthorityError as exc:
+                logger.warning(
+                    "federation_authority_cleanup_failed stage=permit failure_type=%s",
+                    type(exc).__name__,
+                )
             if authority_generation is not None:
                 await self.resolver.expire_generation(authority_generation)
 
