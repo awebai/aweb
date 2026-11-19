@@ -2,10 +2,16 @@
 
 ## Unreleased
 
-- Old chat history was migrated to canonical conversations, preserving stored
-  participants, routes and readable single-participant sessions. Empty sessions
-  remain inaccessible through participant routes. Sends no longer repair these
-  records at runtime.
+- Old chat history with valid participant snapshots is migrated to canonical
+  conversations, preserving exact participants, routes and readable single-party
+  sessions. Existing active pairs retain routing precedence; older replaced
+  pairs stay closed and readable. Empty or blank-DID/alias snapshots are retained
+  unchanged, with their existing direct-history reader authorization. Sends no
+  longer repair these records at runtime.
+- Grant-home clients aw1.34.6–1.36.1 signed message envelopes with the session
+  key; those sends were already refused by the server's sender-identity check.
+  Upgrade aw if that client reports a sender mismatch. The new plaintext
+  signature verification does not create that pre-existing refusal.
 
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
