@@ -7,8 +7,8 @@ participant authority. No cross-thread or registry key equivalence is used.
 
 def mail_identity_sql(field: str, dids_parameter: str) -> str:
     """SQL over messages alias m; arguments are internal query fragments."""
-    if field not in {'from_did', 'to_did'}:
-        raise ValueError('Not a mail identity field')
+    if field not in {"from_did", "to_did"}:
+        raise ValueError("Not a mail identity field")
     return f"""(
         m.{field} = ANY({dids_parameter}::text[])
         OR EXISTS (
