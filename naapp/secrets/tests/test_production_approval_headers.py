@@ -129,6 +129,10 @@ async def test_credential_shaped_agent_headers_are_refused_before_freezing(root,
     )
     assert response.status_code == 403
     assert response.json()["code"] == "header_not_allowed"
+    assert response.json()["message"] == (
+        "Remove credentials and duplicate or malformed headers; use only allowed "
+        "agent headers and let Secrets set reserved headers."
+    )
     db = service.runtime.db()
     assert await db.fetch_value("SELECT count(*) FROM use_approvals") == 1
     assert await requester_receipt(root, pending=pending) == pending.reply

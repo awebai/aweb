@@ -7,9 +7,19 @@ allocate IDs nor poll, admit or dispatch. Callers supply already-projected resul
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from aweb_secrets.use_approval import UNRENDERABLE_MESSAGE, UseApprovalRefusalCode
+
+# Fixed remedies for refusals before the complete request is frozen (§7.4/§10.4).
+_REFUSAL_MESSAGES: Mapping[str, str] = {
+    UseApprovalRefusalCode.UNRENDERABLE: UNRENDERABLE_MESSAGE,
+    UseApprovalRefusalCode.HEADER_NOT_ALLOWED: (
+        "Remove credentials and duplicate or malformed headers; use only allowed "
+        "agent headers and let Secrets set reserved headers."
+    ),
+}
 
 
 def _envelope(state: str, request_id: str | None) -> dict[str, Any]:
@@ -42,8 +52,8 @@ def awaiting_approval(*, request_id: str, request_ref: str, approval_ref: str) -
 def refused(code: str, *, request_id: str | None, use_ref: str | None = None) -> dict[str, Any]:
     """Present an audit ref only after its caller's refusal transaction commits."""
     result = {**_envelope("refused", request_id), "code": code}
-    if code == UseApprovalRefusalCode.UNRENDERABLE:
-        result["message"] = UNRENDERABLE_MESSAGE
+    if code in _REFUSAL_MESSAGES:
+        result["message"] = _REFUSAL_MESSAGES[code]
     if use_ref is not None:
         result["use_ref"] = use_ref
     return result

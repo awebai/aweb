@@ -66,3 +66,16 @@ def test_uncertain_outcome_names_its_original_association_for_reconciliation_rea
     reply = results.outcome_unknown(request_id=REQUEST_ID, request_ref=INTENT)
     assert reply["reconcile_ref"] == INTENT
     assert not {"next", "send", "may_send", "dispatch_id", "link_token"} & reply.keys()
+
+
+def test_a_header_refusal_tells_the_requester_how_to_correct_the_request():
+    reply = results.refused("header_not_allowed", request_id=REQUEST_ID)
+    assert reply == {
+        "state": "refused",
+        "request_id": REQUEST_ID,
+        "code": "header_not_allowed",
+        "message": (
+            "Remove credentials and duplicate or malformed headers; use only allowed "
+            "agent headers and let Secrets set reserved headers."
+        ),
+    }

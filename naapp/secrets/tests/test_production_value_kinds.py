@@ -229,5 +229,6 @@ async def test_invalid_basic_at_post_commit_open_settles_not_sent_and_does_not_f
         assert status.json()["state"] == DispatchState.NOT_SENT.value
         assert status.json()["request_id"] == receipt["request_id"]
         assert status.json()["request_ref"] == receipt["request_ref"]
+        assert status.json()["message"] == receipt["message"]
     assert first.json()["request_id"] != second.json()["request_id"]
     assert first.json()["request_ref"] != second.json()["request_ref"]
