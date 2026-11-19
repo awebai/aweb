@@ -165,10 +165,14 @@ outbox = [
 runtime = [
     { name = "awid-service" },
     { name = "cbor2" },
+    { name = "dnspython" },
     { name = "fastapi" },
+    { name = "httpcore", extra = ["asyncio"] },
     { name = "httpx" },
+    { name = "idna" },
     { name = "jsonschema" },
     { name = "pgdbm" },
+    { name = "publicsuffixlist" },
     { name = "pydantic-settings" },
     { name = "pynacl" },
     { name = "webauthn" },
@@ -176,6 +180,7 @@ runtime = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aweb-naapp", extras = ["egress"], marker = "extra == 'runtime'" },
     { name = "awid-service", marker = "extra == 'hooks'", editable = "../../awid" },
     { name = "awid-service", marker = "extra == 'runtime'", editable = "../../awid" },
     { name = "cbor2", marker = "extra == 'runtime'", specifier = ">=6.1.2" },
@@ -666,6 +671,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl", hash = "sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55", size = 78784, upload-time = "2025-04-24T22:06:20.566Z" },
 ]
 
+[package.optional-dependencies]
+asyncio = [
+    { name = "anyio" },
+]
+
 [[package]]
 name = "httpcore2"
 version = "2.13.1"
@@ -1044,6 +1054,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/5a/04/1759906c4c5b67b2903f546de234a824d4028ef24eb0b1122daa43376c20/publicsuffix2-2.20191221.tar.gz", hash = "sha256:00f8cc31aa8d0d5592a5ced19cccba7de428ebca985db26ac852d920ddd6fe7b", size = 99592, upload-time = "2019-12-21T11:30:44.863Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9d/16/053c2945c5e3aebeefb4ccd5c5e7639e38bc30ad1bdc7ce86c6d01707726/publicsuffix2-2.20191221-py2.py3-none-any.whl", hash = "sha256:786b5e36205b88758bd3518725ec8cfe7a8173f5269354641f581c6b80a99893", size = 89033, upload-time = "2019-12-21T11:30:41.744Z" },
+]
+
+[[package]]
+name = "publicsuffixlist"
+version = "1.1.0.20261018"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/b9/aa4b37e174aa71bc4f6e3e31d837f6b2684d6023b69def1c4bc417d9a54e/publicsuffixlist-1.1.0.20261018.tar.gz", hash = "sha256:87861b9d9af2f035e68ad1fd95f9ff1caf92c8c2187ca9cf5c7d8785db0f221b", size = 106617, upload-time = "2026-10-18T07:57:32.211Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/d2/b60b418213e89c9adfdf6942f3e5d2ba025796a2b820628902b935ba9bef/publicsuffixlist-1.1.0.20261018-py3-none-any.whl", hash = "sha256:8a9f487ad9a501a56f76d20827d58a5847d34a345df854e3b6a1f301e292e9d4", size = 109375, upload-time = "2026-10-18T07:57:30.374Z" },
 ]
 
 [[package]]
