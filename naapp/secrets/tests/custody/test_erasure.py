@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import asyncpg
 import pytest
-from aweb_secrets.schema import service_schema_fingerprint
 from pgdbm import AsyncDatabaseManager
 
 from aweb_secrets.custody import Custody, LocalKeyFileProvider, SealContext, encode_value
@@ -22,6 +21,7 @@ from aweb_secrets.erasure import (
     operator_receipts,
 )
 from aweb_secrets.run_pin_store import retain
+from aweb_secrets.schema import service_schema_fingerprint
 from aweb_secrets.secret import SecretRecord
 from tests.custody.conftest import initial_record
 from tests.custody.test_onepassword import field, reference, sdk_item

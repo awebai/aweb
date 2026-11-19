@@ -5,9 +5,9 @@ import os
 import subprocess
 
 import pytest
-from aweb_secrets.schema import service_schema_fingerprint
 
 from aweb_secrets.erasure import ErasureFailure, ErasureUnavailable, check_erasure_store
+from aweb_secrets.schema import service_schema_fingerprint
 from tests.custody.test_erasure import erasedb as erasedb
 from tests.custody.test_erasure import staged
 
