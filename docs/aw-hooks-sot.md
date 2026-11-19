@@ -269,6 +269,14 @@ committing and calls the best-effort host callback after commit. An exact
 retry returns the stored post without emitting or counting another send.
 No room body or recipient list is included.
 
+A host's pre-post quota admission uses the public dependency
+`aweb.routes.room.room_post_identity`, the same `chat.send` scoped team
+identity dependency used by the room route. A host may bind a wrapper which
+calls it once, checks its authenticated actor, and returns that exact actor.
+The post-commit callback counts a committed post and cannot refuse it at a
+limit. Authentication, current membership and the room signature remain
+native decisions.
+
 `message.sent` route contexts use:
 
 ```text

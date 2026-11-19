@@ -18,7 +18,9 @@ from aweb.messaging.room_notices import pending_room_notices, ack_room_notice
 
 router = APIRouter(prefix="/v1/room", tags=["room"])
 _read = team_identity_with_grant_scope("chat.read")
-_post = team_identity_with_grant_scope("chat.send")
+# Public host admission dependency: wraps the same authenticated identity once.
+# Hosts may bind a pre-post quota check without replacing membership authority.
+room_post_identity = team_identity_with_grant_scope("chat.send")
 
 
 @router.get("")
@@ -62,7 +64,10 @@ async def exact(
 
 @router.post("/messages")
 async def post(
-    payload: RoomPost, request: Request, db=Depends(get_db), actor=Depends(_post)
+    payload: RoomPost,
+    request: Request,
+    db=Depends(get_db),
+    actor=Depends(room_post_identity),
 ):
     with agent_wake_scope(agent_wake_publisher(request.app.state)):
         output = await post_room_message(
