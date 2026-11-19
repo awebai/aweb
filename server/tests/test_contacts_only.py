@@ -228,7 +228,7 @@ async def test_contacts_only_real_delivery(privacy_app, tmp_path, mode, outside,
         """,
             identities["bob"],
             identities["alice"],
-            env.team_did,
+            env.namespace_did,
         )
         await send_both(403)
         await env.db.execute(
@@ -414,7 +414,7 @@ async def test_unmarked_global_recipient_keeps_strict_policy(privacy_app, raw_di
     """,
         recipient.did,
         sender_id,
-        env.team_did,
+        env.namespace_did,
     )
     await send_both(200)
     assert (
@@ -723,7 +723,7 @@ async def test_contact_creation_paths_bind_identity_before_delivery(
                 "SELECT * FROM {{tables.contacts}} WHERE owner_did=$1", identities["bob"]
             )
             assert row["contact_did_aw"] == identities["alice"]
-            assert row["binding_controller_did"] == env.team_did
+            assert row["binding_controller_did"] == env.namespace_did
             assert row["binding_accepted_at"] is not None
             assert row["status"] == "active"
             await send_both(200)
