@@ -6,8 +6,12 @@ from uuid import UUID
 import pytest
 from pgdbm.errors import QueryError
 
-from test_dashboard_privacy import TEAM, privacy_app as privacy_app
+import test_dashboard_privacy
+from test_dashboard_privacy import TEAM
 from test_member_team_key import _connect
+
+
+privacy_app = test_dashboard_privacy.privacy_app
 
 
 @pytest.mark.asyncio
