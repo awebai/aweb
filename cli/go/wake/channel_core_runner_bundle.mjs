@@ -2120,6 +2120,7 @@ function runOATS(bin, args, input = "", options = {}) {
 
 // cli/go/wake/channel_core_runner_entry.ts
 import { createInterface } from "node:readline";
+import { setTimeout as delay } from "node:timers/promises";
 
 // channel-core/src/api/client.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -11610,24 +11611,65 @@ function traceStatus(bindingID, entry) {
     trace_session_id: entry.session_id
   });
 }
+async function inspectStartupPresence(observer) {
+  try {
+    await observer.inspect();
+  } catch (error) {
+    if (!observer.signal.aborted) observer.reportError(error);
+  }
+}
+async function observeStartupPresence(observer) {
+  while (!observer.signal.aborted && !observer.hasObservedReceiver()) {
+    try {
+      await delay(250, void 0, { signal: observer.signal });
+    } catch (error) {
+      if (observer.signal.aborted) return;
+      throw error;
+    }
+    if (observer.signal.aborted || observer.hasObservedReceiver()) return;
+    await inspectStartupPresence(observer);
+  }
+}
 async function start(init) {
   paused = Boolean(init.paused);
   const oatsBin = init.oatsBin || process.env.AW_WAKE_OATS_BIN || "oats";
   const awCommand = init.awCommand || "aw";
   let confirmedLive = false;
+  let receiverObserved = false;
+  let pendingInspection;
+  const inspectSession = async (home) => {
+    if (abort.signal.aborted) throw new Error("runner generation stopped");
+    status({ readiness_waiting: "inspect_start" });
+    try {
+      const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
+      if (abort.signal.aborted) throw new Error("runner generation stopped");
+      const observation = envelope.result;
+      if (typeof observation?.present !== "boolean" || observation.state !== void 0 && typeof observation.state !== "string" || observation.running !== void 0 && typeof observation.running !== "boolean") {
+        throw new Error("oats session inspect did not report valid process presence");
+      }
+      const state = normalizeTerminalReadiness(observation.state, observation.present);
+      if (observation.present) confirmedLive = true;
+      if (observation.present && observation.running !== false && state !== "shell" && state !== "stopped" && state !== "not-launched") {
+        receiverObserved = true;
+      }
+      status({ readiness_waiting: "inspect_done", readiness_state: state, readiness_error: "" });
+      if (confirmedLive && (state === "stopped" || state === "not-launched")) onInactive(state);
+      return { present: observation.present, state };
+    } catch (error) {
+      if (!abort.signal.aborted) {
+        status({ readiness_waiting: "inspect_error", readiness_error: error instanceof Error ? error.message : String(error) });
+      }
+      throw error;
+    }
+  };
   const session = {
     async inspect(home) {
-      status({ readiness_waiting: "inspect_start" });
+      if (pendingInspection) return pendingInspection;
+      pendingInspection = inspectSession(home);
       try {
-        const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
-        if (envelope.result?.present === true) confirmedLive = true;
-        const state = normalizeTerminalReadiness(envelope.result?.state, envelope.result?.present ?? true);
-        status({ readiness_waiting: "inspect_done", readiness_state: state, readiness_error: "" });
-        if (confirmedLive && (state === "stopped" || state === "not-launched")) onInactive(state);
-        return { present: envelope.result?.present, state };
-      } catch (error) {
-        status({ readiness_waiting: "inspect_error", readiness_error: error instanceof Error ? error.message : String(error) });
-        throw error;
+        return await pendingInspection;
+      } finally {
+        pendingInspection = void 0;
       }
     },
     async input(home, text2) {
@@ -11678,15 +11720,16 @@ async function start(init) {
       status({ binding_id: binding.binding_id, error: message });
     }));
   }
-  try {
-    await session.inspect(init.home);
-  } catch (error) {
-    if (!abort.signal.aborted) {
-      lastError = error instanceof Error ? error.message : String(error);
-      status({ readiness_error: lastError });
-    }
-  }
+  const startup = {
+    inspect: () => session.inspect(init.home),
+    hasObservedReceiver: () => receiverObserved,
+    signal: abort.signal,
+    reportError: (error) => status({ readiness_error: error instanceof Error ? error.message : String(error) })
+  };
+  await inspectStartupPresence(startup);
+  if (abort.signal.aborted) return;
   status({ ready: true });
+  consumers.push(observeStartupPresence(startup));
 }
 async function main() {
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });

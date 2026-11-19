@@ -192,6 +192,13 @@ five seconds. Stopped/not-launched observations mark the instance inactive only
 after the child has observed `present:true`; a prelaunch home stays pending and retries
 through unread snapshots without needing re-registration.
 
+A quiet prelaunch registration also observes startup until that runner first
+sees process presence. Registration completes before the process exists; this
+observation does not delay the ready handshake, submit terminal input, or need
+a mail/chat event. It stops at the first presence observation or generation
+shutdown. There is no ongoing inspection loop after startup, and an old healthy
+observation remains advisory rather than a readiness failure.
+
 The `blocked` refusal prevents wake text and Enter from answering a modal such
 as a permission prompt or AskUserQuestion. It relies on inspection identifying
 the modal; `unknown` still delivers, and a modal appearing between inspection and input requires protection
