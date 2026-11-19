@@ -49,6 +49,7 @@ class VerifiedControllerImportMember:
     """
 
     request: TeamImportRequest
+    controller_signature: str
     verified_team_did_key: str
     certificate: TeamCertificate
 
@@ -73,6 +74,7 @@ class VerifiedControllerImport:
     """
 
     request: TeamImportRequest
+    controller_signature: str
     verified_team_did_key: str
     team: Team
     certificates: tuple[TeamCertificate, ...]
@@ -165,12 +167,16 @@ async def verify_controller_import(
         raise TeamControlRequestInvalid(TeamControlRequestReason.CONTROLLER_CHANGED)
     result = VerifiedControllerImport(
         request=request,
+        controller_signature=controller_signature,
         verified_team_did_key=key,
         team=team,
         certificates=certificates,
         members=tuple(
             VerifiedControllerImportMember(
-                request=request, verified_team_did_key=key, certificate=certificate
+                request=request,
+                controller_signature=controller_signature,
+                verified_team_did_key=key,
+                certificate=certificate,
             )
             for certificate in certificates
             if certificate.revoked_at is None and not request.dry_run

@@ -100,6 +100,7 @@ async def test_owner_snapshot_retains_revoked_planning_but_only_live_admission(
             controller_signature=request.sign(signing_key=controller),
         )
     assert proof.request is request
+    assert proof.controller_signature == request.sign(signing_key=controller)
     assert proof.request.organization_id == "organization-1"
     assert proof.request.team_id is None
     assert proof.team.team_id == "import:local"
@@ -115,6 +116,7 @@ async def test_owner_snapshot_retains_revoked_planning_but_only_live_admission(
     admitted = proof.members[0]
     assert isinstance(admitted, VerifiedControllerImportMember)
     assert admitted.team_id == "import:local"
+    assert admitted.controller_signature == proof.controller_signature
     assert admitted.verified_team_did_key == did_key_from_signing_key(controller)
     assert admitted.certificate.certificate_id == "live-certificate"
     assert admitted.certificate.member_did_key == did_key_from_signing_key(member)
