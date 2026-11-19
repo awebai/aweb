@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from aweb.human_kind import human_predicate_sql, effective_agent_type
-from aweb.member_team_key import member_key_current_sql
 
 from aweb.agent_wake import record_did_wakes
 from aweb.attachment_service import attachment_transaction
@@ -12,20 +11,13 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from aweb.inbound_modes import (
-    INBOUND_MODE_CONTACTS_ONLY,
-    INBOUND_MODE_OPEN,
-    INBOUND_MODE_TEAM_AND_CONTACTS,
-    effective_inbound_mode,
-    normalize_inbound_mode,
-)
-from aweb.messaging.contacts import (
-    has_exact_active_identity_contact,
-    normalize_owner_dids,
+from aweb.messaging.delivery_policy import (
+    DeliveryAttempt,
+    DeliverySender,
+    authorize_delivery,
 )
 from aweb.service_errors import (
     ConflictError,
-    ForbiddenError,
     NotFoundError,
     ServiceError,
     ValidationError,
@@ -134,112 +126,6 @@ async def policy_rows_for_participant(db, participant: dict) -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def _is_global_recipient(recipient_agent: dict) -> bool:
-    return (
-        recipient_agent.get("identity_scope") == "global"
-        or bool(recipient_agent.get("has_global_claim"))
-        or bool(str(recipient_agent.get("did_aw") or "").strip())
-    )
-
-
-async def _effective_inbound_mode(db, recipient_agent: dict) -> str:
-    # Raw identity facts select policy, never routing or mutation authority.
-    # Direct service fixtures may omit the separate policy projection.
-    policy_did_aw = recipient_agent.get("policy_did_aw", recipient_agent.get("did_aw"))
-    if policy_did_aw:
-        return await effective_inbound_mode(db.get_manager("aweb"), str(policy_did_aw))
-    # Without a stable identity there is no link to other memberships.
-    try:
-        return normalize_inbound_mode(recipient_agent.get("inbound_mode"), default="")
-    except ValueError as exc:
-        raise ForbiddenError("Recipient inbound_mode migration required") from exc
-
-
-def _identity_dids_from_agent(agent: dict) -> list[str]:
-    dids: list[str] = []
-    for value in (agent.get("did_aw"), agent.get("did_key")):
-        did = str(value or "").strip()
-        if did and did not in dids:
-            dids.append(did)
-    return dids
-
-
-def _normalize_dids(dids: list[str] | tuple[str, ...] | None) -> list[str]:
-    normalized: list[str] = []
-    for value in dids or []:
-        did = str(value or "").strip()
-        if did and did not in normalized:
-            normalized.append(did)
-    return normalized
-
-
-async def _active_team_ids_for_identity(db, dids: list[str]) -> set[str]:
-    dids = _normalize_dids(dids)
-    if not dids:
-        return set()
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT DISTINCT a.team_id
-        FROM {{tables.agents}} AS a
-        WHERE a.deleted_at IS NULL
-          AND ((a.did_aw = ANY($1::text[]) AND a.did_aw_verified_key = a.did_key) OR a.did_key = ANY($1::text[]))
-          AND """
-        + member_key_current_sql("a")
-        + """
-        """,
-        dids,
-    )
-    return {str(row["team_id"]) for row in rows if row.get("team_id")}
-
-
-async def _has_verified_same_team_membership(
-    db,
-    *,
-    recipient_agent: dict,
-    sender_verified_team_id: str | None,
-    sender_verified_dids: list[str] | tuple[str, ...] | None,
-) -> bool:
-    recipient_team_ids = await _active_team_ids_for_identity(
-        db, _identity_dids_from_agent(recipient_agent)
-    )
-    if not recipient_team_ids:
-        return False
-
-    sender_team_ids: set[str] = set()
-    verified_team = str(sender_verified_team_id or "").strip()
-    if verified_team:
-        sender_team_ids.add(verified_team)
-    sender_team_ids.update(
-        await _active_team_ids_for_identity(db, _normalize_dids(sender_verified_dids))
-    )
-
-    return bool(sender_team_ids & recipient_team_ids)
-
-
-async def _recipient_has_exact_sender_contact(
-    db,
-    *,
-    recipient_agent: dict,
-    sender_address: str | None,
-    sender_did: str,
-) -> bool:
-    owner_dids = normalize_owner_dids(
-        owner_dids=[
-            recipient_agent.get("did_aw"),
-            recipient_agent.get("did_key"),
-        ]
-    )
-    if not owner_dids:
-        raise ForbiddenError("Recipient identity is incomplete")
-    return await has_exact_active_identity_contact(
-        db,
-        owner_dids=owner_dids,
-        contact_address=sender_address,
-        contact_did_aw=sender_did,
-    )
-
-
 async def authorize_message_delivery(
     db,
     *,
@@ -251,62 +137,18 @@ async def authorize_message_delivery(
     sender_verified_dids: list[str] | tuple[str, ...] | None = None,
     stored_route_continuation: bool = False,
 ) -> None:
-    sender_stable_did = next(
-        (
-            str(value).strip()
-            for value in (sender_verified_dids or ())
-            if str(value).strip().startswith("did:aw:")
-        ),
-        str(sender_did or "").strip(),
-    )
-
-    if _is_global_recipient(recipient_agent):
-        mode = await _effective_inbound_mode(db, recipient_agent)
-        if mode == INBOUND_MODE_OPEN:
-            return
-        if (
-            mode == INBOUND_MODE_TEAM_AND_CONTACTS
-            and await _has_verified_same_team_membership(
-                db,
-                recipient_agent=recipient_agent,
-                sender_verified_team_id=sender_verified_team_id,
-                sender_verified_dids=sender_verified_dids,
-            )
-        ):
-            return
-        if await _recipient_has_exact_sender_contact(
-            db,
-            recipient_agent=recipient_agent,
-            sender_address=sender_address,
-            sender_did=sender_stable_did,
-        ):
-            return
-        if mode == INBOUND_MODE_CONTACTS_ONLY:
-            raise ForbiddenError(
-                "Recipient only accepts messages from exact active contacts"
-            )
-        raise ForbiddenError(
-            "Recipient only accepts messages from verified team members or exact active contacts"
-        )
-
-    if stored_route_continuation:
-        return
-
-    recipient_team_id = str(recipient_agent.get("team_id") or "").strip()
-    sender_team = str(sender_team_id or "").strip()
-    if sender_team and recipient_team_id and sender_team == recipient_team_id:
-        return
-
-    if await _recipient_has_exact_sender_contact(
+    """Compatibility entry; current memberships come only from the shared owner."""
+    await authorize_delivery(
         db,
-        recipient_agent=recipient_agent,
-        sender_address=sender_address,
-        sender_did=sender_stable_did,
-    ):
-        return
-
-    raise ForbiddenError(
-        "Local recipient only accepts same-team, exact-contact, or stored-route continuation delivery"
+        recipient=recipient_agent,
+        sender=DeliverySender(
+            did=sender_did,
+            address=sender_address,
+            verified_dids=tuple(sender_verified_dids or ()),
+        ),
+        attempt=DeliveryAttempt.STORED_ROUTE
+        if stored_route_continuation
+        else DeliveryAttempt.FIRST_CONTACT,
     )
 
 

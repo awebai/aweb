@@ -78,6 +78,15 @@ This does not grant it authority to set an identity-wide policy.
 The identity-signed "my inbound mode" route uses the authenticated, AWID-bound
 `did:aw` for the change; a stored membership claim cannot select its write scope.
 
+`aweb.messaging.delivery_policy.authorize_delivery` owns this rule for native
+and federated sends. Same-team admission intersects all current active team
+memberships of both verified identities through the native member owner. A
+caller-selected team, retired row or superseded team key adds no membership.
+Address residence and human classification remain independent of membership.
+Exact active identity-contact matching has one owner and retains contact locks
+through an existing delivery transaction. Policy refusals carry a next action;
+federation retains the stable reason separately from that human detail.
+
 The modes are:
 
 - `open`: accept valid senders after address route and identity binding

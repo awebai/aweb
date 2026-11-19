@@ -188,7 +188,7 @@ async def test_identity_policy_locks_every_membership(aweb_cloud_db, lock):
 
 @pytest.mark.asyncio
 async def test_delivery_policy_reads_raw_did_not_gated_authority(aweb_cloud_db):
-    from aweb.messaging.messages import _effective_inbound_mode
+    from aweb.messaging.delivery_policy import recipient_inbound_mode
     from test_messages import _DbShim
 
     manager = aweb_cloud_db.aweb_db
@@ -199,10 +199,10 @@ async def test_delivery_policy_reads_raw_did_not_gated_authority(aweb_cloud_db):
         "did_aw": None,
         "identity_scope": "global",
     }
-    assert await _effective_inbound_mode(_DbShim(manager), recipient) == "contacts_only"
+    assert await recipient_inbound_mode(_DbShim(manager), recipient) == "contacts_only"
     # Direct service fixtures without the policy projection remain supported.
     assert (
-        await _effective_inbound_mode(_DbShim(manager), {"did_aw": "did:aw:policy"})
+        await recipient_inbound_mode(_DbShim(manager), {"did_aw": "did:aw:policy"})
         == "contacts_only"
     )
 
@@ -268,7 +268,7 @@ async def test_policy_patch_uses_authenticated_identity_scope(
 async def test_global_policy_without_raw_did_uses_only_its_own_mode(
     aweb_cloud_db, mode
 ):
-    from aweb.messaging.messages import _effective_inbound_mode
+    from aweb.messaging.delivery_policy import recipient_inbound_mode
     from aweb.service_errors import ForbiddenError
     from test_messages import _DbShim
 
@@ -280,9 +280,9 @@ async def test_global_policy_without_raw_did_uses_only_its_own_mode(
     }
     if mode is None or mode == "unknown":
         with pytest.raises(ForbiddenError, match="inbound_mode migration required"):
-            await _effective_inbound_mode(_DbShim(aweb_cloud_db.aweb_db), recipient)
+            await recipient_inbound_mode(_DbShim(aweb_cloud_db.aweb_db), recipient)
     else:
         assert (
-            await _effective_inbound_mode(_DbShim(aweb_cloud_db.aweb_db), recipient)
+            await recipient_inbound_mode(_DbShim(aweb_cloud_db.aweb_db), recipient)
             == mode
         )

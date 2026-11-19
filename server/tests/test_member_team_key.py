@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 from aweb.identity_auth_deps import current_membership, lookup_identity_agent_context
-from aweb.messaging.messages import _has_verified_same_team_membership
+from aweb.messaging.delivery_policy import has_current_shared_team
 from aweb.messaging.participants import messaging_participants_by_aliases
 from aweb.messaging.sender_membership import sender_memberships
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
@@ -393,11 +393,10 @@ async def test_same_team_delivery_needs_the_sender_under_the_current_key(pinning
         ).status_code == 200
 
     async def same_team():
-        return await _has_verified_same_team_membership(
+        return await has_current_shared_team(
             env.infra,
-            recipient_agent={"did_key": recipient[1]},
-            sender_verified_team_id=None,
-            sender_verified_dids=[sender[1]],
+            recipient={"did_key": recipient[1]},
+            sender_dids=[sender[1]],
         )
 
     assert await same_team()

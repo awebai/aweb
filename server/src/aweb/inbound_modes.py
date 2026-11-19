@@ -6,9 +6,20 @@ instead of using this convenience normalizer's provisioning default.
 
 from __future__ import annotations
 
-INBOUND_MODE_OPEN = "open"
-INBOUND_MODE_TEAM_AND_CONTACTS = "team_and_contacts"
-INBOUND_MODE_CONTACTS_ONLY = "contacts_only"
+from enum import StrEnum
+
+
+class InboundMode(StrEnum):
+    """Canonical recipient-controlled delivery policy, independent of admission."""
+
+    OPEN = "open"
+    TEAM_AND_CONTACTS = "team_and_contacts"
+    CONTACTS_ONLY = "contacts_only"
+
+
+INBOUND_MODE_OPEN = InboundMode.OPEN.value
+INBOUND_MODE_TEAM_AND_CONTACTS = InboundMode.TEAM_AND_CONTACTS.value
+INBOUND_MODE_CONTACTS_ONLY = InboundMode.CONTACTS_ONLY.value
 INBOUND_MODES = frozenset(
     {
         INBOUND_MODE_OPEN,

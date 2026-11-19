@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from enum import Enum, auto
 from uuid import UUID
 
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
@@ -177,6 +178,47 @@ async def get_contact_addresses(
     return {r["contact_address"] for r in rows}
 
 
+class IdentityContactMatch(Enum):
+    MATCHED = auto()
+    NEEDS_BINDING = auto()
+    NOT_FOUND = auto()
+
+
+async def identity_contact_match(
+    db,
+    *,
+    owner_dids: list[str],
+    address: str | None,
+    sender_did: str,
+) -> IdentityContactMatch:
+    """Read exact active identity bindings, retaining locks in a caller transaction.
+
+    docs/identity-messaging-contract.md:85-91 excludes pending/handle/domain
+    matches. A legacy address without an identity needs explicit rebinding.
+    """
+    owner_keys = normalize_owner_dids(owner_dids=owner_dids)
+    addr = normalize_hosted_handle_reference(address or "")
+    bound_did = sender_did.strip()
+    if not owner_keys or not addr or not bound_did:
+        return IdentityContactMatch.NOT_FOUND
+    rows = await db.get_manager("aweb").fetch_all(
+        """
+        SELECT contact_did_aw FROM {{tables.contacts}}
+        WHERE owner_did = ANY($1::text[])
+          AND reference_type = 'identity' AND status = 'active'
+          AND contact_address = $2
+        ORDER BY contact_id FOR UPDATE
+        """,
+        owner_keys,
+        addr,
+    )
+    if any(row["contact_did_aw"] == bound_did for row in rows):
+        return IdentityContactMatch.MATCHED
+    if any(row["contact_did_aw"] is None for row in rows):
+        return IdentityContactMatch.NEEDS_BINDING
+    return IdentityContactMatch.NOT_FOUND
+
+
 async def has_exact_active_identity_contact(
     db,
     *,
@@ -185,34 +227,16 @@ async def has_exact_active_identity_contact(
     contact_address: str | None,
     contact_did_aw: str | None = None,
 ) -> bool:
-    """Return whether owner has an exact active identity contact.
-
-    This helper is intentionally narrower than ``is_address_in_contacts``: it
-    does not allow domain-level matching, pending rows, handle rows, labels, or
-    display names to authorize delivery.
-    """
-    owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
-    addr = normalize_hosted_handle_reference(contact_address or "")
-    bound_did = str(contact_did_aw or "").strip()
-    if not owner_keys or not addr or not bound_did:
-        return False
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT 1
-        FROM {{tables.contacts}}
-        WHERE owner_did = ANY($1::text[])
-          AND reference_type = 'identity'
-          AND status = 'active'
-          AND contact_address = $2
-          AND contact_did_aw = $3
-        LIMIT 1
-        """,
-        owner_keys,
-        addr,
-        bound_did,
+    """Compatibility query delegating to the exact identity-contact owner."""
+    return (
+        await identity_contact_match(
+            db,
+            owner_dids=normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids),
+            address=contact_address,
+            sender_did=contact_did_aw or "",
+        )
+        is IdentityContactMatch.MATCHED
     )
-    return row is not None
 
 
 async def resolve_local_namespace_controller_did(

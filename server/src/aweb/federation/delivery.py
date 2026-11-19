@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from aweb.db import TransactionInfra
+from aweb.federation.errors import FederationPolicyRefused
+from aweb.messaging.delivery_policy import (
+    DeliveryAttempt,
+    DeliveryPolicyRefused,
+    DeliverySender,
+    authorize_delivery,
+)
 from aweb.human_kind import is_verified_human
-from aweb.member_team_key import member_key_current_sql
 
 from aweb.agent_wake import record_did_wakes
 from aweb.messaging.chat_policy import HumanChatRefused, recipient_label
-from aweb.messaging.messages import _is_global_recipient
 
 import hashlib
 import json
@@ -23,7 +29,7 @@ from awid.federation_errors import FederationAuthorityError
 from pgdbm.errors import AsyncDBError
 from awid.signing import canonical_json_bytes
 
-from aweb.inbound_modes import INBOUND_MODES, effective_inbound_mode
+from aweb.inbound_modes import effective_inbound_mode
 from aweb.service_errors import ForbiddenError
 from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.authority_state import AuthoritySecurityToken
@@ -358,61 +364,21 @@ async def _authorize_policy(
     recipient: dict,
     stored_route_continuation: bool,
 ) -> None:
-    mode = str(recipient.get("inbound_mode") or "").strip().lower()
-    recipient_global = _is_global_recipient(recipient)
-    if recipient_global and mode == "open":
-        return
-    if recipient_global and mode not in INBOUND_MODES:
-        raise FederationAuthorityError("recipient_policy_rejected")
-    if not recipient_global and stored_route_continuation:
-        return
-
-    recipient_team = str(recipient.get("team_id") or "").strip()
-    if recipient_team and not (recipient_global and mode == "contacts_only"):
-        same_team = await tx.fetch_one(
-            """
-            SELECT a.agent_id FROM {{tables.agents}} AS a
-            WHERE a.team_id = $1 AND a.deleted_at IS NULL
-              AND ((a.did_aw = $2 AND a.did_aw_verified_key = a.did_key) OR a.did_key = $2)
-              AND """
-            + member_key_current_sql("a")
-            + """
-            LIMIT 1
-            FOR SHARE OF a
-            """,
-            recipient_team,
-            envelope.sender_did_aw,
+    try:
+        await authorize_delivery(
+            TransactionInfra(None, tx),
+            recipient=recipient,
+            sender=DeliverySender(
+                did=envelope.sender_did_aw,
+                address=envelope.sender_address,
+                verified_dids=(envelope.sender_did_aw, envelope.sender_current_did_key),
+            ),
+            attempt=DeliveryAttempt.STORED_ROUTE
+            if stored_route_continuation
+            else DeliveryAttempt.FIRST_CONTACT,
         )
-        if same_team is not None:
-            return
-
-    owner_dids = [
-        value
-        for value in {
-            str(recipient.get("did_aw") or "").strip(),
-            str(recipient.get("did_key") or "").strip(),
-        }
-        if value
-    ]
-    bindings = await tx.fetch_all(
-        """
-        SELECT contact_did_aw
-        FROM {{tables.contacts}}
-        WHERE owner_did = ANY($1::text[])
-          AND reference_type = 'identity'
-          AND status = 'active'
-          AND contact_address = $2
-        ORDER BY contact_id
-        FOR UPDATE
-        """,
-        owner_dids,
-        envelope.sender_address,
-    )
-    if any(row["contact_did_aw"] == envelope.sender_did_aw for row in bindings):
-        return
-    if any(row["contact_did_aw"] is None for row in bindings):
-        raise FederationAuthorityError("contact_identity_binding_required")
-    raise FederationAuthorityError("recipient_policy_rejected")
+    except DeliveryPolicyRefused as exc:
+        raise FederationPolicyRefused(exc) from exc
 
 
 async def _ensure_sender_contact(

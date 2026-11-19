@@ -305,10 +305,10 @@ async def test_old_projections_require_verification_before_stable_resolution(
         authenticated = await request(env, bob, "GET", "/v1/team")
         assert authenticated.status_code == 200, authenticated.text
         assert (await resolve_agent_by_did(env.infra, stable))["agent_id"] == bob.id
-        from aweb.messaging.messages import _active_team_ids_for_identity
+        from aweb.member_team_key import current_member_team_ids_for_identity
         from aweb.identity_metadata import lookup_identity_metadata_by_did
 
-        assert other_team not in await _active_team_ids_for_identity(
+        assert other_team not in await current_member_team_ids_for_identity(
             env.infra, [stable, bob.did]
         )
         metadata = await lookup_identity_metadata_by_did(env.infra, [other_key])

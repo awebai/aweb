@@ -3503,7 +3503,7 @@ async def test_mcp_same_team_contacts_only(
         assert "error" not in result, result
     else:
         assert result == {
-            "error": "Recipient only accepts messages from exact active contacts"
+            "error": "Recipient only accepts messages from exact active contacts. Ask the recipient to add your exact address as a contact or check their inbound policy."
         }
 
     if allowed and kind == "chat" and mode == "contacts_only":
@@ -3529,7 +3529,7 @@ async def test_mcp_same_team_contacts_only(
             await chat_tools.chat_send(DBInfra(manager), **continuation_args)
         )
         assert removed == {
-            "error": "Recipient only accepts messages from exact active contacts"
+            "error": "Recipient only accepts messages from exact active contacts. Ask the recipient to add your exact address as a contact or check their inbound policy."
         }
         assert (
             await manager.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}")
