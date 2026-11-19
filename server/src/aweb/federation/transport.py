@@ -17,6 +17,8 @@ import asyncio
 import ipaddress
 import logging
 import ssl
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import httpx
@@ -29,6 +31,9 @@ from awid.external_authority import (
 )
 from awid.external_registry import HostResolver
 from awid.federation_errors import FederationAuthorityError
+
+if TYPE_CHECKING:
+    from aweb.federation.activation import FederationAuthorityActivation
 
 logger = logging.getLogger(__name__)
 
@@ -294,7 +299,10 @@ class AddressCheckedTransport(httpx.AsyncBaseTransport):
 
 
 def delivery_transport(
-    federation_authority, *host_set
+    federation_authority: FederationAuthorityActivation | None,
+    host_transport: httpx.AsyncBaseTransport | None = None,
+    *,
+    fallback_transports: Sequence[httpx.AsyncBaseTransport | None] = (),
 ) -> httpx.AsyncBaseTransport | None:
     """The transport federated delivery sends through.
 
@@ -302,7 +310,7 @@ def delivery_transport(
     federation authority's, which shares the authority's resolver and origin
     policy.
     """
-    for transport in host_set:
+    for transport in (host_transport, *fallback_transports):
         if transport is not None:
             return transport
     return getattr(federation_authority, "delivery_transport", None)

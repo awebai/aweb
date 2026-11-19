@@ -624,9 +624,13 @@ def test_federation_authority_carries_the_delivery_transport(monkeypatch):
     assert transport.host_resolver is authority.resolver.host_resolver
     assert transport.origin_context is authority.resolver.origin_context
     assert delivery_transport(authority) is transport
-    assert delivery_transport(authority, None, None) is transport
+    assert delivery_transport(authority, fallback_transports=(None,)) is transport
     host_set = httpx.MockTransport(lambda _request: httpx.Response(200, json={}))
-    assert delivery_transport(authority, None, host_set) is host_set
+    assert delivery_transport(authority, fallback_transports=(host_set,)) is host_set
+    assert (
+        delivery_transport(authority, host_set, fallback_transports=(transport,))
+        is host_set
+    )
     assert delivery_transport(None) is None
     assert delivery_transport(SimpleNamespace()) is None
 
