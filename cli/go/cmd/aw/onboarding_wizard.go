@@ -126,6 +126,11 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 		return nil, err
 	}
 
+	effectiveURL, err := resolveGuidedOnboardingAwebURL(req.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	req.BaseURL = effectiveURL
 	serviceURLs, err := discoverOnboardingServiceURLs(req.BaseURL)
 	if err != nil {
 		if req.NonInteractive {
