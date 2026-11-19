@@ -113,11 +113,13 @@ Each supplies `event_type` and `to_context() -> dict[str, object]`. Construct
 them from validated producer data. Event names, message kind and transport use
 the server's named enums. Received `content_mode` and priority instead use
 `ContentModeValue` and `MessagePriorityValue` from `aweb.messaging.kinds`: a
-named standard value or the original string, optionally absent. Exact named
-values become `ContentMode`/`MessagePriority` constants; other accepted strings
-retain every character, including case and whitespace. No context performs
-validator narrowing or changes a signed priority. Constructors cannot newly
-fail on accepted metadata, so callback timing remains unchanged.
+named standard value or the original string. As before typed contexts, an absent
+or empty mode emits `legacy_plaintext_v1`, and an absent or empty priority emits
+`normal`. Exact named values become `ContentMode`/`MessagePriority` constants;
+other accepted nonempty strings retain every character, including case and
+whitespace. These are callback defaults only: request and signed payload bytes
+are unchanged. No context performs validator narrowing. Constructors cannot
+newly fail on accepted metadata, so callback timing remains unchanged.
 
 Mail send, chat send, mail acknowledgement and inbound federation producers
 use these contexts before passing dictionaries to the existing callback or

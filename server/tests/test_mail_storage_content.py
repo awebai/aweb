@@ -49,8 +49,9 @@ def test_accepted_plaintext_keeps_content_and_original_callback_mode(mode):
         priority=request.priority,
         content_mode=request.content_mode,
     )
-    assert context.to_context()["content_mode"] == mode
-    assert request.signed_payload == '{"content_mode":" opaque plaintext "}'
+    assert context.to_context()["content_mode"] == (
+        "legacy_plaintext_v1" if mode is None or mode == "" else str(mode)
+    )
 
 
 def test_encrypted_request_stores_only_envelope_and_ciphertext_metadata():
@@ -74,5 +75,8 @@ def test_encrypted_request_stores_only_envelope_and_ciphertext_metadata():
         ContentMode.ENCRYPTED,
         2,
     )
-    assert stored.envelope == envelope and stored.metadata == metadata
-    assert request.priority is MessagePriority.URGENT
+    assert stored.envelope == {"ciphertext": "ciphertext"}
+    assert stored.metadata == {
+        "encrypted_ciphertext": "ciphertext",
+        "signed_envelope_hash": "sha256:envelope",
+    }

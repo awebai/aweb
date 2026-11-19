@@ -382,6 +382,6 @@ async def post_room_message(
         record_agent_wake(team_room_wake_key(actor.team_id), "room")
         output = _post_dict(row, actor.team_id)
     await fire_mutation_callback(
-        on_mutation, MutationEventType.ROOM_MESSAGE_SENT, context
+        on_mutation, MutationEventType.ROOM_MESSAGE_SENT.value, context
     )
     return output
