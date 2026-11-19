@@ -39,7 +39,13 @@ PRIVATE_DELIVERY_ORIGINS_SETTING = "AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS"
 # to. Loopback, link-local and every other special-purpose range stay refused.
 PRIVATE_DELIVERY_NETWORKS = tuple(
     ipaddress.ip_network(network)
-    for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "fc00::/7")
+    for network in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "fc00::/7",
+    )
 )
 
 
@@ -51,7 +57,9 @@ class AddressRefused(DestinationRefused):
     """The origin resolves to an address the outbound address policy does not admit."""
 
 
-def private_delivery_origins(raw: str, *, origin_context: OriginContext) -> frozenset[str]:
+def private_delivery_origins(
+    raw: str, *, origin_context: OriginContext
+) -> frozenset[str]:
     """Parse the comma-separated delivery origins allowed to resolve to private addresses.
 
     Each entry is an exact origin, ``scheme://host[:port]`` named by host, kept
@@ -134,11 +142,15 @@ class PinnedTransport(httpx.AsyncBaseTransport):
     def __init__(self, origin, approved_ips, ssl_context):
         self.origin = httpx.URL(origin)
         self.ip = approved_ips[0]
-        self.transport = httpx.AsyncHTTPTransport(verify=ssl_context or True, trust_env=False)
+        self.transport = httpx.AsyncHTTPTransport(
+            verify=ssl_context or True, trust_env=False
+        )
 
     async def handle_async_request(self, request):
         if (request.url.scheme, request.url.host, request.url.port) != (
-            self.origin.scheme, self.origin.host, self.origin.port
+            self.origin.scheme,
+            self.origin.host,
+            self.origin.port,
         ):
             raise FederationAuthorityError("sender_registry_origin_forbidden")
         request.headers["Host"] = self.origin.netloc.decode("ascii")
@@ -209,28 +221,39 @@ class AddressCheckedTransport(httpx.AsyncBaseTransport):
                 if exc.reason != "sender_registry_origin_forbidden":
                     raise
                 self._log_refused_address(origin)
-                raise AddressRefused("destination address refused", request=request) from exc
+                raise AddressRefused(
+                    "destination address refused", request=request
+                ) from exc
             return await self._send_to_first_reachable(request, origin, approved_ips)
         except TimeoutError as exc:
-            raise httpx.ConnectTimeout("destination lookup timed out", request=request) from exc
+            raise httpx.ConnectTimeout(
+                "destination lookup timed out", request=request
+            ) from exc
         except FederationAuthorityError as exc:
             if exc.reason == "sender_registry_origin_forbidden":
-                raise DestinationRefused("destination refused", request=request) from exc
-            raise httpx.ConnectError("destination lookup failed", request=request) from exc
+                raise DestinationRefused(
+                    "destination refused", request=request
+                ) from exc
+            raise httpx.ConnectError(
+                "destination lookup failed", request=request
+            ) from exc
 
     def _log_refused_address(self, origin: str) -> None:
         if origin in self.private_delivery_origins:
             logger.warning(
                 "Federated delivery to %s refused: it resolves to an address that is "
                 "neither public nor in the networks admitted for %s origins (%s)",
-                origin, PRIVATE_DELIVERY_ORIGINS_SETTING,
+                origin,
+                PRIVATE_DELIVERY_ORIGINS_SETTING,
                 ", ".join(str(network) for network in PRIVATE_DELIVERY_NETWORKS),
             )
         else:
             logger.warning(
                 "Federated delivery to %s refused: it resolves to a non-public address. "
                 "If this is a server you operate on a private network, add %s to %s",
-                origin, origin, PRIVATE_DELIVERY_ORIGINS_SETTING,
+                origin,
+                origin,
+                PRIVATE_DELIVERY_ORIGINS_SETTING,
             )
 
     async def _send_to_first_reachable(
@@ -247,7 +270,10 @@ class AddressCheckedTransport(httpx.AsyncBaseTransport):
             last = position == len(approved_ips)
             connect = timeouts.get("connect")
             if not last:
-                connect = min(connect or FALLBACK_CONNECT_TIMEOUT_SECONDS, FALLBACK_CONNECT_TIMEOUT_SECONDS)
+                connect = min(
+                    connect or FALLBACK_CONNECT_TIMEOUT_SECONDS,
+                    FALLBACK_CONNECT_TIMEOUT_SECONDS,
+                )
             request.extensions["timeout"] = {**timeouts, "connect": connect}
             pinned = PinnedTransport(origin, (ip,), self._ssl_context)
             try:
@@ -267,7 +293,9 @@ class AddressCheckedTransport(httpx.AsyncBaseTransport):
         raise AssertionError("an admitted origin has at least one address")
 
 
-def delivery_transport(federation_authority, *host_set) -> httpx.AsyncBaseTransport | None:
+def delivery_transport(
+    federation_authority, *host_set
+) -> httpx.AsyncBaseTransport | None:
     """The transport federated delivery sends through.
 
     A transport the embedding host set takes precedence; otherwise it is the
