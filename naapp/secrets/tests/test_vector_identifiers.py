@@ -15,7 +15,7 @@ from awid.did import public_key_from_did, validate_stable_id
 
 ROOT = Path(__file__).resolve().parents[3]
 VECTORS = [
-    ROOT / "naapp" / "secrets" / "vectors" / "use-approval-v1.json",
+    ROOT / "naapp" / "secrets" / "vectors" / "use-approval-v2.json",
     ROOT / "naapp" / "secrets" / "vectors" / "hook-actions-v1.json",
     ROOT / "docs" / "vectors" / "secrets-runner-protocol-v1.json",
 ]

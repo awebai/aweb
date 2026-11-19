@@ -52,6 +52,7 @@ from aweb_secrets.use_approval import (
     RunJob,
     UseApprovalRefused,
     use_approval_request,
+    use_approval_view,
 )
 
 MIGRATIONS = Path(__file__).parent / "use_approval_migrations"
@@ -326,10 +327,14 @@ async def request_use_approval(
         max_ttl_s=max_ttl_s,
     )
     if refusal is not None:
-        raise UseApprovalRefused(refusal, "the secret's ancestry no longer permits this use")
+        raise UseApprovalRefused(
+            code=refusal, detail="the secret's ancestry no longer permits this use"
+        )
     stored = nodes[-1].secret
     if stored.active_version != intent["secret_version"]:
-        raise UseApprovalRefused("secret_version_changed", "the value changed after admission")
+        raise UseApprovalRefused(
+            code="secret_version_changed", detail="the value changed after admission"
+        )
     policy_ref = use_policy_ref(
         intent["installation_id"], intent["team_id"], intent["grant_id"], intent["policy_digest"]
     )
@@ -341,10 +346,10 @@ async def request_use_approval(
         intent["policy_digest"],
     )
     if granted is None:
-        raise UseApprovalRefused("grant_revoked", "the grant or its policy changed")
+        raise UseApprovalRefused(code="grant_revoked", detail="the grant or its policy changed")
     policy = _b2_policy(policy_ref, intent["installation_id"], intent["team_id"], granted)
     if policy is None:
-        raise UseApprovalRefused("no_eligible_approver", "the policy lists no approver")
+        raise UseApprovalRefused(code="no_eligible_approver", detail="the policy lists no approver")
     scopes = await _covering_scopes(
         tx,
         installation_id=intent["installation_id"],
@@ -353,7 +358,9 @@ async def request_use_approval(
         policy=policy,
     )
     if not scopes:
-        raise UseApprovalRefused("no_eligible_approver", "no listed approver covers the ancestry")
+        raise UseApprovalRefused(
+            code="no_eligible_approver", detail="no listed approver covers the ancestry"
+        )
     request = use_approval_request(
         installation_id=intent["installation_id"],
         install_generation=intent["install_generation"],
@@ -379,17 +386,25 @@ async def request_use_approval(
         )
     except ApprovalRefused as exc:
         if exc.reason is Refusal.NO_ELIGIBLE_APPROVER:
-            raise UseApprovalRefused("no_eligible_approver", "no approver can decide") from exc
+            raise UseApprovalRefused(
+                code="no_eligible_approver", detail="no approver can decide"
+            ) from exc
         if exc.reason is Refusal.POLICY_UNKNOWN:
-            raise UseApprovalRefused("grant_revoked", "the grant or policy changed") from exc
+            raise UseApprovalRefused(
+                code="grant_revoked", detail="the grant or policy changed"
+            ) from exc
         raise
     if any(candidate.scope not in scopes for candidate in pending.approval.candidates):
-        raise UseApprovalRefused("no_eligible_approver", "coverage changed while minting")
+        raise UseApprovalRefused(
+            code="no_eligible_approver", detail="coverage changed while minting"
+        )
     # These grant locks are already held. Refresh expiry after any wait for
     # coverage or B2's separate directory connection before committing a mint.
     refusal = await _ancestry_refusal(tx, approvals, nodes, intent["grant_id"], max_ttl_s)
     if refusal is not None:
-        raise UseApprovalRefused(refusal, "the secret expired while minting its approval")
+        raise UseApprovalRefused(
+            code=refusal, detail="the secret expired while minting its approval"
+        )
     await tx.execute(
         "INSERT INTO {{tables.use_approvals}} (intent_id, dispatch_id, installation_id, team_id, "
         "secret_id, secret_version, approval_id, approval_ref, request) "
@@ -482,6 +497,8 @@ async def admit_approved_use(
         policy=policy,
     )
     try:
+        # Names-only versions cannot authorize a fresh send (§10.4).
+        use_approval_view(request)
         # retrieve holds B2's row lock in tx even when it returns None. Only
         # after this classification may an authority refusal void the attempt.
         retrieved = await approvals.retrieve(approval_id, request, str(dispatch_id), tx=tx)
@@ -517,7 +534,9 @@ async def admit_approved_use(
                 attempt, approvals, nodes, request["grant_id"], max_ttl_s
             )
             if refusal is not None:
-                raise UseApprovalRefused(refusal, "the secret expired during dispatch admission")
+                raise UseApprovalRefused(
+                    code=refusal, detail="the secret expired during dispatch admission"
+                )
     except UseApprovalRefused as exc:
         await _void(tx, approvals, approval_id, exc.code)
         return UseAdmission(admission=None, refusal=exc.code)
@@ -690,7 +709,9 @@ async def use_approval_status(
     try:
         view = await approvals.requester_view(approval_ref, principal_key(principal).principal_did)
     except ApprovalRefused as exc:
-        raise UseApprovalRefused("not_found", "no such approval for this requester") from exc
+        raise UseApprovalRefused(
+            code="not_found", detail="no such approval for this requester"
+        ) from exc
     state, next_step = _STATUS[view.approval_state]
     return UseApprovalStatus(state=state, next=next_step)
 

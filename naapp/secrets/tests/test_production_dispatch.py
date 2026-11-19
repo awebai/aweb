@@ -8,7 +8,12 @@ import json
 
 from aweb_naapp_testing.owner_acts import AUDIENCE
 
-from tests.test_production_bootstrap import ProductionRequest, approval_request, envelopes
+from tests.test_production_bootstrap import (
+    ApprovalAction,
+    ProductionRequest,
+    approval_request,
+    envelopes,
+)
 from tests.test_production_bootstrap import root as root
 
 
@@ -24,7 +29,9 @@ async def member_replay(root, pending):
 
 async def decide_run(root, *, decision, onepassword_values):
     service, client, configured, member, *_ = root
-    pending = await approval_request(root, "run", onepassword_values=onepassword_values)
+    pending = await approval_request(
+        root, kind=ApprovalAction.RUN, onepassword_values=onepassword_values
+    )
     human = configured.console_origin
     db = service.runtime.db()
     before = await db.fetch_all("SELECT payload,signature FROM outbox_events ORDER BY position")

@@ -1,4 +1,4 @@
-"""Building the frozen aweb.secrets.use-approval/1 request (secrets §10.4).
+"""Building the frozen aweb.secrets.use-approval/2 request (secrets §10.4).
 
 Each positive vector case is rebuilt from the records and the call it stands
 for, and must come out as exactly the vector's frozen request.
@@ -26,7 +26,7 @@ from aweb_secrets.use_approval import (
     use_approval_request,
 )
 
-VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "use-approval-v1.json").read_text())
+VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "use-approval-v2.json").read_text())
 
 
 def _when(text: str) -> datetime:
@@ -52,13 +52,14 @@ def _inputs(case: dict) -> dict:
             operation_id=op["operation_id"],
             operation_digest=op["operation_digest"],
             params=op["params"],
+            headers=tuple((h["name"], h["value"]) for h in op["headers"]),
         )
     else:
         open_ = request["broker"]
         action = BrokerOpen(
             method=open_["method"],
             canonical_url=open_["canonical_url"],
-            header_names=tuple(reversed([h.upper() for h in open_["header_names"]])),
+            headers=tuple((h["name"].upper(), h["value"]) for h in open_["headers"]),
             body=open_["body_preview"].encode(),
         )
     issued_at = _when(request["issued_at"])
@@ -111,7 +112,7 @@ def _open_with(body: bytes) -> dict:
     inputs["action"] = BrokerOpen(
         method=open_.method,
         canonical_url=open_.canonical_url,
-        header_names=open_.header_names,
+        headers=open_.headers,
         body=body,
     )
     return inputs

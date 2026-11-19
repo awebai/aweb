@@ -4,9 +4,18 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from aweb_naapp.dispatch import State
+from aweb_secrets_values import ValueInvalid, ValueInvalidReason
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_secrets.member_types import ToolReply
+
+NOT_SENT_MESSAGE = (
+    "The request was not sent. Check the secret and destination configuration, then resubmit."
+)
+_NOT_SENT_MESSAGES = frozenset(
+    {NOT_SENT_MESSAGE, *(str(ValueInvalid(reason)) for reason in ValueInvalidReason)}
+)
 
 _IDENTITY = (
     "request_id",
@@ -37,6 +46,13 @@ def durable_broker_receipt(
         body["code"] = reply.body["code"]
     if "next" in reply.body:
         body["next"] = reply.body["next"]
+    message = reply.body.get("message")
+    if (
+        body["state"] == State.NOT_SENT
+        and isinstance(message, str)
+        and message in _NOT_SENT_MESSAGES
+    ):
+        body["message"] = message
     live = reply.body.get("result")
     if isinstance(live, Mapping):
         metadata: dict[str, Any] = {"body": None, "headers": None}

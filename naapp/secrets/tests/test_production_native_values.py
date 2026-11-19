@@ -445,6 +445,7 @@ class InvalidNativeEntry(StrEnum):
     VAULT_BACKEND = "vault_backend"
     VALUE_SHAPE = "value_shape"
     EMPTY_VALUE = "empty_value"
+    BASIC_USERNAME = "basic_username"
     UNTRUSTED_TEAM = "untrusted_team"
 
 
@@ -501,6 +502,9 @@ async def test_invalid_native_entry_never_allocates_or_reflects_the_value(root, 
         body["value"] = {"password": value}
     elif fault is InvalidNativeEntry.EMPTY_VALUE:
         body["value"] = {"value": ""}
+    elif fault is InvalidNativeEntry.BASIC_USERNAME:
+        body["secret"]["kind"] = SecretKind.BASIC
+        body["value"] = {"username": "account:invalid", "password": value}
     else:
         body["team_id"] = "foreign:example.com"
     path = f"/installations/{installed['installation_id']}/native/versions"
@@ -510,5 +514,7 @@ async def test_invalid_native_entry_never_allocates_or_reflects_the_value(root, 
         headers={"X-CSRF-Token": holder.csrf_token},
     )
     assert response.status_code == HTTPStatus.BAD_REQUEST
+    if fault is InvalidNativeEntry.BASIC_USERNAME:
+        assert "username" in response.json()["detail"] and ":" in response.json()["detail"]
     assert_value_not_returned(response=response, value=value)
     assert await service.runtime.db().fetch_value("SELECT count(*) FROM sealed_versions") == 0

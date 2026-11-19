@@ -431,7 +431,7 @@ reason=...)` accepts only the internal planner's `PreparedRun`. The planner
 already holds installation, requester roles, full ancestry/grant unions and
 CURRENT runner/job/operation/template locks. S12 locks one sorted covering-record
 union for the run, intersects parent/template policy scopes per slot, and mints
-one approval for each required slot. The signed use-approval/1 `run_job` keeps
+one approval for each required slot. The signed use-approval/2 `run_job` keeps
 exactly its existing five fields. After authorizing the B2 ceremony, the console
 calls `run_approval_view(tx, installation_id=..., team_id=..., approval_id=...)`
 to read the complete plan, original ordinal, actual mapped issuer values and

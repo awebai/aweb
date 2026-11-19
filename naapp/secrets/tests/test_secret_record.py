@@ -159,7 +159,7 @@ def _secret_kinds_in(node) -> set[str]:
     return set()
 
 
-@pytest.mark.parametrize("vector", ["use-approval-v1.json", "change-v1.json"])
+@pytest.mark.parametrize("vector", ["use-approval-v2.json", "change-v1.json"])
 def test_every_secret_kind_in_the_vectors_is_an_auth_scheme(vector) -> None:
     cases = json.loads((VECTORS / vector).read_text())["positive_cases"]
     kinds = _secret_kinds_in(cases)
@@ -168,7 +168,7 @@ def test_every_secret_kind_in_the_vectors_is_an_auth_scheme(vector) -> None:
 
 
 def test_use_approval_requesters_are_principals() -> None:
-    cases = json.loads((VECTORS / "use-approval-v1.json").read_text())["positive_cases"]
+    cases = json.loads((VECTORS / "use-approval-v2.json").read_text())["positive_cases"]
     requesters = [case["request"]["requester"]["principal"] for case in cases]
     assert requesters and all(is_principal(principal) for principal in requesters)
 

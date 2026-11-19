@@ -425,7 +425,12 @@ async def test_concrete_credential_shaped_path_and_body_never_enter_audit_storag
 
     canary = secrets.token_urlsafe(30)
     raw_path = "/v1/bot123:" + canary + "/sendMessage"
-    opened = BrokerOpen("POST", "https://api.payments.example" + raw_path, (), canary.encode())
+    opened = BrokerOpen(
+        method="POST",
+        canonical_url="https://api.payments.example" + raw_path,
+        headers=(),
+        body=canary.encode(),
+    )
     request, admitted, dispatch_id, state = await prepared(db, fence, open_call=opened)
     async with db.transaction() as tx:
         await state.admit(

@@ -13,8 +13,9 @@ from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlsplit
 
 import asyncpg
@@ -32,11 +33,29 @@ from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_ui import _page, console_page
 from aweb_secrets.run_approvals import run_approval_view
 from aweb_secrets.run_plan import RunPlanRefused
-from aweb_secrets.use_approval import UseApprovalRefused, UseApprovalView, use_approval_view
+from aweb_secrets.use_approval import (
+    UseAction,
+    UseApprovalRefused,
+    UseApprovalView,
+    use_approval_view,
+)
 from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable
 
-Kind = Literal["use", "run"]
+
+class Kind(StrEnum):
+    USE = "use"
+    RUN = "run"
+
+
 _ASSETS = Path(__file__).parent
+
+
+def _renderable_use(frozen: dict[str, Any]) -> UseApprovalView:
+    """Keep incomplete approval versions out of VIEW and decisions (§10.4)."""
+    try:
+        return use_approval_view(frozen)
+    except UseApprovalRefused as refused:
+        raise HTTPException(409, refused.detail) from None
 
 
 class ConsoleUseApprovals:
@@ -54,7 +73,7 @@ class ConsoleUseApprovals:
     async def _linked(self, token: str, kind: Kind):
         linked = await self.approvals.open_link(token)
         # Table names are fixed code, never interpolated request input.
-        table = "use_approvals" if kind == "use" else "run_slot_approvals"
+        table = "use_approvals" if kind == Kind.USE else "run_slot_approvals"
         row = await self.console.db.fetch_one(
             "SELECT installation_id,team_id,request FROM {{tables."
             + table
@@ -64,16 +83,15 @@ class ConsoleUseApprovals:
         if row is None:
             raise HTTPException(404, "approval_unknown")
         frozen = json.loads(row["request"])
-        admitted = await self.console.installation(
-            row["installation_id"], team_id=row["team_id"]
-        )
+        admitted = await self.console.installation(row["installation_id"], team_id=row["team_id"])
         if (
             admitted.installation_id != row["installation_id"]
             or admitted.team_id != row["team_id"]
             or (frozen["installation_id"], frozen["team_id"], frozen["install_generation"])
             != (admitted.installation_id, admitted.team_id, admitted.generation)
             or frozen["type"] != "aweb.secrets.use-approval"
-            or frozen["action"] != ("broker" if kind == "use" else "run_job")
+            or frozen["action"]
+            != (UseAction.BROKER.value if kind == Kind.USE else UseAction.RUN_JOB.value)
         ):
             raise HTTPException(409, "approval_unavailable")
         async with self.console.db.transaction() as tx:
@@ -93,6 +111,7 @@ class ConsoleUseApprovals:
             raise HTTPException(403, "approver_required")
         if current.expires_at <= datetime.now(UTC):
             raise HTTPException(401, "console_session_required")
+        _renderable_use(frozen)
         return linked.approval.approval_id, admitted, frozen
 
     async def options(
@@ -114,7 +133,7 @@ class ConsoleUseApprovals:
             raise HTTPException(409, "approval_unavailable")
         async with self.console.db.transaction() as tx:
             await self.console.fence.check(tx, admitted)
-            if kind == "run":
+            if kind == Kind.RUN:
                 view = await run_approval_view(
                     tx,
                     installation_id=admitted.installation_id,
@@ -124,7 +143,7 @@ class ConsoleUseApprovals:
                 if view is None:
                     raise HTTPException(409, "approval_unavailable")
             else:
-                view = use_approval_view(linked.request)
+                view = _renderable_use(linked.request)
             await self.console.fence.check(tx, admitted)
             if current.expires_at <= datetime.now(UTC):
                 raise HTTPException(401, "console_session_required")
@@ -199,8 +218,8 @@ def _proof(body: dict[str, Any]) -> dict:
 
 def _router(services: ConsoleUseApprovals, kind: Kind) -> APIRouter:
     router = APIRouter(route_class=ConsoleRoute)
-    root = "/use-approvals" if kind == "use" else "/run-approvals"
-    title = "Review a secret use" if kind == "use" else "Review a job credential"
+    root = "/use-approvals" if kind == Kind.USE else "/run-approvals"
+    title = "Review a secret use" if kind == Kind.USE else "Review a job credential"
     script = (
         '<link rel="stylesheet" href="/console-use-approvals/approvals.css">'
         '<script src="/console-use-approvals/approvals.js" defer></script>'
@@ -282,7 +301,7 @@ def _router(services: ConsoleUseApprovals, kind: Kind) -> APIRouter:
                 current, _text(body, "token"), _proof(body), kind=kind, decision=_decision(body)
             )
 
-    if kind == "use":
+    if kind == Kind.USE:
 
         @router.get("/console-use-approvals/approvals.css")
         async def style_asset() -> Response:
@@ -297,9 +316,9 @@ def _router(services: ConsoleUseApprovals, kind: Kind) -> APIRouter:
 
 def console_use_approvals_router(*, services: ConsoleUseApprovals) -> APIRouter:
     """Human-only /use-approvals page and ceremonies; mount with run router."""
-    return _router(services, "use")
+    return _router(services, Kind.USE)
 
 
 def console_run_approvals_router(*, services: ConsoleUseApprovals) -> APIRouter:
     """Human-only /run-approvals page and ceremonies; mount with use router."""
-    return _router(services, "run")
+    return _router(services, Kind.RUN)

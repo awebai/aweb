@@ -21,26 +21,46 @@ class ValueKind(StrEnum):
     AWS_SIGV4 = "aws-sigv4"
 
 
+class ValueInvalidReason(StrEnum):
+    SHAPE = "shape"
+    BASIC_USERNAME = "basic_username"
+    INJECTION_CONFIGURATION = "injection_configuration"
+
+
+_REFUSALS = {
+    ValueInvalidReason.SHAPE: "The secret value does not match its kind. Correct its fields and stage it again.",
+    ValueInvalidReason.BASIC_USERNAME: "The basic username cannot contain ':'. Correct the username and stage it again.",
+    ValueInvalidReason.INJECTION_CONFIGURATION: "The credential cannot be placed in this request. Correct the secret's kind configuration and retry.",
+}
+
 # The structured value fields of each kind, which a derived secret captures (§6.2).
 CAPTURE_FIELDS: Mapping[str, tuple[frozenset[str], frozenset[str]]] = {
-    "bearer": (frozenset({"value"}), frozenset()),
-    "header": (frozenset({"value"}), frozenset()),
-    "query": (frozenset({"value"}), frozenset()),
-    "basic": (frozenset({"username", "password"}), frozenset()),
-    "oauth2-client-credentials": (frozenset({"client_id", "client_secret"}), frozenset()),
-    "aws-sigv4": (frozenset({"access_key_id", "secret_access_key"}), frozenset({"session_token"})),
+    ValueKind.BEARER: (frozenset({"value"}), frozenset()),
+    ValueKind.HEADER: (frozenset({"value"}), frozenset()),
+    ValueKind.QUERY: (frozenset({"value"}), frozenset()),
+    ValueKind.BASIC: (frozenset({"username", "password"}), frozenset()),
+    ValueKind.OAUTH2_CLIENT_CREDENTIALS: (frozenset({"client_id", "client_secret"}), frozenset()),
+    ValueKind.AWS_SIGV4: (
+        frozenset({"access_key_id", "secret_access_key"}),
+        frozenset({"session_token"}),
+    ),
 }
 
 
 class ValueInvalid(ValueError):
     """The value is not the structured value of the specified auth kind."""
 
+    def __init__(self, reason: ValueInvalidReason = ValueInvalidReason.SHAPE) -> None:
+        self.reason = reason
+        super().__init__(_REFUSALS[reason])
+
 
 def _invalid() -> ValueInvalid:
-    return ValueInvalid("the secret value does not match its kind")
+    return ValueInvalid()
 
 
 def _validate(kind: str, value: Any) -> dict[str, str]:
+    """The sole value-fits-kind rule, including Basic's separator (§7.5)."""
     if kind not in CAPTURE_FIELDS or not isinstance(value, Mapping):
         raise _invalid()
     required, optional = CAPTURE_FIELDS[kind]
@@ -55,7 +75,14 @@ def _validate(kind: str, value: Any) -> dict[str, str]:
             v.encode("utf-8")
     except UnicodeError:
         raise _invalid() from None
+    if kind == ValueKind.BASIC and ":" in value["username"]:
+        raise ValueInvalid(ValueInvalidReason.BASIC_USERNAME)
     return dict(value)
+
+
+def validate_value(kind: str, value: Mapping[str, str]) -> dict[str, str]:
+    """Validate an in-memory value through the same rule as ingest and opening."""
+    return _validate(kind, value)
 
 
 def encode_value(kind: str, value: Mapping[str, str]) -> bytes:

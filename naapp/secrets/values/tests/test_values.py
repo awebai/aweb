@@ -1,11 +1,19 @@
 """Freeze existing bytes and validation, including use without app dependencies."""
 
+import json
 import subprocess
 import sys
 
 import pytest
 
-from aweb_secrets_values import CAPTURE_FIELDS, ValueInvalid, decode_value, encode_value
+from aweb_secrets_values import (
+    CAPTURE_FIELDS,
+    ValueInvalid,
+    ValueInvalidReason,
+    decode_value,
+    encode_value,
+    validate_value,
+)
 
 
 @pytest.mark.parametrize("kind", CAPTURE_FIELDS)
@@ -48,7 +56,10 @@ def test_existing_unicode_bytes_and_optional_fields_are_preserved():
 def test_invalid_material_is_not_retained_in_errors(raw):
     with pytest.raises(ValueInvalid) as error:
         decode_value("bearer", raw)
-    assert str(error.value) == "the secret value does not match its kind"
+    assert error.value.reason is ValueInvalidReason.SHAPE
+    assert str(error.value) == (
+        "The secret value does not match its kind. Correct its fields and stage it again."
+    )
     assert error.value.__cause__ is None
 
 
@@ -61,3 +72,27 @@ assert not any(k.startswith(('aweb_naapp','aweb_secrets.','awid','pgdbm')) for k
 """
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, check=False)
     assert result.returncode == 0, result.stderr.decode()
+
+
+def test_basic_username_separator_is_rejected_at_encoding():
+    with pytest.raises(ValueInvalid) as refused:
+        encode_value("basic", {"username": "account:other", "password": "fixture"})
+    assert refused.value.reason is ValueInvalidReason.BASIC_USERNAME
+
+
+def test_basic_username_separator_is_rejected_at_opening():
+    raw = json.dumps({"username": "account:other", "password": "fixture"}).encode()
+    with pytest.raises(ValueInvalid) as refused:
+        decode_value("basic", raw)
+    assert refused.value.reason is ValueInvalidReason.BASIC_USERNAME
+
+
+def test_injection_uses_the_same_basic_username_rule():
+    with pytest.raises(ValueInvalid) as refused:
+        validate_value("basic", {"username": "account:other", "password": "fixture"})
+    assert refused.value.reason is ValueInvalidReason.BASIC_USERNAME
+
+
+def test_a_basic_password_can_contain_the_separator_and_the_username_can_be_empty():
+    value = {"username": "", "password": "fixture:password"}
+    assert decode_value("basic", encode_value("basic", value)) == validate_value("basic", value)

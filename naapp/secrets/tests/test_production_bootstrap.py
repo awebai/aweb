@@ -7,8 +7,11 @@ import asyncio
 import base64
 import json
 import secrets
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+from typing import Any
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
@@ -31,6 +34,7 @@ from awid_service.deps import get_domain_verifier
 from awid_service.testing import SERVICE_TOKEN
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from nacl.signing import SigningKey
+from pgdbm.core import TransactionManager
 
 from aweb_secrets import jobs, records, runners
 from aweb_secrets.composition import create_service
@@ -38,6 +42,7 @@ from aweb_secrets.custody import Custody, LocalKeyFileProvider
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.manifest import MANIFEST_PATH
+from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretBackend, SecretRecord
@@ -201,10 +206,8 @@ class EnrolledOwner:
     csrf_token: str
 
 
-def mounted_owner_console(service):
-    """Find the one original dependency through pinned FastAPI's lazy includes."""
-    import inspect
-
+def _mounted_owner_endpoint(service, path):
+    """Find an existing production endpoint through FastAPI's lazy includes."""
     from fastapi.routing import APIRoute, _IncludedRouter
 
     def original_routes(routes):
@@ -217,9 +220,27 @@ def mounted_owner_console(service):
     [route] = [
         route
         for route in original_routes(service.console_app.routes)
-        if route.path == "/installations/{installation_id}/owner-acts" and "POST" in route.methods
+        if route.path == path and "POST" in route.methods
     ]
-    return inspect.getclosurevars(route.endpoint).nonlocals["services"]
+    return route.endpoint
+
+
+def mounted_owner_console(service):
+    """The original console retained by its real 1Password ingress adapter."""
+    import inspect
+
+    endpoint = _mounted_owner_endpoint(
+        service, "/installations/{installation_id}/onepassword/references"
+    )
+    return inspect.getclosurevars(endpoint).nonlocals["services"].console
+
+
+def mounted_owner_verifier(service):
+    """The verifier used by actual shared owner-act HTTP delivery."""
+    import inspect
+
+    endpoint = _mounted_owner_endpoint(service, "/.well-known/aweb-owner-act")
+    return inspect.getclosurevars(endpoint).nonlocals["verifier"]
 
 
 async def enrolled_owner(root):
@@ -239,9 +260,8 @@ async def enrolled_owner(root):
     member.extra_cert_fields = {"member_did_aw": principal.principal_did}
     if fixture is None:
         admitted = await console.installation(installed["installation_id"], team_id=member.team_id)
-        owner = TeamOwner(
-            member.team_key, console.verifier, member.team_id, console.verifier._team_key_for
-        )
+        verifier = mounted_owner_verifier(service)
+        owner = TeamOwner(member.team_key, verifier, member.team_id, verifier._team_key_for)
         fixture = SimpleNamespace(
             db=console.db,
             console=console,
@@ -428,23 +448,184 @@ class ProductionRequest:
     credential: str
 
 
-async def _activate_request_value(
-    *, db, custody, onepassword_values, installation_id: str, team_id: str, credential: str
-):
+class ApprovalAction(StrEnum):
+    USE = "use"
+    RUN = "run"
+
+
+@dataclass(frozen=True, kw_only=True)
+class MemberToolRequest:
+    path: str
+    raw: bytes
+
+
+def _approval_destination(
+    *, operation: OperationTemplate | None, agent_headers: Sequence[tuple[str, str]]
+) -> DestinationRecord:
+    """Permit exactly the fixed and agent headers used by this fixture (§7.4)."""
+    fixed_header_names = (
+        ()
+        if operation is None
+        else tuple(name.lower() for name in operation.after["headers"]["fixed"])
+    )
+    return DestinationRecord.from_after(
+        {
+            "v": 1,
+            "destination_id": "dst_root_dispatch",
+            "secret_id": SECRET["secret_id"],
+            "scheme": "https",
+            "host": "api.payments.example",
+            "port": 443,
+            "path": "/v1/**",
+            "methods": ["POST"],
+            "query_rules": {},
+            "header_allow": sorted(
+                {
+                    "content-type",
+                    *fixed_header_names,
+                    *(name.lower() for name, _ in agent_headers),
+                }
+            ),
+            "network": "public",
+            "cidr": None,
+        },
+        internal_destinations=InternalDestinations.DISABLED,
+    )
+
+
+async def _stage_approval_secret(
+    *,
+    db,
+    installation_id: str,
+    member: Member,
+    custody: Custody,
+    operation: OperationTemplate | None,
+    credential: str,
+    onepassword_values,
+) -> None:
+    """Observe confirmed fixture metadata through the real remote custody path."""
     record = SecretRecord.from_after({**SECRET, "backend": SecretBackend.ONEPASSWORD})
     async with db.transaction() as tx:
-        await records.create_secret(tx, installation_id, team_id, record)
+        await records.create_secret(tx, installation_id, member.team_id, record)
+        if operation is not None:
+            await records.create_operation(tx, installation_id, member.team_id, operation)
     await onepassword_values.activate(
         db=db,
         custody=custody,
         installation_id=installation_id,
-        team_id=team_id,
+        team_id=member.team_id,
         record=record,
         values={"value": credential},
     )
 
 
-async def approval_request(root, kind, *, onepassword_values):
+async def _register_approval_runner(
+    tx: TransactionManager,
+    *,
+    installation_id: str,
+    member: Member,
+    job: jobs.JobDefinition,
+    runner_signing_key: SigningKey,
+    runner_encryption_key: X25519PrivateKey,
+) -> None:
+    """Register the real fixture runner using its generated public keys."""
+    from aweb_naapp.hooks.strictjson import encode_base64url
+
+    runner_id = job.after["runner_ids"][0]
+    await jobs.create_job(tx, installation_id, member.team_id, job)
+    runner = runners.RunnerRecord.from_after(
+        {
+            "v": 1,
+            "runner_id": runner_id,
+            "label": "Root dispatch",
+            "allowed_jobs": [job.job_id],
+        }
+    )
+    code = await runners.create_runner(
+        tx, installation_id, member.team_id, runner, now=datetime.now(UTC)
+    )
+    await runners.register_runner(
+        tx,
+        code=code,
+        signing_key=did_from_public_key(bytes(runner_signing_key.verify_key)),
+        encryption_key=encode_base64url(runner_encryption_key.public_key().public_bytes_raw()),
+    )
+
+
+def _member_approval_request(
+    *, kind: ApprovalAction, job, runner_id, operation, params, agent_headers, request_id: str
+) -> MemberToolRequest:
+    """Build the one signed member submission used for production approval tests."""
+    path = (
+        "/v1/secrets/" + SECRET["ref"] + "/requests"
+        if kind is ApprovalAction.USE
+        else "/v1/jobs/" + job.job_id + "/runs"
+    )
+    request = {"request_id": request_id}
+    request.update(
+        {"method": "POST", "url": "https://api.payments.example/v1/charge", "data": "hello"}
+        if kind is ApprovalAction.USE
+        else {"runner": runner_id, "params": {"database": "orders"}}
+    )
+    if operation is not None:
+        request = {
+            "request_id": request["request_id"],
+            "operation": operation.operation_id,
+            "params": params or {},
+        }
+    if agent_headers:
+        request["headers"] = [name + ": " + value for name, value in agent_headers]
+    raw = json.dumps(request).encode()
+    return MemberToolRequest(path=path, raw=raw)
+
+
+def _approval_policy(*, member: Member, operation: OperationTemplate | None) -> Policy:
+    """Build the confirmed fixture policy for the member and optional operation (§4.4)."""
+    operations = (
+        []
+        if operation is None
+        else [{"operation_id": operation.operation_id, "digest": operation.digest}]
+    )
+    return Policy.from_body(
+        {
+            **POLICY_BODY,
+            "approvers": ["owner:" + member.extra_cert_fields["member_did_aw"]],
+            "operations": operations,
+            "open_request": operation is None,
+        }
+    )
+
+
+def _approval_grant(
+    *, member: Member, kind: ApprovalAction, policy: Policy, job: jobs.JobDefinition
+) -> GrantRecord:
+    """Build the exact fixture grant selected by the named use/run action (§4.3)."""
+    return GrantRecord.from_after(
+        {
+            "v": 1,
+            "grant_id": "grt_root_dispatch",
+            "secret_id": SECRET["secret_id"],
+            "subject": {"principal": member.extra_cert_fields["member_did_aw"]},
+            "capability": kind.value,
+            "operations": policy.body["operations"],
+            "open_request": kind is ApprovalAction.USE and policy.body["open_request"],
+            "jobs": []
+            if kind is ApprovalAction.USE
+            else [{"job_id": job.job_id, "digest": job.digest}],
+            "policy_digest": policy.digest,
+        }
+    )
+
+
+async def approval_request(
+    root,
+    *,
+    kind: ApprovalAction,
+    onepassword_values,
+    agent_headers: Sequence[tuple[str, str]] = (),
+    operation: OperationTemplate | None = None,
+    params: Mapping[str, Any] | None = None,
+) -> ProductionRequest:
     """Seed confirmed metadata, then mint through the actual signed root tool.
 
     Configuration is fixture state; B1, admission, B2 association/audit and TLS
@@ -454,9 +635,7 @@ async def approval_request(root, kind, *, onepassword_values):
     installation_id = installed["installation_id"]
     holder = await enrolled_owner(root)
     body, device = holder.body, holder.device
-    policy = Policy.from_body(
-        {**POLICY_BODY, "approvers": ["owner:" + member.extra_cert_fields["member_did_aw"]]}
-    )
+    policy = _approval_policy(member=member, operation=operation)
     db = service.runtime.db()
     custody = Custody(LocalKeyFileProvider(configured.custody_key_file), db)
     job_body = job_after()
@@ -467,13 +646,14 @@ async def approval_request(root, kind, *, onepassword_values):
     runner_signing_key = SigningKey.generate()
     runner_encryption_key = X25519PrivateKey.generate()
     credential = uuid4().hex
-    await _activate_request_value(
+    await _stage_approval_secret(
         db=db,
-        custody=custody,
-        onepassword_values=onepassword_values,
         installation_id=installation_id,
-        team_id=member.team_id,
+        member=member,
+        custody=custody,
+        operation=operation,
         credential=credential,
+        onepassword_values=onepassword_values,
     )
     async with db.transaction() as tx:
         await records.create_policy(tx, installation_id, policy, team_id=member.team_id)
@@ -481,78 +661,34 @@ async def approval_request(root, kind, *, onepassword_values):
             tx,
             installation_id,
             member.team_id,
-            GrantRecord.from_after(
-                {
-                    "v": 1,
-                    "grant_id": "grt_root_dispatch",
-                    "secret_id": SECRET["secret_id"],
-                    "subject": {"principal": member.extra_cert_fields["member_did_aw"]},
-                    "capability": "use" if kind == "use" else "run",
-                    "operations": [],
-                    "open_request": kind == "use",
-                    "jobs": [] if kind == "use" else [{"job_id": job.job_id, "digest": job.digest}],
-                    "policy_digest": policy.digest,
-                }
-            ),
+            _approval_grant(member=member, kind=kind, policy=policy, job=job),
         )
-        if kind == "use":
+        if kind is ApprovalAction.USE:
             await records.create_destination(
                 tx,
                 installation_id,
                 member.team_id,
-                DestinationRecord.from_after(
-                    {
-                        "v": 1,
-                        "destination_id": "dst_root_dispatch",
-                        "secret_id": SECRET["secret_id"],
-                        "scheme": "https",
-                        "host": "api.payments.example",
-                        "port": 443,
-                        "path": "/v1/**",
-                        "methods": ["POST"],
-                        "query_rules": {},
-                        "header_allow": ["content-type"],
-                        "network": "public",
-                        "cidr": None,
-                    },
-                    internal_destinations=InternalDestinations.DISABLED,
-                ),
+                _approval_destination(operation=operation, agent_headers=agent_headers),
             )
         else:
-            from aweb_naapp.hooks.strictjson import encode_base64url
-
-            await jobs.create_job(tx, installation_id, member.team_id, job)
-            runner = runners.RunnerRecord.from_after(
-                {
-                    "v": 1,
-                    "runner_id": runner_id,
-                    "label": "Root dispatch",
-                    "allowed_jobs": [job.job_id],
-                }
-            )
-            code = await runners.create_runner(
-                tx, installation_id, member.team_id, runner, now=datetime.now(UTC)
-            )
-            await runners.register_runner(
+            await _register_approval_runner(
                 tx,
-                code=code,
-                signing_key=did_from_public_key(bytes(runner_signing_key.verify_key)),
-                encryption_key=encode_base64url(
-                    runner_encryption_key.public_key().public_bytes_raw()
-                ),
+                installation_id=installation_id,
+                member=member,
+                job=job,
+                runner_signing_key=runner_signing_key,
+                runner_encryption_key=runner_encryption_key,
             )
-    path = (
-        "/v1/secrets/" + SECRET["ref"] + "/requests"
-        if kind == "use"
-        else "/v1/jobs/" + job.job_id + "/runs"
+    submission = _member_approval_request(
+        kind=kind,
+        job=job,
+        runner_id=runner_id,
+        operation=operation,
+        params=params,
+        agent_headers=agent_headers,
+        request_id=uuid4().hex,
     )
-    request = {"request_id": uuid4().hex}
-    request.update(
-        {"method": "POST", "url": "https://api.payments.example/v1/charge", "data": "hello"}
-        if kind == "use"
-        else {"runner": runner_id, "params": {"database": "orders"}}
-    )
-    raw = json.dumps(request).encode()
+    path, raw = submission.path, submission.raw
     reply = await client.post(
         AUDIENCE + path,
         content=raw,
@@ -564,25 +700,27 @@ async def approval_request(root, kind, *, onepassword_values):
     assert urlsplit(url).path == "/approvals"
     [token] = parse_qs(urlsplit(url).fragment)["token"]
     return ProductionRequest(
-        token,
-        device,
-        path,
-        raw,
-        reply.json(),
-        job.job_id,
-        runner_id,
-        runner_signing_key,
-        runner_encryption_key,
-        credential,
+        token=token,
+        device=device,
+        path=path,
+        raw=raw,
+        reply=reply.json(),
+        job_id=job.job_id,
+        runner_id=runner_id,
+        runner_signing_key=runner_signing_key,
+        runner_encryption_key=runner_encryption_key,
+        credential=credential,
     )
 
 
-@pytest.mark.parametrize("kind,path", [("use", "/use-approvals"), ("run", "/run-approvals")])
+@pytest.mark.parametrize(
+    "kind,path", [(ApprovalAction.USE, "/use-approvals"), (ApprovalAction.RUN, "/run-approvals")]
+)
 async def test_production_email_dispatch_uses_migrated_and_mounted_providers(
-    onepassword_values, root, kind, path
+    root, kind, path, *, onepassword_values
 ):
     service, client, configured, *_ = root
-    pending = await approval_request(root, kind, onepassword_values=onepassword_values)
+    pending = await approval_request(root, kind=kind, onepassword_values=onepassword_values)
     token = pending.token
     db = service.runtime.db()
     # Reconciliation is deliberately uncomposed: routing must not query its tables.

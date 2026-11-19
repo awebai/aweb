@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from aweb_secrets_values import ValueInvalidReason
 from onepassword import Client, Item
 
 from aweb_secrets.custody.sealing import (
@@ -95,8 +96,9 @@ class SecretValueInvalid(CustodyUnavailable):
 
     code = "secret_value_invalid"
 
-    def __init__(self) -> None:
-        super().__init__("the secret value does not match its immutable shape")
+    def __init__(self, reason: ValueInvalidReason = ValueInvalidReason.SHAPE) -> None:
+        self.reason = reason
+        super().__init__(str(ValueInvalid(reason)))
 
 
 @dataclass(frozen=True)
@@ -150,8 +152,8 @@ def project_item(
         )
     except SecretVersionChanged:
         raise
-    except ValueInvalid:
-        raise SecretValueInvalid() from None
+    except ValueInvalid as invalid:
+        raise SecretValueInvalid(invalid.reason) from None
     except Exception:
         raise CustodyUnavailable("unusable 1Password item") from None
 

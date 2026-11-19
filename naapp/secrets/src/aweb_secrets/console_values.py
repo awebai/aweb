@@ -28,7 +28,11 @@ from aweb_secrets.custody import (
     ValueInvalid,
     encode_value,
 )
-from aweb_secrets.custody.onepassword import OnePasswordRead, OnePasswordReference, OnePasswordSDK
+from aweb_secrets.custody.onepassword import (
+    OnePasswordRead,
+    OnePasswordReference,
+    OnePasswordSDK,
+)
 from aweb_secrets.custody.store import BACKEND_CREDENTIAL_ID, StagedOnePasswordReference
 from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.owners import owner_scope
@@ -74,7 +78,7 @@ async def native_value_refusals() -> AsyncIterator[None]:
             code = ValueStagingCode(refused.detail)
         except ValueError:
             message = (
-                f"{refused.detail.rstrip('.')}. Check the value fields and try again."
+                f"{refused.detail.rstrip('.')}."
                 if refused.status_code == HTTPStatus.BAD_REQUEST and isinstance(refused.detail, str)
                 else "Check that the installation is active, sign in as its owner, and try again."
             )

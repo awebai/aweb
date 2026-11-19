@@ -11,7 +11,7 @@ VECTORS = Path(__file__).parents[1] / "vectors"
 
 
 def test_backends_match_the_frozen_vectors():
-    frozen = json.loads((VECTORS / "use-approval-v1.json").read_text())
+    frozen = json.loads((VECTORS / "use-approval-v2.json").read_text())
     used = {case["request"]["secret"]["backend"] for case in frozen["positive_cases"]}
     assert used <= set(BACKENDS)
     assert BACKENDS == ("native", "onepassword")
