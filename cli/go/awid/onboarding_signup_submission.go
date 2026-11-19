@@ -34,7 +34,7 @@ func SubmitCliSignup(ctx context.Context, input CliSignupSubmission) (*CliSignup
 	if err := json.Unmarshal(fields["did_key"], &didKey); err != nil {
 		return nil, fmt.Errorf("cli-signup: body did_key is required")
 	}
-	expectedDID := ComputeDIDKey(input.SigningKey.Public().(ed25519.PublicKey))
+	expectedDID := ComputeDIDKey(ed25519.PublicKey(input.SigningKey[ed25519.SeedSize:]))
 	if didKey != expectedDID {
 		return nil, fmt.Errorf("cli-signup: body did_key %s does not match signing key did:key %s", didKey, expectedDID)
 	}

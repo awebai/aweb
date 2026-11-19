@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- CLI signup retains its original signer and request before submission and its received credential before connect. `aw init` resumes that attempt; doctor names unfinished recovery without exposing secrets.
+
 - Local child creation uses indexed request lookup instead of rereading the issuer's invitation and re-sign history. Existing records and older writers remain readable.
 
 - Hosted invites prepare their creator exchange before minting; a later local link-save failure warns while preserving the created token.

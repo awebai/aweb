@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -56,11 +57,11 @@ func TestSignupSubmissionRefusesWrongSignerBeforeTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	response, err := SubmitCliSignup(context.Background(), CliSignupSubmission{OnboardingURL: "http://127.0.0.1:1", RequestJSON: []byte(`{"did_key":"wrong"}`), SigningKey: key})
-	if err == nil || response != nil {
-		t.Fatal("accepted a different signer")
+	if err == nil || response != nil || !strings.Contains(err.Error(), "does not match signing key") {
+		t.Fatalf("wrong signer was not refused before transport: %v", err)
 	}
 	response, err = SubmitCliSignup(context.Background(), CliSignupSubmission{OnboardingURL: "http://127.0.0.1:1", RequestJSON: []byte(`{}`), SigningKey: []byte("malformed")})
-	if err == nil || response != nil {
-		t.Fatal("accepted a malformed private key")
+	if err == nil || response != nil || !strings.Contains(err.Error(), "must be valid") {
+		t.Fatalf("malformed signer was not refused before transport: %v", err)
 	}
 }

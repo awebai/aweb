@@ -334,6 +334,36 @@ remains a hidden, warning compatibility alias for `--name`. New requests,
 registry storage, and product language use `name` as the concept and
 `identity_scope=local|global` for scope.
 
+### CLI signup recovery
+
+CLI signup keeps `.aw/signup-recovery.json` before submitting anything. The
+record uses the common creation-recovery progress header and private atomic
+writer, with a signup-specific payload: the original signing key, serialized
+request, selected services, and any received response. It is mode 0600 in a
+private mode-0700 identity directory. Neither the record nor its credentials
+are printed.
+
+Run `aw init` again in that directory to finish the same signup. Recovery keeps
+the original signer, username, agent name, identity scope, inbound mode and
+request bytes. It precedes username availability checks and ordinary reconnect.
+Changing the creation selection refuses without changing the retained record.
+Once a response is retained, recovery installs and connects from that response
+without submitting another signup. The API key is saved before the connect
+request; successful installation leaves it in the workspace before output.
+
+Availability prompting happens before preparation. A refusal or lost response
+after submission does not prove that the account was never created. An
+unclassified response retains the request; a collision alone never authorizes
+a new signer or handle. Replaying that request requires the service's signup
+replay contract. An expired private response must follow the service's account
+recovery outcome rather than minting another credential.
+
+`aw doctor --offline` names a leftover signup record and tells the operator to
+run `aw init`. To abandon local recovery, first check whether signup created the
+account, then remove `.aw/signup-recovery.json`; removing it does not delete the
+account. A completed signup removes the record after installing its key,
+membership and API key and completing connect.
+
 ### Hosted organization setup (including Omarchy)
 
 A person already signed in can create a managed organization without a namespace

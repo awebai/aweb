@@ -141,6 +141,38 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 			defer cancel()
 			binary := filepath.Join(t.TempDir(), "aw")
 			buildAwBinary(t, ctx, binary)
+			for _, changed := range [][]string{{"--username", "another"}, {"--global"}, {"--url", "http://127.0.0.1:1"}, {"--invite", "aw_inv_another_fixture"}} {
+				args := append([]string{"init", "--json", "--do-not-touch-agents-md"}, changed...)
+				refused := exec.CommandContext(ctx, binary, args...)
+				refused.Dir, refused.Env = directory, idCreateCommandEnv(directory)
+				diagnostic, err := refused.CombinedOutput()
+				if err == nil || (!strings.Contains(string(diagnostic), "signup retry changed") && !strings.Contains(string(diagnostic), "retained signup")) {
+					t.Fatalf("changed signup selection did not refuse locally: %v %v %s", changed, err, diagnostic)
+				}
+				if bytes.Contains(diagnostic, []byte(credential)) {
+					t.Fatal("refusal printed retained credential")
+				}
+				kept, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(kept, record) {
+					t.Fatalf("refusal changed retained signup: %v", err)
+				}
+			}
+			diagnosis := exec.CommandContext(ctx, binary, "doctor", "--offline", "--json")
+			diagnosis.Dir, diagnosis.Env = directory, idCreateCommandEnv(directory)
+			diagnosed, diagnosisErr := diagnosis.CombinedOutput()
+			var report doctorOutput
+			if err := json.Unmarshal(diagnosed, &report); err != nil {
+				t.Fatalf("doctor diagnosis: %v %v %s", err, diagnosisErr, diagnosed)
+			}
+			foundRecovery := false
+			for _, check := range report.Checks {
+				if check.ID == doctorCheckSignupRecovery {
+					foundRecovery = strings.Contains(check.NextStep, "aw init") && strings.Contains(check.NextStep, "signup-recovery.json")
+				}
+			}
+			if !foundRecovery || bytes.Contains(diagnosed, []byte(credential)) {
+				t.Fatalf("doctor lost or exposed recovery: %s", diagnosed)
+			}
 			command := exec.CommandContext(ctx, binary, "init", "--json", "--do-not-touch-agents-md")
 			command.Dir, command.Env = directory, idCreateCommandEnv(directory)
 			if raw, err := command.CombinedOutput(); err != nil {

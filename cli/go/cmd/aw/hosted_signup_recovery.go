@@ -14,7 +14,10 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-const hostedSignupRecoveryFile = "signup-recovery.json"
+const (
+	hostedSignupRecoveryFile  = "signup-recovery.json"
+	hostedSignupRecoveryLimit = 2 * awid.MaxResponseSize
+)
 
 type hostedSignupContext struct {
 	WorkingDir    string `json:"working_dir"`
@@ -47,7 +50,10 @@ func signupRecoveryFile(workingDir string) awconfig.RecoveryFile {
 }
 
 func loadHostedSignupRecovery(workingDir string) (*hostedSignupRecovery, error) {
-	raw, err := signupRecoveryFile(workingDir).ReadBounded(2 * awid.MaxResponseSize)
+	if !filepath.IsAbs(workingDir) {
+		return nil, errors.New("signup recovery requires an explicit absolute working directory")
+	}
+	raw, err := signupRecoveryFile(workingDir).ReadBounded(hostedSignupRecoveryLimit)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -91,7 +97,7 @@ func (state *hostedSignupRecovery) identity() (awid.CliSignupRequest, ed25519.Pr
 		return request, nil, errors.New("signup recovery signer is malformed")
 	}
 	key := ed25519.NewKeyFromSeed(seed)
-	public := key.Public().(ed25519.PublicKey)
+	public := ed25519.PublicKey(key[ed25519.SeedSize:])
 	if request.DIDKey != awid.ComputeDIDKey(public) || (request.DIDAW != "" && request.DIDAW != awid.ComputeStableID(public)) || request.Username == "" || request.Alias == "" {
 		return request, nil, errors.New("signup recovery request does not match its signer")
 	}
@@ -99,7 +105,8 @@ func (state *hostedSignupRecovery) identity() (awid.CliSignupRequest, ed25519.Pr
 }
 
 // prepareHostedSignup retains the signer and exact request before either the
-// registry claim or signup effect. It shares the versioned progress and private
+// registry claim or signup effect (docs/identity.md#cli-signup-recovery).
+// It shares the versioned progress and private
 // atomic writer with init/id-create recovery; only the operation payload differs.
 func prepareHostedSignup(input hostedSignupCreation) (*hostedSignupRecovery, error) {
 	state, err := loadHostedSignupRecovery(input.Context.WorkingDir)
@@ -212,7 +219,22 @@ type hostedSignupCompletion struct {
 
 func completeRecoverableHostedSignup(input hostedSignupCompletion) (result *guidedOnboardingResult, resultErr error) {
 	req := input.Wizard
-	lock, err := awconfig.LockExclusive(filepath.Join(awconfig.WorktreeIdentityHome(req.WorkingDir), "signup-recovery.lock"))
+	if !filepath.IsAbs(req.WorkingDir) || input.Creation.Context.WorkingDir != req.WorkingDir {
+		return nil, errors.New("signup recovery requires the original absolute working directory")
+	}
+	home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(req.WorkingDir)}
+	lockPath, err := awconfig.IdentityHomePath(home, "signup-recovery.lock")
+	if err != nil {
+		return nil, err
+	}
+	if info, err := os.Lstat(home.Root); err == nil {
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0700 {
+			return nil, errors.New("signup recovery requires a private identity directory with mode 0700")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	lock, err := awconfig.LockExclusive(lockPath)
 	if err != nil {
 		return nil, err
 	}

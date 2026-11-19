@@ -672,6 +672,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err := validateInitOutcomeFlags(input); err != nil {
 		return err
 	}
+	creationDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if resumed, err := resumeSignupFromInit(initSignupResumeInput{Command: cmd, WorkingDir: creationDir, Invite: input, Identity: identity}); resumed == initDispatchComplete || err != nil {
+		return err
+	}
 	if dispatched, err := dispatchExplicitInitOutcome(cmd, input); dispatched == initDispatchComplete || err != nil {
 		return err
 	}
@@ -688,10 +695,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	creationDir, err := os.Getwd()
-	if err != nil {
-		return err
-	}
 	apiKey := resolveInitAPIKey()
 	if apiKey != "" {
 		if err := checkAPIKeyInitRecoveryAuthority(apiKeyInitAuthorityPreflight{WorkingDir: creationDir, APIKey: apiKey}); err != nil {
