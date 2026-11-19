@@ -9,6 +9,7 @@ from playwright.async_api import Error as BrowserError
 from playwright.async_api import expect
 
 from tests.human_owner import install_virtual_credential
+from tests.production_approvals import requester_receipt
 from tests.test_console_ui_browser import browser as browser
 from tests.test_production_approval_headers import RequestKind, header_request
 from tests.test_production_bootstrap import root as root
@@ -56,7 +57,6 @@ async def test_production_page_shows_submitted_header_values_before_approval(
     root, production_console, browser, tmp_path, request_kind: RequestKind, width
 ):
     pending = await header_request(root, request_kind=request_kind)
-    _, client, configured, member, *_ = root
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
         page = await context.new_page()
         cdp = await context.new_cdp_session(page)
@@ -98,13 +98,7 @@ async def test_production_page_shows_submitted_header_values_before_approval(
         ).to_be_enabled()
         # The signed requester receipt must still locate this pending approval;
         # reading its terms in the browser cannot approve or admit it (§10.4).
-        status_path = "/v1/status/" + pending.reply["request_ref"]
-        status = await client.get(
-            configured.public_origin + status_path,
-            headers=member.headers(aud=configured.public_origin, method="GET", path=status_path),
-        )
-        assert status.status_code == 200
-        assert status.json() == {
+        assert await requester_receipt(root, pending=pending) == {
             "state": DispatchState.AWAITING_APPROVAL.value,
             "request_id": pending.reply["request_id"],
             "request_ref": pending.reply["request_ref"],

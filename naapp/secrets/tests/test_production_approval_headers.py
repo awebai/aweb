@@ -10,7 +10,7 @@ import pytest
 from aweb_naapp.runtime.approvals import ApprovalState, Decision
 
 from aweb_secrets.operation import OperationTemplate
-from tests.production_approvals import requester_receipt, stored_approval
+from tests.production_approvals import requester_receipt, requester_status, stored_approval
 from tests.test_operation_record import REFUND
 from tests.test_production_bootstrap import ApprovalAction, approval_request
 from tests.test_production_bootstrap import root as root
@@ -133,9 +133,5 @@ async def test_credential_shaped_agent_headers_are_refused_before_freezing(root,
     assert await db.fetch_value("SELECT count(*) FROM use_approvals") == 1
     assert await requester_receipt(root, pending=pending) == pending.reply
     assert (await stored_approval(root, pending=pending)).consumed_operation_id is None
-    status_path = "/v1/status/" + body["request_id"]
-    absent = await client.get(
-        configured.public_origin + status_path,
-        headers=member.headers(aud=configured.public_origin, method="GET", path=status_path),
-    )
+    absent = await requester_status(root, ref=body["request_id"])
     assert absent.status_code == 404
