@@ -69,6 +69,23 @@ _PUBLIC_IPV6_EXCEPTIONS = tuple(
     )
 )
 
+# The isolated-development exception admits private, loopback and link-local
+# networks, matching Go's IsPrivate/IsLoopback/IsLinkLocalUnicast. Documentation
+# and other reserved ranges are not an opt-in network class.
+_ISOLATED_IPV4 = tuple(
+    ipaddress.IPv4Network(value)
+    for value in (
+        "10.0.0.0/8",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+    )
+)
+_ISOLATED_IPV6 = tuple(
+    ipaddress.IPv6Network(value) for value in ("::1/128", "fc00::/7", "fe80::/10")
+)
+
 
 @dataclass(frozen=True)
 class DNSLookup:
@@ -372,6 +389,15 @@ def isolated_registry_test_enabled(origin: str, context: OriginContext) -> bool:
     return _isolated_http_enabled(host, context)
 
 
+def _is_isolated_network_address(
+    address: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> bool:
+    if address.version == 6 and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    networks = _ISOLATED_IPV4 if address.version == 4 else _ISOLATED_IPV6
+    return any(address in network for network in networks)
+
+
 def validate_resolved_addresses(
     values: Sequence[str], *, allow_nonpublic_test: bool = False
 ) -> tuple[str, ...]:
@@ -382,8 +408,8 @@ def validate_resolved_addresses(
         except ValueError as exc:
             raise FederationAuthorityError("sender_registry_origin_forbidden") from exc
         address = ipaddress.ip_address(canonical)
-        allowed_test_address = allow_nonpublic_test and (
-            address.is_private or address.is_loopback or address.is_link_local
+        allowed_test_address = allow_nonpublic_test and _is_isolated_network_address(
+            address
         )
         if not _is_allowed_external_ip(canonical) and not allowed_test_address:
             raise FederationAuthorityError("sender_registry_origin_forbidden")
