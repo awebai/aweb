@@ -119,16 +119,23 @@ stack_up() {
 # volumes and Docker API copies also work when this runs inside a container.
 prepare_fixture() {
   local seed="$PROJECT-prepare-$$"
-  docker create --name "$seed" --user 0 --entrypoint /app/.venv/bin/python \
+  # The project label lets the stack's teardown remove the seed if this run is
+  # interrupted; every other path removes it here.
+  docker create --name "$seed" --label "com.docker.compose.project=$PROJECT" \
+    --user 0 --entrypoint /app/.venv/bin/python \
     -v "$PROJECT-fixture:/fixture" -e PYTHONPATH=/fixture/test-support \
     "$PROJECT-aweb" /fixture/e2e/stack_tls_prepare.py "$LIBRARY_E2E_LIBRARY_HOST" "$LIBRARY_E2E_AWEB_HOST" >/dev/null
-  docker cp "$REPO_ROOT/scripts/e2e/." "$seed:/fixture/e2e"
-  docker cp "$REPO_ROOT/naapp-lib/testing/src/." "$seed:/fixture/test-support"
-  # The seed container is removed whether or not the preparation succeeds.
   local status=0
-  docker start -a "$seed" || status=$?
-  docker rm "$seed" >/dev/null
-  [[ "$status" -eq 0 ]] || return "$status"
+  {
+    docker cp "$REPO_ROOT/scripts/e2e/." "$seed:/fixture/e2e" &&
+      docker cp "$REPO_ROOT/naapp-lib/testing/src/." "$seed:/fixture/test-support" &&
+      docker start -a "$seed"
+  } || status=$?
+  if ! docker rm -f "$seed" >/dev/null; then
+    echo "FATAL: could not remove the preparation container $seed" >&2
+    (( status != 0 )) || status=1
+  fi
+  (( status == 0 )) || return "$status"
   docker run --rm --user 0 --entrypoint /app/.venv/bin/python \
     -v "$PROJECT-fixture:/fixture" -v "$PROJECT-library-source:/app/naapp/library/src/library" \
     -e PYTHONPATH=/fixture/e2e "$PROJECT-library" \
