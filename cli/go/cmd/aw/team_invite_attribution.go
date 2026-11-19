@@ -197,7 +197,11 @@ func prepareTeamInviteAuthority(ctx context.Context, input teamInviteAuthorityRe
 	if err := issuer.invitations.PutInvitation(inv); err != nil {
 		return nil, nil, err
 	}
-	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: out.Parent["id"].(string), Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, verdict.HumanID, nil
+	parentID, validParent := out.Parent["id"].(string)
+	if !validParent || parentID == "" {
+		return nil, nil, errors.New("child invitation has no issuer ID; retain its record and restore the issuer's original chain before retrying")
+	}
+	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: parentID, Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, verdict.HumanID, nil
 }
 
 func checkSelectedTeamInviteIssuer(ctx context.Context, issuer *selectedChildIssuer) error {
