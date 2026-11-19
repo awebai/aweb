@@ -535,7 +535,7 @@ func TestInitAPIKeyGlobalNameCreatesSelfCustodialGlobalCLIIdentity(t *testing.T)
 	if workspace.APIKey != "workspace-sk-global" {
 		t.Fatalf("workspace api_key=%q", workspace.APIKey)
 	}
-	if _, err := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(err) {
+	if _, err := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)})); !os.IsNotExist(err) {
 		t.Fatalf("partial init state should be removed after success: %v", err)
 	}
 }
@@ -665,7 +665,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 	if _, err := runAPIKeyBootstrapInit(req); err == nil || !strings.Contains(err.Error(), "POST /api/v1/workspaces/init returned 500") {
 		t.Fatalf("unexpected first-run error: %v", err)
 	}
-	info, err := os.Stat(apiKeyPartialInitPath(tmp))
+	info, err := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)}))
 	if err != nil {
 		t.Fatalf("partial init state should remain after workspace init failure: %v", err)
 	}
@@ -699,7 +699,7 @@ func TestRunAPIKeyBootstrapInitGlobalResumesPartialAfterWorkspaceInitFailure(t *
 	if got := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); got != registeredDIDKeys[0] {
 		t.Fatalf("persisted signing key DID=%q want %q", got, registeredDIDKeys[0])
 	}
-	if _, err := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(err) {
+	if _, err := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)})); !os.IsNotExist(err) {
 		t.Fatalf("partial init state should be removed after retry success: %v", err)
 	}
 }
@@ -725,7 +725,7 @@ func TestRunAPIKeyBootstrapInitGlobalRejectsPartialContextMismatch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := saveAPIKeyPartialInit(tmp, state); err != nil {
+	if err := saveAPIKeyPartialInit(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)}, state); err != nil {
 		t.Fatalf("save partial init: %v", err)
 	}
 
@@ -780,7 +780,7 @@ func TestRunAPIKeyBootstrapInitRegisterIdentityFailureShortCircuitsWorkspaceInit
 	if _, statErr := os.Stat(filepath.Join(tmp, ".aw", "workspace.yaml")); !os.IsNotExist(statErr) {
 		t.Fatalf("workspace.yaml should not be written: %v", statErr)
 	}
-	info, statErr := os.Stat(apiKeyPartialInitPath(tmp))
+	info, statErr := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)}))
 	if statErr != nil {
 		t.Fatalf("partial init state should be written before register identity: %v", statErr)
 	}
@@ -1449,7 +1449,7 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 			t.Fatalf("connect failure left local state behind at %s (stat err=%v)", leftover, err)
 		}
 	}
-	if _, err := os.Stat(apiKeyPartialInitPath(tmp)); err != nil {
+	if _, err := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)})); err != nil {
 		t.Fatalf("partial init state should survive connect failure for resume: %v", err)
 	}
 
@@ -1470,7 +1470,7 @@ func TestRunAPIKeyBootstrapInitGlobalRollsBackOnConnectFailureAndResumes(t *test
 	if got := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)); got != workspaceInitDIDKeys[0] {
 		t.Fatalf("persisted signing key DID=%q want %q", got, workspaceInitDIDKeys[0])
 	}
-	if _, err := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(err) {
+	if _, err := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)})); !os.IsNotExist(err) {
 		t.Fatalf("partial init state should be removed after success: %v", err)
 	}
 }
@@ -1512,7 +1512,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 				"updated_at":      "2026-04-18T00:00:00Z",
 			})
 		case r.URL.Path == "/api/v1/workspaces/init":
-			data, readErr := os.ReadFile(apiKeyPartialInitPath(tmp))
+			data, readErr := os.ReadFile(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)}))
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
@@ -1576,7 +1576,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 	if _, statErr := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(statErr) {
 		t.Fatalf("already-registered name must not write a signing key: %v", statErr)
 	}
-	files, globErr := filepath.Glob(apiKeyPartialInitPath(tmp) + ".*.rejected")
+	files, globErr := filepath.Glob(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)}) + ".*.rejected")
 	if globErr != nil || len(files) != 1 {
 		t.Fatalf("expected one quarantined partial, got %v: %v", files, globErr)
 	}
@@ -1591,7 +1591,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 	if !strings.Contains(err.Error(), files[0]) || strings.Contains(err.Error(), "rerun the same command") {
 		t.Fatalf("wrong quarantine guidance: %v", err)
 	}
-	if _, statErr := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)})); !os.IsNotExist(statErr) {
 		t.Fatalf("partial was not renamed: %v", statErr)
 	}
 	beforeRetry := requests.Load()
@@ -1602,7 +1602,7 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 		if retryErr == nil || !strings.Contains(retryErr.Error(), "partial_init_reconciliation_required") || !strings.Contains(retryErr.Error(), files[0]) {
 			t.Fatalf("rejected state must refuse fresh init: %v", retryErr)
 		}
-		if _, statErr := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(statErr) {
+		if _, statErr := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp)})); !os.IsNotExist(statErr) {
 			t.Fatal("rerun generated fresh material")
 		}
 		if requests.Load() != beforeRetry {

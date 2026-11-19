@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/internal/pathpreflight"
@@ -11,12 +12,8 @@ import (
 	"time"
 )
 
-func apiKeyPartialInitPath(workingDir string, identityHomes ...string) string {
-	root := filepath.Join(filepath.Clean(workingDir), ".aw")
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		root = filepath.Clean(identityHomes[0])
-	}
-	return filepath.Join(root, "partial-init.yaml")
+func apiKeyPartialInitPath(home awconfig.IdentityHome) string {
+	return filepath.Join(home.Root, "partial-init.yaml")
 }
 
 func preflightAPIKeyPartialInit(path string) error {
@@ -48,7 +45,7 @@ func loadAPIKeyPartialInit(path string) (*apiKeyPartialInitState, error) {
 	return &state, nil
 }
 
-func saveAPIKeyPartialInit(workingDir string, state *apiKeyPartialInitState, identityHomes ...string) error {
+func saveAPIKeyPartialInit(home awconfig.IdentityHome, state *apiKeyPartialInitState) error {
 	if state == nil {
 		return fmt.Errorf("nil partial API-key init state")
 	}
@@ -56,7 +53,10 @@ func saveAPIKeyPartialInit(workingDir string, state *apiKeyPartialInitState, ide
 	if err != nil {
 		return err
 	}
-	path := apiKeyPartialInitPath(workingDir, identityHomes...)
+	path, pathErr := (awconfig.RecoveryFile{Home: home, Name: "partial-init.yaml"}).Path()
+	if pathErr != nil {
+		return pathErr
+	}
 	if err := preflightAPIKeyPartialInit(path); err != nil {
 		return err
 	}
@@ -84,8 +84,11 @@ func refuseRejectedAPIKeyPartialInit(path string) error {
 	return nil
 }
 
-func quarantineAPIKeyPartialInit(workingDir string, identityHomes ...string) (string, error) {
-	path := apiKeyPartialInitPath(workingDir, identityHomes...)
+func quarantineAPIKeyPartialInit(home awconfig.IdentityHome) (string, error) {
+	path, pathErr := (awconfig.RecoveryFile{Home: home, Name: "partial-init.yaml"}).Path()
+	if pathErr != nil {
+		return "", pathErr
+	}
 	if err := preflightAPIKeyPartialInit(path); err != nil {
 		return "", err
 	}
@@ -97,22 +100,23 @@ func quarantineAPIKeyPartialInit(workingDir string, identityHomes ...string) (st
 	}
 	destination := file.Name()
 	if err := file.Close(); err != nil {
-		_ = os.Remove(destination)
-		return "", err
+		return "", errors.Join(err, os.Remove(destination))
 	}
 	if err := os.Chmod(path, 0600); err != nil {
-		_ = os.Remove(destination)
-		return "", err
+		return "", errors.Join(err, os.Remove(destination))
 	}
 	if err := os.Rename(path, destination); err != nil {
-		_ = os.Remove(destination) // Only our empty reservation; original is intact.
-		return "", err
+		// Only our empty reservation is removed; the original remains intact.
+		return "", errors.Join(err, os.Remove(destination))
 	}
 	return destination, nil
 }
 
-func removeAPIKeyPartialInit(workingDir string, identityHomes ...string) error {
-	path := apiKeyPartialInitPath(workingDir, identityHomes...)
+func removeAPIKeyPartialInit(home awconfig.IdentityHome) error {
+	path, pathErr := (awconfig.RecoveryFile{Home: home, Name: "partial-init.yaml"}).Path()
+	if pathErr != nil {
+		return pathErr
+	}
 	if err := preflightAPIKeyPartialInit(path); err != nil {
 		return err
 	}

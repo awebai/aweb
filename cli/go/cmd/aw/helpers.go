@@ -937,7 +937,9 @@ func probeAwebBaseURLOutcome(ctx context.Context, baseURL string) (ok bool, outc
 		// Never reflect that server-controlled header through transport diagnostics.
 		return false, "", fmt.Errorf("heartbeat probe request failed at %q (transport failure or invalid redirect)", redirectLocationDisplay(baseURL, req.URL))
 	}
-	_ = resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		return false, "", fmt.Errorf("close heartbeat probe response: %w", err)
+	}
 	debugLog("probe aweb base url: %s -> %d", baseURL, resp.StatusCode)
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		return false, "", fmt.Errorf("server redirected %q to %q; set AWEB_URL to the intended API base at that address", redirectLocationDisplay(baseURL, req.URL), redirectLocationDisplay(resp.Header.Get("Location"), req.URL))

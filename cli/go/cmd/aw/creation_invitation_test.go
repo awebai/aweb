@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/awebai/aw/awconfig"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -79,7 +80,7 @@ func TestAPIKeyCreationInvitationFixesParentAndIntentBeforeRequest(t *testing.T)
 				if err != nil || resumed.DIDKey != first.DIDKey {
 					t.Fatalf("retry replaced the frozen invitation with refreshed metadata: %v", err)
 				}
-				state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome))
+				state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -162,7 +163,7 @@ func TestAPIKeyInitSendsAndRetainsInvitationBoundRequest(t *testing.T) {
 	if posts != 1 {
 		t.Fatalf("posts=%d", posts)
 	}
-	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir))
+	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(req.WorkingDir)}))
 	if err != nil || state == nil {
 		t.Fatalf("recovery: %v", err)
 	}
@@ -174,7 +175,7 @@ func TestAPIKeyInitSendsAndRetainsInvitationBoundRequest(t *testing.T) {
 	if posts != 2 || teamReads != 1 {
 		t.Fatalf("retry did not use frozen original selection: posts=%d selection reads=%d", posts, teamReads)
 	}
-	state, err = loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir))
+	state, err = loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(req.WorkingDir)}))
 	if err != nil {
 		t.Fatal(err)
 	}

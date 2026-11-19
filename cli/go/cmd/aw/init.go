@@ -687,7 +687,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err := checkAPIKeyInitRecoveryAuthority(apiKeyInitAuthorityPreflight{WorkingDir: creationDir, APIKey: apiKey}); err != nil {
 			return err
 		}
-		retained, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(creationDir))
+		retained, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(creationDir)}))
 		if err != nil {
 			return err
 		}

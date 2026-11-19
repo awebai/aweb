@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/awebai/aw/awconfig"
 	"net/http"
 	"os"
 	"os/exec"
@@ -251,7 +252,7 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 			if strings.Contains(stdout, provisioningKey) || strings.Contains(stdout, "sensitive arbitrary") {
 				t.Fatal("hosted body or key exposed in the error envelope")
 			}
-			partial, err := os.ReadFile(apiKeyPartialInitPath(target))
+			partial, err := os.ReadFile(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(target)}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -299,7 +300,7 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				}
 				// Wrong original authority must refuse locally without altering the partial.
 				_, _, changedCode := run("aw_sk_different_fixture_key")
-				after, err := os.ReadFile(apiKeyPartialInitPath(target))
+				after, err := os.ReadFile(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(target)}))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -328,7 +329,7 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				if awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) != did {
 					t.Fatal("persisted replacement identity")
 				}
-				if _, err := os.Stat(apiKeyPartialInitPath(target)); !os.IsNotExist(err) {
+				if _, err := os.Stat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(target)})); !os.IsNotExist(err) {
 					t.Fatal("success left partial")
 				}
 				mu.Lock()

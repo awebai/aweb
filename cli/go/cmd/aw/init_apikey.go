@@ -123,7 +123,7 @@ func (state *apiKeyPartialInitState) matchesAPIKey(apiKey string) bool {
 // contacts the service (docs/hosted-global-bootstrap.md:180-190). The full
 // recovery context is checked again under the bootstrap lock before effects.
 func checkAPIKeyInitRecoveryAuthority(in apiKeyInitAuthorityPreflight) error {
-	path := apiKeyPartialInitPath(in.WorkingDir)
+	path := apiKeyPartialInitPath(awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(in.WorkingDir)})
 	state, err := loadAPIKeyPartialInit(path)
 	if err != nil || state == nil {
 		return err
@@ -157,7 +157,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		return connectOutput{}, err
 	}
 
-	lockPath := apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome) + ".lock"
+	lockPath := apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}) + ".lock"
 	if err := pathpreflight.PreflightFile(lockPath, "API-key creation recovery lock", pathpreflight.Options{}); err != nil {
 		return connectOutput{}, err
 	}
@@ -165,7 +165,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	if err != nil {
 		return connectOutput{}, fmt.Errorf("API-key creation already in progress or recovery lock unavailable: %w", err)
 	}
-	defer lock.Close()
+	defer func() { resultErr = errors.Join(resultErr, lock.Close()) }()
 
 	// Cloud contract: global uses name (not alias), local uses alias (not name).
 	name := strings.TrimSpace(req.Name)
@@ -181,12 +181,12 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	if err != nil {
 		return connectOutput{}, err
 	}
-	if previous, loadErr := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); loadErr != nil {
+	if previous, loadErr := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome})); loadErr != nil {
 		return connectOutput{}, loadErr
 	} else if previous != nil {
 		original := req
 		original.SelectedTeamID, original.CanonicalTeamID = previous.TeamIDHint, previous.CanonicalTeamID
-		if err := validateAPIKeyPartialInitContext(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome), previous, original, name, registry.DefaultRegistryURL); err != nil {
+		if err := validateAPIKeyPartialInitContext(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}), previous, original, name, registry.DefaultRegistryURL); err != nil {
 			return connectOutput{}, err
 		}
 	}
@@ -204,12 +204,12 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	resumable := true
 	defer func() {
 		if resultErr != nil && resumable {
-			if info, err := os.Lstat(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); err == nil && info.Mode().IsRegular() {
+			if info, err := os.Lstat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome})); err == nil && info.Mode().IsRegular() {
 				resultErr = fmt.Errorf("%w\n%s", resultErr, partialInitGuidance(resultErr))
 			}
 		}
 	}()
-	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome))
+	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}))
 	if err != nil {
 		return connectOutput{}, err
 	}
@@ -262,9 +262,9 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	if req.Global {
 		if responseDID := strings.TrimSpace(resp.DID); responseDID != "" && responseDID != didKey {
 			resumable = false
-			rejected, quarantineErr := quarantineAPIKeyPartialInit(req.WorkingDir, req.IdentityHome)
+			rejected, quarantineErr := quarantineAPIKeyPartialInit(awconfig.IdentityHome{Root: req.IdentityHome})
 			if quarantineErr != nil {
-				return connectOutput{}, fmt.Errorf("global name %q is already registered with a different identity; could not quarantine partial signing material (original retained at %s): %w; operator reconciliation is required", name, apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome), quarantineErr)
+				return connectOutput{}, fmt.Errorf("global name %q is already registered with a different identity; could not quarantine partial signing material (original retained at %s): %w; operator reconciliation is required", name, apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}), quarantineErr)
 			}
 			return connectOutput{}, fmt.Errorf(
 				"global name %q is already registered with a different identity: the server returned did %s but this machine generated %s.\nThe signing key material was preserved at %s. Use a different directory for a new identity, or ask an operator to reconcile the existing identity binding; rejected material is never restored automatically.",
@@ -304,7 +304,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 			return connectOutput{}, err
 		}
 	}
-	if err := saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome); err != nil {
+	if err := saveAPIKeyPartialInit(awconfig.IdentityHome{Root: req.IdentityHome}, state); err != nil {
 		return connectOutput{}, err
 	}
 	treeContext, treeCancel := commandAPIContext(nil)
@@ -313,13 +313,12 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	if treeErr != nil {
 		return connectOutput{}, fmt.Errorf("hosted membership created; attribution installation incomplete: %w", treeErr)
 	}
-	snapshot, err := snapshotAwTree(req.WorkingDir, req.IdentityHome)
+	snapshot, err := snapshotAwTree(awconfig.IdentityHome{Root: req.IdentityHome})
 	if err != nil {
 		return connectOutput{}, err
 	}
 	if err := persistAPIKeyBootstrapState(req.WorkingDir, req.IdentityHome, req.RegistryURL, signingKey, didKey, stableID, cert, global); err != nil {
-		rollbackAwTree(req.WorkingDir, snapshot, req.IdentityHome)
-		return connectOutput{}, err
+		return connectOutput{}, errors.Join(err, rollbackAwTree(awconfig.IdentityHome{Root: req.IdentityHome}, snapshot))
 	}
 
 	out, err = initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
@@ -333,7 +332,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		// Roll back everything this run created. The partial-init state (when
 		// present) survives via the snapshot, so a retry resumes with the same
 		// signing key the server already has on record.
-		rollbackAwTree(req.WorkingDir, snapshot, req.IdentityHome)
+		err = errors.Join(err, rollbackAwTree(awconfig.IdentityHome{Root: req.IdentityHome}, snapshot))
 		return connectOutput{}, fmt.Errorf("%w\n(local state from this attempt was rolled back; rerun the same command to resume)", err)
 	}
 	resumable = false // Connected state must not be retried as an incomplete init.
@@ -342,7 +341,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 			return connectOutput{}, err
 		}
 	}
-	if err := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); err != nil {
+	if err := removeAPIKeyPartialInit(awconfig.IdentityHome{Root: req.IdentityHome}); err != nil {
 		return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)
 	}
 	out.IDRegistration = "unknown"
@@ -375,7 +374,7 @@ func retainedAPIKeyCreationTeam(path string) (*apiKeyCreationTeam, error) {
 }
 
 func selectAPIKeyInitTeam(req apiKeyInitRequest) (apiKeyInitRequest, error) {
-	selectedTeam, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome))
+	selectedTeam, err := retainedAPIKeyCreationTeam(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}))
 	if err != nil {
 		return apiKeyInitRequest{}, err
 	}
@@ -407,7 +406,7 @@ func prepareAPIKeyBootstrapIdentity(
 	name string,
 	registry *awid.RegistryClient,
 ) (apiKeyBootstrapIdentityMaterial, error) {
-	if err := refuseRejectedAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); err != nil {
+	if err := refuseRejectedAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome})); err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, err
 	}
 	registryURL := ""
@@ -417,7 +416,7 @@ func prepareAPIKeyBootstrapIdentity(
 		return apiKeyBootstrapIdentityMaterial{}, errors.New("identity registry client is required for global API-key bootstrap")
 	}
 
-	path := apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)
+	path := apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome})
 	state, err := loadAPIKeyPartialInit(path)
 	if err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, err
@@ -445,7 +444,7 @@ func prepareAPIKeyBootstrapIdentity(
 	if err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, err
 	}
-	if err := saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome); err != nil {
+	if err := saveAPIKeyPartialInit(awconfig.IdentityHome{Root: req.IdentityHome}, state); err != nil {
 		return apiKeyBootstrapIdentityMaterial{}, fmt.Errorf("write partial API-key init state: %w", err)
 	}
 	return material, nil
@@ -462,7 +461,7 @@ func reconcileAPIKeyCreationRecovery(state *apiKeyPartialInitState, req apiKeyIn
 		return err
 	}
 	state.IDTree = tree
-	return saveAPIKeyPartialInit(req.WorkingDir, state, req.IdentityHome)
+	return saveAPIKeyPartialInit(awconfig.IdentityHome{Root: req.IdentityHome}, state)
 }
 
 func generateAPIKeyBootstrapIdentity() (apiKeyBootstrapIdentityMaterial, error) {
@@ -772,7 +771,7 @@ func persistAPIKeyBootstrapState(
 
 // postAPIKeyWorkspaceInit admits the agent with the team API key and proves,
 // with signingKey, that the caller holds the agent's did:key.
-func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payload apiKeyBootstrapRequest, signingKey ed25519.PrivateKey) (*apiKeyBootstrapResponse, error) {
+func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payload apiKeyBootstrapRequest, signingKey ed25519.PrivateKey) (out *apiKeyBootstrapResponse, resultErr error) {
 	if len(signingKey) != ed25519.PrivateKeySize {
 		return nil, errors.New("workspace init needs the agent's signing key to prove its did:key")
 	}
@@ -798,10 +797,13 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if readErr != nil {
+			return nil, fmt.Errorf("read workspace init refusal: %w", readErr)
+		}
 		diagnostic, code := workspaceInitHTTPDiagnostic(resp, respBody, apiKey)
 		if code != "unknown" {
 			if mismatch, ok := parseWorkspaceInitIdentityKeyMismatch(respBody); ok && code == "identity_key_mismatch" {
