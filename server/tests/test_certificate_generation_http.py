@@ -17,7 +17,6 @@ from aweb.api import create_app
 from aweb.certificate_auth import (
     CertificateAuthorityContext,
     EvidenceMode,
-    TeamControllerUnavailable,
     verify_certificate_generation,
 )
 from aweb.service_errors import ServiceError

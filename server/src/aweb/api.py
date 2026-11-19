@@ -28,6 +28,7 @@ from .agent_wake import AgentWakeHub, AgentWakePublisher
 from .outbox_recovery import OutboxRecoveryStarter
 from .routing_utils import move_mount_before_spa_fallback
 from .auth_error_transport import install_auth_error_handlers
+from .certificate_error_transport import install_certificate_error_handlers
 from .service_errors import ServiceError
 from .messaging.chat_policy import HumanChatRefused
 from .install_admins import install_admin_setup_message
@@ -530,6 +531,7 @@ def create_app(
         )
 
     install_auth_error_handlers(app)
+    install_certificate_error_handlers(app)
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
