@@ -30,7 +30,7 @@ from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.run_context import apply_run_dispatch_migrations
 from aweb_secrets.runner_protocol import canonical
 from aweb_secrets.runner_types import RunnerSubmission
-from aweb_secrets.secret import SecretRecord
+from aweb_secrets.secret import SecretBackend, SecretKind, SecretRecord
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies
 from aweb_secrets.use_audit import UseApprovalAudit
 from aweb_secrets.use_context import UseCommitter, apply_use_context_migrations
@@ -94,22 +94,39 @@ class RunInstallations(Installations):
         )
 
 
-async def _activate_source(tx, *, uses, record: SecretRecord, value: str):
-    scope = uses.world.admitted
-    await records.create_secret(tx, scope.installation_id, TEAM, record)
-    version = await uses.world.custody.sealer.ingest(
-        tx,
-        installation_id=scope.installation_id,
-        team_id=TEAM,
-        secret_id=record.secret_id,
-        value=encode_value("bearer", {"value": value}),
-    )
-    await records.set_active_version(tx, scope.installation_id, TEAM, record.secret_id, version)
+async def _activate_source(*, uses, record: SecretRecord, value: str):
+    scope, db, custody = uses.world.admitted, uses.world.db, uses.world.custody
+    async with db.transaction() as tx:
+        await records.create_secret(tx, scope.installation_id, TEAM, record)
+    if record.backend == SecretBackend.ONEPASSWORD:
+        if uses.values is None:
+            raise AssertionError("the runner world requires its SDK boundary")
+        await uses.values.activate(
+            db=db,
+            custody=custody,
+            installation_id=scope.installation_id,
+            team_id=TEAM,
+            record=record,
+            values={"value": value},
+        )
+    else:
+        async with db.transaction() as tx:
+            version = await custody.sealer.ingest(
+                tx,
+                installation_id=scope.installation_id,
+                team_id=TEAM,
+                secret_id=record.secret_id,
+                value=encode_value(SecretKind.BEARER, {"value": value}),
+            )
+            await records.set_active_version(
+                tx, scope.installation_id, TEAM, record.secret_id, version
+            )
 
 
 async def setup(
     uses,
     *,
+    backend: SecretBackend = SecretBackend.ONEPASSWORD,
     approval_required=False,
     producer_clock=None,
     job_timeout_s=None,
@@ -130,7 +147,7 @@ async def setup(
         await migration(db)
     if approval_required:
         await designate(uses, "finance", "finance@acme.com")
-    record = {**SECRET}
+    record = {**SECRET, "backend": backend}
     body = after()
     if variant:
         if reuse_source is None:
@@ -146,6 +163,7 @@ async def setup(
         second_record = SecretRecord.from_after(
             {
                 **SECRET,
+                "backend": backend,
                 "secret_id": "sec_secondary001" + variant,
                 "ref": "secondary-api" + variant,
             }
@@ -174,14 +192,15 @@ async def setup(
             "allowed_jobs": [job.job_id],
         }
     )
+    sources = [(SecretRecord.from_after(record), credential, "grt_durable001" + variant)]
+    if secondary is not None:
+        sources.append((*secondary, "grt_durable002" + variant))
+    if reuse_source is None:
+        for source_record, source_value, _ in sources:
+            await _activate_source(uses=uses, record=source_record, value=source_value)
     async with db.transaction() as tx:
         await records.create_policy(tx, scope.installation_id, policy, team_id=TEAM)
-        sources = [(SecretRecord.from_after(record), credential, "grt_durable001" + variant)]
-        if secondary is not None:
-            sources.append((*secondary, "grt_durable002" + variant))
-        for source_record, source_value, grant_id in sources:
-            if reuse_source is None:
-                await _activate_source(tx, uses=uses, record=source_record, value=source_value)
+        for source_record, _, grant_id in sources:
             await records.create_grant(
                 tx,
                 scope.installation_id,

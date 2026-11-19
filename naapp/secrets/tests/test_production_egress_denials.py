@@ -35,9 +35,9 @@ def deployment_environment(monkeypatch, request):
     return host, entries
 
 
-async def scoped_request(root, url, host, port):
+async def scoped_request(root, url, host, port, *, onepassword_values):
     """Confirmed metadata is fixture state; submission uses actual B1/custody/egress."""
-    pending = await approval_request(root, "use")
+    pending = await approval_request(root, "use", onepassword_values=onepassword_values)
     service, client, configured, member, installed, *_ = root
     db = service.runtime.db()
     policy = Policy.from_body({**POLICY_BODY, "approval": "none", "approvers": []})
@@ -107,7 +107,7 @@ async def scoped_request(root, url, host, port):
 
 @pytest.mark.parametrize("deployment_environment", ["address", "cidr", "empty"], indirect=True)
 async def test_operator_denials_stop_the_real_broker_before_tcp_connect(
-    root, deployment_environment
+    onepassword_values, root, deployment_environment
 ):
     host, entries = deployment_environment
     connections = []
@@ -123,7 +123,9 @@ async def test_operator_denials_stop_the_real_broker_before_tcp_connect(
     listener = await asyncio.start_server(accepted, host, 0)
     async with listener:
         port = listener.sockets[0].getsockname()[1]
-        response = await scoped_request(root, f"https://{host}:{port}/probe", host, port)
+        response = await scoped_request(
+            root, f"https://{host}:{port}/probe", host, port, onepassword_values=onepassword_values
+        )
         assert response.status_code == 503 and response.json()["state"] == "not_sent"
         if entries:
             assert connections == []

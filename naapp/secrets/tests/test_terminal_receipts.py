@@ -76,8 +76,10 @@ async def assert_terminal_receipt(root, pending, expected):
 
 
 @pytest.mark.parametrize("kind", ["use", "run"])
-async def test_revoked_approval_closes_as_cancelled_for_status_and_exact_replay(root, kind):
-    pending = await approval_request(root, kind)
+async def test_revoked_approval_closes_as_cancelled_for_status_and_exact_replay(
+    onepassword_values, root, kind
+):
+    pending = await approval_request(root, kind, onepassword_values=onepassword_values)
     db = root[0].runtime.db()
     approval_id = await db.fetch_value("SELECT approval_id FROM approvals")
     await contain(root, "revoke-approvals", approval_id)
@@ -101,8 +103,10 @@ async def test_revoked_approval_closes_as_cancelled_for_status_and_exact_replay(
     )
 
 
-async def test_stored_run_preparation_refusal_is_a_readable_receipt_not_a_new_503(root):
-    pending = await admitted_run(root)
+async def test_stored_run_preparation_refusal_is_a_readable_receipt_not_a_new_503(
+    onepassword_values, root
+):
+    pending = await admitted_run(root, onepassword_values=onepassword_values)
     _, client, configured, *_ = root
     db = root[0].runtime.db()
     await contain(root, "disable-secret", SECRET["secret_id"])

@@ -34,13 +34,13 @@ from nacl.signing import SigningKey
 
 from aweb_secrets import jobs, records, runners
 from aweb_secrets.composition import create_service
-from aweb_secrets.custody import Custody, LocalKeyFileProvider, encode_value
+from aweb_secrets.custody import Custody, LocalKeyFileProvider
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.manifest import MANIFEST_PATH
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.policy import Policy
-from aweb_secrets.secret import SecretRecord
+from aweb_secrets.secret import SecretBackend, SecretRecord
 from tests.human_owner import apply_holder, fixture_principal, member_key
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
 from tests.test_composition import settings
@@ -429,20 +429,22 @@ class ProductionRequest:
 
 
 async def _activate_request_value(
-    tx, *, custody, installation_id: str, team_id: str, credential: str
+    *, db, custody, onepassword_values, installation_id: str, team_id: str, credential: str
 ):
-    await records.create_secret(tx, installation_id, team_id, SecretRecord.from_after(SECRET))
-    version = await custody.sealer.ingest(
-        tx,
+    record = SecretRecord.from_after({**SECRET, "backend": SecretBackend.ONEPASSWORD})
+    async with db.transaction() as tx:
+        await records.create_secret(tx, installation_id, team_id, record)
+    await onepassword_values.activate(
+        db=db,
+        custody=custody,
         installation_id=installation_id,
         team_id=team_id,
-        secret_id=SECRET["secret_id"],
-        value=encode_value("bearer", {"value": credential}),
+        record=record,
+        values={"value": credential},
     )
-    await records.set_active_version(tx, installation_id, team_id, SECRET["secret_id"], version)
 
 
-async def approval_request(root, kind):
+async def approval_request(root, kind, *, onepassword_values):
     """Seed confirmed metadata, then mint through the actual signed root tool.
 
     Configuration is fixture state; B1, admission, B2 association/audit and TLS
@@ -465,15 +467,16 @@ async def approval_request(root, kind):
     runner_signing_key = SigningKey.generate()
     runner_encryption_key = X25519PrivateKey.generate()
     credential = uuid4().hex
+    await _activate_request_value(
+        db=db,
+        custody=custody,
+        onepassword_values=onepassword_values,
+        installation_id=installation_id,
+        team_id=member.team_id,
+        credential=credential,
+    )
     async with db.transaction() as tx:
         await records.create_policy(tx, installation_id, policy, team_id=member.team_id)
-        await _activate_request_value(
-            tx,
-            custody=custody,
-            installation_id=installation_id,
-            team_id=member.team_id,
-            credential=credential,
-        )
         await records.create_grant(
             tx,
             installation_id,
@@ -575,9 +578,11 @@ async def approval_request(root, kind):
 
 
 @pytest.mark.parametrize("kind,path", [("use", "/use-approvals"), ("run", "/run-approvals")])
-async def test_production_email_dispatch_uses_migrated_and_mounted_providers(root, kind, path):
+async def test_production_email_dispatch_uses_migrated_and_mounted_providers(
+    onepassword_values, root, kind, path
+):
     service, client, configured, *_ = root
-    pending = await approval_request(root, kind)
+    pending = await approval_request(root, kind, onepassword_values=onepassword_values)
     token = pending.token
     db = service.runtime.db()
     # Reconciliation is deliberately uncomposed: routing must not query its tables.

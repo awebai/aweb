@@ -22,9 +22,9 @@ async def member_replay(root, pending):
     )
 
 
-async def decide_run(root, *, decision):
+async def decide_run(root, *, decision, onepassword_values):
     service, client, configured, member, *_ = root
-    pending = await approval_request(root, "run")
+    pending = await approval_request(root, "run", onepassword_values=onepassword_values)
     human = configured.console_origin
     db = service.runtime.db()
     before = await db.fetch_all("SELECT payload,signature FROM outbox_events ORDER BY position")
@@ -96,8 +96,8 @@ async def decide_run(root, *, decision):
     return pending
 
 
-async def admitted_run(root) -> ProductionRequest:
-    pending = await decide_run(root, decision="approve")
+async def admitted_run(root, *, onepassword_values) -> ProductionRequest:
+    pending = await decide_run(root, decision="approve", onepassword_values=onepassword_values)
     service, *_ = root
     admitted = await member_replay(root, pending)
     assert admitted.status_code == 202 and admitted.json()["state"] == "admitted", (
@@ -109,8 +109,10 @@ async def admitted_run(root) -> ProductionRequest:
     return pending
 
 
-async def test_production_run_approval_uses_original_audit_and_requires_member_resubmission(root):
-    pending = await admitted_run(root)
+async def test_production_run_approval_uses_original_audit_and_requires_member_resubmission(
+    onepassword_values, root
+):
+    pending = await admitted_run(root, onepassword_values=onepassword_values)
     service, client, _, member, *_ = root
     db = service.runtime.db()
     assert await db.fetch_value("SELECT count(*) FROM dispatches") == 1
@@ -129,8 +131,10 @@ async def test_production_run_approval_uses_original_audit_and_requires_member_r
     assert await db.fetch_value("SELECT count(*) FROM dispatches") == 1
 
 
-async def test_production_rejected_run_cannot_be_admitted_or_release_a_credential(root):
-    pending = await decide_run(root, decision="reject")
+async def test_production_rejected_run_cannot_be_admitted_or_release_a_credential(
+    onepassword_values, root
+):
+    pending = await decide_run(root, decision="reject", onepassword_values=onepassword_values)
     response = await member_replay(root, pending)
     assert response.json()["state"] == "refused" and response.json()["code"] == "approval_denied"
     db = root[0].runtime.db()

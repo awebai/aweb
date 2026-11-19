@@ -9,6 +9,7 @@ import pytest
 
 from aweb_secrets import records, run_pin_store
 from aweb_secrets.custody import SealContext, encode_value
+from aweb_secrets.secret import SecretBackend
 from tests.test_run_dispatch_service import report, setup
 from tests.test_use_approvals import SECRET, TEAM
 from tests.test_use_approvals import uses as uses
@@ -25,14 +26,14 @@ async def stored_result(context, dispatch_ref):
 
 @pytest.mark.parametrize("effect", ["rotate", "destroy", "disable", "installation"])
 async def test_value_narrowing_disposes_pins_before_any_report_and_withholds(uses, effect):
-    context = await setup(uses)
+    context = await setup(uses, backend=SecretBackend.NATIVE)
     _, _, wire = await context.assigned()
     db, custody, scope = uses.world.db, uses.world.custody, uses.world.admitted
     pinned = SealContext(scope.installation_id, TEAM, SECRET["secret_id"], 1)
     assert await db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_pins}}") == 1
     other = other_wire = other_dispatch = None
     if effect != "installation":
-        other = await setup(uses, variant="unrelated")
+        other = await setup(uses, backend=SecretBackend.NATIVE, variant="unrelated")
         _, _, other_wire = await other.assigned()
         other_dispatch = await db.fetch_value(
             "SELECT dispatch_id FROM {{tables.run_contexts}} WHERE dispatch_ref=$1",
@@ -101,7 +102,7 @@ async def test_value_narrowing_disposes_pins_before_any_report_and_withholds(use
 
 
 async def test_disposal_during_native_reopen_withholds_the_original_result(uses):
-    context = await setup(uses)
+    context = await setup(uses, backend=SecretBackend.NATIVE)
     _, _, wire = await context.assigned()
     db, scope = uses.world.db, uses.world.admitted
     dispatch_id = await db.fetch_value("SELECT dispatch_id FROM {{tables.run_redaction_pins}}")
@@ -145,7 +146,7 @@ async def test_disposal_during_native_reopen_withholds_the_original_result(uses)
 
 @pytest.mark.parametrize("wait_stage", ["dispatch", "outbox", "pin_disposal"])
 async def test_original_database_deadline_expiring_during_a_wait_withholds(uses, wait_stage):
-    context = await setup(uses, job_timeout_s=1)
+    context = await setup(uses, backend=SecretBackend.NATIVE, job_timeout_s=1)
     context.arguments["assignment_ttl"] = timedelta(seconds=2)
     context.arguments["sweep_margin"] = timedelta(milliseconds=100)
     _, _, wire = await context.assigned()
@@ -203,7 +204,7 @@ async def test_original_database_deadline_expiring_during_a_wait_withholds(uses,
 
 @pytest.mark.parametrize("isolation", ["REPEATABLE READ", "SERIALIZABLE"])
 async def test_pin_disposal_refuses_a_stale_snapshot_without_switching_it(uses, isolation):
-    context = await setup(uses)
+    context = await setup(uses, backend=SecretBackend.NATIVE)
     await context.assigned()
     db, scope = uses.world.db, uses.world.admitted
     async with db.transaction() as tx:
@@ -218,7 +219,7 @@ async def test_pin_disposal_refuses_a_stale_snapshot_without_switching_it(uses, 
 
 
 async def test_failed_destruction_rolls_back_pin_disposal_with_the_value(uses):
-    context = await setup(uses)
+    context = await setup(uses, backend=SecretBackend.NATIVE)
     _, _, wire = await context.assigned()
     db, scope = uses.world.db, uses.world.admitted
 
@@ -252,7 +253,7 @@ async def test_confirmed_uninstall_disposes_assignment_keys_in_its_retirement_tr
     from aweb_secrets.app import installation_fence
     from tests.test_reinstall import TeamServer, _grant
 
-    context = await setup(uses)
+    context = await setup(uses, backend=SecretBackend.NATIVE)
     await context.assigned()
     db, scope = uses.world.db, uses.world.admitted
     await apply_console_migrations(db)
@@ -271,7 +272,7 @@ async def test_confirmed_uninstall_disposes_assignment_keys_in_its_retirement_tr
 
 @pytest.mark.parametrize("terminal", ["sweep", "deregister"])
 async def test_terminal_run_settlement_disposes_original_assignment_keys(uses, terminal):
-    context = await setup(uses)
+    context = await setup(uses, backend=SecretBackend.NATIVE)
     await context.assigned()
     db, scope = uses.world.db, uses.world.admitted
     assert await db.fetch_value("SELECT count(*) FROM {{tables.run_redaction_pins}}") == 1
@@ -294,7 +295,7 @@ async def test_terminal_run_settlement_disposes_original_assignment_keys(uses, t
 
 
 async def test_reopen_budget_does_not_restart_after_a_delayed_real_preflight(uses):
-    context = await setup(uses, job_timeout_s=1)
+    context = await setup(uses, backend=SecretBackend.NATIVE, job_timeout_s=1)
     context.arguments["assignment_ttl"] = timedelta(seconds=2)
     context.arguments["sweep_margin"] = timedelta(milliseconds=100)
     _, _, wire = await context.assigned()
@@ -346,9 +347,11 @@ async def test_ordinary_grant_revocation_disposes_only_its_original_assignment(u
     from aweb_secrets.revisions import config_revision
     from tests.test_containment_service import act, service
 
-    original = await setup(uses)
+    original = await setup(uses, backend=SecretBackend.NATIVE)
     _, _, first_wire = await original.assigned()
-    other = await setup(uses, variant="independent", reuse_source=original)
+    other = await setup(
+        uses, backend=SecretBackend.NATIVE, variant="independent", reuse_source=original
+    )
     _, _, other_wire = await other.assigned()
     db, scope = uses.world.db, uses.world.admitted
     first_id = await db.fetch_value(

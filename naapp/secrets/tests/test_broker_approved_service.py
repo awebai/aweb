@@ -23,11 +23,12 @@ from fastapi import Request, Response
 
 from aweb_secrets import records
 from aweb_secrets.broker_service import BrokerRequests
-from aweb_secrets.custody import apply_custody_migrations, encode_value
+from aweb_secrets.custody import apply_custody_migrations
 from aweb_secrets.custody.opening import UseSecretOpener
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.member_types import MemberSubmission
 from aweb_secrets.response_audit import ResponseKey
+from aweb_secrets.secret import SecretBackend, SecretRecord
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies
 from aweb_secrets.use_audit import UseApprovalAudit
@@ -55,11 +56,12 @@ async def setup(
     availability=None,
     response_budget_bytes=None,
 ):
+    record = SecretRecord.from_after({**SECRET, "backend": SecretBackend.ONEPASSWORD})
     if owner:
-        await install(uses, approvers=[f"owner:{ALICE.principal_did}"])
+        await install(uses, secret_record=record, approvers=[f"owner:{ALICE.principal_did}"])
     else:
         await designate(uses, "finance", "finance@acme.com")
-        await install(uses)
+        await install(uses, secret_record=record)
     db = uses.world.db
     for migration in (
         apply_dispatch_migrations,
@@ -105,17 +107,17 @@ async def setup(
     )
     custody = uses.world.custody
     scope = uses.world.admitted
+    if uses.values is None:
+        raise AssertionError("the broker world requires its SDK boundary")
+    await uses.values.activate(
+        db=db,
+        custody=custody,
+        installation_id=scope.installation_id,
+        team_id=TEAM,
+        record=record,
+        values={"value": upstream.creds.bearer},
+    )
     async with db.transaction() as tx:
-        version = await custody.sealer.ingest(
-            tx,
-            installation_id=scope.installation_id,
-            team_id=TEAM,
-            secret_id=SECRET["secret_id"],
-            value=encode_value("bearer", {"value": upstream.creds.bearer}),
-        )
-        await records.set_active_version(
-            tx, scope.installation_id, TEAM, SECRET["secret_id"], version
-        )
         await records.create_destination(
             tx,
             scope.installation_id,

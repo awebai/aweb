@@ -16,7 +16,7 @@ LIMIT = POLICY_BODY["result"]["max_bytes"]
 
 
 async def test_capacity_refuses_immediately_before_send_and_preserves_resubmission(
-    db, fence, tmp_path
+    onepassword_values, db, fence, tmp_path
 ):
     async with running_upstream(tmp_path) as upstream:
         entered = {name: asyncio.Event() for name in ("one", "two")}
@@ -40,6 +40,7 @@ async def test_capacity_refuses_immediately_before_send_and_preserves_resubmissi
             upstream,
             response_budget_bytes=2 * LIMIT,
             policy_body={**POLICY_BODY, "rate": []},
+            onepassword_values=onepassword_values,
         )
 
         def call(name):
@@ -89,7 +90,7 @@ async def test_capacity_refuses_immediately_before_send_and_preserves_resubmissi
 
 @pytest.mark.parametrize("exit_path", ["success", "stream_failure", "cancelled"])
 async def test_response_capacity_is_released_after_success_failure_and_cancellation(
-    db, fence, tmp_path, exit_path
+    onepassword_values, db, fence, tmp_path, exit_path
 ):
     async with running_upstream(tmp_path) as upstream:
         entered, release = asyncio.Event(), asyncio.Event()
@@ -102,7 +103,14 @@ async def test_response_capacity_is_released_after_success_failure_and_cancellat
                 return _ResetResponse()
             return Response(b'{"ok":true}', media_type="application/json")
 
-        service = await setup(db, fence, tmp_path, upstream, response_budget_bytes=LIMIT)
+        service = await setup(
+            db,
+            fence,
+            tmp_path,
+            upstream,
+            response_budget_bytes=LIMIT,
+            onepassword_values=onepassword_values,
+        )
         sender = asyncio.create_task(
             service.submit(
                 secret=SECRET["ref"],

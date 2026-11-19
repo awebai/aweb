@@ -39,6 +39,7 @@ def unused_run_service():
 
 
 async def test_actual_guard_binds_submission_and_status_never_sends(
+    onepassword_values,
     registry,
     test_db_factory,
     tmp_path,
@@ -84,7 +85,12 @@ async def test_actual_guard_binds_submission_and_status_never_sends(
         db = service.runtime.db()
         fence = InstallationFence(db, app_id="secrets", grants=grants)
         async with running_upstream(tmp_path) as upstream:
-            shared.update(broker=await setup(db, fence, tmp_path, upstream), fence=fence)
+            shared.update(
+                broker=await setup(
+                    db, fence, tmp_path, upstream, onepassword_values=onepassword_values
+                ),
+                fence=fence,
+            )
             await _install(
                 db,
                 installation_id=INSTALLATION,

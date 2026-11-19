@@ -18,10 +18,11 @@ from aweb_secrets import runners
 from aweb_secrets.custody import decode_value
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_protocol import RunnerRefused, canonical
+from aweb_secrets.secret import SecretBackend
 from tests.run_world import RunWorld
 from tests.run_world import setup as setup_world
 from tests.test_broker_audit import envelopes
-from tests.test_use_approvals import TEAM
+from tests.test_use_approvals import SECRET_ID, TEAM
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
 from tests.test_use_audit import targets
@@ -43,6 +44,7 @@ class Context(RunWorld):
 async def setup(
     uses,
     *,
+    backend: SecretBackend = SecretBackend.ONEPASSWORD,
     approval_required=False,
     producer_clock=None,
     job_timeout_s=None,
@@ -52,6 +54,7 @@ async def setup(
 ):
     original = await setup_world(
         uses,
+        backend=backend,
         approval_required=approval_required,
         producer_clock=producer_clock,
         job_timeout_s=job_timeout_s,
@@ -77,6 +80,15 @@ async def test_idle_claim_consumes_nonce_once_without_creating_work(uses):
 async def test_one_admitted_run_replays_the_same_signed_sealed_assignment(uses):
     context = await setup(uses)
     _, first, wire = await context.assigned()
+    if uses.values is None:
+        raise AssertionError("the runner world requires its SDK boundary")
+    item = uses.values.item(
+        installation_id=uses.world.admitted.installation_id,
+        team_id=TEAM,
+        secret_id=SECRET_ID,
+    )
+    # Staging, claim observation and pinned release must use distinct SDK reads.
+    assert item.reads == [7, 7, 7]
     payload = wire["assignment"]
     context.arguments["service_key"].verify_key.verify(
         b"aweb.secrets.runner-assignment/1\n" + canonical(payload),
@@ -474,7 +486,7 @@ async def test_unavailable_dispatch_target_refuses_before_assignment_and_consume
 
 
 async def test_missing_original_native_value_refuses_durable_admission_before_release(uses):
-    context = await setup(uses)
+    context = await setup(uses, backend=SecretBackend.NATIVE)
     admitted = await context.service.submit(job=context.job.job_id, submission=context.submission)
     assert admitted.body["state"] == "admitted"
     from aweb_secrets.custody import SealContext
@@ -538,7 +550,6 @@ async def test_two_distinct_slots_wait_for_all_approvals_and_release_in_original
     from aweb_naapp_testing.webauthn import SoftAuthenticator
 
     from aweb_secrets import jobs, records
-    from aweb_secrets.custody import encode_value
     from aweb_secrets.grant import GrantRecord
     from aweb_secrets.policy import Policy
     from aweb_secrets.revisions import config_revision
@@ -551,24 +562,32 @@ async def test_two_distinct_slots_wait_for_all_approvals_and_release_in_original
     context = await setup(uses, approval_required=False)
     scope = uses.world.admitted
     other = SecretRecord.from_after(
-        {**SECRET, "secret_id": "sec_run_other01", "ref": "other-credential"}
+        {
+            **SECRET,
+            "secret_id": "sec_run_other01",
+            "ref": "other-credential",
+            "backend": SecretBackend.ONEPASSWORD,
+        }
     )
     body = context.job.after
     body["credentials"].append({"secret_ref": other.ref, "delivery": "durable", "mint": None})
     body["env"]["OTHER_API_KEY"] = {"$credential": other.ref, "field": "value"}
     job = jobs.JobDefinition.from_after(body)
     async with uses.world.db.transaction() as tx:
+        await records.create_secret(tx, scope.installation_id, TEAM, other)
+    if uses.values is None:
+        raise AssertionError("the runner world requires its SDK boundary")
+    await uses.values.activate(
+        db=uses.world.db,
+        custody=uses.world.custody,
+        installation_id=scope.installation_id,
+        team_id=TEAM,
+        record=other,
+        values={"value": secrets.token_urlsafe(32)},
+    )
+    async with uses.world.db.transaction() as tx:
         policy = Policy.from_body({**POLICY_BODY, "approval": "per_use", "approvers": ["finance"]})
         await records.create_policy(tx, scope.installation_id, policy, team_id=TEAM)
-        await records.create_secret(tx, scope.installation_id, TEAM, other)
-        version = await uses.world.custody.sealer.ingest(
-            tx,
-            installation_id=scope.installation_id,
-            team_id=TEAM,
-            secret_id=other.secret_id,
-            value=encode_value("bearer", {"value": secrets.token_urlsafe(32)}),
-        )
-        await records.set_active_version(tx, scope.installation_id, TEAM, other.secret_id, version)
         await jobs.create_job(tx, scope.installation_id, TEAM, job)
         await records.revoke_grant(tx, scope.installation_id, "grt_durable001")
         for index, secret_id in enumerate((SECRET["secret_id"], other.secret_id)):

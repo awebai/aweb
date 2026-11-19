@@ -21,10 +21,10 @@ from tests.test_broker_service import setup, submission
     [(SECRET["ref"], "refund"), (SECRET["ref"], "unknown"), ("unknown-secret", "refund")],
 )
 async def test_ungranted_named_definition_is_indistinguishable_from_missing(
-    db, fence, tmp_path, secret, operation
+    onepassword_values, db, fence, tmp_path, secret, operation
 ):
     async with running_upstream(tmp_path) as upstream:
-        service = await setup(db, fence, tmp_path, upstream)
+        service = await setup(db, fence, tmp_path, upstream, onepassword_values=onepassword_values)
         async with db.transaction() as tx:
             await records.create_operation(tx, INSTALLATION, TEAM, _template(upstream))
         original = submission(upstream)
