@@ -87,7 +87,8 @@ func streamToChannel(ctx context.Context, stream *awid.SSEStream) (<-chan sseRes
 	return ch, cleanup
 }
 
-// parseSSEEvent converts an SSE event to a chat Event.
+// isGrantTerminalEvent reports a stream event that ends the stream because
+// the identity grant behind it can no longer be used.
 func isGrantTerminalEvent(eventType EventType) bool {
 	switch strings.TrimSpace(string(eventType)) {
 	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
@@ -97,6 +98,8 @@ func isGrantTerminalEvent(eventType EventType) bool {
 	}
 }
 
+// parseSSEEvent converts an SSE event to a chat Event. It only decodes:
+// verification is the caller's (verifyStreamMessage).
 func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	ev := Event{
 		Type: EventType(sseEvent.Event),
