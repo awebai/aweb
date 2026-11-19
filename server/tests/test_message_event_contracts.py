@@ -174,13 +174,16 @@ def test_inbound_federation_preserves_its_distinct_documented_context(kind, mode
 
 
 @pytest.mark.parametrize("mode", list(ContentMode))
-def test_acknowledgement_context_retains_the_existing_identity_fields(mode):
+@pytest.mark.parametrize("alias,from_alias", [("recipient", "sender"), (None, None)])
+def test_acknowledgement_context_retains_the_existing_identity_fields(
+    mode, alias, from_alias
+):
     dto = MessageAcknowledgedContext(
         team_id=None,
         agent_id=None,
-        alias="recipient",
+        alias=alias,
         message_id="message",
-        from_alias="sender",
+        from_alias=from_alias,
         subject="",
         content_mode=mode,
     )
@@ -188,9 +191,9 @@ def test_acknowledgement_context_retains_the_existing_identity_fields(mode):
     assert dto.to_context() == {
         "team_id": None,
         "agent_id": None,
-        "alias": "recipient",
+        "alias": alias,
         "message_id": "message",
-        "from_alias": "sender",
+        "from_alias": from_alias,
         "subject": "",
         "content_mode": mode.value,
     }

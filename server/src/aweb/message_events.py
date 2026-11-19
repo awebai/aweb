@@ -202,9 +202,9 @@ class MessageAcknowledgedContext:
     event_type: ClassVar[MutationEventType] = MutationEventType.MAIL_ACKNOWLEDGED
     team_id: str | None
     agent_id: str | None
-    alias: str
+    alias: str | None
     message_id: str
-    from_alias: str
+    from_alias: str | None
     subject: str
     content_mode: ContentMode
 
