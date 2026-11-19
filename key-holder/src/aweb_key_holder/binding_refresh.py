@@ -50,7 +50,7 @@ class HolderBindingRefresher:
     async def packet(
         self, *, person: str, caller: Caller, body: WireObject, chain: list[WireObject]
     ) -> WireObject:
-        """README.md:148-155: re-sign the same registered keys, never re-enrol.
+        """README.md:183-200: re-sign the same registered keys, never re-enrol.
 
         The service owns the active-binding compare-and-swap. The holder retains
         its original B and historical evidence and signs only that credential set.

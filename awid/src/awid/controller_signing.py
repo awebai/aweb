@@ -857,7 +857,11 @@ def build_controller_payload(
     timestamp: str | None = None,
     registry_origin: str | None = None,
 ) -> bytes:
-    """Rebuild exact signed bytes from a closed operation, never arbitrary input."""
+    """Rebuild signed bytes under docs/awid-controller-requests.md:27-38.
+
+    The selected origin and external path are signed exactly; neither comes
+    from request headers, and caller eligibility remains with the holder.
+    """
     try:
         return _build_controller_payload(
             request,

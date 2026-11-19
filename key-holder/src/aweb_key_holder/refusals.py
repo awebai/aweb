@@ -1,6 +1,6 @@
 """Holder-owned failures and the explicit shared-library HTTP boundary.
 
-The key-holder README's refusal contract distinguishes caller input, authority,
+The key-holder README.md:202-208 refusal contract distinguishes caller input, authority,
 conflicting state and unavailable infrastructure. A new unmapped library code is
 an internal failure, never an accusation of invalid caller credentials.
 """
