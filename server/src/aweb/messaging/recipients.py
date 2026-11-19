@@ -212,8 +212,9 @@ async def _resolve_address_identity(
             authority_controller_did=resolved_recipient_controller_did(resolution),
         )
 
-    # Local fallback requires the same visibility and signed-recipient rule as
-    # the first local lookup. An absent registry grants no new key.
+    # A local projection supplies residence, not visibility or membership.
+    # The caller still applies delivery policy and signed-recipient binding;
+    # an absent registry grants no new key.
     local = await _local_recipient_at_address(db, domain=domain, name=name)
     if local is None:
         if await namespace_exists(db, domain):

@@ -13,6 +13,7 @@ from aweb.service_errors import (
     INTERNAL_SERVICE_ERROR_MESSAGE,
 )
 from aweb.application_state import RegistryClientUnavailable
+from aweb.messaging.delivery_policy import DeliveryPolicyRefused
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import (
@@ -95,6 +96,8 @@ def send_refusal(
     identity holds that name.
     """
     require_send_refusal_mode(mode)
+    if isinstance(exc, DeliveryPolicyRefused):
+        return json.dumps({"error": exc.detail, "reason": exc.code.value})
     if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
         return json.dumps({"error": exc.message, "reason": exc.code})
     if isinstance(exc, RecipientAddressNotFound) and address:
