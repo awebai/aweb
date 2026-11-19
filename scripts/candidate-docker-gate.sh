@@ -484,8 +484,12 @@ docker run --rm --init \
   -w "$checkout" \
   "$IMAGE" \
   bash scripts/candidate-suite.sh "$pending" \
-  2>&1 | tee "$LOG_DIR/gate.log"
-status="${PIPESTATUS[0]}"
+  2>&1 | tee "$LOG_DIR/gate.log" &
+# Bash dispatches TERM while waiting on an asynchronous pipeline, allowing
+# cleanup to stop the owned runner and all its lanes before removing resources.
+runner_pipeline=$!
+wait "$runner_pipeline"
+status=$?
 set -e
 
 if [[ "$status" -ne 0 ]]; then
@@ -519,19 +523,8 @@ record() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$KEY" "$stage" "$result" "$SOURCE_SHA" "" "$log" "$OWNER" "$started" "$finished" "$note" >>"$LEDGER"
 }
-for stage in $pending; do
-  if [[ -f "$LOG_DIR/summary.tsv" ]] && grep -q "^$stage"$'\tPASSED\t' "$LOG_DIR/summary.tsv"; then
-    record "$stage" passed "$LOG_DIR/$stage.log"
-  elif [[ -f "$LOG_DIR/$stage.log" ]]; then
-    record "$stage" failed "$LOG_DIR/$stage.log"
-    status=1
-    break
-  else
-    record setup failed "$run_log"
-    status=1
-    break
-  fi
-done
+source "$ROOT/scripts/candidate-stage-lanes.sh"
+record_completed_stages || status=1
 if [[ ! -f "$LOG_DIR/wrapper-verdict.log" ]] \
    || ! grep -q '^candidate gate cleanup PASSED$' "$LOG_DIR/wrapper-verdict.log"; then
   record cleanup failed "$run_log"

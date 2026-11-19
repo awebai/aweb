@@ -94,34 +94,31 @@ integration() {
   run test-oci-exact-publish
 }
 
-# Prepare disposable outputs once when their first consumer is reached, even
-# if the stage that previously built them was reused from the ledger.
+# Prepare disposable outputs when a consumer is reached, including reused stages.
 node_ready=0
 cli_ready=0
+prepare_stage() {
+  case "$1" in
+    artifacts|integration)
+      if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; fi
+      if [[ "$cli_ready" == 0 ]]; then run build; fi ;;
+  esac
+}
+source "$(dirname "$stage_owner")/../../candidate-stage-lanes.sh"
+batches="$(python3 "$stage_owner" --batches "$stages")"
 : > "$log_dir/summary.tsv"
-for stage in $stages; do
-  case "$stage" in
-    artifacts|integration)
-      if [[ "$node_ready" == 0 ]]; then run _candidate-node-deps; node_ready=1; fi ;;
-  esac
-  case "$stage" in
-    artifacts|integration)
-      if [[ "$cli_ready" == 0 ]]; then run build; cli_ready=1; fi ;;
-  esac
-  started=$SECONDS
-  set +e
-  ( set -e; "$stage" ) 2>&1 | tee "$log_dir/$stage.log"
-  status=${PIPESTATUS[0]}
-  set -e
-  result=PASSED
-  [[ "$status" == 0 ]] || result=FAILED
-  coverage=""
-  if [[ "$stage" == user-paths && -f "$log_dir/user-paths/coverage-summary.txt" ]]; then
-    coverage="$(cat "$log_dir/user-paths/coverage-summary.txt")"
-    printf 'user-paths coverage: %s\n' "$coverage"
+# The parent alone writes the canonical summary, including both parallel results.
+trap collect_stage_results EXIT
+while IFS= read -r batch; do
+  if [[ "$batch" == 'unit integration' ]]; then
+    run_parallel_stages
+  else
+    run_stage "$batch"
+    case "$batch" in
+      unit) node_ready=1 ;;
+      artifacts) node_ready=1; cli_ready=1 ;;
+    esac
   fi
-  printf '%s\t%s\t%s.log\t%ss\t%s\n' "$stage" "$result" "$stage" "$((SECONDS-started))" "$coverage" >> "$log_dir/summary.tsv"
-  [[ "$status" == 0 ]] || exit "$status"
-  [[ "$stage" != unit ]] || node_ready=1
-done
+  collect_stage_results
+done <<< "$batches"
 printf '\ncandidate suite PASSED\n'

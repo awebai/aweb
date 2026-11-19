@@ -193,6 +193,16 @@ normal wrapper; the branch need not already be on main. The stage selection is
 owned by `scripts/vm-gate/vm_gate/aweb_stages.py`, used by the wrapper, suite and
 VM adapter. `AWEB_CANDIDATE_STAGES=all` explicitly selects the same complete run.
 
+When unit and integration are both selected, checks, user-paths and artifacts
+finish first. Unit preparation then builds its private source/dependency image
+and unpublished PostgreSQL/Redis services. Only after that readiness event does
+integration start in the outer runner. The lanes share no writable test source,
+cache, database or network namespace. Unit's runner has neither a host source
+mount nor a Docker socket. Artifact builder pruning finishes before either lane
+starts. Both lanes finish before scoped cleanup, and each keeps its own log,
+wall time and verdict even when the other fails. Quotas and selected tests do not
+change; parallel execution is not itself proof of a speed target.
+
 `AWEB_CANDIDATE_STAGES='checks unit' make candidate-gate` remains available for
 focused development. It prints **partial** and is not landing qualification.
 Release candidates always require all five stages, even if that environment

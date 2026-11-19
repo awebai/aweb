@@ -21,6 +21,26 @@ class StageSelectionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), ALL)
 
+    def test_all_keeps_artifact_mutations_before_parallel_unit_and_integration(self):
+        result = subprocess.run(
+            ["python3", str(OWNER), "--batches", "all"], capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            ["checks", "user-paths", "artifacts", "unit integration"],
+        )
+
+    def test_single_selected_lane_stays_a_complete_stage(self):
+        for selection in ("unit", "integration", "unit artifacts"):
+            result = subprocess.run(
+                ["python3", str(OWNER), "--batches", selection],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(), selection.split())
+
     def test_explicit_subset_is_partial(self):
         result = subprocess.run(
             ["python3", str(OWNER), "--coverage", "checks unit"],

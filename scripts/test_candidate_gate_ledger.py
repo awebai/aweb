@@ -94,6 +94,7 @@ def prepare_committed_fixture(
     for name in (
         "candidate-docker-gate.sh",
         "candidate-suite.sh",
+        "candidate-stage-lanes.sh",
         "candidate-cleanup.sh",
         "candidate-host-pressure.py",
         "candidate-network.py",
@@ -141,6 +142,7 @@ e2e-user-paths:
 \t@python3 -c 'import hashlib,json,os,pathlib; raw=pathlib.Path(os.environ["USER_PATHS_LATEST_METADATA"]).read_bytes(); digest=hashlib.sha256(raw).hexdigest(); assert digest == os.environ["USER_PATHS_LATEST_SHA256"]; metadata=json.loads(raw); assert metadata["version"]; print("runner frozen released input:", digest, metadata["version"])'
 _candidate-unit-suites:
 \t@test "$$(psql -h "$$TEST_DB_HOST" -U postgres -d postgres -Atc 'SELECT 6 * 7')" = 42
+\t@python3 -c 'import os; fd=os.environ.get("AWEB_UNIT_READY_FD"); fd is None or os.write(int(fd), b"READY\\n")'
 _candidate-artifact-server:
 \t@docker build -f candidate-gate/proof.Dockerfile -t "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" candidate-gate
 \t@docker run --rm "$$AWEB_CANDIDATE_RESOURCE_LABEL-proof" sh -c 'test "$$(echo 42)" = 42'

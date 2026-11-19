@@ -13,6 +13,37 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class CandidatePytestTimingTest(unittest.TestCase):
+    def test_isolated_suite_retains_passing_case_rows_in_parent_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "pytest.ini").write_text("[pytest]\n")
+            (directory / "test_case.py").write_text(
+                "def test_case():\n    assert True\n"
+            )
+            program = (
+                "from pathlib import Path; import sys; "
+                + f"sys.path.insert(0, {str(ROOT / 'scripts/test-egress')!r}); "
+                + "from docker import run_logged_suite; "
+                + "raise SystemExit(run_logged_suite(evidence=Path('.'), "
+                + "command=[sys.executable, '-m', 'pytest', '-q', '--durations=0', "
+                + "'--durations-min=0', 'test_case.py']))"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", program],
+                cwd=directory,
+                env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            log = (directory / "suite.log").read_text()
+            self.assertIn(log, result.stdout)
+            for phase in ("setup", "call", "teardown"):
+                self.assertRegex(
+                    result.stdout, rf"\d+\.\d+s {phase}\s+test_case.py::test_case"
+                )
+
     def run_suite(self, source: str) -> subprocess.CompletedProcess[str]:
         # Read the real image setting, then exercise pytest itself without Docker.
         options = []

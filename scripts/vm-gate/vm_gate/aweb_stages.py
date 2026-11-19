@@ -21,6 +21,7 @@ class Coverage(str, Enum):
 class OutputFormat(Enum):
     STAGES = "stages"
     COVERAGE = "coverage"
+    BATCHES = "batches"
 
 
 STAGES = tuple(Stage)
@@ -44,6 +45,16 @@ def selection_coverage(stages: tuple[Stage, ...]) -> Coverage:
     return Coverage.FULL if stages == STAGES else Coverage.PARTIAL
 
 
+def execution_batches(stages: tuple[Stage, ...]) -> tuple[tuple[Stage, ...], ...]:
+    """docs/release.md: finish shared preparation before the isolated long lanes."""
+    if Stage.UNIT in stages and Stage.INTEGRATION in stages:
+        preceding = tuple(
+            (stage,) for stage in stages if stage not in (Stage.UNIT, Stage.INTEGRATION)
+        )
+        return (*preceding, (Stage.UNIT, Stage.INTEGRATION))
+    return tuple((stage,) for stage in stages)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -52,6 +63,12 @@ def main() -> int:
         action="store_const",
         const=OutputFormat.COVERAGE,
         default=OutputFormat.STAGES,
+    )
+    parser.add_argument(
+        "--batches",
+        dest="output_format",
+        action="store_const",
+        const=OutputFormat.BATCHES,
     )
     parser.add_argument("selection", nargs="?")
     args = parser.parse_args()
@@ -62,6 +79,8 @@ def main() -> int:
         return 2
     if args.output_format is OutputFormat.COVERAGE:
         print(selection_coverage(names).value)
+    elif args.output_format is OutputFormat.BATCHES:
+        print("\n".join(" ".join(batch) for batch in execution_batches(names)))
     else:
         print(" ".join(names))
     return 0

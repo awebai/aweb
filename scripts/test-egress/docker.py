@@ -15,6 +15,8 @@ import shutil
 import tempfile
 import time
 import uuid
+import os
+import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 _worker_spec = importlib.util.spec_from_file_location(
@@ -216,12 +218,18 @@ def require_memory_postgres(container, port=5432):
     return storage
 
 
-def run_isolated_suites(
-    *, evidence: Path, runner: str, dns: str, command: list[str]
-) -> int:
+def notify_isolated_unit_ready() -> None:
+    """docs/release.md: overlapping stages must not share writable test state."""
+    descriptor = os.environ.get("AWEB_UNIT_READY_FD")
+    if descriptor is not None:
+        os.write(int(descriptor), b"READY\n")
+
+
+def run_logged_suite(*, evidence: Path, command: list[str]) -> int:
+    """Retain every case's output in both the unit evidence and parent stage log."""
     with (evidence / "suite.log").open("w") as log:
         result = subprocess.run(
-            ["docker", "exec", runner, *command],
+            command,
             stdout=log,
             stderr=subprocess.STDOUT,
         )
@@ -229,11 +237,21 @@ def run_isolated_suites(
         f"Test child exit status: {result.returncode}; evidence: {evidence}",
         flush=True,
     )
-    if result.returncode:
-        print(
-            "\n".join((evidence / "suite.log").read_text().splitlines()[-100:]),
-            flush=True,
-        )
+    # The outer stage log survives even when a later stage is cancelled; keep
+    # successful case durations there as well as in the isolated evidence file.
+    with (evidence / "suite.log").open("rb") as log:
+        shutil.copyfileobj(log, sys.stdout.buffer)
+    sys.stdout.flush()
+    return result.returncode
+
+
+def run_isolated_suites(
+    *, evidence: Path, runner: str, dns: str, command: list[str]
+) -> int:
+    notify_isolated_unit_ready()
+    status = run_logged_suite(
+        evidence=evidence, command=["docker", "exec", runner, *command]
+    )
     if docker("inspect", "--format", "{{.State.Running}}", dns) != "true":
         raise RuntimeError("DNS sink exited during tests")
     report = evidence / "dns-denied.log.reported"
@@ -246,7 +264,7 @@ def run_isolated_suites(
     if denied:
         print("TEST DNS EGRESS DENIED:\n" + denied)
         return 1
-    return result.returncode
+    return status
 
 
 def main():
