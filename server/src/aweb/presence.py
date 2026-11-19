@@ -76,7 +76,7 @@ async def update_agent_presence(
     team_id: Optional[str] = None,
     repo_id: Optional[str] = None,
     agent_id: Optional[str] = None,
-    member_email: str = "",
+    member_email: Optional[str] = None,
     status: str = "active",
     current_branch: Optional[str] = None,
     role: Optional[str] = None,
@@ -97,7 +97,7 @@ async def update_agent_presence(
         role: Brief description of workspace purpose (max 50 chars).
         canonical_origin: Normalized repo origin (e.g. "github.com/org/repo").
         timezone: IANA timezone (e.g. "Europe/Madrid"). Preserved when None.
-        ttl_seconds: How long until presence expires if not refreshed. Default 5 minutes.
+        ttl_seconds: How long until presence expires if not refreshed. Defaults to the configured heartbeat window at each serving caller.
     """
     workspace_id = workspace_id or agent_id
     if not workspace_id:
@@ -109,16 +109,22 @@ async def update_agent_presence(
     fields = {
         "workspace_id": workspace_id,
         "alias": alias,
-        "human_name": human_name or "",
         "team_id": team_id or "",
-        "repo_id": repo_id or "",
-        "member_email": member_email,
-        "program": program or "",
-        "model": model or "",
         "status": status,
-        "current_branch": current_branch or "",
         "last_seen": now,
     }
+    # None means this heartbeat did not carry the coordinate. An explicit
+    # empty string still clears it; narrow heartbeats cannot erase richer ones.
+    for name, value in {
+        "human_name": human_name,
+        "repo_id": repo_id,
+        "member_email": member_email,
+        "program": program,
+        "model": model,
+        "current_branch": current_branch,
+    }.items():
+        if value is not None:
+            fields[name] = value
     if canonical_origin is not None:
         fields["canonical_origin"] = canonical_origin
     if role is not None and len(role) <= ROLE_MAX_LENGTH and is_valid_role(role):
