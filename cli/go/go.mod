@@ -6,7 +6,7 @@ require gopkg.in/yaml.v3 v3.0.1
 
 require (
 	filippo.io/edwards25519 v1.2.0
-	github.com/awebai/approval-service v0.0.0-20261119070133-b6e661a74cb0
+	github.com/awebai/approval-service v0.0.0-20261119084748-2aa792fd635c
 	github.com/charmbracelet/glamour v0.8.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/creack/pty v1.1.24
