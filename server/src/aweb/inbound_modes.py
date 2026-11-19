@@ -3,17 +3,24 @@
 Defaults belong to the provisioning caller. Delivery must reject absent policy
 instead of using this convenience normalizer's provisioning default.
 """
+
 from __future__ import annotations
 
 INBOUND_MODE_OPEN = "open"
 INBOUND_MODE_TEAM_AND_CONTACTS = "team_and_contacts"
 INBOUND_MODE_CONTACTS_ONLY = "contacts_only"
-INBOUND_MODES = frozenset({
-    INBOUND_MODE_OPEN, INBOUND_MODE_TEAM_AND_CONTACTS, INBOUND_MODE_CONTACTS_ONLY,
-})
+INBOUND_MODES = frozenset(
+    {
+        INBOUND_MODE_OPEN,
+        INBOUND_MODE_TEAM_AND_CONTACTS,
+        INBOUND_MODE_CONTACTS_ONLY,
+    }
+)
 
 
-def normalize_inbound_mode(value: str | None, *, default: str = INBOUND_MODE_OPEN) -> str:
+def normalize_inbound_mode(
+    value: str | None, *, default: str = INBOUND_MODE_OPEN
+) -> str:
     """Normalize a wire value, using the caller's default for missing/blank input.
 
     CLI hyphenated spellings are translated by the CLI before sending. Unknown
@@ -21,12 +28,18 @@ def normalize_inbound_mode(value: str | None, *, default: str = INBOUND_MODE_OPE
     """
     mode = (value or "").strip().lower() or default
     if mode not in INBOUND_MODES:
-        raise ValueError("inbound_mode must be one of open, team_and_contacts, contacts_only")
+        raise ValueError(
+            "inbound_mode must be one of open, team_and_contacts, contacts_only"
+        )
     return mode
 
 
 async def effective_inbound_mode(
-    db, did_aw: str, *, for_share: bool = False, for_update: bool = False,
+    db,
+    did_aw: str,
+    *,
+    for_share: bool = False,
+    for_update: bool = False,
     default: str | None = None,
 ) -> str:
     """Read the identity policy across every non-deleted membership.
@@ -49,7 +62,8 @@ async def effective_inbound_mode(
         SELECT agent_id, inbound_mode FROM {{tables.agents}}
         WHERE did_aw = $1 AND deleted_at IS NULL
         ORDER BY agent_id
-        """ + (" FOR UPDATE" if for_update else " FOR SHARE" if for_share else ""),
+        """
+        + (" FOR UPDATE" if for_update else " FOR SHARE" if for_share else ""),
         did_aw,
     )
     if not rows:
@@ -59,7 +73,11 @@ async def effective_inbound_mode(
     modes = {str(row.get("inbound_mode") or "").strip().lower() for row in rows}
     if not modes <= INBOUND_MODES:
         raise ForbiddenError("Recipient inbound_mode migration required")
-    for mode in (INBOUND_MODE_CONTACTS_ONLY, INBOUND_MODE_TEAM_AND_CONTACTS, INBOUND_MODE_OPEN):
+    for mode in (
+        INBOUND_MODE_CONTACTS_ONLY,
+        INBOUND_MODE_TEAM_AND_CONTACTS,
+        INBOUND_MODE_OPEN,
+    ):
         if mode in modes:
             return mode
     raise ForbiddenError("Recipient inbound_mode migration required")
@@ -89,5 +107,6 @@ async def set_identity_inbound_mode(tx, did_aw: str, mode: str) -> None:
         raise NotFoundError("Identity not found")
     await tx.execute(
         "UPDATE {{tables.agents}} SET inbound_mode = $2 WHERE did_aw = $1 AND deleted_at IS NULL",
-        did_aw, mode,
+        did_aw,
+        mode,
     )

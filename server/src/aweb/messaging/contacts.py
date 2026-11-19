@@ -16,7 +16,9 @@ CONTACT_STATUSES = {"pending", "active"}
 logger = logging.getLogger(__name__)
 
 
-def normalize_owner_dids(*, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[str]:
+def normalize_owner_dids(
+    *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> list[str]:
     values: list[str] = []
     if owner_did is not None:
         values.append(owner_did)
@@ -55,7 +57,9 @@ async def add_contact(
     if bound_did is not None and not bound_did.startswith("did:aw:"):
         raise ValidationError("Invalid contact_did_aw format")
     if (bound_did is None) != (controller_did is None):
-        raise ValidationError("Identity-bound contacts require DID and controller proof")
+        raise ValidationError(
+            "Identity-bound contacts require DID and controller proof"
+        )
     if controller_did is not None and not controller_did.startswith("did:key:z"):
         raise ValidationError("Invalid binding_controller_did format")
 
@@ -124,7 +128,9 @@ async def add_handle_contact(
     return _contact_row_to_dict(row)
 
 
-async def list_contacts(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[dict]:
+async def list_contacts(
+    db, *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> list[dict]:
     """List all contacts for an identity."""
     aweb_db = db.get_manager("aweb")
     owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
@@ -149,7 +155,9 @@ async def list_contacts(db, *, owner_did: str | None = None, owner_dids: list[st
     return [_contact_row_to_dict(r) for r in rows]
 
 
-async def get_contact_addresses(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> set[str]:
+async def get_contact_addresses(
+    db, *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> set[str]:
     """Return all contact_address values for an identity."""
     aweb_db = db.get_manager("aweb")
     owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
@@ -342,8 +350,14 @@ async def bind_contact_identity(
         current_did = str(current.get("contact_did_aw") or "").strip() or None
         if current_did != expected:
             raise ConflictError("Contact identity binding changed")
-        if current_did is not None and current_did != bound_did and not replacement_accepted:
-            raise ConflictError("Contact identity replacement requires explicit acceptance")
+        if (
+            current_did is not None
+            and current_did != bound_did
+            and not replacement_accepted
+        ):
+            raise ConflictError(
+                "Contact identity replacement requires explicit acceptance"
+            )
         row = await tx.fetch_one(
             """
             UPDATE {{tables.contacts}}
@@ -440,7 +454,9 @@ async def resolve_handle_contact_agent(
         "identity_scope": row["identity_scope"],
         "status": row["status"],
         "created_at": row["created_at"].isoformat(),
-        "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
+        "last_seen_at": row["last_seen_at"].isoformat()
+        if row["last_seen_at"]
+        else None,
     }
 
 
@@ -460,7 +476,13 @@ def is_address_in_contacts(address: str, contact_addresses: set[str]) -> bool:
     return False
 
 
-async def remove_contact(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None, contact_id: str) -> None:
+async def remove_contact(
+    db,
+    *,
+    owner_did: str | None = None,
+    owner_dids: list[str] | None = None,
+    contact_id: str,
+) -> None:
     """Remove a contact by ID. Idempotent (no error if not found).
 
     Raises ValidationError on invalid contact_id format.
@@ -492,7 +514,11 @@ def _normalize_handle_namespace(handle_namespace: str) -> str:
     namespace = normalize_hosted_handle_reference(handle_namespace)
     if namespace.startswith("@"):
         raise ValidationError("Invalid handle_namespace format")
-    if not namespace or "/" in namespace or not HANDLE_NAMESPACE_PATTERN.match(namespace):
+    if (
+        not namespace
+        or "/" in namespace
+        or not HANDLE_NAMESPACE_PATTERN.match(namespace)
+    ):
         raise ValidationError("Invalid handle_namespace format")
     return namespace
 

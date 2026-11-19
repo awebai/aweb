@@ -26,7 +26,9 @@ def authority_error_body(
     correlation_id: str,
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
-        "detail": error.detail if isinstance(error, RecipientNotResidentError) else error.reason,
+        "detail": error.detail
+        if isinstance(error, RecipientNotResidentError)
+        else error.reason,
         "reason": error.reason,
         "retryable": error.retryable,
         "correlation_id": correlation_id,
