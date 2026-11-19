@@ -17,6 +17,7 @@ from awid.dns_verify import DomainVerifier
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from awid.federation_errors import FederationAuthorityError
+from .application_state import RegistryClientUnavailable
 from .config import get_public_origin, get_settings
 from awid.log import canonical_server_origin
 from .connection_scope import ConnectionScopeMiddleware
@@ -451,6 +452,10 @@ def create_app(
         return JSONResponse(status_code=422, content=exc.body(
             correlation_id=request.headers.get("X-Correlation-ID"),
         ))
+
+    @app.exception_handler(RegistryClientUnavailable)
+    async def _registry_client_unavailable_handler(request: Request, exc: RegistryClientUnavailable):
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):

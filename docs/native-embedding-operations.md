@@ -206,6 +206,25 @@ reference; a host may place that same reference on its root/wrappers rather
 than copying native fields. The factory receives it after wake/federation
 construction, so it can bind its actual extended app to those serving handles.
 
+For a consumer that needs only the configured registry, use
+`aweb.application_state.application_registry_client(request.app.state)`.
+It returns the exact `RegistryClient` (including `CachedRegistryClient`)
+selected by the native resource reference. A wrapper's other registry field
+cannot override that reference. With no resource reference, the accessor uses
+the initialized native `awid_registry_client` state slot, so a host can consume
+this operation before converting its full native resource lifecycle.
+
+The accessor constructs no transports, clients, caches or origins and performs
+no health or registry read. Selecting configuration establishes neither
+readiness nor request authority. Missing or invalid selected configuration
+raises `RegistryClientUnavailable`, a `ServiceError` with `status_code=503`,
+`code="registry_client_unavailable"`, `message` and the corresponding
+`detail` dictionary. The native HTTP handler preserves that expected 503 and
+its configure/start instruction; generic unexpected service failures retain
+their existing masking. Hosted adapters preserve this refusal instead of
+turning it into a negative grant or presence result. A missing resource client
+never falls through to a wrapper's legacy client.
+
 Startup failures raise `EmbeddingStartupError` with named
 `ResourceStartupStage` and a safe actionable `NativeResourceReadiness` result;
 the actual cause is logged/chained. Partial startup and shutdown unwind native

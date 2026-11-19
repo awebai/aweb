@@ -1,14 +1,13 @@
 """Presence and request snapshots borrow the identical configured registry."""
 
-import pytest
 import httpx
-from fastapi import FastAPI
-from redis.asyncio import Redis
-
-from awid.registry import CachedRegistryClient, RegistryClient
+import pytest
 from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.embedding import EmbeddedResources, OutboxRecoveryOwnership, native_resources
 from aweb.service_errors import ServiceError
+from awid.registry import CachedRegistryClient, RegistryClient
+from fastapi import FastAPI
+from redis.asyncio import Redis
 
 
 @pytest.mark.asyncio
@@ -61,23 +60,28 @@ async def test_native_registry_reference_wins_over_all_conflicting_shadow_fields
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("resource_reference", [False, True])
-async def test_missing_selected_registry_is_one_typed_actionable_503(resource_reference):
+@pytest.mark.parametrize("selected_client", [None, "invalid registry client"])
+async def test_missing_selected_registry_is_one_typed_actionable_503(resource_reference, selected_client):
     app = FastAPI()
     redis = Redis.from_url("redis://unused:6379")
     shadow = RegistryClient(registry_url="https://shadow-registry.example.test")
     if resource_reference:
         app.state.awid_registry_client = shadow
         app.state.native_resources = EmbeddedResources(
-            api_app=FastAPI(), db_infra=None, redis=redis, registry_client=None,
+            api_app=FastAPI(), db_infra=None, redis=redis, registry_client=selected_client,
             public_origin="https://native.example.test", outbox_recovery=OutboxRecoveryOwnership.HOST,
             on_mutation=None,
         )
+    else:
+        app.state.awid_registry_client = selected_client
     before = dict(app.state._state)
     try:
         with pytest.raises(RegistryClientUnavailable) as refused:
             application_registry_client(app.state)
         assert isinstance(refused.value, ServiceError)
         assert refused.value.status_code == 503
+        assert refused.value.code == "registry_client_unavailable"
+        assert refused.value.message == refused.value.detail["message"]
         assert refused.value.detail["code"] == "registry_client_unavailable"
         assert refused.value.detail["message"].endswith(
             "Configure the serving registry client and start the application before retrying."
@@ -106,3 +110,22 @@ async def test_native_http_mapping_preserves_the_expected_configuration_503():
     assert response.json()["detail"]["message"].endswith(
         "Configure the serving registry client and start the application before retrying."
     )
+
+
+@pytest.mark.asyncio
+async def test_unknown_service_error_503_keeps_the_existing_generic_mask():
+    from aweb.api import create_app
+
+    class UnknownServiceError(ServiceError):
+        status_code = 503
+
+    app = create_app()
+
+    @app.get("/unknown-service-error-test")
+    async def unknown_failure():
+        raise UnknownServiceError("private upstream failure detail")
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/unknown-service-error-test")
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal server error"}
