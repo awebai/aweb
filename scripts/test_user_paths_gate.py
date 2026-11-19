@@ -19,7 +19,8 @@ def known_failure(case):
     message = ('sending message: recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel '
                'and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext')
     return dict(actor=sender, args=['chat', 'send-and-wait', receiver, case+'/'+'a'*32, '--e2ee', '--wait', '0'],
-                exit=1, response={'error': {'code': 'error', 'message': message}}, stderr=message+'\n')
+                exit=1, response={'error': {'code': 'error', 'message': message}}, stderr=message+'\n',
+                phase='initial-send', existing_local_session='b58ac09b-d7b0-4c70-afe3-1daf87e57cb4')
 
 
 class UserPathsAdmission(unittest.TestCase):
@@ -75,7 +76,8 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertEqual(len(full['required_humans']), 12)
         self.assertEqual(len(full['required_agent_cases']), 66)
         self.assertEqual(len(full['passed_agent_cases']), 66)
-        self.assertEqual(full['known_issue_budget'], [])
+        self.assertEqual(len(full['known_issue_budget']), 2)
+        self.assertEqual({row['task'] for row in full['known_issue_budget']}, {'aweb-actw'})
         self.assertEqual(full['known_issues'], [])
         self.assertEqual(result_model.qualification({'head': lanes['head']}, 100, [])['status'], 'FAILED')
         self.assertEqual(result_model.qualification(lanes, 600, [])['status'], 'FAILED')
@@ -84,7 +86,7 @@ class UserPathsAdmission(unittest.TestCase):
         self.assertEqual(result_model.qualification(lanes, 100, [])['status'], 'FAILED')
 
     def test_fixed_released_local_chat_has_no_budget_exception(self):
-        self.assertEqual(result_model.KNOWN_RELEASED_ISSUES, [])
+        self.assertEqual({row['maximum_version'] for row in result_model.KNOWN_RELEASED_ISSUES}, {'1.36.54'})
         for case in ['released/t1->t2/chat/v2', 'released/t2->t1/chat/v2']:
             with self.subTest(case=case):
                 passed = result_model.classify_outcome(dict(case=case, status='PASSED'), '1.36.55')
@@ -449,8 +451,8 @@ class ExactMessageAssertions(unittest.TestCase):
 
 class ReleasedKnownIssueBudget(unittest.TestCase):
     def setUp(self):
-        # Exercise the unchanged guard using test-only rules, independently of
-        # the now-empty production budget. These are not admission exceptions.
+        # Exercise classifier boundaries with a narrower test-only range,
+        # independently of the reviewed production allowance.
         from unittest.mock import patch
         rules = []
         for case in ['released/t1->t2/chat/v2', 'released/t2->t1/chat/v2']:
@@ -513,14 +515,16 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
                 lane.actors = {actor: dict(address='', home=Path(directory)) for actor in ['t1','t2']}
                 case = name+'/t1->t2/chat/v2'
                 failure = known_failure(case)
+                lane.capture_failure = lambda *args: 'b58ac09b-d7b0-4c70-afe3-1daf87e57cb4'
                 response = subprocess.CompletedProcess([], 1, json.dumps(failure['response'])+'\n', failure['stderr'])
                 stdout = io.StringIO()
                 with redirect_stdout(stdout), patch.object(paths.subprocess, 'run', return_value=response):
-                    lane.run_case(case, lambda: lane.flow('t1','t2','chat',True))
+                    lane.run_case(case, lambda: lane.flow('t1','t2','chat',True), ('t1','t2','chat',True))
                 self.assertEqual(lane.outcomes[0]['status'], expected)
                 self.assertEqual(len(lane.failures), 0 if name=='released' else 1)
                 if name=='released':
                     self.assertTrue(stdout.getvalue().startswith('KNOWN ISSUE '+case+' fixture-issue observed failure:'))
+                    self.assertIn(failure['stderr'].rstrip('\n'), stdout.getvalue())
                     self.assertNotIn('FAIL ', stdout.getvalue())
                     self.assertEqual(lane.outcomes[0]['failure']['response'], failure['response'])
                     unexpected = io.StringIO()
@@ -552,18 +556,24 @@ class ReleasedKnownIssueBudget(unittest.TestCase):
         variants = [('unexpected pass', dict(case=case,status='PASSED'))]
         for field,value in [('exit',2), ('stderr','different failure'), ('actor','t2'),
                             ('args',['chat','send','--session-id','existing','--e2ee'])]:
-            changed=copy.deepcopy(row);changed['failure'][field]=value;variants.append((field,changed))
+            changed=copy.deepcopy(row)
+            changed['failure'][field]=value
+            variants.append((field,changed))
         for field,value in [('message','different key error'),('code','permission_denied'),('reason','new_reason')]:
-            changed=copy.deepcopy(row);changed['failure']['response']['error'][field]=value;variants.append((field,changed))
+            changed=copy.deepcopy(row)
+            changed['failure']['response']['error'][field]=value
+            variants.append((field,changed))
         for name,changed in variants:
             with self.subTest(change=name):
                 self.assertEqual(result_model.classify_outcome(changed,'1.36.53')['status'],'FAILED')
         for version in ['1.36.52','1.36.55','dev','1.36.54-rc.1',None]:
             with self.subTest(version=version):
                 self.assertEqual(result_model.classify_outcome(row,version)['status'],'FAILED')
-                self.assertEqual(result_model.classify_outcome(dict(case=case,status='PASSED'),version)['status'],'FAILED')
+                expected = 'PASSED' if version in ['1.36.52','1.36.55'] else 'FAILED'
+                self.assertEqual(result_model.classify_outcome(dict(case=case,status='PASSED'),version)['status'],expected)
         for other in ['head/t1->t2/chat/v2','released/g1->t1/chat/v2','released/t1->t2/mail/v2']:
-            changed=copy.deepcopy(row);changed['case']=other
+            changed=copy.deepcopy(row)
+            changed['case']=other
             self.assertEqual(result_model.classify_outcome(changed,'1.36.53')['status'],'FAILED')
 
 
