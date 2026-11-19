@@ -235,7 +235,21 @@ def test_registration_lock_refuses_a_concurrent_exchange_before_network(service)
     assert service["requests"] == []
 
 
-def test_private_stdin_registration_reads_one_line_without_waiting_for_eof(service):
+@pytest.mark.parametrize("startup_bytes", [0, 8 * 1024 * 1024])
+def test_private_stdin_registration_reads_one_line_without_waiting_for_eof(
+    service,
+    tmp_path,
+    monkeypatch,
+    startup_bytes,
+):
+    if startup_bytes:
+        (tmp_path / "sitecustomize.py").write_text(
+            f"import sys\nsys.stderr.buffer.write(b'x' * {startup_bytes})\nsys.stderr.flush()\n"
+        )
+        monkeypatch.setenv(
+            "PYTHONPATH",
+            os.pathsep.join(filter(None, (str(tmp_path), os.environ.get("PYTHONPATH")))),
+        )
     extra = encode64(os.urandom(32))
     with subprocess.Popen(
         [
@@ -276,7 +290,7 @@ def test_private_stdin_registration_reads_one_line_without_waiting_for_eof(servi
     )
     if any(value.encode() in stdout + stderr for value in private):
         raise AssertionError("registration output contained private material")
-    assert stderr == b""
+    assert stderr == b"x" * startup_bytes
     assert json.loads(stdout) == service["response"]
     assert len(service["requests"]) == 1
     if service["requests"][0][1]["code"] != service["code"]:

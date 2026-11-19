@@ -61,7 +61,24 @@ def test_controller_authorizer_and_privileged_completion_defaults_are_gone():
         )
 
 
-def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
+@pytest.mark.parametrize("startup_bytes", [0, 8 * 1024 * 1024])
+def test_hardware_manifest_flag_keeps_unattested_enrollment_available(
+    tmp_path,
+    monkeypatch,
+    startup_bytes,
+):
+    import os
+
+    if startup_bytes:
+        (tmp_path / "sitecustomize.py").write_text(
+            f"import sys\nsys.stdout.buffer.write(b'x' * {startup_bytes})\nsys.stdout.flush()\n"
+        )
+        monkeypatch.setenv(
+            "PYTHONPATH",
+            os.pathsep.join(
+                filter(None, (str(tmp_path), os.environ.get("PYTHONPATH")))
+            ),
+        )
     import re
     import time
 
