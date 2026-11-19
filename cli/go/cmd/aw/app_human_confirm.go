@@ -72,14 +72,7 @@ func runConfirm(ctx context.Context, s confirmSteps) (confirmOutcome, error) {
 		}
 		done, stopped, ready := holds(state, s.Completion.Done), stopping(state, s.Completion.Stop), holds(state, s.Completion.Ready)
 		if sent {
-			switch {
-			case done:
-				return confirmOutcome{}, withErrorCode("confirm_result_lost", errors.New("the change was applied, but its reply was lost; a one-time output in it is not recovered"))
-			case stopped != "":
-				return confirmOutcome{}, withErrorCode("confirm_stopped", fmt.Errorf("after the confirm, the change reads %s", stopped))
-			default:
-				return confirmOutcome{}, withErrorCode("confirm_not_applied", fmt.Errorf("the confirm's reply was lost and the change was not applied when read (%s); a confirm still committing may yet land, and aw does not send it again", describeState(state, s.Completion)))
-			}
+			return confirmOutcome{}, reconcileConfirmState(state, s.Completion)
 		}
 		switch {
 		case done:
@@ -108,6 +101,21 @@ func runConfirm(ctx context.Context, s confirmSteps) (confirmOutcome, error) {
 		default:
 			return confirmOutcome{}, appRefusal(reply)
 		}
+	}
+}
+
+// reconcileConfirmState reports the state after the one allowed confirm.
+// docs/design/human-confirmation-from-aw.md:519-525 requires read-only
+// reconciliation after a session renewal; this function never resends.
+func reconcileConfirmState(state map[string]any, completion appmanifest.Completion) error {
+	done, stopped := holds(state, completion.Done), stopping(state, completion.Stop)
+	switch {
+	case done:
+		return withErrorCode("confirm_result_lost", errors.New("the change was applied, but its reply was lost; a one-time output in it is not recovered"))
+	case stopped != "":
+		return withErrorCode("confirm_stopped", fmt.Errorf("after the confirm, the change reads %s", stopped))
+	default:
+		return withErrorCode("confirm_not_applied", fmt.Errorf("the confirm's reply was lost and the change was not applied when read (%s); a confirm still committing may yet land, and aw does not send it again", describeState(state, completion)))
 	}
 }
 
