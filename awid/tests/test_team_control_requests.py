@@ -2,11 +2,10 @@
 
 import copy
 import json
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 import pytest
-
 from awid.team_control_requests import (
     SignedUnownedTeamClaim,
     TeamControlRequestError,
@@ -16,9 +15,8 @@ from awid.team_control_requests import (
     read_unowned_team_claim,
 )
 
-VECTORS = json.loads(
-    (Path(__file__).resolve().parents[2] / "docs" / "vectors" / "team-control-requests-v1.json").read_text()
-)
+VECTOR_ROOT = Path(__file__).resolve().parents[2] / "docs" / "vectors"
+VECTORS = json.loads((VECTOR_ROOT / "team-control-requests-v1.json").read_text())
 SEED = bytes.fromhex(VECTORS["seed_hex"])
 SIGNER = VECTORS["signer_did_key"]
 
@@ -67,8 +65,13 @@ def test_each_claim_target_and_time_is_bound(change):
 def test_claim_does_not_reuse_an_import_signature_or_reinterpret_account_values():
     request = UnownedTeamClaimRequest(**VECTORS["claim_cases"][0]["input"])
     with pytest.raises(TeamControlSignatureError, match="retry"):
-        request.verify_signature(signer_did_key=SIGNER, signature=VECTORS["import_cases"][0]["signature"])
-    assert replace(request, email="Owner@example.com").signing_bytes() != request.signing_bytes()
+        request.verify_signature(
+            signer_did_key=SIGNER, signature=VECTORS["import_cases"][0]["signature"]
+        )
+    assert (
+        replace(request, email="Owner@example.com").signing_bytes()
+        != request.signing_bytes()
+    )
     assert replace(request, username="Owner").signing_bytes() != request.signing_bytes()
 
 
@@ -88,7 +91,9 @@ def test_claim_reader_refuses_unsigned_authority_fields(location):
         read_unowned_team_claim(value)
 
 
-@pytest.mark.parametrize("raw", [b"[]", b"null", b'{"request":{},"request":{}}', b"{} {}", b'"\\ud800"'])
+@pytest.mark.parametrize(
+    "raw", [b"[]", b"null", b'{"request":{},"request":{}}', b"{} {}", b'"\\ud800"']
+)
 def test_claim_json_reader_refuses_malformed_artifacts(raw):
     with pytest.raises(TeamControlRequestError, match="retry"):
         read_unowned_team_claim(raw)
@@ -99,3 +104,66 @@ def test_artifact_integrity_key_is_not_a_current_controller_stamp():
     artifact.verify_integrity()
     with pytest.raises(TeamControlSignatureError, match="retry"):
         artifact.verify_signature(signer_did_key="did:key:another-controller")
+
+
+def test_claim_unicode_escape_neighbors_round_trip_without_loss():
+    artifact = read_unowned_team_claim(VECTORS["claim_cases"][0]["artifact"])
+    request = replace(artifact.request, email="owner+雪😀@example.com")
+    signed = request.sign(signing_key=SEED)
+    escaped = json.dumps(signed.to_dict(), ensure_ascii=True).encode()
+    assert read_unowned_team_claim(escaped) == signed
+    read_unowned_team_claim(escaped).verify_integrity()
+    with pytest.raises(TeamControlRequestError) as error:
+        read_unowned_team_claim(escaped.replace(b"owner+", b"\\ud800"))
+    assert (
+        str(error.value)
+        == "email must contain valid Unicode; correct the request and retry."
+    )
+
+
+def test_claim_artifact_is_immutable_and_returns_detached_transport_data():
+    artifact = read_unowned_team_claim(VECTORS["claim_cases"][0]["artifact"])
+    transport = artifact.to_dict()
+    transport["request"]["email"] = "other@example.com"
+    artifact.verify_integrity()
+    assert artifact.request.email == "owner@example.com"
+    with pytest.raises(FrozenInstanceError):
+        artifact.request.email = "other@example.com"
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (
+            {"awid_team_id": ""},
+            "awid_team_id is required; correct the request and retry.",
+        ),
+        ({"timestamp": None}, "timestamp must be text; correct the request and retry."),
+        (
+            {"email": "\ud800"},
+            "email must contain valid Unicode; correct the request and retry.",
+        ),
+    ],
+)
+def test_claim_value_refusals_name_the_recovery(edit, message):
+    with pytest.raises(TeamControlRequestError) as error:
+        UnownedTeamClaimRequest(**{**VECTORS["claim_cases"][0]["input"], **edit})
+    assert str(error.value) == message
+
+
+def test_claim_refusals_name_the_signature_and_key_recovery():
+    request = UnownedTeamClaimRequest(**VECTORS["claim_cases"][0]["input"])
+    with pytest.raises(TeamControlRequestError) as error:
+        request.sign(signing_key=b"wrong")
+    assert str(error.value) == "Use a 32-byte Ed25519 signing seed and retry."
+    artifact = request.sign(signing_key=SEED)
+    with pytest.raises(TeamControlSignatureError) as error:
+        artifact.verify_signature(signer_did_key="did:key:another-controller")
+    assert str(error.value) == (
+        "The claim signer differs from the current controller; regenerate the claim and retry."
+    )
+    with pytest.raises(TeamControlSignatureError) as error:
+        request.verify_signature(signer_did_key=SIGNER, signature="bad")
+    assert str(error.value) == (
+        "The team-control signature is invalid; regenerate it with the controller key and retry."
+    )
