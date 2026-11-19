@@ -769,7 +769,11 @@ async def _stored_exact_chat_send(
     if lookup.state is StoredMessageState.MISSING:
         return None
     if lookup.message is None:
-        if payload.signature is not None and not _payload_is_encrypted(payload):
+        if (
+            lookup.state is StoredMessageState.CONFLICT
+            and payload.signature is not None
+            and not _payload_is_encrypted(payload)
+        ):
             _parse_signed_timestamp(str(payload.timestamp))
         lookup.refuse_conflicting_message_id()
     row = lookup.message
