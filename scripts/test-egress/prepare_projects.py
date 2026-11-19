@@ -49,6 +49,82 @@ def run(args, *, root, env, failure, capture=False):
     return result.stdout if capture else None
 
 
+def go_build_cache(root, mode, env):
+    module = root / "cli/go"
+    if not (module / "go.mod").is_file():
+        return None
+    manifests = [module / name for name in ("go.mod", "go.sum")]
+    before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in manifests}
+    go_env = dict(
+        env,
+        GOPROXY="https://proxy.golang.org,direct" if mode == "prepare" else "off",
+        GOSUMDB="sum.golang.org" if mode == "prepare" else "off",
+        GOFLAGS="-mod=readonly",
+    )
+    # Use the committed build owner's GOENV, rather than warming Go's default
+    # cache while make build selects a different GOMODCACHE.
+    with tempfile.TemporaryDirectory(prefix="package-go-cache-") as temporary:
+        recipe = Path(temporary) / "Makefile"
+        recipe.write_text(
+            ".PHONY: package-go-cache package-go-download\n"
+            "package-go-cache:\n\t@$(GOENV) go env GOMODCACHE\n"
+            "package-go-download:\n\t@$(GOENV) go mod download\n"
+        )
+        make = [
+            "make",
+            "--no-print-directory",
+            "-s",
+            "-C",
+            str(module),
+            "-f",
+            "Makefile",
+            "-f",
+            str(recipe),
+        ]
+        selected = run(
+            [*make, "package-go-cache"],
+            root=root,
+            env=go_env,
+            failure="PACKAGE_GO_CACHE_SELECTION_FAILED",
+            capture=True,
+        ).strip()
+        cache = Path(selected)
+        if not selected or not cache.is_absolute() or cache == Path("/"):
+            raise SetupFailure("PACKAGE_GO_CACHE_PATH_INVALID")
+        run(
+            [*make, "package-go-download"],
+            root=root,
+            env=go_env,
+            failure="PACKAGE_GO_PREPARATION_FAILED"
+            if mode == "prepare"
+            else "PACKAGE_GO_OFFLINE_CACHE_MISSING",
+        )
+    after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in manifests}
+    if before != after:
+        raise SetupFailure("PACKAGE_GO_LOCK_CHANGED")
+    digest = hashlib.sha256()
+    count = 0
+    for path in sorted(cache.rglob("*")):
+        if path.is_file():
+            relative = path.relative_to(cache).as_posix()
+            digest.update(
+                (
+                    relative
+                    + "\0"
+                    + hashlib.sha256(path.read_bytes()).hexdigest()
+                    + "\n"
+                ).encode()
+            )
+            count += 1
+    return {
+        "module": "cli/go",
+        "manifests": after,
+        "cache": str(cache),
+        "sha256": digest.hexdigest(),
+        "files": count,
+    }
+
+
 def provision(root, sha, names, mode, receipt):
     root = root.resolve()
     if (
@@ -77,6 +153,7 @@ def provision(root, sha, names, mode, receipt):
     )
     for key in ("UV_NO_SYNC", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH", "PYTHONHOME"):
         env.pop(key, None)
+    go_cache = go_build_cache(root, mode, env)
     rows = []
     installed = set()
     for project, _ in projects:
@@ -158,6 +235,7 @@ def provision(root, sha, names, mode, receipt):
                 "uid": os.getuid(),
                 "locks": after,
                 "projects": rows,
+                "go_cache": go_cache,
                 "status": "PASS",
             },
             indent=2,

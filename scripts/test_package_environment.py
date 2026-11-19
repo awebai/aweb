@@ -158,6 +158,107 @@ class ProjectPreparation(unittest.TestCase):
             preparation.selected_projects(self.root, ["server"])
 
 
+class GoBuildCache(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.module = self.root / "cli/go"
+        self.module.mkdir(parents=True)
+        (self.module / "go.mod").write_text("module fixture\n")
+        (self.module / "go.sum").write_text("frozen sum\n")
+        (self.module / "Makefile").write_text(
+            "GOMODCACHE := $(CURDIR)/build-owner-cache\n"
+            'GOENV = env GOMODCACHE="$(GOMODCACHE)"\n'
+            "build:\n\t@$(GOENV) go build\n"
+        )
+        tools = self.root / "tools"
+        tools.mkdir()
+        go = tools / "go"
+        go.write_text(
+            f"#!{sys.executable}\n"
+            "import os,sys\nfrom pathlib import Path\n"
+            "cache=Path(os.environ['GOMODCACHE'])\n"
+            "if sys.argv[1:]==['env','GOMODCACHE']: print(cache)\n"
+            "elif sys.argv[1:]==['mod','download']:\n"
+            " if os.environ['GOPROXY']=='off':\n"
+            "  if not (cache/'module.zip').exists(): sys.exit(12)\n"
+            " else:\n"
+            "  cache.mkdir(parents=True,exist_ok=True)\n"
+            "  (cache/'module.zip').write_bytes(b'cached module')\n"
+            " if os.environ.get('MUTATE_GO_LOCK'): Path('go.sum').write_text('changed')\n"
+            "elif sys.argv[1:]==['build']:\n"
+            " if not (cache/'module.zip').exists():\n"
+            "  print('module lookup disabled by GOPROXY=off',file=sys.stderr); sys.exit(12)\n"
+            "else: sys.exit(13)\n"
+        )
+        go.chmod(0o700)
+        self.env = {
+            **os.environ,
+            "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+            "GOPROXY": "off",
+            "GOSUMDB": "off",
+        }
+
+    def test_prepares_make_selected_cache_then_verifies_it_offline(self):
+        prepared = preparation.go_build_cache(self.root, "prepare", self.env)
+        verified = preparation.go_build_cache(self.root, "verify", self.env)
+        self.assertEqual(prepared, verified)
+        self.assertEqual(prepared["cache"], str(self.module / "build-owner-cache"))
+        self.assertEqual(prepared["files"], 1)
+        self.assertEqual(len(prepared["sha256"]), 64)
+        self.assertEqual((self.module / "go.sum").read_text(), "frozen sum\n")
+
+    def test_offline_missing_make_cache_refuses_even_with_another_cache(self):
+        other = self.root / "default-cache"
+        other.mkdir()
+        (other / "module.zip").write_bytes(b"wrong cache")
+        with self.assertRaisesRegex(
+            preparation.SetupFailure, "PACKAGE_GO_OFFLINE_CACHE_MISSING"
+        ):
+            preparation.go_build_cache(self.root, "verify", self.env)
+
+    def test_download_cannot_change_go_manifests(self):
+        with self.assertRaisesRegex(
+            preparation.SetupFailure, "PACKAGE_GO_LOCK_CHANGED"
+        ):
+            preparation.go_build_cache(
+                self.root, "prepare", {**self.env, "MUTATE_GO_LOCK": "1"}
+            )
+
+    def test_package_receipt_retains_the_go_cache_hash(self):
+        project = self.root / "server"
+        project.mkdir()
+        (project / "pyproject.toml").write_text("[project]\nname='fixture'\n")
+        (project / "uv.lock").write_text("version=1\n")
+        native = subprocess.run
+
+        def invoke(args, **kwargs):
+            if args[0] == "uv":
+                return subprocess.CompletedProcess(args, 0, "\n", "")
+            return native(args, **kwargs)
+
+        with (
+            patch.dict(os.environ, self.env),
+            patch.object(preparation.subprocess, "run", side_effect=invoke),
+            patch.object(preparation.subprocess, "check_output", return_value="a" * 40),
+        ):
+            receipt = self.root / "receipt.json"
+            preparation.provision(self.root, "a" * 40, ["server"], "prepare", receipt)
+        built = native(
+            ["make", "-s", "-C", str(self.module), "build"],
+            env=self.env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(built.returncode, 0, built.stderr)
+        value = json.loads(receipt.read_text())
+        self.assertEqual(
+            value["go_cache"]["cache"], str(self.module / "build-owner-cache")
+        )
+        self.assertEqual(value["go_cache"]["files"], 1)
+
+
 class SourceImagePreparation(unittest.TestCase):
     def test_preparation_trusts_only_selected_checkout_with_different_git_owner(self):
         with tempfile.TemporaryDirectory() as temporary:
