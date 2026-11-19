@@ -18,12 +18,13 @@ from awid.team_certificate import (
     verify_team_certificate_claims,
 )
 from awid.team_ids import build_team_id, parse_team_id
+from awid.team_key_acts import TeamKeyUnverified
 from pgdbm import AsyncDatabaseManager
 
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.certificate_evidence import EvidenceMode
 from aweb.service_errors import ServiceError
-from aweb.team_key_pins import pinned_team_key
+from aweb.team_key_pins import pinned_team_key, team_key_unverified_exception
 from aweb.team_key_reader import read_team_key
 
 
@@ -107,13 +108,16 @@ async def _admit_refreshed_controller(
     """
     if not served_key:
         raise TeamControllerUnavailable()
-    return await pinned_team_key(
-        db=context.db,
-        registry_client=context.registry_client,
-        txt_resolver=context.txt_resolver,
-        team_id=team_id,
-        served_key=served_key,
-    )
+    try:
+        return await pinned_team_key(
+            db=context.db,
+            registry_client=context.registry_client,
+            txt_resolver=context.txt_resolver,
+            team_id=team_id,
+            served_key=served_key,
+        )
+    except TeamKeyUnverified as exc:
+        raise team_key_unverified_exception() from exc
 
 
 async def read_certificate_controller(
@@ -136,6 +140,8 @@ async def read_certificate_controller(
             team_id=team_id,
             evidence=evidence,
         )
+    except TeamKeyUnverified as exc:
+        raise team_key_unverified_exception() from exc
     except AWID_DEPENDENCY_ERRORS as exc:
         raise TeamControllerUnavailable() from exc
     if not key:

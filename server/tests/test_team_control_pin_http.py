@@ -133,6 +133,13 @@ async def test_enforced_pin_refusal_keeps_shared401_for_claim_and_import_http(
         current_claim = claim(new)
         current_claim.verify_integrity()
         signature = request.sign(signing_key=new)
+        _, current_header = issue_team_certificate(
+            team_id=target.team_id,
+            team_signing_key=new,
+            member_did_key=did_key_from_signing_key(member),
+            alias="member",
+            identity_scope="local",
+        )
         outer = FastAPI()
         install_team_control_error_handlers(outer)
         for app in (create_app(), outer):
@@ -151,11 +158,21 @@ async def test_enforced_pin_refusal_keeps_shared401_for_claim_and_import_http(
                 )
                 return {"accepted": True}
 
+            @app.post("/generation-proof")
+            async def generation_endpoint():
+                await verify_certificate_generation(
+                    context=context,
+                    team_id=target.team_id,
+                    encoded_certificate=current_header,
+                    member_did_key=did_key_from_signing_key(member),
+                )
+                return {"accepted": True}
+
             async with AsyncClient(
                 transport=ASGITransport(app=app, raise_app_exceptions=False),
                 base_url="https://native.test",
             ) as client:
-                for path in ("/claim-proof", "/import-proof"):
+                for path in ("/claim-proof", "/import-proof", "/generation-proof"):
                     response = await client.post(path)
                     assert response.status_code == 401, response.text
                     assert response.json() == {
