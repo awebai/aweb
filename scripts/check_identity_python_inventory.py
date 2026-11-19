@@ -94,6 +94,23 @@ def scan_python_source(
                     raise ValueError("wildcard import hides an identity primitive: " + base)
                 aliases[name.asname or name.name] = base + "." + name.name
 
+    postponed = any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "__future__"
+        and any(name.name == "annotations" for name in node.names)
+        for node in tree.body
+    )
+    deferred_nodes = set()
+    if postponed:
+        for node in ast.walk(tree):
+            annotation = None
+            if isinstance(node, (ast.arg, ast.AnnAssign)):
+                annotation = node.annotation
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                annotation = node.returns
+            if annotation is not None:
+                deferred_nodes.update(id(child) for child in ast.walk(annotation))
+
     def called_name(node):
         if isinstance(node, ast.Name):
             return aliases.get(node.id, node.id)
@@ -128,12 +145,16 @@ def scan_python_source(
             calls[".".join(self.scope) or "<module>"].add(name)
 
         def visit_Call(self, node):
+            if id(node) in deferred_nodes:
+                return
             name = called_name(node.func)
             if primitive(name):
                 self.record(name)
             self.generic_visit(node)
 
         def reference(self, node):
+            if id(node) in deferred_nodes:
+                return
             parent = parents.get(id(node))
             is_callee = isinstance(parent, ast.Call) and parent.func is node
             is_receiver = isinstance(parent, ast.Attribute) and parent.value is node

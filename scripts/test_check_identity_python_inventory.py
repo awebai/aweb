@@ -100,6 +100,30 @@ class PrimitiveGuardTests(unittest.TestCase):
             calls = guard.scan_python_source(source, module="nacl.child.mod")
             self.assertTrue(calls)
 
+    def test_postponed_key_annotations_do_not_call_a_primitive(self):
+        source = (
+            "from __future__ import annotations\n"
+            "from nacl.signing import SigningKey\n"
+            "key: SigningKey\n"
+            "def borrow(key: SigningKey | None = None) -> SigningKey:\n"
+            "    return key\n"
+        )
+        self.assertEqual([], self.check("pkg/consumer.py", source))
+
+    def test_postponed_annotations_do_not_hide_runtime_primitive_uses(self):
+        prefix = "from __future__ import annotations\nfrom nacl.signing import SigningKey\n"
+        for body in (
+            "def borrow(key: SigningKey = SigningKey.generate()): return key\n",
+            "def borrow(key: SigningKey): return SigningKey(bytes(key))\n",
+            "factory: SigningKey = SigningKey\n",
+        ):
+            with self.subTest(body=body):
+                self.assertTrue(self.check("pkg/consumer.py", prefix + body))
+
+    def test_evaluated_annotation_primitive_references_remain_visible(self):
+        source = "from nacl.signing import SigningKey\ndef borrow(key: SigningKey): return key\n"
+        self.assertTrue(self.check("pkg/consumer.py", source))
+
     def test_test_files_are_excluded_but_production_test_names_are_not(self):
         source = "from nacl.signing import VerifyKey\ncallback = VerifyKey\n"
         self.assertEqual([], self.check("tests/helper.py", source))
