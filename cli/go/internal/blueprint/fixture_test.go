@@ -103,9 +103,7 @@ func TestMaterializeCreatedProfilePayloadMatchesEngineeringFixture(t *testing.T)
 		t.Fatalf("created result included source blueprint provenance: %+v", result)
 	}
 	expected := filepath.Join(fixture, "expected", "materialized-home-created", "developer")
-	if err := compareMaterializedTrees(expected, target); err != nil {
-		t.Fatalf("created materialized tree mismatch: %v", err)
-	}
+	assertMaterializedTreesEqual(t, materializedTreeRoots{Expected: expected, Actual: target})
 }
 
 func TestEngineeringBlueprintAgentHomeCompositionFixtures(t *testing.T) {

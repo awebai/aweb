@@ -50,9 +50,6 @@ func init() {
 	auditVerifyCmd.Flags().StringArrayVar(&auditVerifyCheckpointKeys, "checkpoint-key", nil, "A did:key you accept for checkpoints (repeatable)")
 	auditVerifyCmd.Flags().StringArrayVar(&auditVerifyWitnesses, "witness", nil, "A file of receipts and checkpoints you hold (repeatable)")
 	auditVerifyCmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		// Parsing stopped before --json could be read; the refusal still
-		// answers in the form asked for.
-		jsonFlag = jsonFlag || argsContainJSONFlag(os.Args[1:])
 		return auditVerifyError("usage", "%v", err)
 	})
 	auditCmd.AddCommand(auditVerifyCmd)

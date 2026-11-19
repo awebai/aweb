@@ -27,6 +27,7 @@ type BundleMalformed struct {
 	Reason string
 }
 
+// Error identifies the malformed export line and its structural refusal.
 func (e *BundleMalformed) Error() string {
 	return fmt.Sprintf("line %d: %s", e.Line, e.Reason)
 }
@@ -55,6 +56,9 @@ type LastCheckpoint struct {
 
 // BundleReport is what a bundle proves, and how far.
 type BundleReport struct {
+	// AttestedEpochs names epochs attested by an accepted receipt or checkpoint
+	// from the bundle or supplied witnesses. Intact alone is structural, and
+	// attestation does not prove the export is complete (docs/logs-chain.md:207-212).
 	AttestedEpochs        []int64
 	ReceiptKeys           []string
 	CheckpointKeys        []string

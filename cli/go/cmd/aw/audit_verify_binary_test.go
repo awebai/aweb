@@ -371,6 +371,20 @@ func TestAuditVerifyRequiresAValidKeyOfEachKind(t *testing.T) {
 	}
 }
 
+func TestAuditFlagRefusalDoesNotMutateOutputMode(t *testing.T) {
+	savedArgs, savedJSON := os.Args, jsonFlag
+	t.Cleanup(func() { os.Args, jsonFlag = savedArgs, savedJSON })
+	os.Args = []string{"aw", "audit", "verify", "--unknown", "--json"}
+	jsonFlag = false
+	err := auditVerifyCmd.FlagErrorFunc()(auditVerifyCmd, errors.New("unknown flag"))
+	if jsonFlag {
+		t.Fatal("audit flag refusal mutated the shared JSON output mode")
+	}
+	if exitCode(err) != 2 || errorCodeOf(err) != "usage" {
+		t.Fatalf("flag refusal lost its usage status/code: %v", err)
+	}
+}
+
 func TestAuditVerifyGivesEveryOtherFailureExitTwo(t *testing.T) {
 	w := newAuditVerifyWorld(t)
 	c := loadLogsExportVector(t).named(t, "whole_log_of_two_epochs")

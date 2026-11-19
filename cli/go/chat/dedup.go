@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,6 +41,8 @@ func deliveredIDsPath(startDir string) string {
 	return filepath.Join(deliveredIDsRoot(startDir), ".aw", DeliveredIDsFileName)
 }
 
+// LoadDeliveredIDs reads unexpired receipt IDs for the current process directory.
+// A missing store is empty; unreadable or malformed state returns an error.
 func LoadDeliveredIDs() (map[string]struct{}, error) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -48,6 +51,8 @@ func LoadDeliveredIDs() (map[string]struct{}, error) {
 	return LoadDeliveredIDsForDir(wd)
 }
 
+// LoadDeliveredIDsForDir reads receipt IDs for startDir, honoring
+// DeliveredIDsPathEnv. Receipts older than ten minutes are excluded.
 func LoadDeliveredIDsForDir(startDir string) (map[string]struct{}, error) {
 	entries, err := loadDeliveredIDTimes(deliveredIDsPath(startDir), time.Now())
 	if err != nil {
@@ -60,6 +65,8 @@ func LoadDeliveredIDsForDir(startDir string) (map[string]struct{}, error) {
 	return ids, nil
 }
 
+// SaveDeliveredIDs records accepted message IDs for the process directory.
+// It merges concurrent updates and expires old receipts under the store lock.
 func SaveDeliveredIDs(ids []string) error {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -68,30 +75,27 @@ func SaveDeliveredIDs(ids []string) error {
 	return SaveDeliveredIDsForDir(wd, ids)
 }
 
-func SaveDeliveredIDsForDir(startDir string, ids []string) error {
+// SaveDeliveredIDsForDir atomically merges accepted IDs into startDir's receipt
+// store, honoring DeliveredIDsPathEnv and preserving concurrent writers.
+func SaveDeliveredIDsForDir(startDir string, ids []string) (err error) {
 	if len(ids) == 0 {
 		return nil
 	}
 	now := time.Now()
 	path := deliveredIDsPath(startDir)
 
-	// Serialize the whole read-merge-write. Without it, concurrent writers each
-	// merge onto a snapshot taken before the others wrote and the last rename
-	// wins — and the loss is SILENT, because every writer still reports success.
-	// A dropped mark makes an already-delivered message look new, so it is
-	// dispatched again: a duplicate model invocation or a repeated human-visible
-	// message (default-aajc.10).
-	//
-	// Contention here is ordinary: the `aw run` wake loop and any `aw chat`
-	// command in the same worktree write this same file. Only Go writes it — the
-	// Node channel uses channel-delivered-ids.json — so a Go-side lock is
-	// sufficient. flock is released by the kernel when the process dies, so an
-	// abandoned lock cannot wedge the store.
+	// Serialize receipt updates so concurrent writers retain each other's
+	// accepted deliveries (docs/receiving-events.md:174). Kernel-released
+	// locks keep a crashed writer from wedging later receipt updates.
 	unlock, err := awconfig.LockExclusive(path + ".lock")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = unlock.Close() }()
+	defer func() {
+		if closeErr := unlock.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("release chat delivery receipt lock: %w. Retry the receipt update", closeErr))
+		}
+	}()
 
 	existing, err := loadDeliveredIDTimes(path, now)
 	if err != nil {
@@ -107,6 +111,8 @@ func SaveDeliveredIDsForDir(startDir string, ids []string) error {
 	return writeDeliveredIDs(path, existing)
 }
 
+// DeliveredMessageIDs returns unique, nonempty, trimmed message IDs in the
+// order they first occur in messages. It does not write delivery receipts.
 func DeliveredMessageIDs(messages []awid.ChatMessage) []string {
 	if len(messages) == 0 {
 		return nil

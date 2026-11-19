@@ -1,10 +1,10 @@
 package blueprint
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +17,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MaterializeOptions selects a local blueprint profile and its home layout.
+// Force permits replacing existing profile files after destination preflight.
 type MaterializeOptions struct {
 	SourceDir   string
 	ProfileID   string
@@ -25,6 +27,8 @@ type MaterializeOptions struct {
 	RuntimeKind string
 }
 
+// MaterializeResult records the selected profile, upstream provenance, files
+// written and assets the consumer could not place.
 type MaterializeResult struct {
 	ProfileRef             string   `json:"profile_ref"`
 	ProfileVersion         string   `json:"profile_version"`
@@ -54,6 +58,9 @@ type materializeProvenance struct {
 	LibraryURL      string
 }
 
+// MaterializeLocalProfile validates a local blueprint and writes its selected
+// profile into the bounded home layout described in
+// docs/blueprint-materialization-contract.md:200-214.
 func MaterializeLocalProfile(opts MaterializeOptions) (*MaterializeResult, error) {
 	if strings.TrimSpace(opts.ProfileID) == "" {
 		return nil, fmt.Errorf("profile id is required")
@@ -283,8 +290,14 @@ func composeAgentsMarkdown(bp *Blueprint, profile Profile, instructions []byte, 
 		writeParagraph("Actions requiring human approval", bulletLines(profile.ApprovalRequired))
 	}
 	if len(profile.MemoryPolicy) > 0 {
-		mode, _ := profile.MemoryPolicy["mode"].(string)
-		proposalTarget, _ := profile.MemoryPolicy["proposal_target"].(string)
+		mode, err := requiredStringMapValue("memory_policy", profile.MemoryPolicy, "mode")
+		if err != nil {
+			return nil, err
+		}
+		proposalTarget, err := requiredStringMapValue("memory_policy", profile.MemoryPolicy, "proposal_target")
+		if err != nil {
+			return nil, err
+		}
 		if strings.TrimSpace(mode) != "" || strings.TrimSpace(proposalTarget) != "" {
 			lines := []string{"Mode: " + mode, "Proposal target: " + proposalTarget, "", "Your full profile is kept under .aw/profile/. To change how you work, propose a", "new profile version from there; " + proposalTarget + " reviews and mints it."}
 			writeParagraph("Memory and learning", lines)
@@ -360,6 +373,9 @@ func resourceSourceRel(profileID, category, blueprintRelativePath string) (strin
 	return rel, nil
 }
 
+// LibraryHomeFile is one file or runtime symlink in a materialize response.
+// Path is relative to the home and remains subject to ValidateHomePath; a
+// response never authorizes writes outside the profile layout.
 type LibraryHomeFile struct {
 	Path        string `json:"path"`
 	Kind        string `json:"kind"`
@@ -367,12 +383,16 @@ type LibraryHomeFile struct {
 	Target      string `json:"target,omitempty"`
 }
 
+// LibraryProfilePayloadFile is one UTF-8 file in a profile-relative Library
+// payload. SHA256, when present, must match ContentUTF8 before materialization.
 type LibraryProfilePayloadFile struct {
 	Path        string `json:"path"`
 	SHA256      string `json:"sha256,omitempty"`
 	ContentUTF8 string `json:"content_utf8,omitempty"`
 }
 
+// ValidateLibraryProfilePayloadOptions binds a Library payload to the requested
+// profile identity and the nonempty digest supplied by its producer.
 type ValidateLibraryProfilePayloadOptions struct {
 	ProfileRef     string
 	ProfileVersion string
@@ -380,6 +400,9 @@ type ValidateLibraryProfilePayloadOptions struct {
 	Files          []LibraryProfilePayloadFile
 }
 
+// MaterializeLibraryProfilePayloadOptions supplies a fetched profile, its
+// source provenance and the destination home. Force permits replacing existing
+// profile files, subject to the same path and symlink preflight.
 type MaterializeLibraryProfilePayloadOptions struct {
 	TargetDir        string
 	LibraryURL       string
@@ -394,6 +417,10 @@ type MaterializeLibraryProfilePayloadOptions struct {
 	Force            bool
 }
 
+// ValidateLibraryProfilePayloadDigest verifies the profile shape, per-file
+// hashes and required profile digest without writing files. The result proves
+// byte consistency, not independent publisher authentication
+// (docs/blueprint-materialization-contract.md:168-176).
 func ValidateLibraryProfilePayloadDigest(opts ValidateLibraryProfilePayloadOptions) (string, error) {
 	if err := validateProfileID("profile_ref", opts.ProfileRef); err != nil {
 		return "", err
@@ -405,7 +432,10 @@ func ValidateLibraryProfilePayloadDigest(opts ValidateLibraryProfilePayloadOptio
 	return digest, err
 }
 
-func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptions) (*MaterializeResult, error) {
+// MaterializeLibraryProfilePayload validates the fetched profile before writing
+// its declared assets into the bounded home layout. It records upstream
+// provenance and reports undeclared assets as warnings.
+func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptions) (result *MaterializeResult, err error) {
 	if strings.TrimSpace(opts.TargetDir) == "" {
 		return nil, fmt.Errorf("target directory is required")
 	}
@@ -432,7 +462,18 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() {
+		if cleanupErr := os.RemoveAll(tmp); cleanupErr != nil {
+			warning := fmt.Errorf("remove temporary Library payload %s: %w. Remove that temporary directory manually", tmp, cleanupErr)
+			if result != nil {
+				// The home is already materialized; cleanup must not turn its
+				// accepted result into a retry that writes the home again.
+				result.Warnings = append(result.Warnings, warning.Error())
+			} else {
+				err = errors.Join(err, warning)
+			}
+		}
+	}()
 	profileDir := filepath.Join(tmp, "profiles", opts.ProfileRef)
 	if err := writeLibraryProfilePayloadFiles(tmp, profileDir, files); err != nil {
 		return nil, err
@@ -465,7 +506,8 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := findProfile(bp, opts.ProfileRef); !ok {
+	profile, ok := findProfile(bp, opts.ProfileRef)
+	if !ok {
 		return nil, fmt.Errorf("profile %q not found in library payload", opts.ProfileRef)
 	}
 	bp.Source.Kind = "library_blueprint_profile_payload"
@@ -474,11 +516,10 @@ func MaterializeLibraryProfilePayload(opts MaterializeLibraryProfilePayloadOptio
 	// not leak the synthetic one-profile wrapper digest into the home pin. Shelf
 	// and local callers that have a real upstream blueprint digest pass it here.
 	bp.Source.Digest = strings.TrimSpace(opts.BlueprintDigest)
-	result, err := materializeLoadedProfile(loadedProfileOptions{Blueprint: bp, ProfileID: opts.ProfileRef, TargetDir: opts.TargetDir, Overwrite: opts.Force, RuntimeKind: opts.RuntimeKind, Provenance: materializeProvenance{SourceBlueprint: hasSourceBlueprint, LibraryURL: opts.LibraryURL}})
+	result, err = materializeLoadedProfile(loadedProfileOptions{Blueprint: bp, ProfileID: opts.ProfileRef, TargetDir: opts.TargetDir, Overwrite: opts.Force, RuntimeKind: opts.RuntimeKind, Provenance: materializeProvenance{SourceBlueprint: hasSourceBlueprint, LibraryURL: opts.LibraryURL}})
 	if err != nil {
 		return nil, err
 	}
-	profile, _ := findProfile(bp, opts.ProfileRef)
 	result.Warnings = undeclaredLibraryProfileAssetWarnings(bp, profile)
 	return result, nil
 }
@@ -644,6 +685,10 @@ func writeLibraryProfilePayloadFiles(root, profileDir string, files []LibraryPro
 	return nil
 }
 
+// WriteLibraryHomeFiles preflights every response entry, then writes only the
+// profile layout permitted by docs/blueprint-materialization-contract.md:200-214.
+// The released force argument selects collision handling; the internal write
+// plan uses a named policy. No writes occur when preflight rejects any entry.
 func WriteLibraryHomeFiles(targetDir string, files []LibraryHomeFile, force bool) ([]string, error) {
 	policy := preserveExistingProfileFiles
 	if force {
@@ -678,11 +723,11 @@ func writeLibraryHomeFiles(options libraryHomeWriteOptions) ([]string, error) {
 	ops := make([]materializeWriteOp, 0, len(files))
 	for _, file := range files {
 		rel := file.Path
-		kind := strings.TrimSpace(file.Kind)
+		kind := materializeWriteKind(strings.TrimSpace(file.Kind))
 		switch kind {
-		case string(opFile):
+		case opFile:
 			ops = append(ops, materializeWriteOp{Kind: opFile, Rel: rel, Data: []byte(file.ContentUTF8)})
-		case string(opSymlink):
+		case opSymlink:
 			ops = append(ops, materializeWriteOp{Kind: opSymlink, Rel: rel, LinkTarget: filepath.ToSlash(strings.TrimSpace(file.Target))})
 		default:
 			return nil, fmt.Errorf("unsupported materialized home file kind %q for %s. Use file or a documented runtime symlink", file.Kind, rel)
@@ -929,51 +974,4 @@ func writeMaterializedFiles(targetRoot string, ops []materializeWriteOp) ([]stri
 		written = append(written, filepath.ToSlash(op.Rel))
 	}
 	return written, nil
-}
-
-func compareMaterializedTrees(wantDir, gotDir string) error {
-	return filepath.WalkDir(wantDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, _ := filepath.Rel(wantDir, path)
-		gotPath := filepath.Join(gotDir, rel)
-		wantInfo, err := os.Lstat(path)
-		if err != nil {
-			return err
-		}
-		gotInfo, err := os.Lstat(gotPath)
-		if err != nil {
-			return err
-		}
-		if wantInfo.Mode()&os.ModeSymlink != 0 {
-			if gotInfo.Mode()&os.ModeSymlink == 0 {
-				return fmt.Errorf("%s: got non-symlink", rel)
-			}
-			wantLink, _ := os.Readlink(path)
-			gotLink, _ := os.Readlink(gotPath)
-			if wantLink != gotLink {
-				return fmt.Errorf("%s: symlink target %q, want %q", rel, gotLink, wantLink)
-			}
-			return nil
-		}
-		if gotInfo.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%s: got symlink, want file", rel)
-		}
-		want, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		got, err := os.ReadFile(gotPath)
-		if err != nil {
-			return err
-		}
-		if !bytes.Equal(want, got) {
-			return fmt.Errorf("%s: file content mismatch", rel)
-		}
-		return nil
-	})
 }

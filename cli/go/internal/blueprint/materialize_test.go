@@ -20,7 +20,7 @@ func TestMaterializeLocalProfileMatchesEngineeringFixture(t *testing.T) {
 	if result.ProfileRef != "developer" || result.ProfileVersion != "0.1.0" || !strings.HasPrefix(result.ProfileDigest, "sha256:") {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	assertDirsEqual(t, filepath.Join(fixture, "expected/materialized-home/developer"), target)
+	assertMaterializedTreesEqual(t, materializedTreeRoots{Expected: filepath.Join(fixture, "expected/materialized-home/developer"), Actual: target})
 }
 
 func TestMaterializeLocalProfileRecordsRuntimeKind(t *testing.T) {
@@ -271,7 +271,13 @@ func TestMaterializeLocalProfileRequiresBoundProfileAndRefusesOverwrite(t *testi
 	}
 }
 
-func assertDirsEqual(t *testing.T, wantDir, gotDir string) {
+type materializedTreeRoots struct {
+	Expected string
+	Actual   string
+}
+
+func assertMaterializedTreesEqual(t *testing.T, trees materializedTreeRoots) {
+	wantDir, gotDir := trees.Expected, trees.Actual
 	t.Helper()
 	wantFiles := listFiles(t, wantDir)
 	gotFiles := listFiles(t, gotDir)
@@ -293,8 +299,14 @@ func assertDirsEqual(t *testing.T, wantDir, gotDir string) {
 			if gotInfo.Mode()&os.ModeSymlink == 0 {
 				t.Fatalf("%s: got non-symlink", rel)
 			}
-			wantLink, _ := os.Readlink(wantPath)
-			gotLink, _ := os.Readlink(gotPath)
+			wantLink, err := os.Readlink(wantPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotLink, err := os.Readlink(gotPath)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if wantLink != gotLink {
 				t.Fatalf("%s: symlink target %q, want %q", rel, gotLink, wantLink)
 			}
@@ -327,7 +339,10 @@ func listFiles(t *testing.T, root string) []string {
 		if d.IsDir() {
 			return nil
 		}
-		rel, _ := filepath.Rel(root, path)
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
 		files = append(files, filepath.ToSlash(rel))
 		return nil
 	}); err != nil {

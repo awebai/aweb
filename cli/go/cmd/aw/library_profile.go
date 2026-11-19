@@ -30,18 +30,29 @@ const (
 	libraryPluginInstallCommand   = "aw plugin install " + libraryPluginManifestURL
 )
 
-const missingLibraryPluginMarker = "Library plugin"
+// missingLibraryPluginError keeps plugin absence identifiable through wrapping
+// without making callers depend on the wording shown to the user.
+// docs/improve-profile.md:27 requires the plugin for private shelf operations.
+type missingLibraryPluginError struct{ cause error }
+
+func (e *missingLibraryPluginError) Error() string { return e.cause.Error() }
+func (e *missingLibraryPluginError) Unwrap() error { return e.cause }
+
+type libraryMaterializeTarget string
+
+const libraryLocalTarget libraryMaterializeTarget = "local"
 
 func missingLibraryPluginCommandError() error {
-	return usageError("The aw Library plugin is not installed. Install it with:\n    %s", libraryPluginInstallCommand)
+	return &missingLibraryPluginError{cause: usageError("The aw Library plugin is not installed. Install it with:\n    %s", libraryPluginInstallCommand)}
 }
 
 func missingLibraryPluginProfileError(selector libraryProfileSelector) error {
-	return usageError("Adding an agent from a Library profile (%s) requires the aw Library plugin, which is not installed. Install it, then re-run:\n    %s", libraryProfileSelectorLabel(selector), libraryPluginInstallCommand)
+	return &missingLibraryPluginError{cause: usageError("Adding an agent from a Library profile (%s) requires the aw Library plugin, which is not installed. Install it, then re-run:\n    %s", libraryProfileSelectorLabel(selector), libraryPluginInstallCommand)}
 }
 
 func isMissingLibraryPluginError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), missingLibraryPluginMarker) && strings.Contains(err.Error(), "not installed")
+	var missing *missingLibraryPluginError
+	return errors.As(err, &missing)
 }
 
 func libraryProfileSelectorLabel(selector libraryProfileSelector) string {
@@ -331,7 +342,7 @@ func configureMaterializedAgentHome(homeDir string, identityHomes ...awconfig.Id
 	return nil
 }
 
-func withWorkingDir(dir string, fn func() error) error {
+func withWorkingDir(dir string, fn func() error) (err error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -339,7 +350,11 @@ func withWorkingDir(dir string, fn func() error) error {
 	if err := os.Chdir(dir); err != nil {
 		return err
 	}
-	defer func() { _ = os.Chdir(cwd) }()
+	defer func() {
+		if restoreErr := os.Chdir(cwd); restoreErr != nil {
+			err = errors.Join(err, fmt.Errorf("restore working directory %s: %w. Repair the directory before retrying", cwd, restoreErr))
+		}
+	}()
 	return fn()
 }
 
@@ -398,7 +413,7 @@ func publicLibraryProfileForSelector(ctx context.Context, selector libraryProfil
 	return fetchPublicLibraryProfile(ctx, selector)
 }
 
-func fetchPublicLibraryProfile(ctx context.Context, selector libraryProfileSelector) (*libraryProfileDetailResponse, error) {
+func fetchPublicLibraryProfile(ctx context.Context, selector libraryProfileSelector) (profile *libraryProfileDetailResponse, err error) {
 	base := strings.TrimSpace(selector.LibraryURL)
 	if base == "" {
 		return nil, fmt.Errorf("library url is required")
@@ -415,9 +430,17 @@ func fetchPublicLibraryProfile(ctx context.Context, selector libraryProfileSelec
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			profile = nil
+			err = errors.Join(err, fmt.Errorf("close Library response: %w. Retry the profile request", closeErr))
+		}
+	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		if readErr != nil {
+			return nil, fmt.Errorf("GET %s returned %d: %s (read error response: %w). Retry the profile request", endpoint, resp.StatusCode, awid.SanitizeErrorText(string(body)), readErr)
+		}
 		return nil, fmt.Errorf("GET %s returned %d: %s", endpoint, resp.StatusCode, awid.SanitizeErrorText(string(body)))
 	}
 	responseBody, err := awid.ReadAllBounded(resp.Body, awid.MaxResponseSize)
@@ -579,7 +602,7 @@ func isLibraryManifestLocalMaterialize(name, verb string, args map[string]any) b
 		return false
 	}
 	target, ok := args["target"].(string)
-	return ok && strings.TrimSpace(target) == "local"
+	return ok && libraryMaterializeTarget(strings.TrimSpace(target)) == libraryLocalTarget
 }
 
 func applyLibraryManifestLocalMaterialize(name, verb string, args map[string]any, body []byte) error {

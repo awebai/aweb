@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +19,89 @@ import (
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/blueprint"
 )
+
+func TestMissingLibraryPluginClassificationUsesErrorIdentity(t *testing.T) {
+	for _, err := range []error{
+		missingLibraryPluginCommandError(),
+		missingLibraryPluginProfileError(libraryProfileSelector{}),
+	} {
+		wrapped := fmt.Errorf("fetch profile: %w", err)
+		if !isMissingLibraryPluginError(wrapped) {
+			t.Fatalf("wrapped missing-plugin refusal lost its identity: %v", wrapped)
+		}
+		if exitCode(wrapped) != 2 {
+			t.Fatalf("missing-plugin refusal lost usage exit status: %v", wrapped)
+		}
+	}
+	if isMissingLibraryPluginError(errors.New("remote Library plugin is not installed")) {
+		t.Fatal("an unrelated error's English text impersonates plugin absence")
+	}
+}
+
+func TestWithWorkingDirReportsRestoreFailure(t *testing.T) {
+	processDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operationErr := range []error{nil, errors.New("profile operation failed")} {
+		root := t.TempDir()
+		original := filepath.Join(root, "original")
+		target := filepath.Join(root, "target")
+		for _, dir := range []string{original, target} {
+			if err := os.Mkdir(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Chdir(original); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Chdir(processDir); err != nil {
+				t.Errorf("restore test directory: %v", err)
+			}
+		})
+		err := withWorkingDir(target, func() error {
+			if err := os.Remove(original); err != nil {
+				return err
+			}
+			return operationErr
+		})
+		if !errors.Is(err, os.ErrNotExist) || !strings.Contains(err.Error(), "restore working directory") {
+			t.Fatalf("directory restoration failure was discarded: %v", err)
+		}
+		if !strings.Contains(err.Error(), "Repair the directory before retrying") {
+			t.Fatalf("directory restoration failure has no recovery action: %v", err)
+		}
+		if operationErr != nil && !errors.Is(err, operationErr) {
+			t.Fatalf("operation failure was replaced by cleanup failure: %v", err)
+		}
+		if err := os.Chdir(processDir); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestPublicLibraryProfileReportsErrorBodyReadFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if _, err := io.WriteString(w, "upstream refused"); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+	_, err := fetchPublicLibraryProfile(context.Background(), libraryProfileSelector{
+		LibraryURL: server.URL, SourceBlueprintRef: "aweb.team", ProfileRef: "developer",
+	})
+	if !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("truncated error response lost its read error: %v", err)
+	}
+	for _, want := range []string{"503", "upstream refused", "Retry the profile request"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("missing %q in %v", want, err)
+		}
+	}
+}
 
 func TestMissingLibraryPluginErrorsAreActionable(t *testing.T) {
 	home := t.TempDir()
