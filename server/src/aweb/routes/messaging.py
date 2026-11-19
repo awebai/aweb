@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from aweb.deps import get_db
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
 from aweb.messaging.messages import authorize_message_delivery
+from aweb.messaging.delivery_policy import DeliveryPolicyRefused
 from aweb.messaging.participants import messaging_participant_by_alias
 from aweb.messaging.sender_address import sender_address
 from aweb.service_errors import ServiceError
@@ -58,6 +59,10 @@ async def participant(
             sender_verified_team_id=auth.verified_team_id,
             sender_verified_dids=auth_dids(auth),
         )
+    except DeliveryPolicyRefused as error:
+        # Participant discovery keeps its released forbidden response; sends
+        # retain the canonical policy's distinct local-route 404.
+        raise HTTPException(403, detail=error.detail) from error
     except ServiceError as error:
         raise HTTPException(error.status_code, detail=error.detail) from error
     assertion = await db.get_manager("aweb").fetch_one(

@@ -1221,14 +1221,6 @@ async def _resolve_named_recipients(
         except DeliveryPolicyRefused:
             raise
         except (ValidationError, NotFoundError, ForbiddenError) as exc:
-            if (
-                isinstance(exc, ForbiddenError)
-                and row.get("address") in to_addresses
-                and row.get("identity_scope") == "local"
-                and not row.get("has_global_claim")
-                and not row.get("did_aw")
-            ):
-                raise FederationAuthorityError("local_recipient_route_missing") from exc
             raise DeliveryRefusal(
                 status_code=exc.status_code, detail=exc.detail
             ) from exc

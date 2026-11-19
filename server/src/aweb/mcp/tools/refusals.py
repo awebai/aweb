@@ -101,7 +101,7 @@ def send_refusal(
     if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
         return json.dumps({"error": exc.message, "reason": exc.code})
     if isinstance(exc, RecipientAddressNotFound) and address:
-        return json.dumps({"error": unreachable_address_refusal(address)})
+        return json.dumps({"error": unreachable_address_refusal(address), "reason": exc.code.value})
     if isinstance(exc, MailConversationExists):
         return json.dumps({"error": exc.recovery_action, "reason": exc.code.value})
     if isinstance(exc, ContactIdentityBindingRequired):
@@ -111,11 +111,11 @@ def send_refusal(
             {"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable}
         )
     if isinstance(exc, FederationAuthorityError):
-        if address and exc.reason in (
+        if exc.reason in (
             "recipient_identity_not_found",
             "local_recipient_route_missing",
         ):
-            return json.dumps({"error": unreachable_address_refusal(address)})
+            return json.dumps({"error": unreachable_address_refusal(address), "reason": exc.reason})
         next_action = None
         if address and exc.reason == "sender_registry_unavailable":
             next_action = REGISTRY_CANNOT_CONFIRM_ADDRESS.format(address=address)

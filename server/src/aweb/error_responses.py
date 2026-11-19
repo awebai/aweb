@@ -1,9 +1,11 @@
 """HTTP serialization of service errors, independent of delivery decisions."""
 
 import logging
+from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from aweb.messaging.refusals import DeliveryRefusal
+from aweb.messaging.refusals import DeliveryRefusal, DeliveryRefusalCode
+from aweb.federation.errors import FederationPolicyRefused, authority_error_body
 from aweb.messaging.delivery_policy import DeliveryPolicyRefused
 from aweb.service_errors import ServiceError, INTERNAL_SERVICE_ERROR_MESSAGE
 from aweb.auth_error_transport import install_auth_error_handlers
@@ -39,6 +41,18 @@ async def service_error_handler(request: Request, exc: Exception) -> JSONRespons
             "Delivery dependency refused status=%s failure_type=%s",
             exc.status_code,
             type(exc).__name__,
+        )
+    if (
+        isinstance(exc, DeliveryPolicyRefused)
+        and exc.code is DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING
+    ):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=authority_error_body(
+                FederationPolicyRefused(exc),
+                correlation_id=request.headers.get("X-Correlation-ID") or str(uuid4()),
+            ),
+            headers=exc.headers,
         )
     content = {"detail": exc.detail}
     if isinstance(exc, DeliveryPolicyRefused):

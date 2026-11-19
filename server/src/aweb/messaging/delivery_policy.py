@@ -1,7 +1,6 @@
 """One recipient policy decision for native and federated mail/chat."""
 
 import logging
-from awid.federation_errors import FederationAuthorityError
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -13,7 +12,7 @@ from aweb.inbound_modes import (
 )
 from aweb.member_team_key import MemberReadLock, current_member_team_ids_for_identity
 from aweb.messaging.contacts import IdentityContactMatch, identity_contact_match
-from aweb.messaging.refusals import CONTACT_REBIND_ACTION, DeliveryRefusalCode
+from aweb.messaging.refusals import CONTACT_REBIND_ACTION, DeliveryRefusalCode, unreachable_address_refusal
 from aweb.service_errors import ForbiddenError
 
 logger = logging.getLogger(__name__)
@@ -52,6 +51,7 @@ class DeliveryPolicyRefused(ForbiddenError):
 
     def __init__(self, *, code: DeliveryRefusalCode, detail: str):
         self.code = code
+        self.status_code = 404 if code is DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING else 403
         logger.warning("delivery_policy_refused reason=%s", code.value)
         super().__init__(detail)
 
@@ -144,27 +144,18 @@ async def authorize_delivery(
             code=DeliveryRefusalCode.CONTACT_IDENTITY_BINDING_REQUIRED,
             detail=CONTACT_REBIND_ACTION,
         )
-    if mode is InboundMode.CONTACTS_ONLY:
-        detail = (
-            "Recipient only accepts messages from exact active contacts. "
-            + _POLICY_ACTION
-        )
-    elif global_recipient:
-        detail = (
-            "Recipient only accepts messages from verified team members or exact active contacts. "
-            + _POLICY_ACTION
-        )
-    else:
-        detail = (
-            "Local recipient only accepts same-team, exact-contact, or stored-route continuation delivery. "
-            + _POLICY_ACTION
-        )
     if not global_recipient:
         # Preserve the published local-only 404 (federation-error-reference.md:40).
         # Missing identities retain their distinct released error code.
-        code = DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING
-        logger.warning("delivery_policy_refused reason=%s", code.value)
-        raise FederationAuthorityError(code.value) from ForbiddenError(detail)
+        raise DeliveryPolicyRefused(
+            code=DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING,
+            detail=unreachable_address_refusal(str(recipient.get("address") or "")),
+        )
+    detail = (
+        "Recipient only accepts messages from exact active contacts. "
+        if mode is InboundMode.CONTACTS_ONLY
+        else "Recipient only accepts messages from verified team members or exact active contacts. "
+    ) + _POLICY_ACTION
     raise DeliveryPolicyRefused(
         code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED, detail=detail
     )

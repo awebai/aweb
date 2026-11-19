@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.refusals import unreachable_address_refusal as unreachable_address_refusal
+
 import json
 import logging
 from dataclasses import replace
@@ -130,10 +132,7 @@ async def local_recipient_for_own_route(
 
         recipient = await resolve_agent_by_did(db, did)
     if recipient is None:
-        logging.getLogger(__name__).warning(
-            "Refusing same-origin nonresident recipient: recipient_identity_not_found"
-        )
-        raise RecipientNotResidentError()
+        return refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
     if did.startswith("did:aw:"):
         # As with a stable-only signed continuation, discover the current key
         # through the existing binding authority, outside database transactions.
@@ -164,16 +163,6 @@ async def local_recipient_for_own_route(
         )
         recipient = replace(recipient, did_key=binding.did_key)
     return recipient
-
-
-def unreachable_address_refusal(address: str) -> str:
-    """Why a full address reaches no one, in words that do not say whether a
-    local identity holds that name."""
-    return (
-        f"{address} is not a registered address. A local identity has no address and "
-        "is reachable only from inside its own team, by alias; a global identity is "
-        "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
-    )
 
 
 def verified_signed_payload_json(

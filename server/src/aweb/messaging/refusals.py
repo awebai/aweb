@@ -84,7 +84,7 @@ class SignedRecipientMismatch(DeliveryRefusal):
 class MailConversationExists(DeliveryRefusal):
     """Retain the frozen collision detail and add a separate recovery action."""
 
-    code: DeliveryRefusalCode = DeliveryRefusalCode.CONVERSATION_EXISTS
+    code: DeliveryRefusalCode
     recovery_action = (
         "Continue the existing conversation or choose a new conversation_id and retry."
     )
@@ -160,4 +160,14 @@ def encrypted_message_refusal(*, detail: str) -> DeliveryRefusal:
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         detail=detail.rstrip(".")
         + ". Check whether the original message was delivered before preparing a new encrypted message.",
+    )
+
+
+def unreachable_address_refusal(address: str) -> str:
+    """One not-routable action for address and other local-only selectors."""
+    target = address or "The recipient"
+    return (
+        f"{target} is not a registered address. A local identity has no address and "
+        "is reachable only from inside its own team, by alias; a global identity is "
+        "reachable by address once one is assigned. Check the address or use a teammate alias and retry."
     )
