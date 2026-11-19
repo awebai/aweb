@@ -6,7 +6,6 @@ from time import monotonic
 from types import SimpleNamespace
 from aweb.identity_binding import IdentityBinding
 from awid.registry import IDTreeEnrollment
-from aweb.team_auth_deps import TeamIdentity
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -21,7 +20,7 @@ from awid.registry import Address, AddressDelivery, Namespace
 from awid.signing import sign_message
 from aweb.e2ee_messages import encrypt_e2ee_chat, generate_x25519_keypair
 from aweb.internal_auth import build_internal_auth_header_value
-from aweb.identity_auth_deps import IdentityAuth
+from aweb.identity_auth_deps import MessagingAuth
 from aweb.mcp import auth as mcp_auth
 from aweb.mcp.auth import AuthContext
 from aweb.mcp.mutations import reset_mutation_callback, set_mutation_callback
@@ -207,8 +206,8 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
         "alice",
     )
 
-    async def _fake_get_team_identity(_request, _db_infra):
-        return TeamIdentity(
+    async def _fake_get_messaging_auth(_request, _db_infra):
+        return MessagingAuth(
             team_id=team_id,
             did_key=did_key,
             alias="alice",
@@ -219,7 +218,7 @@ async def test_mcp_auth_prefers_certificate_identity_fields(aweb_cloud_db, monke
             certificate_id="cert-1",
         )
 
-    monkeypatch.setattr(mcp_auth, "get_team_identity", _fake_get_team_identity)
+    monkeypatch.setattr(mcp_auth, "get_messaging_auth", _fake_get_messaging_auth)
 
     middleware = mcp_auth.MCPAuthMiddleware(
         app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db)
@@ -268,8 +267,8 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
         "alice",
     )
 
-    async def _fake_get_team_identity(_request, _db_infra):
-        return TeamIdentity(
+    async def _fake_get_messaging_auth(_request, _db_infra):
+        return MessagingAuth(
             team_id=team_id,
             did_key=did_key,
             alias="alice",
@@ -280,7 +279,7 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
             certificate_id="cert-1",
         )
 
-    monkeypatch.setattr(mcp_auth, "get_team_identity", _fake_get_team_identity)
+    monkeypatch.setattr(mcp_auth, "get_messaging_auth", _fake_get_messaging_auth)
 
     middleware = mcp_auth.MCPAuthMiddleware(
         app=lambda *_args, **_kwargs: None, db_infra=aweb_cloud_db.aweb_db
@@ -300,7 +299,7 @@ async def test_mcp_auth_accepts_raw_manager(aweb_cloud_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_auth_enriches_identity_auth_from_agent_row(
+async def test_mcp_auth_retains_the_shared_identity_member_context(
     aweb_cloud_db, monkeypatch
 ):
     team_id = "ops:gsk.aweb.ai"
@@ -325,10 +324,18 @@ async def test_mcp_auth_enriches_identity_auth_from_agent_row(
         did_key,
     )
 
-    async def _fake_resolve_identity_auth(_request):
-        return IdentityAuth(did_key=did_key, did_aw=None, address=None)
+    async def _fake_get_messaging_auth(_request, _db_infra):
+        return MessagingAuth(
+            did_key=did_key,
+            did_aw=None,
+            address=None,
+            team_id=team_id,
+            agent_id=str(agent_id),
+            alias="gsk",
+            identity_scope="local",
+        )
 
-    monkeypatch.setattr(mcp_auth, "resolve_identity_auth", _fake_resolve_identity_auth)
+    monkeypatch.setattr(mcp_auth, "get_messaging_auth", _fake_get_messaging_auth)
 
     middleware = mcp_auth.MCPAuthMiddleware(
         app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db)

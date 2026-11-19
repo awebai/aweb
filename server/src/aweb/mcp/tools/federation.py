@@ -15,6 +15,9 @@ from aweb.messaging.runtime import MessagingRuntime, application_public_origin
 
 
 def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
+    """Retain native credential evidence; adapt existing host metadata callers."""
+    if auth.messaging_auth is not None:
+        return auth.messaging_auth
     return MessagingAuth(
         did_key=(auth.did_key or "").strip(),
         did_aw=(auth.did_aw or "").strip() or None,
@@ -23,6 +26,8 @@ def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
         alias=auth.alias,
         agent_id=auth.agent_id,
         identity_scope=auth.identity_scope,
+        certificate_id=auth.certificate_id,
+        verified_team_id=auth.team_id if auth.certificate_id else None,
         address_resolution=auth.address_resolution,
     )
 
