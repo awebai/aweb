@@ -9,11 +9,12 @@ import asyncio
 import json
 import logging
 import os
-from pathlib import Path
-import signal
 import sys
 import tempfile
 import time
+from contextvars import ContextVar
+from datetime import datetime
+from pathlib import Path
 
 CASE = sys.argv[1]
 SOURCE = Path(os.environ["HERMES_AGENT_SOURCE"]).resolve()
@@ -51,10 +52,19 @@ from gateway.config import Platform
 from gateway.platform_registry import platform_registry
 
 
-async def command(argv, *, cwd=None, env=None):
+async def command(argv, *, cwd=None, env=None, stdin_data=None, timeout=12):
     proc = await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=ENV if env is None else env,
+             stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
              stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await asyncio.wait_for(proc.communicate(), 12)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(stdin_data), timeout)
+    finally:
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.communicate()
     if proc.returncode:
         raise RuntimeError(f"{argv[:3]}: {err.decode()}")
     return out.decode()
@@ -137,12 +147,9 @@ async def prepare_team_senders():
             invite = await aw(controller, "id", "team", "invite", "--team", "other",
                               "--namespace", namespace, "--member-global")
             # Token stays private stdin, never argv, logs or evidence.
-            proc = await asyncio.create_subprocess_exec(
-                "aw", "id", "team", "accept-invite", "--token-stdin", "--name", actor,
-                "--global", "--address", f"{namespace}/{actor}", "--json", cwd=home, env=ENV,
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            _, err = await asyncio.wait_for(proc.communicate((invite["token"] + "\n").encode()), 45)
-            assert proc.returncode == 0, err.decode()
+            await command(["aw", "id", "team", "accept-invite", "--token-stdin", "--name", actor,
+                           "--global", "--address", f"{namespace}/{actor}", "--json"], cwd=home,
+                          stdin_data=(invite["token"] + "\n").encode(), timeout=45)
             await aw(home, "workspace", "connect", "--service", "http://127.0.0.1:28180",
                      "--team", "other:" + namespace)
     await aw(RECEIVER, "contacts", "add", namespace + "/contact")
@@ -189,6 +196,8 @@ async def main():
     pending_key = None
     connect_measurements = []
     aw_sends = []
+    delivery_files = []
+    send_files = ContextVar("probe_send_files", default=None)
     home_notice_results = []
     home_logs = []
 
@@ -203,7 +212,15 @@ async def main():
         plugin_logger.addHandler(home_log)
 
     async def observe_send(self, chat_id, content, reply_to=None, metadata=None):
-        result = await original_send(self, chat_id, content, reply_to=reply_to, metadata=metadata)
+        paths = []
+        token = send_files.set(paths)
+        try:
+            result = await original_send(self, chat_id, content, reply_to=reply_to, metadata=metadata)
+        finally:
+            send_files.reset(token)
+        for operation, path in paths:
+            assert not path.exists(), "outbound temporary body file was not removed"
+            delivery_files.append({"operation": operation, "path": str(path), "removed": True})
         if CASE == "home_notice":
             from agent.i18n import t
             if content == t("gateway.notify.no_home_channel", platform="Aweb", sethome_cmd="/sethome"):
@@ -221,12 +238,21 @@ async def main():
 
     async def io(self, *args):
         nonlocal dropped
+        if args[:2] in (("mail", "reply"), ("chat", "send")):
+            body_path = Path(args[args.index("--body-file") + 1])
+            body = body_path.read_text()
+            assert body_path.name.startswith("hermes-aweb-"), body_path.name
+            assert not body or body not in args, "outbound body was exposed in CLI arguments"
+            paths = send_files.get()
+            assert paths is not None, "outbound send escaped the actual send observer"
+            paths.append((args[:2], body_path))
         result = await original_io(self, *args)
         if CASE == "home_notice" and args[:2] in (("mail", "reply"), ("chat", "send"), ("chat", "send-and-leave")):
             aw_sends.append({"message_id": result.get("message_id"),
                              "body": Path(args[args.index("--body-file") + 1]).read_text()})
         if args[:2] == ("mail", "reply"):
-            replies.append({"input": args[2], "body": Path(args[args.index("--body-file") + 1]).read_text()})
+            replies.append({"input": args[2], "message_id": result["message_id"],
+                            "body": Path(args[args.index("--body-file") + 1]).read_text()})
         if CASE == "mail_retry" and args[:2] == ("mail", "show") and args[-1] == target and not dropped:
             dropped = True
             fault.set()
@@ -271,6 +297,7 @@ async def main():
         original = ingress[value.message_id]
         body = original["body"]
         turns.append({"message_id": value.message_id, "body": body, "text": value.text,
+                      "chat_id": source.chat_id, "user_id": source.user_id,
                       "subject": original["subject"], "ingress_text": original["text"],
                       "ingress_control": original["control"],
                       "control": value.allow_gateway_control, "command": value.get_command()})
@@ -554,7 +581,25 @@ async def main():
             await until(lambda: len(replies) >= 2, "ordinary mail replies missing", 12)
             assert [r["input"] for r in replies] == ids, replies
             assert_content(ids)
-            print(json.dumps({"case": CASE, "input_ids": ids, "reply_inputs": [r["input"] for r in replies], "turns": turns}))
+            assert all(row["chat_id"] == chat_id and row["user_id"] == "hermes-acft1.test/alice"
+                       for row in turns), turns
+
+            async def mail_receipts():
+                rows = [(await aw(RECEIVER, "mail", "show", "--message-id", message_id))["messages"][0]
+                        for message_id in ids]
+                return rows if all(row.get("read_at") for row in rows) else None
+
+            reads = await until(mail_receipts, "real mail replies were not acknowledged")
+            visible = [(await aw(SENDER, "mail", "show", "--message-id", reply["message_id"]))["messages"][0]
+                       for reply in replies]
+            for incoming, outgoing in zip(reads, visible):
+                assert outgoing["conversation_id"] == first["conversation_id"], outgoing
+                assert datetime.fromisoformat(incoming["read_at"]) >= \
+                    datetime.fromisoformat(outgoing["created_at"]), (incoming, outgoing)
+            await until(lambda: len(delivery_files) == 2, "mail body-file cleanup did not complete")
+            print(json.dumps({"case": CASE, "input_ids": ids, "reply_inputs": [r["input"] for r in replies],
+                              "turns": turns, "reads": reads, "visible_replies": visible,
+                              "delivery_files": delivery_files}))
         elif CASE == "home_notice":
             inputs, histories = [], []
 
@@ -590,9 +635,13 @@ async def main():
             assert result.success and aw_sends[-1]["body"] == quote, aw_sends
             assert len(aw_sends) == 4 and len(home_logs) == 1
             assert_content([r["message_id"] for r in inputs])
+            assert len(turns) == len(inputs), turns
+            assert all(row["chat_id"] == "chat:" + incoming["session_id"] and
+                       row["user_id"] == "hermes-acft1.test/alice" for row, incoming in zip(turns, inputs)), turns
+            assert len(delivery_files) == 4, delivery_files
             print(json.dumps({"case": CASE, "histories": histories, "aw_sends": aw_sends,
                               "home_notice_results": home_notice_results, "home_logs": home_logs,
-                              "turns": turns}))
+                              "turns": turns, "delivery_files": delivery_files}))
     finally:
         release.set()
         (HOME / "release").touch()

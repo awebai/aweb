@@ -1,10 +1,75 @@
 """Execute the actual forwarding observer without importing a live-probe process."""
 import ast
 import asyncio
+import os
+import sys
 import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
+
+
+class ProbeCommandTests(unittest.IsolatedAsyncioTestCase):
+    def command(self):
+        path = Path(__file__).with_name("live_delivery_probe.py")
+        functions = [node for node in ast.parse(path.read_text()).body
+                     if isinstance(node, ast.AsyncFunctionDef) and node.name == "command"]
+        self.assertEqual(len(functions), 1)
+        namespace = {"asyncio": asyncio, "ENV": dict(os.environ)}
+        exec(compile(ast.Module(body=functions, type_ignores=[]), str(path), "exec"), namespace)  # noqa: S102 - Only the named command helper AST from this repository.
+        return namespace["command"]
+
+    async def check_child_cleanup(self, *, cancel):
+        command = self.command()
+        original = asyncio.create_subprocess_exec
+        ready = asyncio.Event()
+        children = []
+        operation = None
+
+        async def observe_spawn(*args, **kwargs):
+            child = await original(*args, **kwargs)
+            children.append(child)
+            self.assertEqual(await child.stdout.readline(), b"READY\n")
+            ready.set()
+            return child
+
+        try:
+            with patch.object(asyncio, "create_subprocess_exec", observe_spawn):
+                operation = asyncio.create_task(command([
+                    sys.executable, "-c", "import time; print('READY', flush=True); time.sleep(60)",
+                ], timeout=1))
+                await asyncio.wait_for(ready.wait(), 5)
+                if cancel:
+                    operation.cancel()
+                with self.assertRaises(asyncio.CancelledError if cancel else TimeoutError):
+                    await operation
+            self.assertIsNotNone(children[0].returncode, "interrupted command left its child running")
+        finally:
+            if operation is not None and not operation.done():
+                operation.cancel()
+                try:
+                    await operation
+                except asyncio.CancelledError:
+                    pass
+            for child in children:
+                if child.returncode is None:
+                    child.kill()
+                    await child.communicate()
+
+    async def test_cancellation_joins_the_actual_child(self):
+        await self.check_child_cleanup(cancel=True)
+
+    async def test_timeout_joins_the_actual_child(self):
+        await self.check_child_cleanup(cancel=False)
+
+    async def test_actual_child_output_and_failure_are_preserved(self):
+        command = self.command()
+        self.assertEqual(await command([sys.executable, "-c", "print('probe output')"]), "probe output\n")
+        self.assertEqual(await command([sys.executable, "-c", "import sys; print(sys.stdin.read(), end='')"],
+                                      stdin_data=b"private stdin\n"), "private stdin\n")
+        with self.assertRaisesRegex(RuntimeError, "probe failure"):
+            await command([sys.executable, "-c", "import sys; sys.stderr.write('probe failure'); sys.exit(7)"])
 
 
 class ProbeTimingTests(unittest.IsolatedAsyncioTestCase):
