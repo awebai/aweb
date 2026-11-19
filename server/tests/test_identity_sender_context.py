@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
-from aweb.api import _mount_mcp_app, _shutdown_mcp_app
+from mcp_runtime_fixtures import mounted_mcp
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -27,7 +27,7 @@ class SenderTransport(StrEnum):
     MCP = "mcp"
 
 
-async def _send(
+async def _send_response(
     env, *, actor, stable_did: str, certificate: str | None, transport: SenderTransport
 ):
     if transport is SenderTransport.HTTP:
@@ -68,6 +68,19 @@ async def _send(
             "Accept": "application/json, text/event-stream",
         },
     )
+    return response
+
+
+async def _send(
+    env, *, actor, stable_did: str, certificate: str | None, transport: SenderTransport
+):
+    response = await _send_response(
+        env,
+        actor=actor,
+        stable_did=stable_did,
+        certificate=certificate,
+        transport=transport,
+    )
     assert response.status_code == 200, response.text
     result = response.json()
     if transport is SenderTransport.MCP:
@@ -100,7 +113,7 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
         )
         await register_namespace_controller(env, env.team_did)
         stable = (await registry.register_did(actor.did, actor.sk)).did_aw
-        prefix = "sender-" + uuid4().hex[:12]
+        prefix = "a-" + uuid4().hex[:12]
         earlier = await registry.register_address(
             "example.test",
             prefix + "-other",
@@ -110,7 +123,7 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
         )
         selected = await registry.register_address(
             "example.test",
-            prefix + "-selected",
+            "alice",
             stable,
             env.team_sk,
             current_did_key=actor.did,
@@ -144,8 +157,12 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
             },
         )
         assert admitted.status_code == 200, admitted.text
-        await _mount_mcp_app(env.app, env.infra, env.redis, registry)
-        try:
+        async with mounted_mcp(
+            env.app,
+            db_infra=env.infra,
+            redis=env.redis,
+            registry_client=registry,
+        ):
             positive = await _send(
                 env,
                 actor=actor,
@@ -173,5 +190,82 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
             )
             assert row["from_did"] == stable
             assert row["from_address"] == selected_address
-        finally:
-            await _shutdown_mcp_app(env.app)
+
+            # Add another independently verified native member context with a
+            # different exact From. Listing order cannot choose between them.
+            second_name = "sender-context-" + uuid4().hex[:12]
+            await registry.register_team(
+                domain="example.test",
+                name=second_name,
+                display_name="Second sender context",
+                team_did_key=env.team_did,
+                visibility="public",
+                namespace_controller_signing_key=env.team_sk,
+            )
+            second_team = second_name + ":example.test"
+            second_certificate = _encode_certificate(
+                _make_certificate(
+                    env.team_sk,
+                    env.team_did,
+                    actor.did,
+                    team_id=second_team,
+                    alias=earlier.name,
+                    identity_scope="global",
+                    member_did_aw=stable,
+                    member_address=f"{earlier.domain}/{earlier.name}",
+                    certificate_id="second-context-" + uuid4().hex,
+                )
+            )
+            connected = await env.client.post(
+                "/v1/connect",
+                content=b"{}",
+                headers={
+                    **_signed_team_headers(
+                        actor.sk, actor.did, second_team, second_certificate, b"{}"
+                    ),
+                    "Content-Type": "application/json",
+                },
+            )
+            assert connected.status_code == 200, connected.text
+            before = await env.db.fetch_value(
+                "SELECT count(*) FROM {{tables.messages}} WHERE from_did=$1",
+                stable,
+            )
+            refused = await _send_response(
+                env,
+                actor=actor,
+                stable_did=stable,
+                certificate=None,
+                transport=transport,
+            )
+            if transport is SenderTransport.HTTP:
+                assert refused.status_code == 409, refused.text
+            else:
+                assert refused.status_code == 200, refused.text
+            # The MCP transport keeps a tool refusal in its result envelope;
+            # both shapes retain the same code and exact credential remedy.
+            assert "sender_context_required" in refused.text
+            assert "X-AWID-Team-Certificate" in refused.text
+            assert "pass --team" in refused.text
+            assert "upgrade aw 1.36.58" in refused.text
+            assert (
+                await env.db.fetch_value(
+                    "SELECT count(*) FROM {{tables.messages}} WHERE from_did=$1",
+                    stable,
+                )
+                == before
+            )
+            selected_again = await _send(
+                env,
+                actor=actor,
+                stable_did=stable,
+                certificate=certificate,
+                transport=transport,
+            )
+            assert (
+                await env.db.fetch_value(
+                    "SELECT from_address FROM {{tables.messages}} WHERE message_id=$1",
+                    selected_again,
+                )
+                == selected_address
+            )
