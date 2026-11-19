@@ -102,6 +102,15 @@ A retained `approval-binding-refresh.json` packet makes an interrupted submissio
 replayable. Repeating the command completes that same update; it does not enroll
 another key or rewrite a historical statement.
 
+While a retained packet exists, `--issuer` does not replace that interrupted
+operation. Transient or uncertain failures keep its exact packet for replay.
+A definitive service refusal names `approval-binding-refresh.json` and explains
+how to remove that file and request a new packet with `--issuer URL`, after
+restoring the last successful live binding if another machine refreshed it.
+An unreadable retained packet names its local file rather than blaming the
+holder; recover the exact interrupted packet, or confirm with the issuer that
+it cannot be used before removing it. Historical enrollment files stay intact.
+
 This initial path supports plaintext mail, not human encryption-key custody.
 Encrypted sends or replies refuse when that custody is unavailable; there is
 no silent plaintext fallback. Chat, arbitrary `id sign`, blueprint publication

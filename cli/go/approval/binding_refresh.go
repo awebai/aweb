@@ -21,7 +21,7 @@ type BindingRefreshResponse struct {
 // RefreshBinding transports the unchanged holder packet. Call the shared
 // ReadBindingRefreshAnswer before storing its returned binding as live authority.
 func (c *Client) RefreshBinding(ctx context.Context, in BindingRefreshInput) (*BindingRefreshResponse, error) {
-	raw, status, err := c.exchange(ctx, PurposeBindingRefresh, in.Packet)
+	raw, status, err := c.exchange(ctx, string(PurposeBindingRefresh), in.Packet)
 	if err != nil {
 		return nil, err
 	}

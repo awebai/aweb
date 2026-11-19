@@ -64,3 +64,22 @@ func TestHumanBindingRefreshCorruptPacketNamesRetainedSource(t *testing.T) {
 		t.Fatalf("fresh holder failure lost its source: %v", err)
 	}
 }
+
+func TestHumanBindingRefreshRecoveryDistinguishesDefinitiveFromUncertain(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "approval-binding-refresh.json")
+	for _, status := range []int{400, 401, 403, 404, 409, 422, 408, 429, 500, 503} {
+		_, err := proof.ReadBindingRefreshAnswer(map[string]any{"version": json.Number("1"), "error": map[string]any{"code": "binding_refresh_refused"}}, proof.BindingRefreshAnswerInput{Status: status})
+		if err == nil {
+			t.Fatal("shared refusal missing")
+		}
+		got := bindingRefreshRecoveryError(bindingRefreshAnswerError(err), path)
+		definitive := status < 500 && status != 408 && status != 429
+		if strings.Contains(got.Error(), "remove") != definitive || (definitive && (!strings.Contains(got.Error(), path) || strings.Contains(got.Error(), "Keep the retained packet and retry"))) {
+			t.Fatalf("wrong recovery for HTTP %d: %v", status, got)
+		}
+		var service *proof.ServiceError
+		if !errors.As(got, &service) || service.HTTPStatus != status {
+			t.Fatalf("lost shared service status %d: %v", status, got)
+		}
+	}
+}

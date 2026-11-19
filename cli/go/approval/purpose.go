@@ -2,9 +2,6 @@ package approval
 
 import "errors"
 
-// PurposeBindingRefresh is the released string purpose accepted by SignedRequest.
-const PurposeBindingRefresh = "binding_refresh"
-
 // RequestPurpose names one shared approval HTTP operation, without granting authority.
 type RequestPurpose string
 
@@ -16,14 +13,14 @@ const (
 	PurposeEnrollmentMaterial RequestPurpose = "enrollment_material"
 	PurposeEnrollmentConfirm  RequestPurpose = "enrollment_confirm"
 	PurposeEnrollmentActivate RequestPurpose = "enrollment_activate"
-	purposeBindingRefresh     RequestPurpose = PurposeBindingRefresh
+	PurposeBindingRefresh     RequestPurpose = "binding_refresh"
 )
 
 var routes = map[RequestPurpose]string{
 	purposeSubmit: "/v1/requests/submit", purposePoll: "/v1/requests/poll",
 	purposeCancel: "/v1/requests/cancel", PurposeEnrollmentStart: "/v1/enrollments/start",
 	PurposeEnrollmentMaterial: "/v1/enrollments/material", PurposeEnrollmentConfirm: "/v1/enrollments/confirm",
-	PurposeEnrollmentActivate: "/v1/enrollments/activate", purposeBindingRefresh: "/v1/enrollment-bindings/refresh",
+	PurposeEnrollmentActivate: "/v1/enrollments/activate", PurposeBindingRefresh: "/v1/enrollment-bindings/refresh",
 }
 
 func checkedPurpose(value string) (RequestPurpose, error) {

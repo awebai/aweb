@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	proof "github.com/awebai/approval-service/verify"
@@ -26,7 +27,10 @@ The approval service checks your own-person packet; no new key is enrolled.
 
 The new live binding is saved separately from the original enrollment and
 historical proof evidence. A retry carries the same retained packet until the
-service confirms it. This command never replaces a lost approval key.`,
+service confirms it. While that packet exists, --issuer does not replace it.
+A definitive refusal names the retained file to remove before requesting a new
+packet. An uncertain failure keeps the exact packet for replay.
+This command never replaces a lost approval key.`,
 	Args: cobra.NoArgs, Annotations: map[string]string{humanCommandAnnotation: "registered"}, RunE: runIDHumanRefreshBinding,
 }
 
@@ -68,9 +72,26 @@ func loadHumanApprovalBinding(dir string) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return proof.Parse(raw)
+		binding, err := proof.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("The saved approval binding in %q is unreadable. Restore that file from your last successful enrollment or refresh before retrying: %w", filepath.Join(dir, name), err)
+		}
+		return binding, nil
 	}
 	return nil, fmt.Errorf("No approval binding is saved. Run aw id human enroll with your human identity first.")
+}
+
+func (in humanBindingRefreshInput) packetError(detail string, cause error) error {
+	var message string
+	if in.Source == bindingRefreshRetainedReplay {
+		message = fmt.Sprintf("The retained refresh packet in %q is unreadable or does not match this person, binding or service. Restore the exact packet from the interrupted request; if the issuer confirms it cannot be used, remove that file and repeat refresh-binding with --issuer URL to request a new packet.", filepath.Join(in.Human.dir, "approval-binding-refresh.json"))
+	} else {
+		message = "The holder returned an unreadable or mismatched refresh packet. Check the selected issuer and this person's last successful live binding before retrying."
+	}
+	if cause != nil {
+		return fmt.Errorf("%s %s: %w", message, detail, cause)
+	}
+	return fmt.Errorf("%s %s", message, detail)
 }
 
 func bindingRefreshBody(binding map[string]any) (map[string]any, error) {
@@ -87,9 +108,9 @@ func bindingRefreshBody(binding map[string]any) (map[string]any, error) {
 func readHumanBindingRefreshPacket(raw []byte, in humanBindingRefreshInput) (*humanBindingRefreshPacket, error) {
 	packet, err := proof.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("The holder returned an unreadable refresh packet. Check the issuer and retry: %w", err)
+		return nil, in.packetError("The packet is not valid JSON.", err)
 	}
-	refusal := fmt.Errorf("The holder's packet does not match this person, live binding or service. Check the issuer and restore the last successful live binding before retrying.")
+	refusal := in.packetError("The packet does not match the selected person, live binding or service.", nil)
 	version, ok := packet["version"].(json.Number)
 	if !ok || version.String() != "1" || len(packet) != 5 {
 		return nil, refusal
@@ -108,7 +129,7 @@ func readHumanBindingRefreshPacket(raw []byte, in humanBindingRefreshInput) (*hu
 	}
 	body, err := bindingRefreshBody(binding)
 	if err != nil {
-		return nil, err
+		return nil, in.packetError("The packet's binding is unreadable.", err)
 	}
 	current, err := bindingRefreshBody(in.Current)
 	if err != nil {
@@ -136,10 +157,26 @@ func readHumanBindingRefreshPacket(raw []byte, in humanBindingRefreshInput) (*hu
 
 func bindingRefreshAnswerError(err error) error {
 	var refusal *proof.BindingRefreshServiceError
-	if errors.As(err, &refusal) && refusal.Advice != "" {
-		return fmt.Errorf("%w. %s", err, refusal.Advice)
+	if errors.As(err, &refusal) {
+		if advice := awid.SanitizeErrorText(refusal.Advice); advice != "" {
+			return fmt.Errorf("%w. %s", err, advice)
+		}
+		return fmt.Errorf("%w. Ask the issuer to check this binding refresh.", err)
 	}
 	return fmt.Errorf("The service did not confirm this binding. Keep the retained packet and retry; if refusal persists, ask your issuer to check the active enrollment: %w", err)
+}
+
+// The shared answer reader establishes a service refusal. Unavailable or
+// ambiguous answers retain exact replay (docs/id-certificates.md:105-112).
+func bindingRefreshRecoveryError(err error, pendingPath string) error {
+	var refusal *proof.BindingRefreshServiceError
+	if errors.As(err, &refusal) {
+		status := refusal.Service.HTTPStatus
+		if status >= 400 && status < 500 && status != http.StatusRequestTimeout && status != http.StatusTooManyRequests {
+			return fmt.Errorf("%w. The service definitively refused this packet. Restore your last successful live binding if it changed elsewhere. To ask the holder for a new packet, remove %q and repeat refresh-binding with --issuer URL for the current issuer.", err, pendingPath)
+		}
+	}
+	return err
 }
 
 func saveCheckedHumanBindingRefresh(h *humanParticipation, packet *humanBindingRefreshPacket, answer humanBindingRefreshAnswer) error {
@@ -163,6 +200,8 @@ func humanBindingRefreshIssuer(h *humanParticipation, issuerOrigin string) (stri
 	return canonicalHumanIssuer(session.Issuer)
 }
 
+var humanHolderErrorCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,127}$`)
+
 // humanBindingRefreshHolderError preserves the holder's controlled next step.
 // Holder enrollment errors use an error envelope, not the service answer profile.
 func humanBindingRefreshHolderError(result *idRequestExecutionResult) error {
@@ -172,7 +211,7 @@ func humanBindingRefreshHolderError(result *idRequestExecutionResult) error {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(result.Body, &response); err == nil && strings.TrimSpace(response.Error.Code) != "" && strings.TrimSpace(response.Error.Message) != "" {
+	if err := json.Unmarshal(result.Body, &response); err == nil && humanHolderErrorCode.MatchString(response.Error.Code) && strings.TrimSpace(response.Error.Message) != "" {
 		message := awid.SanitizeErrorText(response.Error.Message)
 		if message != "" {
 			refusal := &awid.APIError{StatusCode: result.Status, Body: string(result.Body)}
@@ -211,7 +250,7 @@ func runIDHumanRefreshBinding(cmd *cobra.Command, args []string) error {
 		}
 		raw = result.Body
 	} else if err != nil {
-		return err
+		return fmt.Errorf("Cannot read the retained refresh packet in %q. Restore access to that exact packet before retrying: %w", pendingPath, err)
 	}
 	packet, err := readHumanBindingRefreshPacket(raw, humanBindingRefreshInput{Human: h, Current: current, Source: source})
 	if err != nil {
@@ -226,10 +265,10 @@ func runIDHumanRefreshBinding(cmd *cobra.Command, args []string) error {
 	}
 	answer, err := client.RefreshBinding(cmd.Context(), approval.BindingRefreshInput{Packet: packet.Body})
 	if err != nil {
-		return bindingRefreshAnswerError(err)
+		return bindingRefreshRecoveryError(bindingRefreshAnswerError(err), pendingPath)
 	}
 	if err = saveCheckedHumanBindingRefresh(h, packet, humanBindingRefreshAnswer{Status: answer.Status, Body: answer.Body}); err != nil {
-		return err
+		return bindingRefreshRecoveryError(err, pendingPath)
 	}
 	if err = os.Remove(pendingPath); err != nil {
 		return fmt.Errorf("Live binding saved but the retained packet could not be removed. Repeat refresh-binding to complete the exact replay: %w", err)
