@@ -112,7 +112,9 @@ async def test_conversations_lists_identity_scoped_mail_by_local_did(aweb_cloud_
     )
 
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.resolve_key = AsyncMock(
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+    )
     registry.list_did_addresses = AsyncMock(
         return_value=[
             Address(
@@ -218,7 +220,9 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db, encry
         )
 
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.resolve_key = AsyncMock(
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+    )
     registry.list_did_addresses = AsyncMock(
         return_value=[
             Address(
@@ -252,7 +256,9 @@ async def test_conversations_groups_mail_by_conversation_id(aweb_cloud_db, encry
 
 
 @pytest.mark.asyncio
-async def test_conversations_lists_legacy_mail_messages_without_conversation_id_separately(aweb_cloud_db):
+async def test_conversations_lists_legacy_mail_messages_without_conversation_id_separately(
+    aweb_cloud_db,
+):
     bob_sk, _, bob_did_key = _make_keypair()
 
     await aweb_cloud_db.aweb_db.execute(
@@ -288,7 +294,9 @@ async def test_conversations_lists_legacy_mail_messages_without_conversation_id_
     )
 
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.resolve_key = AsyncMock(
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+    )
     registry.list_did_addresses = AsyncMock(
         return_value=[
             Address(
@@ -371,7 +379,9 @@ async def test_conversations_lists_mail_for_sender_identity(aweb_cloud_db):
     )
 
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key))
+    registry.resolve_key = AsyncMock(
+        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
+    )
     registry.list_did_addresses = AsyncMock(
         return_value=[
             Address(
@@ -396,7 +406,9 @@ async def test_conversations_lists_mail_for_sender_identity(aweb_cloud_db):
     conversations = resp.json()["conversations"]
     assert len(conversations) == 1
     assert conversations[0]["conversation_id"] == "55555555-5555-4555-8555-555555555555"
-    assert "legacy_message_id" not in conversations[0] or conversations[0]["legacy_message_id"] is None
+    assert (
+        "legacy_message_id" not in conversations[0] or conversations[0]["legacy_message_id"] is None
+    )
     assert conversations[0]["subject"] == "sender-visible"
 
 
@@ -841,19 +853,25 @@ async def test_grant_conversations_require_type_specific_read_scopes(aweb_cloud_
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         mail_allowed = await client.get("/v1/conversations?conversation_type=mail")
-        counts_allowed = await client.get("/v1/conversations/unread-counts?participant_did=did:aw:bob")
+        counts_allowed = await client.get(
+            "/v1/conversations/unread-counts?participant_did=did:aw:bob"
+        )
         chat_denied = await client.get("/v1/conversations?conversation_type=chat")
         unfiltered_denied = await client.get("/v1/conversations")
         grant_scopes = ("mail.read", "chat.read")
         unfiltered_allowed = await client.get("/v1/conversations")
         invalid_type = await client.get("/v1/conversations?conversation_type=task")
         grant_scopes = ("chat.read",)
-        counts_denied = await client.get("/v1/conversations/unread-counts?participant_did=did:aw:bob")
+        counts_denied = await client.get(
+            "/v1/conversations/unread-counts?participant_did=did:aw:bob"
+        )
 
     assert mail_allowed.status_code == 200, mail_allowed.text
     assert [item["conversation_type"] for item in mail_allowed.json()["conversations"]] == ["mail"]
     assert counts_allowed.status_code == 200, counts_allowed.text
-    assert counts_allowed.json() == {"counts": [{"participant_did": "did:aw:bob", "unread_count": 1}]}
+    assert counts_allowed.json() == {
+        "counts": [{"participant_did": "did:aw:bob", "unread_count": 1}]
+    }
     assert counts_denied.status_code == 403
     assert counts_denied.json()["detail"] == "outside grant scope"
     assert chat_denied.status_code == 403
@@ -861,7 +879,10 @@ async def test_grant_conversations_require_type_specific_read_scopes(aweb_cloud_
     assert unfiltered_denied.status_code == 403
     assert unfiltered_denied.json()["detail"] == "outside grant scope"
     assert unfiltered_allowed.status_code == 200, unfiltered_allowed.text
-    assert {item["conversation_type"] for item in unfiltered_allowed.json()["conversations"]} == {"mail", "chat"}
+    assert {item["conversation_type"] for item in unfiltered_allowed.json()["conversations"]} == {
+        "mail",
+        "chat",
+    }
     assert invalid_type.status_code == 422
 
 
@@ -901,7 +922,9 @@ async def test_conversations_lists_identity_scoped_chat_by_participant_did(aweb_
     )
 
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
+    registry.resolve_key = AsyncMock(
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+    )
     registry.list_did_addresses = AsyncMock(
         return_value=[
             Address(
