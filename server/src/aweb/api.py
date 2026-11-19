@@ -34,8 +34,7 @@ from .outbox_recovery import (
 )
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
-from .error_responses import service_error_handler
-from .service_errors import ServiceError
+from .error_responses import install_service_error_handlers
 from .messaging.chat_policy import HumanChatRefused
 from .install_admins import install_admin_setup_message
 from .mcp.server import NormalizeMountedMCPPathMiddleware
@@ -604,7 +603,7 @@ def create_app(
             ),
         )
 
-    app.add_exception_handler(ServiceError, service_error_handler)
+    install_service_error_handlers(app)
 
     @app.get("/live", tags=["internal"])
     async def live() -> dict:
