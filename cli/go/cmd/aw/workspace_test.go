@@ -1946,7 +1946,7 @@ func didFromDIDKeyAuthorizationForTest(authHeader string) string {
 	return parts[1]
 }
 
-func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) {
+func TestAwWorkspaceAddWorktreeKeepsCertificateWhenConnectFails(t *testing.T) {
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
@@ -2043,17 +2043,21 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 	if registeredCert["certificate_id"] == nil || registeredCert["certificate_id"] == "" {
 		t.Fatalf("registered certificate_id=%v", registeredCert["certificate_id"])
 	}
-	if revokedCert["certificate_id"] != registeredCert["certificate_id"] {
-		t.Fatalf("revoked certificate_id=%v want %v", revokedCert["certificate_id"], registeredCert["certificate_id"])
+	if len(revokedCert) != 0 {
+		t.Fatal("connect uncertainty revoked the member before coordination cleanup")
 	}
 
 	child := filepath.Join(tmp, "repo-charlie")
-	if _, err := os.Stat(child); !os.IsNotExist(err) {
-		t.Fatalf("expected failed child worktree cleanup, stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(child, ".aw", "signing.key")); err != nil {
+		t.Fatalf("failure discarded the member credential: %v", err)
+	}
+	certificate, err := awconfig.LoadTeamCertificateForTeam(child, teamID)
+	if err != nil || certificate.CertificateID != registeredCert["certificate_id"] {
+		t.Fatalf("failure lost the exact issued certificate: %v", err)
 	}
 }
 
-func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *testing.T) {
+func TestAwWorkspaceAddWorktreeKeepsCertificateWhenConnectAliasMismatches(t *testing.T) {
 	t.Parallel()
 
 	const origin = "https://github.com/acme/repo.git"
@@ -2158,13 +2162,17 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *t
 	if registeredCert["certificate_id"] == nil || registeredCert["certificate_id"] == "" {
 		t.Fatalf("registered certificate_id=%v", registeredCert["certificate_id"])
 	}
-	if revokedCert["certificate_id"] != registeredCert["certificate_id"] {
-		t.Fatalf("revoked certificate_id=%v want %v", revokedCert["certificate_id"], registeredCert["certificate_id"])
+	if len(revokedCert) != 0 {
+		t.Fatal("connect uncertainty revoked the member before coordination cleanup")
 	}
 
 	child := filepath.Join(tmp, "repo-charlie")
-	if _, err := os.Stat(child); !os.IsNotExist(err) {
-		t.Fatalf("expected failed child worktree cleanup, stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(child, ".aw", "signing.key")); err != nil {
+		t.Fatalf("failure discarded the member credential: %v", err)
+	}
+	certificate, err := awconfig.LoadTeamCertificateForTeam(child, teamID)
+	if err != nil || certificate.CertificateID != registeredCert["certificate_id"] {
+		t.Fatalf("failure lost the exact issued certificate: %v", err)
 	}
 }
 
