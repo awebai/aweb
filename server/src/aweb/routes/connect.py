@@ -25,7 +25,7 @@ from aweb.human_kind import IdentityKindObservation
 from aweb.identity_binding import IdentityBinding, refresh_projection_binding
 from aweb.identity_scope import normalize_identity_scope
 from aweb.inbound_modes import effective_inbound_mode
-from aweb.service_errors import ServiceError
+from aweb.service_errors import ServiceError, ValidationError
 from aweb.team_admission import admit_team
 from aweb.team_auth_deps import get_team_identity, verify_request_certificate
 
@@ -58,6 +58,19 @@ class ConnectResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+class WorkspaceProfile(StrEnum):
+    """Host-requested kinds for an admitted workspace without a repository."""
+
+    MANUAL = "manual"
+    HOSTED_MCP = "hosted_mcp"
+
+
+@dataclass(frozen=True)
+class _ConnectedWorkspace:
+    workspace_id: str
+    workspace_type: str
+
 
 @dataclass(frozen=True, kw_only=True)
 class PlannedIdentityIds:
@@ -318,7 +331,8 @@ async def _ensure_workspace(
     role: str,
     human_name: str,
     planned_workspace_id: uuid.UUID | None = None,
-) -> str:
+    workspace_profile: WorkspaceProfile | None = None,
+) -> _ConnectedWorkspace:
     """Find or create a workspace row. Returns workspace_id as string.
 
     On reconnect (same team_id + alias), updates the existing workspace
@@ -331,21 +345,28 @@ async def _ensure_workspace(
     async def _get_existing_workspace():
         return await db.fetch_one(
             """
-            SELECT workspace_id, agent_id FROM {{tables.workspaces}}
+            SELECT workspace_id, agent_id, repo_id, workspace_type FROM {{tables.workspaces}}
             WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
             """,
             team_id,
             alias,
         )
 
-    async def _update_existing_workspace(workspace_id: uuid.UUID | str) -> str:
+    async def _update_existing_workspace(existing) -> _ConnectedWorkspace:
+        workspace_id = existing["workspace_id"]
         _require_planned_id(workspace_id, planned_workspace_id)
+        if repo_id is not None or existing["repo_id"] is not None:
+            workspace_type = "agent"
+        elif workspace_profile is not None:
+            workspace_type = workspace_profile.value
+        else:
+            workspace_type = existing["workspace_type"]
         await db.execute(
             """
             UPDATE {{tables.workspaces}}
             SET hostname = $1, workspace_path = $2, role = $3,
                 human_name = $4, repo_id = COALESCE($5, repo_id),
-                agent_id = $6, last_seen_at = NOW(), updated_at = NOW()
+                agent_id = $6, last_seen_at = NOW(), updated_at = NOW(), workspace_type = $8
             WHERE workspace_id = $7
             """,
             hostname,
@@ -355,8 +376,9 @@ async def _ensure_workspace(
             repo_id,
             uuid.UUID(agent_id),
             workspace_id,
+            workspace_type,
         )
-        return str(workspace_id)
+        return _ConnectedWorkspace(str(workspace_id), workspace_type)
 
     existing = await _get_existing_workspace()
     if existing:
@@ -365,10 +387,15 @@ async def _ensure_workspace(
                 f"alias {alias!r} is already in use by another active agent in team {team_id}",
                 code="alias_active",
             )
-        return await _update_existing_workspace(existing["workspace_id"])
+        return await _update_existing_workspace(existing)
 
     workspace_id = planned_workspace_id or uuid.uuid4()
-    workspace_type = "agent" if repo_origin else "manual"
+    if repo_id is not None:
+        workspace_type = "agent"
+    elif workspace_profile is not None:
+        workspace_type = workspace_profile.value
+    else:
+        workspace_type = "manual"
     try:
         async with db.transaction() as insert_tx:
             row = await insert_tx.fetch_one(
@@ -390,13 +417,13 @@ async def _ensure_workspace(
                 workspace_path,
                 workspace_type,
             )
-        return str(row["workspace_id"])
+        return _ConnectedWorkspace(str(row["workspace_id"]), workspace_type)
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
             raise
         existing = await _get_existing_workspace()
         if existing and str(existing["agent_id"]) == agent_id:
-            return await _update_existing_workspace(existing["workspace_id"])
+            return await _update_existing_workspace(existing)
         if planned_workspace_id is not None and existing is None:
             raise PlannedIdentityConflict() from exc
         raise AliasConflictError(
@@ -437,6 +464,7 @@ async def connect_agent(
     identity_kind: IdentityKindObservation | None = None,
     planned_ids: PlannedIdentityIds | None = None,
     generation: VerifiedCertificateGeneration | None = None,
+    workspace_profile: WorkspaceProfile | None = None,
 ) -> dict[str, Any]:
     """Auto-provision team + agent + workspace from certificate info.
 
@@ -455,6 +483,8 @@ async def connect_agent(
         agent_type: Non-authoritative runtime label; a human claim alone is ignored.
         identity_kind: Exact-subject observation from the public ID-chain verifier.
         planned_ids: Retained creation IDs; existing projections must match both exactly.
+        workspace_profile: Explicit non-repository kind; an existing repository
+            always keeps agent kind. Omission preserves an existing workspace kind.
         generation: Actual current-controller proof from verify_certificate_generation.
             Its immutable claims and verified key replace issuer-supplied mint fields.
             Registration status remains separate. Acquire this proof before locks;
@@ -463,6 +493,11 @@ async def connect_agent(
     Returns:
         Dict with team_id, alias, agent_id, workspace_id, role.
     """
+    if workspace_profile is not None and not isinstance(workspace_profile, WorkspaceProfile):
+        raise ValidationError({
+            "code": "workspace_profile_invalid",
+            "message": "Choose WorkspaceProfile.MANUAL or WorkspaceProfile.HOSTED_MCP, then retry.",
+        })
     if generation is not None:
         if not isinstance(generation, VerifiedCertificateGeneration):
             raise TypeError("Pass the result of verify_certificate_generation for generation admission.")
@@ -559,7 +594,7 @@ async def connect_agent(
                 tx, agent_id=agent_id, did_key=did_key, binding=identity_binding,
             )
 
-        workspace_id = await _ensure_workspace(
+        workspace = await _ensure_workspace(
             tx,
             team_id=team_id,
             agent_id=agent_id,
@@ -570,6 +605,7 @@ async def connect_agent(
             role=role,
             human_name=human_name,
             planned_workspace_id=planned_ids.workspace_id if planned_ids is not None else None,
+            workspace_profile=workspace_profile,
         )
 
     return {
@@ -577,7 +613,8 @@ async def connect_agent(
         "agent_type": agent_type,
         "alias": alias,
         "agent_id": agent_id,
-        "workspace_id": workspace_id,
+        "workspace_id": workspace.workspace_id,
+        "workspace_type": workspace.workspace_type,
         "role": role,
     }
 

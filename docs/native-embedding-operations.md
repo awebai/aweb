@@ -335,3 +335,39 @@ The optional extension inputs have structural contracts: `on_mutation` is
 runtime admission or new validation. Ordinary None-returning host callbacks,
 SDK limiter implementations and existing attachment providers retain their
 current behavior.
+
+## Existing-member certificate replacement
+
+`aweb.certificate_projection.replace_member_certificate(*, db, agent_id,
+team_id, member_did_key, expected_certificate_id, generation,
+identity_binding=None)` updates an existing member without reconstructing its
+profile or workspace. `generation` is the actual verified generation; it
+supplies the checked artifact and independent current team key. The operation
+locks team then member, checks the live exact team/key/alias/scope and expected
+old certificate ID, and returns `CertificateProjectionResult` with
+`UPDATED`/`UNCHANGED`, the same agent ID, certificate ID and proof fingerprint.
+An exact already-applied generation is idempotent. A missing member, changed
+fence or stale team proof is an actionable named conflict, never an UPDATE0
+reported as success.
+
+An omitted `identity_binding` asserts that signed identity claims equal the
+stored verified binding, and the operation checks that assertion. If they
+differ, the caller must supply an independently fresh matching native
+`IdentityBinding`. The canonical `refresh_projection_binding` applies it in
+the same transaction as the certificate acceptance; no intermediate mismatch
+is committed. Without that proof, `certificate_binding_conflict` says what to
+supply and nothing changes. An unchanged binding requires no fresh-registry
+gate. Profile, role, kind, status and workspace fields remain unchanged. These
+are Antares `16d02630`'s four required outcomes. Hosts can update their complete
+artifact cache and retained operation in this transaction; native storage
+never names those host columns.
+
+## Requested workspace profile
+
+`connect_agent` also accepts optional `workspace_profile` using
+`WorkspaceProfile.MANUAL` or `WorkspaceProfile.HOSTED_MCP`. It is requested
+metadata, not member authority. A supplied or existing repository keeps the
+workspace kind `agent`; otherwise an explicit profile selects the non-repo
+kind. Omission preserves an existing kind. The Python result includes effective
+`workspace_type` so hosts do not read or rewrite native tables to discover it.
+There is no second workspace constructor or added HTTP input/output field.
