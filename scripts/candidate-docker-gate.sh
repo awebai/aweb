@@ -316,6 +316,8 @@ docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$
 
 BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
   --build-arg USER_PATHS_SOURCE_TREE="$TREE" \
+  --build-arg USER_PATHS_SOURCE_SHA="$SOURCE_SHA" \
+  --build-arg USER_PATHS_CLI_VERSION="$CLI_VERSION" \
   --label "aweb.candidate-gate=$resource_label" \
   -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
