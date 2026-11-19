@@ -186,6 +186,35 @@ async def _is_open_task_ref(
     return (row["status"] or "").strip().lower() != "closed"
 
 
+async def lock_task_claim_workspaces_on(
+    tx,
+    *,
+    team_id: str,
+    task_ref: str,
+    workspace_id: str | None = None,
+    actor_agent_id: str | None = None,
+):
+    """Lock the complete claimant/actor workspace set before claim or agent locks."""
+    return await tx.fetch_all(
+        """
+        SELECT w.workspace_id, w.agent_id, w.alias, w.human_name, w.last_seen_at
+        FROM {{tables.workspaces}} w
+        WHERE w.team_id=$1 AND (
+          ($4::uuid IS NOT NULL AND w.agent_id=$4 AND w.deleted_at IS NULL)
+          OR EXISTS (
+            SELECT 1 FROM {{tables.task_claims}} c
+            WHERE c.team_id=$1 AND c.task_ref=$2 AND c.workspace_id=w.workspace_id
+              AND ($3::uuid IS NULL OR c.workspace_id=$3)
+          ))
+        ORDER BY w.workspace_id FOR UPDATE
+        """,
+        team_id,
+        task_ref,
+        UUID(workspace_id) if workspace_id else None,
+        UUID(actor_agent_id) if actor_agent_id else None,
+    )
+
+
 async def acquire_task_claim_on(
     tx, *, team_id: str, actor_agent_id: str, task_ref: str, now: datetime
 ) -> UUID | None:
@@ -195,16 +224,21 @@ async def acquire_task_claim_on(
     actor's actual workspace, rather than an alias match, owns a taken claim.
     """
     apex_task_ref = await resolve_task_claim_apex_on(tx, team_id, task_ref)
-    workspace = await tx.fetch_one(
-        """
-        SELECT workspace_id, alias, human_name
-        FROM {{tables.workspaces}}
-        WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
-        ORDER BY last_seen_at DESC NULLS LAST, workspace_id
-        LIMIT 1 FOR UPDATE
-        """,
-        UUID(actor_agent_id),
-        team_id,
+    locked = await lock_task_claim_workspaces_on(
+        tx,
+        team_id=team_id,
+        task_ref=task_ref,
+        actor_agent_id=actor_agent_id,
+    )
+    candidates = [row for row in locked if str(row["agent_id"]) == actor_agent_id]
+    # Stable UUID order breaks equal/null activity ties; do not select a newly
+    # inserted workspace after acquiring this transaction's complete lock set.
+    workspace = max(
+        candidates,
+        key=lambda row: (
+            row["last_seen_at"] or datetime.min.replace(tzinfo=timezone.utc)
+        ),
+        default=None,
     )
     conflicting_claim = await tx.fetch_one(
         """
@@ -294,23 +328,11 @@ async def release_task_claims_on(
     Lock workspaces in UUID order, matching acquisition and lifecycle cleanup,
     before deleting claims (docs/aweb-sot.md:1151–1166).
     """
-    await tx.fetch_all(
-        """
-        SELECT w.workspace_id
-        FROM {{tables.workspaces}} w
-        WHERE w.team_id = $1
-          AND EXISTS (
-              SELECT 1 FROM {{tables.task_claims}} c
-              WHERE c.team_id = $1 AND c.task_ref = $2
-                AND c.workspace_id = w.workspace_id
-                AND ($3::uuid IS NULL OR c.workspace_id = $3)
-          )
-        ORDER BY w.workspace_id
-        FOR UPDATE
-        """,
-        team_id,
-        task_ref,
-        UUID(workspace_id) if workspace_id else None,
+    await lock_task_claim_workspaces_on(
+        tx,
+        team_id=team_id,
+        task_ref=task_ref,
+        workspace_id=workspace_id,
     )
     released_focus_by_workspace: dict[str, str] = {}
     if workspace_id:

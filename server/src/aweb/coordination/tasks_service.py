@@ -27,6 +27,7 @@ from awid.team_ids import team_slug
 from ..task_refs import format_task_ref, task_ref_suffix
 from ..claims import (
     acquire_task_claim_on,
+    lock_task_claim_workspaces_on,
     release_task_claims_on,
 )
 from ..hooks import MutationCallback, MutationDeliveryStatus, fire_mutation_callback
@@ -249,6 +250,23 @@ async def answer_task_on(
         installation = await get_installation_on(
             tx, team_id=team_id, app_id=source["app_id"], for_update=True
         )
+    task = await tx.fetch_one(
+        """SELECT task_id, rev, question_rev, status, assignee_did, app_request, cancellation,
+                  task_ref_suffix, title, assignee_alias
+           FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2
+             AND deleted_at IS NULL FOR UPDATE""",
+        task_id,
+        team_id,
+    )
+    if not task:
+        raise NotFoundError("Task not found")
+    await lock_task_claim_workspaces_on(
+        tx,
+        team_id=team_id,
+        task_ref=format_task_ref(
+            team_slug=_get_team_slug(team_id), task_ref_suffix=task["task_ref_suffix"]
+        ),
+    )
     principal = actor.did_aw or actor.did_key
     member = await tx.fetch_one(
         """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
@@ -265,16 +283,6 @@ async def answer_task_on(
         or member["certificate_id"] != actor.certificate_id
     ):
         raise ForbiddenError("target_mismatch")
-    task = await tx.fetch_one(
-        """SELECT task_id, rev, question_rev, status, assignee_did, app_request, cancellation,
-                  task_ref_suffix, title, assignee_alias
-           FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2
-             AND deleted_at IS NULL FOR UPDATE""",
-        task_id,
-        team_id,
-    )
-    if not task:
-        raise NotFoundError("Task not found")
     existing = await tx.fetch_one(
         "SELECT * FROM {{tables.task_answers}} WHERE task_id = $1 AND answer_key = $2",
         task_id,
@@ -1509,6 +1517,26 @@ async def update_task(
                 params.append(resolved_parent_task_id)
                 idx += 1
 
+        if status == "in_progress":
+            task_ref = format_task_ref(
+                team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+            )
+            claim_workspace_id = await acquire_task_claim_on(
+                tx,
+                team_id=team_id,
+                actor_agent_id=actor.agent_id,
+                task_ref=task_ref,
+                now=now,
+            )
+        elif status is not None:
+            await lock_task_claim_workspaces_on(
+                tx,
+                team_id=team_id,
+                task_ref=format_task_ref(
+                    team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+                ),
+            )
+
         if assignee_alias is not _UNSET:
             resolved_assignee_alias, resolved_assignee_did = (
                 await _resolve_assignee_on(
@@ -1533,9 +1561,6 @@ async def update_task(
         auto_closed: list[dict[str, Any]] = []
         if status is not None:
             if status == "in_progress":
-                task_ref = format_task_ref(
-                    team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
-                )
                 claimant = await tx.fetch_one(
                     """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
                        FROM {{tables.agents}}
@@ -1543,13 +1568,6 @@ async def update_task(
                        FOR SHARE""",
                     team_id,
                     actor_alias,
-                )
-                claim_workspace_id = await acquire_task_claim_on(
-                    tx,
-                    team_id=team_id,
-                    actor_agent_id=actor.agent_id,
-                    task_ref=task_ref,
-                    now=now,
                 )
 
                 sets.append(f"assignee_alias = ${idx}")
