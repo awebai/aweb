@@ -7,12 +7,15 @@ the production instances. Confirmed configuration is fixture state.
 
 import json
 import secrets
+from enum import StrEnum
 from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
 import pytest
+from aweb_naapp.dispatch import State as DispatchState
 from aweb_naapp.egress import InternalDestinations
+from aweb_secrets_values import ValueKind
 from onepassword import Client
 
 from aweb_secrets import records
@@ -20,10 +23,16 @@ from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
-from tests.custody.test_onepassword import field, reference, sdk_item
+from tests.custody.test_onepassword import ITEM, VAULT, field, reference, sdk_item
 from tests.test_production_bootstrap import enrolled_owner
 from tests.test_production_bootstrap import root as root
 from tests.test_use_approvals import POLICY_BODY, SECRET
+
+
+class SDKValueScenario(StrEnum):
+    VALID = "valid"
+    INVALID = "invalid"
+    INVALID_AFTER_DISPATCH = "invalid_after_dispatch"
 
 
 @pytest.fixture
@@ -31,20 +40,28 @@ async def vault(root, monkeypatch):
     service, client, configured, member, installed, *_ = root
     owner = await enrolled_owner(root)
     username, password = secrets.token_hex(12), secrets.token_urlsafe(32)
-    state = SimpleNamespace(invalid=False, invalid_on_open=False, reads=0, opened=False)
+    backend_token = secrets.token_urlsafe(32)
+    state = SimpleNamespace(scenario=SDKValueScenario.VALID, reads=0, opened=False)
 
-    async def get(vault_id, item_id):
+    async def get(*, vault_id: str, item_id: str):
+        if vault_id != VAULT or item_id != ITEM:
+            raise AssertionError("the SDK requested a different item")
         state.reads += 1
         dispatching = await service.runtime.db().fetch_value(
-            "SELECT EXISTS(SELECT 1 FROM dispatches WHERE state='dispatching')"
+            "SELECT EXISTS(SELECT 1 FROM dispatches WHERE state=$1)",
+            DispatchState.DISPATCHING.value,
         )
         state.opened |= dispatching
-        invalid = state.invalid or (state.invalid_on_open and dispatching)
+        invalid = state.scenario is SDKValueScenario.INVALID or (
+            state.scenario is SDKValueScenario.INVALID_AFTER_DISPATCH and dispatching
+        )
         return sdk_item(
             [field("username", username + (":" if invalid else "")), field("password", password)]
         )
 
-    async def authenticate(**kwargs):
+    async def authenticate(*, auth: str, integration_name: str, integration_version: str):
+        if not secrets.compare_digest(auth, backend_token):
+            raise AssertionError("the SDK did not receive the staged service credential")
         return SimpleNamespace(items=SimpleNamespace(get=get))
 
     monkeypatch.setattr(Client, "authenticate", authenticate)
@@ -52,15 +69,17 @@ async def vault(root, monkeypatch):
     headers = {"X-CSRF-Token": owner.csrf_token}
     token = await client.post(
         prefix + "/backend-credentials/onepassword/versions",
-        json={"value": secrets.token_urlsafe(32)},
+        json={"value": backend_token},
         headers=headers,
     )
     assert token.status_code == 201
-    record = SecretRecord.from_after({**SECRET, "kind": "basic", "backend": "onepassword"})
+    record = SecretRecord.from_after(
+        {**SECRET, "kind": ValueKind.BASIC.value, "backend": "onepassword"}
+    )
     request = {
         "secret": record.after,
         "reference": reference(
-            "basic", {"username": "username", "password": "password"}
+            ValueKind.BASIC, {"username": "username", "password": "password"}
         ).as_config(),
         "credential_version": token.json()["version"],
     }
@@ -80,7 +99,7 @@ async def vault(root, monkeypatch):
 
 
 async def test_staging_a_basic_reference_refuses_a_colon_username_without_allocating(vault):
-    vault.state.invalid = True
+    vault.state.scenario = SDKValueScenario.INVALID
     response = await vault.client.post(
         vault.prefix + "/onepassword/references", json=vault.request, headers=vault.headers
     )
@@ -155,7 +174,7 @@ async def configured_basic(vault):
         )
 
 
-async def submit(vault, request_id):
+async def submit(vault, *, request_id: str):
     path = f"/v1/secrets/{vault.record.ref}/requests"
     raw = json.dumps(
         {
@@ -186,18 +205,18 @@ async def test_invalid_basic_at_post_commit_open_settles_not_sent_and_does_not_f
     vault,
 ):
     await configured_basic(vault)
-    vault.state.invalid_on_open = True
-    first = await submit(vault, uuid4().hex)
+    vault.state.scenario = SDKValueScenario.INVALID_AFTER_DISPATCH
+    first = await submit(vault, request_id=uuid4().hex)
     assert vault.state.opened, "the test must reach the post-dispatching pinned SDK read"
     assert first.status_code == 503, "a pre-send injection failure escaped as HTTP 500"
-    assert first.json()["state"] == "not_sent"
+    assert first.json()["state"] == DispatchState.NOT_SENT.value
     assert "username" in first.json()["message"].lower() and ":" in first.json()["message"]
     db = vault.service.runtime.db()
-    assert await db.fetch_value("SELECT state FROM dispatches") == "not_sent"
+    assert await db.fetch_value("SELECT state FROM dispatches") == DispatchState.NOT_SENT.value
     # Leave the provider invalid. A new request must be admitted and settle the
     # same way, rather than a swept outcome_unknown fencing this secret pair.
-    second = await submit(vault, uuid4().hex)
-    assert second.status_code == 503 and second.json()["state"] == "not_sent"
+    second = await submit(vault, request_id=uuid4().hex)
+    assert second.status_code == 503 and second.json()["state"] == DispatchState.NOT_SENT.value
     assert (
         await db.fetch_value("SELECT count(*) FROM dispatches WHERE state='outcome_unknown'") == 0
     )
