@@ -155,7 +155,7 @@ async def _require_current_stored_route(
     *,
     envelope: FederationEnvelope,
     expected: dict,
-) -> None:
+) -> UUID | None:
     conversation_id = UUID(str(envelope.conversation_id))
     conversation = await tx.fetch_one(
         """
@@ -174,7 +174,7 @@ async def _require_current_stored_route(
         raise FederationAuthorityError("federation_conversation_invalid")
     rows = await tx.fetch_all(
         """
-        SELECT did, address, delivery_origin, current_did_key, transport_hint
+        SELECT did, address, delivery_origin, current_did_key, transport_hint, agent_id
         FROM {{tables.conversation_participants}}
         WHERE conversation_id = $1 AND did = ANY($2::text[])
         ORDER BY did
@@ -239,8 +239,10 @@ async def _require_current_stored_route(
         expected_conversation,
         include_transport_hint=True,
     )
+    stored_agent_id = participants[envelope.target_did_aw].get("agent_id")
+    storage_reference = UUID(str(stored_agent_id)) if stored_agent_id is not None else None
     if envelope.type != "chat":
-        return
+        return storage_reference
     session = await tx.fetch_one(
         "SELECT session_id FROM {{tables.chat_sessions}} WHERE session_id = $1 FOR UPDATE",
         conversation_id,
@@ -270,6 +272,8 @@ async def _require_current_stored_route(
         expected_chat,
         include_transport_hint=False,
     )
+
+    return storage_reference
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -728,6 +732,7 @@ async def _store_mail(
     signature: str,
     recipient: Mapping,
     id_chain: dict | None,
+    recipient_storage_agent_id: UUID | str | None,
 ):
     """Project an admitted inbound envelope through the canonical mail writer."""
     encrypted = envelope.content_mode == ContentMode.ENCRYPTED
@@ -751,7 +756,9 @@ async def _store_mail(
             recipient=MailRecipient(
                 did=envelope.target_did_aw,
                 alias=recipient.get("alias") or envelope.target_address.split("/", 1)[-1],
-                agent_id=recipient.get("agent_id"),
+                agent_id=str(recipient_storage_agent_id)
+                if recipient_storage_agent_id is not None
+                else None,
             ),
             content=content,
             attestation=MailAttestation(
@@ -931,14 +938,20 @@ async def _deliver_federated_phase_b(
         recipient = locked_residence.recipient
         if envelope.type == "chat" and is_verified_human(recipient):
             raise HumanChatRefused(recipient_label(recipient))
+        recipient_storage_agent_id = recipient.get("agent_id")
         if stored_route_continuation:
             if stored_route_snapshot is None:
                 raise FederationAuthorityError("federation_conversation_invalid")
-            await _require_current_stored_route(
+            stored_reference = await _require_current_stored_route(
                 tx,
                 envelope=envelope,
                 expected=stored_route_snapshot,
             )
+            # Retain a saved row reference only after both its participant and
+            # exact identity residence have been locked. It stays storage data;
+            # recipient/team authorization and wake targets remain identity-only.
+            if stored_reference in locked_residence.storage_agent_ids:
+                recipient_storage_agent_id = stored_reference
         await _require_recipient_encryption_assertion(
             tx,
             envelope=envelope,
@@ -988,6 +1001,7 @@ async def _deliver_federated_phase_b(
                 signature=signature,
                 recipient=recipient,
                 id_chain=id_chain,
+                recipient_storage_agent_id=recipient_storage_agent_id,
             )
         else:
             await _ensure_chat_session(
