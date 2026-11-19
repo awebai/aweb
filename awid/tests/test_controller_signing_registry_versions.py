@@ -103,6 +103,10 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
         "AWID_DB_SCHEMA": "sdk_version_" + registry_version.replace(".", "_"),
         "AWID_REDIS_URL": os.environ["REDIS_URL"],
         "AWID_PUBLIC_ORIGINS": origin,
+        # This standalone peer owns its default per-client budget; other tests
+        # sharing Redis must not spend it before this journey registers its DID.
+        "AWID_RATE_LIMIT_BACKEND": "memory",
+        "AWID_RATE_LIMIT_DISABLED": "0",
         "UV_PROJECT_ENVIRONMENT": str(project / ".venv"),
     }
     env.pop("PYTHONPATH", None)

@@ -367,7 +367,7 @@ test-naapp: production-awid-sync
 		git diff --exit-code -- $$package/uv.lock; \
 	done
 
-test-awid:
+test-awid: production-awid-sync
 	cd awid && uv sync --frozen
 	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
