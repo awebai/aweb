@@ -39,7 +39,11 @@ from aweb.identity_binding import (
 )
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.identity_address import AddressResolution
-from aweb.member_team_key import MemberProjection, member_team_scope, read_member_projection
+from aweb.member_team_key import (
+    MemberProjection,
+    member_team_scope,
+    read_member_projection,
+)
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
 from aweb.team_key_pins import pinned_team_key_for_request
 from aweb.team_auth_envelope import team_auth_signature_payload
@@ -48,14 +52,20 @@ logger = logging.getLogger(__name__)
 
 
 def _aweb_db(db_or_manager):
-    return db_or_manager.get_manager("aweb") if hasattr(db_or_manager, "get_manager") else db_or_manager
+    return (
+        db_or_manager.get_manager("aweb")
+        if hasattr(db_or_manager, "get_manager")
+        else db_or_manager
+    )
 
 
 def _team_auth_allowed_audiences(request: Request) -> list[str]:
     configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
     if configured:
         return [configured]
-    raise HTTPException(status_code=503, detail="Request authentication public origin is not configured")
+    raise HTTPException(
+        status_code=503, detail="Request authentication public origin is not configured"
+    )
 
 
 @dataclass(frozen=True)
@@ -85,7 +95,8 @@ class TeamIdentity:
 async def resolve_team_identity(
     db: AsyncDatabaseManager,
     cert_info: dict,
-    *, request: Request | None = None,
+    *,
+    request: Request | None = None,
 ) -> TeamIdentity:
     """Resolve a TeamIdentity from verified certificate info.
 
@@ -137,18 +148,27 @@ async def resolve_team_identity(
         binding = IdentityBinding()
         if request is not None:
             binding = await verify_identity_binding(
-                request, did_key=did_key,
+                request,
+                did_key=did_key,
                 did_aw=cert_info.get("member_did_aw") or "",
                 address=cert_info.get("member_address") or "",
             )
-    if request is not None and not binding.did_aw and (row.get("did_aw") or row.get("address")):
+    if (
+        request is not None
+        and not binding.did_aw
+        and (row.get("did_aw") or row.get("address"))
+    ):
         # An older local certificate cannot inherit a stored global identity
         # without proving that row's binding as well.
         binding = await verify_identity_binding(
-            request, did_key=did_key, did_aw=row.get("did_aw") or "",
+            request,
+            did_key=did_key,
+            did_aw=row.get("did_aw") or "",
             address=row.get("address") or "",
         )
-    await refresh_projection_binding(db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
+    await refresh_projection_binding(
+        db, agent_id=row["agent_id"], did_key=did_key, binding=binding
+    )
 
     # Keep the admitting certificate recorded on the projection current
     # (aweb-abfn): identity-only auth checks THIS value against the registry's
@@ -177,7 +197,9 @@ async def resolve_team_identity(
         did_aw=binding.did_aw,
         address=binding.address,
         agent_id=str(row["agent_id"]),
-        identity_scope=normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime")),
+        identity_scope=normalize_identity_scope(
+            cert_info.get("identity_scope") or cert_info.get("lifetime")
+        ),
         certificate_id=cert_info.get("certificate_id", ""),
     )
 
@@ -187,7 +209,9 @@ async def resolve_team_identity(
 # ---------------------------------------------------------------------------
 
 
-async def verify_request_certificate(request: Request, db, *, fresh: bool = False) -> dict:
+async def verify_request_certificate(
+    request: Request, db, *, fresh: bool = False
+) -> dict:
     """Verify a request's DIDKey signature and team certificate.
 
     Steps 1-5 of the auth pipeline:
@@ -217,7 +241,9 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
 
     cert_header = request.headers.get("X-AWID-Team-Certificate")
     if not cert_header:
-        raise HTTPException(status_code=401, detail="Missing X-AWID-Team-Certificate header")
+        raise HTTPException(
+            status_code=401, detail="Missing X-AWID-Team-Certificate header"
+        )
 
     try:
         cert_data = decode_team_certificate(cert_header)
@@ -234,6 +260,7 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     body_sha256 = getattr(request.state, "body_sha256", None)
     if body_sha256 is None:
         import hashlib as _hashlib
+
         body_sha256 = _hashlib.sha256(b"").hexdigest()
     allowed_audiences = (
         _team_auth_allowed_audiences(request)
@@ -265,9 +292,14 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
         raise HTTPException(status_code=401, detail="unknown_team")
 
     # -- Step 5: The team's revoked and registered certificates --
-    selected_certificate_ids = ([cert_data["certificate_id"]]
-                                if isinstance(cert_data.get("certificate_id"), str) else None)
-    revoked_certs = await _get_revoked_certificates(request, cert_team_id, certificate_ids=selected_certificate_ids)
+    selected_certificate_ids = (
+        [cert_data["certificate_id"]]
+        if isinstance(cert_data.get("certificate_id"), str)
+        else None
+    )
+    revoked_certs = await _get_revoked_certificates(
+        request, cert_team_id, certificate_ids=selected_certificate_ids
+    )
     # Staged, default OFF: require registry existence (aweb-acya.9). An
     # unregistered certificate is unrevocable — the revocation set can never
     # name it — so once hosted anchoring backfill completes, "not registered"
@@ -291,7 +323,9 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
             registered_certificate_ids=registered_certs,
         )
 
-    async def check_with_registration(team_key: str, *, refresh_revocations: bool = False):
+    async def check_with_registration(
+        team_key: str, *, refresh_revocations: bool = False
+    ):
         nonlocal registered_certs, revoked_certs
         try:
             result = check_certificate(team_key)
@@ -301,18 +335,32 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
             # Unregistered already establishes a valid signature. Rotation
             # additionally requires current revocations before a list retry.
             if refresh_revocations:
-                revoked_certs = await _get_revoked_certificates(request, cert_team_id, certificate_ids=selected_certificate_ids, fresh=True)
+                revoked_certs = await _get_revoked_certificates(
+                    request,
+                    cert_team_id,
+                    certificate_ids=selected_certificate_ids,
+                    fresh=True,
+                )
                 if cert_data["certificate_id"] in revoked_certs:
                     raise TeamCertificateError("revoked") from None
             registry = getattr(request.app.state, "awid_registry_client", None)
-            if not callable(getattr(registry, "refresh_team_certificates_after_miss", None)):
+            if not callable(
+                getattr(registry, "refresh_team_certificates_after_miss", None)
+            ):
                 # An uncached registry client's initial list was already live.
                 raise
-            registered_certs = await registered_certificates(registry, cert_team_id, after_miss=True)
+            registered_certs = await registered_certificates(
+                registry, cert_team_id, after_miss=True
+            )
             result = check_certificate(team_key)
         else:
             if refresh_revocations:
-                revoked_certs = await _get_revoked_certificates(request, cert_team_id, certificate_ids=selected_certificate_ids, fresh=True)
+                revoked_certs = await _get_revoked_certificates(
+                    request,
+                    cert_team_id,
+                    certificate_ids=selected_certificate_ids,
+                    fresh=True,
+                )
                 if result["certificate_id"] in revoked_certs:
                     raise TeamCertificateError("revoked") from None
         return result
@@ -326,23 +374,37 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
             # Only a certificate signature failure may spend the separate
             # bounded team-key refresh budget.
             registry = getattr(request.app.state, "awid_registry_client", None)
-            refresh = getattr(registry, "refresh_team_key_after_signature_failure", None)
+            refresh = getattr(
+                registry, "refresh_team_key_after_signature_failure", None
+            )
             refreshed_key = None
             if refresh is not None:
                 domain, team_name = parse_team_id(cert_team_id)
-                refreshed_key = await refresh(domain, team_name, rejected_key=team_did_key)
+                refreshed_key = await refresh(
+                    domain, team_name, rejected_key=team_did_key
+                )
             if not refreshed_key or refreshed_key == team_did_key:
                 raise
-            refreshed_key = await pinned_team_key_for_request(request, cert_team_id, refreshed_key, db=_aweb_db(db))
+            refreshed_key = await pinned_team_key_for_request(
+                request, cert_team_id, refreshed_key, db=_aweb_db(db)
+            )
             team_did_key = refreshed_key
-            cert_info = await check_with_registration(team_did_key, refresh_revocations=True)
+            cert_info = await check_with_registration(
+                team_did_key, refresh_revocations=True
+            )
     except TeamCertificateError as e:
-        if e.reason == "bad_signature" and str(cert_data.get("team_did_key") or "").strip() != team_did_key:
+        if (
+            e.reason == "bad_signature"
+            and str(cert_data.get("team_did_key") or "").strip() != team_did_key
+        ):
             # A certificate under a key the team no longer holds: the member
             # fetches the certificate now recorded for it and continues.
             raise HTTPException(
                 status_code=401,
-                detail={"code": "team_key_not_current", "message": "The team certificate is under a superseded team key"},
+                detail={
+                    "code": "team_key_not_current",
+                    "message": "The team certificate is under a superseded team key",
+                },
             ) from None
         if e.reason == "unregistered":
             logger.warning(
@@ -354,7 +416,8 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
 
     # Team authority does not establish the member's stable identity/address.
     binding = await verify_identity_binding(
-        request, did_key=did_key,
+        request,
+        did_key=did_key,
         did_aw=cert_info.get("member_did_aw", ""),
         address=cert_info.get("member_address", ""),
         fresh=fresh,
@@ -370,11 +433,16 @@ async def verify_request_certificate(request: Request, db, *, fresh: bool = Fals
     cert_info["verified_team_did_key"] = team_did_key
     if envelope.version == 1:
         count_legacy_request_auth(request, "certificate")
-    set_verified_audit_actor(request, AuditActor(
-        team_id=cert_info["team_id"], principal_type="c",
-        auth_mode="team_auth_v2" if envelope.version == 2 else "team_auth_v1",
-        did_key=cert_info["did_key"], did_aw=binding.did_aw or None,
-    ))
+    set_verified_audit_actor(
+        request,
+        AuditActor(
+            team_id=cert_info["team_id"],
+            principal_type="c",
+            auth_mode="team_auth_v2" if envelope.version == 2 else "team_auth_v1",
+            did_key=cert_info["did_key"],
+            did_aw=binding.did_aw or None,
+        ),
+    )
     return cert_info
 
 
@@ -413,7 +481,9 @@ async def resolve_team_identity_with_grant_scope(
                 )
             raise HTTPException(status_code=403, detail="outside grant scope")
 
-        return await verify_identity_grant_team_identity(request, db, required_scope=grant_scope)
+        return await verify_identity_grant_team_identity(
+            request, db, required_scope=grant_scope
+        )
 
     cert_info = await verify_request_certificate(request, db)
 
@@ -445,7 +515,9 @@ def team_identity_with_grant_scope(scope: str):
         raise AssertionError(f"unknown grant scope declaration: {scope}")
 
     async def dependency(request: Request, db=Depends(get_db)) -> TeamIdentity:
-        return await resolve_team_identity_with_grant_scope(request, db, grant_scope=scope)
+        return await resolve_team_identity_with_grant_scope(
+            request, db, grant_scope=scope
+        )
 
     dependency._aweb_grant_scope = scope  # type: ignore[attr-defined]
     return dependency
@@ -465,9 +537,13 @@ def _team_read_failure(
     serve: its members are refused with 403, and that is not a registry fault.
     """
     if is_private_team_refusal(exc) and not serves_team(registry_client, team_id):
-        logger.info("Refused %s for team %s, which this server does not serve", reading, team_id)
+        logger.info(
+            "Refused %s for team %s, which this server does not serve", reading, team_id
+        )
         return team_not_served_exception(team_id, operation=operation)
-    logger.warning("AWID registry dependency failed for %s: %s", reading, team_id, exc_info=True)
+    logger.warning(
+        "AWID registry dependency failed for %s: %s", reading, team_id, exc_info=True
+    )
     return awid_dependency_http_exception(exc, operation=operation, team_id=team_id)
 
 
@@ -487,7 +563,9 @@ async def _resolve_team_key(request: Request, team_id: str, *, db: Any = None) -
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID team key resolution")
+        raise awid_registry_not_configured_exception(
+            operation="AWID team key resolution"
+        )
 
     try:
         key = await registry_client.get_team_public_key(domain, team_name)
@@ -498,27 +576,47 @@ async def _resolve_team_key(request: Request, team_id: str, *, db: Any = None) -
         raise
     except AWID_DEPENDENCY_ERRORS as exc:
         raise _team_read_failure(
-            exc, registry_client, build_team_id(domain, team_name),
-            operation="AWID team key resolution", reading="team key resolution",
+            exc,
+            registry_client,
+            build_team_id(domain, team_name),
+            operation="AWID team key resolution",
+            reading="team key resolution",
         ) from exc
     except Exception as exc:
-        logger.exception("Unexpected AWID registry dependency error for team key resolution: %s", team_id)
-        raise awid_dependency_http_exception(exc, operation="AWID team key resolution") from exc
+        logger.exception(
+            "Unexpected AWID registry dependency error for team key resolution: %s",
+            team_id,
+        )
+        raise awid_dependency_http_exception(
+            exc, operation="AWID team key resolution"
+        ) from exc
 
 
 async def _get_revoked_certificates(
-    request: Request, team_id: str, *, certificate_ids: list[str] | None = None, fresh: bool = False,
+    request: Request,
+    team_id: str,
+    *,
+    certificate_ids: list[str] | None = None,
+    fresh: bool = False,
 ) -> set[str]:
     """Get the set of revoked certificate IDs from awid.
 
     Raises HTTPException(503) if awid is unreachable.
     """
-    return await revoked_certificates(getattr(request.app.state, "awid_registry_client", None), team_id,
-                                      certificate_ids=certificate_ids, fresh=fresh)
+    return await revoked_certificates(
+        getattr(request.app.state, "awid_registry_client", None),
+        team_id,
+        certificate_ids=certificate_ids,
+        fresh=fresh,
+    )
 
 
 async def revoked_certificates(
-    registry_client, team_id: str, *, certificate_ids: list[str] | None = None, fresh: bool = False,
+    registry_client,
+    team_id: str,
+    *,
+    certificate_ids: list[str] | None = None,
+    fresh: bool = False,
 ) -> set[str]:
     """The revoked certificate IDs of a team, read through this registry client.
 
@@ -527,7 +625,9 @@ async def revoked_certificates(
     domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID team revocation check")
+        raise awid_registry_not_configured_exception(
+            operation="AWID team revocation check"
+        )
 
     try:
         select = getattr(registry_client, "get_team_revocations_for_certificates", None)
@@ -538,12 +638,20 @@ async def revoked_certificates(
         return await registry_client.get_team_revocations(domain, team_name)
     except AWID_DEPENDENCY_ERRORS as exc:
         raise _team_read_failure(
-            exc, registry_client, build_team_id(domain, team_name),
-            operation="AWID team revocation check", reading="revocation check",
+            exc,
+            registry_client,
+            build_team_id(domain, team_name),
+            operation="AWID team revocation check",
+            reading="revocation check",
         ) from exc
     except Exception as exc:
-        logger.exception("Unexpected AWID registry dependency error for revocation check: %s", team_id)
-        raise awid_dependency_http_exception(exc, operation="AWID team revocation check") from exc
+        logger.exception(
+            "Unexpected AWID registry dependency error for revocation check: %s",
+            team_id,
+        )
+        raise awid_dependency_http_exception(
+            exc, operation="AWID team revocation check"
+        ) from exc
 
 
 async def _get_registered_certificates(request: Request, team_id: str) -> set[str]:
@@ -559,19 +667,27 @@ async def _get_registered_certificates(request: Request, team_id: str) -> set[st
     staleness allowance, fail closed with 503 — an existence check must not
     silently fail open.
     """
-    return await registered_certificates(getattr(request.app.state, "awid_registry_client", None), team_id)
+    return await registered_certificates(
+        getattr(request.app.state, "awid_registry_client", None), team_id
+    )
 
 
-async def registered_certificates(registry_client, team_id: str, *, after_miss: bool = False) -> set[str]:
+async def registered_certificates(
+    registry_client, team_id: str, *, after_miss: bool = False
+) -> set[str]:
     """The certificate IDs the AWID registry knows for a team, read through this registry client."""
     domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
-        raise awid_registry_not_configured_exception(operation="AWID certificate existence check")
+        raise awid_registry_not_configured_exception(
+            operation="AWID certificate existence check"
+        )
 
     try:
         if after_miss:
-            certificates = await registry_client.refresh_team_certificates_after_miss(domain, team_name)
+            certificates = await registry_client.refresh_team_certificates_after_miss(
+                domain, team_name
+            )
         else:
             certificates = await registry_client.list_team_certificates(
                 domain, team_name, active_only=False
@@ -584,14 +700,20 @@ async def registered_certificates(registry_client, team_id: str, *, after_miss: 
             # treating a definitive answer as an outage.
             return set()
         raise _team_read_failure(
-            exc, registry_client, build_team_id(domain, team_name),
-            operation="AWID certificate existence check", reading="certificate existence check",
+            exc,
+            registry_client,
+            build_team_id(domain, team_name),
+            operation="AWID certificate existence check",
+            reading="certificate existence check",
         ) from exc
     except Exception as exc:
         logger.exception(
-            "Unexpected AWID registry dependency error for certificate existence check: %s", team_id
+            "Unexpected AWID registry dependency error for certificate existence check: %s",
+            team_id,
         )
-        raise awid_dependency_http_exception(exc, operation="AWID certificate existence check") from exc
+        raise awid_dependency_http_exception(
+            exc, operation="AWID certificate existence check"
+        ) from exc
 
     return {
         cert_id

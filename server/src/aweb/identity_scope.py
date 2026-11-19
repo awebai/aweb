@@ -16,4 +16,8 @@ def normalize_identity_scope(value: str | None, *, default: str = "local") -> st
 
 
 def legacy_lifetime_for_scope(identity_scope: str | None) -> str:
-    return "persistent" if normalize_identity_scope(identity_scope) == "global" else "ephemeral"
+    return (
+        "persistent"
+        if normalize_identity_scope(identity_scope) == "global"
+        else "ephemeral"
+    )

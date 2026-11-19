@@ -168,7 +168,9 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         )
     if envelope.version == 1:
         count_legacy_request_auth(request, "identity")
-    return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address, address_resolution=outcome)
+    return IdentityAuth(
+        did_key=did_key, did_aw=did_aw, address=address, address_resolution=outcome
+    )
 
 
 async def lookup_identity_agent_context(
@@ -196,7 +198,9 @@ async def lookup_identity_agent_context(
     if not rows:
         return None
     outcome = (
-        getattr(request.state, "identity_address_resolution", None) if request is not None else None
+        getattr(request.state, "identity_address_resolution", None)
+        if request is not None
+        else None
     )
     if outcome is not None and outcome.state == "unknown":
         # Key possession/current DID binding was authenticated above. During an
@@ -224,12 +228,15 @@ async def lookup_identity_agent_context(
         if allow_ambiguous_global_identity and did_aw_value:
             return None
         raise HTTPException(
-            status_code=409, detail="Authenticated DID matches multiple active local agents"
+            status_code=409,
+            detail="Authenticated DID matches multiple active local agents",
         )
     return dict(rows[0])
 
 
-async def _enforce_current_membership(request: Request, row: dict | None) -> dict | None:
+async def _enforce_current_membership(
+    request: Request, row: dict | None
+) -> dict | None:
     """Refuse team context derived from a projection whose admitting
     certificate is revoked (aweb-abfn).
 
@@ -251,7 +258,9 @@ async def _enforce_current_membership(request: Request, row: dict | None) -> dic
     while it was accepted under the team's current key
     (aweb.member_team_key).
     """
-    return await current_membership(getattr(request.app.state, "awid_registry_client", None), row)
+    return await current_membership(
+        getattr(request.app.state, "awid_registry_client", None), row
+    )
 
 
 async def current_membership(registry_client, row: dict | None) -> dict | None:
@@ -273,7 +282,9 @@ async def current_membership(registry_client, row: dict | None) -> dict | None:
         return _without_team_context(row)
     if not certificate_id:
         return row
-    revoked = await revoked_certificates(registry_client, team_id, certificate_ids=[certificate_id])
+    revoked = await revoked_certificates(
+        registry_client, team_id, certificate_ids=[certificate_id]
+    )
     if certificate_id not in revoked:
         # Staged existence requirement (default OFF): an unregistered
         # certificate can never appear in the revocation set, so once
@@ -347,7 +358,9 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         request=request,
     )
     row = await _enforce_current_membership(request, row)
-    outcome = getattr(request.state, "identity_address_resolution", identity.address_resolution)
+    outcome = getattr(
+        request.state, "identity_address_resolution", identity.address_resolution
+    )
     return MessagingAuth(
         did_key=identity.did_key,
         did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
@@ -358,7 +371,9 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         ),
         team_id=(row or {}).get("team_id") or None,
         alias=(row or {}).get("alias") or None,
-        agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
+        agent_id=(
+            str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None
+        ),
         identity_scope=(row or {}).get("identity_scope") or None,
         id_chain=getattr(request.state, "id_chain", None),
         address_resolution=outcome,

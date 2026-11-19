@@ -26,14 +26,23 @@ class AddressResolution:
         }
         if len(addresses) != 1:
             return self
-        return replace(self, stored_binding_verified=True, stored_address=addresses.pop())
+        return replace(
+            self, stored_binding_verified=True, stored_address=addresses.pop()
+        )
 
 
 def require_address_evidence(auth) -> None:
     """Refuse address-dependent effects without turning a failed read empty."""
     outcome = getattr(auth, "address_resolution", None)
-    if outcome is not None and outcome.state == "unknown" and not outcome.stored_binding_verified:
+    if (
+        outcome is not None
+        and outcome.state == "unknown"
+        and not outcome.stored_binding_verified
+    ):
         raise HTTPException(
             status_code=503,
-            detail={"code": "address_evidence_unavailable", "message": "Address evidence is unavailable. Retry in a moment."},
+            detail={
+                "code": "address_evidence_unavailable",
+                "message": "Address evidence is unavailable. Retry in a moment.",
+            },
         ) from outcome.cause
