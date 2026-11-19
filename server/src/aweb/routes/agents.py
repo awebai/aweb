@@ -283,7 +283,7 @@ async def suggest_alias_prefix(
     request_payload = payload or SuggestAliasPrefixRequest()
     aweb_db = db.get_manager("aweb")
     if request_payload.scope == "global":
-        existing = await _global_namespace_names(request, aweb_db, identity)
+        existing = await _global_namespace_names(request, identity)
         user_prefix = _identity_global_name_prefix(identity)
         names = _suggest_scoped_names(
             existing,
@@ -325,7 +325,7 @@ async def _local_team_aliases(aweb_db, team_id: str) -> list[str]:
     return [str(r.get("alias") or "") for r in rows]
 
 
-async def _global_namespace_names(request: Request, aweb_db, identity: TeamIdentity) -> list[str]:
+async def _global_namespace_names(request: Request, identity: TeamIdentity) -> list[str]:
     namespace, _team_name = parse_team_id(identity.team_id)
     registry_client = application_registry_client(request.app.state)
     try:
