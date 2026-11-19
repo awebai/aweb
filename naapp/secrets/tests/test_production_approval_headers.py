@@ -7,10 +7,10 @@ from enum import StrEnum
 from uuid import uuid4
 
 import pytest
-from aweb_naapp.dispatch import State as DispatchState
-from aweb_naapp.runtime.approvals import Decision
+from aweb_naapp.runtime.approvals import ApprovalState, Decision
 
 from aweb_secrets.operation import OperationTemplate
+from tests.production_approvals import requester_receipt, stored_approval
 from tests.test_operation_record import REFUND
 from tests.test_production_bootstrap import ApprovalAction, approval_request
 from tests.test_production_bootstrap import root as root
@@ -100,11 +100,13 @@ async def test_the_production_approver_view_discloses_each_agent_header_name_and
         },
     )
     assert rejected.status_code == 409
-    assert (
-        await db.fetch_value("SELECT state FROM dispatches")
-        == DispatchState.AWAITING_APPROVAL.value
-    )
-    assert await db.fetch_value("SELECT consumed_operation_id FROM approvals") is None
+    assert await requester_receipt(root, pending=pending) == {
+        "state": ApprovalState.APPROVED.value,
+        "request_id": pending.reply["request_id"],
+        "request_ref": pending.reply["request_ref"],
+        "next": "resubmit",
+    }
+    assert (await stored_approval(root, pending=pending)).consumed_operation_id is None
 
 
 @pytest.mark.parametrize("request_kind", list(RequestKind), ids=lambda kind: kind.value)
@@ -129,5 +131,11 @@ async def test_credential_shaped_agent_headers_are_refused_before_freezing(root,
     assert response.json()["code"] == "header_not_allowed"
     db = service.runtime.db()
     assert await db.fetch_value("SELECT count(*) FROM use_approvals") == 1
-    assert await db.fetch_value("SELECT count(*) FROM approvals") == 1
-    assert await db.fetch_value("SELECT count(*) FROM dispatches") == 1
+    assert await requester_receipt(root, pending=pending) == pending.reply
+    assert (await stored_approval(root, pending=pending)).consumed_operation_id is None
+    status_path = "/v1/status/" + body["request_id"]
+    absent = await client.get(
+        configured.public_origin + status_path,
+        headers=member.headers(aud=configured.public_origin, method="GET", path=status_path),
+    )
+    assert absent.status_code == 404
