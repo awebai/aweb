@@ -18,7 +18,11 @@ from collections.abc import Collection
 
 from fastapi import HTTPException
 
-from awid.team_certificate import TeamCertificateError, check_team_certificate, refusal_answer
+from awid.team_certificate import (
+    TeamCertificateError,
+    check_team_certificate,
+    refusal_answer,
+)
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 
 logger = logging.getLogger(__name__)
@@ -79,7 +83,9 @@ def parse_and_verify_certificate(
     member_did_key = cert["member_did_key"]
     certificate_id = cert["certificate_id"]
 
-    identity_scope = normalize_identity_scope(cert.get("identity_scope") or cert.get("lifetime"))
+    identity_scope = normalize_identity_scope(
+        cert.get("identity_scope") or cert.get("lifetime")
+    )
     return {
         "team_id": team_id,
         "alias": cert["alias"],
@@ -121,7 +127,9 @@ def verify_dashboard_token(
 
     try:
         # docs/aweb-sot.md:1260,1280-1286: dashboard authority is short-lived.
-        payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"require": ["exp"]})
+        payload = pyjwt.decode(
+            token, secret, algorithms=["HS256"], options={"require": ["exp"]}
+        )
     except pyjwt.MissingRequiredClaimError as exc:
         if exc.claim == "exp":
             raise ValueError(
