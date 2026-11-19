@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Retain the Go entry points `blueprint.CanonicalImportPayload`,
+  `logschain.VerifyChain`, `chat.LoadDeliveredIDs` and
+  `chat.FilterDeliveredMessages` in this release. They are removal candidates
+  for a future release, pending measurement of downstream usage.
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
