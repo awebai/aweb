@@ -30,8 +30,10 @@ class IdentityObservationRefused(ValueError):
     """A binding mismatch or unavailable evidence; no web-framework dependency."""
 
     def __init__(
-        self, code: Literal["identity_binding_mismatch", "identity_binding_unavailable"],
-        *, retry_after_seconds: float | None = None,
+        self,
+        code: Literal["identity_binding_mismatch", "identity_binding_unavailable"],
+        *,
+        retry_after_seconds: float | None = None,
     ) -> None:
         if code not in ("identity_binding_mismatch", "identity_binding_unavailable"):
             raise ValueError("unknown identity observation refusal")
@@ -163,7 +165,9 @@ def unverified_kind(reason: str) -> dict[str, Any]:
     return {
         "outcome": "unavailable" if unavailable else "unknown",
         "human_id": None,
-        "identity_valid": None if unavailable or reason == "unregistered_identity" else False,
+        "identity_valid": None
+        if unavailable or reason == "unregistered_identity"
+        else False,
         "kind": None,
         "reason": reason,
     }
