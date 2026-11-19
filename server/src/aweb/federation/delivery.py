@@ -10,6 +10,8 @@ from aweb.member_team_key import (
     member_projection_columns_sql,
     messaging_identity_projection,
 )
+from collections.abc import Mapping
+
 from aweb.messaging.kinds import ContentMode, MessagePriority
 from aweb.messaging.chat_storage import store_chat
 from aweb.messaging.message_replay import established_federation_receipt
@@ -282,7 +284,7 @@ async def _lock_current_recipient(
     tx,
     *,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
 ) -> _LockedRecipientResidence:
     """Lock exact-DID residence without selecting a membership as its authority.
 
@@ -355,7 +357,7 @@ def _resident_participant(
     *,
     residences: tuple[MemberProjection, ...],
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     policy_did: str | None,
 ) -> dict:
     """Keep verified target identity and explicit references separate from rows.
@@ -476,7 +478,7 @@ async def _authorize_policy(
     tx,
     *,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     stored_route_continuation: bool,
 ) -> None:
     try:
@@ -500,7 +502,7 @@ async def _ensure_sender_contact(
     tx,
     *,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     controller_did: str | None,
 ) -> None:
     owner_did = str(recipient.get("did_aw") or "").strip()
@@ -532,7 +534,7 @@ async def _ensure_sender_contact(
 async def _ensure_mail_conversation(
     tx,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     *,
     preserve_existing_route: bool,
 ) -> None:
@@ -575,7 +577,7 @@ async def _ensure_mail_conversation(
 async def _ensure_chat_session(
     tx,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     *,
     preserve_existing_route: bool,
 ) -> None:
@@ -648,7 +650,7 @@ async def _ensure_chat_session(
         )
 
 
-def _participants(envelope: FederationEnvelope, recipient: dict):
+def _participants(envelope: FederationEnvelope, recipient: Mapping):
     sender_alias = (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1]
     target_alias = str(recipient.get("alias") or envelope.target_address.split("/", 1)[-1])
     return (
@@ -674,7 +676,7 @@ def _participants(envelope: FederationEnvelope, recipient: dict):
 async def _upsert_conversation_participants(
     tx,
     envelope: FederationEnvelope,
-    recipient: dict,
+    recipient: Mapping,
     conversation_id: UUID,
     *,
     preserve_existing_route: bool,
@@ -724,7 +726,7 @@ async def _store_mail(
     *,
     envelope: FederationEnvelope,
     signature: str,
-    recipient: dict,
+    recipient: Mapping,
     id_chain: dict | None,
 ):
     """Project an admitted inbound envelope through the canonical mail writer."""
@@ -879,7 +881,7 @@ async def _deliver_federated_phase_b(
     *,
     envelope: FederationEnvelope,
     signature: str,
-    recipient: dict,
+    recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,
@@ -1056,7 +1058,7 @@ async def deliver_federated_phase_b(
     *,
     envelope: FederationEnvelope,
     signature: str,
-    recipient: dict,
+    recipient: Mapping,
     id_chain: dict | None = None,
     authority_token: AuthoritySecurityToken | None,
     stored_route_continuation: bool = False,

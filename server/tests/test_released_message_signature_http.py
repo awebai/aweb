@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from awid.did import did_from_public_key, generate_keypair
 from awid.signing import sign_message
 from aweb.messaging.kinds import MessageKind
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_identity_grants import _grant_headers
 from test_messages_http import _signed_team_headers
 

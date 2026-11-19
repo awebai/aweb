@@ -3,7 +3,8 @@ from __future__ import annotations
 from aweb.human_kind import is_verified_human
 
 from dataclasses import dataclass, replace
-from typing import Iterable
+from typing import Iterable, Any
+from collections.abc import Mapping
 from uuid import UUID
 
 from aweb.identity_binding import verified_key_sql
@@ -34,7 +35,7 @@ class ParticipantRetiredError(ValidationError):
 
 
 async def _require_live_mail_participant(
-    db, participant: dict, conversation: dict, *, human_only: bool = False
+    db, participant: Mapping[str, Any], conversation: dict, *, human_only: bool = False
 ) -> None:
     did = participant["did"]
     rows = await db.get_manager("aweb").fetch_all(

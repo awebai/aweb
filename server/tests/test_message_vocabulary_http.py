@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import pytest
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.message_vocabulary import MessageInputSource, UNNAMED_MESSAGE_VOCABULARY
-from test_dashboard_privacy import privacy_app  # noqa: F401
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_delivery_contract_regressions import _send
 
 
