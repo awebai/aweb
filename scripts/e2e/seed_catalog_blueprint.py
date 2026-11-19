@@ -49,7 +49,19 @@ BLUEPRINT_SRC = Path(
 BLUEPRINT_PAYLOAD_SCHEMA = "aweb.blueprint.import-payload.v1"
 # Mirror library.digest.EXCLUDED_DIRS: VCS/build/cache dirs never enter the payload.
 EXCLUDED_DIRS = frozenset(
-    {".git", ".hg", ".svn", "node_modules", ".cache", "dist", "build", "target", "tmp", "vendor", "__pycache__"}
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        ".cache",
+        "dist",
+        "build",
+        "target",
+        "tmp",
+        "vendor",
+        "__pycache__",
+    }
 )
 
 
@@ -117,16 +129,61 @@ def _provision_team(workspace: Path, env: dict[str, str]) -> tuple[str, str]:
     alias = "alice"
     address = f"{namespace}/{alias}"
 
-    _run_aw(workspace, env, "id", "create", "--domain", namespace, "--name", alias,
-            "--registry", AWID_URL, "--skip-dns-verify")
-    _run_aw(workspace, env, "id", "team", "create", "--namespace", namespace,
-            "--name", team, "--registry", AWID_URL)
-    add_member = _run_aw(workspace, env, "id", "team", "add-member", "--namespace",
-                         namespace, "--team", team, "--member", address)
+    _run_aw(
+        workspace,
+        env,
+        "id",
+        "create",
+        "--domain",
+        namespace,
+        "--name",
+        alias,
+        "--registry",
+        AWID_URL,
+        "--skip-dns-verify",
+    )
+    _run_aw(
+        workspace,
+        env,
+        "id",
+        "team",
+        "create",
+        "--namespace",
+        namespace,
+        "--name",
+        team,
+        "--registry",
+        AWID_URL,
+    )
+    add_member = _run_aw(
+        workspace,
+        env,
+        "id",
+        "team",
+        "add-member",
+        "--namespace",
+        namespace,
+        "--team",
+        team,
+        "--member",
+        address,
+    )
     certificate_id = str(add_member["certificate_id"])
-    fetch_cert = _run_aw(workspace, env, "id", "team", "fetch-cert", "--namespace",
-                         namespace, "--team", team, "--cert-id", certificate_id,
-                         "--registry", AWID_URL)
+    fetch_cert = _run_aw(
+        workspace,
+        env,
+        "id",
+        "team",
+        "fetch-cert",
+        "--namespace",
+        namespace,
+        "--team",
+        team,
+        "--cert-id",
+        certificate_id,
+        "--registry",
+        AWID_URL,
+    )
     team_id = f"{team}:{namespace}"
     _run_aw(workspace, env, "id", "team", "switch", team_id)
 
@@ -150,36 +207,91 @@ updated_at: "{now}"
     return namespace, team
 
 
-def _install_library(workspace: Path, env: dict[str, str], *, namespace: str, team: str) -> None:
+def _install_library(
+    workspace: Path, env: dict[str, str], *, namespace: str, team: str
+) -> None:
     """Install Library for the seed team as a team admin does: the stack's server
     is the team's server, the member is an install admin there, and the real
     `aw plugin install` approves the install. Library admits only installed teams."""
     team_id = f"{team}:{namespace}"
-    _run_aw(workspace, env, "workspace", "connect", "--service", AWEB_URL, "--team", team_id)
-    _run_aw(workspace, env, "id", "team", "set-server", "--team", team, "--namespace",
-            namespace, "--url", AWEB_URL, "--registry", AWID_URL)
+    _run_aw(
+        workspace, env, "workspace", "connect", "--service", AWEB_URL, "--team", team_id
+    )
+    _run_aw(
+        workspace,
+        env,
+        "id",
+        "team",
+        "set-server",
+        "--team",
+        team,
+        "--namespace",
+        namespace,
+        "--url",
+        AWEB_URL,
+        "--registry",
+        AWID_URL,
+    )
     did_key = str(_run_aw(workspace, env, "id", "show")["did_key"])
     aweb = subprocess.run(
-        ["docker", "ps", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}",
-         "--filter", "label=com.docker.compose.service=aweb"],
-        text=True, capture_output=True, timeout=30, check=True,
+        [
+            "docker",
+            "ps",
+            "-q",
+            "--filter",
+            f"label=com.docker.compose.project={PROJECT}",
+            "--filter",
+            "label=com.docker.compose.service=aweb",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=True,
     ).stdout.split()
     if len(aweb) != 1:
-        raise SystemExit(f"expected one aweb container in project {PROJECT}, found {aweb}")
+        raise SystemExit(
+            f"expected one aweb container in project {PROJECT}, found {aweb}"
+        )
     grant = subprocess.run(
-        ["docker", "exec", aweb[0], "aweb", "install-admin", "grant", "--team-id", team_id,
-         "--principal-did", did_key, "--role", "owner"],
-        text=True, capture_output=True, timeout=60, check=False,
+        [
+            "docker",
+            "exec",
+            aweb[0],
+            "aweb",
+            "install-admin",
+            "grant",
+            "--team-id",
+            team_id,
+            "--principal-did",
+            did_key,
+            "--role",
+            "owner",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
     )
     if grant.returncode != 0:
-        raise SystemExit(f"aweb install-admin grant failed\n{grant.stdout}\n{grant.stderr}")
+        raise SystemExit(
+            f"aweb install-admin grant failed\n{grant.stdout}\n{grant.stderr}"
+        )
     _run_aw(workspace, env, "plugin", "install", LIBRARY_URL)
 
 
 def _publish(workspace: Path, env: dict[str, str], payload_file: Path) -> int:
     result = subprocess.run(
-        [AW_BIN, "id", "request", "POST", f"{LIBRARY_URL}/v1/blueprints/import",
-         "--team-auth", "--raw", "--body-file", str(payload_file)],
+        [
+            AW_BIN,
+            "id",
+            "request",
+            "POST",
+            f"{LIBRARY_URL}/v1/blueprints/import",
+            "--team-auth",
+            "--raw",
+            "--body-file",
+            str(payload_file),
+        ],
         cwd=workspace,
         env=env,
         text=True,
@@ -256,11 +368,17 @@ def main() -> int:
             # present (or none) is a real failure - the new pack did not land - and
             # must not be swallowed as an idempotent no-op.
             existing = next(
-                (bp for bp in _get_blueprints() if bp.get("blueprint_ref") == blueprint_id),
+                (
+                    bp
+                    for bp in _get_blueprints()
+                    if bp.get("blueprint_ref") == blueprint_id
+                ),
                 None,
             )
             if existing is not None and existing.get("version") == source_version:
-                print(f"  {blueprint_id} v{source_version} already present in catalog; treating as seeded")
+                print(
+                    f"  {blueprint_id} v{source_version} already present in catalog; treating as seeded"
+                )
             else:
                 raise SystemExit(
                     f"publish failed and the catalog does not hold {blueprint_id} "
@@ -268,7 +386,9 @@ def main() -> int:
                 )
 
     catalog = _get_blueprints()
-    match = next((bp for bp in catalog if bp.get("blueprint_ref") == blueprint_id), None)
+    match = next(
+        (bp for bp in catalog if bp.get("blueprint_ref") == blueprint_id), None
+    )
     if match is None:
         raise SystemExit(
             f"{blueprint_id} not found in public catalog after seeding; "
