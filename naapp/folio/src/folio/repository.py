@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 import secrets
 from dataclasses import dataclass
@@ -15,12 +16,18 @@ from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
+from folio.cloudflare_stream import (
+    CloudflareStreamClient,
+    UndocumentedStreamReply,
+    stream_direct_upload_expires_at,
+)
 from folio.config import Settings
 from folio.event_emit import emit_doc_changed
 from folio.link_secrets import read_only_link_key, secret_digest
-from folio.models import LinkKind
+from folio.models import AssetKind, LinkKind
 from folio.presentation import builtin_preset, sanitize_theme_tokens
+
+logger = logging.getLogger(__name__)
 
 
 async def _team_usage(db: AsyncDatabaseManager, *, team_id: str) -> dict[str, int]:
@@ -283,7 +290,11 @@ async def mint_presentation_link(
         raise HTTPException(
             status_code=422, detail="Editable links expire after at most 300 seconds"
         )
-    if kind is LinkKind.READ_ONLY and ttl_seconds is not None and ttl_seconds > settings.max_present_ttl_seconds:
+    if (
+        kind is LinkKind.READ_ONLY
+        and ttl_seconds is not None
+        and ttl_seconds > settings.max_present_ttl_seconds
+    ):
         raise HTTPException(
             status_code=422,
             detail=f"Read-only links expire after at most {settings.max_present_ttl_seconds} seconds",
@@ -295,9 +306,7 @@ async def mint_presentation_link(
     )
     ttl = min(requested_ttl, settings.max_present_ttl_seconds)
     opener = secrets.token_urlsafe(32) if kind is LinkKind.EDITABLE else None
-    token = (
-        secrets.token_urlsafe(16) if kind is LinkKind.EDITABLE else secrets.token_urlsafe(32)
-    )
+    token = secrets.token_urlsafe(16) if kind is LinkKind.EDITABLE else secrets.token_urlsafe(32)
     # Use the same database clock for expiry and the row's default created_at.
     # That makes the stored editable lifetime exactly bounded across hosts.
     minted = await db.fetch_one(
@@ -366,37 +375,22 @@ async def get_presented_document(
     """The live read-only link keyed by ``link_key`` (see folio.link_secrets), as presented."""
     row = await db.fetch_one(
         """
-        SELECT p.editable, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer,
-               pinned.body AS pinned_body, pinned.version_number AS pinned_version_number,
-               latest.body AS latest_body, latest.version_number AS latest_version_number
+        SELECT d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer, v.body
         FROM {{tables.presentation_links}} p
-        JOIN {{tables.document_versions}} pinned
-          ON pinned.document_id = p.document_id AND pinned.version_number = p.version_number
+        JOIN {{tables.document_versions}} v
+          ON v.document_id = p.document_id AND v.version_number = p.version_number
         JOIN {{tables.documents}} d ON d.document_id = p.document_id
-        JOIN LATERAL (
-            SELECT body, version_number
-            FROM {{tables.document_versions}}
-            WHERE document_id = p.document_id
-            ORDER BY version_number DESC
-            LIMIT 1
-        ) latest ON TRUE
         LEFT JOIN {{tables.themes}} t ON t.team_id = d.team_id
         WHERE p.token = $1 AND p.editable IS FALSE AND p.revoked_at IS NULL AND p.expires_at > NOW()
-          AND (p.editable IS FALSE OR p.expires_at <= p.created_at + interval '300 seconds')
         """,
         link_key,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Presentation not found")
-    editable = bool(row["editable"])
-    body = str(row["latest_body"] if editable else row["pinned_body"])
-    version_number = int(row["latest_version_number"] if editable else row["pinned_version_number"])
+    body = str(row["body"])
     return {
         "team_id": str(row["team_id"]),
         "body": body,
-        "version_number": version_number,
-        "editable": editable,
-        "expires_at": row["expires_at"],
         "theme": _theme_from_row(row, public_origin=None),
         "allowed_assets": await _allowed_assets_for_body(
             db, team_id=str(row["team_id"]), body=body
@@ -609,7 +603,7 @@ async def upload_image_asset(
     )
     return {
         "asset_id": asset_id,
-        "kind": "image",
+        "kind": AssetKind.IMAGE,
         "url": f"{settings.public_origin.rstrip('/')}/assets/{asset_id}",
         "content_type": content_type,
     }
@@ -658,7 +652,7 @@ async def create_video_direct_upload(
     )
     return {
         "asset_id": asset_id,
-        "kind": "video",
+        "kind": AssetKind.VIDEO,
         "stream_uid": direct_upload.uid,
         "upload_url": direct_upload.upload_url,
         "upload_expires_at": direct_upload.expires_at,
@@ -686,22 +680,28 @@ async def get_asset_metadata(
     if row is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     data = dict(row)
-    if data.get("kind") == "video" and data.get("stream_uid"):
+    if data.get("kind") == AssetKind.VIDEO and data.get("stream_uid"):
         try:
             status = await CloudflareStreamClient(settings).get_video_status(
                 stream_uid=str(data["stream_uid"])
             )
+        except UndocumentedStreamReply as exc:
+            logger.error("Refused the Cloudflare Stream status of asset %s: %s", asset_id, exc)
+            raise HTTPException(
+                status_code=502,
+                detail="Cloudflare Stream reported a video status Folio does not recognize",
+            ) from exc
         except HTTPException as exc:
             if exc.status_code != 503:
                 raise
         else:
-            data["stream_status"] = status.status
+            data["stream_status"] = status
             await db.execute(
                 "UPDATE {{tables.assets}} SET stream_status = $1, updated_at = NOW() WHERE asset_id = $2",
-                status.status,
+                status,
                 asset_id,
             )
-    if data.get("kind") == "image":
+    if data.get("kind") == AssetKind.IMAGE:
         data["url"] = f"{settings.public_origin.rstrip('/')}/assets/{asset_id}"
     return data
 

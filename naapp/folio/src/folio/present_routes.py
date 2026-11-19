@@ -83,8 +83,8 @@ def mount_presentation_routes(
             if kind == AssetKind.IMAGE:
                 embeds[asset_id] = {"kind": AssetKind.IMAGE, "url": image_url(asset_id)}
             elif kind == AssetKind.VIDEO:
-                status = str(raw.get("stream_status") or StreamStatus.PENDING_UPLOAD)
-                embed = {"kind": AssetKind.VIDEO, "status": status}
+                status = StreamStatus(raw.get("stream_status") or StreamStatus.PENDING_UPLOAD)
+                embed: dict[str, str] = {"kind": AssetKind.VIDEO, "status": status}
                 stream_uid = str(raw.get("stream_uid") or "").strip()
                 if status == StreamStatus.READY and stream_uid:
                     try:
@@ -300,8 +300,6 @@ def mount_presentation_routes(
         image_url = presented_image_url(token)
         if isinstance(theme, dict) and theme.get("logo_asset_id") is not None:
             theme["logo_url"] = image_url(theme["logo_asset_id"])
-        if bool(presented.get("editable")):
-            raise edit_sessions.unavailable()
         nonce = secrets.token_urlsafe(16)
         mode = sanitize_layout_tokens(theme.get("tokens") if isinstance(theme, dict) else None)[
             "mode"

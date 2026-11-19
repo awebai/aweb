@@ -564,7 +564,7 @@ def _replace_video_markdown(
             return match.group(0)
         iframe_url = str(embed.get("iframe_url") or "")
         if not iframe_url:
-            status = escape(str(embed.get("status") or "processing"))
+            status = escape(str(embed["status"]))
             return f'\n\n<div class="folio-video-pending">Video is {status}.</div>\n\n'
         token = f"FOLIO_VIDEO_{secrets.token_urlsafe(24)}"
         replacements[token] = _video_iframe_html(
