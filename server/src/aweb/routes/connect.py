@@ -469,10 +469,11 @@ async def connect_agent(
         claims = generation.certificate.claims
         verified = dict(claims)
         verified["did_key"] = claims["member_did_key"]
+        verified["team_did_key"] = generation.verified_team_did_key
         if team_did_key is not None and team_did_key != generation.verified_team_did_key:
             raise ConnectIdentityRefusal(ConnectIdentityRefusalReason.GENERATION_MISMATCH)
         if cert_info is not None:
-            for field in ("team_id", "alias", "did_key", "member_did_key", "certificate_id",
+            for field in ("team_id", "team_did_key", "alias", "did_key", "member_did_key", "certificate_id",
                           "member_did_aw", "member_address"):
                 if field not in cert_info:
                     continue

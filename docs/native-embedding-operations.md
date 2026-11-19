@@ -277,7 +277,8 @@ projection transaction, using `CertificateAuthorityContext` with the serving
 registry client, native database manager and configured TXT resolver. The
 constructor reads its checked immutable claims and independently verified team
 key directly; it neither reparses the artifact nor performs registry I/O.
-Accompanying `cert_info` or `team_did_key` cannot contradict that proof. Global
+Accompanying admission fields in `cert_info` or `team_did_key` cannot contradict
+that proof. Global
 identity/address and human-kind observations remain separate exact-subject
 inputs; generation does not replace them.
 

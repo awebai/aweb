@@ -149,6 +149,7 @@ async def test_generation_rejects_contradictory_issuer_fields_before_projection(
         )
     for contradictory in (
         {"team_did_key": "different"},
+        {"cert_info": {"team_did_key": "different"}},
         {"cert_info": {"alias": "different"}},
         {"cert_info": {"certificate_id": "another-mint"}},
     ):
