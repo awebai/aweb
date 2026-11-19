@@ -6,42 +6,32 @@ import (
 )
 
 func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDChainEvidence, domain string) (IDChainVerdict, error) {
-	bad := func(code IDRefusal) (IDChainVerdict, error) { return IDChainVerdict{}, idCertificateRefusal(code) }
-	plan, err := IDStatusRequest(bundle, subject, domain)
+	plan, err := planIDStatusRequest(bundle, subject, domain)
 	if err != nil {
 		return IDChainVerdict{}, err
 	}
 	if plan == nil {
-		return bad(IDRefusalLegacyNoChain)
+		return IDChainVerdict{}, idCertificateRefusal(IDRefusalLegacyNoChain)
 	}
-	domain = plan["domain"].(string)
-	var certs []map[string]any
+	certificates := plan.certificates
 	if bundle != nil {
-		raw, er := idCertificateCanonical(bundle)
-		if er != nil {
-			return IDChainVerdict{}, er
-		}
-		if len(raw) > IDChainMaxBytes {
-			return bad(IDRefusalBundleTooLarge)
-		}
-		certs = idChainCertificates(bundle)
-		if err = idChainStructure(certs); err != nil {
+		if err := idChainStructure(certificates); err != nil {
 			return IDChainVerdict{}, err
 		}
-		if certs[len(certs)-1]["certificate"].(map[string]any)["id"] != subject.ID {
-			return bad(IDRefusalSubjectMismatch)
+		if certificates[len(certificates)-1].ID() != subject.ID {
+			return IDChainVerdict{}, idCertificateRefusal(IDRefusalSubjectMismatch)
 		}
 	}
-	if (subject.TeamMemberDIDKey != "" && subject.TeamMemberDIDKey != subject.DIDKey) || (subject.TeamMemberDIDAW != "" && subject.TeamMemberDIDAW != subject.ID) || (strings.HasPrefix(subject.ID, "did:key:") && subject.ID != subject.DIDKey) {
-		return bad(IDRefusalSubjectMismatch)
-	}
-	if evidence == nil {
-		return bad(IDRefusalEvidenceUnavailable)
-	}
-	if err = idEvidenceUsable(evidence); err != nil {
+	if err := checkIDSubjectBinding(subject); err != nil {
 		return IDChainVerdict{}, err
 	}
-	status, err := parseIDStatus(evidence, domain)
+	if evidence == nil {
+		return IDChainVerdict{}, idCertificateRefusal(IDRefusalEvidenceUnavailable)
+	}
+	if err := idEvidenceUsable(evidence); err != nil {
+		return IDChainVerdict{}, err
+	}
+	status, err := parseIDStatus(evidence, plan.domain)
 	if err != nil {
 		return IDChainVerdict{}, err
 	}
@@ -51,161 +41,212 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 			return IDChainVerdict{}, err
 		}
 		if key != subject.DIDKey {
-			return bad(IDRefusalSubjectMismatch)
+			return IDChainVerdict{}, idCertificateRefusal(IDRefusalSubjectMismatch)
 		}
 	}
-	if certs == nil {
-		id := subject.ID
-		seen := map[string]bool{}
-		for {
-			if seen[id] {
-				return bad(IDRefusalCycle)
-			}
-			if len(certs) >= IDChainMaxDepth {
-				return bad(IDRefusalDepthExceeded)
-			}
-			seen[id] = true
-			r, err := status.revision(id, status.now)
-			if err != nil {
-				return IDChainVerdict{}, err
-			}
-			certs = append([]map[string]any{r.Signed}, certs...)
-			p := r.Signed["certificate"].(map[string]any)["parent"].(map[string]any)
-			if p["kind"] == "namespace" {
-				break
-			}
-			id = p["id"].(string)
-		}
-		if err = idChainStructure(certs); err != nil {
-			return IDChainVerdict{}, err
-		}
-	}
-	by := map[string]map[string]any{}
-	for _, signed := range certs {
-		c := signed["certificate"].(map[string]any)
-		id := c["id"].(string)
-		by[id] = signed
-		if strings.HasPrefix(id, "did:aw:") {
-			row, err := status.row(id)
-			if err != nil {
-				return IDChainVerdict{}, err
-			}
-			digest, _ := IDCertificateID(c)
-			if row.CurrentCertificateID != digest {
-				return bad(IDRefusalSupersededCertificate)
-			}
-		}
-	}
-	for _, signed := range certs {
-		c := signed["certificate"].(map[string]any)
-		var r *idStatusRevision
-		if strings.HasPrefix(c["id"].(string), "did:aw:") {
-			r, err = status.revision(c["id"].(string), status.now)
-			if err != nil {
-				return IDChainVerdict{}, err
-			}
-		}
-		key, err := status.issuer(c, r)
+	if certificates == nil {
+		certificates, err = status.chainForSubject(subject.ID)
 		if err != nil {
 			return IDChainVerdict{}, err
 		}
-		if key != c["issuer_key"] {
-			return bad(IDRefusalStaleIssuerKey)
-		}
-		if err = VerifyIDCertificate(signed, key); err != nil {
-			return IDChainVerdict{}, err
-		}
 	}
-	var evaluate func(string, time.Time, map[string]bool) (string, error)
-	evaluate = func(id string, at time.Time, path map[string]bool) (string, error) {
-		if path[id] {
-			return "", idCertificateRefusal(IDRefusalCycle)
-		}
-		if len(path) >= IDChainMaxDepth {
-			return "", idCertificateRefusal(IDRefusalDepthExceeded)
-		}
-		path[id] = true
-		defer delete(path, id)
-		var r *idStatusRevision
-		var signed map[string]any
-		if strings.HasPrefix(id, "did:aw:") {
-			var err error
-			r, err = status.revision(id, at)
-			if err != nil {
-				return "", err
-			}
-			signed = r.Signed
-			if r.validity.from.Before(status.cutoff) {
-				return "", idCertificateRefusal(IDRefusalRootReplaced)
-			}
-			row, _ := status.row(id)
-			if row.Revocation != nil && !row.Revocation.effectiveAt.After(at) {
-				return "", idCertificateRefusal(IDRefusalRevoked)
-			}
-		} else {
-			signed = by[id]
-		}
-		if signed == nil {
-			return "", idCertificateRefusal(IDRefusalEvidenceUnavailable)
-		}
-		c := signed["certificate"].(map[string]any)
-		if c["domain"] != domain {
-			return "", idCertificateRefusal(IDRefusalDomainMismatch)
-		}
-		key, err := status.issuer(c, r)
-		if err != nil {
-			return "", err
-		}
-		if c["issuer_key"] != key {
-			return "", idCertificateRefusal(IDRefusalStaleIssuerKey)
-		}
-		if err = VerifyIDCertificate(signed, key); err != nil {
-			return "", err
-		}
-		p := c["parent"].(map[string]any)
-		human := ""
-		if p["kind"] == "identity" {
-			parentID := p["id"].(string)
-			parentAt := at
-			if c["kind"] == "human" && r != nil {
-				parentAt = r.validity.from
-			}
-			var parent map[string]any
-			if strings.HasPrefix(parentID, "did:aw:") {
-				rev, err := status.revision(parentID, parentAt)
-				if err != nil {
-					return "", err
-				}
-				parent = rev.Signed
-			} else {
-				parent = by[parentID]
-			}
-			if parent == nil {
-				return "", idCertificateRefusal(IDRefusalEvidenceUnavailable)
-			}
-			if c["kind"] == "human" && parent["certificate"].(map[string]any)["kind"] != "human" {
-				return "", idCertificateRefusal(IDRefusalHumanIssuerIsAgent)
-			}
-			human, err = evaluate(parentID, parentAt, path)
-			if err != nil {
-				return "", err
-			}
-		}
-		if c["kind"] == "human" {
-			human = id
-		}
-		return human, nil
+	byID, err := checkCurrentIDChain(status, certificates)
+	if err != nil {
+		return IDChainVerdict{}, err
 	}
-	human, err := evaluate(subject.ID, status.now, map[string]bool{})
+	evaluator := idChainEvaluation{status: status, domain: plan.domain, byID: byID}
+	human, err := evaluator.nearestHumanAt(subject.ID, status.now, make(map[string]bool))
 	if err != nil {
 		return IDChainVerdict{}, err
 	}
 	valid := true
-	kind := IDCertificateKind(certs[len(certs)-1]["certificate"].(map[string]any)["kind"].(string))
-	r := IDChainVerdict{Outcome: IDChainOutcomeNoHuman, IdentityValid: &valid, Kind: &kind}
+	kind := certificates[len(certificates)-1].Kind()
+	result := IDChainVerdict{Outcome: IDChainOutcomeNoHuman, IdentityValid: &valid, Kind: &kind}
 	if human != "" {
-		r.Outcome = IDChainOutcomeNearestHuman
-		r.HumanID = &human
+		result.Outcome = IDChainOutcomeNearestHuman
+		result.HumanID = &human
 	}
-	return r, nil
+	return result, nil
+}
+
+func checkIDSubjectBinding(subject IDChainSubject) error {
+	if subject.TeamMemberDIDKey != "" && subject.TeamMemberDIDKey != subject.DIDKey {
+		return idCertificateRefusal(IDRefusalSubjectMismatch)
+	}
+	if subject.TeamMemberDIDAW != "" && subject.TeamMemberDIDAW != subject.ID {
+		return idCertificateRefusal(IDRefusalSubjectMismatch)
+	}
+	if strings.HasPrefix(subject.ID, "did:key:") && subject.ID != subject.DIDKey {
+		return idCertificateRefusal(IDRefusalSubjectMismatch)
+	}
+	return nil
+}
+
+func (status *idStatusSnapshot) chainForSubject(id string) ([]IDCertificateView, error) {
+	var certificates []IDCertificateView
+	seen := make(map[string]bool)
+	for {
+		if seen[id] {
+			return nil, idCertificateRefusal(IDRefusalCycle)
+		}
+		if len(certificates) >= IDChainMaxDepth {
+			return nil, idCertificateRefusal(IDRefusalDepthExceeded)
+		}
+		seen[id] = true
+		revision, err := status.revision(id, status.now)
+		if err != nil {
+			return nil, err
+		}
+		certificate := revision.certificate
+		certificates = append([]IDCertificateView{certificate}, certificates...)
+		if certificate.Parent().Kind() == IDParentKindNamespace {
+			break
+		}
+		id = certificate.Parent().ID()
+	}
+	if err := idChainStructure(certificates); err != nil {
+		return nil, err
+	}
+	return certificates, nil
+}
+
+func checkCurrentIDChain(status *idStatusSnapshot, certificates []IDCertificateView) (map[string]IDCertificateView, error) {
+	byID := make(map[string]IDCertificateView)
+	for _, certificate := range certificates {
+		byID[certificate.ID()] = certificate
+		if !strings.HasPrefix(certificate.ID(), "did:aw:") {
+			continue
+		}
+		row, err := status.row(certificate.ID())
+		if err != nil {
+			return nil, err
+		}
+		digest, err := certificate.CertificateID()
+		if err != nil {
+			return nil, err
+		}
+		if row.CurrentCertificateID != digest {
+			return nil, idCertificateRefusal(IDRefusalSupersededCertificate)
+		}
+	}
+	for _, certificate := range certificates {
+		var revision *idStatusRevision
+		if strings.HasPrefix(certificate.ID(), "did:aw:") {
+			var err error
+			revision, err = status.revision(certificate.ID(), status.now)
+			if err != nil {
+				return nil, err
+			}
+		}
+		issuer, err := status.issuer(certificate, revision)
+		if err != nil {
+			return nil, err
+		}
+		if issuer != certificate.IssuerKey() {
+			return nil, idCertificateRefusal(IDRefusalStaleIssuerKey)
+		}
+		if err := VerifyIDCertificate(certificate.Signed(), issuer); err != nil {
+			return nil, err
+		}
+	}
+	return byID, nil
+}
+
+type idChainEvaluation struct {
+	status *idStatusSnapshot
+	domain string
+	byID   map[string]IDCertificateView
+}
+
+// nearestHumanAt follows the historical parent at each registered human's
+// witness while retaining current revocation and replacement checks (§4).
+func (evaluation idChainEvaluation) nearestHumanAt(id string, at time.Time, path map[string]bool) (string, error) {
+	if path[id] {
+		return "", idCertificateRefusal(IDRefusalCycle)
+	}
+	if len(path) >= IDChainMaxDepth {
+		return "", idCertificateRefusal(IDRefusalDepthExceeded)
+	}
+	path[id] = true
+	defer delete(path, id)
+	certificate, revision, err := evaluation.certificateAt(id, at)
+	if err != nil {
+		return "", err
+	}
+	if certificate.Domain() != evaluation.domain {
+		return "", idCertificateRefusal(IDRefusalDomainMismatch)
+	}
+	issuer, err := evaluation.status.issuer(certificate, revision)
+	if err != nil {
+		return "", err
+	}
+	if certificate.IssuerKey() != issuer {
+		return "", idCertificateRefusal(IDRefusalStaleIssuerKey)
+	}
+	if err := VerifyIDCertificate(certificate.Signed(), issuer); err != nil {
+		return "", err
+	}
+	human := ""
+	parent := certificate.Parent()
+	if parent.Kind() == IDParentKindIdentity {
+		parentAt := at
+		if certificate.Kind() == IDCertificateKindHuman && revision != nil {
+			parentAt = revision.validity.from
+		}
+		parentCertificate, err := evaluation.parentCertificateAt(parent.ID(), parentAt)
+		if err != nil {
+			return "", err
+		}
+		if certificate.Kind() == IDCertificateKindHuman && parentCertificate.Kind() != IDCertificateKindHuman {
+			return "", idCertificateRefusal(IDRefusalHumanIssuerIsAgent)
+		}
+		human, err = evaluation.nearestHumanAt(parent.ID(), parentAt, path)
+		if err != nil {
+			return "", err
+		}
+	}
+	if certificate.Kind() == IDCertificateKindHuman {
+		human = id
+	}
+	return human, nil
+}
+
+func (evaluation idChainEvaluation) certificateAt(id string, at time.Time) (IDCertificateView, *idStatusRevision, error) {
+	if !strings.HasPrefix(id, "did:aw:") {
+		certificate, present := evaluation.byID[id]
+		if !present {
+			return IDCertificateView{}, nil, idCertificateRefusal(IDRefusalEvidenceUnavailable)
+		}
+		return certificate, nil, nil
+	}
+	revision, err := evaluation.status.revision(id, at)
+	if err != nil {
+		return IDCertificateView{}, nil, err
+	}
+	if revision.validity.from.Before(evaluation.status.cutoff) {
+		return IDCertificateView{}, nil, idCertificateRefusal(IDRefusalRootReplaced)
+	}
+	row, err := evaluation.status.row(id)
+	if err != nil {
+		return IDCertificateView{}, nil, err
+	}
+	if row.Revocation != nil && !row.Revocation.effectiveAt.After(at) {
+		return IDCertificateView{}, nil, idCertificateRefusal(IDRefusalRevoked)
+	}
+	return revision.certificate, revision, nil
+}
+
+func (evaluation idChainEvaluation) parentCertificateAt(id string, at time.Time) (IDCertificateView, error) {
+	if strings.HasPrefix(id, "did:aw:") {
+		revision, err := evaluation.status.revision(id, at)
+		if err != nil {
+			return IDCertificateView{}, err
+		}
+		return revision.certificate, nil
+	}
+	certificate, present := evaluation.byID[id]
+	if !present {
+		return IDCertificateView{}, idCertificateRefusal(IDRefusalEvidenceUnavailable)
+	}
+	return certificate, nil
 }

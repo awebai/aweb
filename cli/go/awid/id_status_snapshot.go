@@ -88,7 +88,10 @@ func idStatusRequired(s map[string]any) bool {
 	if !idStatusFields(s, "v domain observed_at namespace identities missing") || (!idStatusFields(s["namespace"], "epochs") && !idStatusFields(s["namespace"], "epochs delegation")) {
 		return false
 	}
-	namespace := s["namespace"].(map[string]any)
+	namespace, ok := s["namespace"].(map[string]any)
+	if !ok {
+		return false
+	}
 	if delegation, present := namespace["delegation"]; present && !idStatusFields(delegation, "parent_domain parent_controller_key controller_key") {
 		return false
 	}
@@ -112,13 +115,17 @@ func idStatusRequired(s map[string]any) bool {
 		if !idStatusFields(r, "id current_certificate_id current_key_seq key_history certificates revocation") {
 			return false
 		}
-		row := r.(map[string]any)
+		row, ok := r.(map[string]any)
+		if !ok {
+			return false
+		}
 		ks, ok := row["key_history"].([]any)
 		if !ok {
 			return false
 		}
 		for _, k := range ks {
-			if !idStatusFields(k, "entry registered_at") || !idStatusFields(k.(map[string]any)["entry"], "seq operation previous_did_key new_did_key prev_entry_hash entry_hash state_hash authorized_by signature timestamp") {
+			key, ok := k.(map[string]any)
+			if !ok || !idStatusFields(key, "entry registered_at") || !idStatusFields(key["entry"], "seq operation previous_did_key new_did_key prev_entry_hash entry_hash state_hash authorized_by signature timestamp") {
 				return false
 			}
 		}
@@ -412,9 +419,9 @@ func (s *idStatusSnapshot) currentKey(id string) (string, error) {
 	}
 	return r.KeyHistory[len(r.KeyHistory)-1].Entry.NewDIDKey, nil
 }
-func (s *idStatusSnapshot) issuer(c map[string]any, r *idStatusRevision) (string, error) {
-	p := c["parent"].(map[string]any)
-	if p["kind"] == "namespace" {
+func (s *idStatusSnapshot) issuer(certificate IDCertificateView, r *idStatusRevision) (string, error) {
+	parent := certificate.Parent()
+	if parent.Kind() == IDParentKindNamespace {
 		if r == nil {
 			return s.Namespace.Epochs[len(s.Namespace.Epochs)-1].DIDKey, nil
 		}
@@ -423,7 +430,7 @@ func (s *idStatusSnapshot) issuer(c map[string]any, r *idStatusRevision) (string
 		}
 		return s.Namespace.Epochs[r.IssuerKeySeq-1].DIDKey, nil
 	}
-	id := p["id"].(string)
+	id := parent.ID()
 	if r != nil {
 		if strings.HasPrefix(id, "did:key:") {
 			return "", idCertificateRefusal(IDRefusalUnregisteredParent)

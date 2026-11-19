@@ -119,6 +119,20 @@ func IDRequestDisposition(result IDChainResult, subject IDChainSubject, original
 // IDStatusRequest selects the domain and registered identity IDs needed to
 // verify this exact subject. A nil request means advisory chainless local identity.
 func IDStatusRequest(bundle map[string]any, subject IDChainSubject, domain string) (map[string]any, error) {
+	plan, err := planIDStatusRequest(bundle, subject, domain)
+	if err != nil || plan == nil {
+		return nil, err
+	}
+	return map[string]any{"v": 1, "domain": plan.domain, "ids": plan.ids}, nil
+}
+
+type idChainPlan struct {
+	domain       string
+	ids          []string
+	certificates []IDCertificateView
+}
+
+func planIDStatusRequest(bundle map[string]any, subject IDChainSubject, domain string) (*idChainPlan, error) {
 	if bundle == nil {
 		if strings.HasPrefix(subject.ID, "did:key:") {
 			return nil, nil
@@ -129,82 +143,71 @@ func IDStatusRequest(bundle map[string]any, subject IDChainSubject, domain strin
 		if !idCertificateDomain(domain) {
 			return nil, idCertificateRefusal(IDRefusalInvalidDomain)
 		}
-		return map[string]any{"v": 1, "domain": domain, "ids": []string{subject.ID}}, nil
+		return &idChainPlan{domain: domain, ids: []string{subject.ID}}, nil
 	}
-	if raw, err := idCertificateCanonical(bundle); err != nil {
-		return nil, err
-	} else if len(raw) > IDChainMaxBytes {
-		return nil, idCertificateRefusal(IDRefusalBundleTooLarge)
-	}
-	if err := idCertificateBundleShape(bundle); err != nil {
+	chain, err := IDChainFromBundle(bundle)
+	if err != nil {
 		return nil, err
 	}
-	certs := idChainCertificates(bundle)
-	selected := certs[0]["certificate"].(map[string]any)["domain"].(string)
+	certificates := chain.Certificates()
+	selected := certificates[0].Domain()
 	if domain != "" && domain != selected {
 		return nil, idCertificateRefusal(IDRefusalDomainMismatch)
 	}
-	ids := []string{}
-	seen := map[string]bool{}
-	for _, s := range certs {
-		id := s["certificate"].(map[string]any)["id"].(string)
+	ids := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, certificate := range certificates {
+		id := certificate.ID()
 		if strings.HasPrefix(id, "did:aw:") && !seen[id] {
 			ids = append(ids, id)
 			seen[id] = true
 		}
 	}
-	return map[string]any{"v": 1, "domain": selected, "ids": ids}, nil
+	return &idChainPlan{domain: selected, ids: ids, certificates: certificates}, nil
 }
-func idChainCertificates(bundle map[string]any) []map[string]any {
-	out := []map[string]any{}
-	for _, s := range bundle["certificates"].([]any) {
-		out = append(out, s.(map[string]any))
-	}
-	return out
-}
-func idChainStructure(certs []map[string]any) error {
-	by := map[string]map[string]any{}
-	for _, s := range certs {
-		c := s["certificate"].(map[string]any)
-		id := c["id"].(string)
-		if by[id] != nil {
+
+func idChainStructure(certificates []IDCertificateView) error {
+	byID := make(map[string]IDCertificateView)
+	for _, certificate := range certificates {
+		if _, exists := byID[certificate.ID()]; exists {
 			return idCertificateRefusal(IDRefusalDuplicateId)
 		}
-		by[id] = c
+		byID[certificate.ID()] = certificate
 	}
-	for id := range by {
-		seen := map[string]bool{}
-		for by[id] != nil {
+	for id := range byID {
+		seen := make(map[string]bool)
+		certificate, exists := byID[id]
+		for exists {
 			if seen[id] {
 				return idCertificateRefusal(IDRefusalCycle)
 			}
 			seen[id] = true
-			p := by[id]["parent"].(map[string]any)
-			if p["kind"] == "namespace" {
+			parent := certificate.Parent()
+			if parent.Kind() == IDParentKindNamespace {
 				break
 			}
-			id = p["id"].(string)
+			id = parent.ID()
+			certificate, exists = byID[id]
 		}
 	}
-	domain := certs[0]["certificate"].(map[string]any)["domain"]
-	for n, s := range certs {
-		c := s["certificate"].(map[string]any)
-		p := c["parent"].(map[string]any)
-		if c["domain"] != domain {
+	domain := certificates[0].Domain()
+	for index, certificate := range certificates {
+		parent := certificate.Parent()
+		if certificate.Domain() != domain {
 			return idCertificateRefusal(IDRefusalDomainMismatch)
 		}
-		if n == 0 {
-			if p["kind"] != "namespace" || p["id"] != domain {
+		if index == 0 {
+			if parent.Kind() != IDParentKindNamespace || parent.ID() != domain {
 				return idCertificateRefusal(IDRefusalMissingParent)
 			}
-		} else {
-			prev := certs[n-1]["certificate"].(map[string]any)
-			if p["kind"] != "identity" || p["id"] != prev["id"] {
-				return idCertificateRefusal(IDRefusalMissingParent)
-			}
-			if c["kind"] == "human" && prev["kind"] != "human" {
-				return idCertificateRefusal(IDRefusalHumanIssuerIsAgent)
-			}
+			continue
+		}
+		previous := certificates[index-1]
+		if parent.Kind() != IDParentKindIdentity || parent.ID() != previous.ID() {
+			return idCertificateRefusal(IDRefusalMissingParent)
+		}
+		if certificate.Kind() == IDCertificateKindHuman && previous.Kind() != IDCertificateKindHuman {
+			return idCertificateRefusal(IDRefusalHumanIssuerIsAgent)
 		}
 	}
 	return nil
