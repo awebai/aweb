@@ -1219,6 +1219,21 @@ def self_test(root: Path) -> None:
     if baseline:
         raise AssertionError(f"baseline provenance check is not green: {baseline}")
 
+    formatted_consumer = PurePosixPath("server/tests/test_id_chain_request_auth.py")
+    original = read_bytes(root, formatted_consumer)
+    for quoted in (b'"docs/vectors/id-certificates-v1.json"', b"'docs/vectors/id-certificates-v1.json'"):
+        alternate = original.replace(b'"docs/vectors/id-certificates-v1.json"', quoted)
+        failures = check(root, tracked, {formatted_consumer: alternate})
+        if failures:
+            raise AssertionError(f"equivalent formatted vector root refused: {failures}")
+    for label, alternate in (
+        ("wrong Python root", original.replace(b"parents[2]", b"parents[1]")),
+        ("wrong Python path", original.replace(b"docs/vectors/", b"local-fixtures/")),
+        ("comment-only Python root", b"# " + original.replace(b"\n", b"\n# ")),
+    ):
+        _expect_mutation(label, root, tracked, overrides={formatted_consumer: alternate},
+                         expected="does not resolve the repository-root authority")
+
     _expect_mutation(
         "server hand copy",
         root,
