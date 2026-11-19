@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
-from aweb.api import _mount_mcp_app, _shutdown_mcp_app
+from mcp_runtime_fixtures import mounted_mcp
 from test_cli_never_grants import registry_listener
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -157,8 +157,12 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
             },
         )
         assert admitted.status_code == 200, admitted.text
-        await _mount_mcp_app(env.app, env.infra, env.redis, registry)
-        try:
+        async with mounted_mcp(
+            env.app,
+            db_infra=env.infra,
+            redis=env.redis,
+            registry_client=registry,
+        ):
             positive = await _send(
                 env,
                 actor=actor,
@@ -265,5 +269,3 @@ async def test_identity_sender_uses_its_single_current_context_not_first_registe
                 )
                 == selected_address
             )
-        finally:
-            await _shutdown_mcp_app(env.app)

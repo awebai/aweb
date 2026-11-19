@@ -6,9 +6,10 @@ import json
 from uuid import uuid4
 
 import pytest
-from aweb.api import _mount_mcp_app, _shutdown_mcp_app
+from mcp_runtime_fixtures import mounted_mcp
 from test_cli_never_grants import registry_listener
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -44,7 +45,9 @@ async def _connect_global_member(env, *, actor, team_id: str, stable_did: str) -
     return certificate
 
 
-async def _call_tool(env, *, actor, stable_did: str, name: str, certificate=None, team_id=TEAM):
+async def _call_tool(
+    env, *, actor, stable_did: str, name: str, certificate=None, team_id=TEAM
+):
     body = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -76,7 +79,9 @@ async def _call_tool(env, *, actor, stable_did: str, name: str, certificate=None
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("membership_count", [1, 2], ids=["one-team", "two-teams"])
-async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app, membership_count):
+async def test_global_identity_reads_use_same_auth_for_http_and_mcp(
+    privacy_app, membership_count
+):
     # Source model: identity-messaging-contract.md:68-94,253-286. A global
     # participant is one DID; two memberships do not require a team choice
     # for its inbox. A presented team certificate still selects that team.
@@ -85,7 +90,9 @@ async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app,
     async with registry_listener(env) as (registry, _):
         stable = (await registry.register_did(actor.did, actor.sk)).did_aw
         certificates = {
-            TEAM: await _connect_global_member(env, actor=actor, team_id=TEAM, stable_did=stable)
+            TEAM: await _connect_global_member(
+                env, actor=actor, team_id=TEAM, stable_did=stable
+            )
         }
         if membership_count == 2:
             # Namespace control is fixture provisioning; team creation and
@@ -113,8 +120,12 @@ async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app,
             headers=_signed_identity_headers(actor.sk, actor.did, stable),
         )
         assert pending.status_code == 200, pending.text
-        await _mount_mcp_app(env.app, env.infra, env.redis, registry)
-        try:
+        async with mounted_mcp(
+            env.app,
+            db_infra=env.infra,
+            redis=env.redis,
+            registry_client=registry,
+        ):
             for team_id, certificate in certificates.items():
                 selected = await _call_tool(
                     env,
@@ -126,12 +137,14 @@ async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app,
                 )
                 assert selected["team_id"] == team_id
                 assert selected["agent_id"]
-            mail = await _call_tool(env, actor=actor, stable_did=stable, name="check_mail")
+            mail = await _call_tool(
+                env, actor=actor, stable_did=stable, name="check_mail"
+            )
             assert "error" not in mail, mail
-            identity = await _call_tool(env, actor=actor, stable_did=stable, name="whoami")
+            identity = await _call_tool(
+                env, actor=actor, stable_did=stable, name="whoami"
+            )
             assert identity["did_aw"] == stable
             if membership_count == 2:
                 assert identity["team_id"] is None
                 assert identity["agent_id"] is None
-        finally:
-            await _shutdown_mcp_app(env.app)
