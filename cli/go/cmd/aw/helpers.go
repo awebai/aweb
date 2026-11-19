@@ -1073,18 +1073,14 @@ func configureAnsweringMountHint(c *aweb.Client, sel *awconfig.Selection, baseUR
 
 func newSelectionRegistryResolver(httpClient *http.Client, selectionRegistryURL, identityAddress string) (*awid.RegistryResolver, error) {
 	registry := newAWIDRegistryResolver(httpClient, nil)
-	registryURL := strings.TrimSpace(selectionRegistryURL)
-	if registryURL == "" {
-		registryURL = strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
+	registryURL, err := resolveRegistryURLSetting(registryURLSettingInput{ExplicitURL: selectionRegistryURL})
+	if err != nil {
+		return nil, err
 	}
 	if registryURL == "" {
 		return registry, nil
 	}
-	if strings.EqualFold(registryURL, "local") {
-		return nil, fmt.Errorf("registry URL 'local' is not supported; use an explicit registry URL")
-	}
 	identityDomain, hasIdentityAddress := registryIdentityDomain(identityAddress)
-	var err error
 	if hasIdentityAddress {
 		err = registry.SetIdentityRegistryURL(registryURL, identityDomain)
 	} else {
@@ -1138,17 +1134,17 @@ func loadOptionalWorktreeSigningKey(workingDir string) (ed25519.PrivateKey, erro
 // configureEmbeddedRegistryBaseURL applies AWID_REGISTRY_URL, the operator's
 // process-wide registry choice, as the client's fallback registry.
 func configureEmbeddedRegistryBaseURL(setFallback func(string) error) error {
-	registryValue := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
+	registryValue, err := resolveRegistryURLSetting(registryURLSettingInput{})
+	if err != nil {
+		return err
+	}
 	if registryValue == "" {
 		return nil
 	}
-	if !strings.EqualFold(registryValue, "local") {
-		if err := setFallback(registryValue); err != nil {
-			return fmt.Errorf("invalid registry URL: %w", err)
-		}
-		return nil
+	if err := setFallback(registryValue); err != nil {
+		return fmt.Errorf("invalid registry URL: %w", err)
 	}
-	return fmt.Errorf("registry URL 'local' is not supported; use an explicit registry URL")
+	return nil
 }
 
 func persistResolvedAwebURL(workspacePath, baseURL string) error {

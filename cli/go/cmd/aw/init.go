@@ -1106,15 +1106,12 @@ func awebURLOrDefault(raw string) string {
 }
 
 func resolveInitAWIDRegistryURL() (string, error) {
-	value := strings.TrimSpace(initAWIDRegistry)
-	if value == "" {
-		value = strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
-	}
-	if value == "" {
-		value = awid.DefaultAWIDRegistryURL
-	}
-	if strings.EqualFold(value, "local") {
+	value, err := resolveRegistryURLSetting(registryURLSettingInput{ExplicitURL: initAWIDRegistry, DefaultURL: awid.DefaultAWIDRegistryURL})
+	if errors.Is(err, errLocalRegistryURL) {
 		return "", usageError("AWID_REGISTRY_URL=local is not supported by `aw init`; use an explicit localhost URL such as http://localhost:8010")
+	}
+	if err != nil {
+		return "", err
 	}
 	return awid.CanonicalRegistryServerOrigin(value)
 }
@@ -1196,24 +1193,6 @@ var channelPiPathLines = []string{
 	"sender's verification shown.",
 }
 
-// Only human identities inherit a display name from the environment. An agent
-// name must be supplied explicitly; a machine login does not identify its human.
-func resolveHumanNameValue(value, agentType string) string {
-	if v := strings.TrimSpace(value); v != "" || agentType != "human" {
-		return v
-	}
-	if v := strings.TrimSpace(os.Getenv("AWEB_HUMAN")); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(os.Getenv("AWEB_HUMAN_NAME")); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(os.Getenv("USER")); v != "" {
-		return v
-	}
-	return "developer"
-}
-
 func resolveAgentType() string {
 	return resolveAgentTypeValue(strings.TrimSpace(initAgentType))
 }
@@ -1292,16 +1271,6 @@ func canonicalInitInboundModeForWire(flag string) string {
 		return strings.TrimSpace(flag)
 	}
 	return mode
-}
-
-func resolveRequestedRole(explicit string) string {
-	if v := strings.TrimSpace(explicit); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(os.Getenv("AWEB_ROLE_NAME")); v != "" {
-		return v
-	}
-	return strings.TrimSpace(os.Getenv("AWEB_ROLE"))
 }
 
 // runDefaultInitDocsInjection writes the default aweb docs and returns what
