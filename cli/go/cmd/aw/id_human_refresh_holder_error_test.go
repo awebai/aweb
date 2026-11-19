@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -37,7 +36,9 @@ func TestHumanRefreshBindingCarriesHolderRecoveryAdvice(t *testing.T) {
 	originalHuman, originalIssuer := activeHuman, humanRefreshIssuer
 	activeHuman = h
 	t.Cleanup(func() { activeHuman, humanRefreshIssuer = originalHuman, originalIssuer })
-	_, binding := refreshBindingFixture(t)
+	// This command only commits the retained binding before the holder refuses;
+	// no enrollment verification is claimed by the transport regression.
+	binding := map[string]any{"binding": map[string]any{"person": h.record.StableID, "identity_key": h.record.DIDKey, "organisation": h.record.Domain, "origin": "https://approval.example.test"}, "signature": "retained-enrollment"}
 	if err := saveHumanEnrollment(filepath.Join(h.dir, "approval-binding.json"), binding); err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +105,6 @@ func TestHumanRefreshBindingCarriesHolderRecoveryAdvice(t *testing.T) {
 		}
 	}
 	if _, err := os.Stat(filepath.Join(h.dir, "approval-binding-refresh.json")); !os.IsNotExist(err) {
-		t.Fatal(fmt.Sprintf("refused holder created a pending packet: %v", err))
+		t.Fatalf("refused holder created a pending packet: %v", err)
 	}
 }
