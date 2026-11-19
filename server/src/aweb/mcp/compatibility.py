@@ -1,8 +1,9 @@
 """Measure published MCP names before deciding whether they can be removed.
 
 Observe at the serving call_tool entry, before validation, quota or delegation.
-The default Prometheus registry is exposed by the embedding host, as for native
-request-auth metrics. No tool arguments, identities or client metadata are kept.
+The default Prometheus registry can be collected by a configured host exporter.
+A bounded log event also reaches the serving process's configured log sink.
+Neither observation includes tool arguments, identities or client metadata.
 """
 
 import logging
@@ -36,9 +37,10 @@ MCP_COMPATIBILITY_TOOL_CALLS = Counter(
 
 
 def observe_compatibility_tool_call(*, tool_name: str) -> None:
-    """Count one compatibility invocation without changing its result or logging input."""
+    """Observe one fixed compatibility name without changing its result."""
     if tool_name not in COMPATIBILITY_TOOL_REPLACEMENTS:
         return
+    logger.info("mcp_compatibility_tool_call tool=%s", tool_name)
     try:
         MCP_COMPATIBILITY_TOOL_CALLS.labels(tool=tool_name).inc()
     except Exception:

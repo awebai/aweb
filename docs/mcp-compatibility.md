@@ -49,3 +49,13 @@ in the default Prometheus registry. Hosts choose how to expose that registry,
 as for native request-auth metrics. Other tool names create no labels. The
 observer records no tool arguments, content, identity or client metadata;
 measurement failure logs a fixed message and permits the invocation.
+
+The observer also emits one INFO log event, `mcp_compatibility_tool_call tool=NAME`,
+where `NAME` is one of the eleven fixed names above. It contains no arguments,
+identity or client metadata. Operators can count those events in their existing
+native and hosted process log sinks. The Prometheus counter is available to an
+operator-configured exporter; this library does not install a scrape endpoint.
+Choose one observation source per serving entry to avoid counting the log and
+counter twice. Establish collection, INFO-level retention and complete serving
+coverage before starting the thirty-day window. Missing exports, filtered logs,
+shorter retention or an unobserved entry cannot establish zero use.
