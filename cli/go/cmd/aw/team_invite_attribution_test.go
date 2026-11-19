@@ -155,7 +155,7 @@ func TestTeamInviteChainlessGlobalEnrollmentWithoutTreeRoot(t *testing.T) {
 			if err := awconfig.SaveWorktreeIdentityTo(path, identity); err != nil {
 				t.Fatal(err)
 			}
-			link, err := prepareTeamInviteIDChild(context.Background(), idChildOptions{WorkingDir: dir, TXTResolver: staticTXTResolver{}, Now: time.Now})
+			link, _, err := prepareTeamInviteAuthority(context.Background(), teamInviteAuthorityRequest{Issuer: idChildOptions{WorkingDir: dir, TXTResolver: staticTXTResolver{}, Now: time.Now}, Child: inviteCreatesChild})
 			if (err == nil) != tc.allowed || link != nil {
 				t.Fatalf("allowed=%v: link=%+v err=%v", tc.allowed, link, err)
 			}
@@ -240,7 +240,7 @@ func TestLocalTeamInviteKeepsTheInvitersRegistry(t *testing.T) {
 			if err := awconfig.SaveTeamKey(teamDomain, "backend", teamKey); err != nil {
 				t.Fatal(err)
 			}
-			_, token, err := createTeamInviteTokenAt(teamDomain, "backend", operationRegistry, "https://service.example", true, "", dir, "")
+			_, token, err := createTeamInviteTokenAt(teamDomain, "backend", operationRegistry, "https://service.example", true, dir, "")
 			refused := scenario == "contradictory authority" || scenario == "stale key" || scenario == "unknown enrollment"
 			if refused {
 				if err == nil || token != "" {

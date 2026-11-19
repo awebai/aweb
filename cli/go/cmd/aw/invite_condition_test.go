@@ -238,7 +238,7 @@ func TestLocalInviteStoresTheVerifiedDefaultOrExplicitCondition(t *testing.T) {
 			if scenario == "explicit same" {
 				requested = []string{want}
 			}
-			id, token, err := createTeamInviteTokenAt("example.com", "backend", origin, "https://service.example", true, "", wd, filepath.Join(wd, ".aw"), requested...)
+			id, token, err := createTeamInviteTokenAt("example.com", "backend", origin, "https://service.example", true, wd, filepath.Join(wd, ".aw"), requested...)
 			if err != nil {
 				t.Fatal(err)
 			}

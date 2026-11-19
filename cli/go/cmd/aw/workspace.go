@@ -173,7 +173,10 @@ func init() {
 }
 
 func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
-	workingDir, _ := os.Getwd()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	home, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return err
@@ -445,7 +448,10 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 }
 
 func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
-	workingDir, _ := os.Getwd()
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
 	root, err := currentGitWorktreeRootFromDir(workingDir)
 	if err != nil {
 		return usageError("workspace add-worktree requires a git worktree")
@@ -577,22 +583,17 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("check team key: %w", err)
 	}
 
+	child := worktreeAgentCreation{
+		WorkingDir: workingDir, CreatorHome: home, WorktreePath: worktreePath, RepoRoot: root,
+		BranchName: branchName, BranchCreated: branchCreated, ServerURL: sourceServerURL, TeamID: teamID,
+		Alias: alias, Role: role, Workspace: state, APIKey: strings.TrimSpace(state.APIKey),
+	}
 	if hasTeamKey {
-		_, err = addWorktreeViaLocalTeamKey(
-			worktreePath, root, branchName, branchCreated,
-			teamID, teamDomain, teamName, sourceServerURL, workingDir, sourceIdentityHome,
-			alias, role, state,
-		)
+		_, err = addWorktreeViaLocalTeamKey(child)
 	} else if strings.TrimSpace(state.APIKey) != "" {
-		_, err = addWorktreeViaCloudBootstrap(
-			worktreePath, root, branchName, branchCreated,
-			sourceServerURL, alias, role, state,
-		)
+		_, err = addWorktreeViaCloudBootstrap(child)
 	} else {
-		_, err = addWorktreeViaPrimaryInvite(
-			workingDir, sourceIdentityHome, worktreePath, root, branchName, branchCreated,
-			sourceServerURL, alias, role, state,
-		)
+		_, err = addWorktreeViaPrimaryInvite(child)
 	}
 	if err != nil {
 		return err
