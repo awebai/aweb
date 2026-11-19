@@ -73,7 +73,7 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 	signPayload := onboardingDIDKeySignPayload(httpReq.Method, httpReq.URL.Path, timestamp, bodyBytes)
 	signature := ed25519.Sign(c.signingKey, signPayload)
 	httpReq.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(signature)))
-	httpReq.Header.Set("X-AWEB-Timestamp", timestamp)
+	httpReq.Header.Set(HeaderRequestTimestamp, timestamp)
 
 	resp, err := DoServerRequestWithTimeout(c.httpClient, httpReq, c.baseURL, APITimeout())
 	if err != nil {

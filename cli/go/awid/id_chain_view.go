@@ -78,7 +78,7 @@ func (certificate IDCertificateView) CertificateID() (string, error) {
 // IDChain is an immutable view of a checked ID-chain bundle. It preserves the
 // released map/header APIs while keeping unchecked JSON out of typed consumers.
 type IDChain struct {
-	bundle       map[string]any
+	canonical    []byte
 	certificates []IDCertificateView
 }
 
@@ -101,7 +101,7 @@ func IDChainFromBundle(bundle map[string]any) (IDChain, error) {
 	if !ok {
 		return IDChain{}, idCertificateRefusal(IDRefusalInvalidShape)
 	}
-	chain := IDChain{bundle: snapshot, certificates: make([]IDCertificateView, 0, len(entries))}
+	chain := IDChain{canonical: canonical, certificates: make([]IDCertificateView, 0, len(entries))}
 	for _, entry := range entries {
 		signed, ok := entry.(map[string]any)
 		if !ok {
@@ -146,11 +146,7 @@ func (chain IDChain) Header() (string, error) {
 	if len(chain.certificates) == 0 {
 		return "", idCertificateRefusal(IDRefusalInvalidShape)
 	}
-	canonical, err := idCertificateCanonical(chain.bundle)
-	if err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(canonical), nil
+	return base64.RawURLEncoding.EncodeToString(chain.canonical), nil
 }
 
 func checkedIDCertificateView(signed map[string]any) (IDCertificateView, error) {

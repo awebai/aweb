@@ -78,7 +78,7 @@ func (c *RegistryClient) RegisterIDCertificateAt(ctx context.Context, registryUR
 	leaf := chain.Leaf()
 	body := map[string]any{"certificate": leaf.Signed(), "expected_head": optionalText(expectedHead), "invitation_id": optionalText(invitationID)}
 	var answer map[string]any
-	err = c.controllerWrite(ctx, http.MethodPost, registryURL, "/v1/id-certificates/register", leaf.Domain(), "register_id_certificate", nil, body, signer, map[string]string{"X-AWID-ID-Chain": header}, &answer)
+	err = c.controllerWrite(ctx, http.MethodPost, registryURL, "/v1/id-certificates/register", leaf.Domain(), "register_id_certificate", nil, body, signer, map[string]string{HeaderIDChain: header}, &answer)
 	return answer, err
 }
 
@@ -145,9 +145,9 @@ func (c *RegistryClient) controllerWrite(ctx context.Context, method, registryUR
 		return fmt.Errorf("signer answer refused: %w", err)
 	}
 	signed := map[string]string{
-		"X-AWEB-Timestamp":      timestamp,
-		"X-AWEB-Signed-Payload": base64.RawURLEncoding.EncodeToString(payload),
-		"Authorization":         "DIDKey " + didKey + " " + base64.RawStdEncoding.EncodeToString(signature),
+		HeaderRequestTimestamp: timestamp,
+		HeaderSignedPayload:    base64.RawURLEncoding.EncodeToString(payload),
+		"Authorization":        "DIDKey " + didKey + " " + base64.RawStdEncoding.EncodeToString(signature),
 	}
 	for k, v := range headers {
 		signed[k] = v

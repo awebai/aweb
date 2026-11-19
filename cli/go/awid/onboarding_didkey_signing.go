@@ -51,8 +51,8 @@ func DIDKeyRequestHeadersForAudience(method, path, audience string, body []byte,
 	payload := onboardingDIDKeySignPayloadWithAudience(audience, method, path, timestamp, body)
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
 	return map[string]string{
-		"Authorization":    "DIDKey " + did + " " + base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, payload)),
-		"X-AWEB-Timestamp": timestamp,
+		"Authorization":        "DIDKey " + did + " " + base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, payload)),
+		HeaderRequestTimestamp: timestamp,
 	}, nil
 }
 

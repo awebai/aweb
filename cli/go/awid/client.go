@@ -1923,7 +1923,7 @@ func SignRequestCredential(key ed25519.PrivateKey, method string, target *url.UR
 // credentials keep their already target-bound protocol; root credentials use v2.
 func (c *Client) signRequest(req *http.Request, body []byte) error {
 	if c.idChainHeader != "" {
-		req.Header.Set("X-AWID-ID-Chain", c.idChainHeader)
+		req.Header.Set(HeaderIDChain, c.idChainHeader)
 	}
 	if c.signingKey == nil && c.interactiveSigner == nil {
 		return nil
@@ -1957,12 +1957,12 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 		return err
 	}
 	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
-	req.Header.Set("X-AWEB-Timestamp", timestamp)
-	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
+	req.Header.Set(HeaderRequestTimestamp, timestamp)
+	req.Header.Set(HeaderSignedPayload, base64.RawURLEncoding.EncodeToString([]byte(canonical)))
 	if teamCertHeader != "" {
-		req.Header.Set("X-AWID-Team-Certificate", teamCertHeader)
+		req.Header.Set(HeaderTeamCertificate, teamCertHeader)
 	} else if c.stableID != "" {
-		req.Header.Set("X-AWEB-DID-AW", c.stableID)
+		req.Header.Set(HeaderIdentityID, c.stableID)
 	}
 	return nil
 }
