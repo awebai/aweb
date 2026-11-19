@@ -71,6 +71,14 @@ class SendRefusalMode(Enum):
     HOSTED_ENVELOPE = auto()
 
 
+def require_send_refusal_mode(mode: SendRefusalMode) -> None:
+    """Reject unnamed formatting intent before interpreting any refusal subtype."""
+    if not isinstance(mode, SendRefusalMode):
+        raise TypeError(
+            "Pass a named SendRefusalMode value before formatting a send refusal."
+        )
+
+
 def send_refusal(
     exc: Exception,
     *,
@@ -86,10 +94,7 @@ def send_refusal(
     no one is refused in one set of words, which do not say whether a local
     identity holds that name.
     """
-    if not isinstance(mode, SendRefusalMode):
-        raise TypeError(
-            "Pass a named SendRefusalMode value before formatting a send refusal."
-        )
+    require_send_refusal_mode(mode)
     if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
         return json.dumps({"error": exc.message, "reason": exc.code})
     if isinstance(exc, RecipientAddressNotFound) and address:

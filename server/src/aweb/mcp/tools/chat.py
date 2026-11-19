@@ -56,6 +56,7 @@ from aweb.mcp.tools.federation import (
 from aweb.mcp.tools.refusals import (
     CONVERSATION_CHANGED_DURING_SEND,
     SendRefusalMode,
+    require_send_refusal_mode,
     send_refusal,
 )
 from aweb.messaging.chat_send import (
@@ -195,6 +196,7 @@ def _send_refusal(
     mode: SendRefusalMode = SendRefusalMode.STANDARD,
 ) -> str:
     """A chat send the service refused, in this tool's error shape."""
+    require_send_refusal_mode(mode)
     if isinstance(exc, HumanChatRefused):
         return json.dumps({"error": exc.detail, **exc.body()})
     return send_refusal(exc, address=address, mode=mode)
