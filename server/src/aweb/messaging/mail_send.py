@@ -1459,6 +1459,24 @@ async def send_mail(
     runtime: MessagingRuntime,
 ) -> SentMail:
     """Store and deliver the signed or encrypted ``payload`` to a resolved target."""
+    return await _send_mail_to_resolved_target(
+        db,
+        auth=auth,
+        target=target,
+        payload=payload,
+        runtime=runtime,
+    )
+
+
+async def _send_mail_to_resolved_target(
+    db,
+    *,
+    auth: MessagingAuth,
+    target: MailTarget,
+    payload: SendMessageRequest,
+    runtime: MessagingRuntime,
+) -> SentMail:
+    """Deliver to the selected local recipient or stored/federated route."""
     registry_client = runtime.registry_client
     id_chain = auth.id_chain
     sender_address = _sender_address(auth)
