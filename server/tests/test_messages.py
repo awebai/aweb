@@ -82,18 +82,31 @@ async def test_plaintext_message_id_collision_is_a_conflict(aweb_cloud_db, colli
     await _insert_team(manager, "default:example.com")
     recipient_key = _make_did_key()
     await _insert_agent(
-        manager, team_id="default:example.com", alias="agent",
-        did_key=recipient_key, did_aw="did:aw:recipient", address="example.com/agent",
+        manager,
+        team_id="default:example.com",
+        alias="agent",
+        did_key=recipient_key,
+        did_aw="did:aw:recipient",
+        address="example.com/agent",
     )
     original = dict(
-        from_did=_make_did_key(), to_did="did:aw:recipient", from_alias="person",
-        to_alias="agent", subject="Private mail", body="original", priority="normal",
-        message_id=uuid4(), signed_payload='{"body":"original"}' if collision != "unsigned" else None,
+        from_did=_make_did_key(),
+        to_did="did:aw:recipient",
+        from_alias="person",
+        to_alias="agent",
+        subject="Private mail",
+        body="original",
+        priority="normal",
+        message_id=uuid4(),
+        signed_payload='{"body":"original"}' if collision != "unsigned" else None,
     )
     await deliver_message(db, **original)
-    before = dict(await manager.fetch_one(
-        "SELECT * FROM {{tables.messages}} WHERE message_id = $1", original["message_id"],
-    ))
+    before = dict(
+        await manager.fetch_one(
+            "SELECT * FROM {{tables.messages}} WHERE message_id = $1",
+            original["message_id"],
+        )
+    )
     retry = dict(original)
     if collision == "sender":
         retry["from_did"] = _make_did_key()
@@ -102,17 +115,28 @@ async def test_plaintext_message_id_collision_is_a_conflict(aweb_cloud_db, colli
     elif collision == "unsigned":
         retry["body"] = "changed unsigned body"
     else:
-        retry.update(content_mode="encrypted_v2", encrypted_envelope={},
-                     encrypted_metadata={"signed_envelope_hash": "sha256:other"})
+        retry.update(
+            content_mode="encrypted_v2",
+            encrypted_envelope={},
+            encrypted_metadata={"signed_envelope_hash": "sha256:other"},
+        )
     with pytest.raises(ConflictError):
         await deliver_message(db, **retry)
-    assert dict(await manager.fetch_one(
-        "SELECT * FROM {{tables.messages}} WHERE message_id = $1", original["message_id"],
-    )) == before
+    assert (
+        dict(
+            await manager.fetch_one(
+                "SELECT * FROM {{tables.messages}} WHERE message_id = $1",
+                original["message_id"],
+            )
+        )
+        == before
+    )
 
 
 @pytest.mark.asyncio
-async def test_agents_inbound_mode_schema_nullable_no_default_and_constraint(aweb_cloud_db):
+async def test_agents_inbound_mode_schema_nullable_no_default_and_constraint(
+    aweb_cloud_db,
+):
     await _insert_team(aweb_cloud_db.aweb_db, "default:example.com")
     agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
@@ -303,7 +327,9 @@ async def test_exact_active_identity_contact_helper_is_narrow(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_inbound_mode_open_allows_unconnected_sender(aweb_cloud_db):
+async def test_deliver_message_inbound_mode_open_allows_unconnected_sender(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
     bob_did_aw = "did:aw:bob"
@@ -336,7 +362,9 @@ async def test_deliver_message_inbound_mode_open_allows_unconnected_sender(aweb_
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_team_and_contacts_allows_exact_active_contact(aweb_cloud_db):
+async def test_deliver_message_team_and_contacts_allows_exact_active_contact(
+    aweb_cloud_db,
+):
     """team_and_contacts allows exact saved contacts."""
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
@@ -400,7 +428,9 @@ async def test_agents_inbound_mode_check_rejects_stale_values(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_team_and_contacts_allows_verified_same_team_non_contact(aweb_cloud_db):
+async def test_deliver_message_team_and_contacts_allows_verified_same_team_non_contact(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
     bob_did_aw = "did:aw:bob-team-and-contacts"
@@ -430,7 +460,9 @@ async def test_deliver_message_team_and_contacts_allows_verified_same_team_non_c
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_team_and_contacts_rejects_declared_team_without_proof(aweb_cloud_db):
+async def test_deliver_message_team_and_contacts_rejects_declared_team_without_proof(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
     bob_did_aw = "did:aw:bob-team-claim"
@@ -460,7 +492,9 @@ async def test_deliver_message_team_and_contacts_rejects_declared_team_without_p
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_team_and_contacts_checks_multi_team_identity_memberships(aweb_cloud_db):
+async def test_deliver_message_team_and_contacts_checks_multi_team_identity_memberships(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "alpha:example.com")
     await _insert_team(aweb_cloud_db.aweb_db, "beta:example.com")
@@ -513,7 +547,9 @@ async def test_deliver_message_team_and_contacts_checks_multi_team_identity_memb
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_local_recipient_same_team_behavior_unchanged(aweb_cloud_db):
+async def test_deliver_message_local_recipient_same_team_behavior_unchanged(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "default:local")
     alice_did_key = _make_did_key()
@@ -547,7 +583,9 @@ async def test_deliver_message_local_recipient_same_team_behavior_unchanged(aweb
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_null_inbound_mode_fails_migration_required(aweb_cloud_db):
+async def test_deliver_message_null_inbound_mode_fails_migration_required(
+    aweb_cloud_db,
+):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db, "ops:otherco.com")
     bob_did_aw = "did:aw:bob"
@@ -589,11 +627,15 @@ async def test_resolve_agent_helpers(aweb_cloud_db):
         address="acme.com/alice",
     )
 
-    by_alias = await get_agent_by_alias(db_shim, team_id="backend:acme.com", alias="alice")
+    by_alias = await get_agent_by_alias(
+        db_shim, team_id="backend:acme.com", alias="alice"
+    )
     assert by_alias is not None
     assert str(by_alias["agent_id"]) == alice_id
 
-    by_id = await get_agent_by_id(db_shim, team_id="backend:acme.com", agent_id=alice_id)
+    by_id = await get_agent_by_id(
+        db_shim, team_id="backend:acme.com", agent_id=alice_id
+    )
     assert by_id is not None
     assert by_id["alias"] == "alice"
 
@@ -629,14 +671,24 @@ async def test_contacts_only_rejects_verified_teammate_before_contact(aweb_cloud
     manager = aweb_cloud_db.aweb_db
     await _insert_team(manager, "backend:acme.com")
     recipient_id = await _insert_agent(
-        manager, team_id="backend:acme.com", alias="strict", did_key=_make_did_key(),
-        did_aw="did:aw:strict", address="acme.com/strict", inbound_mode="contacts_only",
+        manager,
+        team_id="backend:acme.com",
+        alias="strict",
+        did_key=_make_did_key(),
+        did_aw="did:aw:strict",
+        address="acme.com/strict",
+        inbound_mode="contacts_only",
     )
     recipient = await get_agent_by_id(_DbShim(manager), agent_id=recipient_id)
-    with pytest.raises(ForbiddenError, match="Recipient only accepts messages from exact active contacts"):
+    with pytest.raises(
+        ForbiddenError,
+        match="Recipient only accepts messages from exact active contacts",
+    ):
         await authorize_message_delivery(
-            _DbShim(manager), recipient_agent=recipient,
-            sender_did="did:aw:teammate", sender_address="acme.com/teammate",
+            _DbShim(manager),
+            recipient_agent=recipient,
+            sender_did="did:aw:teammate",
+            sender_address="acme.com/teammate",
             sender_verified_team_id="backend:acme.com",
             stored_route_continuation=True,
         )
