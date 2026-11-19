@@ -1699,44 +1699,16 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		return failure
 	}
 	for i := range plans {
-		rollback, err := captureAgentHomeRollback(plans[i].HomeDir)
+		teamID, err := createAndSetUpTeamAgent(teamAgentSetup{
+			Membership:  teamAgentMembershipPreparation{SourceDir: inviteAnchorDir, Plan: &plans[i], Authority: creation, APIKey: opts.APIKey},
+			CreatorHome: creatorHome, WorktreeAnchorDir: worktreeAnchorDir, WorkDir: teamHumanAddWorkDir,
+			ExpectedTeamID: opts.ExpectedTeamID, AssertionSource: opts.TeamIDAssertionSource, LayoutOnly: teamHumanAddLayoutOnly,
+		})
+		if createdTeamID == "" {
+			createdTeamID = teamID
+		}
 		if err != nil {
 			return reportRosterFailure(i, err)
-		}
-		if err := os.MkdirAll(plans[i].HomeDir, 0o755); err != nil {
-			homeRollbackErr := rollback.Rollback()
-			return reportRosterFailure(i, withLocalProvisioningRollback(localProvisioningRollback{Cause: err, Rollback: homeRollbackErr}))
-		}
-		if teamHumanAddLayoutOnly {
-			continue
-		}
-		err = prepareTeamAgentMembership(teamAgentMembershipPreparation{SourceDir: inviteAnchorDir, Plan: &plans[i], Authority: creation, APIKey: opts.APIKey})
-		if err != nil {
-			if retainUnfinishedProvisioningIdentity(err) {
-				return reportRosterFailure(i, err)
-			}
-			homeRollbackErr := rollback.Rollback()
-			return reportRosterFailure(i, withLocalProvisioningRollback(localProvisioningRollback{Cause: err, Rollback: homeRollbackErr}))
-		}
-		setupFailure := func(cause error) error {
-			return retainProvisionedSetupFailure(provisionedSetupFailure{Cause: cause, Plan: plans[i], CreatorDir: inviteAnchorDir, CreatorHome: creatorHome, Authority: creation.Mode, WorkDir: teamHumanAddWorkDir})
-		}
-		if expected := strings.TrimSpace(opts.ExpectedTeamID); expected != "" && !strings.EqualFold(strings.TrimSpace(plans[i].TeamID), expected) {
-			mismatchErr := teamIDAssertionMismatchError(expected, strings.TrimSpace(plans[i].TeamID), opts.TeamIDAssertionSource)
-			return reportRosterFailure(i, setupFailure(mismatchErr))
-		}
-		if err := completePlannedTeamAgentProfile(teamAgentProfileSetup{
-			Plan: &plans[i], Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(plans[i].HomeDir), Source: awconfig.IdentityHomeDefault},
-		}); err != nil {
-			return reportRosterFailure(i, setupFailure(err))
-		}
-
-		if createdTeamID == "" {
-			createdTeamID = strings.TrimSpace(plans[i].TeamID)
-		}
-
-		if err := setupTeamAddedAgentWorktree(worktreeAnchorDir, plans[i], teamHumanAddWorkDir); err != nil {
-			return reportRosterFailure(i, setupFailure(err))
 		}
 	}
 	if teamHumanAddStart && len(plans) == 1 {
