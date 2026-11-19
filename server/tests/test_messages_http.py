@@ -8311,75 +8311,65 @@ async def test_global_inbox_does_not_include_current_key_identity(aweb_cloud_db)
 
 
 @pytest.mark.asyncio
-async def test_messages_inbox_and_ack_accept_persistent_cert_auth(aweb_cloud_db):
-    team_sk, _, team_did_key = _make_keypair()
-    alice_sk, _, alice_did_key = _make_keypair()
+async def test_messages_inbox_and_ack_accept_persistent_cert_auth(shared_test_pool, monkeypatch):
+    from identity_binding_support import register_global_identity
+    from test_dashboard_privacy import TEAM, privacy_stack
 
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', $1)
-        """,
-        team_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END)
-        """,
-        alice_did_key,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.messages}} (
-            message_id, from_did, to_did, from_alias, to_alias, subject, body, priority
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        alice, bob = env.actors["alice"], env.actors["bob"]
+        stable = await register_global_identity(env, alice, "example.test/alice")
+        cert = _encode_certificate(
+            _make_certificate(
+                env.team_sk,
+                env.team_did,
+                alice.did,
+                team_id=TEAM,
+                alias="alice",
+                identity_scope="global",
+                member_did_aw=stable,
+                member_address="example.test/alice",
+                certificate_id="persistent-cert-inbox",
+            )
         )
-        VALUES (
-            '33333333-3333-3333-3333-333333333333',
-            'did:aw:bob',
-            'did:aw:alice',
-            'bob',
-            'alice',
-            'persistent cert inbox',
-            'hello',
-            'normal'
+        raw = b"{}"
+        connected = await env.client.post(
+            "/v1/connect",
+            content=raw,
+            headers={
+                **_signed_team_headers(alice.sk, alice.did, TEAM, cert, raw),
+                "Content-Type": "application/json",
+            },
         )
-        """
-    )
-
-    cert = _make_certificate(
-        team_sk,
-        team_did_key,
-        alice_did_key,
-        team_id="backend:acme.com",
-        alias="alice",
-        member_did_aw="did:aw:alice",
-        member_address="acme.com/alice",
-    )
-    cert_header = _encode_certificate(cert)
-    registry = AsyncMock()
-    registry.get_team_public_key = AsyncMock(return_value=team_did_key)
-    registry.get_team_revocations = AsyncMock(return_value=set())
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    headers = _signed_team_headers(alice_sk, alice_did_key, "backend:acme.com", cert_header)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        inbox_resp = await client.get("/v1/messages/inbox", headers=headers)
-        ack_resp = await client.post(
-            "/v1/messages/33333333-3333-3333-3333-333333333333/ack", headers=headers
+        assert connected.status_code == 200, connected.text
+        raw = json.dumps(
+            {"to_did": stable, "subject": "persistent cert inbox", "body": "hello"}
+        ).encode()
+        sent = await env.client.post(
+            "/v1/messages",
+            content=raw,
+            headers={
+                **_signed_team_headers(bob.sk, bob.did, TEAM, bob.certificate, raw),
+                "Content-Type": "application/json",
+            },
         )
-
-    assert inbox_resp.status_code == 200, inbox_resp.text
-    assert [item["subject"] for item in inbox_resp.json()["messages"]] == ["persistent cert inbox"]
-    assert ack_resp.status_code == 200, ack_resp.text
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT read_at FROM {{tables.messages}} WHERE message_id = '33333333-3333-3333-3333-333333333333'"
-    )
-    assert row["read_at"] is not None
+        assert sent.status_code == 200, sent.text
+        message_id = sent.json()["message_id"]
+        inbox = await env.client.get(
+            "/v1/messages/inbox",
+            headers=_signed_team_headers(alice.sk, alice.did, TEAM, cert),
+        )
+        acknowledged = await env.client.post(
+            f"/v1/messages/{message_id}/ack",
+            headers=_signed_team_headers(alice.sk, alice.did, TEAM, cert),
+        )
+        assert inbox.status_code == 200, inbox.text
+        assert [item["subject"] for item in inbox.json()["messages"]] == ["persistent cert inbox"]
+        assert acknowledged.status_code == 200, acknowledged.text
+        row = await env.db.fetch_one(
+            "SELECT read_at FROM {{tables.messages}} WHERE message_id=$1",
+            UUID(message_id),
+        )
+        assert row["read_at"] is not None
 
 
 @pytest.mark.asyncio

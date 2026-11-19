@@ -2530,74 +2530,82 @@ async def test_receive_federated_chat_rejects_closed_or_mismatched_conversation(
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_accepts_identity_auth_and_to_did(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo' /* team-1 */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6Mksty56NE8sLwnubZAGcm16vuLQnaMnSqUcsGmGygSk8mF' /* team-2 */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES
-            ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END),
-            ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """,
-        alice_did_key,
-    )
+async def test_create_chat_session_accepts_identity_auth_and_to_did(shared_test_pool, monkeypatch):
+    from aweb.application_state import application_registry_client
+    from identity_binding_support import register_global_identity
+    from test_dashboard_privacy import TEAM, privacy_stack
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-1",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        registry = application_registry_client(env.app.state)
+        alice, bob = env.actors["alice"], env.actors["bob"]
+        alice_stable = await register_global_identity(env, alice, "acme.com/alice")
+        bob_stable = await register_global_identity(env, bob, "otherco.com/bob")
+        other_team_sk, _, other_team_did = _make_keypair()
+        controller = await env.registry.ensure_namespace(domain="otherco.com")
+        await registry.register_team(
+            domain="otherco.com",
+            name="ops",
+            display_name="ops",
+            team_did_key=other_team_did,
+            visibility="public",
+            namespace_controller_signing_key=bytes(controller),
+        )
+        for alias, actor, stable, address, team, signing_key, team_did in (
+            ("alice", alice, alice_stable, "acme.com/alice", TEAM, env.team_sk, env.team_did),
+            (
+                "bob",
+                bob,
+                bob_stable,
+                "otherco.com/bob",
+                "ops:otherco.com",
+                other_team_sk,
+                other_team_did,
+            ),
+        ):
+            cert = _encode_certificate(
+                _make_certificate(
+                    signing_key,
+                    team_did,
+                    actor.did,
+                    team_id=team,
+                    alias=alias,
+                    identity_scope="global",
+                    member_did_aw=stable,
+                    member_address=address,
+                    certificate_id=f"identity-chat-{alias}",
+                )
             )
-        ]
-    )
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
+            raw = b"{}"
+            connected = await env.client.post(
+                "/v1/connect",
+                content=raw,
+                headers={
+                    **_signed_team_headers(actor.sk, actor.did, team, cert, raw),
+                    "Content-Type": "application/json",
+                },
+            )
+            assert connected.status_code == 200, connected.text
 
-    payload = {"to_dids": ["did:aw:bob"], "message": "hello bob"}
-    body = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
-
-    assert resp.status_code == 200, resp.text
-    payload = resp.json()
-    assert payload["session_id"]
-    assert {participant["did"] for participant in payload["participants"]} == {
-        "did:aw:alice",
-        "did:aw:bob",
-    }
-    assert {participant["address"] for participant in payload["participants"]} == {
-        "acme.com/alice",
-        "otherco.com/bob",
-    }
+        raw = json.dumps({"to_dids": [bob_stable], "message": "hello bob"}).encode()
+        response = await env.client.post(
+            "/v1/chat/sessions",
+            content=raw,
+            headers={
+                **_signed_identity_headers(alice.sk, alice.did, alice_stable, raw),
+                "Content-Type": "application/json",
+            },
+        )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["session_id"]
+        assert {participant["did"] for participant in payload["participants"]} == {
+            alice_stable,
+            bob_stable,
+        }
+        assert {participant["address"] for participant in payload["participants"]} == {
+            "acme.com/alice",
+            "otherco.com/bob",
+        }
 
 
 @pytest.mark.asyncio
