@@ -1621,6 +1621,108 @@ async def send_mail(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _LocalMailCommit:
+    message_id: UUID
+    conversation_id: str
+    server_received_at: datetime
+
+
+async def _commit_new_local_mail(
+    db,
+    *,
+    auth: MessagingAuth,
+    target: MailTarget,
+    payload: SendMessageRequest,
+    encrypted_metadata: dict | None,
+    replay_lookup: MailReplayLookup,
+) -> _LocalMailCommit:
+    """Store a new thread and its first message in one native transaction."""
+    recipient = target.recipient
+    if recipient is None:
+        raise ValueError("A new local mail commit requires a resolved recipient")
+    recipient_did = target.recipient_did
+    to_agent_id = target.to_agent_id
+    to_alias = target.to_alias
+    sender_did = (auth.did_aw or auth.did_key or "").strip()
+    sender_address = _sender_address(auth)
+    id_chain = auth.id_chain
+    msg_uuid = UUID(payload.message_id) if payload.message_id else None
+    async with db.get_manager("aweb").transaction() as tx:
+        send_db = TransactionInfra(db, tx)
+        # If an explicit recipient is present, conversation_id is a caller-chosen
+        # initial id. Continuations use conversation_id without recipient fields.
+        conversation = await _create_mail_conversation(
+            send_db,
+            conversation_type="mail",
+            created_by_did=sender_did,
+            conversation_id=payload.conversation_id,
+            initiator={
+                "did": sender_did,
+                "agent_id": auth.agent_id,
+                "alias": auth.alias or sender_address or sender_did,
+                "address": sender_address,
+                "current_did_key": (auth.did_key or "").strip() or None,
+                "transport_hint": "local",
+            },
+            recipients=[
+                {
+                    "did": recipient_did or "",
+                    "agent_id": to_agent_id,
+                    "alias": to_alias
+                    or (recipient or {}).get("alias")
+                    or recipient_did
+                    or "",
+                    "address": _recipient_conversation_address(recipient, payload),
+                    "current_did_key": (recipient or {}).get("did_key"),
+                    "transport_hint": "local",
+                }
+            ],
+            team_id=auth.team_id,
+        )
+        message_id, server_received_at = await store_mail(
+            send_db,
+            message=MailStorageInput(
+                sender=MailSender(
+                    did=sender_did,
+                    alias=auth.alias,
+                    address=sender_address,
+                    agent_id=auth.agent_id,
+                    team_id=auth.team_id,
+                ),
+                recipient=MailRecipient(
+                    did=recipient_did or "",
+                    alias=to_alias or recipient.get("alias"),
+                    address=recipient.get("address"),
+                    agent_id=to_agent_id or recipient.get("agent_id"),
+                    signed_did=None,
+                    wake_dids=(
+                        recipient.get("did_aw"),
+                        recipient.get("did_key"),
+                    ),
+                ),
+                content=mail_content_for_storage(
+                    payload, encrypted_metadata=encrypted_metadata
+                ),
+                attestation=MailAttestation(
+                    signature=payload.signature,
+                    signed_payload=payload.signed_payload,
+                    id_chain=id_chain,
+                ),
+                priority=payload.priority,
+                message_id=msg_uuid,
+                conversation_id=conversation["conversation_id"],
+                id_availability=replay_lookup.availability,
+            ),
+        )
+
+    return _LocalMailCommit(
+        message_id=message_id,
+        conversation_id=conversation["conversation_id"],
+        server_received_at=server_received_at,
+    )
+
+
 async def _send_mail_to_resolved_target(
     db,
     *,
@@ -1755,75 +1857,17 @@ async def _send_mail_to_resolved_target(
             with agent_wake_scope(runtime.agent_wake_publisher):
                 # The conversation and its first message commit together: a refused
                 # delivery leaves no conversation behind.
-                async with db.get_manager("aweb").transaction() as tx:
-                    send_db = TransactionInfra(db, tx)
-                    # If an explicit recipient is present, conversation_id is a caller-chosen
-                    # initial id. Continuations use conversation_id without recipient fields.
-                    conversation = await _create_mail_conversation(
-                        send_db,
-                        conversation_type="mail",
-                        created_by_did=sender_did,
-                        conversation_id=payload.conversation_id,
-                        initiator={
-                            "did": sender_did,
-                            "agent_id": auth.agent_id,
-                            "alias": auth.alias or sender_address or sender_did,
-                            "address": sender_address,
-                            "current_did_key": (auth.did_key or "").strip() or None,
-                            "transport_hint": "local",
-                        },
-                        recipients=[
-                            {
-                                "did": recipient_did or "",
-                                "agent_id": to_agent_id,
-                                "alias": to_alias
-                                or (recipient or {}).get("alias")
-                                or recipient_did
-                                or "",
-                                "address": _recipient_conversation_address(
-                                    recipient, payload
-                                ),
-                                "current_did_key": (recipient or {}).get("did_key"),
-                                "transport_hint": "local",
-                            }
-                        ],
-                        team_id=auth.team_id,
-                    )
-                    message_id, server_received_at = await store_mail(
-                        send_db,
-                        message=MailStorageInput(
-                            sender=MailSender(
-                                did=sender_did,
-                                alias=auth.alias,
-                                address=sender_address,
-                                agent_id=auth.agent_id,
-                                team_id=auth.team_id,
-                            ),
-                            recipient=MailRecipient(
-                                did=recipient_did or "",
-                                alias=to_alias or recipient.get("alias"),
-                                address=recipient.get("address"),
-                                agent_id=to_agent_id or recipient.get("agent_id"),
-                                signed_did=None,
-                                wake_dids=(
-                                    recipient.get("did_aw"),
-                                    recipient.get("did_key"),
-                                ),
-                            ),
-                            content=mail_content_for_storage(
-                                payload, encrypted_metadata=encrypted_metadata
-                            ),
-                            attestation=MailAttestation(
-                                signature=payload.signature,
-                                signed_payload=payload.signed_payload,
-                                id_chain=id_chain,
-                            ),
-                            priority=payload.priority,
-                            message_id=msg_uuid,
-                            conversation_id=conversation["conversation_id"],
-                            id_availability=replay_lookup.availability,
-                        ),
-                    )
+                committed = await _commit_new_local_mail(
+                    db,
+                    auth=auth,
+                    target=target,
+                    payload=payload,
+                    encrypted_metadata=encrypted_metadata,
+                    replay_lookup=replay_lookup,
+                )
+                message_id = committed.message_id
+                server_received_at = committed.server_received_at
+                conversation_id = committed.conversation_id
         except (
             MailConversationExists,
             QueryError,
@@ -1869,7 +1913,7 @@ async def _send_mail_to_resolved_target(
             to_agent_id=to_agent_id,
             from_alias=auth.alias or sender_did,
             message_id=str(message_id),
-            conversation_id=conversation["conversation_id"],
+            conversation_id=conversation_id,
             to_alias=to_alias,
             subject=payload.subject,
             priority=payload.priority,
@@ -1879,7 +1923,7 @@ async def _send_mail_to_resolved_target(
 
     return SentMail(
         message_id=str(message_id),
-        conversation_id=conversation["conversation_id"],
+        conversation_id=conversation_id,
         status="delivered",
         delivered_at=_utc_iso(server_received_at),
     )
