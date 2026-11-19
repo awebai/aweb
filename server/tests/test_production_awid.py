@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from nacl.signing import SigningKey
 from redis.asyncio import Redis
 
 from aweb.api import create_app
@@ -50,7 +51,7 @@ async def _member_of_a_team_on_the_production_release(
     registry_db = await test_db_factory.create_db(suffix="production_awid")
     async with running_production_registry(registry_db.config.get_dsn()) as registry:
         await registry.add_team(team_id, team_did)
-        await registry.add_certificate(certificate)
+        await registry.add_certificate(certificate, team_key=SigningKey(team_sk))
         registry_client = RegistryClient(
             registry_url=REGISTRY_URL, transport=registry.transport
         )

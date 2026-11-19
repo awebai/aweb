@@ -13,8 +13,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from nacl.signing import SigningKey
+from aweb_naapp_testing import Member
 from awid.attestation_records import sign_record
-from awid.signing import canonical_json_bytes
 from awid_service.testing import REGISTRY_URL
 
 from aweb_naapp.runtime.attestation import (
@@ -121,31 +122,20 @@ VALID = next(c for c in VECTORS["verification_cases"] if c["name"] == "valid")
 async def _publish_vector_state(registry):
     await registry.add_team(TEAM_ID, KEYS["team"]["did_key"], visibility="private")
     certificate = VALID["certificate"]
-    await registry.add_certificate(
-        {
-            "team_id": TEAM_ID,
-            "certificate_id": certificate["certificate_id"],
-            "member_did_key": certificate["member_did_key"],
-            "alias": "alice",
-        }
+    team_key = SigningKey(bytes.fromhex(KEYS["team"]["seed_hex"]))
+    member = Member(
+        team_id=TEAM_ID,
+        team_key=team_key,
+        member_key=SigningKey(bytes.fromhex(KEYS["member"]["seed_hex"])),
+        certificate_id=certificate["certificate_id"],
+        alias="alice",
     )
-    for table, key_column, signed in (
-        ("team_custodians", "custodian_id", VALID["registry"]["team_custodian"]),
-        ("member_custody", "certificate_id", VALID["registry"]["member_custody"]),
-    ):
-        record = signed["record"]
-        extra = ", custodian_id" if table == "member_custody" else ""
-        extra_value = ", $7" if table == "member_custody" else ""
-        await registry.db.execute(
-            f"INSERT INTO {{{{tables.{table}}}}} (team_uuid, {key_column}, record_json, signature, team_did_key, issued_at{extra}) "
-            f"SELECT team_uuid, $1, $2, $3, $4, $5::timestamptz{extra_value} FROM {{{{tables.teams}}}} WHERE name = $6",
-            record[key_column],
-            canonical_json_bytes(record).decode(),
-            signed["signature"],
-            record["team_did_key"],
-            _at(record["issued_at"]),
-            "backend",
-            *([record["custodian_id"]] if table == "member_custody" else []),
+    await registry.add_certificate(member.certificate(), team_key=team_key)
+    for signed in (VALID["registry"]["team_custodian"], VALID["registry"]["member_custody"]):
+        await registry.publish_signed_record(
+            record=signed["record"],
+            signature=signed["signature"],
+            team_key=team_key,
         )
 
 

@@ -62,7 +62,7 @@ async def certified(
         alias=alias,
         extra_cert_fields=extra,
     )
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 

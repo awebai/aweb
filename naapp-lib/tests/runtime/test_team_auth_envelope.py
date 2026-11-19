@@ -28,7 +28,7 @@ async def member(registry) -> Member:
         "member_address": "example.com/alice",
     }
     await registry.add_team(TEAM_ID, member.team_did_key, visibility="private")
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 
@@ -233,7 +233,7 @@ async def test_certificate_must_name_the_signer(registry, member):
     impostor = Member(
         team_id=TEAM_ID, team_key=member.team_key, certificate_id="cert-2", alias="bob"
     )
-    await registry.add_certificate(impostor.certificate())
+    await registry.add_certificate(impostor.certificate(), team_key=impostor.team_key)
     headers = impostor.headers(
         aud=ORIGIN, method="GET", path="/v1/items", cert=member.certificate()
     )

@@ -132,7 +132,7 @@ class Policy:
 async def member(registry) -> Member:
     member = Member(team_id=TEAM_ID)
     await registry.add_team(TEAM_ID, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 

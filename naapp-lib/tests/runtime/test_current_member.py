@@ -40,8 +40,10 @@ def cache(registry, request):
 @pytest.fixture(params=["public", "private"])
 async def member(registry, request):
     member = Member(team_id=TEAM)
-    await registry.add_team(TEAM, member.team_did_key, visibility=request.param)
-    await registry.add_certificate(member.certificate())
+    await registry.add_team(
+        TEAM, member.team_did_key, visibility=request.param, namespace_controller=NAMESPACE_KEY
+    )
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     return member
 
 
@@ -124,7 +126,7 @@ async def test_lost_authority_refuses_on_refresh(registry, cache, member, change
 async def test_another_teams_evidence_is_not_authority(registry, cache, member):
     other = Member(team_id="other:example.com", certificate_id=member.certificate_id)
     await registry.add_team(other.team_id, other.team_did_key)
-    await registry.add_certificate(other.certificate())
+    await registry.add_certificate(other.certificate(), team_key=other.team_key)
     with pytest.raises(HTTPException) as refused:
         await require(cache, other)
     assert refused.value.status_code == 403

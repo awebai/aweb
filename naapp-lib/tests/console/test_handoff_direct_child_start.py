@@ -36,7 +36,7 @@ async def requester_app(handoff_db, registry):
     member = Member(team_id="people:example.com")
     member.extra_cert_fields = {"member_did_aw": await registry.register_did(member.member_key)}
     await registry.add_team(member.team_id, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     cache = AWIDTeamCache(
         registry_url=REGISTRY_URL,
         ttl_seconds=60,

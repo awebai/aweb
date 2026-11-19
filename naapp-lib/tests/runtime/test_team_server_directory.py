@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from aweb_naapp_testing import did_key
+from aweb_naapp_testing import Member, did_key
 from awid.dns_verify import DnsVerificationError
 from awid.team_server_record import record_signing_bytes
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, signed_team_server_record
@@ -145,14 +145,8 @@ async def test_an_answer_is_reused_for_at_most_a_minute_and_never_after(registry
 async def test_without_a_service_token_the_member_certificate_reads_a_private_team(registry):
     team_key = SigningKey.generate()
     await registry.add_team(TEAM_ID, did_key(team_key), visibility="private")
-    await registry.add_certificate(
-        {
-            "team_id": TEAM_ID,
-            "certificate_id": "cert-1",
-            "member_did_key": did_key(SigningKey.generate()),
-            "alias": "alice",
-        }
-    )
+    member = Member(team_id=TEAM_ID, team_key=team_key, certificate_id="cert-1", alias="alice")
+    await registry.add_certificate(member.certificate(), team_key=team_key)
     await registry.publish_team_server(
         TEAM_ID, team_key, server_url=SERVER_URL, issued_at=datetime.now(UTC) - timedelta(minutes=1)
     )

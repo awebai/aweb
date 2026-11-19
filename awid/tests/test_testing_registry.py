@@ -81,7 +81,9 @@ async def test_an_added_certificate_is_listed_until_revoked(database_url) -> Non
     team_key, member_key = SigningKey.generate(), SigningKey.generate()
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
-        await registry.add_certificate(_certificate(team_key, member_key, "cert-1"))
+        await registry.add_certificate(
+            _certificate(team_key, member_key, "cert-1"), team_key=team_key
+        )
         client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
         listed = await client.list_team_certificates("example.com", "backend")
         assert [cert.certificate_id for cert in listed] == ["cert-1"]
@@ -121,7 +123,7 @@ async def test_fixture_setup_stores_the_registered_signed_certificate(
     certificate = _certificate(team_key, member_key, "cert-1")
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
-        await registry.add_certificate(certificate)
+        await registry.add_certificate(certificate, team_key=team_key)
         stored = await registry.db.fetch_value(
             "SELECT certificate FROM {{tables.team_certificates}} WHERE certificate_id='cert-1'",
         )
@@ -141,7 +143,7 @@ async def test_fixture_setup_rejects_a_forged_certificate_without_writing(
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
         with pytest.raises(RegistryError) as refused:
-            await registry.add_certificate(certificate)
+            await registry.add_certificate(certificate, team_key=team_key)
         assert (refused.value.status_code, refused.value.detail) == (
             422,
             "certificate signature verification failed",
@@ -244,3 +246,66 @@ async def test_the_registry_without_redis_is_live_and_not_ready(database_url) ->
         "rate_limiter": "NoOpRateLimiter",
     }
     assert (live.status_code, live.json()) == (200, {"status": "ok"})
+
+
+@pytest.mark.asyncio
+async def test_fixture_namespace_custody_cannot_silently_change(database_url):
+    async with running_registry(database_url) as registry:
+        original = SigningKey.generate()
+        assert (
+            await registry.ensure_namespace(domain="example.com", controller=original)
+            is original
+        )
+        assert await registry.ensure_namespace(domain="example.com") is original
+        with pytest.raises(ValueError) as refused:
+            await registry.ensure_namespace(
+                domain="example.com", controller=SigningKey.generate()
+            )
+        assert str(refused.value).endswith(
+            "Pass its current signing key as controller=."
+        )
+        namespace = await RegistryClient(
+            registry_url=REGISTRY_URL, transport=registry.transport
+        ).get_namespace("example.com")
+        assert namespace.controller_did == _did_key(original)
+
+
+@pytest.mark.asyncio
+async def test_fixture_revoke_requires_registered_controller_custody(database_url):
+    async with running_registry(database_url) as registry:
+        with pytest.raises(ValueError) as refused:
+            await registry.revoke("never-registered")
+        assert str(refused.value).endswith(
+            "Register it through add_certificate and select team_id= before revoking it."
+        )
+        assert not registry.transport.calls
+
+
+@pytest.mark.asyncio
+async def test_fixture_dns_requires_a_published_namespace_authority(database_url):
+    from awid.dns_verify import DnsVerificationError
+
+    async with running_registry(database_url) as registry:
+        with pytest.raises(DnsVerificationError) as refused:
+            await registry.namespace_authority("missing.example")
+        assert str(refused.value).endswith(
+            "Register the namespace through ensure_namespace first."
+        )
+        assert not registry.transport.calls
+
+
+@pytest.mark.asyncio
+async def test_fixture_attestation_publication_requires_a_supported_record(
+    database_url,
+):
+    async with running_registry(database_url) as registry:
+        with pytest.raises(ValueError) as refused:
+            await registry.publish_signed_record(
+                record={"team_id": TEAM_ID, "type": "unknown"},
+                signature="",
+                team_key=SigningKey.generate(),
+            )
+        assert str(refused.value).endswith(
+            "Publish a team custodian, member custody or member person record."
+        )
+        assert not registry.transport.calls

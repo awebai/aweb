@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 
 import dns.asyncresolver
 import httpx
+from nacl.signing import SigningKey
 import pytest_asyncio
 from redis.asyncio import Redis
 import uvicorn
@@ -26,6 +27,8 @@ from aweb.testing import running_server
 from aweb_naapp_testing.network import DnsServer
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.registry import RegistryClient
+from awid.dns_verify import verify_domain
+from awid_service.deps import get_domain_verifier
 from awid.signing import canonical_json_bytes, sign_message
 from awid_service.testing import running_registry
 from test_messages_http import (
@@ -132,20 +135,23 @@ async def route_pair(test_db_factory, monkeypatch):
             await stack.enter_async_context(_listener(registry.app, registry_sock))
             registry_client = RegistryClient(registry_origin, service_token=token)
             stack.push_async_callback(registry_client.aclose)
-            await registry.add_team(team_id, team_did, visibility="private")
             server_sock = _socket()
             public_origin = _origin(server_sock)
-            await registry.db.execute(
-                "INSERT INTO {{tables.dns_namespaces}} "
-                "(domain, controller_did, verification_status, default_delivery_origin) "
-                "VALUES ($1,$2,'verified',$3)",
-                domain,
-                team_did,
-                public_origin,
-            )
             dns_server.records[(f"_awid.{domain}", "TXT")] = [
                 f'"awid=v1;controller={team_did};registry={registry_origin}"',
             ]
+            registry.app.dependency_overrides[get_domain_verifier] = lambda: (
+                verify_domain
+            )
+            await registry.add_team(
+                team_id,
+                team_did,
+                visibility="private",
+                namespace_controller=SigningKey(team_sk),
+            )
+            await registry_client.update_namespace_delivery_origin(
+                domain, team_sk, public_origin
+            )
             monkeypatch.setenv("AWID_REGISTRY_URL", registry_origin)
             server = await stack.enter_async_context(
                 running_server(

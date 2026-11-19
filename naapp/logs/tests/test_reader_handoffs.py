@@ -184,7 +184,7 @@ async def registered_human(
     )
     principal = (await registry.register_did(member.did_key, bytes(member.member_key))).did_aw
     member.extra_cert_fields = {"member_did_aw": principal}
-    await world.registry.add_certificate(member.certificate())
+    await world.registry.add_certificate(member.certificate(), team_key=member.team_key)
     fields = {
         "v": 1,
         "type": "aweb.id-certificate",

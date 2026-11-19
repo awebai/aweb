@@ -68,8 +68,8 @@ async def members(registry):
     alice = Member(team_id=TEAM)
     bob = Member(team_id=TEAM, team_key=alice.team_key, certificate_id="cert-2", alias="bob")
     await registry.add_team(TEAM, alice.team_did_key)
-    await registry.add_certificate(alice.certificate())
-    await registry.add_certificate(bob.certificate())
+    await registry.add_certificate(alice.certificate(), team_key=alice.team_key)
+    await registry.add_certificate(bob.certificate(), team_key=bob.team_key)
     return alice, bob
 
 
