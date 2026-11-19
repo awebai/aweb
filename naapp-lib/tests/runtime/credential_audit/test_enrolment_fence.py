@@ -6,11 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import time
 
 import pytest
 from aweb_naapp_testing.owner_acts import APP_ID, TEAM_ID
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 
+from aweb_naapp.runtime.clock import seconds_to_ns
 from aweb_naapp.runtime.passkeys import EnrolmentRefused
 from tests.runtime.credential_audit.support import (
     CONTACT,
@@ -66,32 +68,43 @@ async def test_the_fence_holds_installation_authority_before_b3_takes_any_lock(w
             completion = asyncio.create_task(
                 world.passkeys.complete_enrolment(token, registration, fence=prepared)
             )
-        async with asyncio.timeout(5):
-            while not await world.db.fetch_value(
-                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
-                "WHERE $1 = ANY(pg_blocking_pids(pid)))",
-                blocker,
-            ):
-                if completion.done():
-                    await completion
-                    pytest.fail("the completion did not wait for the installation")
-                await asyncio.sleep(0.01)
-        # Waiting on the installation, the completion holds no B3 row.
-        async with world.db.transaction() as observer:
-            assert (
-                await observer.fetch_value(
-                    "SELECT subject FROM {{tables.passkey_approvers}} "
-                    "WHERE subject=$1 FOR UPDATE NOWAIT",
+        try:
+            async with asyncio.timeout(5):
+                while not await world.db.fetch_value(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity "
+                    "WHERE $1 = ANY(pg_blocking_pids(pid)))",
+                    blocker,
+                ):
+                    if completion.done():
+                        await completion
+                        pytest.fail("the completion did not wait for the installation")
+                    await asyncio.sleep(0.01)
+            # Waiting on the installation, the completion holds no B3 row.
+            async with world.db.transaction() as observer:
+                assert (
+                    await observer.fetch_value(
+                        "SELECT subject FROM {{tables.passkey_approvers}} "
+                        "WHERE subject=$1 FOR UPDATE NOWAIT",
+                        subject,
+                    )
+                    == subject
+                )
+                assert await observer.fetch_value(
+                    "SELECT count(*) FROM (SELECT 1 FROM {{tables.passkey_enrolments}} "
+                    "WHERE subject=$1 FOR UPDATE NOWAIT) held",
                     subject,
                 )
-                == subject
-            )
-            assert await observer.fetch_value(
-                "SELECT count(*) FROM (SELECT 1 FROM {{tables.passkey_enrolments}} "
-                "WHERE subject=$1 FOR UPDATE NOWAIT) held",
-                subject,
-            )
-    approver = await asyncio.wait_for(completion, 5)
+        except BaseException:
+            completion.cancel()
+            await asyncio.gather(completion, return_exceptions=True)
+            raise
+    # The holder is released; only now may the completion go on.
+    try:
+        approver = await asyncio.wait_for(completion, 5)
+    finally:
+        if not completion.done():
+            completion.cancel()
+            await asyncio.gather(completion, return_exceptions=True)
     assert approver.scope == scope
     assert [fields["payload"]["act"] for _, fields in await events(world)] == [
         "role.designated",
@@ -113,36 +126,40 @@ async def test_a_reinstall_before_the_completion_refuses_it_at_prepare(world: Wo
             with pytest.raises(EnrolmentRefused):
                 await world.passkeys.complete_enrolment(token, registration, fence=prepared)
         assert await effect_state(world) == before
-        refused = await client.post(
-            "/enrolment", json={"link_token": token, "credential": registration}
-        )
+        # A fresh ceremony, so that only the installation can refuse it.
+        refused = await enrol(client, token, SoftAuthenticator(ORIGIN))
         assert (refused.status_code, refused.json()) == (403, {"detail": "enrolment_refused"})
     assert await effect_state(world) == before
 
 
-async def test_authority_lost_while_the_effect_runs_refuses_at_check_and_rolls_back(
+async def test_authority_lapsing_while_the_effect_runs_refuses_at_check_and_rolls_back(
     world: World,
 ):
     _, token = await designated(world)
-    # The installation's freshness lapses while the enrolment's event is
-    # being written: after prepare, before check.
-    await world.db.execute(
-        "CREATE FUNCTION expire_enrolment_fence() RETURNS trigger LANGUAGE plpgsql AS $$ "
-        "BEGIN UPDATE {{tables.installation_fences}} "
-        "SET fresh_until=clock_timestamp()-interval '1 second'; RETURN NEW; END $$"
-    )
-    await world.db.execute(
-        "CREATE TRIGGER expire_enrolment_fence AFTER INSERT ON {{tables.outbox_events}} "
-        "FOR EACH ROW EXECUTE FUNCTION expire_enrolment_fence()"
-    )
+    grants = world.fence.grants
+    standing = grants.grant
+    # The server answers with authority fresh for two seconds only.
+    grants.grant = dataclasses.replace(standing, fresh_until=time.monotonic_ns() + seconds_to_ns(2))
+
+    async def slow_work() -> None:
+        # The effect's work outlasts that authority, after prepare.
+        while time.monotonic_ns() <= grants.grant.fresh_until + 500_000_000:
+            await asyncio.sleep(0.1)
+
     device = SoftAuthenticator(ORIGIN)
     async with console(world) as client:
-        before = await effect_state(world)
+        before, handed = await effect_state(world), len(world.handed)
+        world.pause_after_enqueue[0] = slow_work
         refused = await enrol(client, token, device)
+        world.pause_after_enqueue[0] = None
         assert (refused.status_code, refused.json()) == (403, {"detail": "enrolment_refused"})
+        # The effect reached its event before the refusal: it was check that refused.
+        assert len(world.handed) == handed + 1
         assert await effect_state(world) == before
-        await world.db.execute("DROP TRIGGER expire_enrolment_fence ON {{tables.outbox_events}}")
-        # The link was not spent: a fresh ceremony through it completes.
+        # Fresh authority again; the link was not spent and a fresh ceremony completes.
+        grants.grant = dataclasses.replace(
+            standing, fresh_until=time.monotonic_ns() + seconds_to_ns(55)
+        )
         enrolled = await enrol(client, token, device)
         assert enrolled.status_code == 200
     assert len(await events(world)) == len(before[-1]) + 1
