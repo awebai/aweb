@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- AWID rejects a signed initial identity registration whose state hash differs
+  from its canonical identity state before storing anything. This defensive fix
+  has no affected registrations in the production census and needs no backfill.
+
 - `aw id human refresh-binding` carries an own-person binding refresh after an
   issuer or controller change. The checked live binding is saved separately;
   original enrollment and historical evidence are preserved.
