@@ -382,3 +382,26 @@ assertion. A manager alone is refused for this branch. The signed assertion
 validator and storage remain shared with authenticated request publication.
 Current request publication callers are the native PUT route and hosted service
 publication; the new generation caller is hosted retained creation completion.
+
+## Periodic maintenance
+
+`aweb.maintenance.run_native_maintenance(*, db_infra, redis, registry_client,
+on_mutation)` attempts outbox recovery and presence reconciliation once. It
+returns `NativeMaintenanceResult(presence)` on success. On failure it raises
+`NativeMaintenanceError` with named `failures` (stage and original error) and
+`completed_stages`; the other stage is still attempted. Cancellation propagates.
+
+Pass the exact serving `application_registry_client` reference. The native
+serving timer invokes this operation; a HOST owner invokes it on its existing
+maintenance schedule, retaining its released `outbox_recovery` operator name.
+Presence runs without dashboard viewers, using the R15 transition owner and
+R2's registry-aware grant validity. Runtime composition requires the complete
+R2 Python component at `25e2229017`, rather than an old grant reader or a
+missing-evidence fallback. Unknown grant authority cannot publish offline.
+
+A mounted server whose first request starts automatic recovery still recovers
+its outboxes if it lacks registry configuration: an explicit `None` reports a
+named presence configuration failure after attempting recovery. It never
+selects a shadow registry or marks presence healthy. Hosts with configured
+resources pass their selected client. Resource ownership, borrowed connections
+and cleanup remain with the existing lifecycle.
