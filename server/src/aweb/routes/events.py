@@ -813,12 +813,12 @@ async def _sse_agent_events(
                     yield _sse_frame(evt)
                     delivered = True
 
-            now = datetime.now(timezone.utc)
+            heartbeat_now = datetime.now(timezone.utc)
             if delivered:
-                last_heartbeat_at = now
-            elif (now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
+                last_heartbeat_at = heartbeat_now
+            elif (heartbeat_now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
                 yield ": keepalive\n\n"
-                last_heartbeat_at = now
+                last_heartbeat_at = heartbeat_now
 
         reason = await guard.reason()
         if reason:
