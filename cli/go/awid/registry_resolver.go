@@ -17,6 +17,9 @@ const (
 	registryDiscoveryTTL = 15 * time.Minute
 	registryAddressTTL   = 5 * time.Minute
 	registryKeyTTL       = 15 * time.Minute
+	// registryForcedReadInterval bounds the reads a disagreeing cached answer
+	// forces: one per sender per interval (docs/trust-model.md).
+	registryForcedReadInterval = 30 * time.Second
 )
 
 type cachedValue[T any] struct {
@@ -114,6 +117,14 @@ type RegistryResolver struct {
 	keyCache            map[string]cachedValue[*DidKeyResolution]
 	headCache           map[string]*VerifiedLogHead
 	receivedRegistries  map[string]*RegistryResolver
+	forcedReads         map[string]forcedRegistryRead
+}
+
+// forcedRegistryRead is the last read a disagreeing cached answer forced for
+// one sender's address or key.
+type forcedRegistryRead struct {
+	at     time.Time
+	failed bool
 }
 
 func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *RegistryResolver {
@@ -132,6 +143,36 @@ func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *Regi
 		memberCache:   make(map[string]cachedValue[*registryTeamMemberCacheValue]),
 		keyCache:      make(map[string]cachedValue[*DidKeyResolution]),
 		headCache:     make(map[string]*VerifiedLogHead),
+		forcedReads:   make(map[string]forcedRegistryRead),
+	}
+}
+
+// claimForcedRead decides whether a cached answer that disagrees with a
+// signed message may be read again from the registry now: once per
+// registryForcedReadInterval for that sender. When it may not, lastFailed
+// reports whether the read that used the interval failed; the cache then still
+// holds the older answer.
+func (r *RegistryResolver) claimForcedRead(key string) (allowed bool, lastFailed bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.forcedReads == nil {
+		r.forcedReads = make(map[string]forcedRegistryRead)
+	}
+	now := r.now()
+	if last, ok := r.forcedReads[key]; ok && now.Sub(last.at) < registryForcedReadInterval {
+		return false, last.failed
+	}
+	r.forcedReads[key] = forcedRegistryRead{at: now}
+	return true, false
+}
+
+// recordForcedRead records how a claimed forced read ended.
+func (r *RegistryResolver) recordForcedRead(key string, failed bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if read, ok := r.forcedReads[key]; ok {
+		read.failed = failed
+		r.forcedReads[key] = read
 	}
 }
 
@@ -345,9 +386,17 @@ func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, addr
 		}
 	}
 	if addr.response.DIDAW != stableID {
-		addr, err = r.resolveAddressFresh(ctx, domain, name, true)
-		if err != nil {
-			return &StableIdentityVerification{Outcome: StableIdentityStaleCache, Error: err.Error()}
+		readKey := "address:" + domain + "/" + name
+		allowed, lastFailed := r.claimForcedRead(readKey)
+		if !allowed && lastFailed {
+			return &StableIdentityVerification{Outcome: StableIdentityStaleCache, Error: "registry address could not be read again in this interval"}
+		}
+		if allowed {
+			addr, err = r.resolveAddressFresh(ctx, domain, name, true)
+			r.recordForcedRead(readKey, err != nil)
+			if err != nil {
+				return &StableIdentityVerification{Outcome: StableIdentityStaleCache, Error: err.Error()}
+			}
 		}
 		if addr.response.DIDAW != stableID {
 			return &StableIdentityVerification{
@@ -368,14 +417,26 @@ func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, r
 		}
 	}
 	expectedCurrentDIDKey = strings.TrimSpace(expectedCurrentDIDKey)
-	if expectedCurrentDIDKey != "" && strings.TrimSpace(keyRes.CurrentDIDKey) != expectedCurrentDIDKey {
+	if expectedCurrentDIDKey != "" && strings.TrimSpace(keyRes.CurrentDIDKey) != expectedCurrentDIDKey && !fresh {
 		staleCurrentDIDKey := keyRes.CurrentDIDKey
-		keyRes, err = r.resolveKeyFresh(ctx, registryURL, stableID, true)
-		if err != nil {
+		readKey := "key:" + registryURL + "|" + stableID
+		allowed, lastFailed := r.claimForcedRead(readKey)
+		if !allowed && lastFailed {
 			return &StableIdentityVerification{
 				Outcome:       StableIdentityStaleCache,
 				CurrentDIDKey: staleCurrentDIDKey,
-				Error:         err.Error(),
+				Error:         "registry key could not be read again in this interval",
+			}
+		}
+		if allowed {
+			keyRes, err = r.resolveKeyFresh(ctx, registryURL, stableID, true)
+			r.recordForcedRead(readKey, err != nil)
+			if err != nil {
+				return &StableIdentityVerification{
+					Outcome:       StableIdentityStaleCache,
+					CurrentDIDKey: staleCurrentDIDKey,
+					Error:         err.Error(),
+				}
 			}
 		}
 	}
