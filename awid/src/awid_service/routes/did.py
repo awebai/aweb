@@ -309,6 +309,13 @@ async def register_did(request: Request, req: DidRegisterRequest) -> dict:
             )
         except Exception as exc:
             raise HTTPException(status_code=401, detail="invalid proof") from exc
+        if req.state_hash != state_hash:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "state_hash mismatch. Rebuild and sign the request with its canonical identity state hash."
+                ),
+            )
         await tx.execute(
             """
             INSERT INTO {{tables.did_aw_mappings}}
