@@ -10,7 +10,6 @@ draft/approve/confirm flow owns activation of both candidates.
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from http import HTTPStatus
@@ -25,6 +24,7 @@ from aweb_secrets.custody import (
     Custody,
     CustodyUnavailable,
     SealContext,
+    StagedNativeValue,
     ValueInvalid,
     encode_value,
 )
@@ -36,7 +36,7 @@ from aweb_secrets.custody.onepassword import (
 )
 from aweb_secrets.custody.store import BACKEND_CREDENTIAL_ID, StagedOnePasswordReference
 from aweb_secrets.owners import hold_owner as hold_owner_holding
-from aweb_secrets.owners import owner_scope
+from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.secret import SecretBackend, SecretInvalid, SecretKind, SecretRecord
 
 
@@ -55,12 +55,6 @@ _NATIVE_REFUSALS = {
     ValueStagingCode.OWNER_REQUIRED: "Sign in with the current installation owner's passkey to store a value.",
     ValueStagingCode.CUSTODY_UNAVAILABLE: "The value could not be sealed. Ask the operator to check custody readiness, then enter it again.",
 }
-
-
-@dataclass(frozen=True, kw_only=True)
-class StagedNativeValue:
-    context: SealContext
-    created_at: datetime
 
 
 @asynccontextmanager
@@ -95,6 +89,22 @@ class ConsoleValues:
         self.console = console
         self._custody = custody
 
+    async def authorize_entry(self, current: ConsoleSession) -> str:
+        """Admit the blank value-entry page through the same owner rule (§6.1)."""
+        async with _value_staging_errors(self.console, current=current):
+            binding = await owner_binding(self.console.db, current.scope)
+            if binding is None:
+                raise HTTPException(HTTPStatus.FORBIDDEN, ValueStagingCode.OWNER_REQUIRED)
+            installation_id = binding["installation_id"]
+            admitted = await self.console.session_installation(current, installation_id)
+            if admitted.installation_id != installation_id:
+                raise HTTPException(HTTPStatus.FORBIDDEN, ValueStagingCode.OWNER_REQUIRED)
+            async with self.console.db.transaction() as tx:
+                await self._authorize(tx, current, admitted)
+                await self.console.fence.check(tx, admitted)
+                await self._session_open(tx, current)
+        return admitted.installation_id
+
     async def stage_native_value(
         self,
         current: ConsoleSession,
@@ -113,33 +123,17 @@ class ConsoleValues:
             raise HTTPException(HTTPStatus.FORBIDDEN, ValueStagingCode.OWNER_REQUIRED)
         async with self.console.db.transaction() as tx:
             await self._authorize(tx, current, admitted)
-            version = await self._custody.sealer.ingest(
+            staged = await self._custody.stage_native_value(
                 tx,
                 installation_id=admitted.installation_id,
                 team_id=admitted.team_id,
-                secret_id=initial.secret_id,
                 value=encode_value(initial.kind, value),
                 initial=initial,
             )
-            created_at = await tx.fetch_value(
-                "SELECT created_at FROM {{tables.sealed_versions}}"
-                " WHERE installation_id=$1 AND team_id=$2 AND secret_id=$3 AND version=$4",
-                admitted.installation_id,
-                admitted.team_id,
-                initial.secret_id,
-                version,
-            )
-            if not isinstance(created_at, datetime):
-                raise CustodyUnavailable("staged version metadata is unavailable")
             # The allocator/KMS may wait; consume no stale authority after it.
             await self.console.fence.check(tx, admitted)
             await self._session_open(tx, current)
-        return StagedNativeValue(
-            context=SealContext(
-                admitted.installation_id, admitted.team_id, initial.secret_id, version
-            ),
-            created_at=created_at,
-        )
+        return staged
 
     async def _session_open(self, tx: TransactionManager, current: ConsoleSession) -> None:
         if isinstance(current, KeyBoundConsoleSession):

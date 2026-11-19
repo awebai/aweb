@@ -84,6 +84,7 @@ from aweb_secrets.console_audit_delivery import ConsoleAuditDelivery, console_au
 from aweb_secrets.console_bootstrap import console_bootstrap_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from aweb_secrets.console_forms import console_forms_router
+from aweb_secrets.console_forms.native import native_value_forms_router
 from aweb_secrets.console_jobs import console_jobs_router
 from aweb_secrets.console_reconciliation import ConsoleReconciliation, console_reconciliation_router
 from aweb_secrets.console_ui import console_ui_router
@@ -791,6 +792,7 @@ def create_service(
             human(lambda s: console_values_router(s.values)),
             human(lambda s: console_changes_router(s.changes)),
             human(lambda s: console_forms_router(changes=s.changes)),
+            human(lambda s: native_value_forms_router(values=s.values)),
             human(lambda s: console_jobs_router(changes=s.changes)),
             human(lambda s: console_use_approvals_router(services=s.use_pages)),
             human(lambda s: console_run_approvals_router(services=s.use_pages)),
