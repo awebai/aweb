@@ -123,11 +123,39 @@ func loadHostedInviteCreation(path string) (*hostedInviteCreation, error) {
 }
 
 func (state *hostedInviteCreation) save(path string) error {
-	raw, err := json.Marshal(state)
+	saved := *state
+	response, err := hostedInviteInstallationResponse(state.ResponseJSON)
+	if err != nil {
+		return err
+	}
+	saved.ResponseJSON = response
+	raw, err := json.Marshal(&saved)
 	if err != nil {
 		return err
 	}
 	return awid.AtomicWriteFile(path, raw)
+}
+
+// hostedInviteInstallationResponse retains the installation evidence but no
+// workspace API key: hosted invite acceptance acts with its own identity key.
+// Raw fields keep forward-compatible response evidence intact.
+func hostedInviteInstallationResponse(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return "", fmt.Errorf("read hosted invite installation response: %w", err)
+	}
+	if _, present := fields["api_key"]; !present {
+		return raw, nil
+	}
+	delete(fields, "api_key")
+	sanitized, err := json.Marshal(fields)
+	if err != nil {
+		return "", err
+	}
+	return string(sanitized), nil
 }
 
 func prepareHostedInviteCreation(ctx context.Context, prior *hostedInviteCreation, token, origin, alias, address string, noAddress bool, material workspaceTeamIdentityMaterial) (*hostedInviteCreation, error) {
