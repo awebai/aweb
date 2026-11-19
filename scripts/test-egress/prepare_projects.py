@@ -53,7 +53,9 @@ def provision(root, sha, names, mode, receipt):
     root = root.resolve()
     if (
         subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ["git", "-c", "safe.directory=" + str(root), "rev-parse", "HEAD"],
+            cwd=root,
+            text=True,
         ).strip()
         != sha
     ):
@@ -66,6 +68,13 @@ def provision(root, sha, names, mode, receipt):
         for _, lock in projects
     }
     env = dict(os.environ, UV_OFFLINE="0" if mode == "prepare" else "1")
+    # Root image preparation reads the checkout later owned by UID1000.
+    # Trust only this operator-selected repository for child build backends.
+    env.update(
+        GIT_CONFIG_COUNT="1",
+        GIT_CONFIG_KEY_0="safe.directory",
+        GIT_CONFIG_VALUE_0=str(root),
+    )
     for key in ("UV_NO_SYNC", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH", "PYTHONHOME"):
         env.pop(key, None)
     rows = []

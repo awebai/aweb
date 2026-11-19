@@ -158,6 +158,84 @@ class ProjectPreparation(unittest.TestCase):
 
 
 class SourceImagePreparation(unittest.TestCase):
+    def test_preparation_trusts_only_selected_checkout_with_different_git_owner(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve() / "selected"
+            other = root.parent / "unselected"
+            for repo in (root, other):
+                (repo / "server").mkdir(parents=True)
+                (repo / "server/pyproject.toml").write_text(
+                    '[project]\nname="fixture"\nversion="0.0.0"\n'
+                )
+                (repo / "server/uv.lock").write_text("version=1\n")
+                for args in (
+                    ["init", "-q"],
+                    ["add", "."],
+                    [
+                        "-c",
+                        "user.name=fixture",
+                        "-c",
+                        "user.email=fixture@example.test",
+                        "commit",
+                        "-qm",
+                        "source",
+                    ],
+                ):
+                    subprocess.run(["git", *args], cwd=repo, check=True)
+            sha = subprocess.check_output(
+                ["git", "rev-parse", "HEAD"], cwd=root, text=True
+            ).strip()
+            real_run = subprocess.run
+            child_checks = []
+
+            def invoke(args, **kwargs):
+                if args[0] != "uv":
+                    return real_run(args, **kwargs)
+                allowed = real_run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=root,
+                    env=kwargs["env"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                refused = real_run(
+                    ["git", "status"],
+                    cwd=other,
+                    env=kwargs["env"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(allowed.returncode, 0, allowed.stderr)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn("dubious ownership", refused.stderr)
+                child_checks.append(True)
+                return subprocess.CompletedProcess(args, 0, "\n", "")
+
+            with patch.dict(
+                os.environ,
+                {
+                    "GIT_TEST_ASSUME_DIFFERENT_OWNER": "1",
+                    "GIT_CONFIG_GLOBAL": os.devnull,
+                    "GIT_CONFIG_NOSYSTEM": "1",
+                },
+            ):
+                baseline = real_run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=root,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(baseline.returncode, 0)
+                self.assertIn("dubious ownership", baseline.stderr)
+                with patch.object(preparation.subprocess, "run", side_effect=invoke):
+                    preparation.provision(
+                        root, sha, ["server"], "prepare", root.parent / "receipt.json"
+                    )
+            self.assertTrue(child_checks)
+
     def test_real_source_bundle_and_recipe_bind_the_selected_locks_and_uid_verification(
         self,
     ):
