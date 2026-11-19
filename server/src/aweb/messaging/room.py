@@ -17,6 +17,9 @@ from aweb.federation.envelope import (
     enforce_message_timestamp_skew,
     FederationEnvelopeError,
 )
+from aweb.event_types import MutationEventType
+from aweb.hooks import MutationCallback, fire_mutation_callback
+from aweb.message_events import RoomMessageSentContext
 from aweb.id_chain_auth import stored_id_chain
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.service_errors import (
@@ -254,7 +257,14 @@ async def exact_room_message(db, actor, message_id):
         return _post_dict(row, actor.team_id)
 
 
-async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
+async def post_room_message(
+    db,
+    actor,
+    post: RoomPost,
+    *,
+    id_chain=None,
+    on_mutation: MutationCallback | None = None,
+):
     require_address_evidence(actor)
     if post.e2ee:
         raise ValidationError("room_e2ee_unsupported")
@@ -288,6 +298,16 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
     ):
         logger.warning("Room post signed sender or target binding mismatch")
         raise ValidationError("Signed room post binding mismatch")
+    # docs/aw-hooks-sot.md:92: build metadata before commit; emit only a new post.
+    context = RoomMessageSentContext(
+        team_id=actor.team_id,
+        room_id=str(post.room_id),
+        message_id=str(message_id),
+        from_agent_id=actor.agent_id,
+        from_did=actor.did_key,
+        from_did_aw=actor.did_aw,
+        from_alias=actor.alias or actor.did_key,
+    ).to_context()
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
         # Serializing room appends makes sequence order also commit order;
@@ -356,4 +376,8 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
             UUID(actor.agent_id),
         )
         record_agent_wake(team_room_wake_key(actor.team_id), "room")
-        return _post_dict(row, actor.team_id)
+        output = _post_dict(row, actor.team_id)
+    await fire_mutation_callback(
+        on_mutation, MutationEventType.ROOM_MESSAGE_SENT, context
+    )
+    return output

@@ -103,7 +103,8 @@ handler branch does not establish that a producer emits that event.
 - `MailSentContext` for local and outbound mail;
 - `ChatMessageSentContext` for native chat sends;
 - `FederatedMessageSentContext` for the shared inbound outbox shape;
-- `MessageAcknowledgedContext` for incoming mail acknowledgements.
+- `MessageAcknowledgedContext` for incoming mail acknowledgements;
+- `RoomMessageSentContext` for a committed team room post.
 
 Each supplies `event_type` and `to_context() -> dict[str, object]`. Construct
 them from validated producer data. Event names, message kind and transport use
@@ -172,6 +173,7 @@ MCP `send_chat` tool call, and an acknowledgement fires from
 
 | HTTP route | Event | When called |
 |---|---|---|
+| `POST /v1/room/messages` | `room.message_sent` | After a new room post commits. Exact retries emit nothing. |
 | `POST /v1/messages` | `message.sent` | After a successful local, stored-route, or federated outbound mail send. Helper branches converge on the same event. |
 | `POST /v1/messages/{message_id}/ack` | `message.acknowledged` | Only when the ack changes the stored row. |
 | `POST /v1/chat/sessions` | `chat.message_sent` | After the initial chat message is stored/sent, including federated first contact. |
@@ -200,6 +202,7 @@ table fires the hook.
 
 | MCP tool | Event | When called |
 |---|---|---|
+| `room_post` | `room.message_sent` | After a new room post commits, as `POST /v1/room/messages`. |
 | `send_mail` (and `send_message_to_contact` for mail) | `message.sent` | After a successful local, stored-route, or federated send, as `POST /v1/messages`. |
 | `check_mail` | `message.acknowledged` | Once for each unread message the call marks read; already-read mail does not fire again. |
 | `send_chat` (and `send_message_to_contact` for chat) | `chat.message_sent` | After a new-session or continuation message is stored/sent, including federated delivery. |
@@ -234,6 +237,17 @@ Keys can be absent or null on paths that do not have that projection. Consumers
 must tolerate additive keys and missing optional identity/workspace data.
 
 ### Messaging
+
+`room.message_sent` uses only metadata:
+
+```text
+team_id, room_id, message_id, from_agent_id, from_did, from_did_aw, from_alias
+```
+
+Both HTTP and MCP room sends call one producer. It builds this context before
+committing and calls the best-effort host callback after commit. An exact
+retry returns the stored post without emitting or counting another send.
+No room body or recipient list is included.
 
 `message.sent` route contexts use:
 

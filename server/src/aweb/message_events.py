@@ -223,3 +223,29 @@ class MessageAcknowledgedContext:
             "subject": self.subject,
             "content_mode": self.content_mode,
         }
+
+
+@dataclass(frozen=True, kw_only=True)
+class RoomMessageSentContext:
+    """Committed room-post metadata, without message content or recipients."""
+
+    event_type: ClassVar[MutationEventType] = MutationEventType.ROOM_MESSAGE_SENT
+    team_id: str
+    room_id: str
+    message_id: str
+    from_agent_id: str
+    from_did: str
+    from_did_aw: str | None
+    from_alias: str
+
+    def to_context(self) -> dict[str, object]:
+        """Return host accounting identifiers without disclosing the room body."""
+        return {
+            "team_id": self.team_id,
+            "room_id": self.room_id,
+            "message_id": self.message_id,
+            "from_agent_id": self.from_agent_id,
+            "from_did": self.from_did,
+            "from_did_aw": self.from_did_aw,
+            "from_alias": self.from_alias,
+        }

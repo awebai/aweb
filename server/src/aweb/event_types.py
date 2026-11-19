@@ -16,6 +16,7 @@ class MutationEventType(StrEnum):
     MAIL_SENT = "message.sent"
     MAIL_ACKNOWLEDGED = "message.acknowledged"
     CHAT_MESSAGE_SENT = "chat.message_sent"
+    ROOM_MESSAGE_SENT = "room.message_sent"
     RESERVATION_ACQUIRED = "reservation.acquired"
     RESERVATION_RELEASED = "reservation.released"
     RESERVATION_RENEWED = "reservation.renewed"

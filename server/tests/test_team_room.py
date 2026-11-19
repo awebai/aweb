@@ -552,6 +552,13 @@ async def test_hosted_mcp_room_signs_as_actor_and_reads_shared_history(
         assert stored_post["from_did"] == actor.did
         assert stored_post["body"] == "MCP announcement"
         assert stored_post["confidentiality"] == "server_readable"
+        assert len(env.dispatched) == 1
+        event, context = env.dispatched[0]
+        assert event == "room.message_sent"
+        assert context["message_id"] == stored_post["message_id"]
+        assert context["from_agent_id"] == str(actor.id)
+        assert context["team_id"] == TEAM
+        assert "body" not in context
         assert len(calls) == 1
         room = await metadata(env)
         assert (

@@ -221,6 +221,7 @@ HOOK_SOURCES = (
     "server/src/aweb/messaging/mail_ack.py",
     "server/src/aweb/messaging/mail_send.py",
     "server/src/aweb/messaging/chat_send.py",
+    "server/src/aweb/messaging/room.py",
     "server/src/aweb/routes/federation.py",
     "server/src/aweb/routes/reservations.py",
     "server/src/aweb/routes/agent_status.py",
@@ -816,6 +817,28 @@ def check(
     return failures
 
 
+def _room_dynamic_event_is_rejected(root: Path) -> bool:
+    """Exercise the actual named room producer, restoring its source afterward."""
+    relative = "server/src/aweb/messaging/room.py"
+    source = root / relative
+    original = source.read_text(encoding="utf-8")
+    mutated = original.replace(
+        "MutationEventType.ROOM_MESSAGE_SENT,", "dynamic_event_name,", 1
+    )
+    if mutated == original:
+        return False
+    try:
+        source.write_text(mutated, encoding="utf-8")
+        failures: list[str] = []
+        _source_hook_call_sites(root, failures)
+        return any(
+            relative in failure and "unsupported non-literal" in failure
+            for failure in failures
+        )
+    finally:
+        source.write_text(original, encoding="utf-8")
+
+
 def self_test(root: Path) -> int:
     if failures := check(root):
         print("self-test setup is not green:")
@@ -849,6 +872,10 @@ def self_test(root: Path) -> int:
             destination = tmp / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(root / relative, destination)
+
+        if not _room_dynamic_event_is_rejected(tmp):
+            print("self-test failed: dynamic room event was not detected")
+            return 1
 
         untracked_note = tmp / "docs/untracked-self-test-note.md"
         untracked_note.write_text("not part of the tracked corpus\n", encoding="utf-8")

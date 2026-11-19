@@ -20,6 +20,7 @@ from aweb.message_events import (
     MessageAcknowledgedContext,
     MessageAcknowledgedEvent,
     MessageDeliveredEvent,
+    RoomMessageSentContext,
 )
 from aweb.messaging.chat_send import _fire_chat_message_sent
 from aweb.messaging.kinds import (
@@ -33,6 +34,28 @@ from aweb.routes.messages import SendMessageRequest
 from awid.did import did_from_public_key, generate_keypair
 from awid.signing import canonical_json_bytes
 from test_federation_envelope import _envelope, _sign
+
+
+def test_room_context_exposes_accounting_metadata_without_content():
+    context = RoomMessageSentContext(
+        team_id="team",
+        room_id="room",
+        message_id="message",
+        from_agent_id="sender",
+        from_did="did:key:sender",
+        from_did_aw=None,
+        from_alias="sender",
+    )
+    assert context.event_type is MutationEventType.ROOM_MESSAGE_SENT
+    assert context.to_context() == {
+        "team_id": "team",
+        "room_id": "room",
+        "message_id": "message",
+        "from_agent_id": "sender",
+        "from_did": "did:key:sender",
+        "from_did_aw": None,
+        "from_alias": "sender",
+    }
 
 
 @pytest.mark.parametrize("mode", list(ContentMode))
