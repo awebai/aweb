@@ -233,3 +233,69 @@ async def test_root_activity_without_a_redis_beat_is_visible_on_every_http_reade
         else:
             assert alice["status"] == "active", path
         assert alice.get("last_seen"), path
+
+
+@pytest.mark.asyncio
+async def test_committed_deletion_reports_claim_release_failure_and_retries(
+    privacy_app,
+):
+    env = privacy_app
+    created = await request_as(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
+        payload={"title": "Deletion with a held claim"},
+    )
+    assert created.status_code == 200, created.text
+    ref = created.json()["task_ref"]
+    path = f"/v1/tasks/{ref}"
+    claimed = await request_as(
+        env, alias="alice", method="PATCH", path=path, payload={"status": "in_progress"}
+    )
+    assert claimed.status_code == 200, claimed.text
+    # Real database failure at the release statement, scoped to this test's
+    # disposable database and this exact task. Auth/hooks/queries stay real.
+    await env.db.execute("""
+        CREATE FUNCTION aweb.r15_fail_claim_release() RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN RAISE EXCEPTION 'r15 owned claim-release fault'; END $$
+    """)
+    safe_ref = ref.replace("'", "''")
+    await env.db.execute(f"""
+        CREATE TRIGGER r15_claim_release_fault BEFORE DELETE ON {{{{tables.task_claims}}}}
+        FOR EACH ROW WHEN (OLD.task_ref = '{safe_ref}')
+        EXECUTE FUNCTION aweb.r15_fail_claim_release()
+    """)
+    try:
+        deleted = await request_as(env, alias="alice", method="DELETE", path=path)
+        assert deleted.status_code == 503, deleted.text
+        assert deleted.json()["detail"]["code"] == "task_deleted_cleanup_pending"
+        assert deleted.json()["detail"]["task_id"] == created.json()["task_id"]
+        assert await env.db.fetch_value(
+            "SELECT deleted_at IS NOT NULL FROM {{tables.tasks}} WHERE task_id=$1",
+            UUID(created.json()["task_id"]),
+        )
+        assert (
+            await env.db.fetch_value(
+                "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+                TEAM,
+                ref,
+            )
+            == 1
+        )
+    finally:
+        await env.db.execute(
+            "DROP TRIGGER r15_claim_release_fault ON {{tables.task_claims}}"
+        )
+        await env.db.execute("DROP FUNCTION aweb.r15_fail_claim_release()")
+    retried = await request_as(env, alias="alice", method="DELETE", path=path)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["task_id"] == created.json()["task_id"]
+    assert (
+        await env.db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+            TEAM,
+            ref,
+        )
+        == 0
+    )
