@@ -359,7 +359,7 @@ class EndpointTests(unittest.TestCase):
                 + "\n".join(
                     line
                     for line in source.splitlines()
-                    if line.startswith("export LIBRARY_E2E_") and "_HOST=" in line
+                    if line.startswith("LIBRARY_E2E_") and "_HOST=" in line
                 )
                 + '\nprintf "%s %s %s" "$LIBRARY_E2E_AWID_HOST" "$LIBRARY_E2E_AWEB_HOST" "$LIBRARY_E2E_LIBRARY_HOST"',
                 CANDIDATE_RUNNER_NAME=runner,
@@ -372,6 +372,25 @@ class EndpointTests(unittest.TestCase):
                     for service in ("awid", "aweb", "library")
                 ],
             )
+
+    def test_the_library_stack_stops_when_a_scoped_name_cannot_be_derived(self):
+        source = (ROOT / "scripts/e2e-library-stack.sh").read_text()
+        names = [
+            line
+            for line in source.splitlines()
+            if "LIBRARY_E2E_" in line
+            and "_HOST=" in line
+            and "journey_hostname" in line
+        ]
+        self.assertEqual(len(names), 3, names)
+        result = bash(
+            "journey_hostname() { return 1; }\nPROJECT=proof\n"
+            + "\n".join(names)
+            + "\necho derived",
+            CANDIDATE_RUNNER_NAME="",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("derived", result.stdout)
 
     def test_channel_does_not_reserve_ports_and_selects_both_service_names(self):
         source = (ROOT / "channel/test/integration.test.ts").read_text()

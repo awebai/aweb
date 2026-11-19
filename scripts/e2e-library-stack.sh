@@ -60,9 +60,10 @@ fi
 # Every service is addressed by its project-scoped in-network name, the same
 # name the candidate gate's network adds, so the TLS name and the team-auth
 # audiences are one origin wherever the journeys run.
-export LIBRARY_E2E_AWID_HOST="$(journey_hostname "$PROJECT" awid)"
-export LIBRARY_E2E_AWEB_HOST="$(journey_hostname "$PROJECT" aweb)"
-export LIBRARY_E2E_LIBRARY_HOST="$(journey_hostname "$PROJECT" library)"
+LIBRARY_E2E_AWID_HOST="$(journey_hostname "$PROJECT" awid)"
+LIBRARY_E2E_AWEB_HOST="$(journey_hostname "$PROJECT" aweb)"
+LIBRARY_E2E_LIBRARY_HOST="$(journey_hostname "$PROJECT" library)"
+export LIBRARY_E2E_AWID_HOST LIBRARY_E2E_AWEB_HOST LIBRARY_E2E_LIBRARY_HOST
 AWID_URL="http://$LIBRARY_E2E_AWID_HOST:8010"
 AWEB_URL="https://$LIBRARY_E2E_AWEB_HOST:8000"
 LIBRARY_URL="https://$LIBRARY_E2E_LIBRARY_HOST:8765"
