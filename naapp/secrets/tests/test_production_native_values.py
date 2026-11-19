@@ -380,9 +380,10 @@ async def test_native_form_recovers_this_tabs_sign_in_and_discards_the_value(
 
             async def lose_tab_csrf(route):
                 # The actual production handler must reject the missing tab proof.
+                original_headers = await route.request.all_headers()
                 headers = {
                     name: value
-                    for name, value in route.request.headers.items()
+                    for name, value in original_headers.items()
                     if name.lower() != "x-csrf-token"
                 }
                 await route.continue_(headers=headers)
