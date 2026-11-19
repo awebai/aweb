@@ -149,9 +149,9 @@ func saveCheckedHumanBindingRefresh(h *humanParticipation, packet *humanBindingR
 	return saveHumanEnrollment(filepath.Join(h.dir, "approval-live-binding.json"), packet.Binding)
 }
 
-func humanBindingRefreshIssuer(h *humanParticipation) (string, error) {
-	if humanRefreshIssuer != "" {
-		return canonicalHumanIssuer(humanRefreshIssuer)
+func humanBindingRefreshIssuer(h *humanParticipation, issuerOrigin string) (string, error) {
+	if issuerOrigin != "" {
+		return canonicalHumanIssuer(issuerOrigin)
 	}
 	session, err := loadHumanEnrollment(filepath.Join(h.dir, "enrollment-session.json"), h)
 	if err != nil {
@@ -194,7 +194,7 @@ func runIDHumanRefreshBinding(cmd *cobra.Command, args []string) error {
 	raw, err := readFileBounded(pendingPath, maxResponseBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		source = bindingRefreshFromHolder
-		issuer, issuerErr := humanBindingRefreshIssuer(h)
+		issuer, issuerErr := humanBindingRefreshIssuer(h, humanRefreshIssuer)
 		if issuerErr != nil {
 			return issuerErr
 		}
@@ -220,7 +220,10 @@ func runIDHumanRefreshBinding(cmd *cobra.Command, args []string) error {
 	if err = (atomicfile.Options{Mode: 0600, ParentMode: 0700}).Write(pendingPath, raw); err != nil {
 		return err
 	}
-	client := humanEnrollmentClient(h, packet.Origin)
+	client, err := humanEnrollmentClient(h, packet.Origin)
+	if err != nil {
+		return err
+	}
 	answer, err := client.RefreshBinding(cmd.Context(), approval.BindingRefreshInput{Packet: packet.Body})
 	if err != nil {
 		return bindingRefreshAnswerError(err)
