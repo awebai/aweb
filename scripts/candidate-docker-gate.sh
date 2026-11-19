@@ -284,7 +284,8 @@ record_input() {
   tree="$sha"
   [[ "$path" == "$repo" ]] || tree="$sha:${path#"$repo"/}"
   mkdir -p "$work/inputs/$name"
-  git -C "$repo" archive "$tree" | tar -xf - -C "$work/inputs/$name"
+  # Drain archive padding through EOF so the producer completes under pipefail.
+  git -C "$repo" archive "$tree" | tar --ignore-zeros -xf - -C "$work/inputs/$name"
 }
 record_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC"
 LIBRARY_E2E_BLUEPRINT_SRC="$work/inputs/blueprints"

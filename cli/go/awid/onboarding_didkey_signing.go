@@ -13,7 +13,7 @@ import (
 
 // onboardingDIDKeySignPayload builds the canonical JSON bytes for the shared
 // onboarding DIDKey auth envelope used by every onboarding endpoint that
-// accepts a DIDKey-signed request (cli-signup, claim-human, bootstrap-redeem):
+// accepts a DIDKey-signed request (cli-signup, claim-human):
 //
 //	{"body_sha256":"<hex>","method":"<METHOD>","path":"<PATH>","timestamp":"<ISO8601>"}
 //
