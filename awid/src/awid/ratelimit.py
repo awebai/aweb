@@ -209,7 +209,11 @@ def _extract_client_ip(request: Request) -> str:
 
 
 def build_rate_limiter(*, redis=None, backend: str | None = None) -> RateLimiter:
-    if os.getenv("AWID_RATE_LIMIT_DISABLED", "").strip().lower() in ("1", "true", "yes"):
+    if os.getenv("AWID_RATE_LIMIT_DISABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
         return NoOpRateLimiter()
     if backend is None:
         backend = os.getenv("AWEB_RATE_LIMIT_BACKEND", "memory")
@@ -294,8 +298,12 @@ def rate_limit_dep(
         if allow_trusted_service:
             expected = getattr(request.app.state, "awid_service_token", None)
             presented = (request.headers.get(AWID_SERVICE_TOKEN_HEADER) or "").strip()
-            if expected and presented and secrets.compare_digest(
-                expected.encode("utf-8"), presented.encode("utf-8")
+            if (
+                expected
+                and presented
+                and secrets.compare_digest(
+                    expected.encode("utf-8"), presented.encode("utf-8")
+                )
             ):
                 _record_trusted_service_exemption(request, bucket)
                 return
