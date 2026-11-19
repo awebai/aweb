@@ -1936,25 +1936,8 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		return acceptHostedTeamInviteWithDetails(workingDir, token, opts)
 	}
 
-	scope := strings.TrimSpace(opts.Scope)
-	if scope == "" {
-		scope = awid.IdentityModeLocal
-	}
-	if scope != awid.IdentityModeLocal && scope != awid.IdentityModeGlobal {
-		return nil, usageError("identity scope must be --local or --global")
-	}
-	if scope == awid.IdentityModeLocal {
-		if strings.TrimSpace(opts.Address) != "" {
-			return nil, usageError("--address requires --global")
-		}
-		if opts.NoAddress {
-			return nil, usageError("--no-address requires --global")
-		}
-	}
-	if opts.NoAddress && strings.TrimSpace(opts.Address) != "" {
-		return nil, usageError("--address and --no-address cannot be used together")
-	}
-	if err := ensureTeamAcceptScopeAllowed(workingDir, opts.IdentityHome, scope); err != nil {
+	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{WorkingDir: workingDir, Options: opts})
+	if err != nil {
 		return nil, err
 	}
 
@@ -2071,16 +2054,9 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if _, err := verifyInviteMembership(ctx, bundle, awid.IDChainSubject{ID: subjectID, DIDKey: plan.MemberDIDKey}, invite.ForHuman, registry, opts.TXTResolver); err != nil {
 		return nil, err
 	}
-	var appliedDefaultClaim *awid.AtomicAddressClaimResult
-	if plan.DefaultClaim != nil {
-		if _, err := registry.ClaimIdentityAddressAt(ctx, registryURL, *plan.DefaultClaim); err != nil {
-			return nil, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err)
-		}
-		plan.DefaultClaim.DryRun = false
-		appliedDefaultClaim, err = registry.ClaimIdentityAddressAt(ctx, registryURL, *plan.DefaultClaim)
-		if err != nil {
-			return nil, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err)
-		}
+	appliedDefaultClaim, err := claimNativeInviteDefaultAddress(ctx, nativeInviteDefaultClaimRequest{Plan: &plan, Registry: registry, RegistryURL: registryURL})
+	if err != nil {
+		return nil, err
 	}
 
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
@@ -2188,25 +2164,8 @@ func rollbackDefaultAddressClaimAfterCertificateFailure(
 }
 
 func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAcceptInviteOptions) (accepted *acceptedTeamInvite, resultErr error) {
-	scope := strings.TrimSpace(opts.Scope)
-	if scope == "" {
-		scope = awid.IdentityModeLocal
-	}
-	if scope != awid.IdentityModeLocal && scope != awid.IdentityModeGlobal {
-		return nil, usageError("identity scope must be --local or --global")
-	}
-	if scope == awid.IdentityModeLocal {
-		if strings.TrimSpace(opts.Address) != "" {
-			return nil, usageError("--address requires --global")
-		}
-		if opts.NoAddress {
-			return nil, usageError("--no-address requires --global")
-		}
-	}
-	if opts.NoAddress && strings.TrimSpace(opts.Address) != "" {
-		return nil, usageError("--address and --no-address cannot be used together")
-	}
-	if err := ensureTeamAcceptScopeAllowed(workingDir, opts.IdentityHome, scope); err != nil {
+	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{WorkingDir: workingDir, Options: opts})
+	if err != nil {
 		return nil, err
 	}
 
@@ -2229,7 +2188,6 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	if alias == "" {
 		return nil, usageError("--name is required for hosted team invites")
 	}
-	var err error
 	alias, err = normalizeIDCreateName(alias)
 	if err != nil {
 		return nil, err
@@ -2404,43 +2362,9 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	registryURL := ""
 	var atomicAddressClaim *awid.AtomicAddressClaimIdentityProof
 	if creation.ResponseJSON == "" && scope == awid.IdentityModeGlobal && memberAddress != "" {
-		registry, err := newConfiguredRegistryClient(nil)
+		registryURL, atomicAddressClaim, err = buildHostedInviteAddressClaim(ctx, hostedInviteAddressClaimRequest{MemberAddress: memberAddress, Material: material})
 		if err != nil {
 			return nil, err
-		}
-		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-		domain, name, err := parseAddress(memberAddress)
-		if err != nil {
-			return nil, err
-		}
-		var logProof *awid.DidKeyEvidence
-		if awid.ComputeStableID(pub) != stableID {
-			resolution, err := registry.ResolveKeyAt(ctx, registryURL, stableID)
-			if err != nil {
-				return nil, fmt.Errorf("resolve did log head for hosted global identity %s: %w", stableID, err)
-			}
-			if strings.TrimSpace(resolution.CurrentDIDKey) != didKey {
-				return nil, fmt.Errorf("registry current did:key for %s is %s, not %s", stableID, resolution.CurrentDIDKey, didKey)
-			}
-			logProof = resolution.LogHead
-			if logProof == nil {
-				return nil, fmt.Errorf("registry did log for hosted global identity %s has no log head", stableID)
-			}
-		}
-		atomicAddressClaim, err = awid.BuildAtomicAddressClaimIdentityProof(awid.AtomicAddressClaimFields{
-			Operation:        awid.AtomicAddressClaimOperation,
-			Domain:           domain,
-			AddressName:      name,
-			DIDAW:            stableID,
-			CurrentDIDKey:    didKey,
-			RegistryURL:      registryURL,
-			DryRun:           false,
-			IdentityCustody:  string(awid.AddressClaimCustodySelf),
-			NamespaceCustody: string(awid.AddressClaimCustodyHostedCustodial),
-			DIDLogProof:      logProof,
-		}, signingKey)
-		if err != nil {
-			return nil, fmt.Errorf("build hosted invite atomic address claim proof: %w", err)
 		}
 	}
 
@@ -2461,21 +2385,11 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	} else {
 		req.Alias = alias
 	}
-	var resp *awid.SpawnAcceptInviteResponse
-	if creation.ResponseJSON != "" {
-		resp = &awid.SpawnAcceptInviteResponse{}
-		err = json.Unmarshal([]byte(creation.ResponseJSON), resp)
-	} else {
-		attempted := true
-		creation.AcceptAttempted = &attempted
-		if err := creation.save(recoveryPath); err != nil {
-			return nil, err
-		}
-		resp, err = client.AcceptSpawnInvite(ctx, req)
-	}
+	resp, err := obtainHostedInviteResponse(ctx, hostedInviteResponseRequest{Creation: creation, RecoveryPath: recoveryPath, Client: client, Request: req})
 	if err != nil {
-		return nil, fmt.Errorf("accept hosted team invite: %w", err)
+		return nil, err
 	}
+
 	cert, serverURL, err := validateHostedTeamInviteAcceptResponse(resp, didKey, alias, stableID, memberAddress, scope, opts.NoAddress)
 	if err != nil {
 		return nil, err
