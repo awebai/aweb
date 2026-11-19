@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -353,7 +354,16 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) (runErr error) {
 		c.setNode(node, "", err.Error(), false)
 		return err
 	}
-	defer func() { runErr = errors.Join(runErr, bundle.close()) }()
+	defer func() {
+		if closeErr := bundle.close(); closeErr != nil {
+			runErr = errors.Join(runErr, closeErr)
+			if c.cfg.Log != nil {
+				c.cfg.Log("private runner cleanup failed: %v", closeErr)
+			} else {
+				log.Printf("private runner cleanup failed: %v", closeErr)
+			}
+		}
+	}()
 	childCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	cmd := exec.CommandContext(childCtx, node, bundle.Path)
