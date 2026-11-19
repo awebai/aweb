@@ -563,6 +563,7 @@ async def approval_request(
     agent_headers: Sequence[tuple[str, str]] = (),
     operation: OperationTemplate | None = None,
     params: Mapping[str, Any] | None = None,
+    job_timeout_seconds: int | None = None,
 ) -> ProductionRequest:
     """Seed confirmed metadata, then mint through the actual signed root tool.
 
@@ -577,6 +578,8 @@ async def approval_request(
     db = service.runtime.db()
     custody = Custody(LocalKeyFileProvider(configured.custody_key_file), db)
     job_body = job_after()
+    if job_timeout_seconds is not None:
+        job_body["timeout_s"] = job_timeout_seconds
     job_body["credentials"][0]["secret_ref"] = SECRET["ref"]
     job_body["env"] = {"DB_ADMIN": {"$credential": SECRET["ref"], "field": "value"}}
     job = jobs.JobDefinition.from_after(job_body)

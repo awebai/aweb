@@ -27,10 +27,13 @@ async def member_replay(root, pending):
     )
 
 
-async def decide_run(root, *, decision, onepassword_values):
+async def decide_run(root, *, decision, onepassword_values, job_timeout_seconds: int | None = None):
     service, client, configured, member, *_ = root
     pending = await approval_request(
-        root, kind=ApprovalAction.RUN, onepassword_values=onepassword_values
+        root,
+        kind=ApprovalAction.RUN,
+        onepassword_values=onepassword_values,
+        job_timeout_seconds=job_timeout_seconds,
     )
     human = configured.console_origin
     db = service.runtime.db()
@@ -103,8 +106,15 @@ async def decide_run(root, *, decision, onepassword_values):
     return pending
 
 
-async def admitted_run(root, *, onepassword_values) -> ProductionRequest:
-    pending = await decide_run(root, decision="approve", onepassword_values=onepassword_values)
+async def admitted_run(
+    root, *, onepassword_values, job_timeout_seconds: int | None = None
+) -> ProductionRequest:
+    pending = await decide_run(
+        root,
+        decision="approve",
+        onepassword_values=onepassword_values,
+        job_timeout_seconds=job_timeout_seconds,
+    )
     service, *_ = root
     admitted = await member_replay(root, pending)
     assert admitted.status_code == 202 and admitted.json()["state"] == "admitted", (

@@ -6,8 +6,10 @@ from uuid import uuid4
 
 import pytest
 from aweb_naapp.egress import InternalDestinations
+from aweb_naapp.runtime.approvals import ApprovalState, PgApprovalStore
 from aweb_naapp_testing.network import TlsServer, local_address, make_certificates
 
+from tests.production_approvals import requester_receipt
 from tests.test_production_bootstrap import enrolled_owner, envelopes
 from tests.test_production_bootstrap import root as root
 from tests.test_production_dispatch import admitted_run
@@ -42,6 +44,8 @@ def production_settings(upstream):
         "internal_destinations": InternalDestinations.ALLOWED,
         "egress_ca_file": server.certificates.ca_file,
         "sweep_interval_seconds": 1,
+        "runner_assignment_ttl_seconds": 3,
+        "sweep_margin_seconds": 1,
     }
 
 
@@ -96,12 +100,8 @@ async def settle(root, reconcile_ref):
     settled = await client.post(control + "/settle", json={}, headers=headers)
     assert settled.status_code == 200
     assert settled.json()["state"] == "reconciled_unknown"
-    assert (
-        await service.runtime.db().fetch_value(
-            "SELECT state FROM approvals WHERE approval_id=$1", approval_id
-        )
-        == "consumed"
-    )
+    approval = await PgApprovalStore(service.runtime.db()).get(approval_id)
+    assert approval is not None and approval.state is ApprovalState.CONSUMED
 
 
 async def test_owner_can_settle_an_uncertain_production_broker_effect_and_unblock_the_pair(
@@ -138,7 +138,7 @@ async def test_owner_can_settle_a_swept_production_run_and_request_a_fresh_appro
     root, *, onepassword_values
 ):
     service, client, configured, *_ = root
-    pending = await admitted_run(root, onepassword_values=onepassword_values)
+    pending = await admitted_run(root, onepassword_values=onepassword_values, job_timeout_seconds=2)
     claimed = await client.post(
         configured.public_origin + "/runner/v1/claim",
         content=b"{}",
@@ -147,23 +147,11 @@ async def test_owner_can_settle_a_swept_production_run_and_request_a_fresh_appro
     assert claimed.status_code == 200, "the production runner must receive a real assignment"
     ref = pending.reply["request_ref"]
     db = service.runtime.db()
-    # Advance only the persisted recovery deadline. The production recovery
-    # task, not this test, must decide and record the uncertain outcome.
-    await db.execute(
-        "UPDATE dispatches SET sweep_after=clock_timestamp()-interval '1 second'"
-        " WHERE dispatch_id=(SELECT dispatch_id FROM run_contexts WHERE intent_id=$1)",
-        ref,
-    )
-    async with asyncio.timeout(10):
-        while (
-            await db.fetch_value(
-                "SELECT d.state FROM dispatches d JOIN run_contexts c USING(dispatch_id)"
-                " WHERE c.intent_id=$1",
-                ref,
-            )
-            != "outcome_unknown"
-        ):
-            await asyncio.sleep(0.02)
+    # The signed assignment and job have short real lifetimes. Only the
+    # production recovery task can close their expired dispatch.
+    async with asyncio.timeout(15):
+        while (await requester_receipt(root, pending=pending))["state"] != "outcome_unknown":
+            await asyncio.sleep(0.05)
     original = json.loads(pending.raw)
     blocked = await member_request(root, pending.path, {**original, "request_id": uuid4().hex})
     assert blocked.status_code == 409 and blocked.json()["code"] == "reconciliation_pending"
