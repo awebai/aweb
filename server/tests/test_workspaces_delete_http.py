@@ -132,7 +132,6 @@ class _FakeRedisPipeline:
         self.actions.append(("exists", key))
         return self
 
-
     def srem(self, key, member):
         self.actions.append(("srem", key, member))
         return self
@@ -153,11 +152,8 @@ class _FakeRedis:
     def __init__(self):
         self.presence = {}
 
-
     async def exists(self, key):
         return int(key in self.presence)
-
-
 
     async def smembers(self, key):
         if key.startswith("idx:team_workspaces:"):
@@ -171,10 +167,8 @@ class _FakeRedis:
     async def get(self, key):
         return None
 
-
     def pipeline(self, transaction=True):
         return _FakeRedisPipeline(self)
-
 
 
 @pytest.mark.asyncio
@@ -429,13 +423,9 @@ async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(aweb
     assert data["workspaces"][0]["status"] == "active"
 
 
-
-
-
-
-
-
-async def _seed_local_member(aweb_cloud_db, *, team_id, team_did_key, agent_did_key, alias, last_seen_at):
+async def _seed_local_member(
+    aweb_cloud_db, *, team_id, team_did_key, agent_did_key, alias, last_seen_at
+):
     """One live local member: agent row plus its workspace, seen at last_seen_at."""
     agent_id = uuid4()
     workspace_id = uuid4()
@@ -464,18 +454,6 @@ async def _seed_local_member(aweb_cloud_db, *, team_id, team_did_key, agent_did_
         last_seen_at,
     )
     return agent_id, workspace_id
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 async def _seed_two_members_for_ownership(aweb_cloud_db):
@@ -554,11 +532,17 @@ def _record_presence_updates(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_workspace_heartbeat_refuses_another_members_workspace(aweb_cloud_db, monkeypatch, caplog):
+async def test_workspace_heartbeat_refuses_another_members_workspace(
+    aweb_cloud_db, monkeypatch, caplog
+):
     """A certified member cannot keep another member's seat looking alive."""
-    team_did_key, _, owner_workspace_id, seen_at, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
-    )
+    (
+        team_did_key,
+        _,
+        owner_workspace_id,
+        seen_at,
+        caller_headers,
+    ) = await _seed_two_members_for_ownership(aweb_cloud_db)
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
     presence_updates = _record_presence_updates(monkeypatch)
     body = json.dumps(
@@ -568,7 +552,9 @@ async def test_workspace_heartbeat_refuses_another_members_workspace(aweb_cloud_
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/workspaces/heartbeat", content=body, headers=caller_headers(body))
+        resp = await client.post(
+            "/v1/workspaces/heartbeat", content=body, headers=caller_headers(body)
+        )
 
     assert resp.status_code == 403, resp.text
     assert resp.json()["detail"] == f"Workspace {owner_workspace_id} belongs to another agent."
@@ -583,9 +569,13 @@ async def test_workspace_heartbeat_refuses_another_members_workspace(aweb_cloud_
 
 @pytest.mark.asyncio
 async def test_workspace_heartbeat_refreshes_the_callers_own_workspace(aweb_cloud_db, monkeypatch):
-    team_did_key, caller_workspace_id, _, seen_at, caller_headers = await _seed_two_members_for_ownership(
-        aweb_cloud_db
-    )
+    (
+        team_did_key,
+        caller_workspace_id,
+        _,
+        seen_at,
+        caller_headers,
+    ) = await _seed_two_members_for_ownership(aweb_cloud_db)
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
     presence_updates = _record_presence_updates(monkeypatch)
     body = json.dumps(
@@ -595,7 +585,9 @@ async def test_workspace_heartbeat_refreshes_the_callers_own_workspace(aweb_clou
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/workspaces/heartbeat", content=body, headers=caller_headers(body))
+        resp = await client.post(
+            "/v1/workspaces/heartbeat", content=body, headers=caller_headers(body)
+        )
 
     assert resp.status_code == 200, resp.text
     row = await _workspace_row(aweb_cloud_db, caller_workspace_id)
@@ -611,7 +603,11 @@ async def test_workspace_patch_refuses_another_members_workspace(aweb_cloud_db, 
         aweb_cloud_db
     )
     body = json.dumps(
-        {"hostname": "attacker-host", "workspace_path": "/tmp/elsewhere", "focus_task_ref": "backend-x"},
+        {
+            "hostname": "attacker-host",
+            "workspace_path": "/tmp/elsewhere",
+            "focus_task_ref": "backend-x",
+        },
         separators=(",", ":"),
     ).encode()
 
