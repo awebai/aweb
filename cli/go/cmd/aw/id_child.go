@@ -630,6 +630,14 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 		return nil, err
 	}
 	pending := found.record().State == awid.IDRequestPending
+	// docs/id-certificates.md §6: an unregistered home cannot establish
+	// exclusive attribution outside that home. Tell the signing person before
+	// asking their key to issue another independently valid certificate.
+	if pending && issuer.kind == "human" && out.Kind == "agent" && strings.HasPrefix(out.ID, "did:key:") && opts.Show != nil {
+		if _, err := fmt.Fprintln(opts.Show, "This agent is unregistered; your signature attributes it to you, and nothing prevents it from also holding another person's signature."); err != nil {
+			return nil, err
+		}
+	}
 	approval := awid.IDHumanApproval{}
 	if out.Kind == "human" && pending {
 		if err := opts.HumanAtTerminal(); err != nil {

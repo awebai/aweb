@@ -1131,9 +1131,17 @@ or retroactively attach unrelated legacy agents.
 
 ### First adoption under a person
 
-An agent immediately under its organisation's namespace may be adopted once
-through the adoption path by a person of that organisation, keeping its ID and
-key. The recorded creator alone may adopt while their account is active and they are a current member of the agent's team; organisation membership is not required. Otherwise, a current explicit team member with team-admin or owning-organisation owner/admin authority may adopt. The person explicitly
+An agent immediately under its organisation's namespace may be adopted through
+the first-adoption path by a person, keeping its ID and key. For a registered
+agent, the registry's current-certificate head makes the first adoption
+exclusive and checkable by anyone. For an unregistered local `did:key` agent,
+the once-only rule is kept by its own home and by a hosted team's adoption
+record where there is one; a third party cannot verify that exclusivity. The
+home's holder can restore an earlier organisation chain, and another person can
+then sign for the same agent. Both signatures remain true statements by their
+signers. A person who needs exclusive, checkable attribution adopts a registered
+agent. Before a human-key `aw id child approve` signs for an unregistered agent,
+it prints this limitation. The recorded creator alone may adopt while their account is active and they are a current member of the agent's team; organisation membership is not required. Otherwise, a current explicit team member with team-admin or owning-organisation owner/admin authority may adopt. The person explicitly
 signs for that named agent and key under their checked session or local command.
 A chain already containing a person refuses adoption. An agent immediately
 under another agent is not adopted independently; only its namespace-parented
@@ -1145,9 +1153,10 @@ domain; cross-domain adoption of a registered agent is not supported.
 Registered adoption uses the existing atomic registry head replacement. Moving
 a registered agent between people remains the separate explicit re-parenting
 operation in §3, with the new parent's signature, subject key proof and expected
-head; it is not another adoption. A local agent that already has a person parent
-cannot be moved to another person. For its first adoption, it installs the
-person-parented chain in place of the organisation chain. The old local
+head; it is not another adoption. While a local agent's installed chain contains
+a person, the local adoption command refuses another adoption. For its first
+adoption, it installs the person-parented chain in place of the organisation
+chain. The old local
 certificate remains cryptographically valid and reports `no_human` if presented.
 
 Existing descendants retain copies of the old ancestry until refreshed. They
