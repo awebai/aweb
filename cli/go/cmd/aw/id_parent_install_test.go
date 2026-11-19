@@ -46,13 +46,17 @@ func TestParentInstallExistingCertificateForSameLocalKeyOnly(t *testing.T) {
 		}
 		return key
 	}
-	newHome := func(t *testing.T, key ed25519.PrivateKey, global bool) string {
+	newHome := func(t *testing.T, key ed25519.PrivateKey, scope string) string {
 		t.Helper()
 		home := filepath.Join(t.TempDir(), ".aw")
 		pub := key.Public().(ed25519.PublicKey)
-		identity := &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal}
-		if global {
-			identity.StableID, identity.IdentityScope = awid.ComputeStableID(pub), awid.IdentityModeGlobal
+		identity := &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), Custody: awid.CustodySelf, IdentityScope: scope}
+		switch scope {
+		case awid.IdentityModeLocal:
+		case awid.IdentityModeGlobal:
+			identity.StableID = awid.ComputeStableID(pub)
+		default:
+			t.Fatalf("unknown identity scope %q", scope)
 		}
 		if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(home, "identity.yaml"), identity); err != nil {
 			t.Fatal(err)
@@ -71,9 +75,18 @@ func TestParentInstallExistingCertificateForSameLocalKeyOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 		parent := ""
-		asRoot := invitation.Parent["kind"] == "namespace"
-		if !asRoot {
-			parent = invitation.Parent["id"].(string)
+		asRoot := false
+		switch invitation.Parent["kind"] {
+		case "namespace":
+			asRoot = true
+		case "identity":
+			var ok bool
+			parent, ok = invitation.Parent["id"].(string)
+			if !ok || parent == "" {
+				t.Fatal("child invitation has no identity parent ID")
+			}
+		default:
+			t.Fatal("child invitation has no recognized parent kind")
 		}
 		_, request, err := executeIDParentRequest(idParentOptions{IdentityHome: home, WorkingDir: filepath.Dir(home), Domain: domain}, invitation.InvitationID, parent, asRoot)
 		if err != nil {
@@ -91,13 +104,17 @@ func TestParentInstallExistingCertificateForSameLocalKeyOnly(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return parsed["chain"].(map[string]any), response
+		chain, ok := parsed["chain"].(map[string]any)
+		if !ok || chain == nil {
+			t.Fatal("child approval response has no chain object")
+		}
+		return chain, response
 	}
 	subjectKey := newKey()
-	subjectHome := newHome(t, subjectKey, false)
+	subjectHome := newHome(t, subjectKey, awid.IdentityModeLocal)
 	chain, _ := issue(root, subjectHome)
-	otherKeyChain, _ := issue(root, newHome(t, newKey(), false))
-	parentHome := newHome(t, newKey(), false)
+	otherKeyChain, _ := issue(root, newHome(t, newKey(), awid.IdentityModeLocal))
+	parentHome := newHome(t, newKey(), awid.IdentityModeLocal)
 	_, parentResponse := issue(root, parentHome)
 	if _, err := executeIDParentImport(t.Context(), idParentOptions{IdentityHome: parentHome, WorkingDir: filepath.Dir(parentHome), Domain: domain, RegistryURL: registryURL, TXTResolver: resolver}, parentResponse); err != nil {
 		t.Fatalf("import local parent's issued certificate: %v", err)
@@ -107,7 +124,11 @@ func TestParentInstallExistingCertificateForSameLocalKeyOnly(t *testing.T) {
 
 	for _, scenario := range []string{"empty", "identical", "another-chain", "another-key", "registered", "unavailable"} {
 		t.Run(scenario, func(t *testing.T) {
-			home := newHome(t, subjectKey, scenario == "registered")
+			scope := awid.IdentityModeLocal
+			if scenario == "registered" {
+				scope = awid.IdentityModeGlobal
+			}
+			home := newHome(t, subjectKey, scope)
 			if scenario == "registered" {
 				pub := subjectKey.Public().(ed25519.PublicKey)
 				if _, err := registry.RegisterIdentity(t.Context(), registryURL, awid.ComputeDIDKey(pub), awid.ComputeStableID(pub), subjectKey); err != nil {
@@ -147,6 +168,10 @@ func TestParentInstallExistingCertificateForSameLocalKeyOnly(t *testing.T) {
 				if err := listener.Close(); err != nil {
 					t.Fatal(err)
 				}
+				// Admit this exact endpoint under normal transport protection.
+				t.Setenv("AWID_REGISTRY_URL", opts.RegistryURL)
+				t.Setenv("APP_ENV", "production")
+				t.Setenv("AWEB_FEDERATION_TEST", "")
 			}
 			if _, err := os.Stat(awconfig.IdentityRequestsDir(home)); !os.IsNotExist(err) {
 				t.Fatalf("install target has outgoing request state: %v", err)
