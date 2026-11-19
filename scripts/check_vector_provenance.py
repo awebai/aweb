@@ -983,7 +983,7 @@ def _python_tokens(source: str) -> tuple[tuple[int, str], ...] | None:
                 except (ValueError, SyntaxError):
                     # Older Python tokenizers retain an entire f-string token.
                     # It is not a literal path expression and cannot supply one.
-                    pass
+                    value = token.string
             result.append((token.type, value))
     except (tokenize.TokenError, IndentationError, SyntaxError):
         return None
@@ -1230,7 +1230,11 @@ def self_test(root: Path) -> None:
         failures = check(root, tracked, {formatted_consumer: alternate})
         if failures:
             raise AssertionError(f"equivalent formatted vector root refused: {failures}")
+    with_fstring = original + b'\ndiagnostic = f"vector {len(ALICE)}"\n'
+    if failures := check(root, tracked, {formatted_consumer: with_fstring}):
+        raise AssertionError(f"ordinary f-string refused: {failures}")
     for label, alternate in (
+        ("f-string-only Python root", b'marker = f"Path(__file__).resolve().parents[2] / \'docs/vectors/id-certificates-v1.json\'"\n'),
         ("wrong Python root", original.replace(b"parents[2]", b"parents[1]")),
         ("wrong Python path", original.replace(b"docs/vectors/", b"local-fixtures/")),
         ("comment-only Python root", b"# " + original.replace(b"\n", b"\n# ")),
