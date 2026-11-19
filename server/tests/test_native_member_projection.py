@@ -48,7 +48,9 @@ def test_omitted_authority_column_is_not_a_null_fact(native_json_snapshot, colum
         MemberProjection.from_row(native_json_snapshot)
 
 
-def test_snapshot_keeps_raw_policy_claims_without_attributing_them(native_json_snapshot):
+def test_snapshot_keeps_raw_policy_claims_without_attributing_them(
+    native_json_snapshot,
+):
     # Deliberate legacy/tampering state, not a supported authenticated identity.
     projection = MemberProjection.from_row(native_json_snapshot)
     assert projection["did_aw"] == "did:aw:unverified-claim"

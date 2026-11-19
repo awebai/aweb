@@ -94,7 +94,10 @@ def _app():
 
     @app.get("/notes")
     async def get_notes(request: Request):
-        return {"cached": request.state.cached_body.decode(), "sha256": request.state.body_sha256}
+        return {
+            "cached": request.state.cached_body.decode(),
+            "sha256": request.state.body_sha256,
+        }
 
     @app.post("/refuse")
     async def refuse(note: Note):
@@ -106,8 +109,12 @@ def _app():
 @pytest.mark.asyncio
 async def test_a_post_body_is_cached_hashed_and_still_parsed():
     body = b'{"text":"hello"}'
-    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
-        response = await client.post("/notes", content=body, headers={"content-type": "application/json"})
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/notes", content=body, headers={"content-type": "application/json"}
+        )
     assert response.status_code == 200, response.text
     assert response.json() == {
         "text": "hello",
@@ -119,7 +126,9 @@ async def test_a_post_body_is_cached_hashed_and_still_parsed():
 
 @pytest.mark.asyncio
 async def test_a_get_sees_an_empty_cached_body():
-    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
         response = await client.get("/notes")
     assert response.status_code == 200, response.text
     assert response.json() == {"cached": "", "sha256": EMPTY_SHA256}
@@ -127,9 +136,12 @@ async def test_a_get_sees_an_empty_cached_body():
 
 @pytest.mark.asyncio
 async def test_a_post_that_errors_still_gets_its_response():
-    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=_app()), base_url="http://test"
+    ) as client:
         response = await asyncio.wait_for(
-            client.post("/refuse", json={"text": "x"}), timeout=5,
+            client.post("/refuse", json={"text": "x"}),
+            timeout=5,
         )
     assert response.status_code == 409
     assert response.json() == {"detail": "refused x"}
@@ -159,8 +171,13 @@ async def test_a_multi_part_body_is_read_whole_before_the_app_runs():
     async def send(message):
         sent.append(message)
 
-    await RequestBodyCacheMiddleware(app)({"type": "http", "method": "POST", "headers": []}, receive, send)
-    assert seen == [b'{"text":"split"}', {"type": "http.request", "body": b'{"text":"split"}', "more_body": False}]
+    await RequestBodyCacheMiddleware(app)(
+        {"type": "http", "method": "POST", "headers": []}, receive, send
+    )
+    assert seen == [
+        b'{"text":"split"}',
+        {"type": "http.request", "body": b'{"text":"split"}', "more_body": False},
+    ]
     assert sent[0]["status"] == 204
 
 
@@ -186,7 +203,9 @@ async def test_non_http_scopes_pass_through_untouched():
 def test_create_app_keeps_no_base_http_middleware():
     app = create_app()
     assert RequestBodyCacheMiddleware in [entry.cls for entry in app.user_middleware]
-    assert not [entry.cls for entry in app.user_middleware if entry.cls is BaseHTTPMiddleware]
+    assert not [
+        entry.cls for entry in app.user_middleware if entry.cls is BaseHTTPMiddleware
+    ]
 
 
 async def _run(middleware, scope, chunks):
@@ -201,7 +220,9 @@ async def _run(middleware, scope, chunks):
     async def send(message):
         sent.append(message)
 
-    await middleware({"type": "http", "method": "POST", "headers": [], **scope}, receive, send)
+    await middleware(
+        {"type": "http", "method": "POST", "headers": [], **scope}, receive, send
+    )
     return seen, sent, read
 
 
@@ -228,8 +249,12 @@ async def test_a_body_at_the_cap_is_cached_and_one_byte_more_is_refused():
     _, sent, _ = await _run(middleware, {}, at_cap)
     assert seen == [cap] and _status(sent) == 204
 
-    over = iter([{"type": "http.request", "body": b"x" * cap, "more_body": True},
-                 {"type": "http.request", "body": b"y", "more_body": False}])
+    over = iter(
+        [
+            {"type": "http.request", "body": b"x" * cap, "more_body": True},
+            {"type": "http.request", "body": b"y", "more_body": False},
+        ]
+    )
     _, sent, _ = await _run(middleware, {}, over)
     assert seen == [cap], "the app must not run for an oversized body"
     assert _status(sent) == 413
@@ -244,7 +269,11 @@ async def test_an_endless_body_is_refused_without_reading_past_the_cap():
             yield {"type": "http.request", "body": b"z" * chunk, "more_body": True}
 
     seen = []
-    _, sent, read = await _run(RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=cap), {}, endless())
+    _, sent, read = await _run(
+        RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=cap),
+        {},
+        endless(),
+    )
     assert _status(sent) == 413 and seen == []
     assert sum(read) <= cap + chunk, sum(read)
 
@@ -253,7 +282,11 @@ async def test_an_endless_body_is_refused_without_reading_past_the_cap():
 async def test_a_declared_oversized_body_is_refused_before_any_read():
     seen = []
     scope = {"headers": [(b"content-length", b"4097")]}
-    _, sent, read = await _run(RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=4096), scope, iter([]))
+    _, sent, read = await _run(
+        RequestBodyCacheMiddleware(_recording_app(seen), max_body_bytes=4096),
+        scope,
+        iter([]),
+    )
     assert read == [] and seen == [] and _status(sent) == 413
 
 
@@ -269,8 +302,14 @@ def test_the_default_cap_admits_the_largest_released_client_body():
 async def test_create_app_takes_its_cap_from_the_environment(monkeypatch):
     monkeypatch.setenv("AWEB_MAX_REQUEST_BODY_BYTES", "1024")
     app = create_app()
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        response = await client.post("/v1/messages", content=b"x" * 2048, headers={"content-type": "application/json"})
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.post(
+            "/v1/messages",
+            content=b"x" * 2048,
+            headers={"content-type": "application/json"},
+        )
     assert response.status_code == 413
     assert response.json() == {"detail": "Request body too large"}
 

@@ -33,11 +33,15 @@ def mcp_auth_error_response(
     )
 
 
-async def _binding_handler(request: Request, error: IdentityBindingError) -> JSONResponse:
+async def _binding_handler(
+    request: Request, error: IdentityBindingError
+) -> JSONResponse:
     return identity_binding_error_response(error)
 
 
-async def _registry_handler(request: Request, error: RegistryClientUnavailable) -> JSONResponse:
+async def _registry_handler(
+    request: Request, error: RegistryClientUnavailable
+) -> JSONResponse:
     return registry_client_error_response(error)
 
 

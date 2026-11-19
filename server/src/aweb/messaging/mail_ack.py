@@ -34,7 +34,7 @@ async def acknowledge_mail(
             f"""
             UPDATE {{{{tables.messages}}}} m
             SET read_at = $1
-            WHERE {incoming_mail_sql('$2')}
+            WHERE {incoming_mail_sql("$2")}
               AND message_id = ANY($3::uuid[])
               AND read_at IS NULL
             RETURNING message_id, from_alias, subject, content_mode
