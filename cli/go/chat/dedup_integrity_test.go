@@ -119,6 +119,69 @@ func TestCorruptDeliveryReceiptCacheDoesNotBlockFiltering(t *testing.T) {
 	}
 }
 
+func TestClosedStderrDoesNotBlockReceiptCacheRecovery(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "receipts.json")
+	t.Setenv(DeliveredIDsPathEnv, path)
+	corrupt := []byte(`{"accepted-message":"not-a-time"}`)
+	if err := os.WriteFile(path, corrupt, 0600); err != nil {
+		t.Fatal(err)
+	}
+	closedOutput, err := os.CreateTemp(t.TempDir(), "closed-stderr-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := closedOutput.Close(); err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stderr
+	t.Cleanup(func() { os.Stderr = original })
+	os.Stderr = closedOutput
+
+	messages, err := FilterDeliveredMessagesForDir(workspace, []awid.ChatMessage{{MessageID: "accepted-message"}})
+	if err != nil || len(messages) != 1 || messages[0].MessageID != "accepted-message" {
+		t.Fatalf("closed diagnostic output blocked cache recovery: messages=%v err=%v", messages, err)
+	}
+	quarantines, err := filepath.Glob(path + ".quarantine-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(quarantines) != 1 {
+		t.Fatalf("quarantines=%v", quarantines)
+	}
+	data, err := os.ReadFile(filepath.Join(quarantines[0], filepath.Base(path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, corrupt) {
+		t.Fatal("closed stderr lost the quarantine record")
+	}
+	fresh, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipts map[string]string
+	if err := json.Unmarshal(fresh, &receipts); err != nil {
+		t.Fatal(err)
+	}
+	if receipts == nil || len(receipts) != 0 {
+		t.Fatalf("cache was not reset to an empty object: %q", fresh)
+	}
+	if err := SaveDeliveredIDsForDir(workspace, []string{"next-message"}); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := LoadDeliveredIDsForDir(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("reset cache lost next delivery: %v", ids)
+	}
+	if _, ok := ids["next-message"]; !ok {
+		t.Fatalf("next receipt missing: %v", ids)
+	}
+}
+
 func TestCorruptDeliveryReceiptCacheRecoversBeforeWriterMerge(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "receipts.json")
 	t.Setenv(DeliveredIDsPathEnv, path)

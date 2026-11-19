@@ -226,7 +226,9 @@ func loadOrQuarantineDeliveredIDTimes(path string, now time.Time) (map[string]ti
 		return nil, fmt.Errorf("receipt cache quarantined at %q but reset failed: %w. Repair the cache directory before retrying", quarantined, err)
 	}
 	if _, err := fmt.Fprintf(os.Stderr, "WARNING: chat delivery receipt cache %q could not be read (%q); quarantined at %q and reset. Messages may be shown again; inspect the quarantined cache if needed.\n", path, readErr.Error(), quarantined); err != nil {
-		return nil, fmt.Errorf("receipt cache reset with quarantine at %q, but its warning could not be written: %w. Use a writable diagnostic output before retrying", quarantined, err)
+		// A supervisor may close stderr. The quarantine retains the record,
+		// so a failed best-effort warning must not stop chat after recovery.
+		return entries, nil
 	}
 	return entries, nil
 }
