@@ -61,6 +61,7 @@ TOOL = Path(__file__).resolve().parents[2] / "deploy" / "team" / "agent_state.py
 sys.path.insert(0, str(TOOL.parent))
 
 from agent_state import signals_held, unheld  # noqa: E402
+
 UID = GID = 20001
 # One age process may run this long; a CLI call holds at most two.
 AGE_DEADLINE = 60

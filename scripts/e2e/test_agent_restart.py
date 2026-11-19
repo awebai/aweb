@@ -204,7 +204,7 @@ def listing(*containers: tuple[str, str]) -> str:
 
 
 class ReplaceTests(unittest.TestCase):
-    def agent(self) -> "restart.Agent":
+    def agent(self) -> restart.Agent:
         agent = restart.Agent.__new__(restart.Agent)
         agent.container = "oats-agent-acwd25"
         agent.compose = ["docker", "compose", "-p", "acwd25-lab", "-f", "compose.agent.yaml"]
