@@ -18,11 +18,13 @@ from pathlib import Path
 from time import monotonic_ns
 from typing import Annotated
 
+import dns.asyncresolver
 import httpx
 import pytest
 from aweb.app_manifests import FetchedManifest
 from aweb.installations import install_verified_manifest_on, uninstall_installation_on
 from aweb_naapp_testing import Member
+from aweb_naapp_testing.network import DnsServer
 from aweb_naapp_testing.server import Coordination
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from fastapi import Depends, FastAPI
@@ -71,12 +73,24 @@ def _runtime(tmp_path: Path, coordination: Coordination, database_url: str) -> N
         awid_transport=coordination.registry.transport,
         team_server_transport=coordination.server.transport,
     )
-
-    async def this_registry(domain: str) -> str:
-        return REGISTRY_URL
-
-    runtime.team_server_directory()._registry_override = this_registry
     return runtime
+
+
+@pytest.fixture(autouse=True)
+async def dns_with_no_awid_statements(monkeypatch) -> AsyncIterator[None]:
+    """The process's DNS is a test server holding no records: every team's
+    domain publishes no _awid statement, so its registry is the app's own."""
+    server = DnsServer()
+    await server.start()
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = ["127.0.0.1"]
+    resolver.port = server.port
+    resolver.timeout = resolver.lifetime = 1
+    monkeypatch.setattr(dns.asyncresolver, "default_resolver", resolver)
+    try:
+        yield
+    finally:
+        server.close()
 
 
 @asynccontextmanager
