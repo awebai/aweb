@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -54,6 +55,19 @@ async def _event(pubsub):
                 return json.loads(frame["data"])
 
 
+async def _through_barrier(env, stream):
+    # Redis processes this publication after every awaited product transaction.
+    # Drain through it instead of treating a short quiet interval as no events.
+    barrier = {"type": "test.presence.barrier", "barrier": uuid4().hex}
+    await env.redis.publish(team_events_channel_name(TEAM), json.dumps(barrier))
+    events = []
+    while True:
+        event = await _event(stream)
+        if event == barrier:
+            return events
+        events.append(event)
+
+
 @pytest.mark.asyncio
 async def test_presence_is_published_once_with_concurrent_maintenance_and_no_dashboard(
     privacy_app,
@@ -72,17 +86,15 @@ async def test_presence_is_published_once_with_concurrent_maintenance_and_no_das
                 for _ in range(3)
             )
         )
-        events = [await _event(stream) for _ in env.actors]
+        events = await _through_barrier(env, stream)
+        assert len(events) == len(env.actors)
         assert {(event["type"], event["alias"]) for event in events} == {
             ("agent.online", alias) for alias in env.actors
         }
         await reconcile_presence(
             env.infra, env.redis, registry_client=env.app.state.awid_registry_client
         )
-        assert (
-            await stream.get_message(ignore_subscribe_messages=True, timeout=0.1)
-            is None
-        )
+        assert await _through_barrier(env, stream) == []
 
         await env.db.execute(
             "UPDATE {{tables.workspaces}} SET last_seen_at=$1 WHERE workspace_id=$2",
@@ -92,12 +104,10 @@ async def test_presence_is_published_once_with_concurrent_maintenance_and_no_das
         await reconcile_presence(
             env.infra, env.redis, registry_client=env.app.state.awid_registry_client
         )
-        event = await _event(stream)
-        assert (event["type"], event["alias"]) == ("agent.offline", "alice")
-        assert (
-            await stream.get_message(ignore_subscribe_messages=True, timeout=0.1)
-            is None
-        )
+        events = await _through_barrier(env, stream)
+        assert [(event["type"], event["alias"]) for event in events] == [
+            ("agent.offline", "alice")
+        ]
 
 
 @pytest.mark.asyncio
@@ -116,7 +126,8 @@ async def test_presence_reconciles_after_a_period_without_subscribers(privacy_ap
             env.infra, env.redis, registry_client=env.app.state.awid_registry_client
         )
         assert result.events_published == len(env.actors)
-        events = [await _event(stream) for _ in env.actors]
+        events = await _through_barrier(env, stream)
+        assert len(events) == len(env.actors)
         assert {(event["type"], event["alias"]) for event in events} == {
             ("agent.offline", alias) for alias in env.actors
         }
@@ -136,10 +147,7 @@ async def test_corrupt_projection_is_not_empty_presence(privacy_app):
                 env.infra, env.redis, registry_client=env.app.state.awid_registry_client
             )
         assert await env.redis.get(key) == "{broken"
-        assert (
-            await stream.get_message(ignore_subscribe_messages=True, timeout=0.1)
-            is None
-        )
+        assert await _through_barrier(env, stream) == []
 
 
 @pytest.mark.asyncio
@@ -176,10 +184,7 @@ async def test_older_observer_cannot_restore_an_expired_alias(privacy_app):
             )
             == 0
         )
-        assert (
-            await stream.get_message(ignore_subscribe_messages=True, timeout=0.1)
-            is None
-        )
+        assert await _through_barrier(env, stream) == []
 
 
 @pytest.mark.asyncio
@@ -205,8 +210,13 @@ async def test_two_dashboard_readers_survive_bad_frames_and_observe_one_transiti
             await reconcile_presence(
                 env.infra, env.redis, registry_client=env.app.state.awid_registry_client
             )
+            barrier = {"type": "test.presence.barrier", "barrier": uuid4().hex}
+            await env.redis.publish(team_events_channel_name(TEAM), json.dumps(barrier))
             for reader in readers:
-                events = [await _next_event(reader) for _ in env.actors]
+                events = []
+                while (event := await _next_event(reader)) != barrier:
+                    events.append(event)
+                assert len(events) == len(env.actors)
                 assert {(event["type"], event["alias"]) for event in events} == {
                     ("agent.online", alias) for alias in env.actors
                 }
