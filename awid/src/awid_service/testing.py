@@ -100,11 +100,16 @@ class Registry:
     db: AsyncDatabaseManager
     transport: ServiceTransport
 
-    async def add_team(self, team_id: str, team_did_key: str, *, visibility: str = "public") -> None:
+    async def add_team(
+        self, team_id: str, team_did_key: str, *, visibility: str = "public"
+    ) -> None:
         name, domain = team_id.split(":", 1)
         await self.db.execute(
             "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ($1, $2, $3, $4)",
-            domain, name, team_did_key, visibility,
+            domain,
+            name,
+            team_did_key,
+            visibility,
         )
 
     async def rotate_team_key(self, team_id: str, team_did_key: str) -> None:
@@ -114,10 +119,14 @@ class Registry:
         name, domain = team_id.split(":", 1)
         await self.db.execute(
             "UPDATE {{tables.teams}} SET team_did_key = $3 WHERE domain = $1 AND name = $2",
-            domain, name, team_did_key,
+            domain,
+            name,
+            team_did_key,
         )
 
-    async def rotate_team_key_by_controller(self, team_id: str, team_did_key: str, controller: SigningKey) -> None:
+    async def rotate_team_key_by_controller(
+        self, team_id: str, team_did_key: str, controller: SigningKey
+    ) -> None:
         """Rotate through the real route, signed by ``controller`` as the
         namespace controller (registered for the domain if it has none), so
         AWID keeps the act a pinned server checks against DNS (dns_naming)."""
@@ -125,16 +134,27 @@ class Registry:
         await self.db.execute(
             "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
             "VALUES ($1, $2, 'verified') ON CONFLICT DO NOTHING",
-            domain, _did_key(controller),
+            domain,
+            _did_key(controller),
         )
         timestamp = datetime.now(UTC).isoformat()
-        claims = {"domain": domain, "operation": "rotate_team_key", "name": name, "new_team_did_key": team_did_key}
-        signature = sign_message(bytes(controller), canonical_json_bytes({**claims, "timestamp": timestamp}))
+        claims = {
+            "domain": domain,
+            "operation": "rotate_team_key",
+            "name": name,
+            "new_team_did_key": team_did_key,
+        }
+        signature = sign_message(
+            bytes(controller), canonical_json_bytes({**claims, "timestamp": timestamp})
+        )
         async with httpx.AsyncClient(transport=self.transport, base_url=REGISTRY_URL) as client:
             response = await client.post(
                 f"/v1/namespaces/{domain}/teams/{name}/rotate",
                 json={"new_team_did_key": team_did_key},
-                headers={"Authorization": f"DIDKey {_did_key(controller)} {signature}", "X-AWEB-Timestamp": timestamp},
+                headers={
+                    "Authorization": f"DIDKey {_did_key(controller)} {signature}",
+                    "X-AWEB-Timestamp": timestamp,
+                },
             )
         if response.status_code != 200:
             raise AssertionError(f"rotate_team_key refused: {response.status_code} {response.text}")
@@ -145,7 +165,11 @@ class Registry:
             "INSERT INTO {{tables.team_certificates}} "
             "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
             "SELECT team_uuid, $3, $4, $5, now() FROM {{tables.teams}} WHERE domain = $1 AND name = $2",
-            domain, name, cert["certificate_id"], cert["member_did_key"], cert["alias"],
+            domain,
+            name,
+            cert["certificate_id"],
+            cert["member_did_key"],
+            cert["alias"],
         )
 
     async def revoke(self, certificate_id: str) -> None:
@@ -159,11 +183,20 @@ class Registry:
         and holds ``member``'s certificate."""
         name, domain = member.team_id.split(":", 1)
         issued_at = datetime.now(UTC).replace(microsecond=0)
-        common = {"v": 1, "team_id": member.team_id, "team_did_key": member.team_did_key,
-                  "custodian_id": custodian_id, "issued_at": issued_at.isoformat().replace("+00:00", "Z")}
+        common = {
+            "v": 1,
+            "team_id": member.team_id,
+            "team_did_key": member.team_did_key,
+            "custodian_id": custodian_id,
+            "issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+        }
         custodian = {**common, "type": "aweb.team-custodian", "issuer_did_keys": [_did_key(issuer)]}
-        custody = {**common, "type": "aweb.member-custody", "certificate_id": member.certificate_id,
-                   "member_did_key": member.did_key}
+        custody = {
+            **common,
+            "type": "aweb.member-custody",
+            "certificate_id": member.certificate_id,
+            "member_did_key": member.did_key,
+        }
         for table, key_column, record, extra in (
             ("team_custodians", "custodian_id", custodian, {}),
             ("member_custody", "certificate_id", custody, {"custodian_id": custodian_id}),
@@ -175,9 +208,14 @@ class Registry:
                 f"(team_uuid, {key_column}, record_json, signature, team_did_key, issued_at{columns}) "
                 f"SELECT team_uuid, $1, $2, $3, $4, $5::timestamptz{values} FROM {{{{tables.teams}}}} "
                 "WHERE domain = $6 AND name = $7",
-                record[key_column], canonical_json_bytes(record).decode(),
-                sign_record(bytes(member.team_key), record), member.team_did_key,
-                issued_at, domain, name, *extra.values(),
+                record[key_column],
+                canonical_json_bytes(record).decode(),
+                sign_record(bytes(member.team_key), record),
+                member.team_did_key,
+                issued_at,
+                domain,
+                name,
+                *extra.values(),
             )
 
     def _client(self) -> RegistryClient:
@@ -192,7 +230,12 @@ class Registry:
         await self._client().rotate_key(did_aw, _did_key(new), bytes(old), bytes(new))
 
     async def publish_team_server(
-        self, team_id: str, team_key: SigningKey, *, server_url: str, issued_at: datetime | None = None
+        self,
+        team_id: str,
+        team_key: SigningKey,
+        *,
+        server_url: str,
+        issued_at: datetime | None = None,
     ) -> None:
         """Publishes the team's ``aweb.team-server/1`` record, signed by its
         team key, through AWID's own route."""
@@ -217,7 +260,10 @@ def signed_team_server_record(
         "server_url": server_url,
         "issued_at": issued_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    return {"record": record, "signature": sign_message(bytes(team_key), record_signing_bytes(record))}
+    return {
+        "record": record,
+        "signature": sign_message(bytes(team_key), record_signing_bytes(record)),
+    }
 
 
 @asynccontextmanager
