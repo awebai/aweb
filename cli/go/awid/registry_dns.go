@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
 	"net/url"
 	"os"
 	"strings"
@@ -173,31 +172,7 @@ func isTXTNotFound(err error) bool {
 }
 
 func validateRegistryOrigin(raw string) (string, error) {
-	canonical, err := CanonicalRegistryServerOrigin(raw)
-	if err != nil {
-		return "", err
-	}
-	parsed, err := url.Parse(canonical)
-	if err != nil {
-		return "", err
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "" {
-		return "", fmt.Errorf("registry URL must include a host")
-	}
-	if parsed.Scheme != "https" && !isExplicitDevelopmentEnvironment() {
-		return "", fmt.Errorf("registry URL must use https unless APP_ENV=development")
-	}
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
-		return "", fmt.Errorf("registry URL must not target localhost")
-	}
-	if addr, err := netip.ParseAddr(host); err == nil {
-		if addr.IsPrivate() || addr.IsLoopback() || addr.IsLinkLocalUnicast() || addr.IsMulticast() || addr.IsUnspecified() {
-			return "", fmt.Errorf("registry URL must not target a local or reserved IP address")
-		}
-		return "", fmt.Errorf("registry URL must not use a literal IP address")
-	}
-	return canonical, nil
+	return discoveredRegistryOrigin(raw, registrySelectionEnvironment())
 }
 
 func canonicalServerOrigin(raw string) (string, error) {

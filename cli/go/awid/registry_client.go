@@ -166,6 +166,12 @@ func (c *RegistryClient) DiscoverRegistry(ctx context.Context, domain string) (s
 	return c.Resolver.DiscoverRegistry(ctx, domain)
 }
 
+// SelectRegistry retains the selected origin's provenance and 404 meaning.
+// It does not turn a saved team origin into administrative network trust.
+func (c *RegistryClient) SelectRegistry(ctx context.Context, in RegistryAuthorityInput) (RegistryAuthoritySelection, error) {
+	return c.Resolver.SelectRegistry(ctx, in)
+}
+
 func (c *RegistryClient) ResolveKey(ctx context.Context, didAW string) (*DidKeyResolution, error) {
 	return c.ResolveKeyAt(ctx, c.defaultRegistryURL(), didAW)
 }

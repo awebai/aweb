@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -626,36 +624,25 @@ func (r *RegistryResolver) discoverRegistry(ctx context.Context, domain string) 
 }
 
 func (r *RegistryResolver) DiscoverRegistry(ctx context.Context, domain string) (string, error) {
-	if strings.TrimSpace(r.fallbackRegistryURL) != "" {
-		return r.fallbackRegistryURL, nil
-	}
-	return r.discoverRegistry(ctx, domain)
+	selection, err := r.SelectRegistry(ctx, RegistryAuthorityInput{
+		Environment: registrySelectionEnvironment(), Operation: RegistryOutboundRead,
+		Domain: domain, ExplicitOrigin: r.fallbackRegistryURL,
+	})
+	return selection.Origin, err
 }
 
 func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string) (DomainAuthority, error) {
-	domain = canonicalizeDomain(domain)
-	fallback := strings.TrimSpace(r.fallbackRegistryURL)
-	if fallback != "" && (r.identityDomain == "" || domain == r.identityDomain) {
-		return DomainAuthority{RegistryURL: fallback}, nil
+	in := RegistryAuthorityInput{
+		Environment: registrySelectionEnvironment(), Operation: RegistryOutboundRead,
+		Domain: domain, IdentityDomain: r.identityDomain, ConfiguredOrigin: r.fallbackRegistryURL,
 	}
-	if cached, ok := r.loadRegistryCache(domain); ok {
-		return cached, nil
+	// SetFallbackRegistryURL's released callers without an identity domain use
+	// a global routing pin. SetIdentityRegistryURL supplies the own-domain scope.
+	if r.identityDomain == "" {
+		in.ExplicitOrigin = r.fallbackRegistryURL
 	}
-	authority, err := DiscoverAuthoritativeRegistry(ctx, r.DNSResolver, domain)
-	if err != nil {
-		if fallback != "" && isDNSFallbackFailure(err) {
-			return DomainAuthority{RegistryURL: fallback}, nil
-		}
-		return DomainAuthority{}, err
-	}
-	if strings.TrimSpace(authority.ControllerDID) == "" && fallback != "" {
-		authority.RegistryURL = fallback
-	}
-	if strings.TrimSpace(authority.RegistryURL) == "" {
-		authority.RegistryURL = DefaultAWIDRegistryURL
-	}
-	r.storeRegistryCache(domain, authority, registryDiscoveryTTL)
-	return authority, nil
+	_, authority, err := r.selectRegistryWithAuthority(ctx, in)
+	return authority, err
 }
 
 func (r *RegistryResolver) getAddressJSON(ctx context.Context, baseURL, domain, name string, bypassCache bool, out any) error {
@@ -754,20 +741,6 @@ func (r *RegistryResolver) loadRegistryCache(domain string) (DomainAuthority, bo
 		return DomainAuthority{}, false
 	}
 	return entry.value, true
-}
-
-func isDNSFallbackFailure(err error) bool {
-	var dnsErr *net.DNSError
-	if !errors.As(err, &dnsErr) {
-		return false
-	}
-	if dnsErr.IsTimeout || dnsErr.IsTemporary {
-		return true
-	}
-	detail := strings.ToLower(strings.TrimSpace(dnsErr.Err))
-	return strings.Contains(detail, "connection refused") ||
-		strings.Contains(detail, "network is unreachable") ||
-		strings.Contains(detail, "no route to host")
 }
 
 func (r *RegistryResolver) storeRegistryCache(domain string, authority DomainAuthority, ttl time.Duration) {

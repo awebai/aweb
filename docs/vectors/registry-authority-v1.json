@@ -57,7 +57,8 @@
         "team": {
           "team_id": "source:foreign.example",
           "origin": "https://team.registry.example/api/"
-        }
+        },
+        "team_id": "source:foreign.example"
       },
       "expected": {
         "action": "selected",
@@ -82,7 +83,8 @@
         "team": {
           "team_id": "source:foreign.example",
           "origin": "https://team.registry.example"
-        }
+        },
+        "team_id": "source:foreign.example"
       },
       "expected": {
         "action": "selected",
@@ -106,7 +108,8 @@
         "team": {
           "team_id": "source:other.example",
           "origin": "https://team.registry.example"
-        }
+        },
+        "team_id": "source:foreign.example"
       },
       "error_code": "registry_team_mismatch",
       "error_message": "The selected team's registry does not match the requested domain. Select the exact source team and retry."
@@ -500,7 +503,8 @@
         "team": {
           "team_id": "source:foreign.example",
           "origin": "http://127.0.0.1:18010/api"
-        }
+        },
+        "team_id": "source:foreign.example"
       },
       "expected": {
         "action": "selected",
@@ -545,6 +549,156 @@
       },
       "error_code": "registry_operation_invalid",
       "error_message": "The registry operation is invalid. Choose an administrative operation or an outbound address read."
+    },
+    {
+      "id": "team-other-membership-in-same-domain-refused",
+      "input": {
+        "environment": "production",
+        "operation": "administrative",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        },
+        "team": {
+          "team_id": "other:foreign.example",
+          "origin": "https://team.registry.example"
+        },
+        "team_id": "source:foreign.example"
+      },
+      "error_code": "registry_team_mismatch",
+      "error_message": "The selected team's registry does not match the requested domain. Select the exact source team and retry."
+    },
+    {
+      "id": "no-configured-fallback-timeout",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "",
+        "discovery": {
+          "state": "timeout"
+        }
+      },
+      "error_code": "registry_discovery_unavailable",
+      "error_message": "The domain's registry could not be discovered and no fallback is configured. Check DNS availability or configure your identity's registry, then retry."
+    },
+    {
+      "id": "no-configured-fallback-temporary_failure",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "",
+        "discovery": {
+          "state": "temporary_failure"
+        }
+      },
+      "error_code": "registry_discovery_unavailable",
+      "error_message": "The domain's registry could not be discovered and no fallback is configured. Check DNS availability or configure your identity's registry, then retry."
+    },
+    {
+      "id": "no-configured-fallback-unreachable",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "",
+        "discovery": {
+          "state": "unreachable"
+        }
+      },
+      "error_code": "registry_discovery_unavailable",
+      "error_message": "The domain's registry could not be discovered and no fallback is configured. Check DNS availability or configure your identity's registry, then retry."
+    },
+    {
+      "id": "no-configured-fallback-connection_refused",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "",
+        "discovery": {
+          "state": "connection_refused"
+        }
+      },
+      "error_code": "registry_discovery_unavailable",
+      "error_message": "The domain's registry could not be discovered and no fallback is configured. Check DNS availability or configure your identity's registry, then retry."
+    },
+    {
+      "id": "scoped-memo-discovery",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        },
+        "memo": {
+          "domain": "foreign.example",
+          "origin": "https://memo.registry.example",
+          "controller": "did:key:parsed-controller"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://memo.registry.example",
+        "provenance": "discovery",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "scoped-memo-fallback",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        },
+        "memo": {
+          "domain": "foreign.example",
+          "origin": "https://memo.registry.example",
+          "controller": ""
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://memo.registry.example",
+        "provenance": "fallback",
+        "authority_established": false,
+        "not_found": "unknown"
+      }
+    },
+    {
+      "id": "memo-cannot-mask-refused-new-evidence",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "refused"
+        },
+        "memo": {
+          "domain": "foreign.example",
+          "origin": "https://memo.registry.example",
+          "controller": "did:key:parsed-controller"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
     }
   ]
 }
