@@ -8,7 +8,7 @@ and native egress guard; it does not replace release-gate qualification.
 
 ```sh
 make test-server-local
-LOCAL_TEST_SUITE=server LOCAL_PYTEST_ARGS='tests/test_agent_wake.py -k mail' make test-server-local
+LOCAL_TEST_SUITE=server LOCAL_PYTEST_ARGS='tests/test_mail_send_retry.py' make test-server-local
 LOCAL_TEST_SUITE=registry make test-server-local
 LOCAL_TEST_WORKERS=2 make test-server-local
 ```
@@ -20,6 +20,12 @@ registry-only invocation creates just one pair. Focused pytest arguments are
 relative to the selected package. Use one suite when selecting a package-specific
 file. Existing `PYTEST_ADDOPTS` is preserved; worker options must instead use
 `LOCAL_TEST_WORKERS`.
+
+Before a server suite, the target runs `make prepare-server-node`: the existing
+`make test-node-deps` installs the three committed npm lockfiles, then builds
+channel-core, channel and pi-extension in that order. A preparation failure
+stops before pytest; fix the reported error with `make prepare-server-node`
+and rerun the local target. Registry-only runs do not need this preparation.
 
 ## Guards and cleanup
 
