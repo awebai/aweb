@@ -327,9 +327,7 @@ async def _local_team_aliases(aweb_db, team_id: str) -> list[str]:
 
 async def _global_namespace_names(request: Request, aweb_db, identity: TeamIdentity) -> list[str]:
     namespace, _team_name = parse_team_id(identity.team_id)
-    registry_client = getattr(request.app.state, "awid_registry_client", None)
-    if registry_client is None or not hasattr(registry_client, "list_addresses"):
-        raise HTTPException(status_code=503, detail="awid_registry_unavailable")
+    registry_client = application_registry_client(request.app.state)
     try:
         addresses = await registry_client.list_addresses(namespace)
     except Exception as exc:
