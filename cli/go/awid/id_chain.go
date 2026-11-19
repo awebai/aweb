@@ -715,6 +715,9 @@ func VerifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 // idCurrentCertificateMatches compares the public status commitment with the
 // supplied certificate (docs/id-certificates.md, current certificate checks).
 func idCurrentCertificateMatches(certificate map[string]any, expectedID string) bool {
-	digest, _ := IDCertificateID(certificate)
+	digest, err := IDCertificateID(certificate)
+	if err != nil {
+		return false
+	}
 	return digest == expectedID
 }

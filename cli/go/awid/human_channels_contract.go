@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/awebai/aw/canonicaljson"
 )
 
 const HumanChannelsProfile = "aweb-human-channels-v1"
@@ -535,9 +537,8 @@ func checkHumanChannelsPrepareRequest(v map[string]any) error {
 	}
 	if managed {
 		c := v["group_context"].(map[string]any)
-		a, _ := StrictCanonicalJSON(c["author_ref"])
-		b, _ := StrictCanonicalJSON(author)
-		if string(a) != string(b) || c["message_id"] != v["message_id"] || c["session_id"] != v["conversation_id"] {
+		matches, err := canonicaljson.EqualValues(canonicaljson.Comparison{Expected: author, Actual: c["author_ref"]})
+		if err != nil || !matches || c["message_id"] != v["message_id"] || c["session_id"] != v["conversation_id"] {
 			return hcError("invalid", "message context")
 		}
 	}

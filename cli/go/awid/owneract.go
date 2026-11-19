@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/awebai/aw/canonicaljson"
 	"github.com/awebai/aw/signaturewire"
 	"github.com/awebai/aw/strictjson"
 )
@@ -337,12 +338,11 @@ func VerifyOwnerAct(signing []byte, signature string, opts OwnerActVerifyOptions
 	if opts.NonceUsed(act.Nonce) {
 		return nil, strictjson.Refuse("nonce_reused", "%s", act.Nonce)
 	}
-	want, err := strictjson.Canonical(opts.ExpectedSubject)
+	matches, err := strictjson.EqualValues(canonicaljson.Comparison{Expected: opts.ExpectedSubject, Actual: act.Subject})
 	if err != nil {
 		return nil, err
 	}
-	got, _ := strictjson.Canonical(act.Subject)
-	if !bytes.Equal(want, got) {
+	if !matches {
 		return nil, strictjson.Refuse("subject_mismatch", "the act names a different subject")
 	}
 	return act, nil

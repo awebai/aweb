@@ -174,6 +174,20 @@ func Canonical(value any) ([]byte, error) {
 	return canonicaljson.Strict(normalized)
 }
 
+// EqualValues compares owner-act values under the same ASCII/no-null profile
+// as Canonical, delegating comparison to the shared canonical owner.
+func EqualValues(input canonicaljson.Comparison) (bool, error) {
+	expected, err := canonicalValue(input.Expected)
+	if err != nil {
+		return false, err
+	}
+	actual, err := canonicalValue(input.Actual)
+	if err != nil {
+		return false, err
+	}
+	return canonicaljson.EqualValues(canonicaljson.Comparison{Expected: expected, Actual: actual})
+}
+
 // Validation is this family's ASCII/no-null policy; serialization is shared.
 func canonicalValue(value any) (any, error) {
 	switch v := value.(type) {
