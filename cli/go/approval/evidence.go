@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -61,7 +62,8 @@ func CheckHumanEvidence(link Link, statement, receipt map[string]any, trust, cur
 	claimed, err := proof.VerifyEnrollmentEvidence(statement, nil, *trust)
 	if err != nil {
 		status := "invalid"
-		if err.Error() == "enrollment_evidence_unsupported" {
+		var refusal *proof.RefusalError
+		if errors.As(err, &refusal) && refusal.Code == proof.EnrollmentEvidenceUnsupported {
 			status = "unsupported"
 		}
 		r.Statement = Check{status, err.Error()}
