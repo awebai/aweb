@@ -13,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.asyncio import Redis
 
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
+
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...config import get_settings
@@ -583,6 +585,10 @@ async def delete_workspace(
             ),
         )
 
+    try:
+        registry_client = application_registry_client(request.app.state)
+    except RegistryClientUnavailable as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     deleted_at = datetime.now(timezone.utc)
     cascade_result = await apply_local_workspace_cleanup(
         aweb_db,
@@ -598,6 +604,8 @@ async def delete_workspace(
             actor_id=identity.agent_id, actor_type="agent", authority="team_identity"
         ),
         deleted_at=deleted_at,
+        registry_client=registry_client,
+        request_context=request,
     )
     if cascade_result.errors:
         error = cascade_result.errors[0]

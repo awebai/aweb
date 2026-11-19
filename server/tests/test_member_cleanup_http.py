@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from aweb.events import team_events_channel_name
@@ -219,3 +219,60 @@ async def test_failed_emergency_revoke_audit_preserves_lock_and_emits_no_release
         await env.db.execute(
             "ALTER TABLE {{tables.audit_log}} DROP CONSTRAINT reject_emergency_revoke_audit"
         )
+
+
+@pytest.mark.asyncio
+async def test_empty_prefix_emergency_revoke_keeps_another_teams_reservations(privacy_app):
+    """A team's emergency override has the authenticated team's exact bound."""
+    env = privacy_app
+    for alias in ("bob", "carol"):
+        await _acquire_lock(env, alias=alias, resource_key=f"all/{alias}")
+    other_team = "neighbor:other.example"
+    other_agent = uuid4()
+    await env.db.execute(
+        "INSERT INTO {{tables.teams}} (team_id,namespace,team_name,team_did_key) "
+        "VALUES ($1,'other.example','neighbor','did:key:z6Mkotherteam')",
+        other_team,
+    )
+    await env.db.execute(
+        "INSERT INTO {{tables.agents}} (agent_id,team_id,did_key,alias) "
+        "VALUES ($1,$2,'did:key:z6Mkother','other')",
+        other_agent,
+        other_team,
+    )
+    await env.db.execute(
+        "INSERT INTO {{tables.reservations}} (team_id,resource_key,holder_alias,holder_agent_id,expires_at) "
+        "VALUES ($1,'all/other','other',$2,NOW()+INTERVAL '1 hour')",
+        other_team,
+        other_agent,
+    )
+    response = await _send_member_request(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/reservations/revoke",
+        body={},
+    )
+    assert response.status_code == 200, response.text
+    assert set(response.json()["revoked_keys"]) == {"all/bob", "all/carol"}
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.reservations}} WHERE team_id=$1", TEAM
+        )
+        == 0
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT resource_key FROM {{tables.reservations}} WHERE team_id=$1", other_team
+        )
+        == "all/other"
+    )
+    events = [context for event, context in env.dispatched if event == "reservation.released"]
+    assert {context["resource_key"] for context in events} == {"all/bob", "all/carol"}
+    assert (
+        await env.db.fetch_value(
+            "SELECT actor_did_key FROM {{tables.audit_log}} WHERE team_id=$1 AND event_type='reservations.revoke'",
+            TEAM,
+        )
+        == env.actors["alice"].did
+    )

@@ -1,5 +1,7 @@
 """Lifecycle cleanup through the real SQL transaction and Redis outbox."""
 
+import asyncio
+from datetime import datetime, timezone
 from enum import StrEnum
 from uuid import uuid4
 
@@ -12,6 +14,8 @@ from aweb.lifecycle import (
     replay_lifecycle_side_effects,
 )
 from aweb.messaging.waiting import get_waiting_agents, register_waiting
+from aweb.lifecycle_agent import apply_agent_disposition_on
+from aweb.member_status import MemberStatus
 from aweb.presence import update_agent_presence
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -196,6 +200,25 @@ async def test_agent_cleanup_retains_history_and_completion_credentials_without_
         db, lifecycle_redis, operation_id=result.outbox_operation_id
     )
     assert replay.pending_count == 0
+    repeated = await apply_lifecycle_cascade(
+        db,
+        lifecycle_redis,
+        LifecycleCascadeRequest(
+            operation="cleanup_agent_coordination_state",
+            actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+            team_id=team,
+            target_agent_id=str(agent),
+            workspace_scope="all_for_agent",
+            agent_disposition=disposition,
+        ),
+    )
+    assert repeated.errors == ()
+    assert repeated.identity_deleted == result.identity_deleted
+    assert repeated.identity_retired == result.identity_retired
+    assert (
+        await db.fetch_value("SELECT status FROM {{tables.agents}} WHERE agent_id=$1", agent)
+        == expected_status
+    )
 
 
 @pytest.mark.asyncio
@@ -317,3 +340,84 @@ async def test_prepared_removal_denies_ordinary_member_activity(privacy_app):
     assert await env.db.fetch_value(
         "SELECT deleted_at IS NOT NULL FROM {{tables.agents}} WHERE agent_id=$1", agent
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", [AgentDisposition.DELETED, AgentDisposition.RETIRED])
+async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_removal(
+    aweb_cloud_db, lifecycle_redis, terminal
+):
+    """The checked native state and its write agree under READ COMMITTED."""
+    db = aweb_cloud_db.aweb_db
+    team, agent, workspace = await _seed_workspace_with_claim(db)
+    prepared_pid = asyncio.get_running_loop().create_future()
+
+    async def prepare():
+        async with db.transaction() as prepared_tx:
+            prepared_pid.set_result(await prepared_tx.fetch_value("SELECT pg_backend_pid()"))
+            return await apply_lifecycle_cascade(
+                prepared_tx,
+                lifecycle_redis,
+                LifecycleCascadeRequest(
+                    operation="cleanup_agent_coordination_state",
+                    actor=LifecycleActor(
+                        actor_id="owner", actor_type="system", authority="embedding"
+                    ),
+                    team_id=team,
+                    target_agent_id=str(agent),
+                    workspace_scope="all_for_agent",
+                    agent_disposition=AgentDisposition.PREPARED_REMOVAL,
+                ),
+            )
+
+    prepared_task = None
+    try:
+        async with db.transaction() as terminal_tx:
+            changed = await apply_agent_disposition_on(
+                terminal_tx,
+                agent_ids=[agent],
+                team_id=team,
+                disposition=terminal,
+                deleted_at=datetime.now(timezone.utc),
+            )
+            assert changed == 1
+            prepared_task = asyncio.create_task(prepare())
+            pid = await prepared_pid
+            # Wait for the real blocked UPDATE, not a guessed scheduling delay.
+            async with asyncio.timeout(5):
+                while not await db.fetch_value("SELECT cardinality(pg_blocking_pids($1)) > 0", pid):
+                    assert not prepared_task.done()
+                    await asyncio.sleep(0.01)
+        result = await prepared_task
+        assert [error.code for error in result.errors] == ["terminal_agent_cannot_prepare_removal"]
+        expected_status = {
+            AgentDisposition.DELETED: MemberStatus.DELETED,
+            AgentDisposition.RETIRED: MemberStatus.RETIRED,
+        }[terminal]
+        assert (
+            await db.fetch_value("SELECT status FROM {{tables.agents}} WHERE agent_id=$1", agent)
+            == expected_status
+        )
+        assert (
+            await db.fetch_value(
+                "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+            )
+            is None
+        )
+        assert (
+            await db.fetch_value(
+                "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1", workspace
+            )
+            == 1
+        )
+        assert (
+            await db.fetch_value(
+                "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1",
+                team,
+            )
+            == 0
+        )
+    finally:
+        if prepared_task is not None and not prepared_task.done():
+            prepared_task.cancel()
+            await asyncio.gather(prepared_task, return_exceptions=True)

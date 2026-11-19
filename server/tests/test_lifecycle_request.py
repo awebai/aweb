@@ -1,6 +1,9 @@
 """Public lifecycle request choices and compatibility, without service doubles."""
 
+from datetime import datetime, timezone
+
 import pytest
+from aweb.lifecycle_agent import apply_agent_disposition_on, clear_agent_coordination_on
 from aweb.lifecycle import (
     AgentDisposition,
     LifecycleActor,
@@ -86,3 +89,19 @@ def test_released_local_delete_cannot_delete_a_global_identity_without_workspace
     assert [error.code for error in _agent_precondition_errors(request, row)] == [
         "lifecycle_identity_scope_precondition_failed"
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("team_id", [None, "", "  "])
+async def test_native_lifecycle_writers_reject_missing_team_before_sql(team_id):
+    # Invalid scope must be refused even for an empty target set.
+    with pytest.raises(ValueError, match="nonempty team_id"):
+        await clear_agent_coordination_on(None, agent_ids=[], team_id=team_id)
+    with pytest.raises(ValueError, match="nonempty team_id"):
+        await apply_agent_disposition_on(
+            None,
+            agent_ids=[],
+            team_id=team_id,
+            disposition=AgentDisposition.DELETED,
+            deleted_at=datetime.now(timezone.utc),
+        )

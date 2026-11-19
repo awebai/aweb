@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from redis.asyncio import Redis
 
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
+
 from aweb.audit import OperatorAuditRoute, audit_success
 
 from ...db import DatabaseInfra, get_db_infra
@@ -291,6 +293,10 @@ async def delete_repo(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> RepoDeleteResponse:
     """Soft-delete a repo and cascade to workspaces."""
+    try:
+        registry_client = application_registry_client(request.app.state)
+    except RegistryClientUnavailable as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     manager = db.get_manager("aweb")
     async with manager.transaction() as aweb_db:
         repo = await aweb_db.fetch_one(
@@ -331,6 +337,8 @@ async def delete_repo(
                 ),
                 actor=actor,
                 deleted_at=deleted_at,
+                registry_client=registry_client,
+                request_context=request,
             )
             if result.errors:
                 skipped.append(

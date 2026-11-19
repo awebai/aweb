@@ -188,9 +188,16 @@ async def test_live_activity_protects_workspace_from_teammate_delete(
         )
         # Both planner and mutator must enforce the rule, even if a host calls
         # the public owner without the HTTP route's pre-check.
-        planned = await apply_lifecycle_cascade(env.db, env.redis, replace(request, dry_run=True))
+        planned = await apply_lifecycle_cascade(
+            env.db,
+            env.redis,
+            replace(request, dry_run=True),
+            registry_client=env.app.state.awid_registry_client,
+        )
         assert [error.code for error in planned.errors] == ["local_workspace_still_active"]
-        applied = await apply_lifecycle_cascade(env.db, env.redis, request)
+        applied = await apply_lifecycle_cascade(
+            env.db, env.redis, request, registry_client=env.app.state.awid_registry_client
+        )
         assert [error.code for error in applied.errors] == ["local_workspace_still_active"]
         response = await _send_member_request(
             env, alias="bob", method="DELETE", path=f"/v1/workspaces/{actor.workspace}"
