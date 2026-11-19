@@ -1570,12 +1570,6 @@
       "file": "server/tests/test_user_signature_separation.py",
       "code": "F401",
       "count": 1
-    },
-    {
-      "tool": "ruff",
-      "file": "server/tests/test_verified_human_kind.py",
-      "code": "B023",
-      "count": 3
     }
   ]
 }
