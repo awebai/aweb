@@ -8,6 +8,7 @@ from typing import Any
 from aweb.agent_wake import agent_wake_publisher
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.identity_binding import identity_binding_cache
+from aweb.identity_scope import normalize_identity_scope
 from aweb.mcp.auth import AuthContext
 from aweb.federation.origins import application_public_origins
 from aweb.mcp.mutations import current_mutation_callback
@@ -25,7 +26,11 @@ def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
         team_id=auth.team_id,
         alias=auth.alias,
         agent_id=auth.agent_id,
-        identity_scope=auth.identity_scope,
+        identity_scope=(
+            normalize_identity_scope(auth.identity_scope)
+            if auth.identity_scope is not None
+            else None
+        ),
         certificate_id=auth.certificate_id,
         verified_team_id=auth.team_id if auth.certificate_id else None,
         address_resolution=auth.address_resolution,

@@ -149,7 +149,7 @@ async def _resolve_target_identity(
     stored_route_continuation: bool,
 ) -> Address | None:
     if stored_route_continuation:
-        return
+        return None
     domain, name = _split_address(envelope.target_address)
     # Admission can cache an address before its delivery origin is published.
     # Refresh failed route facts once, retaining cached successful validation.
@@ -177,6 +177,7 @@ async def _resolve_target_identity(
                 raise
         else:
             return resolved
+    return None
 
 
 def _validate_target_identity(resolved, envelope: FederationEnvelope) -> None:

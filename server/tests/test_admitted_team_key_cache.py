@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 from awid.registry import CachedRegistryClient
 from test_cli_never_grants import registry_listener
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_member_team_key import _certificate, _change_key, _connect, _new_member, _row
 from test_messages_http import _signed_team_headers
 from test_team_key_pinning import pinning as pinning

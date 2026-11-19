@@ -44,21 +44,21 @@ async def _room_actor(db):
         or not (auth.certificate_id or auth.trusted_proxy)
     ):
         raise HTTPException(403, "Room requires authenticated team context")
-    row = await read_member_projection(
+    projection = await read_member_projection(
         db.get_manager("aweb"),
         agent_id=auth.agent_id,
         team_id=auth.team_id,
     )
     if (
-        not row
-        or not row["certificate_id"]
-        or row["did_key"] != auth.did_key
-        or not current_member(row)
+        not projection
+        or not projection["certificate_id"]
+        or projection["did_key"] != auth.did_key
+        or not current_member(projection)
     ):
         raise HTTPException(403, CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
     row = await current_membership(
         application_registry_client(auth.request.app.state),
-        dict(row),
+        dict(projection),
         request=auth.request,
     )
     if not row or row["team_id"] != auth.team_id:

@@ -11,7 +11,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from awid.signing import canonical_json_bytes, sign_message
-from test_dashboard_privacy import privacy_app  # noqa: F401
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
