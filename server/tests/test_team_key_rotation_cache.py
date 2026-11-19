@@ -94,6 +94,10 @@ async def world(monkeypatch, aweb_cloud_db):
     )
 
     async def handler(request):
+        if request.url.path.endswith("/certificates"):
+            # OFF-mode registration measurement is distinct from controller
+            # acquisition; its catalog request must not spend the key counter.
+            return httpx.Response(200, json={"certificates": [], "has_more": False})
         if request.url.path.endswith("/revocations"):
             env.revocation_reads += 1
             return httpx.Response(
