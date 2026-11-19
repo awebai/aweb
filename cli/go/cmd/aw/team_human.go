@@ -1642,45 +1642,16 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		if teamHumanAddLayoutOnly {
 			continue
 		}
-		createdIdentity := false
-		var acceptedIdentity *acceptedTeamInvite
-		if plans[i].Profile != nil {
-			targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
-			if sel, err := resolveSelectionAtIdentityHome(plans[i].HomeDir, "", targetIdentityHome); err == nil && strings.TrimSpace(sel.TeamID) != "" {
-				plans[i].Alias = strings.TrimSpace(sel.Alias)
-				plans[i].TeamID = strings.TrimSpace(sel.TeamID)
-			} else {
-				accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
-				if err != nil {
-					if retainUnfinishedProvisioningIdentity(err) {
-						return reportRosterFailure(i, err)
-					}
-					homeRollbackErr := rollback.Rollback()
-					return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
-				}
-				createdIdentity = true
-				acceptedIdentity = accepted
-				plans[i].Alias = accepted.Output.Alias
-				plans[i].TeamID = accepted.Output.TeamID
-				plans[i].CertPath = accepted.Output.CertPath
-				plans[i].ProfileRoleConnected = apiKeyBootstrapMode
+		prepared, err := prepareTeamAgentMembership(teamAgentMembershipPreparation{SourceDir: inviteAnchorDir, Plan: &plans[i], Authority: creation, APIKey: opts.APIKey})
+		if err != nil {
+			if retainUnfinishedProvisioningIdentity(err) {
+				return reportRosterFailure(i, err)
 			}
-		} else {
-			accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
-			if err != nil {
-				if retainUnfinishedProvisioningIdentity(err) {
-					return reportRosterFailure(i, err)
-				}
-				homeRollbackErr := rollback.Rollback()
-				return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
-			}
-			createdIdentity = true
-			acceptedIdentity = accepted
-			plans[i].Alias = accepted.Output.Alias
-			plans[i].TeamID = accepted.Output.TeamID
-			plans[i].CertPath = accepted.Output.CertPath
-			plans[i].ProfileRoleConnected = apiKeyBootstrapMode
+			homeRollbackErr := rollback.Rollback()
+			return reportRosterFailure(i, addPostJoinRollbackError(err, nil, nil, homeRollbackErr))
 		}
+		createdIdentity := prepared.State == teamAgentMembershipCreated
+		acceptedIdentity := prepared.Accepted
 		rollbackOnErr := func(err error) error {
 			var memberRollbackErr error
 			if createdIdentity {
