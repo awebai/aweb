@@ -371,3 +371,14 @@ workspace kind `agent`; otherwise an explicit profile selects the non-repo
 kind. Omission preserves an existing kind. The Python result includes effective
 `workspace_type` so hosts do not read or rewrite native tables to discover it.
 There is no second workspace constructor or added HTTP input/output field.
+
+For retained admission completion, `publish_encryption_key` accepts
+`generation=VerifiedCertificateGeneration` and `agent_id=UUID`, mutually exclusive
+with `identity=TeamIdentity`. Pass the same open transaction used for
+`connect_agent`; it retains the constructor's team and member locks. The public
+member projection owner checks current eligibility and exact certificate/member/
+controller equality. Only its verified stable identity is attributed to the
+assertion. A manager alone is refused for this branch. The signed assertion
+validator and storage remain shared with authenticated request publication.
+Current request publication callers are the native PUT route and hosted service
+publication; the new generation caller is hosted retained creation completion.
