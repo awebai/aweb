@@ -403,6 +403,13 @@ _USABLE_APPROVER = (
 )
 
 
+async def apply_passkey_migrations(db: AsyncDatabaseManager) -> None:
+    """Prepare B3 without constructing authenticator or delivery authority."""
+    await AsyncMigrationManager(
+        db, migrations_path=str(MIGRATIONS), module_name=MIGRATION_MODULE
+    ).apply_pending_migrations()
+
+
 class Passkeys:
     """Approver designation, enrolment and passkey assertions for one app.
 
@@ -454,9 +461,7 @@ class Passkeys:
         self._clock = clock
 
     async def migrate(self) -> None:
-        await AsyncMigrationManager(
-            self.db, migrations_path=str(MIGRATIONS), module_name=MIGRATION_MODULE
-        ).apply_pending_migrations()
+        await apply_passkey_migrations(self.db)
 
     def authenticator(self) -> PasskeyAuthenticator:
         return PasskeyAuthenticator(self)
@@ -2297,8 +2302,7 @@ class Passkeys:
         except (ValueError, KeyError, TypeError):
             raise PasskeyProofUnavailable() from None
         expected = {
-            field: row[field]
-            for field in ("app_id", "team_id", "installation_id", "generation")
+            field: row[field] for field in ("app_id", "team_id", "installation_id", "generation")
         }
         if (
             proof.metadata["evidence_ref"] != evidence_ref

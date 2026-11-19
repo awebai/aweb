@@ -9,10 +9,12 @@ from aweb_naapp.runtime.credential_audit.recorder import (
     PreparedContactProof,
     PreparedEnrolment,
     RoleOf,
+    apply_credential_audit_migrations,
     is_credential_event,
 )
 
 __all__ = [
+    "apply_credential_audit_migrations",
     "ApprovalGovernance",
     "CredentialAudit",
     "GovernanceUnavailable",

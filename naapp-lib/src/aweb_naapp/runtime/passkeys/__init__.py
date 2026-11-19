@@ -38,6 +38,7 @@ from aweb_naapp.runtime.passkeys.service import (
     Passkeys,
     RetirementProtection,
     RetirementRefused,
+    apply_passkey_migrations,
     contact_sha256,
 )
 from aweb_naapp.runtime.passkeys.webauthn import (
@@ -49,6 +50,7 @@ from aweb_naapp.runtime.passkeys.webauthn import (
 )
 
 __all__ = [
+    "apply_passkey_migrations",
     "RetiredSubjects",
     "RetiringInstallation",
     "retire_subjects",

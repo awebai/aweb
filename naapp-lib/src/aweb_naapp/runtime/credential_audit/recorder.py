@@ -262,6 +262,13 @@ class PreparedContactProof:
             raise ContactChangeRefused("contact_proof_unavailable") from None
 
 
+async def apply_credential_audit_migrations(db: AsyncDatabaseManager, *, module_name: str) -> None:
+    """Prepare credential evidence without constructing its authority callbacks."""
+    await AsyncMigrationManager(
+        db, migrations_path=str(Path(__file__).with_name("migrations")), module_name=module_name
+    ).apply_pending_migrations()
+
+
 class CredentialAudit:
     def __init__(
         self,
@@ -319,11 +326,7 @@ class CredentialAudit:
         ] = ContextVar("credential_governance", default=None)
 
     async def migrate(self) -> None:
-        await AsyncMigrationManager(
-            self.db,
-            migrations_path=str(Path(__file__).with_name("migrations")),
-            module_name=self._migration_module,
-        ).apply_pending_migrations()
+        await apply_credential_audit_migrations(self.db, module_name=self._migration_module)
 
     def is_change_approval(self, event: AuditEvent) -> bool:
         return (

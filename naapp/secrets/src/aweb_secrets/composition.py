@@ -18,19 +18,16 @@ from aweb_naapp.console import (
     ClientIdentity,
     ConsoleSession,
     KeyBoundConsoleSession,
-    apply_console_migrations,
 )
 from aweb_naapp.console.handoff_authority import HandoffAuthority, PreparedSessionTarget
 from aweb_naapp.console.handoff_requester import requester_parent
 from aweb_naapp.console.handoff_sessions import ConsoleHandoffs
-from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.egress import AddressPolicy, DnsResolver, Egress
 from aweb_naapp.email import EmailSettings, Mailer
 from aweb_naapp.hooks.owner_act import HUMAN_ROLE_ACTS
-from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, apply_owner_act_migrations
+from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 from aweb_naapp.hooks.producer import RegistrationView
 from aweb_naapp.key_file import read_key_file
-from aweb_naapp.nonces import apply_nonce_migrations
 from aweb_naapp.roles import is_holding_scope
 from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.approvals import (
@@ -51,7 +48,6 @@ from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
 from awid.dns_verify import DomainVerifier
 from fastapi import APIRouter, Request
-from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.activity_service import ActivityReads
@@ -65,16 +61,13 @@ from aweb_secrets.app import (
 from aweb_secrets.approval_email import ApprovalEmailDelivery
 from aweb_secrets.approval_kind import ApprovalKind, approval_kind
 from aweb_secrets.audit_sink import SecretsAudit
-from aweb_secrets.broker_outcomes import prepare_legacy_broker_outcomes
 from aweb_secrets.broker_service import BrokerRequests
 from aweb_secrets.catalog import Catalog
 from aweb_secrets.change import TYPE as CHANGE_TYPE
-from aweb_secrets.change_policy import apply_change_policy_migrations
 from aweb_secrets.change_sets import (
     ChangeSetPolicies,
     ChangeSets,
     DraftLimit,
-    apply_change_set_migrations,
 )
 from aweb_secrets.config import ServiceSettings
 from aweb_secrets.console import OwnerConsole, owner_console_router
@@ -108,21 +101,18 @@ from aweb_secrets.custody import (
     KeyProvider,
     LocalKeyFileProvider,
     SecretOpener,
-    apply_custody_migrations,
 )
 from aweb_secrets.custody.opening import UseSecretOpener
 from aweb_secrets.human_holders import OwnerHoldingAuthority
 from aweb_secrets.human_holding_identity import owner_holding_identity
 from aweb_secrets.installation_lookup import InstallationLookup
-from aweb_secrets.jobs import apply_job_migrations
 from aweb_secrets.metadata_routes import MetadataServices, metadata_router
 from aweb_secrets.onepassword_reconciliation import BackendReconciler
-from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, apply_owner_migrations, is_owner_scope
+from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, is_owner_scope
 from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.passkey_email import PasskeyEmailDelivery
 from aweb_secrets.reconciliation_control_audit import (
     ReconciliationAudit,
-    apply_reconciliation_migrations,
 )
 from aweb_secrets.reconciliation_policy import ReconciliationApprovers, ReconciliationPolicies
 from aweb_secrets.reconciliation_providers import (
@@ -135,15 +125,14 @@ from aweb_secrets.reconciliation_service import ReconciliationControls
 from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.retirement import retire_team
 from aweb_secrets.revisions import bump_config_revision
-from aweb_secrets.run_context import apply_run_dispatch_migrations
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_routes import runner_dispatch_router, runner_registration_router
-from aweb_secrets.runners import apply_runner_migrations
+from aweb_secrets.schema import prepare_business_schema
 from aweb_secrets.status_service import UseStatus
 from aweb_secrets.tokens import ProcessTokenCache
-from aweb_secrets.use_approvals import UseApprovers, UsePolicies, apply_use_approval_migrations
+from aweb_secrets.use_approvals import UseApprovers, UsePolicies
 from aweb_secrets.use_audit import UseApprovalAudit
-from aweb_secrets.use_context import UseCommitter, apply_use_context_migrations
+from aweb_secrets.use_context import UseCommitter
 from aweb_secrets.use_dispatch_authority import UseDispatchAuthority
 from aweb_secrets.use_routes import UseServices, use_router
 
@@ -274,27 +263,6 @@ class _ApprovalServices:
     reconciliation_audit: ReconciliationAudit
 
 
-async def _migrate_stores(*, db: AsyncDatabaseManager, store: PgApprovalStore) -> None:
-    await store.migrate()
-    for migrate in (
-        apply_owner_act_migrations,
-        apply_owner_migrations,
-        apply_console_migrations,
-        apply_change_policy_migrations,
-        apply_custody_migrations,
-        apply_change_set_migrations,
-        partial(apply_dispatch_migrations, before_upgrade=prepare_legacy_broker_outcomes),
-        apply_nonce_migrations,
-        apply_job_migrations,
-        apply_runner_migrations,
-        apply_use_approval_migrations,
-        apply_use_context_migrations,
-        apply_run_dispatch_migrations,
-        apply_reconciliation_migrations,
-    ):
-        await migrate(db)
-
-
 async def _compose_approvals(
     *, runtime: NaappRuntime, settings: ServiceSettings, store: PgApprovalStore, mailer: Mailer
 ) -> _ApprovalServices:
@@ -356,8 +324,6 @@ async def _compose_approvals(
         holding_scopes=is_holding_scope,
         proof_context=contexts,
     )
-    await passkeys.migrate()
-    await credentials.migrate()
     owners = OwnerDirectory(passkeys, db)
     approvals = Approvals(
         store=store,
@@ -402,8 +368,7 @@ async def _compose(
     # Configure the shared fence; never create another G1 source or fence.
     fence.on_retire = partial(retire_team, app_id=settings.app_id)
     registrations = runtime.hook_registrations()
-    store = PgApprovalStore(db)
-    await _migrate_stores(db=db, store=store)
+    store = await prepare_business_schema(db)
 
     approval_services = await _compose_approvals(
         runtime=runtime, settings=settings, store=store, mailer=mailer
