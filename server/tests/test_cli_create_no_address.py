@@ -128,7 +128,7 @@ async def test_a_root_is_created_with_no_address_at_the_real_registry_and_only_o
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("output_fd", [1, 2])
-async def test_process_fixture_drains_large_output_during_shutdown(
+async def test_process_fixture_bounds_shutdown_with_large_captured_output(
     tmp_path, monkeypatch, output_fd
 ):
     child = tmp_path / "noisy-child"
@@ -154,6 +154,7 @@ async def test_process_fixture_drains_large_output_during_shutdown(
     try:
         try:
             await asyncio.wait_for(exercise_shutdown(), 3)
+            assert all(process.returncode is not None for process in processes)
         except TimeoutError:
             pytest.fail("process capture cleanup waited on 8 MiB of undrained output")
     finally:
