@@ -204,13 +204,9 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	}
 	// Only failures with the original resumable material receive retry guidance.
 	// A rejected server identity must be reconciled, never selected automatically.
-	resumable := true
+	recoveryState := apiKeyInitRecoverable
 	defer func() {
-		if resultErr != nil && resumable {
-			if info, err := os.Lstat(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome})); err == nil && info.Mode().IsRegular() {
-				resultErr = fmt.Errorf("%w\n%s", resultErr, partialInitGuidance(resultErr))
-			}
-		}
+		resultErr = finalizeAPIKeyInitFailure(apiKeyInitFailure{Cause: resultErr, Home: awconfig.IdentityHome{Root: req.IdentityHome}, State: recoveryState})
 	}()
 	state, err := loadAPIKeyPartialInit(apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}))
 	if err != nil {
@@ -264,7 +260,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 
 	if req.Global {
 		if responseDID := strings.TrimSpace(resp.DID); responseDID != "" && responseDID != didKey {
-			resumable = false
+			recoveryState = apiKeyInitReconciliationOnly
 			rejected, quarantineErr := quarantineAPIKeyPartialInit(awconfig.IdentityHome{Root: req.IdentityHome})
 			if quarantineErr != nil {
 				return connectOutput{}, fmt.Errorf("global name %q is already registered with a different identity; could not quarantine partial signing material (original retained at %s): %w; operator reconciliation is required", name, apiKeyPartialInitPath(awconfig.IdentityHome{Root: req.IdentityHome}), quarantineErr)
@@ -338,7 +334,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		err = errors.Join(err, rollbackAwTree(awconfig.IdentityHome{Root: req.IdentityHome}, snapshot))
 		return connectOutput{}, fmt.Errorf("%w\n(local state from this attempt was rolled back; rerun the same command to resume)", err)
 	}
-	resumable = false // Connected state must not be retried as an incomplete init.
+	recoveryState = apiKeyInitReconciliationOnly // Connected state must not be retried as an incomplete init.
 	if global && strings.TrimSpace(req.InboundMode) != "" {
 		if err := requireCreatedIdentityInboundMode(nil, req.WorkingDir, req.IdentityHome, serverURL, cert.Team, req.InboundMode); err != nil {
 			return connectOutput{}, err
