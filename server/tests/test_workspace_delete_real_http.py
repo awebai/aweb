@@ -170,8 +170,12 @@ async def test_peer_delete_preserves_an_unbound_workspace_and_its_claim(privacy_
     env = privacy_app
     alice = env.actors["alice"]
     await _claim_tasks(env, count=1)
+    # Workspaces require an agent UUID but intentionally have no agent FK.
+    # An orphan binding exercises unknown identity scope without invalid setup.
     await env.db.execute(
-        "UPDATE {{tables.workspaces}} SET agent_id=NULL WHERE workspace_id=$1", alice.workspace
+        "UPDATE {{tables.workspaces}} SET agent_id=$2 WHERE workspace_id=$1",
+        alice.workspace,
+        uuid4(),
     )
     response = await _send_member_request(
         env, alias="bob", method="DELETE", path=f"/v1/workspaces/{alice.workspace}"
