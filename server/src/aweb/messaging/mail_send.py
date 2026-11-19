@@ -1942,6 +1942,8 @@ async def _send_mail_to_resolved_target(
             continuation=target.continuation,
         )
     recipient = target.recipient
+    if recipient is None:
+        raise ValueError("A new mail target requires a resolved recipient")
     recipient_did = target.recipient_did
     to_agent_id = target.to_agent_id
     to_alias = target.to_alias
@@ -1984,7 +1986,7 @@ async def _send_mail_to_resolved_target(
             conversation_id=payload.conversation_id,
         )
 
-    if (recipient or {}).get("external"):
+    if recipient.get("external"):
         return await deliver_remote_mail_and_project_locally(
             runtime,
             payload,
@@ -2002,7 +2004,7 @@ async def _send_mail_to_resolved_target(
         )
 
     try:
-        if not (recipient or {}).get("external"):
+        if not recipient.get("external"):
             await authorize_message_delivery(
                 db,
                 recipient_agent=recipient,

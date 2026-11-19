@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
 from awid.team_ids import build_team_id, parse_team_id
@@ -124,7 +125,7 @@ def derive_team_address(team_id: str | None, alias: str | None) -> str:
 
 async def get_agent_by_namespace_alias(
     db, *, namespace: str, alias: str
-) -> dict[str, Any] | None:
+) -> Mapping[str, Any] | None:
     aweb_db = db.get_manager("aweb")
     rows = await aweb_db.fetch_all(
         """
