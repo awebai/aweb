@@ -235,7 +235,8 @@ def main() -> int:
         env.update(
             {
                 "HOME": str(home),
-                "AWEB_URL": "http://127.0.0.1:1",
+                # The seed team installs Library through the stack's server.
+                "AWEB_URL": AWEB_URL,
                 "AWID_REGISTRY_URL": AWID_URL,
                 "AWID_SKIP_DNS_VERIFY": "1",
                 "NO_COLOR": "1",
