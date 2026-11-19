@@ -89,6 +89,9 @@ wrong current controller and a controller change during import return 422
 with distinct `team_control_*` codes and a regeneration instruction.
 Unknown controller returns 503 `team_control_authority_unavailable`; missing
 or unreadable import roster returns 503 `team_import_evidence_unavailable`.
-Existing typed key-pin refusals retain their owner's transport mapping.
+An enforced key-pin refusal is converted by the common acquisition phase using
+the existing `team_key_unverified_exception()` owner: 401 with its unchanged
+`team_key_unverified` detail and administrator/retry instruction. It does not
+become unknown evidence or an internal 500.
 Cloud owns missing-artifact 403 `claim_controller_required` for fully unowned
 teams. The organization-owned signup lane retains its own guard.

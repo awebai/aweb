@@ -5,6 +5,7 @@ from enum import StrEnum
 from awid.did import public_key_from_did
 from awid.dns_auth import enforce_timestamp_skew
 from awid.team_ids import build_team_id, parse_team_id
+from awid.team_key_acts import TeamKeyUnverified
 from fastapi import HTTPException
 
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
@@ -13,6 +14,7 @@ from aweb.certificate_auth import (
 )
 from aweb.certificate_evidence import EvidenceMode
 from aweb.service_errors import ServiceError
+from aweb.team_key_pins import team_key_unverified_exception
 from aweb.team_key_reader import read_team_key
 
 
@@ -133,6 +135,8 @@ async def read_fresh_team_controller(
             team_id=team_id,
             evidence=EvidenceMode.FRESH,
         )
+    except TeamKeyUnverified as exc:
+        raise team_key_unverified_exception() from exc
     except AWID_DEPENDENCY_ERRORS as exc:
         raise TeamControlAuthorityUnavailable() from exc
     if not key:
