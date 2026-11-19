@@ -106,10 +106,18 @@ handler branch does not establish that a producer emits that event.
 - `MessageAcknowledgedContext` for incoming mail acknowledgements.
 
 Each supplies `event_type` and `to_context() -> dict[str, object]`. Construct
-them from validated producer data, using `ContentMode`, `MessagePriority`
-and `MessageTransport` from `aweb.messaging.kinds`. Native chat recipients
-are an immutable tuple in the context object and a fresh list in the callback
-dictionary. Nullable identity projections remain null. Local sends omit the
+them from validated producer data. Event names, message kind and transport use
+the server's named enums. Received `content_mode` and priority instead use
+`ContentModeValue` and `MessagePriorityValue` from `aweb.messaging.kinds`: a
+named standard value or the original string, optionally absent. Exact named
+values become `ContentMode`/`MessagePriority` constants; other accepted strings
+retain every character, including case and whitespace. No context performs
+validator narrowing or changes a signed priority. Constructors cannot newly
+fail on accepted metadata, so callback timing remains unchanged.
+
+Native chat recipients accept the existing list or a tuple; the context takes
+an immutable snapshot and returns a fresh list in the callback dictionary.
+Nullable identity projections remain null. Local sends omit the
 optional `federated` key; federation sends retain it. Inbound chat retains its
 existing shared shape, which may have `to_alias` and no `to_aliases` or preview.
 
