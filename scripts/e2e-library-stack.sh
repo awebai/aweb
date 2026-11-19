@@ -90,8 +90,40 @@ assert_project_absent() {
 }
 
 remove_stack() {
+  remove_preparation_containers
   "${COMPOSE[@]}" down -v --rmi local --remove-orphans
   assert_project_absent
+}
+
+# The seed container prepare_fixture writes the fixture through, while it exists.
+PREPARATION_SEED=""
+
+# Removes the live seed; a removal failure is reported and returned.
+release_preparation_seed() {
+  [[ -n "$PREPARATION_SEED" ]] || return 0
+  local seed="$PREPARATION_SEED"
+  PREPARATION_SEED=""
+  if ! docker rm -f "$seed" >/dev/null; then
+    echo "FATAL: could not remove the preparation container $seed" >&2
+    return 1
+  fi
+}
+
+# An interrupted run removes its live seed, then exits with the signal's status,
+# which runs the `all` action's teardown.
+trap 'release_preparation_seed; exit 130' INT
+trap 'release_preparation_seed; exit 143' TERM
+
+# prepare_fixture's seed containers, named "$PROJECT-prepare-<pid>". Compose
+# lists only the containers it created, so a seed a killed run left behind is
+# removed here by name, or it would keep the fixture volume in use.
+remove_preparation_containers() {
+  local seeds
+  seeds="$(docker ps -aq --filter "name=^${PROJECT}-prepare-")"
+  if [[ -n "$seeds" ]]; then
+    # shellcheck disable=SC2086 # one container id per word
+    docker rm -f $seeds >/dev/null
+  fi
 }
 
 stack_up() {
@@ -118,23 +150,19 @@ stack_up() {
 # scripts the services run, and Library's template and grant-read key. Named
 # volumes and Docker API copies also work when this runs inside a container.
 prepare_fixture() {
-  local seed="$PROJECT-prepare-$$"
-  # The project label lets the stack's teardown remove the seed if this run is
-  # interrupted; every other path removes it here.
-  docker create --name "$seed" --label "com.docker.compose.project=$PROJECT" \
+  PREPARATION_SEED="$PROJECT-prepare-$$"
+  # The project label makes a leftover seed visible to assert_project_absent.
+  docker create --name "$PREPARATION_SEED" --label "com.docker.compose.project=$PROJECT" \
     --user 0 --entrypoint /app/.venv/bin/python \
     -v "$PROJECT-fixture:/fixture" -e PYTHONPATH=/fixture/test-support \
     "$PROJECT-aweb" /fixture/e2e/stack_tls_prepare.py "$LIBRARY_E2E_LIBRARY_HOST" "$LIBRARY_E2E_AWEB_HOST" >/dev/null
   local status=0
   {
-    docker cp "$REPO_ROOT/scripts/e2e/." "$seed:/fixture/e2e" &&
-      docker cp "$REPO_ROOT/naapp-lib/testing/src/." "$seed:/fixture/test-support" &&
-      docker start -a "$seed"
+    docker cp "$REPO_ROOT/scripts/e2e/." "$PREPARATION_SEED:/fixture/e2e" &&
+      docker cp "$REPO_ROOT/naapp-lib/testing/src/." "$PREPARATION_SEED:/fixture/test-support" &&
+      docker start -a "$PREPARATION_SEED"
   } || status=$?
-  if ! docker rm -f "$seed" >/dev/null; then
-    echo "FATAL: could not remove the preparation container $seed" >&2
-    (( status != 0 )) || status=1
-  fi
+  release_preparation_seed || { (( status != 0 )) || status=1; }
   (( status == 0 )) || return "$status"
   docker run --rm --user 0 --entrypoint /app/.venv/bin/python \
     -v "$PROJECT-fixture:/fixture" -v "$PROJECT-library-source:/app/naapp/library/src/library" \
