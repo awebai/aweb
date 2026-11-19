@@ -686,10 +686,6 @@ func cliAuthResource(issuer string) string {
 	return strings.TrimRight(issuer, "/") + "/cli"
 }
 
-func cliAuthConfigPath() (string, error) {
-	return cliAuthConfigPathForScope(cliAuthScope)
-}
-
 func cliAuthConfigPathForScope(scope string) (string, error) {
 	scope = strings.TrimSpace(scope)
 	if scope == "" || scope == cliAuthScope || scope == cliAuthScopeOrgCreate || cliAuthSameScopes(scope, cliAuthDefaultScopes) {

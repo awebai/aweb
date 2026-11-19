@@ -1962,7 +1962,7 @@ func TestAwMailInboxLogsStableIDWhenAddressMissing(t *testing.T) {
 		t.Fatalf("interaction from=%q want did:aw:monitor", got)
 	}
 
-	recap := formatInteractionRecap(entries, 10)
+	recap := formatInteractionRecapStyled(entries, 10, false, 0)
 	if !strings.Contains(recap, "from did:aw:monitor (mail)") {
 		t.Fatalf("interaction recap lost sender identity:\n%s", recap)
 	}

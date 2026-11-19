@@ -83,10 +83,6 @@ func runServiceInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func activateExistingTeamMembership(workingDir, teamID string) error {
-	return activateExistingTeamMembershipAt(workingDir, "", teamID)
-}
-
 func activateExistingTeamMembershipAt(workingDir, identityHome, teamID string) error {
 	teamState, err := requireTeamStateForMembershipAt(workingDir, identityHome)
 	if err != nil {
