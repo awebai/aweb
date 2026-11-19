@@ -320,19 +320,11 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		return connectOutput{}, errors.Join(err, rollbackAwTree(awconfig.IdentityHome{Root: req.IdentityHome}, snapshot))
 	}
 
-	out, err = initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
-		ContextFile: req.ContextFile, Role: strings.TrimSpace(req.Role),
-		HumanName:    strings.TrimSpace(req.HumanName),
-		AgentType:    strings.TrimSpace(req.AgentType),
-		APIKey:       strings.TrimSpace(resp.APIKey),
-		IdentityHome: strings.TrimSpace(req.IdentityHome),
+	out, err = connectAPIKeyInitializedMember(apiKeyMemberConnection{
+		Request: req, ServerURL: serverURL, WorkspaceAPIKey: resp.APIKey, Snapshot: snapshot,
 	})
 	if err != nil {
-		// Roll back everything this run created. The partial-init state (when
-		// present) survives via the snapshot, so a retry resumes with the same
-		// signing key the server already has on record.
-		err = errors.Join(err, rollbackAwTree(awconfig.IdentityHome{Root: req.IdentityHome}, snapshot))
-		return connectOutput{}, fmt.Errorf("%w\n(local state from this attempt was rolled back; rerun the same command to resume)", err)
+		return connectOutput{}, err
 	}
 	recoveryState = apiKeyInitReconciliationOnly // Connected state must not be retried as an incomplete init.
 	if global && strings.TrimSpace(req.InboundMode) != "" {
