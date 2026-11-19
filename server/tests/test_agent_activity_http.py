@@ -351,10 +351,14 @@ async def test_failing_redis_is_unavailable_and_the_failure_is_logged(
 
     assert response.status_code == 503
     assert response.json()["detail"].startswith("publishing_unavailable: ")
-    assert [record.getMessage() for record in caplog.records] == [
+    # Maintenance can report the same Redis outage through its own loggers.
+    records = [
+        record for record in caplog.records if record.name == "aweb.routes.agent_activity"
+    ]
+    assert [record.getMessage() for record in records] == [
         f"Activity rate limit failed for {env.actors['alice'].id}"
     ]
-    assert caplog.records[0].exc_info is not None
+    assert records[0].exc_info is not None
 
 
 async def _grant_publish(env, alias, scopes, *, event_from_session_key=True):

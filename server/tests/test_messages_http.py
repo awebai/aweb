@@ -8539,436 +8539,146 @@ async def test_messages_inbox_and_ack_accept_ephemeral_cert_auth(aweb_cloud_db):
     assert row["read_at"] is not None
 
 
-@pytest.mark.asyncio
-async def test_send_message_requires_timestamp_when_signature_is_provided(
-    aweb_cloud_db,
-):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
-    )
-
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    payload = {
-        "to_did": "did:aw:bob",
-        "subject": "signed",
-        "body": "hi",
-        "from_did": "did:aw:alice",
-        "message_id": "11111111-1111-4111-8111-111111111111",
-        "signature": "sig",
-        "signed_payload": "{}",
-    }
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
-    assert resp.status_code == 422, resp.text
-    assert "message_id and timestamp are required" in resp.text
-
-
-@pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_body_mismatch(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
-    )
-
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    # Generated at run time so the fixture clears the federation skew window and
-    # the tampered body is the only thing left that can refuse it.
-    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    message_id = "11111111-1111-4111-8111-111111111111"
-    signed_payload = canonical_json_bytes(
-        {
-            "body": "signed hi",
-            "from": "did:aw:alice",
-            "from_did": "did:aw:alice",
-            "message_id": message_id,
-            "subject": "signed subject",
-            "timestamp": timestamp,
-            "to": "did:aw:bob",
-            "to_did": "",
-            "type": "mail",
-        }
-    )
-    payload = {
-        "to_did": "did:aw:bob",
-        "subject": "signed subject",
-        "body": "tampered hi",
-        "from_did": "did:aw:alice",
+async def _assert_registered_mail_field_refusal(
+    registered_mail_actors,
+    *,
+    detail: str,
+    signed_changes: dict[str, str] | None = None,
+    request_changes: dict[str, str] | None = None,
+    omit_fields: tuple[str, ...] = (),
+) -> None:
+    """Refuse one changed field, then accept the exact valid neighboring wire."""
+    env, actors = registered_mail_actors
+    alice, bob = actors["alice"], actors["bob"]
+    message_id, conversation_id = str(uuid4()), str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    original = {
+        "type": "mail",
         "message_id": message_id,
+        "conversation_id": conversation_id,
         "timestamp": timestamp,
-        "signature": sign_message(alice_sk, signed_payload),
-        "signed_payload": signed_payload.decode(),
-    }
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
-    assert resp.status_code == 422, resp.text
-    assert "signed_payload body must match the mail body" in resp.text
-
-
-@pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_priority_mismatch(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
-    )
-
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    timestamp = "2026-04-10T00:00:00Z"
-    message_id = "12111111-1111-4111-8111-111111111111"
-    signed_payload = canonical_json_bytes(
-        {
-            "body": "signed hi",
-            "from": "did:aw:alice",
-            "from_did": "did:aw:alice",
-            "message_id": message_id,
-            "subject": "signed subject",
-            "timestamp": timestamp,
-            "to": "did:aw:bob",
-            "to_did": "",
-            "type": "mail",
-        }
-    )
-    payload = {
-        "to_did": "did:aw:bob",
         "subject": "signed subject",
         "body": "signed hi",
-        "priority": "urgent",
-        "from_did": "did:aw:alice",
-        "message_id": message_id,
-        "timestamp": timestamp,
-        "signature": sign_message(alice_sk, signed_payload),
-        "signed_payload": signed_payload.decode(),
+        "priority": "normal",
+        "from": alice.address,
+        "from_did": alice.did_key,
+        "from_stable_id": alice.stable_id,
+        "to": bob.address,
+        "to_did": bob.did_key,
+        "to_stable_id": bob.stable_id,
     }
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
-    assert resp.status_code == 422, resp.text
-    assert "signed_payload priority must match the mail message" in resp.text
-
-
-@pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_recipient_mismatch(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
-    )
-
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    timestamp = "2026-04-10T00:00:00Z"
-    message_id = "14111111-1111-4111-8111-111111111111"
-    signed_payload = canonical_json_bytes(
-        {
-            "body": "signed hi",
-            "from": "did:aw:alice",
-            "from_did": "did:aw:alice",
-            "message_id": message_id,
+    def request(signed_fields: dict[str, str]) -> dict[str, str]:
+        encoded = canonical_json_bytes(signed_fields)
+        return {
+            "to_did": bob.stable_id,
+            "conversation_id": conversation_id,
             "subject": "signed subject",
-            "timestamp": timestamp,
-            "to": "did:aw:mallory",
-            "to_did": "did:aw:mallory",
-            "type": "mail",
-        }
-    )
-    payload = {
-        "to_did": "did:aw:bob",
-        "subject": "signed subject",
-        "body": "signed hi",
-        "from_did": "did:aw:alice",
-        "message_id": message_id,
-        "timestamp": timestamp,
-        "signature": sign_message(alice_sk, signed_payload),
-        "signed_payload": signed_payload.decode(),
-    }
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
-    assert resp.status_code == 422, resp.text
-    assert "signed_payload recipient must match the mail recipient" in resp.text
-
-
-@pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_from_stable_id_mismatch(
-    aweb_cloud_db,
-):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
-    )
-
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    timestamp = "2026-04-10T00:00:00Z"
-    message_id = "15111111-1111-4111-8111-111111111111"
-    signed_payload = canonical_json_bytes(
-        {
             "body": "signed hi",
-            "from": "did:aw:alice",
-            "from_did": "did:aw:alice",
-            "from_stable_id": "did:aw:mallory",
+            "priority": "normal",
+            "from_did": alice.did_key,
             "message_id": message_id,
-            "subject": "signed subject",
             "timestamp": timestamp,
-            "to": "did:aw:bob",
-            "to_did": "did:aw:bob",
-            "type": "mail",
+            "signature": sign_message(alice.signing_key, encoded),
+            "signed_payload": encoded.decode(),
         }
-    )
-    payload = {
-        "to_did": "did:aw:bob",
-        "subject": "signed subject",
-        "body": "signed hi",
-        "from_did": "did:aw:alice",
-        "message_id": message_id,
-        "timestamp": timestamp,
-        "signature": sign_message(alice_sk, signed_payload),
-        "signed_payload": signed_payload.decode(),
-    }
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
-    assert resp.status_code == 422, resp.text
-    assert "signed_payload from_stable_id must match the authenticated sender" in resp.text
+    async def post(payload: dict[str, str]):
+        raw = json.dumps(payload).encode()
+        return await env.client.post(
+            "/v1/messages",
+            content=raw,
+            headers={
+                **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                "Content-Type": "application/json",
+            },
+        )
+
+    changed = request({**original, **(signed_changes or {})})
+    changed.update(request_changes or {})
+    for field in omit_fields:
+        changed.pop(field)
+    refused = await post(changed)
+    assert refused.status_code == 422, refused.text
+    assert detail in refused.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0
+    accepted = await post(request(original))
+    assert accepted.status_code == 200, accepted.text
+    stored = await env.db.fetch_one(
+        "SELECT body,signed_payload FROM {{tables.messages}} WHERE message_id=$1",
+        UUID(message_id),
+    )
+    assert stored["body"] == "signed hi"
+    assert stored["signed_payload"] == canonical_json_bytes(original).decode()
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 1
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_signed_payload_from_mismatch(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
+async def test_send_message_requires_timestamp_when_signature_is_provided(registered_mail_actors):
+    await _assert_registered_mail_field_refusal(
+        registered_mail_actors,
+        omit_fields=("timestamp",),
+        detail="message_id and timestamp are required",
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
-    )
-
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
-
-    timestamp = "2026-04-10T00:00:00Z"
-    message_id = "16111111-1111-4111-8111-111111111111"
-    signed_payload = canonical_json_bytes(
-        {
-            "body": "signed hi",
-            "from": "otherco.com/mallory",
-            "from_did": "did:aw:alice",
-            "message_id": message_id,
-            "subject": "signed subject",
-            "timestamp": timestamp,
-            "to": "did:aw:bob",
-            "to_did": "did:aw:bob",
-            "type": "mail",
-        }
-    )
-    payload = {
-        "to_did": "did:aw:bob",
-        "subject": "signed subject",
-        "body": "signed hi",
-        "from_did": "did:aw:alice",
-        "message_id": message_id,
-        "timestamp": timestamp,
-        "signature": sign_message(alice_sk, signed_payload),
-        "signed_payload": signed_payload.decode(),
-    }
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
-
-    assert resp.status_code == 422, resp.text
-    assert "signed_payload from must match the authenticated sender" in resp.text
 
 
 @pytest.mark.asyncio
-async def test_send_message_rejects_signed_from_did_mismatch(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkhhodeuD8atLozQZK9giDHHwvgioQW3LxmP8osbz3qzU8' /* team */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('ops:otherco.com', 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */, 'did:aw:bob', 'otherco.com/bob', 'bob', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:bob', '') IS NOT NULL THEN 'did:key:z6MkhjGZJUfS3HvzqmbwWDoehpXsNtnrcskFTpUYN727wRRH' /* bob */ END)
-        """
+async def test_send_message_rejects_signed_payload_body_mismatch(registered_mail_actors):
+    await _assert_registered_mail_field_refusal(
+        registered_mail_actors,
+        request_changes={"body": "tampered hi"},
+        detail="signed_payload body must match the mail body",
     )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_signed_payload_priority_mismatch(registered_mail_actors):
+    await _assert_registered_mail_field_refusal(
+        registered_mail_actors,
+        request_changes={"priority": "urgent"},
+        detail="signed_payload priority must match the mail message",
     )
 
-    payload = {
-        "to_did": "did:aw:bob",
-        "subject": "signed",
-        "body": "hi",
-        "from_did": "did:aw:mallory",
-        "message_id": "11111111-1111-4111-8111-111111111111",
-        "timestamp": "2026-04-10T00:00:00Z",
-        "signature": "sig",
-        "signed_payload": "{}",
-    }
-    body_bytes = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body_bytes),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/messages", content=body_bytes, headers=headers)
 
-    assert resp.status_code == 422, resp.text
-    assert "from_did must match the authenticated sender" in resp.text
+@pytest.mark.asyncio
+async def test_send_message_rejects_signed_payload_recipient_mismatch(registered_mail_actors):
+    _, actors = registered_mail_actors
+    await _assert_registered_mail_field_refusal(
+        registered_mail_actors,
+        signed_changes={"to": actors["carol"].stable_id},
+        detail="signed_payload recipient must match the mail recipient",
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_signed_payload_from_stable_id_mismatch(registered_mail_actors):
+    _, actors = registered_mail_actors
+    await _assert_registered_mail_field_refusal(
+        registered_mail_actors,
+        signed_changes={"from_stable_id": actors["carol"].stable_id},
+        detail="signed_payload from_stable_id must match the authenticated sender",
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_signed_payload_from_mismatch(registered_mail_actors):
+    _, actors = registered_mail_actors
+    await _assert_registered_mail_field_refusal(
+        registered_mail_actors,
+        signed_changes={"from": actors["carol"].address},
+        detail="signed_payload from must match the authenticated sender",
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_message_rejects_signed_from_did_mismatch(registered_mail_actors):
+    _, actors = registered_mail_actors
+    await _assert_registered_mail_field_refusal(
+        registered_mail_actors,
+        request_changes={"from_did": actors["bob"].did_key},
+        detail="from_did must match the authenticated sender",
+    )
 
 
 @pytest.mark.asyncio
