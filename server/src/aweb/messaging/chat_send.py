@@ -8,7 +8,9 @@ import json
 import logging
 import uuid as uuid_mod
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from enum import Enum, auto
 from aweb.messaging.recipient import Recipient
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -1266,7 +1268,12 @@ async def _resolve_session_recipient_rows(
     ]
 
 
-@dataclass(frozen=True)
+class ChatSessionSelection(Enum):
+    REQUEST_DEFAULT = auto()
+    REUSE_PAIR = auto()
+
+
+@dataclass(frozen=True, init=False)
 class ChatTarget:
     """Whom a chat send reaches: the recipients a new send names, or the session it continues.
 
@@ -1274,7 +1281,7 @@ class ChatTarget:
     session, are set for a continuation. ``source`` keys the federation
     authority's rate bucket for the route lookups the send makes.
 
-    ``reuse_or_create`` marks a send to one recipient that goes to the session
+    ``REUSE_PAIR`` marks a send to one recipient that goes to the session
     the two share, or to one the send creates when they share none;
     ``shared_session_id`` is the session they shared when the target was
     resolved. Such a send never closes a session.
@@ -1284,15 +1291,31 @@ class ChatTarget:
     source: str
     session_id: UUID | None = None
     actor_did: str = ""
-    reuse_or_create: bool = False
+    session_selection: ChatSessionSelection = ChatSessionSelection.REQUEST_DEFAULT
     shared_session_id: UUID | None = None
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        recipients: Sequence[Mapping[str, Any]],
+        source: str,
+        session_id: UUID | None = None,
+        actor_did: str = "",
+        session_selection: ChatSessionSelection = ChatSessionSelection.REQUEST_DEFAULT,
+        shared_session_id: UUID | None = None,
+    ) -> None:
+        if not isinstance(session_selection, ChatSessionSelection):
+            raise TypeError("Chat targets require a named ChatSessionSelection")
         object.__setattr__(
             self,
             "recipients",
-            tuple(Recipient.from_delivery_projection(row) for row in self.recipients),
+            tuple(Recipient.from_delivery_projection(row) for row in recipients),
         )
+        object.__setattr__(self, "source", source)
+        object.__setattr__(self, "session_id", session_id)
+        object.__setattr__(self, "actor_did", actor_did)
+        object.__setattr__(self, "session_selection", session_selection)
+        object.__setattr__(self, "shared_session_id", shared_session_id)
 
 
 @dataclass(frozen=True)
@@ -1320,7 +1343,7 @@ async def resolve_chat_targets(
     runtime: MessagingRuntime,
     source: str,
     *,
-    reuse_or_create: bool = False,
+    session_selection: ChatSessionSelection = ChatSessionSelection.REQUEST_DEFAULT,
     recipient_binding: RecipientIdentityBinding | None = None,
 ) -> ChatTarget:
     """Resolve whom a send reaches, before any of it is stored.
@@ -1330,7 +1353,7 @@ async def resolve_chat_targets(
     session id selects the other participants of that session. ``source`` keys
     the federation authority's rate bucket for this caller.
 
-    With ``reuse_or_create`` the request names one recipient and no session:
+    With ``REUSE_PAIR`` the request names one recipient and no session:
     the target carries the session the two share, which the sender signs, or
     none, for which the sender proposes an id.
     """
@@ -1368,7 +1391,7 @@ async def resolve_chat_targets(
         signature=selector.signature,
         recipient_binding=recipient_binding,
     )
-    if not reuse_or_create:
+    if session_selection is ChatSessionSelection.REQUEST_DEFAULT:
         return ChatTarget(recipients=target_rows, source=source)
     if len(target_rows) != 1:
         raise DeliveryRefusal(
@@ -1381,7 +1404,7 @@ async def resolve_chat_targets(
     return ChatTarget(
         recipients=target_rows,
         source=source,
-        reuse_or_create=True,
+        session_selection=ChatSessionSelection.REUSE_PAIR,
         shared_session_id=shared_session_id,
     )
 
@@ -1696,7 +1719,7 @@ async def _send_to_named_recipients(
     signed_requested_session_id = _sender_bound_fresh_session(
         payload, auth, requested_session_id
     )
-    if target.reuse_or_create:
+    if target.session_selection is ChatSessionSelection.REUSE_PAIR:
         requested_session_id = await _reuse_or_create_session(
             db,
             team_id=auth.team_id,

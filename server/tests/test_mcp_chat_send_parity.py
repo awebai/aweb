@@ -488,6 +488,7 @@ async def test_two_interleaved_sends_that_reuse_or_create_share_one_session_and_
     from aweb.identity_auth_deps import MessagingAuth
     from aweb.messaging.chat_send import (
         ChatSessionChanged,
+        ChatSessionSelection,
         resolve_chat_targets,
         send_chat,
     )
@@ -511,7 +512,7 @@ async def test_two_interleaved_sends_that_reuse_or_create_share_one_session_and_
             CreateSessionRequest(to_aliases=["bob"], message=""),
             server.runtime,
             "test",
-            reuse_or_create=True,
+            session_selection=ChatSessionSelection.REUSE_PAIR,
         )
 
     async def send(target, session_id, message):
