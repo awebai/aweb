@@ -3,6 +3,7 @@ package wake
 import (
 	"errors"
 	"net"
+	"os"
 	"testing"
 	"time"
 )
@@ -16,9 +17,13 @@ func TestControlExchangeFailureDoesNotProveDaemonAbsence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { listener.Close() })
+			t.Cleanup(func() {
+				if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+					t.Error(err)
+				}
+			})
 			release := make(chan struct{})
-			defer close(release)
+
 			done := make(chan error, 1)
 			go func() {
 				conn, err := listener.Accept()
@@ -31,22 +36,35 @@ func TestControlExchangeFailureDoesNotProveDaemonAbsence(t *testing.T) {
 				}
 				if name == "unterminated-response" {
 					if _, err := conn.Write([]byte(`{"ok":true}`)); err != nil {
-						conn.Close()
-						done <- err
+						done <- errors.Join(err, conn.Close())
 						return
 					}
 				}
 				done <- conn.Close()
 			}()
+			defer func() {
+				close(release)
+				if err := <-done; err != nil {
+					t.Error(err)
+				}
+			}()
 			_, err = callWithTimeout(store.SocketPath(), ControlRequest{Op: OpPause, Home: "/instance"}, 30*time.Millisecond)
 			if err == nil || errors.Is(err, ErrDaemonDown) {
 				t.Errorf("accepted peer failure = %v, want unavailable without absence proof", err)
 			}
-			if name != "deadline" {
-				if err := <-done; err != nil {
-					t.Fatal(err)
-				}
-			}
 		})
+	}
+}
+
+func TestDaemonLockInspectionFailureIsNotAbsence(t *testing.T) {
+	store := tempStore(t)
+	if err := os.Mkdir(store.LockPath(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LockOwner(store.LockPath()); err == nil {
+		t.Fatal("invalid lock treated as proof of daemon absence")
+	}
+	if _, err := StatusFromStore(store, 128); err == nil {
+		t.Fatal("status swallowed lock inspection failure")
 	}
 }
