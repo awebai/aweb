@@ -39,10 +39,14 @@ async def cleanup_expired_grant_liveness(
         """,
         ttl_seconds,
     )
+    if not isinstance(status, str) or not status.startswith("DELETE "):
+        raise ValueError("Grant liveness cleanup did not return a DELETE count")
     try:
-        return int(str(status).split()[-1])
-    except Exception:
-        return 0
+        return int(status.removeprefix("DELETE "))
+    except ValueError as exc:
+        raise ValueError(
+            "Grant liveness cleanup returned an invalid DELETE count"
+        ) from exc
 
 
 async def valid_grant_liveness_by_workspace(

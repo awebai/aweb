@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException
+from aweb.service_errors import IdentityBindingError
 
 from aweb.human_kind import (
     IdentityKindObservation,
@@ -45,7 +46,7 @@ async def _observe_row(registry_client, row):
             if row["did_aw"]
             else IdentityBinding(did_key=row["did_key"])
         )
-    except HTTPException as exc:
+    except (HTTPException, IdentityBindingError) as exc:
         return "unavailable" if exc.status_code == 503 else "invalid"
     observation = await observe_identity_kind(registry_client, binding)
     if (

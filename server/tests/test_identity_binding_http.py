@@ -658,7 +658,7 @@ async def test_verified_proxy_context_rechecks_subject_binding(
     privacy_app, monkeypatch
 ):
     from starlette.requests import Request
-    from fastapi import HTTPException
+    from aweb.service_errors import IdentityBindingError
     from aweb.internal_auth import build_internal_auth_header_value
     from aweb.mcp.auth import MCPAuthMiddleware
 
@@ -713,7 +713,7 @@ async def test_verified_proxy_context_rechecks_subject_binding(
             bob.id,
             other,
         )
-        with pytest.raises(HTTPException) as refused:
+        with pytest.raises(IdentityBindingError) as refused:
             await middleware._resolve_auth(proxy_request())
         assert refused.value.status_code == 403
 

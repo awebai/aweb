@@ -12,7 +12,8 @@ from fastapi import HTTPException
 
 from aweb.agent_wake import agent_wake_scope
 from aweb.id_chain_auth import authenticate_id_chain
-from aweb.identity_auth_deps import _enforce_current_membership
+from aweb.identity_auth_deps import current_membership
+from aweb.application_state import application_registry_client
 from aweb.identity_binding import verify_identity_binding
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
 from aweb.mcp.signing import sign_hosted_message
@@ -55,7 +56,11 @@ async def _room_actor(db):
         or not current_member(row)
     ):
         raise HTTPException(403, CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
-    row = await _enforce_current_membership(auth.request, dict(row))
+    row = await current_membership(
+        application_registry_client(auth.request.app.state),
+        dict(row),
+        request=auth.request,
+    )
     if not row or row["team_id"] != auth.team_id:
         raise HTTPException(403, CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
     if auth.trusted_proxy:
@@ -74,7 +79,9 @@ async def _room_actor(db):
 async def room_read(db, *, after=None, limit=50):
     auth, actor = await _room_actor(db)
     return json.dumps(
-        await present_room(db, auth.request, await read_room(db, actor, after=after, limit=limit))
+        await present_room(
+            db, auth.request, await read_room(db, actor, after=after, limit=limit)
+        )
     )
 
 
@@ -95,7 +102,9 @@ async def room_pending(db):
     return json.dumps(await pending_room_notices(db, actor))
 
 
-async def room_post(db, *, hosted_signer=None, subject="", body="", e2ee=False, signed_post=None):
+async def room_post(
+    db, *, hosted_signer=None, subject="", body="", e2ee=False, signed_post=None
+):
     if e2ee:
         raise HTTPException(422, "room_e2ee_unsupported")
     auth, actor = await _room_actor(db)
@@ -104,7 +113,9 @@ async def room_post(db, *, hosted_signer=None, subject="", body="", e2ee=False, 
         payload = RoomPost.model_validate(signed_post)
     else:
         if not auth.trusted_proxy:
-            raise HTTPException(403, "Provide an identity-signed post, or use aw room post")
+            raise HTTPException(
+                403, "Provide an identity-signed post, or use aw room post"
+            )
         room = await room_metadata(db, actor)
         signed = {
             "type": "chat",

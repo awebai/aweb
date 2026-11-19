@@ -34,6 +34,7 @@ from .outbox_recovery import (
 )
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
+from .auth_error_transport import install_auth_error_handlers
 from .service_errors import ServiceError
 from .messaging.chat_policy import HumanChatRefused
 from .install_admins import install_admin_setup_message
@@ -602,6 +603,8 @@ def create_app(
                 correlation_id=request.headers.get("X-Correlation-ID"),
             ),
         )
+
+    install_auth_error_handlers(app)
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):

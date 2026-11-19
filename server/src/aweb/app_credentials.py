@@ -8,7 +8,8 @@ is never accepted for another, even when one physical key serves several.
 
 from __future__ import annotations
 
-import hashlib
+from aweb.request_body import request_body_sha256
+
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -165,12 +166,7 @@ async def verify_app_credential(
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is None:
-        body_sha256 = hashlib.sha256(
-            getattr(request.state, "cached_body", b"") or b""
-        ).hexdigest()
-
+    body_sha256 = request_body_sha256(request)
     try:
         canonical = decode_signed_payload_header(
             str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()

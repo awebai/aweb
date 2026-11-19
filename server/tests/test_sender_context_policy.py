@@ -35,3 +35,21 @@ def test_empty_keys_never_verify_a_stored_global_claim():
     )
     assert verified_projection(row)["did_aw"] is None
     assert "NULLIF(a.did_key, '') IS NOT NULL" in verified_key_sql("a")
+
+
+@pytest.mark.parametrize(
+    "code,action",
+    [
+        ("identity_binding_mismatch", "current credentials"),
+        ("identity_binding_unavailable", "Retry"),
+    ],
+)
+def test_typed_binding_refusal_retains_reason_and_action(code, action):
+    from aweb.service_errors import IdentityBindingCode, IdentityBindingError
+
+    error = IdentityBindingError(
+        IdentityBindingCode(code), headers={"Retry-After": "7"}
+    )
+    assert error.detail == code
+    assert action in error.message
+    assert error.headers == {"Retry-After": "7"}

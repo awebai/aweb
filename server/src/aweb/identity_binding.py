@@ -17,7 +17,8 @@ from awid.identity_observation import (
 from awid.identity_observation import (
     observe_identity_binding as observe_public_identity_binding,
 )
-from fastapi import HTTPException, Request
+from fastapi import Request
+from aweb.service_errors import IdentityBindingCode, IdentityBindingError
 
 logger = logging.getLogger(__name__)
 _BINDING_TTL = 60
@@ -94,14 +95,14 @@ async def verify_identity_binding(
     if not did_aw and not address:
         return IdentityBinding(did_key=did_key)
     if not did_aw or not did_aw.startswith("did:aw:"):
-        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
     client = (
         registry_client
         if registry_client is not None
         else getattr(request.app.state, "awid_registry_client", None)
     )
     if client is None:
-        raise HTTPException(status_code=503, detail="identity_binding_unavailable")
+        raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
     cache = identity_binding_cache(request.app.state)
     key = (did_aw, did_key, address)
     if registry_client is not None:
@@ -150,9 +151,9 @@ async def observe_current_identity_binding(
     """
     did_aw, address = (did_aw or "").strip(), (address or "").strip()
     if not did_aw.startswith("did:aw:"):
-        raise HTTPException(status_code=403, detail="identity_binding_mismatch")
+        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
     if registry_client is None:
-        raise HTTPException(status_code=503, detail="identity_binding_unavailable")
+        raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
     return await _observe_into_cache(
         registry_client, cache, (did_aw, did_key, address), monotonic()
     )
@@ -189,7 +190,8 @@ async def observe_identity_binding(
             address=address,
         )
     except IdentityObservationRefused as exc:
-        status = 403 if exc.code == "identity_binding_mismatch" else 503
+        code = IdentityBindingCode(exc.code)
+        status = 403 if code is IdentityBindingCode.MISMATCH else 503
         delay = getattr(exc, "retry_after_seconds", None)
         headers = None
         if (
@@ -201,9 +203,7 @@ async def observe_identity_binding(
         ):
             # Never shorten an upstream window or busy-loop a zero hint.
             headers = {"Retry-After": str(max(1, math.ceil(delay)))}
-        raise HTTPException(
-            status_code=status, detail=exc.code, headers=headers
-        ) from exc
+        raise IdentityBindingError(code, headers=headers) from exc
 
 
 async def refresh_projection_binding(
@@ -259,7 +259,7 @@ async def verify_pending_identity_bindings(
                 did_aw=row["did_aw"] or "",
                 address=row["address"] or "",
             )
-        except HTTPException as exc:
+        except IdentityBindingError as exc:
             counts["awid_error" if exc.status_code == 503 else "unbound"] += 1
             continue
         if not dry_run:

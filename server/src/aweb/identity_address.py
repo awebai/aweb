@@ -12,6 +12,7 @@ class AddressResolutionState(StrEnum):
     VERIFIED = "verified"
     UNKNOWN = "unknown"
     CONTEXT_REQUIRED = "context_required"
+    UNSELECTED = "unselected"
 
 
 @dataclass(frozen=True)

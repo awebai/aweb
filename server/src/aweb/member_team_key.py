@@ -15,13 +15,14 @@ import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, StrEnum, auto
+from enum import Enum, auto
 from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
 from awid.team_ids import parse_team_id
 
+from aweb.member_status import MemberStatus as MemberStatus
 from aweb.service_errors import AuthenticationError, NotFoundError
 
 
@@ -30,13 +31,6 @@ class MemberReadLock(Enum):
 
     NONE = auto()
     SHARE = auto()
-
-
-class MemberStatus(StrEnum):
-    ACTIVE = "active"
-    RETIRED = "retired"
-    ARCHIVED = "archived"
-    DELETED = "deleted"
 
 
 RECIPIENT_RECONNECT_DETAIL = "Check the name; if the agent exists, ask it to reconnect with a current team certificate."

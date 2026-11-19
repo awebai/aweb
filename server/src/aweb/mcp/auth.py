@@ -16,6 +16,9 @@ from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.agent_wake import agent_wake_publisher
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.identity_address import AddressResolution
+from aweb.service_errors import IdentityBindingError
+from aweb.application_state import RegistryClientUnavailable
+from aweb.auth_error_transport import mcp_auth_error_response
 from aweb.internal_auth import (
     parse_internal_auth_context,
     read_internal_actor_projection,
@@ -25,7 +28,7 @@ from aweb.mcp.mutations import (
     reset_mutation_callback,
     set_mutation_callback,
 )
-from aweb.team_auth_deps import _aweb_db
+from aweb.team_registry import native_database_manager
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +135,12 @@ class MCPAuthMiddleware:
 
         try:
             ctx = await self._resolve_auth(request)
+        except (IdentityBindingError, RegistryClientUnavailable) as exc:
+            await mcp_auth_error_response(exc)(scope, receive, send)
+            return
         except HTTPException as exc:
             response = JSONResponse(
-                {"error": exc.detail},
-                status_code=exc.status_code,
-                headers=exc.headers,
+                {"error": exc.detail}, status_code=exc.status_code, headers=exc.headers
             )
             await response(scope, receive, send)
             return
@@ -172,7 +176,7 @@ class MCPAuthMiddleware:
         identity = await get_messaging_auth(request, self.db_infra)
         workspace = None
         if identity.certificate_id and identity.agent_id:
-            workspace = await _aweb_db(self.db_infra).fetch_one(
+            workspace = await native_database_manager(self.db_infra).fetch_one(
                 """
                 SELECT workspace_id
                 FROM {{tables.workspaces}}
@@ -191,7 +195,7 @@ class MCPAuthMiddleware:
     async def _resolve_proxy_auth(
         self, internal: dict[str, str], *, request: Request
     ) -> AuthContext:
-        aweb_db = _aweb_db(self.db_infra)
+        aweb_db = native_database_manager(self.db_infra)
         team_id = internal["team_id"]
         row = await read_internal_actor_projection(aweb_db, internal)
         if not row:

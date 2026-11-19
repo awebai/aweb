@@ -2089,6 +2089,14 @@ class RegistryClient:
         )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _CertificateMissRefresh:
+    """One reader-partition producer and the verified omission it rechecks."""
+
+    certificate_id: str | None
+    task: asyncio.Task[list[TeamCertificate]]
+
+
 class CachedRegistryClient(RegistryClient):
     """Redis-backed caching wrapper for RegistryClient reads."""
 
@@ -2097,7 +2105,7 @@ class CachedRegistryClient(RegistryClient):
     _domain_verifier: DomainVerifier | None
     _id_status_refreshes: dict[str, asyncio.Task[_IDStatusRefresh]]
     _team_key_signature_refreshes: dict[str, asyncio.Task[str | None]]
-    _team_certificate_miss_refreshes: dict[str, asyncio.Task[list[TeamCertificate]]]
+    _team_certificate_miss_refreshes: dict[str, _CertificateMissRefresh]
 
     async def _invalidate_controller_request(
         self, request, registry_origin: str
@@ -2770,11 +2778,16 @@ class CachedRegistryClient(RegistryClient):
         self,
         domain: str,
         name: str,
+        *,
+        certificate_id: str | None = None,
     ) -> list[TeamCertificate]:
-        """Recheck a verified certificate's omission, once per team per five seconds.
+        """Recheck a signature-verified certificate missing from the cached list.
 
-        Call only after the presented certificate's signature and revocation
-        checks. Suppression is unavailable authority, never proof of absence.
+        Distinct newly registered members need independent miss admission
+        (aweb-adjw). A verified certificate shares one five-second budget across
+        clients; legacy callers without an ID retain their team-wide budget.
+        Call only after signature and revocation checks. Suppression is
+        unavailable authority, never proof of absence.
         Both a waiter and the shared producer retain the client's total bound;
         cancelling a waiter does not cancel another waiter's bounded producer.
         """
@@ -2782,30 +2795,68 @@ class CachedRegistryClient(RegistryClient):
             self._team_certificates_cache_key(domain, name, active_only=False),
             self._team_certificates_generation_key(domain, name),
         )
-        async with asyncio.timeout(self.timeout_seconds):
-            task = self._team_certificate_miss_refreshes.get(cache_key)
-            if task is None:
-                task = asyncio.create_task(
-                    self._refresh_missing_team_certificate(
-                        domain,
-                        name,
-                        cache_key=cache_key,
-                    )
+        admission_key = (
+            f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}"
+        )
+        if certificate_id is not None:
+            if not isinstance(certificate_id, str) or not certificate_id.strip():
+                raise ValueError(
+                    "Pass the exact signature-verified certificate ID for a registration miss."
                 )
-                self._team_certificate_miss_refreshes[cache_key] = task
+            digest = hashlib.sha256(certificate_id.encode()).hexdigest()
+            admission_key += f":certificate:{digest}"
+        async with asyncio.timeout(self.timeout_seconds):
+            while True:
+                refresh = self._team_certificate_miss_refreshes.get(cache_key)
+                if refresh is None:
+                    task = asyncio.create_task(
+                        self._refresh_missing_team_certificate(
+                            domain,
+                            name,
+                            cache_key=cache_key,
+                            admission_key=admission_key,
+                        )
+                    )
+                    refresh = _CertificateMissRefresh(
+                        certificate_id=certificate_id, task=task
+                    )
+                    self._team_certificate_miss_refreshes[cache_key] = refresh
+                    task.add_done_callback(
+                        lambda done: self._finish_certificate_miss_refresh(
+                            cache_key, done
+                        )
+                    )
+                try:
+                    certificates = await asyncio.shield(refresh.task)
+                except (RedisError, OSError) as exc:
+                    raise RegistryError(
+                        "AWID certificate existence refresh unavailable",
+                        status_code=503,
+                    ) from exc
+                if (
+                    certificate_id is None
+                    or refresh.certificate_id == certificate_id
+                    or any(
+                        cert.certificate_id == certificate_id for cert in certificates
+                    )
+                ):
+                    return certificates
+                # Another member's refresh predates this registration. Reuse
+                # its positive facts, but spend this verified omission's own
+                # bounded admission if it still needs an authoritative answer.
+                if self._team_certificate_miss_refreshes.get(cache_key) is refresh:
+                    self._team_certificate_miss_refreshes.pop(cache_key)
 
-                def finished(done: asyncio.Task[list[TeamCertificate]]) -> None:
-                    self._team_certificate_miss_refreshes.pop(cache_key, None)
-                    if not done.cancelled():
-                        done.exception()  # Observe failures after every waiter was cancelled.
-
-                task.add_done_callback(finished)
-            try:
-                return await asyncio.shield(task)
-            except (RedisError, OSError) as exc:
-                raise RegistryError(
-                    "AWID certificate existence refresh unavailable", status_code=503
-                ) from exc
+    def _finish_certificate_miss_refresh(
+        self,
+        cache_key: str,
+        task: asyncio.Task[list[TeamCertificate]],
+    ) -> None:
+        refresh = self._team_certificate_miss_refreshes.get(cache_key)
+        if refresh is not None and refresh.task is task:
+            self._team_certificate_miss_refreshes.pop(cache_key)
+        if not task.cancelled():
+            task.exception()  # Observe failures after every waiter was cancelled.
 
     async def _refresh_missing_team_certificate(
         self,
@@ -2813,11 +2864,12 @@ class CachedRegistryClient(RegistryClient):
         name: str,
         *,
         cache_key: str,
+        admission_key: str,
     ) -> list[TeamCertificate]:
         async with asyncio.timeout(self.timeout_seconds):
-            # Forged certificates spend only the separate signature bucket.
+            # Only an independently verified artifact may spend its own budget.
             admitted = await self.redis_client.set(
-                f"awid:team_certificates_miss_refresh:{self.registry_url}:{domain}/{name}",
+                admission_key,
                 "1",
                 nx=True,
                 ex=_TEAM_KEY_SIGNATURE_REFRESH_COOLDOWN_SECONDS,

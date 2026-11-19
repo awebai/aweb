@@ -14,8 +14,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from aweb.member_team_key import read_member_projection
 
-from aweb.identity_auth_deps import current_membership, lookup_identity_agent_context
+from aweb.identity_auth_deps import current_membership
 from aweb.messaging.messages import _has_verified_same_team_membership
 from aweb.messaging.participants import messaging_participants_by_aliases
 from aweb.messaging.sender_membership import sender_memberships
@@ -94,7 +95,7 @@ async def _row(env, member):
 
 
 async def _identity_membership(env, member):
-    row = await lookup_identity_agent_context(env.infra, did_key=member[1])
+    row = await read_member_projection(env.db, team_id=TEAM, did_key=member[1])
     return await current_membership(env.app.state.awid_registry_client, row)
 
 

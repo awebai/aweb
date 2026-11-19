@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.team_registry import native_database_manager
 from aweb.identity_binding import (
     IdentityProjectionField,
     verified_identity_field_sql,
@@ -44,14 +45,6 @@ async def lookup_participant_identity_metadata(
     return {**values.get(ref["did"], {}), "participant_kind": "native"}
 
 
-def _aweb_db(db_or_manager):
-    return (
-        db_or_manager.get_manager("aweb")
-        if hasattr(db_or_manager, "get_manager")
-        else db_or_manager
-    )
-
-
 def routable_chat_address(
     meta: dict[str, str] | None, viewer_team_id: str | None, fallback_alias: str
 ) -> str:
@@ -90,7 +83,7 @@ async def lookup_identity_metadata_by_did(
     if not unique_dids:
         return {}
 
-    aweb_db = _aweb_db(db_or_manager)
+    aweb_db = native_database_manager(db_or_manager)
     rows = await aweb_db.fetch_all(
         f"""
         SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, did_key, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, team_id, alias, identity_scope
@@ -136,7 +129,7 @@ async def lookup_identity_metadata_by_agent_id(
     if not unique_agent_ids:
         return {}
 
-    aweb_db = _aweb_db(db_or_manager)
+    aweb_db = native_database_manager(db_or_manager)
     rows = await aweb_db.fetch_all(
         f"""
         SELECT agent_id::text AS agent_id, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, did_key, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import hashlib
 import logging
-from dataclasses import dataclass, field, replace
-from enum import StrEnum
+from dataclasses import replace
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
 from awid.signing import verify_did_key_signature
 from fastapi import Depends, HTTPException, Request
 
-from aweb.auth_context import GrantContext
+from aweb.request_body import request_body_sha256
+from aweb.auth_context import IdentityAuth, MessagingAuth
+from aweb.auth_context import GrantContext as GrantContext
 from aweb.auth_metrics import count_legacy_request_auth
 from aweb.certificate_registration import (
     configured_registration_mode,
@@ -18,6 +18,7 @@ from aweb.certificate_registration import (
 )
 from aweb.deps import get_db
 from aweb.id_chain_auth import authenticate_id_chain
+from aweb.service_errors import IdentityBindingError
 from aweb.identity_address import AddressResolution, AddressResolutionState
 from aweb.identity_binding import (
     IdentityBinding,
@@ -29,11 +30,11 @@ from aweb.member_team_key import (
     current_member,
     member_projection_columns_sql,
 )
-from aweb.team_auth_deps import (
-    TeamIdentity,
-    _aweb_db,
-    _team_auth_allowed_audiences,
-    get_team_identity,
+from aweb.team_auth_deps import get_team_identity
+from aweb.auth_context import TeamIdentity
+from aweb.team_registry import (
+    native_database_manager,
+    request_auth_audiences,
     revoked_certificates,
 )
 from aweb.team_auth_envelope import identity_auth_signature_payload
@@ -41,30 +42,6 @@ from aweb.team_auth_envelope import identity_auth_signature_payload
 logger = logging.getLogger(__name__)
 
 IDENTITY_DID_AW_HEADER = "X-AWEB-DID-AW"
-
-
-@dataclass(frozen=True)
-class IdentityAuth:
-    did_key: str
-    did_aw: str | None
-    address: str | None
-    address_resolution: AddressResolution = field(default_factory=AddressResolution)
-
-
-@dataclass(frozen=True)
-class MessagingAuth:
-    did_key: str
-    did_aw: str | None
-    address: str | None
-    team_id: str | None = None
-    alias: str | None = None
-    agent_id: str | None = None
-    identity_scope: str | None = None
-    certificate_id: str | None = None
-    verified_team_id: str | None = None
-    grant: GrantContext | None = None
-    id_chain: dict | None = None
-    address_resolution: AddressResolution = field(default_factory=AddressResolution)
 
 
 def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
@@ -87,14 +64,8 @@ def participant_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:
     return auth_dids(identity)[:1]
 
 
-def _get_body_sha256(request: Request) -> str:
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is not None:
-        return body_sha256
-    return hashlib.sha256(b"").hexdigest()
-
-
 async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
+    """Verify request-bound key possession and stable identity before membership selection."""
     auth_header = request.headers.get("Authorization")
     if not auth_header:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
@@ -109,8 +80,8 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
             request,
             did_aw=did_aw,
             timestamp=timestamp,
-            body_sha256=_get_body_sha256(request),
-            allowed_audiences=_team_auth_allowed_audiences(request)
+            body_sha256=request_body_sha256(request),
+            allowed_audiences=request_auth_audiences(request)
             if request.headers.get("X-AWEB-Signed-Payload")
             else [],
         )
@@ -134,7 +105,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     try:
         binding = await verify_identity_binding(request, did_key=did_key, did_aw=did_aw)
-    except HTTPException as exc:
+    except IdentityBindingError as exc:
         if exc.status_code == 403:
             raise HTTPException(
                 status_code=401, detail="did:aw does not match Authorization did:key"
@@ -148,24 +119,27 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     except Exception as exc:
         # Retain the typed cause in request-local evidence; log no URL, name,
         # exception message or credentials. Failed discovery grants no fact.
-        outcome = AddressResolution("unknown", cause=exc)
+        outcome = AddressResolution(AddressResolutionState.UNKNOWN, cause=exc)
         logger.warning("Identity address evidence unavailable: %s", type(exc).__name__)
     else:
-        outcome = AddressResolution("empty")
+        outcome = AddressResolution(AddressResolutionState.EMPTY)
         if len(addresses) == 1:
             first = addresses[0]
             address = f"{first.domain}/{first.name}"
             binding = await verify_identity_binding(
                 request, did_key=did_key, did_aw=did_aw, address=address
             )
-            outcome = AddressResolution("verified")
+            outcome = AddressResolution(AddressResolutionState.VERIFIED)
+        elif addresses:
+            # Discovery is known, but listing order does not select a From.
+            outcome = AddressResolution(AddressResolutionState.UNSELECTED)
     request.state.identity_address_resolution = outcome
 
     await authenticate_id_chain(request, binding)
     binding_db = db if db is not None else getattr(request.app.state, "db", None)
-    if binding_db is not None and outcome.state != "unknown":
+    if binding_db is not None and outcome.state is not AddressResolutionState.UNKNOWN:
         await refresh_projection_binding(
-            _aweb_db(binding_db),
+            native_database_manager(binding_db),
             agent_id=None,
             did_key=did_key,
             binding=key_binding if key_binding.fresh_observation else binding,
@@ -177,21 +151,21 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
     )
 
 
-class IdentityContextSelection(StrEnum):
-    REQUIRE_UNIQUE = "require_unique"
-    IDENTITY_ONLY = "identity_only"
-
-
 async def lookup_identity_agent_context(
     db,
     *,
     did_key: str,
     did_aw: str | None = None,
-    selection: IdentityContextSelection = IdentityContextSelection.REQUIRE_UNIQUE,
-    request: Request | None = None,
+    request: Request,
 ) -> dict | None:
+    """Select one current member context, preserving identity-only reads on ambiguity.
+
+    trust-model.md:186-191 permits a unique current row to supply its exact
+    verified address; address-dependent effects require an explicit credential
+    when several rows remain. No newest-row winner establishes authority.
+    """
     did_aw_value = (did_aw or "").strip()
-    aweb_db = _aweb_db(db)
+    aweb_db = native_database_manager(db)
     rows = await aweb_db.fetch_all(
         """
         SELECT """
@@ -206,12 +180,8 @@ async def lookup_identity_agent_context(
     )
     if not rows:
         return None
-    outcome = (
-        getattr(request.state, "identity_address_resolution", None)
-        if request is not None
-        else None
-    )
-    if outcome is not None and outcome.state == "unknown":
+    outcome = getattr(request.state, "identity_address_resolution", None)
+    if outcome is not None and outcome.state is AddressResolutionState.UNKNOWN:
         # Key possession/current DID binding was authenticated above. During an
         # address outage, retain previously verified projections, including
         # verified-empty; never mint a marker from a key-only observation.
@@ -220,7 +190,7 @@ async def lookup_identity_agent_context(
             did_key=did_key,
             did_aw=did_aw_value,
         )
-    elif request is not None:
+    else:
         for row in rows:
             binding = await verify_identity_binding(
                 request,
@@ -233,44 +203,41 @@ async def lookup_identity_agent_context(
             )
         rows = [{**dict(row), "did_aw_verified_key": did_key} for row in rows]
     rows = [verified_projection(row) for row in rows]
-    if request is not None and selection is IdentityContextSelection.IDENTITY_ONLY:
-        registry = getattr(request.app.state, "awid_registry_client", None)
-        eligible = []
-        for row in rows:
-            member = await current_membership(registry, row, request=request)
-            if member and member.get("team_id"):
-                eligible.append(member)
-        rows = eligible
-        if len(rows) > 1:
-            outcome = getattr(
-                request.state, "identity_address_resolution", AddressResolution()
-            )
-            request.state.identity_address_resolution = replace(
-                outcome, state=AddressResolutionState.CONTEXT_REQUIRED
-            )
-        if not rows:
-            return None
+    registry = getattr(request.app.state, "awid_registry_client", None)
+    eligible = []
+    for row in rows:
+        member = await current_membership(registry, row, request=request)
+        if member and member.get("team_id"):
+            eligible.append(member)
+    rows = eligible
+    outcome = getattr(request.state, "identity_address_resolution", AddressResolution())
     if len(rows) > 1:
-        if selection is IdentityContextSelection.IDENTITY_ONLY and did_aw_value:
+        request.state.identity_address_resolution = replace(
+            outcome,
+            state=AddressResolutionState.CONTEXT_REQUIRED,
+        )
+        if did_aw_value:
             return None
         raise HTTPException(
             status_code=409,
             detail="Authenticated DID matches multiple active local agents",
         )
+    if not rows:
+        return None
+    if outcome.state is AddressResolutionState.UNKNOWN:
+        request.state.identity_address_resolution = outcome.with_stored_bindings(
+            rows,
+            did_key=did_key,
+            did_aw=did_aw_value,
+        )
+    elif outcome.state is AddressResolutionState.UNSELECTED:
+        state = (
+            AddressResolutionState.VERIFIED
+            if rows[0].get("address")
+            else AddressResolutionState.EMPTY
+        )
+        request.state.identity_address_resolution = replace(outcome, state=state)
     return dict(rows[0])
-
-
-async def _enforce_current_membership(
-    request: Request, row: dict | None
-) -> dict | None:
-    """Keep identity access while rechecking membership under identity.md:569-585.
-
-    Registry revocation or an enforced missing registration removes team
-    attribution; identity-only inbox and history remain scoped to the DID.
-    """
-    return await current_membership(
-        getattr(request.app.state, "awid_registry_client", None), row, request=request
-    )
 
 
 async def current_membership(
@@ -339,6 +306,7 @@ def _without_team_context(row: dict) -> dict:
 
 
 async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingAuth:
+    """Resolve one original messaging principal for HTTP and native MCP consumers."""
     if (request.headers.get("Authorization") or "").lstrip().startswith("AWEB-Grant "):
         # Imported lazily: identity_grant_auth imports MessagingAuth from here.
         from aweb.identity_grant_auth import verify_identity_grant_auth
@@ -368,7 +336,6 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         db,
         did_key=identity.did_key,
         did_aw=identity.did_aw,
-        selection=IdentityContextSelection.IDENTITY_ONLY,
         request=request,
     )
     outcome = getattr(
