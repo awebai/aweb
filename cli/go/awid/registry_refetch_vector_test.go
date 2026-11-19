@@ -146,7 +146,7 @@ func buildRegistryRefetchVector(t *testing.T) registryRefetchVector {
 					{FromDID: oldDID, ExpectedStatus: "identity_mismatch"},
 					{AdvanceSeconds: 10, FromDID: oldDID, ExpectedStatus: "identity_mismatch"},
 				},
-				ExpectedRequests: map[string]int{addressPath: 2},
+				ExpectedRequests: map[string]int{addressPath: 2, keyPath: 0},
 			},
 			{
 				Name: "address-read-that-fails-is-stale", Address: "acme.com/alice", FromStableID: stableID,
@@ -155,7 +155,7 @@ func buildRegistryRefetchVector(t *testing.T) registryRefetchVector {
 					{FromDID: oldDID, ExpectedStatus: "verification_stale"},
 					{AdvanceSeconds: 10, FromDID: oldDID, ExpectedStatus: "verification_stale"},
 				},
-				ExpectedRequests: map[string]int{addressPath: 2},
+				ExpectedRequests: map[string]int{addressPath: 2, keyPath: 0},
 			},
 		},
 	}

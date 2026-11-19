@@ -383,6 +383,7 @@
         }
       ],
       "expected_requests": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 0,
         "/v1/namespaces/acme.com/addresses/alice": 2
       }
     },
@@ -421,6 +422,7 @@
         }
       ],
       "expected_requests": {
+        "/v1/did/did:aw:jPUMBAvNeJo8USHNtJ81Wm7cqnk/key": 0,
         "/v1/namespaces/acme.com/addresses/alice": 2
       }
     }

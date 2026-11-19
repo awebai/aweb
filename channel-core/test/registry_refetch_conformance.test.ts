@@ -57,6 +57,8 @@ describe("registry refetch conformance", () => {
       else if (result.outcome === "OK_VERIFIED" && result.currentDidKey && result.currentDidKey !== step.from_did) status = "identity_mismatch";
       expect({ step: index, status }).toEqual({ step: index, status: step.expected_status });
     }
-    expect(served).toEqual(expect.objectContaining(tc.expected_requests));
+    for (const [path, count] of Object.entries(tc.expected_requests)) {
+      expect({ path, count: served[path] ?? 0 }).toEqual({ path, count });
+    }
   });
 });
