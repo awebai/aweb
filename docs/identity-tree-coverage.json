@@ -76,7 +76,7 @@
         "cli/go/cmd/aw/connect.go"
       ],
       "status": "legacy",
-      "reason": "Bootstrap redemption generates a key, optionally registers its DID, validates the returned member certificate and connects (cli/go/cmd/aw/connect.go:77,111,122,132). It does not install an ID-parent chain. Missing: a redemption response/consumer binding ancestry to that exact child and a real token-redemption chain-or-required-refusal journey. The token itself is not ancestry evidence."
+      "reason": "Retired bootstrap-token flow: connect.go refuses before generating keys, registering identity, redeeming a token or writing state. TestConnectBootstrapUnsupported drives the real binary and asserts the actionable refusal naming a dashboard setup key or aw init --join-from."
     },
     {
       "id": "CLI.INIT.APIKEY",

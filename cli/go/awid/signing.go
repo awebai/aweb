@@ -144,7 +144,7 @@ func SignMessage(key ed25519.PrivateKey, env *MessageEnvelope) (string, error) {
 // TestCanonicalJSONValuePreservesUnicode.
 //
 // This matches the shared onboardingDIDKeySignPayload helper used by the
-// onboarding signing family (cli-signup, claim-human, bootstrap-redeem).
+// onboarding signing family (cli-signup, claim-human).
 //
 // Struct fields are written in declaration order, so callers pass maps.
 func CanonicalJSONValue(v any) (string, error) {

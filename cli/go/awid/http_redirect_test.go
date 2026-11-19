@@ -173,18 +173,6 @@ func TestTrustRequestsDoNotFollowRedirects(t *testing.T) {
 			},
 		},
 		{
-			name:             "bootstrap redeem",
-			expectsAuthority: true,
-			invoke: func(baseURL string) error {
-				client, err := NewWithIdentity(baseURL, signingKey, did)
-				if err != nil {
-					return err
-				}
-				_, err = client.BootstrapRedeem(context.Background(), &BootstrapRedeemRequest{Token: "secret-bootstrap-token", DIDKey: did})
-				return err
-			},
-		},
-		{
 			name:             "CLI signup",
 			expectsAuthority: true,
 			invoke: func(baseURL string) error {

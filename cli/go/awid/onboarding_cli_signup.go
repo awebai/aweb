@@ -127,8 +127,7 @@ func CliSignup(
 // function does not re-marshal anything.
 //
 // The signed envelope is built by the shared onboardingDIDKeySignPayload helper,
-// which is also used by claim-human
-// and bootstrap-redeem so all three onboarding endpoints produce
+// which is also used by claim-human so both onboarding endpoints produce
 // byte-identical canonical payloads.
 func onboardingDIDKeyHeaders(
 	method, path string,
