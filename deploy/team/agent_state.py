@@ -1,5 +1,5 @@
 """One agent state (TEAM_STATE_DIR, bound at /state) as an age-encrypted
-backup and back, on a host, as root, with the agent's writer fenced:
+backup and back, on a host, as root, with the agent's writer fenced (below):
 
     python3 -I agent_state.py capture --state DIR --container NAME \\
         --age PATH --age-sha256 HEX --recipients FILE --out NEW_DIR \\
@@ -14,10 +14,17 @@ databases stays refused (teamctl restore).
 
 Docker is asked through the local daemon's socket alone, with no inherited
 context or configuration, and its answer is an exact inventory: a failed or
-mixed answer refuses. capture refuses unless the named container is absent,
-or stopped with that state directory as its /state. Stopping a container does
-not keep it stopped: the operator's fence (renaming the state directory, which
-the agent's bind refuses to create) precedes the final capture.
+mixed answer refuses.
+
+The fence on the writer is the operator's, in this order, before the final
+capture: record the agent container's id and its /state source; stop it and
+disable whatever starts it (its Compose project, a unit); remove that verified
+container; rename the state directory, so that the agent's bind, which never
+creates its source (create_host_path: false), refuses any later start of the
+old service. Stopping alone is no fence: a stopped container keeps its bind
+and its restart policy. capture then takes the renamed directory, and refuses
+while any container of the given name exists; it records the daemon and that
+absence, which is an observation, not the fence itself.
 
 capture walks the state once to an inventory, refusing any entry it cannot
 read, checks every member as deploy/team/state_archive.py does, and streams
@@ -424,25 +431,20 @@ def listed(answer: subprocess.CompletedProcess, name: str) -> dict | None:
     return found[0] if found else None
 
 
-def writer(name: str, state: Path) -> dict:
-    """The fence on the writer as this host's daemon answers it: absent, or
-    stopped with state as its /state; anything else refuses."""
+def writer(name: str) -> dict:
+    """The capture's observation of the fence on the writer, as this host's
+    daemon answers it: no container of that name may exist. The fence itself
+    is the operator's (see the module's docstring); this records the daemon
+    and the absence, and refuses anything else."""
     daemon = docker("info", "--format", "{{.ID}}")
     if daemon.returncode != 0 or daemon.stderr.strip() or not daemon.stdout.strip():
         raise Refused(f"docker info failed (rc={daemon.returncode})")
     container = listed(docker("container", "ls", "--all", "--no-trunc", "--format", "{{json .}}"), name)
-    seen = {"daemon": daemon.stdout.strip(), "container": name}
-    if container is None:
-        return {**seen, "state": "absent"}
-    if container["state"] not in ("exited", "created"):
-        raise Refused(f"the container {name} is {container['state'] or 'in an unknown state'}; fence the writer first")
-    mounts = docker("container", "inspect", "--format", "{{json .Mounts}}", container["id"])
-    if mounts.returncode != 0 or mounts.stderr.strip():
-        raise Refused(f"docker container inspect {name} failed (rc={mounts.returncode})")
-    sources = [mount.get("Source") for mount in json.loads(mounts.stdout) if mount.get("Destination") == "/state"]
-    if sources != [os.path.realpath(state)]:
-        raise Refused(f"the container {name} mounts /state from {sources}, not {state}")
-    return {**seen, "state": container["state"], "id": container["id"]}
+    if container is not None:
+        raise Refused(f"the container {name} ({container['id'][:12]}) is {container['state'] or 'present'}; stop it,"
+                      " disable its launchers, remove the verified container and rename the state directory before"
+                      " the final capture")
+    return {"daemon": daemon.stdout.strip(), "container": name, "state": "absent"}
 
 
 def new_directory(path: Path) -> None:
@@ -453,7 +455,7 @@ def new_directory(path: Path) -> None:
 
 
 def capture_command(args: argparse.Namespace) -> None:
-    fence = writer(args.container, args.state)
+    fence = writer(args.container)
     age, version = pinned_age(args.age, args.age_sha256)
     new_directory(args.out)
     partial = args.out / "state.tar.age.partial"

@@ -319,7 +319,7 @@ def test_the_container_is_found_by_its_exact_name_only():
 def test_with_no_daemon_to_ask_the_writer_is_not_fenced(tmp_path, monkeypatch):
     monkeypatch.setitem(agent_state.DOCKER_ENV, "PATH", str(tmp_path))
     with pytest.raises(agent_state.Refused, match="docker info failed"):
-        agent_state.writer("agent", tmp_path)
+        agent_state.writer("agent")
 
 
 def fake_age(directory: Path, version: str = "v1.3.2") -> tuple[Path, str]:
@@ -508,3 +508,30 @@ def test_the_restore_command_refuses_to_run_unprivileged(tmp_path, monkeypatch, 
                              "--age-sha256", "0" * 64, "--identity", str(tmp_path / "id"),
                              "--target", str(tmp_path / "restored")])
     assert code == 1 and "runs as root" in capsys.readouterr().err
+
+
+def daemon_answers(monkeypatch, listing: str) -> None:
+    """The local daemon's answers to writer(), substituted in process: what
+    is tested is how writer() reads them."""
+    def docker(*args):
+        if args[0] == "info":
+            return answer(0, "daemon-1\n")
+        if args[:2] == ("container", "ls"):
+            return answer(0, listing)
+        raise AssertionError(f"writer() asked docker {args}")
+    monkeypatch.setattr(agent_state, "docker", docker)
+
+
+def test_the_capture_fence_is_the_container_removed(tmp_path, monkeypatch):
+    # The supported sequence: stop, remove the verified container, rename the
+    # state directory (its bind then refuses any restart), capture the renamed
+    # directory. A container still there, stopped or not, is no fence.
+    for state in ("exited", "created", "running"):
+        daemon_answers(monkeypatch, line("agent", state) + "\n")
+        with pytest.raises(agent_state.Refused, match="remove the verified container"):
+            agent_state.writer("agent")
+
+
+def test_with_the_container_removed_the_capture_records_the_daemon_and_its_absence(tmp_path, monkeypatch):
+    daemon_answers(monkeypatch, line("agent-two") + "\n")
+    assert agent_state.writer("agent") == {"daemon": "daemon-1", "container": "agent", "state": "absent"}
