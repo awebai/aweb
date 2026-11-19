@@ -609,75 +609,79 @@ def _served_app_id(manifest: object) -> str:
 
 
 @contextmanager
+def coordination_listener() -> Iterator[tuple[socket.socket, str]]:
+    """The coordination server's listening socket and its loopback origin, bound
+    before the app starts so the app can name that origin as its team server."""
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        yield listener, f"http://127.0.0.1:{listener.getsockname()[1]}"
+
+
+@contextmanager
 def running_coordination_server(
     tmp_path: Path,
     *,
+    listener: socket.socket,
     stack: E2EStack,
     awid_service_token: str,
     app_origin: str,
     ca_file: Path,
 ) -> Iterator[CoordinationServer]:
-    """Real aweb, with the real HTTPS fetcher pinned to this test origin."""
-    with ExitStack() as setup:
-        listener = setup.enter_context(socket.socket())
-        listener.bind(("127.0.0.1", 0))
-        listener.listen()
-        port = listener.getsockname()[1]
-        origin = f"http://127.0.0.1:{port}"
-        redis_url = stack.redis_url
-        if redis_url is None:
-            redis_port = compose(stack, "port", "redis", "6379").stdout.strip().rsplit(":", 1)[1]
-            redis_url = f"redis://{stack.host}:{redis_port}/0"
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_", "AWID_"))}
-        env.update(
-            AWEB_DATABASE_URL=stack.postgres_url,
-            AWEB_REDIS_URL=redis_url,
-            AWEB_PUBLIC_ORIGIN=origin,
-            AWID_REGISTRY_URL=stack.awid_url,
-            AWID_SERVICE_TOKEN=awid_service_token,
+    """Real aweb on ``listener``, with the real HTTPS fetcher pinned to this test origin."""
+    origin = f"http://127.0.0.1:{listener.getsockname()[1]}"
+    redis_url = stack.redis_url
+    if redis_url is None:
+        redis_port = compose(stack, "port", "redis", "6379").stdout.strip().rsplit(":", 1)[1]
+        redis_url = f"redis://{stack.host}:{redis_port}/0"
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_", "AWID_"))}
+    env.update(
+        AWEB_DATABASE_URL=stack.postgres_url,
+        AWEB_REDIS_URL=redis_url,
+        AWEB_PUBLIC_ORIGIN=origin,
+        AWID_REGISTRY_URL=stack.awid_url,
+        AWID_SERVICE_TOKEN=awid_service_token,
+    )
+    with (tmp_path / "coordination.log").open("w+") as log:
+        proc = subprocess.Popen(
+            [
+                "uv",
+                "run",
+                "--offline",
+                "--frozen",
+                "--project",
+                str(SERVER_PROJECT),
+                "python",
+                str(STACK_SERVER),
+                "--app-origin",
+                app_origin,
+                "--ca-file",
+                str(ca_file),
+                "--user-agent",
+                "naapp-install-test/1",
+                "--fd",
+                str(listener.fileno()),
+            ],
+            env=env,
+            stdout=log,
+            stderr=log,
+            pass_fds=(listener.fileno(),),
         )
-        with (tmp_path / "coordination.log").open("w+") as log:
-            proc = subprocess.Popen(
-                [
-                    "uv",
-                    "run",
-                    "--offline",
-                    "--frozen",
-                    "--project",
-                    str(SERVER_PROJECT),
-                    "python",
-                    str(STACK_SERVER),
-                    "--app-origin",
-                    app_origin,
-                    "--ca-file",
-                    str(ca_file),
-                    "--user-agent",
-                    "naapp-install-test/1",
-                    "--fd",
-                    str(listener.fileno()),
-                ],
-                env=env,
-                stdout=log,
-                stderr=log,
-                pass_fds=(listener.fileno(),),
-            )
-            listener.close()
+        listener.close()
+        try:
+            wait_http_ok(f"{origin}/health")
+            yield CoordinationServer(origin=origin, env=env)
+        finally:
+            proc.terminate()
             try:
-                wait_http_ok(f"{origin}/health")
-                yield CoordinationServer(origin=origin, env=env)
-            finally:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=10)
-                # uv may report forwarded SIGTERM as 128 + SIGTERM.
-                if proc.returncode not in (0, -15, 143, None):
-                    log.seek(0)
-                    raise AssertionError(
-                        f"coordination server exit {proc.returncode}: {log.read()}"
-                    )
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+            # uv may report forwarded SIGTERM as 128 + SIGTERM.
+            if proc.returncode not in (0, -15, 143, None):
+                log.seek(0)
+                raise AssertionError(f"coordination server exit {proc.returncode}: {log.read()}")
 
 
 def configure_app_client(workspace: AWWorkspace, app: RunningApp) -> None:

@@ -126,6 +126,9 @@ services:
       LIBRARY_PUBLIC_ORIGIN: https://${LIBRARY_E2E_LIBRARY_HOST:-library-stack.test}:8765
       LIBRARY_AUTH_CACHE_TTL_SECONDS: "2"
       LIBRARY_APP_KEY_FILES: '{"library:grant-read-1": "/fixture/library/grant-read.hex"}'
+      # The stack's own coordination server, the one team server Library reads
+      # grants from inside the network.
+      LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS: '["https://${LIBRARY_E2E_AWEB_HOST:-aweb}:8000"]'
       # The stack CA signs the team server Library reads grants from.
       SSL_CERT_FILE: /fixture/tls/ca.pem
       PORT: "8765"

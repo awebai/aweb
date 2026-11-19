@@ -27,6 +27,7 @@ from aweb_naapp_testing.deployment import (
     aw_request,
     aw_workspace_factory,
     connect_team_server,
+    coordination_listener,
     e2e_stack,
     install_app,
     provision_team,
@@ -59,6 +60,7 @@ _DEPLOYMENT_SETTINGS = (
     "LIBRARY_AWID_SERVICE_TOKEN",
     "LIBRARY_APP_KEY_FILES",
     "LIBRARY_APP_ID",
+    "LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS",
 )
 
 
@@ -69,9 +71,14 @@ def require_e2e_enabled() -> None:
 
 @contextmanager
 def running_library(
-    directory: Path, *, awid_service_token: str | None, registry_url: str = AWID_URL
+    directory: Path,
+    *,
+    awid_service_token: str | None,
+    team_server_origin: str,
+    registry_url: str = AWID_URL,
 ) -> Iterator[RunningApp]:
-    """Library behind TLS on this host, reading AWID at ``registry_url``."""
+    """Library behind TLS on this host, reading AWID at ``registry_url``, with
+    ``team_server_origin`` as the one team server it reaches outside the egress guard."""
     require_e2e_enabled()
     wait_http_ok(f"{registry_url}/health")
     directory.mkdir(parents=True)
@@ -88,6 +95,7 @@ def running_library(
             "LIBRARY_PUBLIC_ORIGIN": origin,
             "LIBRARY_APP_ID": E2E_APP_ID,
             "LIBRARY_APP_KEY_FILES": json.dumps({"library:grant-read-1": str(grant_key)}),
+            "LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([team_server_origin]),
         }
         if awid_service_token is not None:
             values["LIBRARY_AWID_SERVICE_TOKEN"] = awid_service_token
@@ -106,10 +114,16 @@ def running_library(
 @contextmanager
 def library_deployment(directory: Path, *, awid_service_token: str | None) -> Iterator[RunningApp]:
     """Library plus the coordination server its teams install it through."""
-    with running_library(directory, awid_service_token=awid_service_token) as app:
+    with (
+        coordination_listener() as (listener, server_origin),
+        running_library(
+            directory, awid_service_token=awid_service_token, team_server_origin=server_origin
+        ) as app,
+    ):
         assert app.ca_file is not None
         with running_coordination_server(
             directory,
+            listener=listener,
             stack=STACK,
             awid_service_token=AWID_SERVICE_TOKEN,
             app_origin=app.origin,
