@@ -90,7 +90,7 @@ function prepareMintAuthority({ seat, fixtureHome, team }) {
   mkdirSync(dirname(targetKey), { recursive: true, mode: 0o700 });
   copyFileSync(join(fixtureHome, relativeKey), targetKey);
   chmodSync(targetKey, 0o600);
-  const invite = parseObject(aw({ identity: seat, args: ["id", "team", "invite", "--namespace", match[2], "--team", match[1], "--registry", env.AWID_REGISTRY_URL, "--json"] }));
+  const invite = parseObject(aw({ identity: seat, args: ["id", "team", "invite", "--namespace", match[2], "--team", match[1], "--json"] }));
   assert.ok(typeof invite.token === "string" && invite.token, "mint preflight must create a disposable invite; its token is not retained");
   return { team, service: workspace.aweb_url, mint_authority: ProbeOutcome.Passed, invite_cleanup: "disposable team; unconsumed preflight invite removed with the team" };
 }
