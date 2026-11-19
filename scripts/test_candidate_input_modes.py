@@ -62,9 +62,17 @@ class CandidateInputModesTests(unittest.TestCase):
                 "-qm",
                 "different default head",
             )
+            main = git("rev-parse", "HEAD")
+            git("update-ref", "refs/remotes/origin/main", main)
             work = private / "candidate-private"
             work.mkdir(mode=0o700)
-            env = dict(os.environ, ROOT=str(repo), work=str(work), SOURCE_SHA=sha)
+            env = dict(
+                os.environ,
+                ROOT=str(repo),
+                work=str(work),
+                SOURCE_SHA=sha,
+                SYNCHRONIZED_MAIN_SHA=main,
+            )
             result = subprocess.run(
                 [
                     "bash",

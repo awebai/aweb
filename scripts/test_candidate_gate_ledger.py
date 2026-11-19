@@ -160,6 +160,7 @@ candidate-gate:
         checked(repo, "git", "add", ".")
         checked(repo, "git", "commit", "-qm", "small real gate stages")
         checked(repo, "git", "remote", "add", "origin", str(repo))
+        checked(repo, "git", "fetch", "--quiet", "origin", "main")
         env = {
             key: value
             for key, value in os.environ.items()

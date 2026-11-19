@@ -330,6 +330,7 @@ e2e-user-paths:
                 git("add", ".")
                 git("commit", "-qm", "gate entrypoint fixture")
                 git("remote", "add", "origin", str(repo))
+                git("fetch", "--quiet", "origin", "main")
                 blueprints = repo / "naapp/library/test-vectors/blueprints/team"
                 self.assertEqual(
                     subprocess.check_output(
@@ -466,7 +467,8 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual(receipt["digest"], digest)
                     self.assertEqual(receipt["declared"], digest)
                     tree = git("rev-parse", "HEAD^{tree}")
-                    external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nRELEASED_AW={digest}\n"
+                    main = git("rev-parse", "refs/remotes/origin/main")
+                    external = f"CLI_VERSION=1.36.54\nA2A_GATEWAY_VERSION=1.27.6\nSYNCHRONIZED_MAIN_SHA={main}\nRELEASED_AW={digest}\n"
                     self.assertEqual(
                         ledger[0].split("\t")[0],
                         tree + "-" + hashlib.sha256(external.encode()).hexdigest(),
@@ -476,15 +478,27 @@ if args[:2] in [['network','create'],['volume','create']]: print('owned');sys.ex
                     self.assertEqual(reused.count("NOT COVERED: pending aweb-actu"), 12)
                     self.assertIn("incomplete: human paths not covered", reused)
                     self.assertEqual(len(ledger_rows()), 5)
+                    # A new reviewed main baseline also invalidates cached checks,
+                    # even when the candidate source tree and artifact are unchanged.
+                    next_main = git(
+                        "commit-tree", tree, "-p", main, "-m", "next reviewed main"
+                    )
+                    git("update-ref", "refs/remotes/origin/main", next_main)
+                    invoke("checks")
+                    rebound = ledger_rows()
+                    self.assertEqual(len(rebound), 6)
+                    self.assertNotEqual(
+                        rebound[-1].split("\t")[0], ledger[0].split("\t")[0]
+                    )
                     # Changing only the frozen artifact invalidates the key.
                     metadata["version"] = "1.36.55"
                     invoke("checks")
                     changed = ledger_rows()
-                    self.assertEqual(len(changed), 6)
+                    self.assertEqual(len(changed), 7)
                     self.assertNotEqual(
                         changed[-1].split("\t")[0], ledger[0].split("\t")[0]
                     )
-                    self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 4)
+                    self.assertEqual(server.requests, ["/@awebai%2faw/latest"] * 5)
                 finally:
                     for logs in Path("/tmp").glob(
                         "aweb-candidate-gate-" + git("rev-parse", "HEAD") + "-*"
