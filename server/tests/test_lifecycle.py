@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 from uuid import UUID, uuid4
 
 import os
@@ -8,6 +12,12 @@ import os
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
+
+from aweb.events import team_events_channel_name
+from aweb.presence import get_agent_presence
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
+from test_workspace_liveness_http import _send_member_request
 
 from aweb.messaging.waiting import get_waiting_agents, register_waiting
 
@@ -101,9 +111,7 @@ async def _seed_waiting_chat(aweb_db, *, team_id: str, agent_id):
     return session_id, did
 
 
-def _request(
-    *, team_id: str, agent_id, workspace_id, dry_run: bool = False
-) -> LifecycleCascadeRequest:
+def _request(*, team_id: str, agent_id, workspace_id) -> LifecycleCascadeRequest:
     return LifecycleCascadeRequest(
         operation="delete_local_workspace",
         actor=LifecycleActor(
@@ -115,212 +123,270 @@ def _request(
         target_agent_id=str(agent_id),
         target_workspace_ids=(str(workspace_id),),
         workspace_scope="explicit",
-        dry_run=dry_run,
         require_identity_scope="local",
         stale_before=datetime.now(timezone.utc) - timedelta(minutes=10),
         mark_local_agent_deleted=True,
     )
 
 
-@pytest.mark.asyncio
-async def test_lifecycle_plan_reports_claims_without_mutating(aweb_cloud_db):
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(aweb_cloud_db.aweb_db)
+@dataclass(frozen=True)
+class _ServiceLifecycle:
+    request: LifecycleCascadeRequest
+    task_ref: str
+    session_id: str
+    did: str
+    workspace_id: UUID
 
-    result = await plan_lifecycle_cascade(
-        aweb_cloud_db.aweb_db,
-        _request(
-            team_id=team_id,
-            agent_id=agent_id,
-            workspace_id=workspace_id,
-            dry_run=True,
+
+@pytest_asyncio.fixture
+async def service_lifecycle(privacy_app):
+    """Create docs/aweb-sot.md:1256–1262 coordination through its real owners."""
+    env = privacy_app
+    actor = env.actors["alice"]
+    task = await _send_member_request(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
+        body={"title": "Retirement transaction control"},
+    )
+    assert task.status_code == 200, task.text
+    task_body = task.json()
+    assert isinstance(task_body, dict), task_body
+    task_ref = task_body.get("task_ref")
+    assert isinstance(task_ref, str), task_body
+    claim = await _send_member_request(
+        env,
+        alias="alice",
+        method="PATCH",
+        path=f"/v1/tasks/{task_ref}",
+        body={"status": "in_progress"},
+    )
+    assert claim.status_code == 200, claim.text
+    heartbeat = await _send_member_request(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/agents/heartbeat",
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+    chat = await _send_member_request(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/chat/sessions",
+        body={"to_dids": [env.actors["bob"].did], "message": "Retirement wait", "wait_seconds": 60},
+    )
+    assert chat.status_code == 200, chat.text
+    chat_body = chat.json()
+    assert isinstance(chat_body, dict), chat_body
+    session_id = chat_body.get("session_id")
+    assert isinstance(session_id, str), chat_body
+    await register_waiting(env.redis, session_id, actor.did)
+    case = _ServiceLifecycle(
+        request=LifecycleCascadeRequest(
+            operation="delete_local_workspace",
+            actor=LifecycleActor(actor_id=str(actor.id), actor_type="agent", authority="test"),
+            team_id=TEAM,
+            target_agent_id=str(actor.id),
+            target_workspace_ids=(str(actor.workspace),),
+            workspace_scope="explicit",
+            require_identity_scope="local",
+            agent_disposition=lifecycle.AgentDisposition.DELETED,
         ),
+        task_ref=task_ref,
+        session_id=session_id,
+        did=actor.did,
+        workspace_id=actor.workspace,
     )
-
-    assert result.dry_run is True
-    assert result.errors == ()
-    assert result.task_unclaim_count == 1
-    assert result.presence_cleanup_status == "planned"
-    assert result.workspace_changes[0].workspace_id == str(workspace_id)
-
-    workspace_deleted_at = await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
-        workspace_id,
-    )
-    claim_count = await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
-        workspace_id,
-    )
-    assert workspace_deleted_at is None
-    assert claim_count == 1
+    await _assert_service_coordination_retained(env, case=case)
+    return env, case
 
 
-@pytest.mark.asyncio
-async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(
-    aweb_cloud_db, monkeypatch, lifecycle_redis
-):
-    db = aweb_cloud_db.aweb_db
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
-    session_id, did = await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
-    published: list[tuple[str, str]] = []
-    presence_clears: list[tuple[str, ...]] = []
-    waiting_clears: list[tuple[str, str]] = []
-
-    async def _capture_workspace_event(_redis, event):
-        published.append(("workspace", event.task_ref))
-        return 1
-
-    async def _capture_team_event(_redis, event):
-        published.append(("team", event.task_ref))
-        return 1
-
-    async def _capture_presence(_redis, workspace_ids):
-        presence_clears.append(tuple(workspace_ids))
-        return len(workspace_ids)
-
-    async def _capture_waiting(_redis, captured_session_id, captured_did):
-        waiting_clears.append((captured_session_id, captured_did))
-
-    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
-    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
-    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
-    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
-
-    async with db.transaction() as outer:
-        result = await apply_lifecycle_cascade(
-            outer,
-            lifecycle_redis,
-            _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
-        )
-        assert result.post_commit_status == "pending"
-        assert result.outbox_operation_id is not None
-        assert published == []
-        assert presence_clears == []
-        assert waiting_clears == []
-
-    replay = await lifecycle.replay_lifecycle_side_effects(
-        db,
-        lifecycle_redis,
-        operation_id=result.outbox_operation_id,
-    )
-
-    assert replay.pending_count == 0
-    assert set(published) == {("workspace", "backend-777"), ("team", "backend-777")}
-    assert set(presence_clears[0]) == {str(workspace_id), str(agent_id)}
-    assert waiting_clears == [(str(session_id), did)]
+@asynccontextmanager
+async def _lifecycle_subscription(env, *, case: _ServiceLifecycle):
+    channels = {f"events:{case.workspace_id}", team_events_channel_name(TEAM)}
+    async with env.redis.pubsub() as pubsub:
+        await pubsub.subscribe(*channels)
+        # Observe this subscription's actual acknowledgement before mutating.
+        acknowledged = set()
+        async with asyncio.timeout(5):
+            async for message in pubsub.listen():
+                if message["type"] == "subscribe":
+                    acknowledged.add(message["channel"])
+                    if acknowledged == channels:
+                        break
+        yield pubsub
 
 
-@pytest.mark.asyncio
-async def test_lifecycle_outer_transaction_rollback_emits_no_side_effects(
-    aweb_cloud_db, monkeypatch, lifecycle_redis
-):
-    db = aweb_cloud_db.aweb_db
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
-    await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
-    observed: list[str] = []
+async def _unclaimed_events_through_barrier(env, pubsub, *, case: _ServiceLifecycle):
+    """Drain both real channels through ordered markers, including the empty case."""
+    channels = {f"events:{case.workspace_id}", team_events_channel_name(TEAM)}
+    marker = str(uuid4())
+    for channel in channels:
+        await env.redis.publish(channel, json.dumps({"lifecycle_test_barrier": marker}))
+    reached = set()
+    events = []
+    async with asyncio.timeout(5):
+        async for message in pubsub.listen():
+            if message["type"] != "message":
+                continue
+            event = json.loads(message["data"])
+            assert isinstance(event, dict), event
+            if event.get("lifecycle_test_barrier") == marker:
+                reached.add(message["channel"])
+                if reached == channels:
+                    return events
+            elif event.get("type") == "task.unclaimed":
+                assert isinstance(event.get("task_ref"), str), event
+                events.append((message["channel"], event["task_ref"]))
+    raise AssertionError("Redis did not deliver both lifecycle test barriers")
 
-    async def _capture_workspace_event(_redis, _event):
-        observed.append("workspace_event")
-        return 1
 
-    async def _capture_team_event(_redis, _event):
-        observed.append("team_event")
-        return 1
-
-    async def _capture_presence(_redis, _workspace_ids):
-        observed.append("presence")
-        return 1
-
-    async def _capture_waiting(_redis, _session_id, _did):
-        observed.append("waiting")
-
-    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
-    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
-    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
-    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
-
-    class _Rollback(Exception):
-        pass
-
-    with pytest.raises(_Rollback):
-        async with db.transaction() as outer:
-            result = await apply_lifecycle_cascade(
-                outer,
-                lifecycle_redis,
-                _request(
-                    team_id=team_id,
-                    agent_id=agent_id,
-                    workspace_id=workspace_id,
-                ),
-            )
-            assert result.post_commit_status == "pending"
-            assert result.outbox_operation_id is not None
-            assert observed == []
-            raise _Rollback
-
-    replay = await lifecycle.replay_lifecycle_side_effects(
-        db,
-        lifecycle_redis,
-        operation_id=result.outbox_operation_id,
-    )
-    assert replay.pending_count == 0
-    assert observed == []
+async def _assert_service_coordination_retained(env, *, case: _ServiceLifecycle):
+    assert await get_agent_presence(env.redis, str(case.workspace_id)) is not None
+    assert await get_waiting_agents(env.redis, case.session_id, [case.did]) == [case.did]
     assert (
-        await db.fetch_value(
-            "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
-            workspace_id,
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1 AND task_ref=$2",
+            case.workspace_id,
+            case.task_ref,
         )
         == 1
     )
     assert (
-        await db.fetch_value(
-            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
-            workspace_id,
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            case.workspace_id,
         )
         is None
     )
 
 
-@pytest.mark.asyncio
-async def test_lifecycle_plain_handle_still_publishes_side_effects(
-    aweb_cloud_db, monkeypatch, lifecycle_redis
-):
-    db = aweb_cloud_db.aweb_db
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
-    await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
-    observed: list[str] = []
-
-    async def _capture_workspace_event(_redis, _event):
-        observed.append("workspace_event")
-        return 1
-
-    async def _capture_team_event(_redis, _event):
-        observed.append("team_event")
-        return 1
-
-    async def _capture_presence(_redis, _workspace_ids):
-        observed.append("presence")
-        return 1
-
-    async def _capture_waiting(_redis, _session_id, _did):
-        observed.append("waiting")
-
-    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
-    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
-    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
-    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
-
-    result = await apply_lifecycle_cascade(
-        db,
-        lifecycle_redis,
-        _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+async def _assert_service_coordination_released(env, *, case: _ServiceLifecycle):
+    assert await get_agent_presence(env.redis, str(case.workspace_id)) is None
+    # A strict read distinguishes deletion from the display helper's outage omission.
+    assert await env.redis.zscore(f"chat:waiting:{case.session_id}", case.did) is None
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1",
+            case.workspace_id,
+        )
+        == 0
+    )
+    assert await env.db.fetch_value(
+        "SELECT deleted_at IS NOT NULL FROM {{tables.workspaces}} WHERE workspace_id=$1",
+        case.workspace_id,
+    )
+    assert await env.db.fetch_value(
+        "SELECT wait_started_by IS NULL FROM {{tables.chat_sessions}} WHERE session_id=$1",
+        UUID(case.session_id),
     )
 
-    assert result.post_commit_status == "completed"
-    assert result.outbox_operation_id is not None
-    assert observed.count("workspace_event") == 1
-    assert observed.count("team_event") == 1
-    assert observed.count("presence") == 1
-    assert observed.count("waiting") == 1
+
+async def _wait_for_committed_delivery(env, *, operation_id: str):
+    async with asyncio.timeout(5):
+        while True:
+            state = await env.db.fetch_one(
+                """SELECT count(*) AS total,
+                          count(*) FILTER (WHERE delivered_at IS NULL) AS pending
+                   FROM {{tables.lifecycle_side_effect_outbox}} WHERE operation_id=$1""",
+                UUID(operation_id),
+            )
+            assert state is not None
+            assert state["total"] == 4
+            if state["pending"] == 0:
+                return
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_plan_reports_claims_without_mutating(service_lifecycle):
+    env, case = service_lifecycle
+    async with _lifecycle_subscription(env, case=case) as pubsub:
+        result = await plan_lifecycle_cascade(env.db, case.request, redis=env.redis)
+        assert result.dry_run is True
+        assert result.errors == ()
+        assert result.task_unclaim_count == 1
+        assert result.chat_participant_cleanup_count == 1
+        assert result.presence_cleanup_status == "planned"
+        assert result.workspace_changes[0].workspace_id == str(case.workspace_id)
+        assert await _unclaimed_events_through_barrier(env, pubsub, case=case) == []
+    await _assert_service_coordination_retained(env, case=case)
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}}")
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(service_lifecycle):
+    env, case = service_lifecycle
+    async with _lifecycle_subscription(env, case=case) as pubsub:
+        async with env.db.transaction() as outer:
+            result = await apply_lifecycle_cascade(outer, env.redis, case.request)
+            assert result.errors == ()
+            assert result.post_commit_status == "pending"
+            assert result.outbox_operation_id is not None
+            assert await _unclaimed_events_through_barrier(env, pubsub, case=case) == []
+            assert await get_agent_presence(env.redis, str(case.workspace_id)) is not None
+            assert await get_waiting_agents(env.redis, case.session_id, [case.did]) == [case.did]
+        await _wait_for_committed_delivery(env, operation_id=result.outbox_operation_id)
+        assert sorted(await _unclaimed_events_through_barrier(env, pubsub, case=case)) == sorted(
+            [
+                (f"events:{case.workspace_id}", case.task_ref),
+                (team_events_channel_name(TEAM), case.task_ref),
+            ]
+        )
+    await _assert_service_coordination_released(env, case=case)
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_outer_transaction_rollback_emits_no_side_effects(service_lifecycle):
+    env, case = service_lifecycle
+
+    class RollbackControl(Exception):
+        """Abort the caller's real transaction after the lifecycle savepoint."""
+
+    async with _lifecycle_subscription(env, case=case) as pubsub:
+        with pytest.raises(RollbackControl):
+            async with env.db.transaction() as outer:
+                result = await apply_lifecycle_cascade(outer, env.redis, case.request)
+                assert result.errors == ()
+                assert result.post_commit_status == "pending"
+                assert result.outbox_operation_id is not None
+                assert await _unclaimed_events_through_barrier(env, pubsub, case=case) == []
+                raise RollbackControl
+        replay = await lifecycle.replay_lifecycle_side_effects(
+            env.db,
+            env.redis,
+            operation_id=result.outbox_operation_id,
+        )
+        assert replay.attempted_count == 0
+        assert replay.pending_count == 0
+        assert await _unclaimed_events_through_barrier(env, pubsub, case=case) == []
+    await _assert_service_coordination_retained(env, case=case)
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}}")
+        == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_plain_handle_still_publishes_side_effects(service_lifecycle):
+    env, case = service_lifecycle
+    async with _lifecycle_subscription(env, case=case) as pubsub:
+        result = await apply_lifecycle_cascade(env.db, env.redis, case.request)
+        assert result.errors == ()
+        assert result.post_commit_status == "completed"
+        assert result.outbox_operation_id is not None
+        assert sorted(await _unclaimed_events_through_barrier(env, pubsub, case=case)) == sorted(
+            [
+                (f"events:{case.workspace_id}", case.task_ref),
+                (team_events_channel_name(TEAM), case.task_ref),
+            ]
+        )
+    await _assert_service_coordination_released(env, case=case)
 
 
 @pytest.mark.asyncio
@@ -1022,13 +1088,7 @@ async def test_lifecycle_archive_global_agent_rejects_non_global_target(
 
 @pytest.mark.asyncio
 async def test_chat_waiting_cleanup_wakes_the_remaining_participants(aweb_cloud_db):
-    import asyncio
-    import os
-
-    from redis.asyncio import Redis
-
     from aweb.agent_wake import AgentWakeHub, did_wake_key
-    from aweb.messaging.waiting import register_waiting
 
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
