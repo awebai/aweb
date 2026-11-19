@@ -32,6 +32,7 @@ from aweb_secrets.custody.onepassword import (
     OnePasswordRead,
     OnePasswordReference,
     OnePasswordSDK,
+    SecretValueInvalid,
 )
 from aweb_secrets.custody.store import BACKEND_CREDENTIAL_ID, StagedOnePasswordReference
 from aweb_secrets.owners import hold_owner as hold_owner_holding
@@ -287,7 +288,7 @@ async def _value_staging_errors(
                 headers={"Set-Cookie": response.headers["set-cookie"]},
             ) from None
         raise
-    except ValueInvalid as refused:
+    except (ValueInvalid, SecretValueInvalid) as refused:
         # The shared codec owns kind validation and never includes entered bytes.
         raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(refused)) from None
     except InstallationRefused as refused:
