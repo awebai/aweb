@@ -10,7 +10,6 @@ from aweb.messaging.kinds import MessagePriority
 from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 from aweb.messaging.recipients import RecipientIdentityBinding
-from aweb.client_address import request_client_address
 from aweb.messaging.mail_attribution import incoming_mail_sql
 
 from aweb.identity_auth_deps import participant_dids
@@ -40,6 +39,7 @@ from aweb.mcp.signing import (
     sign_hosted_message,
 )
 from aweb.mcp.tools.federation import (
+    mcp_sender_budget_key,
     mcp_messaging_auth,
     mcp_messaging_runtime,
 )
@@ -312,7 +312,7 @@ async def send_mail(
             sender=sender,
             selector=selector,
             runtime=runtime,
-            source=request_client_address(auth.request),
+            source=mcp_sender_budget_key(auth),
             recipient_binding=recipient_binding,
         )
         if target.continuation is not None:

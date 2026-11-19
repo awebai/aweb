@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.mcp.tools.federation import mcp_sender_budget_key
+
 import json
 from uuid import UUID
 
@@ -13,7 +15,6 @@ from aweb.messaging.kinds import MessageKind
 from aweb.messaging.refusals import ContactIdentityBindingRequired
 from aweb.mcp.tools.refusals import send_refusal
 from fastapi import HTTPException
-from aweb.client_address import request_client_address
 from aweb.identity_auth_deps import participant_dids
 from aweb.mcp.auth import get_auth
 from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
@@ -69,7 +70,7 @@ async def contacts_add(
             )
         resolved = await federation_authority.resolve_contact(
             normalize_hosted_handle_reference(contact_address),
-            source_ip=request_client_address(auth.request),
+            source_ip=mcp_sender_budget_key(auth),
         )
         result = await add_contact(
             db_infra,

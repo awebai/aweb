@@ -6,7 +6,6 @@ from aweb.messaging.kinds import ContentMode
 
 from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.recipients import RecipientIdentityBinding
-from aweb.client_address import request_client_address
 from aweb.messaging.chat_policy import HumanChatRefused
 from aweb.identity_auth_deps import participant_dids
 
@@ -50,6 +49,7 @@ from aweb.mcp.signing import (
     sign_hosted_message,
 )
 from aweb.mcp.tools.federation import (
+    mcp_sender_budget_key,
     mcp_messaging_auth,
     mcp_messaging_runtime,
 )
@@ -446,7 +446,7 @@ async def chat_send(
         federation_authority=federation_authority,
         chat_transport=federation_transport,
     )
-    source = request_client_address(auth.request)
+    source = mcp_sender_budget_key(auth)
     address_ref = to_address.strip()
     named_alias = ""
     selector = None

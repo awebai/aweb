@@ -509,7 +509,7 @@ async def test_consumer_mcp_contacts_add_normalizes_hosted_handle_address(
     assert result["binding_controller_did"] == "did:key:z6Mkcontroller"
     assert result["binding_accepted_at"] is not None
     authority.resolve_contact.assert_awaited_once_with(
-        "jane.aweb.ai/c3po", source_ip="unknown"
+        "jane.aweb.ai/c3po", source_ip="mcp:did:key:alice"
     )
 
 
