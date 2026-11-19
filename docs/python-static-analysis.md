@@ -28,11 +28,15 @@ mypy module/code suppression is refused instead of masking a count increase.
 A tool failure, malformed configuration, unstructured output or an exit status
 that contradicts the diagnostics is a setup failure, never a clean result.
 
-The current allowances also cannot exceed the checked-in allowances on the
-already synchronized `origin/main`. The checker reads that reference without
-fetching or changing it. Main's first reviewed baseline bootstraps the counts;
-later heads cannot add or enlarge groups, even when the source would fit a
-manually raised budget. Missing Git/reference evidence fails as setup.
+The checker compares allowances with the checked-in baseline on the already
+synchronized `origin/main`, without fetching or changing that reference.
+Main's first reviewed baseline bootstraps the counts. A later head may relocate
+allowances by adding or enlarging groups only when its same ceiling diff removes
+more allowances than it adds: the total must strictly decrease. The checker
+prints the before/after totals and every changed tool/file/code group so the
+reviewer can verify which old groups the new owner replaces. A bare increase
+or a relocation with an unchanged total is refused even when the tools fit the
+candidate budget. Missing Git/reference evidence fails as setup.
 
 ## Source exemptions
 
@@ -51,11 +55,11 @@ acquires the underlying lint findings despite inline or file-level `noqa`.
 Real CLI controls cover all these forms and valid neighbors.
 
 When clearing findings, lower or remove the affected counts in the same
-reviewed change. Do not raise a ceiling, move an allowance to another file or
-regenerate this data during a gate run. An initial inventory does not make an
-existing finding acceptable forever; its rule owner fixes it in the owning
-head. Cleared groups disappear. The normal command never writes its input
-configuration or ceilings.
+reviewed change. Relocate allowances only under the strictly decreasing,
+reviewed-diff rule above; do not regenerate this data during a gate run. An
+initial inventory does not make an existing finding acceptable forever; its
+rule owner fixes it in the owning head. Cleared groups disappear. The normal
+command never writes its input configuration or ceilings.
 
 `make check-python-static` prepares the server and AWID checkout environments
 with `uv sync --frozen`, then invokes the offline checker. Preparation preserves
