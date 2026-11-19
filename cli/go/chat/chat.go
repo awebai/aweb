@@ -373,7 +373,7 @@ func (row chatParticipantRow) identityValues() []string {
 
 func (row chatParticipantRow) matchesTarget(target string) bool {
 	for _, candidate := range row.identityValues() {
-		if chatIdentityMatchesTarget(candidate, target) {
+		if chatIdentityMatches(candidate, target, handlesEitherWay) {
 			return true
 		}
 	}
@@ -382,7 +382,7 @@ func (row chatParticipantRow) matchesTarget(target string) bool {
 
 func (row chatParticipantRow) matchesSessionTarget(target string) bool {
 	for _, candidate := range row.identityValues() {
-		if chatSessionIdentityMatchesTarget(candidate, target) {
+		if chatIdentityMatches(candidate, target, candidateHandleForBareTarget) {
 			return true
 		}
 	}
@@ -392,9 +392,9 @@ func (row chatParticipantRow) matchesSessionTarget(target string) bool {
 func (row chatParticipantRow) matchesStrongIdentity(kind string, target string) bool {
 	switch kind {
 	case "address":
-		return chatIdentityMatchesTarget(row.Address, target)
+		return chatIdentityMatches(row.Address, target, handlesEitherWay)
 	case "did":
-		return chatIdentityMatchesTarget(row.DID, target)
+		return chatIdentityMatches(row.DID, target, handlesEitherWay)
 	default:
 		return false
 	}
@@ -431,7 +431,23 @@ func preferredChatIdentityLabel(alias string, address string, stableID string, d
 	return row.label()
 }
 
-func chatIdentityMatchesTarget(candidate string, target string) bool {
+// handleMatching is when an address's handle (its name after the domain)
+// may stand in for an identity value.
+type handleMatching int
+
+const (
+	// handlesEitherWay: a handle on either side matches the other value.
+	handlesEitherWay handleMatching = iota
+	// candidateHandleForBareTarget: only a candidate address's handle
+	// matches, and only a bare target name; a DID or address target matches
+	// only exactly (session lookup).
+	candidateHandleForBareTarget
+)
+
+// chatIdentityMatches is the one comparison of a participant identity value
+// with a target: equal ignoring case, through a stable alias, or through an
+// address handle as handles allows (chat/IDENTITY_RULES.md).
+func chatIdentityMatches(candidate string, target string, handles handleMatching) bool {
 	candidate = strings.TrimSpace(candidate)
 	target = strings.TrimSpace(target)
 	if candidate == "" || target == "" {
@@ -445,35 +461,19 @@ func chatIdentityMatchesTarget(candidate string, target string) bool {
 	}
 	if alias := stableAlias(target); alias != "" && strings.EqualFold(alias, candidate) {
 		return true
+	}
+	if handles == candidateHandleForBareTarget {
+		if strings.HasPrefix(target, "did:") || strings.Contains(target, "/") {
+			return false
+		}
+		handle := addressHandle(candidate)
+		return handle != "" && strings.EqualFold(handle, target)
 	}
 	if handle := addressHandle(candidate); handle != "" && strings.EqualFold(handle, target) {
 		return true
 	}
 	if handle := addressHandle(target); handle != "" && strings.EqualFold(handle, candidate) {
 		return true
-	}
-	return false
-}
-
-func chatSessionIdentityMatchesTarget(candidate string, target string) bool {
-	candidate = strings.TrimSpace(candidate)
-	target = strings.TrimSpace(target)
-	if candidate == "" || target == "" {
-		return false
-	}
-	if strings.EqualFold(candidate, target) {
-		return true
-	}
-	if alias := stableAlias(candidate); alias != "" && strings.EqualFold(alias, target) {
-		return true
-	}
-	if alias := stableAlias(target); alias != "" && strings.EqualFold(alias, candidate) {
-		return true
-	}
-	if !strings.HasPrefix(target, "did:") && !strings.Contains(target, "/") {
-		if handle := addressHandle(candidate); handle != "" && strings.EqualFold(handle, target) {
-			return true
-		}
 	}
 	return false
 }

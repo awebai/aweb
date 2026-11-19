@@ -3,7 +3,7 @@ package chat
 import "testing"
 
 // A participant's name matches an address's handle without regard to case,
-// as every other participant match does (chatIdentityMatchesTarget).
+// as every other participant match does (chatIdentityMatches).
 func TestUniqueHandleParticipantMatchIgnoresCase(t *testing.T) {
 	for _, tc := range []struct {
 		participant, target string
