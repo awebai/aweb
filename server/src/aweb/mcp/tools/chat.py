@@ -340,6 +340,27 @@ async def _wait_for_replies(
         )
 
 
+async def _resolve_chat_target_for_tool(
+    db,
+    *,
+    sender,
+    selector: CreateSessionRequest | str,
+    runtime,
+    source: str,
+):
+    """Resolve a tool's named recipient or its stored session through one owner."""
+    if isinstance(selector, CreateSessionRequest):
+        return await resolve_chat_targets(
+            db,
+            sender,
+            selector,
+            runtime,
+            source,
+            reuse_or_create=True,
+        )
+    return await resolve_chat_targets(db, sender, selector, runtime, source)
+
+
 async def chat_send(
     db_infra,
     redis,
@@ -435,19 +456,13 @@ async def chat_send(
     # and the fields are resolved and signed again.
     for _ in range(SESSION_ATTEMPTS):
         try:
-            if selector is not None:
-                target = await resolve_chat_targets(
-                    db_infra,
-                    sender,
-                    selector,
-                    runtime,
-                    source,
-                    reuse_or_create=True,
-                )
-            else:
-                target = await resolve_chat_targets(
-                    db_infra, sender, session_id, runtime, source
-                )
+            target = await _resolve_chat_target_for_tool(
+                db_infra,
+                sender=sender,
+                selector=selector if selector is not None else session_id,
+                runtime=runtime,
+                source=source,
+            )
         except (HTTPException, FederationAuthorityError, ServiceError) as exc:
             return _send_refusal(exc, address=address_ref)
 

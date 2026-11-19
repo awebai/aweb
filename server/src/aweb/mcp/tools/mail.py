@@ -198,6 +198,18 @@ def _signed_mail_fields(
     return signed_fields
 
 
+async def _resolve_mail_target_for_tool(
+    db,
+    *,
+    sender,
+    selector: SendMessageRequest,
+    runtime,
+    source: str,
+) -> mail_send.MailTarget:
+    """Translate tool selection into the shared mail target owner."""
+    return await mail_send.resolve_mail_target(db, sender, selector, runtime, source)
+
+
 async def send_mail(
     db_infra,
     *,
@@ -273,11 +285,11 @@ async def send_mail(
     # independent server receipt time for ordering, so they may disagree.
     sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
     try:
-        target = await mail_send.resolve_mail_target(
+        target = await _resolve_mail_target_for_tool(
             db_infra,
-            sender,
-            selector,
-            runtime,
+            sender=sender,
+            selector=selector,
+            runtime=runtime,
             source=request_client_address(auth.request),
         )
         if target.continuation is not None:
