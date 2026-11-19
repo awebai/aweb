@@ -1635,8 +1635,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			} else {
 				accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 				if err != nil {
-					var pending *hostedInviteSignaturePendingError
-					if errors.As(err, &pending) {
+					if retainUnfinishedProvisioningIdentity(err) {
 						return reportRosterFailure(i, err)
 					}
 					homeRollbackErr := rollback.Rollback()
@@ -1652,8 +1651,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		} else {
 			accepted, err := resolveOrCreateTeamMemberIdentity(inviteAnchorDir, plans[i], apiKeyBootstrapMode, opts.APIKey)
 			if err != nil {
-				var pending *hostedInviteSignaturePendingError
-				if errors.As(err, &pending) {
+				if retainUnfinishedProvisioningIdentity(err) {
 					return reportRosterFailure(i, err)
 				}
 				homeRollbackErr := rollback.Rollback()
@@ -1674,37 +1672,12 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 			homeRollbackErr := rollback.Rollback()
 			return addPostJoinRollbackError(err, acceptedIdentity, memberRollbackErr, homeRollbackErr)
 		}
-		if plans[i].Profile != nil {
-			// Materialize the profile home, connect the member to the aweb service,
-			// then run the coordination configure step. Connect sits between the two:
-			// the configure step injects the team's active instructions, which the
-			// aweb server serves only to a connected agent, and self-hosted create/add
-			// install the awid certificate but not the aweb connection. Connecting only
-			// after materialize succeeds avoids an orphaned aweb connection on a
-			// materialize failure. (default-aabq.21)
-			if strings.TrimSpace(plans[i].LocalBlueprintDir) != "" {
-				if _, _, err := applyLocalBlueprintProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].LocalBlueprintDir, true); err != nil {
-					return reportRosterFailure(i, rollbackOnErr(err))
-				}
-			} else if _, _, err := applyTeamLibraryProfileToHome(plans[i].HomeDir, *plans[i].Profile, plans[i].Source, true); err != nil {
-				return reportRosterFailure(i, rollbackOnErr(err))
-			}
-			if !plans[i].Connected {
-				targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
-				if sel, selErr := resolveSelectionAtIdentityHome(plans[i].HomeDir, "", targetIdentityHome); selErr == nil && strings.TrimSpace(sel.AwebURL) != "" {
-					if _, err := initCertificateConnectWithOptions(plans[i].HomeDir, strings.TrimSpace(sel.AwebURL), certificateConnectOptions{
-						Role:         strings.TrimSpace(plans[i].Profile.ProfileRef),
-						IdentityHome: targetIdentityHome.Root,
-					}); err != nil {
-						return reportRosterFailure(i, rollbackOnErr(fmt.Errorf("connect agent to aweb service: %w", err)))
-					}
-				}
-			}
-			targetIdentityHome := awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(plans[i].HomeDir), ".aw"), Source: awconfig.IdentityHomeDefault}
-			if err := configureMaterializedAgentHome(plans[i].HomeDir, targetIdentityHome); err != nil {
-				return reportRosterFailure(i, rollbackOnErr(err))
-			}
+		if err := completePlannedTeamAgentProfile(teamAgentProfileSetup{
+			Plan: &plans[i], Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(plans[i].HomeDir), Source: awconfig.IdentityHomeDefault},
+		}); err != nil {
+			return reportRosterFailure(i, rollbackOnErr(err))
 		}
+
 		if createdTeamID == "" {
 			createdTeamID = strings.TrimSpace(plans[i].TeamID)
 		}
