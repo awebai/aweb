@@ -67,18 +67,18 @@ func (c *RegistryClient) RegisterIDCertificate(ctx context.Context, bundle map[s
 
 // RegisterIDCertificateAt registers at an explicit registry origin.
 func (c *RegistryClient) RegisterIDCertificateAt(ctx context.Context, registryURL string, bundle map[string]any, signer IDCertificateSigner, expectedHead, invitationID *string) (map[string]any, error) {
-	domain, err := idBundleLeafDomain(bundle)
+	chain, err := IDChainFromBundle(bundle)
 	if err != nil {
 		return nil, err
 	}
-	header, err := EncodeIDChainHeader(bundle)
+	header, err := chain.Header()
 	if err != nil {
 		return nil, err
 	}
-	certificates := bundle["certificates"].([]any)
-	body := map[string]any{"certificate": certificates[len(certificates)-1], "expected_head": optionalText(expectedHead), "invitation_id": optionalText(invitationID)}
+	leaf := chain.Leaf()
+	body := map[string]any{"certificate": leaf.Signed(), "expected_head": optionalText(expectedHead), "invitation_id": optionalText(invitationID)}
 	var answer map[string]any
-	err = c.controllerWrite(ctx, http.MethodPost, registryURL, "/v1/id-certificates/register", domain, "register_id_certificate", nil, body, signer, map[string]string{"X-AWID-ID-Chain": header}, &answer)
+	err = c.controllerWrite(ctx, http.MethodPost, registryURL, "/v1/id-certificates/register", leaf.Domain(), "register_id_certificate", nil, body, signer, map[string]string{"X-AWID-ID-Chain": header}, &answer)
 	return answer, err
 }
 

@@ -63,7 +63,8 @@ func IdentityScopeFromLegacyLifetime(lifetime string) string {
 
 // IdentityHasPublicAddress reports whether the scope permits global addressing.
 func IdentityHasPublicAddress(scope string) bool {
-	return NormalizeIdentityScope(scope) == IdentityModeGlobal
+	parsed, err := ParseIdentityScope(scope)
+	return err == nil && parsed == IdentityScopeGlobal
 }
 
 // RoutingHandle prefers the team-local member name over a global address.
@@ -92,5 +93,6 @@ func DescribeIdentityScope(scope string) string {
 
 // IsSelfCustodial reports whether the identity's private key stays with its owner.
 func IsSelfCustodial(custody string) bool {
-	return strings.TrimSpace(strings.ToLower(custody)) == CustodySelf
+	parsed, err := ParseIdentityCustody(custody)
+	return err == nil && parsed == IdentityCustodySelf
 }

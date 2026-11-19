@@ -359,18 +359,15 @@ func idCertificateBundleShape(bundle map[string]any) error {
 	}
 	return nil
 }
+
+// EncodeIDChainHeader checks the bundle and encodes the same canonical profile
+// as IDChain.Header, preserving the released map-based entry point.
 func EncodeIDChainHeader(bundle map[string]any) (string, error) {
-	b, e := idCertificateCanonical(bundle)
-	if e != nil {
-		return "", e
+	chain, err := IDChainFromBundle(bundle)
+	if err != nil {
+		return "", err
 	}
-	if len(b) > IDChainMaxBytes {
-		return "", idCertificateRefusal(IDRefusalBundleTooLarge)
-	}
-	if e := idCertificateBundleShape(bundle); e != nil {
-		return "", e
-	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	return chain.Header()
 }
 
 // Read each key once; the standard JSON map decoder otherwise overwrites dupes.
