@@ -158,8 +158,6 @@ class FederatedMessageSentContext:
 
     def __post_init__(self) -> None:
         _require_named_value(self.kind, expected=MessageKind, field="kind")
-        if self.kind not in (MessageKind.MAIL, MessageKind.CHAT):
-            raise ValueError("Use mail or chat for a federation message event.")
         object.__setattr__(self, "priority", accepted_message_priority(self.priority))
         object.__setattr__(
             self, "content_mode", accepted_content_mode(self.content_mode)
