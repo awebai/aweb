@@ -691,3 +691,25 @@ async def test_real_redis_ages_shared_evidence_on_its_own_clock(env, monkeypatch
     assert written.age_seconds == 0
     assert 0 <= read.age_seconds <= 2
     assert len(env.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_distinct_status_requests_share_only_the_fresh_domain_authority(env):
+    await _evidence(env)
+    env.clock[0] += 20
+    observed = await _evidence(env, bundle=None, subject=GLOBAL_SUBJECT)
+    assert len(env.requests) == 2
+    assert len(env.dns_lookups) == 1
+    assert observed.age_seconds == 20
+    assert env.requests[0]["ids"] != env.requests[1]["ids"]
+    env.clock[0] += 41
+    await _evidence(env, bundle=None, subject=GLOBAL_SUBJECT)
+    assert len(env.dns_lookups) == 2
+
+
+@pytest.mark.asyncio
+async def test_namespace_write_generation_cannot_reuse_prior_domain_authority(env):
+    await _evidence(env)
+    await env.client._invalidate_id_status_cache(DOMAIN)
+    await _evidence(env, bundle=None, subject=GLOBAL_SUBJECT)
+    assert len(env.dns_lookups) == len(env.requests) == 2
