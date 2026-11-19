@@ -284,6 +284,12 @@ async def test_import_global_claims_still_require_actual_independent_binding(rea
     member_key = did_key_from_signing_key(member)
     async with aclosing(sdk):
         identity = await sdk.register_did(member_key, member)
+        await sdk.revoke_team_certificate(
+            "local",
+            "import",
+            team_controller_signing_key=controller,
+            certificate_id="live-certificate",
+        )
         await sdk.register_team_certificate(
             "local",
             "import",
