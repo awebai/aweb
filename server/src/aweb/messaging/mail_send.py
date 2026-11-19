@@ -31,6 +31,12 @@ from aweb.messaging.refusals import (
 from http import HTTPStatus
 from pgdbm.errors import QueryError
 from aweb.messaging.write_conflicts import is_unique_write_conflict
+from aweb.messaging.message_replay import (
+    StoredMessageClaim,
+    StoredMessageState,
+    read_stored_message,
+    replay_artifact,
+)
 
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
@@ -862,42 +868,33 @@ async def _stored_exact_send(db, *, payload, sender_did: str) -> MailReplayLooku
         return MailReplayLookup(
             stored=None, availability=MailIdAvailability.UNDETERMINED
         )
-    row = await db.get_manager("aweb").fetch_one(
-        """
-        SELECT message_id, conversation_id, created_at, content_mode, from_did,
-               signed_payload, encrypted_envelope
-        FROM {{tables.messages}}
-        WHERE message_id = $1
-        """,
-        message_uuid,
+    lookup = await read_stored_message(
+        db,
+        claim=StoredMessageClaim(
+            kind=MessageKind.MAIL,
+            message_id=message_uuid,
+            sender_did=sender_did,
+            conversation_id=UUID(payload.conversation_id)
+            if payload.conversation_id
+            else None,
+            artifact=replay_artifact(
+                content_mode=payload.content_mode,
+                encrypted_envelope=payload.encrypted_envelope,
+                signature=payload.signature,
+                signed_payload=payload.signed_payload,
+            ),
+        ),
     )
-    if row is None:
+    if lookup.message is None:
         return MailReplayLookup(
-            stored=None, availability=MailIdAvailability.CONFIRMED_UNUSED
+            stored=None,
+            availability=(
+                MailIdAvailability.CONFIRMED_UNUSED
+                if lookup.state is StoredMessageState.MISSING
+                else MailIdAvailability.UNDETERMINED
+            ),
         )
-    if row["from_did"] != sender_did:
-        return MailReplayLookup(
-            stored=None, availability=MailIdAvailability.UNDETERMINED
-        )
-    if (payload.content_mode or ContentMode.PLAINTEXT) == ContentMode.ENCRYPTED:
-        stored_envelope = row["encrypted_envelope"]
-        if isinstance(stored_envelope, str):
-            stored_envelope = json.loads(stored_envelope)
-        same = (
-            row["content_mode"] == ContentMode.ENCRYPTED
-            and payload.encrypted_envelope is not None
-            and stored_envelope == payload.encrypted_envelope
-        )
-    else:
-        same = (
-            row["content_mode"] == ContentMode.PLAINTEXT
-            and bool(payload.signed_payload)
-            and row["signed_payload"] == payload.signed_payload
-        )
-    if not same:
-        return MailReplayLookup(
-            stored=None, availability=MailIdAvailability.UNDETERMINED
-        )
+    row = lookup.message
     return MailReplayLookup(
         stored=SentMail(
             message_id=str(row["message_id"]),
