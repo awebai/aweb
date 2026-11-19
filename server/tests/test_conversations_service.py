@@ -42,7 +42,9 @@ async def _insert_team(aweb_db, team_id: str = "backend:acme.com"):
     )
 
 
-async def _insert_agent(aweb_db, *, team_id: str, alias: str, did_aw: str, address: str):
+async def _insert_agent(
+    aweb_db, *, team_id: str, alias: str, did_aw: str, address: str
+):
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
@@ -126,7 +128,9 @@ async def test_create_conversation_records_sender_and_recipients(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_require_active_participant_uses_stored_membership_not_discovery(aweb_cloud_db):
+async def test_require_active_participant_uses_stored_membership_not_discovery(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
 
@@ -142,7 +146,9 @@ async def test_require_active_participant_uses_stored_membership_not_discovery(a
 
 
 @pytest.mark.asyncio
-async def test_require_active_participant_accepts_verified_equivalent_did(aweb_cloud_db):
+async def test_require_active_participant_accepts_verified_equivalent_did(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
 
@@ -157,7 +163,9 @@ async def test_require_active_participant_accepts_verified_equivalent_did(aweb_c
 
 
 @pytest.mark.asyncio
-async def test_non_participant_with_leaked_conversation_id_gets_not_found(aweb_cloud_db):
+async def test_non_participant_with_leaked_conversation_id_gets_not_found(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
 
@@ -182,7 +190,9 @@ async def test_missing_conversation_is_not_found(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_closed_conversation_rejects_continuation_and_new_participants(aweb_cloud_db):
+async def test_closed_conversation_rejects_continuation_and_new_participants(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
 
@@ -228,16 +238,22 @@ async def test_past_expires_at_lazily_expires_conversation(aweb_cloud_db):
             authenticated_did="did:aw:bob",
         )
 
-    expired = await get_conversation(db, conversation_id=conversation["conversation_id"])
+    expired = await get_conversation(
+        db, conversation_id=conversation["conversation_id"]
+    )
     assert expired is not None
     assert expired["status"] == "expired"
 
     with pytest.raises(ForbiddenError, match="expired"):
-        await touch_conversation_activity(db, conversation_id=conversation["conversation_id"])
+        await touch_conversation_activity(
+            db, conversation_id=conversation["conversation_id"]
+        )
 
 
 @pytest.mark.asyncio
-async def test_touch_conversation_activity_updates_activity_and_slides_expiry(aweb_cloud_db):
+async def test_touch_conversation_activity_updates_activity_and_slides_expiry(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -260,8 +276,14 @@ async def test_create_conversation_allows_self_conversation(aweb_cloud_db):
         _DbShim(aweb_cloud_db.aweb_db),
         conversation_type="mail",
         created_by_did="did:aw:alice",
-        initiator={"did": "did:aw:alice", "alias": "alice", "address": "acme.com/alice"},
-        recipients=[{"did": "did:aw:alice", "alias": "alice", "address": "acme.com/alice"}],
+        initiator={
+            "did": "did:aw:alice",
+            "alias": "alice",
+            "address": "acme.com/alice",
+        },
+        recipients=[
+            {"did": "did:aw:alice", "alias": "alice", "address": "acme.com/alice"}
+        ],
         team_id="backend:acme.com",
     )
     participants = await list_conversation_participants(
@@ -274,7 +296,9 @@ async def test_create_conversation_allows_self_conversation(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_create_conversation_rolls_back_when_participant_insert_fails(aweb_cloud_db):
+async def test_create_conversation_rolls_back_when_participant_insert_fails(
+    aweb_cloud_db,
+):
     await _insert_team(aweb_cloud_db.aweb_db)
     alice_agent_id = await _insert_agent(
         aweb_cloud_db.aweb_db,
@@ -341,7 +365,9 @@ async def test_close_conversation_requires_participant_or_system_close(aweb_clou
 
 
 @pytest.mark.asyncio
-async def test_touch_conversation_activity_preserves_expiry_when_ttl_is_none(aweb_cloud_db):
+async def test_touch_conversation_activity_preserves_expiry_when_ttl_is_none(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
 
@@ -355,7 +381,9 @@ async def test_touch_conversation_activity_preserves_expiry_when_ttl_is_none(awe
 
 
 @pytest.mark.asyncio
-async def test_explicitly_expired_conversation_rejects_continuation_idempotently(aweb_cloud_db):
+async def test_explicitly_expired_conversation_rejects_continuation_idempotently(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
     await expire_conversation(db, conversation_id=conversation["conversation_id"])
@@ -375,7 +403,9 @@ async def test_explicitly_expired_conversation_rejects_continuation_idempotently
     )
 
     assert all(isinstance(result, ForbiddenError) for result in results)
-    expired = await get_conversation(db, conversation_id=conversation["conversation_id"])
+    expired = await get_conversation(
+        db, conversation_id=conversation["conversation_id"]
+    )
     assert expired is not None
     assert expired["status"] == "expired"
     expired_updated_at = expired["updated_at"]
@@ -449,7 +479,9 @@ async def _multi_team_alice_setup(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_find_active_conversation_matches_multi_team_agent_via_did_fallback(aweb_cloud_db):
+async def test_find_active_conversation_matches_multi_team_agent_via_did_fallback(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     alice_a, alice_b, bob_b = await _multi_team_alice_setup(aweb_cloud_db)
 
@@ -464,13 +496,15 @@ async def test_find_active_conversation_matches_multi_team_agent_via_did_fallbac
             "address": "acme.com/alice",
             "transport_hint": "mail",
         },
-        recipients=[{
-            "did": "did:aw:bob",
-            "agent_id": bob_b,
-            "alias": "bob",
-            "address": "acme.com/bob",
-            "transport_hint": "mail",
-        }],
+        recipients=[
+            {
+                "did": "did:aw:bob",
+                "agent_id": bob_b,
+                "alias": "bob",
+                "address": "acme.com/bob",
+                "transport_hint": "mail",
+            }
+        ],
         team_id="team-b:acme.com",
     )
 
@@ -495,7 +529,9 @@ async def test_find_active_conversation_matches_multi_team_agent_via_did_fallbac
 
 
 @pytest.mark.asyncio
-async def test_find_active_conversation_matches_identity_despite_other_membership_projection(aweb_cloud_db):
+async def test_find_active_conversation_matches_identity_despite_other_membership_projection(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db)
     real_alice_agent_id = await _insert_agent(
@@ -530,13 +566,15 @@ async def test_find_active_conversation_matches_identity_despite_other_membershi
             "address": "acme.com/alice-other",
             "transport_hint": "mail",
         },
-        recipients=[{
-            "did": "did:aw:bob",
-            "agent_id": bob_agent_id,
-            "alias": "bob",
-            "address": "acme.com/bob",
-            "transport_hint": "mail",
-        }],
+        recipients=[
+            {
+                "did": "did:aw:bob",
+                "agent_id": bob_agent_id,
+                "alias": "bob",
+                "address": "acme.com/bob",
+                "transport_hint": "mail",
+            }
+        ],
         team_id="backend:acme.com",
     )
 
@@ -552,7 +590,9 @@ async def test_find_active_conversation_matches_identity_despite_other_membershi
 
 
 @pytest.mark.asyncio
-async def test_find_session_between_matches_multi_team_agent_via_did_fallback(aweb_cloud_db):
+async def test_find_session_between_matches_multi_team_agent_via_did_fallback(
+    aweb_cloud_db,
+):
     db = _DbShim(aweb_cloud_db.aweb_db)
     alice_a, alice_b, bob_b = await _multi_team_alice_setup(aweb_cloud_db)
     aweb_db = aweb_cloud_db.aweb_db
@@ -745,10 +785,20 @@ async def test_a_chat_send_backfills_a_legacy_session_once(aweb_cloud_db, monkey
 
     db = _DbShim(aweb_cloud_db.aweb_db)
     await _insert_team(aweb_cloud_db.aweb_db)
-    alice = await _insert_agent(aweb_cloud_db.aweb_db, team_id="backend:acme.com", alias="alice",
-                                did_aw="did:aw:alice", address="acme.com/alice")
-    bob = await _insert_agent(aweb_cloud_db.aweb_db, team_id="backend:acme.com", alias="bob",
-                              did_aw="did:aw:bob", address="acme.com/bob")
+    alice = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    bob = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
     session = await aweb_cloud_db.aweb_db.fetch_one(
         "INSERT INTO {{tables.chat_sessions}} (team_id, created_by) VALUES ('backend:acme.com', 'alice') "
         "RETURNING session_id"
@@ -760,11 +810,23 @@ async def test_a_chat_send_backfills_a_legacy_session_once(aweb_cloud_db, monkey
         VALUES ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
                ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob')
         """,
-        session_id, alice, bob,
+        session_id,
+        alice,
+        bob,
     )
     participants = [
-        {"did": "did:aw:alice", "agent_id": alice, "alias": "alice", "address": "acme.com/alice"},
-        {"did": "did:aw:bob", "agent_id": bob, "alias": "bob", "address": "acme.com/bob"},
+        {
+            "did": "did:aw:alice",
+            "agent_id": alice,
+            "alias": "alice",
+            "address": "acme.com/alice",
+        },
+        {
+            "did": "did:aw:bob",
+            "agent_id": bob,
+            "alias": "bob",
+            "address": "acme.com/bob",
+        },
     ]
     backfill_statements: list[str] = []
     execute = asyncpg.connection.Connection._execute
@@ -778,14 +840,18 @@ async def test_a_chat_send_backfills_a_legacy_session_once(aweb_cloud_db, monkey
 
     async def send():
         return await ensure_session(
-            db, team_id="backend:acme.com", participant_rows=participants, created_by="alice",
+            db,
+            team_id="backend:acme.com",
+            participant_rows=participants,
+            created_by="alice",
             session_id=session_id,
         )
 
     assert await send() == session_id
     backfilled = len(backfill_statements)
     conversation = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1", session_id,
+        "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1",
+        session_id,
     )
     assert await send() == session_id
 
