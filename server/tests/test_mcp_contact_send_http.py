@@ -14,7 +14,7 @@ from aweb.federation.activation import build_federation_authority_activation
 from aweb.mcp.server import create_mcp_app
 from identity_binding_support import register_global_identity
 from test_cli_never_grants import registry_listener
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,

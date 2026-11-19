@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from awid.signing import canonical_json_bytes, sign_message
-from test_dashboard_privacy import privacy_app, TEAM  # noqa: F401
+from test_dashboard_privacy import privacy_app as privacy_app, TEAM
 from test_messages_http import (
     _signed_team_headers,
     _make_keypair,
