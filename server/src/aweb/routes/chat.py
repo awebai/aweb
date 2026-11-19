@@ -104,8 +104,8 @@ CHAT_STREAM_KEEPALIVE_SECONDS = 30.0
 def _parse_uuid(value: str, *, field: str) -> str:
     try:
         return str(UUID(str(value).strip()))
-    except Exception:
-        raise ValueError(f"Invalid {field} format")
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field} format") from exc
 
 
 def _parse_deadline(value: str) -> datetime:
@@ -636,7 +636,13 @@ async def mark_read(
         raise HTTPException(
             status_code=401, detail="Authenticated identity is missing a routing DID"
         )
-    session_uuid = UUID(session_id.strip())
+    try:
+        session_uuid = UUID(_parse_uuid(session_id, field="session_id"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{exc}. Choose a session_id from aw chat pending and retry.",
+        ) from exc
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one(
