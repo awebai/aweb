@@ -12,11 +12,15 @@ def grant_liveness_expiry(grant: GrantContext) -> datetime:
     # Presence is ephemeral even when delegation is not. Do not write the
     # storage sentinel as a heartbeat deadline after its calendar horizon.
     if grant.never_expires:
-        return datetime.now(timezone.utc) + timedelta(seconds=DEFAULT_GRANT_LIVENESS_TTL_SECONDS)
+        return datetime.now(timezone.utc) + timedelta(
+            seconds=DEFAULT_GRANT_LIVENESS_TTL_SECONDS
+        )
     return grant.expires_at
 
 
-async def cleanup_expired_grant_liveness(db, *, ttl_seconds: int = DEFAULT_GRANT_LIVENESS_TTL_SECONDS) -> int:
+async def cleanup_expired_grant_liveness(
+    db, *, ttl_seconds: int = DEFAULT_GRANT_LIVENESS_TTL_SECONDS
+) -> int:
     """Delete grant liveness rows that can no longer make a worker online."""
     status = await db.execute(
         """
