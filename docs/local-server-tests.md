@@ -8,7 +8,7 @@ and native egress guard; it does not replace release-gate qualification.
 
 ```sh
 make test-server-local
-LOCAL_TEST_SUITE=server LOCAL_PYTEST_ARGS='tests/test_agent_wake.py -k mail' make test-server-local
+LOCAL_TEST_SUITE=server LOCAL_PYTEST_ARGS='tests/test_mail_send_retry.py' make test-server-local
 LOCAL_TEST_SUITE=registry make test-server-local
 LOCAL_TEST_WORKERS=2 make test-server-local
 ```
