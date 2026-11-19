@@ -36,7 +36,7 @@ func TestHostedInviteRefusalPreservesSubmissionHistoryAndRetainedAnswers(t *test
 				t.Fatal(err)
 			}
 			recovery := filepath.Join(home.Root, hostedInviteRecoveryFile)
-			marker := hostedAcceptPendingMarkerPath(root, home.Root)
+			marker := filepath.Join(home.Root, acceptanceKeyMarkerName)
 			for _, path := range []string{recovery, marker} {
 				if err := os.WriteFile(path, []byte("selection"), 0o600); err != nil {
 					t.Fatal(err)

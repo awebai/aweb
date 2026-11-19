@@ -2168,7 +2168,7 @@ func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acce
 		}
 		_, refusal := verifyInviteMembership(ctx, prior.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: prior.DIDKey}, prior.ForHuman, opts.Registry, opts.TXTResolver)
 		if awid.IDCertificateErrorCode(refusal) == "human_mismatch" {
-			if err := discardHostedInviteAttempt(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root)); err != nil {
+			if err := discardHostedInviteAttempt(recoveryPath, acceptanceMintedKey{Home: home}); err != nil {
 				return nil, errors.Join(refusal, err)
 			}
 			prior = nil
@@ -2217,8 +2217,12 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 	if err != nil {
 		return nil, nil, err
 	}
-	markerPath := hostedAcceptPendingMarkerPath(workingDir, home.Root)
+	marker := acceptanceMintedKey{Home: home}
 	if _, err := os.Stat(keyPath); err == nil {
+		markerPresent, markerErr := marker.present()
+		if markerErr != nil {
+			return nil, nil, markerErr
+		}
 		identityPath, pathErr := awconfig.IdentityHomePath(home, "identity.yaml")
 		if pathErr != nil {
 			return nil, nil, pathErr
@@ -2230,10 +2234,20 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 		completedPaths := []string{identityPath, workspacePath}
 		for _, path := range completedPaths {
 			if _, err := os.Stat(path); err == nil {
-				if path == identityPath && statHostedAcceptPendingMarker(markerPath, keyPath) == nil {
+				if path == identityPath && markerPresent {
 					metadata, loadErr := awconfig.LoadWorktreeIdentityFrom(identityPath)
 					key, keyErr := awid.LoadSigningKey(keyPath)
-					if loadErr == nil && keyErr == nil && metadata.IdentityScope == awid.IdentityModeLocal && metadata.Custody == awid.CustodySelf && metadata.DID == awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)) {
+					if loadErr != nil {
+						return nil, nil, loadErr
+					}
+					if keyErr != nil {
+						return nil, nil, keyErr
+					}
+					public, publicErr := teamInviteSigningPublicKey(key)
+					if publicErr != nil {
+						return nil, nil, publicErr
+					}
+					if metadata.IdentityScope == awid.IdentityModeLocal && metadata.Custody == awid.CustodySelf && metadata.DID == awid.ComputeDIDKey(public) {
 						continue
 					}
 				}
@@ -2242,9 +2256,8 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 				return nil, nil, err
 			}
 		}
-		markerErr := statHostedAcceptPendingMarker(markerPath, keyPath)
-		if markerErr != nil {
-			return nil, nil, markerErr
+		if err := marker.require(); err != nil {
+			return nil, nil, err
 		}
 		certsPath := filepath.Join(home.Root, "team-certs")
 		if err := pathpreflight.PreflightDir(certsPath, "team certificate directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
@@ -2280,7 +2293,7 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 	if err := awid.SaveSigningKey(keyPath, signingKey); err != nil {
 		return nil, nil, fmt.Errorf("save pending hosted accept signing key: %w", err)
 	}
-	if err := writeHostedAcceptPendingMarker(markerPath); err != nil {
+	if err := marker.save(); err != nil {
 		return nil, nil, err
 	}
 	return pub, signingKey, nil
@@ -2314,17 +2327,6 @@ func identityHomeForTarget(workingDir, identityHome string) (awconfig.IdentityHo
 		return awconfig.IdentityHome{Root: filepath.Clean(identityHome)}, nil
 	}
 	return identityHomeForDir(workingDir)
-}
-
-// hostedAcceptPendingMarkerPath is the marker written next to the signing key
-// while a hosted accept is pending, so a retry reuses the key while a stray
-// leftover key (no marker) is refused.
-func hostedAcceptPendingMarkerPath(workingDir string, identityHomes ...string) string {
-	root := filepath.Join(filepath.Clean(workingDir), ".aw")
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		root = filepath.Clean(identityHomes[0])
-	}
-	return filepath.Join(root, "pending-hosted-accept")
 }
 
 type hostedInviteResponseExpectation struct {
@@ -2437,47 +2439,6 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 		teamKey,
 	); err != nil {
 		return fmt.Errorf("revoke certificate %s: %w", accepted.Certificate.CertificateID, err)
-	}
-	return nil
-}
-
-func preflightHostedAcceptPendingMarker(markerPath string) error {
-	return pathpreflight.PreflightFile(markerPath, "hosted accept recovery marker", pathpreflight.AllowTempAmbientSymlinkPrefix())
-}
-
-func writeHostedAcceptPendingMarker(markerPath string) error {
-	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
-		return err
-	}
-	if err := os.WriteFile(markerPath, []byte("pending hosted accept\n"), 0o600); err != nil {
-		return fmt.Errorf("write pending hosted accept marker: %w", err)
-	}
-	return nil
-}
-
-func removeHostedAcceptPendingMarker(markerPath string) error {
-	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
-		return err
-	}
-	if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
-func statHostedAcceptPendingMarker(markerPath, keyPath string) error {
-	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
-		return err
-	}
-	if _, err := os.Stat(markerPath); err != nil {
-		if os.IsNotExist(err) {
-			return usageError(
-				"refusing to reuse existing %s: not a pending hosted accept (no %s marker); remove it if it is stale. If this directory has .aw/team-certs but no .aw/identity.yaml after a failed hosted global accept, rerun the same accept-invite command only when the marker is present; otherwise back up/remove the partial .aw/signing.key and .aw/team-certs state before retrying",
-				keyPath,
-				filepath.Base(markerPath),
-			)
-		}
-		return err
 	}
 	return nil
 }

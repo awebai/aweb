@@ -217,7 +217,7 @@ func finishHostedInviteRefusal(request hostedInviteAcceptanceRequest, history ho
 		return cause
 	}
 	if history == hostedSubmissionNotAttempted || awid.IDCertificateErrorCode(cause) == "human_mismatch" {
-		return releaseRefusedHostedInvite(request.RecoveryPath, hostedAcceptPendingMarkerPath(request.WorkingDir, request.Home.Root), cause)
+		return releaseRefusedHostedInvite(request.RecoveryPath, acceptanceMintedKey{Home: request.Home}, cause)
 	}
 	return cause
 }
@@ -363,7 +363,7 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 	}
 	// Accept completed: clear the pending marker so the home is no longer in
 	// pending-accept state. (The completed-identity guard already protects it.)
-	if err := removeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(workingDir, home.Root)); err != nil {
+	if err := (acceptanceMintedKey{Home: home}).remove(); err != nil {
 		return nil, err
 	}
 
