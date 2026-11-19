@@ -78,6 +78,34 @@ func TestOATSRealExplicitHomeJoinFrom(t *testing.T) {
 	if !native.MintComplete || native.Service != world.Stack.ServerURL || native.Alias != "native-worker" {
 		t.Fatalf("native init did not complete at its saved service: %s", nativeStatus)
 	}
+	// A selected fresh home must not read or replace a different checkout's
+	// principal while the same real invitation flow creates its recipient.
+	checkoutHome := filepath.Join(filepath.Dir(target), ".aw")
+	world.requireCommand(t, checkoutHome, "id", "create", "--local")
+	checkoutBefore := fileDigestsForTest(t, checkoutHome)
+	checkoutKey, err := awid.LoadSigningKey(filepath.Join(checkoutHome, "signing.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	neighborTarget := filepath.Join(filepath.Dir(target), "named-with-checkout-principal")
+	world.requireCommand(t, neighborTarget, "init", "--join-from", source.Home, "--join-team", world.TeamID, "--name", "neighbor-worker", "--do-not-touch-agents-md")
+	neighborJSON := world.requireCommand(t, neighborTarget, "id", "status", "--team", world.TeamID)
+	var neighbor identityStatusOutput
+	if err := json.Unmarshal([]byte(neighborJSON), &neighbor); err != nil {
+		t.Fatal(err)
+	}
+	if !neighbor.MintComplete || neighbor.Alias != "neighbor-worker" || neighbor.DID == didOf(checkoutKey) {
+		t.Fatalf("explicit join used the unrelated checkout principal: %s", neighborJSON)
+	}
+	checkoutAfter := fileDigestsForTest(t, checkoutHome)
+	if len(checkoutAfter) != len(checkoutBefore) {
+		t.Fatal("explicit join changed unrelated checkout files")
+	}
+	for path, digest := range checkoutBefore {
+		if checkoutAfter[path] != digest {
+			t.Fatalf("explicit join changed unrelated checkout file: %s", path)
+		}
+	}
 
 	after := fileDigestsForTest(t, source.Home)
 	if len(after) != len(sourceBefore) {
