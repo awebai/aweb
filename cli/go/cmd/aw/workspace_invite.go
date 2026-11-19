@@ -16,58 +16,6 @@ type workspaceTeamInvite struct {
 	AwebURL string
 }
 
-func addWorktreeViaPrimaryInvite(
-	primaryDir, primaryIdentityHome, worktreePath, root, branchName string, branchCreated bool,
-	sourceServerURL, alias, role string, state *awconfig.WorktreeWorkspace,
-) (connectOutput, error) {
-	invite, err := createWorkspaceTeamInviteAt(primaryDir, primaryIdentityHome)
-	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("create team invite from primary workspace: %w", err)
-	}
-	if strings.TrimSpace(invite.AwebURL) == "" {
-		invite.AwebURL = sourceServerURL
-	}
-
-	accepted, err := acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, worktreePath, invite.Token, strings.TrimSpace(invite.AwebURL), alias)
-	if err != nil {
-		var pending *hostedInviteSignaturePendingError
-		if !errors.As(err, &pending) {
-			cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		}
-		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
-	}
-
-	awebURL := strings.TrimSpace(accepted.AwebURL)
-	if awebURL == "" {
-		awebURL = strings.TrimSpace(invite.AwebURL)
-	}
-	if awebURL == "" {
-		awebURL = strings.TrimSpace(sourceServerURL)
-	}
-	awebURL = awebURLOrDefault(awebURL)
-	if err := upsertAcceptedTeamMembershipState(worktreePath, accepted.Output, accepted.Certificate, accepted.RegistryURL, awebURL, true); err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, err
-	}
-
-	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
-	connectResult, err := initCertificateConnectWithOptions(worktreePath, awebURL, certificateConnectOptions{
-		Role:      role,
-		HumanName: strings.TrimSpace(state.HumanName),
-		AgentType: strings.TrimSpace(state.AgentType),
-	})
-	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("connect new worktree: %w", err)
-	}
-	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)
-	}
-	return connectResult, nil
-}
-
 func createWorkspaceTeamInviteAt(workingDir, identityHome string) (workspaceTeamInvite, error) {
 	return createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, "")
 }
