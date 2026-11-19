@@ -8,4 +8,7 @@ import "os"
 func warnWakeDirectory(path string)                  {}
 func checkRunnerSnapshotDirectory(path string) error { return nil }
 func checkRunnerSnapshotParent(path string) error    { return nil }
-func runnerSnapshotRoot() string                     { return os.TempDir() }
+
+// Windows stale cleanup needs an ACL owner check; never infer ownership from a
+// temporary path. Normal child-exit cleanup remains available.
+func runnerSnapshotOwnedByCurrentUser(info os.FileInfo) (bool, error) { return false, nil }

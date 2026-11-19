@@ -2,12 +2,10 @@ package wake
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -19,7 +17,6 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
-	"github.com/awebai/aw/internal/atomicfile"
 )
 
 //go:embed channel_core_runner_bundle.mjs
@@ -54,7 +51,10 @@ type ChannelCoreStatus struct {
 	Running            bool              `json:"running"`
 }
 
-type ChannelCoreRunner struct{ store *Store }
+type ChannelCoreRunner struct {
+	store           *Store
+	snapshotCleanup sync.Once
+}
 
 type childPipes struct {
 	stdinWriter  *os.File
@@ -764,37 +764,6 @@ func (c *ChannelCoreChild) setError(err error) {
 	c.st.LastError = err.Error()
 	c.st.Running = false
 	c.mu.Unlock()
-}
-
-// bundlePath implements docs/wake-runner-integrity.md:3-18.
-func (r *ChannelCoreRunner) bundlePath() (string, error) {
-	warnWakeDirectory(r.store.Dir())
-	root := filepath.Join(r.store.Dir(), "channel-core")
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return "", err
-	}
-	warnWakeDirectory(root)
-	// A released older aw trusts this marker. Invalidate it before repairing
-	// bytes so a later downgrade cannot mistake this bundle for the older one.
-	if err := os.Remove(filepath.Join(root, "runner.sha256")); err != nil && !os.IsNotExist(err) {
-		return "", fmt.Errorf("invalidating legacy runner cache: %w. Check the wake state directory permissions and retry aw wake.", err)
-	}
-	path := filepath.Join(root, "runner.mjs")
-	content, err := channelCoreRunnerFS.ReadFile("channel_core_runner_bundle.mjs")
-	if err != nil {
-		return "", err
-	}
-	// The embedded bytes authorize the runner, not a separately mutable stamp.
-	info, statErr := os.Lstat(path)
-	if statErr == nil && info.Mode().IsRegular() {
-		if got, err := os.ReadFile(path); err == nil && bytes.Equal(got, content) {
-			return path, nil
-		}
-	}
-	if err := atomicfile.Write(path, content, 0o600); err != nil {
-		return "", err
-	}
-	return path, nil
 }
 
 func bindingID(b ReceiveIdentity) string { return b.IdentityHome + "|" + b.TeamID }

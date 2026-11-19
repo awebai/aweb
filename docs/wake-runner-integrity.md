@@ -1,27 +1,33 @@
 # Wake runner integrity
 
-A cached runner is executable only when its actual bytes equal the bundle
-embedded in aw. A stamp file cannot authorize different bytes. Missing, empty,
-modified or symlink cache entries are repaired with a complete atomic replacement.
-Remove legacy success stamps before repair so an older aw cannot trust stale state.
+Only the bundle embedded in aw authorizes runner execution. The persistent
+channel-core/runner.mjs cache is no longer read, created or rewritten. Remove
+its old runner.sha256 success stamp before starting a child, so a downgraded aw
+cannot trust stale bytes. A failed stamp removal warns with its path and recovery.
 
-Existing wake state and cache directories remain supported when shared or owned
-by another UID. Warn once per affected path with the exact chmod/chown command to
-make it private; registration, inspection and runner startup remain available.
-A read-only or unavailable shared cache warns and uses the private snapshot;
-shared-cache repair never proceeds unless its legacy stamp was removed first.
-Node executes a fresh process-private snapshot of the embedded, verified bundle,
-created at 0700/0600 beneath the protected system temporary directory and removed
-after the child exits. Replacing or widening the shared state cache cannot change
-this snapshot. Refuse only unsafe permissions on the actual execution directory
-or a temporary parent that lets another UID replace it. Do not gate every
-ancestor mount; a storage-managed PVC root is not the execution directory.
-Windows uses inherited ACLs; Unix mode checks do not establish Windows permissions.
+Existing wake state directories remain supported when shared or owned by another
+UID. Warn once per affected state path with the exact chmod/chown command to make
+it private; registration, inspection and startup remain available. Storage-managed
+ancestor mounts and the unused legacy cache do not become eligibility gates.
+
+Node executes a fresh private snapshot of the embedded bundle at 0700/0600 under
+os.TempDir(), honoring TMPDIR. The parent must be owned by root or the effective
+user, and must be sticky when writable by group or others. Refuse an unsafe actual
+execution directory or temporary parent, with a repair and retry instruction.
+Remove the snapshot after the child exits. On Unix, startup also removes this
+user's own aw-wake-runner-* directories older than a day, excluding symlinks and
+snapshots whose broker still holds their OS lock. Cleanup failures warn without
+stopping wake delivery. Windows uses inherited ACLs and normal exit cleanup; stale cleanup
+waits for an ACL ownership check rather than deleting an unproven owner's files.
+
+A read-only root needs a writable temporary mount or a private writable TMPDIR.
+Mode-fixture tests prove alternate temporary-directory selection; they do not
+qualify a deployed mount or its options.
 
 An invalid child status JSON line increments an invalid-output count without
 retaining its contents or stopping valid neighboring status delivery.
 
 The user-paths gate qualifies the released OATS kernel against candidate aw using
-the real messaging provider and an isolated passive tmux session. This kernel
-wake receipt is required for the lane to pass; ordinary channel-core delivery
-alone does not qualify it. This does not qualify a deployed image or Helm storage.
+the real provider and an isolated passive tmux session. Its kernel wake receipt
+is required; direct channel-core delivery alone does not qualify this seam. This
+does not qualify a deployed image or Helm storage.

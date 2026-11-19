@@ -9,13 +9,19 @@ class KernelWakeOutcome(str, Enum):
 
 
 def add_kernel_wake_result(*, qualification, kernel_receipt):
-    """Enforce docs/wake-runner-integrity.md:24-27: no kernel receipt, no pass."""
+    """Enforce docs/wake-runner-integrity.md:30-33: no kernel receipt, no pass."""
     receipt = (
         kernel_receipt
         if isinstance(kernel_receipt, dict)
+        and kernel_receipt.get("result")
+        in (KernelWakeOutcome.PASSED.value, KernelWakeOutcome.FAILED.value)
         else {
             "result": KernelWakeOutcome.FAILED.value,
-            "error": "released OATS kernel wake evidence is missing or malformed",
+            "error": (
+                "released OATS kernel wake evidence is missing or malformed. "
+                "Re-run the user-paths stage with the prepared candidate runtime, "
+                "inspect released-kernel-wake.json, then retry qualification."
+            ),
         }
     )
     result = {**qualification, "released_kernel_wake": receipt}

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, existsSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -92,7 +92,7 @@ function prepareMintAuthority({ seat, fixtureHome, team }) {
   chmodSync(targetKey, 0o600);
   const invite = parseObject(aw({ identity: seat, args: ["id", "team", "invite", "--namespace", match[2], "--team", match[1], "--registry", env.AWID_REGISTRY_URL, "--json"] }));
   assert.ok(typeof invite.token === "string" && invite.token, "mint preflight must create a disposable invite; its token is not retained");
-  return { team, service: workspace.aweb_url, mint_authority: ProbeOutcome.Passed };
+  return { team, service: workspace.aweb_url, mint_authority: ProbeOutcome.Passed, invite_cleanup: "disposable team; unconsumed preflight invite removed with the team" };
 }
 function activeKernelStatus() {
   const status = parseObject(oats("status", "--json"));
@@ -135,6 +135,13 @@ try {
     child.stderr.on("data", (chunk) => { brokerErrors = (brokerErrors + chunk).slice(-16384); });
     return child;
   };
+  // A downgraded aw could trust this old stamp; candidate aw must remove it
+  // without reading or rewriting the now-unused legacy runner file.
+  const state = join(home, ".config/aw/wake"), cache = join(state, "channel-core");
+  mkdirSync(cache, { recursive: true, mode: 0o700 });
+  const legacyBytes = "throw new Error('unused legacy cache must never execute');\n";
+  writeFileSync(join(cache, "runner.mjs"), legacyBytes, { mode: 0o600 });
+  writeFileSync(join(cache, "runner.sha256"), "old success stamp\n", { mode: 0o600 });
   broker = startOwnedBroker();
   const wakeStatus = () => parseObject(command({ argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
   await until({ read: wakeStatus, ready: (status) => status.daemon_running === true && status.daemon_pid === broker.pid, label: "isolated broker" });
@@ -147,7 +154,9 @@ try {
   const fresh = await until({ read: wakeStatus, ready: runnerReady, label: "kernel-registered wake runner" });
   evidence.wake_fresh = fresh;
   evidence.private_execution_fresh = executionPermissions(fresh);
-  const state = join(home, ".config/aw/wake"), cache = join(state, "channel-core");
+  assert.equal(existsSync(join(cache, "runner.sha256")), false, "candidate removes the legacy stamp");
+  assert.equal(readFileSync(join(cache, "runner.mjs"), "utf8"), legacyBytes, "candidate leaves unused legacy bytes alone");
+  evidence.legacy_cache = { stamp_removed: true, runner_unchanged: true };
   evidence.permissions_fresh = [join(home, ".config/aw"), state, cache].map(permission);
   await stopOwnedBroker(broker);
   chmodSync(state, 0o770);
@@ -183,7 +192,7 @@ try {
   evidence.error = String(error);
   process.exitCode = 1;
 } finally {
-  if (instance) { try { evidence.retire = parseObject(oats("retire", instance, "--json")); } catch (error) { cleanupErrors.push(String(error)); } }
+  if (instance) { try { evidence.retire = parseObject(oats("retire", instance, "--json")); assert.equal(evidence.retire.ok, true, "released provider retire must complete successfully"); } catch (error) { cleanupErrors.push(String(error)); } }
   await stopOwnedBroker(broker);
   const stopped = spawnSync(OWNED_TMUX[0], [...OWNED_TMUX.slice(1), "kill-server"], { cwd: deployment, env, encoding: "utf8" });
   if (stopped.error || (stopped.status !== 0 && !/no server running|No such file or directory/.test(stopped.stderr))) cleanupErrors.push(String(stopped.error || stopped.stderr));

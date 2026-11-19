@@ -210,7 +210,7 @@ for origin in ['http://awid:8010','http://server:8000','http://peer:8000']:
 
 
 def run_released_kernel_wake_probe(*, lane, binary, lane_failures):
-    """Run the required kernel seam and retain its failure in lane admission."""
+    """Enforce docs/wake-runner-integrity.md:30-33 with the real kernel seam."""
     with phase("released-kernel-wake"):
         try:
             compose(

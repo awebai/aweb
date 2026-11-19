@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -47,7 +46,7 @@ func (directory wakeDirectoryPermissions) repairAdvice() string {
 	return strings.Join(commands, "; ")
 }
 
-// warnWakeDirectory implements docs/wake-runner-integrity.md:8-14.
+// warnWakeDirectory implements docs/wake-runner-integrity.md:8-11.
 // Existing state layouts remain usable; each affected path warns once per process.
 func warnWakeDirectory(path string) {
 	directory, err := inspectWakeDirectory(path)
@@ -64,7 +63,7 @@ func warnWakeDirectory(path string) {
 	log.Printf("Warning: wake state directory %s is shared or owned by uid %d. To make this directory private, run: %s. State operations remain available; runner execution uses a separate private snapshot.", path, directory.Owner, directory.repairAdvice())
 }
 
-// writableByAnotherUser implements docs/wake-runner-integrity.md:11-14.
+// writableByAnotherUser implements docs/wake-runner-integrity.md:13-16.
 // Root already controls the process; root ownership alone adds no cache writer.
 func (directory wakeDirectoryPermissions) writableByAnotherUser() bool {
 	return directory.Mode.Perm()&0o022 != 0 || (directory.Owner != uint32(os.Geteuid()) && directory.Owner != 0)
@@ -76,18 +75,9 @@ func checkRunnerSnapshotDirectory(path string) error {
 		return err
 	}
 	if directory.writableByAnotherUser() {
-		return fmt.Errorf("unsafe private runner directory %s: another user can replace runner bytes. Run %s, or choose a private --state-dir, then retry aw wake.", path, directory.repairAdvice())
+		return fmt.Errorf("unsafe private runner directory %s: another user can replace runner bytes. Run %s, then retry aw wake.", path, directory.repairAdvice())
 	}
 	return nil
-}
-
-// The system's sticky temporary directory protects a newly created private
-// snapshot from renames by other UIDs, independently of mounted state volumes.
-func runnerSnapshotRoot() string {
-	if runtime.GOOS == "darwin" {
-		return "/private/tmp"
-	}
-	return "/tmp"
 }
 
 func checkRunnerSnapshotParent(path string) error {
@@ -100,4 +90,13 @@ func checkRunnerSnapshotParent(path string) error {
 		return fmt.Errorf("unsafe system temporary directory %s. Ask the system administrator to restore its ownership and sticky permissions, then retry aw wake.", path)
 	}
 	return nil
+}
+
+// Only the effective user's own directories may be removed by stale cleanup.
+func runnerSnapshotOwnedByCurrentUser(info os.FileInfo) (bool, error) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false, fmt.Errorf("cannot inspect runner snapshot owner")
+	}
+	return stat.Uid == uint32(os.Geteuid()), nil
 }
