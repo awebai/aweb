@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,6 +67,9 @@ func recordAcceptedTeamMembership(request acceptedTeamMembershipRequest) error {
 	if err != nil {
 		return err
 	}
+	if request.Binding != membershipLeaveWorkspaceBinding && request.Binding != membershipWriteWorkspaceBinding {
+		return errors.New("membership workspace binding is unknown")
+	}
 	if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
 		Location:    teamMembershipLocation{WorkingDir: request.WorkingDir, IdentityHome: identityHomeRoot},
 		Output:      request.Output,
@@ -90,6 +94,12 @@ func recordAcceptedTeamMembership(request acceptedTeamMembershipRequest) error {
 // on reinstallation, activating a membership only on request or for an empty
 // store (docs/cli-identity-selection.md:28-33).
 func upsertAcceptedTeamMembershipState(request teamMembershipStateUpdate) error {
+	if err := request.Location.validate(); err != nil {
+		return err
+	}
+	if request.Activation != membershipPreserveActive && request.Activation != membershipMakeActive {
+		return errors.New("membership activation is unknown")
+	}
 	output, cert := request.Output, request.Certificate
 	if output == nil || cert == nil {
 		return fmt.Errorf("accepted team membership is required")
@@ -128,7 +138,17 @@ func upsertAcceptedTeamMembershipState(request teamMembershipStateUpdate) error 
 	return awconfig.SaveTeamState(request.Location.WorkingDir, teamState)
 }
 
+func (location teamMembershipLocation) validate() error {
+	if strings.TrimSpace(location.IdentityHome) == "" && strings.TrimSpace(location.WorkingDir) == "" {
+		return errors.New("membership recording requires a working directory or identity home")
+	}
+	return nil
+}
+
 func loadOptionalTeamState(location teamMembershipLocation) (*awconfig.TeamState, error) {
+	if err := location.validate(); err != nil {
+		return nil, err
+	}
 	var teamState *awconfig.TeamState
 	var err error
 	if strings.TrimSpace(location.IdentityHome) != "" {
