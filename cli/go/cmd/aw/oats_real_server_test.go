@@ -29,7 +29,7 @@ func TestOATSRealExplicitHomeJoinFrom(t *testing.T) {
 	world := newRealCommandWorld(t)
 	source := world.addLocalMember(t, "root")
 	target := filepath.Join(t.TempDir(), "named-identity")
-	t.Setenv("HOME", filepath.Dir(target))
+	t.Setenv("HOME", world.UserHome)
 	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestOATSRealServiceRegisterPreservesCode(t *testing.T) {
 
 func TestOATSRealTeamNameTakenPreservesThePrivateTeamBoundary(t *testing.T) {
 	world := newRealCommandWorld(t)
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("HOME", world.UserHome)
 	_, err := ensureLocalTeamRegistered(world.Context, world.Registry, world.Stack.RegistryURL, world.Domain, "backend", "Existing private team", world.NamespaceKey)
 	if err == nil || errorCodeOf(err) != codeTeamNameTaken || !strings.HasSuffix(err.Error(), "Restore this team's controller key to reuse it, or choose another --name.") {
 		t.Fatalf("private name conflict lost code or action: %v", err)
@@ -128,7 +128,7 @@ func TestOATSRealTeamNameTakenPreservesThePrivateTeamBoundary(t *testing.T) {
 func TestOATSRealIssuedInviteRemainsUsedWhenRecipientPersistenceFails(t *testing.T) {
 	world := newRealCommandWorld(t)
 	source := world.addLocalMember(t, "root")
-	t.Setenv("HOME", filepath.Dir(source.Home))
+	t.Setenv("HOME", world.UserHome)
 	t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
 	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
 		t.Fatal(err)
@@ -183,7 +183,7 @@ func TestOATSRealControllerRetirement(t *testing.T) {
 	world := newRealCommandWorld(t)
 	member := world.addLocalMember(t, "worker")
 	peer := world.addLocalMember(t, "peer")
-	t.Setenv("HOME", filepath.Dir(member.Home))
+	t.Setenv("HOME", world.UserHome)
 	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestOATSRealControllerRetirement(t *testing.T) {
 func TestOATSRealRetirementResumesOnlyControllerRevocation(t *testing.T) {
 	world := newRealCommandWorld(t)
 	member := world.addLocalMember(t, "worker")
-	t.Setenv("HOME", filepath.Dir(member.Home))
+	t.Setenv("HOME", world.UserHome)
 	statusJSON := world.requireCommand(t, member.Home, "id", "status", "--team", world.TeamID)
 	var status identityStatusOutput
 	if err := json.Unmarshal([]byte(statusJSON), &status); err != nil {

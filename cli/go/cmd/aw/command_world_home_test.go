@@ -59,6 +59,7 @@ func TestCommandWorldSharesUserControllerStoreAcrossExplicitIdentityHomes(t *tes
 	other := *world
 	other.UserHome = t.TempDir()
 	home := filepath.Join(t.TempDir(), ".aw")
+	other.requireCommand(t, home, "id", "create", "--local")
 	out := other.requireCommand(t, home, "id", "namespace", "prepare-controller", "--domain", world.Domain)
 	var controller idNamespacePrepareControllerOutput
 	if err := json.Unmarshal([]byte(out), &controller); err != nil {

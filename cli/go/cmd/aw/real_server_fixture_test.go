@@ -91,7 +91,8 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	t.Cleanup(cancel)
 	world := &realCommandWorld{
 		Context: ctx, Binary: filepath.Join(t.TempDir(), "aw"),
-		Domain: freshName(t, "commands-") + ".test", NamespaceKey: newKey(t), TeamKey: newKey(t),
+		UserHome: t.TempDir(),
+		Domain:   freshName(t, "commands-") + ".test", NamespaceKey: newKey(t), TeamKey: newKey(t),
 	}
 	buildAwBinary(t, ctx, world.Binary)
 	world.Stack = realCommandStack(t, ctx, commandStackAuthority{Domain: world.Domain, ControllerDID: didOf(world.NamespaceKey)})
@@ -116,7 +117,7 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 func (world *realCommandWorld) runInIdentityHome(home string, args ...string) (string, error) {
 	command := exec.CommandContext(world.Context, world.Binary, append([]string{"--identity-home", home, "--json"}, args...)...)
 	command.Dir = filepath.Dir(home)
-	command.Env = append(idCreateCommandEnv(filepath.Dir(home)), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
+	command.Env = append(idCreateCommandEnv(world.UserHome), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
 	out, err := command.CombinedOutput()
 	return string(out), err
 }
