@@ -23,7 +23,6 @@ var (
 	guidedOnboardingExecuteBYODPath       = executeBYODPath
 	guidedOnboardingProvisionBYODIdentity = provisionBYODIdentity
 	guidedOnboardingCheckUsername         = awid.CheckUsername
-	guidedOnboardingCliSignup             = awid.CliSignup
 	guidedOnboardingClaimHuman            = claimHumanWithOptions
 	guidedOnboardingInjectDocs            = InjectAgentDocs
 	guidedOnboardingSetupHooks            = SetupClaudeHooks
@@ -75,6 +74,14 @@ func executeGuidedOnboardingWizard(req guidedOnboardingRequest) (*guidedOnboardi
 	req.PromptIn = bufferedPromptReader(guidedPromptIn(req.PromptIn))
 	req.PromptOut = guidedPromptOut(req.PromptOut)
 
+	retained, err := loadHostedSignupRecovery(req.WorkingDir)
+	if err != nil {
+		return nil, err
+	}
+	if retained != nil {
+		return resumeHostedSignup(req, retained)
+	}
+
 	if guidedOnboardingHasReconnectState(req.WorkingDir) {
 		return executeReconnectPath(req)
 	}
@@ -107,6 +114,14 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 	req.PromptIn = bufferedPromptReader(guidedPromptIn(req.PromptIn))
 	req.PromptOut = guidedPromptOut(req.PromptOut)
 
+	retained, err := loadHostedSignupRecovery(req.WorkingDir)
+	if err != nil {
+		return nil, err
+	}
+	if retained != nil {
+		return resumeHostedSignup(req, retained)
+	}
+
 	if err := validateHostedNonInteractiveRequired(req); err != nil {
 		return nil, err
 	}
@@ -134,62 +149,23 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 		return nil, err
 	}
 
-	var provisioned hostedIdentityProvision
-	for {
-		provisioned, err = provisionHostedIdentity(serviceURLs.OnboardingURL, serviceURLs.RegistryURL, username, alias, req.Global, req.InboundMode)
-		if err != nil {
-			if hostedUsernameTakenOnSignup(err) {
-				if req.NonInteractive {
-					return nil, usageError("username %q is not available (taken)", username)
-				}
-				fmt.Fprintf(req.PromptOut, "Username %q was taken during signup. Choose another.\n", username)
-				username, err = promptAvailableHostedUsername(req.PromptIn, req.PromptOut, serviceURLs.OnboardingURL)
-				if err != nil {
-					return nil, err
-				}
-				continue
-			}
-			return nil, err
-		}
-		scope := localHostedIdentity
-		if req.Global {
-			scope = globalHostedIdentity
-		}
-		if err := persistHostedIdentityState(hostedStatePersistence{
-			WorkingDir:   req.WorkingDir,
-			IdentityHome: awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(req.WorkingDir), ".aw"), Source: awconfig.IdentityHomeDefault},
-			RegistryURL:  provisioned.RegistryURL, SigningKey: provisioned.SigningKey,
-			Certificate: provisioned.Certificate, DIDKey: provisioned.DIDKey,
-			DIDAW: provisioned.DIDAW, MemberAddress: provisioned.MemberAddress, Scope: scope,
-		}); err != nil {
-			return nil, err
-		}
-		break
-	}
-
-	result, err := guidedOnboardingConnect(req.WorkingDir, serviceURLs.AwebURL, certificateConnectOptions{
-		Role:      req.Role,
-		HumanName: req.HumanName,
-		AgentType: req.AgentType,
-		APIKey:    provisioned.APIKey,
-	})
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		return nil, err
 	}
-	if req.Global && strings.TrimSpace(req.InboundMode) != "" {
-		if err := requireCreatedIdentityInboundMode(nil, req.WorkingDir, "", serviceURLs.AwebURL, provisioned.Certificate.Team, req.InboundMode); err != nil {
+	if serviceURLs.RegistryURL != "" {
+		if err := registry.SetFallbackRegistryURL(serviceURLs.RegistryURL); err != nil {
 			return nil, err
 		}
 	}
-	if err := printInitOutcome(result, &initResult{ServerName: hostFromBaseURL(result.AwebURL), ExportBaseURL: result.AwebURL, Alias: strings.TrimSpace(result.Alias), Path: initPathNewTeam}, req.WorkingDir, guidedSetup(req)); err != nil {
-		return nil, err
+	scope := awid.IdentityScopeLocal
+	if req.Global {
+		scope = awid.IdentityScopeGlobal
 	}
-	if req.AskPostCreateSetup && !req.NonInteractive {
-		if err := promptHostedClaimHuman(req, serviceURLs.OnboardingURL); err != nil {
-			return nil, err
-		}
-	}
-	return &guidedOnboardingResult{}, nil
+	return completeRecoverableHostedSignup(hostedSignupCompletion{Wizard: req, Creation: hostedSignupCreation{
+		Context:  hostedSignupContext{WorkingDir: req.WorkingDir, DiscoveryURL: req.BaseURL, OnboardingURL: serviceURLs.OnboardingURL, AwebURL: serviceURLs.AwebURL, RegistryURL: registry.DefaultRegistryURL},
+		Username: username, Alias: alias, InboundMode: strings.TrimSpace(req.InboundMode), Scope: scope,
+	}})
 }
 
 func validateHostedNonInteractiveRequired(req guidedOnboardingRequest) error {
@@ -664,71 +640,6 @@ type hostedIdentityProvision struct {
 	APIKey        string
 }
 
-func provisionHostedIdentity(
-	onboardingURL, registryURL, username, alias string, global bool, inboundMode string,
-) (hostedIdentityProvision, error) {
-	registry, err := newConfiguredRegistryClient(nil)
-	if err != nil {
-		return hostedIdentityProvision{}, err
-	}
-	if strings.TrimSpace(registryURL) != "" {
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return hostedIdentityProvision{}, err
-		}
-	}
-
-	pub, signingKey, err := awid.GenerateKeypair()
-	if err != nil {
-		return hostedIdentityProvision{}, err
-	}
-	didKey := awid.ComputeDIDKey(pub)
-	didAW := ""
-	if global {
-		didAW = awid.ComputeStableID(pub)
-	}
-
-	ctx, cancel := commandAPIContext(nil)
-	defer cancel()
-
-	if global {
-		// Hosted onboarding receives the managed address from cli-signup; the CLI
-		// publishes only the did:aw identity before asking the cloud to bind it.
-		if err := registerHostedDID(ctx, registry, didKey, didAW, signingKey); err != nil {
-			return hostedIdentityProvision{}, err
-		}
-	}
-
-	resp, err := guidedOnboardingCliSignup(ctx, onboardingURL, &awid.CliSignupRequest{
-		Username:    username,
-		DIDKey:      didKey,
-		DIDAW:       didAW,
-		Alias:       alias,
-		InboundMode: strings.TrimSpace(inboundMode),
-	}, signingKey)
-	if err != nil {
-		return hostedIdentityProvision{}, err
-	}
-
-	cert, err := validateHostedSignupResponse(resp, didKey, didAW, alias)
-	if err != nil {
-		return hostedIdentityProvision{}, err
-	}
-	apiKey := strings.TrimSpace(resp.APIKey)
-	if apiKey == "" {
-		return hostedIdentityProvision{}, fmt.Errorf("hosted signup response missing api_key")
-	}
-
-	return hostedIdentityProvision{
-		SigningKey:    signingKey,
-		Certificate:   cert,
-		DIDKey:        didKey,
-		DIDAW:         didAW,
-		MemberAddress: strings.TrimSpace(cert.MemberAddress),
-		RegistryURL:   strings.TrimSpace(registry.DefaultRegistryURL),
-		APIKey:        apiKey,
-	}, nil
-}
-
 func registerHostedDID(
 	ctx context.Context,
 	registry *awid.RegistryClient,
@@ -866,14 +777,6 @@ func resolveReconnectServiceURLs(req guidedOnboardingRequest) (onboardingService
 	return onboardingServiceURLs{
 		AwebURL: awebURL,
 	}, nil
-}
-
-func hostedUsernameTakenOnSignup(err error) bool {
-	var regErr *awid.RegistryError
-	if !errors.As(err, &regErr) || regErr.StatusCode != http.StatusConflict {
-		return false
-	}
-	return true
 }
 
 func guidedPromptIn(in io.Reader) io.Reader {
