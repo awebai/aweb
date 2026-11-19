@@ -18,8 +18,8 @@
 #   AWEB_BETA_E2E_PORT    beta aweb host port (default: 8330)
 #   AWEB_FED_E2E_BUILD    set to 0 to skip docker compose build
 #   AWEB_FED_E2E_KEEP     set to 1 to leave containers/temp dir for debugging
-#   AWEB_FED_E2E_SERVER_MODE source (default) or wheel; wheel requires exact
-#                            alpha/beta wheel path, version, and sha256 inputs
+#   AWEB_FED_E2E_SERVER_MODE unset uses candidate wheels; explicit source or wheel
+#                            selects the skew inputs (wheel needs paths, versions and hashes)
 #   AWEB_FED_E2E_DIRECTION a-to-b (default) or b-to-a for the cell proof
 #   AWEB_FED_E2E_CELL_ID   exact full-cell identity rendered in evidence
 #   AWEB_FED_E2E_PROJECT   collision-resistant exact Compose project identity

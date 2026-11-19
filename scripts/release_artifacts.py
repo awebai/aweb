@@ -187,7 +187,7 @@ def materialize(root: Path, directory: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['python', 'npm', 'materialize', 'manifest', 'verify', 'wheel', 'compare'])
+    parser.add_argument('action', choices=['python', 'npm', 'materialize', 'verify', 'wheel', 'compare'])
     parser.add_argument('--directory', type=Path, default=os.environ.get('CANDIDATE_ARTIFACT_DIR'))
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--previous-directory', type=Path)
@@ -212,8 +212,6 @@ def main() -> int:
             prepare_npm(args.root, args.directory.resolve(), args.prefix)
         elif args.action == 'materialize':
             print(materialize(args.root, args.directory.resolve()))
-        elif args.action == 'manifest':
-            write_manifest(args.root, args.directory.resolve())
         elif args.action == 'compare':
             from release_stamp import compare_restamp
             compare_restamp(args.previous_directory, args.directory)

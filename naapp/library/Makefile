@@ -5,6 +5,7 @@
 
 API_PORT ?= 8765
 export NAAPP_E2E_PROJECT ?= library-e2e
+export PREPARE_RELEASE_WHEELS
 PROD_CONFIG ?= ops/render-production.json
 RENDER_ENV_FILE ?= $(HOME)/.aweb-render/env
 PROD_COMMIT ?=
@@ -54,14 +55,14 @@ run:
 
 e2e e2e-up: SHELL := /bin/bash
 e2e:
-	set -e; source ../../scripts/prepare-release-wheels.sh; \
+	set -e; : "$${PREPARE_RELEASE_WHEELS:?PREPARE_RELEASE_WHEELS is required; supply the release-wheel helper path}"; source "$$PREPARE_RELEASE_WHEELS"; \
 	trap 'status=$$?; docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans || status=1; cleanup_release_wheels || status=1; exit "$$status"' EXIT; \
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans >/dev/null 2>&1 || true; \
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d; \
 	LIBRARY_E2E=1 uv run pytest -q -m e2e
 
 e2e-up:
-	set -e; source ../../scripts/prepare-release-wheels.sh; docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
+	set -e; : "$${PREPARE_RELEASE_WHEELS:?PREPARE_RELEASE_WHEELS is required; supply the release-wheel helper path}"; source "$$PREPARE_RELEASE_WHEELS"; docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml up --build -d
 
 e2e-down:
 	docker compose -p $(NAAPP_E2E_PROJECT) -f docker-compose.e2e.yml down -v --remove-orphans

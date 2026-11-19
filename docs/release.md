@@ -381,8 +381,9 @@ Python requirement, extras and entry points. ZIP timestamps, RECORD and metadata
 long descriptions do not decide this comparison. An unchanged installed package
 passes with excluded source differences logged; changed installed code or metadata
 requires a coordinated version bump. The package import check additionally runs
-at declared in-repository dependency floors so a newer local AWID cannot hide a
-missing module in an older allowed release.
+at declared in-repository dependency floors, including higher bounds imposed by
+exact lockstep siblings, so a newer local AWID cannot hide a missing module in an
+older allowed release.
 
 The shared wheel installer verifies each input hash, replaces editable installs,
 checks installed payload bytes and logs `installed manifest wheel:` with the

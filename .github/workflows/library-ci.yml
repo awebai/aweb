@@ -125,7 +125,7 @@ jobs:
         working-directory: naapp/library
         env:
           LIBRARY_E2E_AWEB_CONTEXT: ${{ github.workspace }}
-        run: make e2e
+        run: make e2e PREPARE_RELEASE_WHEELS="$GITHUB_WORKSPACE/scripts/prepare-release-wheels.sh"
 
   # naapp-lib is tested here rather than in its own workflow because it is an
   # in-repo dependency of BOTH movers - naapp/library and naapp/folio each

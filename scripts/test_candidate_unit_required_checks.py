@@ -72,14 +72,18 @@ class UnitRequiredChecksTests(unittest.TestCase):
                 self.assertIn("unit\tFAILED\tunit.log", summary)
                 self.assertIn("=== candidate: " + target + " ===", log)
 
-    def test_later_artifact_stage_reuses_the_successful_unit_node_setup(self):
+    def test_artifacts_run_first_and_unit_reuses_their_node_setup(self):
         result, calls, summary, _ = self.exercise("unit artifacts")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(
-            calls[:7], REQUIRED + ["_candidate-node-deps", "_candidate-unit-suites"]
+            calls[-6:], REQUIRED + ["_candidate-unit-suites"]
         )
+        self.assertEqual(calls[:2], ["_candidate-node-deps", "build"])
         self.assertEqual(calls.count("_candidate-node-deps"), 1)
+        self.assertEqual([row.split("\t")[0] for row in summary.splitlines()],
+                         ["artifacts", "unit"])
         self.assertIn("artifacts\tPASSED\tartifacts.log", summary)
+        self.assertIn("unit\tPASSED\tunit.log", summary)
 
 
 if __name__ == "__main__":

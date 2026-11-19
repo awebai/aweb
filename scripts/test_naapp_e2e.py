@@ -72,9 +72,26 @@ class NaappE2ETest(unittest.TestCase):
                 self.assertEqual((package / "helper.txt").read_text(),
                                  str(ROOT / "scripts/prepare-release-wheels.sh"))
 
-    def test_folio_ci_supplies_the_release_helper(self):
-        workflow = (ROOT / ".github/workflows/folio-ci.yml").read_text()
-        self.assertIn('make e2e PREPARE_RELEASE_WHEELS="$GITHUB_WORKSPACE/scripts/prepare-release-wheels.sh"', workflow)
+    def test_ci_callers_supply_the_release_helper(self):
+        for package in ("folio", "library"):
+            with self.subTest(package=package):
+                workflow = (ROOT / f".github/workflows/{package}-ci.yml").read_text()
+                self.assertIn('make e2e PREPARE_RELEASE_WHEELS="$GITHUB_WORKSPACE/scripts/prepare-release-wheels.sh"', workflow)
+
+    def test_library_requires_the_helper_before_any_tool_starts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tool = root / "docker"
+            tool.write_text('#!/bin/sh\nexit 99\n')
+            tool.chmod(0o755)
+            environment = dict(os.environ, PATH=str(root) + os.pathsep + os.environ["PATH"])
+            environment.pop("PREPARE_RELEASE_WHEELS", None)
+            for target in ("e2e", "e2e-up"):
+                with self.subTest(target=target):
+                    result = subprocess.run(["make", "-f", str(ROOT / "naapp/library/Makefile"), target],
+                                            cwd=root, env=environment, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("PREPARE_RELEASE_WHEELS is required", result.stderr)
 
     def test_missing_allocation_fails_before_starting_a_package(self):
         result = subprocess.run(

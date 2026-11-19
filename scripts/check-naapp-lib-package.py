@@ -126,26 +126,43 @@ def _check_install(project: Path, wheel: Path, metadata: Message, find_links: li
     probe = "import importlib\nfor name in %r:\n    importlib.import_module(name)\n" % (_modules(project),)
     links = [argument for path in find_links for argument in ("--find-links", str(path))]
     siblings = []
+    local_metadata = {}
     for directory in find_links:
         for sibling in sorted(directory.glob("*.whl")):
             sibling_metadata = _metadata(sibling)
             if sibling_metadata["Name"] == metadata["Name"]:
                 continue
+            local_metadata[sibling_metadata["Name"]] = sibling_metadata
             # Explicit pins admit only this matched RC set, while wheel paths
             # bind the inputs to local bytes. uv still enforces every floor.
             siblings.extend(("--with", f'{sibling_metadata["Name"]}=={sibling_metadata["Version"]}',
                              "--with", str(sibling)))
-    # Local wheels can be newer than the declared minimum. Test each in-repo
-    # dependency at its declared floor too, so a fresh local AWID cannot hide a
-    # module absent from the release that downstream resolvers may select.
-    floors = []
-    for dependency in metadata.get_all("Requires-Dist") or []:
-        match = re.match(r"(awid-service|aweb-naapp)(?:\[[^]]+\])?\s*>=\s*([^,;\s]+)", dependency)
-        if match:
-            floors.extend(("--with", f"{match[1]}=={match[2]}"))
+    # Test the minimum allowed release, including bounds imposed by exact
+    # lockstep siblings. A testing wheel's older direct AWID floor does not
+    # override the higher AWID floor of its exactly pinned naapp dependency.
+    floors = {}
+    pending = [metadata]
+    visited = set()
+    while pending:
+        current = pending.pop()
+        if current["Name"] in visited:
+            continue
+        visited.add(current["Name"])
+        for dependency in current.get_all("Requires-Dist") or []:
+            match = re.match(r"(awid-service|aweb-naapp)(?:\[[^]]+\])?\s*(>=|==)\s*([^,;\s]+)", dependency)
+            if not match:
+                continue
+            name, operator, version = match.groups()
+            if operator == "==":
+                sibling = local_metadata.get(name)
+                if sibling is not None and sibling["Version"] == version:
+                    pending.append(sibling)
+            elif name not in floors or python_version_key(version) > python_version_key(floors[name]):
+                floors[name] = version
     modes = [("candidate wheels", siblings)]
     if floors:
-        modes.append(("declared floors", floors))
+        modes.append(("declared floors", [arg for name, version in sorted(floors.items())
+                                         for arg in ("--with", f"{name}=={version}")]))
     for mode, dependencies in modes:
         result = subprocess.run(
             ["uv", "run", "--isolated", "--no-project", *links, "--with", requirement,

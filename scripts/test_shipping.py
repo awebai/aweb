@@ -495,7 +495,7 @@ class MatchedRcSiblingInstallTest(unittest.TestCase):
         cls.server = build('server', 'aweb', '1.27.51rc1', 'aweb',
                            ['awid-service>=0.5.40rc1'], 'from awid import LOCAL_RC\nassert LOCAL_RC\n')
         cls.testing = build('testing', 'aweb-naapp-testing', '0.5.2rc1', 'aweb_naapp_testing',
-                            ['aweb-naapp==0.5.2rc1', 'aweb>=1.27.51rc1'],
+                            ['awid-service>=0.5.39', 'aweb-naapp==0.5.2rc1', 'aweb>=1.27.51rc1'],
                             'import aweb_naapp\nimport aweb\n')
         cls.newer = build('newer', 'aweb-naapp', '0.5.2rc1', 'aweb_naapp',
                           ['awid-service>=0.5.40rc2'], 'import awid\n')
