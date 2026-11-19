@@ -71,3 +71,51 @@ async def test_work_ready_excludes_tasks_claimed_by_another_workspace(coordinati
     assert claimed.status_code == 200, claimed.text
     body = await call_mcp(env, name="work_ready")
     assert [task["task_ref"] for task in body["tasks"]] == [tasks["alice"]["task_ref"]]
+
+
+@pytest.mark.asyncio
+async def test_active_claim_activity_matches_http_and_mcp(coordination_mcp):
+    from datetime import UTC, datetime, timedelta
+    from aweb.presence import update_agent_presence
+
+    env = coordination_mcp
+    created = await request_as(
+        env,
+        alias="alice",
+        method="POST",
+        path="/v1/tasks",
+        payload={"title": "Active observation"},
+    )
+    assert created.status_code == 200, created.text
+    claimed = await request_as(
+        env,
+        alias="alice",
+        method="PATCH",
+        path=f"/v1/tasks/{created.json()['task_ref']}",
+        payload={"status": "in_progress"},
+    )
+    assert claimed.status_code == 200, claimed.text
+    await env.db.execute(
+        "UPDATE {{tables.workspaces}} SET last_seen_at=$1 WHERE workspace_id=$2",
+        datetime.now(UTC) - timedelta(days=2),
+        env.actors["alice"].workspace,
+    )
+    # Supply the actual team, independent of whether the task DTO includes it.
+    from test_dashboard_privacy import TEAM
+
+    newest = await update_agent_presence(
+        env.redis,
+        workspace_id=str(env.actors["alice"].workspace),
+        alias="alice",
+        team_id=TEAM,
+        current_branch="work-branch",
+    )
+    http = await request_as(env, alias="alice", method="GET", path="/v1/tasks/active")
+    assert http.status_code == 200, http.text
+    mcp = await call_mcp(env, name="work_active")
+    for rows in (http.json()["tasks"], mcp["tasks"]):
+        assert len(rows) == 1
+        assert rows[0]["task_ref"] == created.json()["task_ref"]
+        assert rows[0]["workspace_id"] == str(env.actors["alice"].workspace)
+        assert rows[0]["owner_last_seen_at"] == newest
+        assert rows[0]["branch"] == "work-branch"
