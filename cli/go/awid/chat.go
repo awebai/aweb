@@ -853,141 +853,62 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 
 // VerifyReceivedChatMessage sets a plaintext or encrypted chat message's
 // verification status and authenticated sender fields, the same way for every
-// reader: chat history and the live stream. It checks that the displayed
-// fields are the signed ones before projecting signed metadata over them,
-// decrypts an encrypted message, verifies the signature and its conversation
-// claim, normalises sender trust (trustAlias names the sender when the message
-// carries no address), and binds the message to its signed recipient. An
-// error means the message could not be read at all.
+// reader (chat history and the live stream) and by the rule mail uses
+// (verifyReceived). trustAlias names the sender for trust normalisation when
+// the message carries no address. An error means the message could not be
+// read at all.
 func (c *Client) VerifyReceivedChatMessage(ctx context.Context, m *ChatMessage, trustAlias string) error {
-	m.Attachments = nil
-	m.AttachmentsAvailable = true
-	binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
-	if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !SignedChatDisplayMatches(m.SignedPayload, ChatDisplay{
-		Body:           m.Body,
-		MessageID:      m.MessageID,
-		ConversationID: m.ConversationID,
-		FromDID:        m.FromDID,
-		ToDID:          m.ToDID,
-	}) {
-		// Preserve the observed response so a mismatch cannot be hidden by
-		// metadata overlay or subsequently promoted by trust normalization.
-		m.VerificationStatus = Failed
-		return nil
+	r := receivedChatMessage(m, trustAlias)
+	if err := c.verifyReceived(ctx, &r); err != nil {
+		return err
 	}
-
-	if m.ContentMode == ContentModeEncryptedV2 || m.MessageVersion == E2EEMessageVersion || m.Encrypted != nil {
-		if m.Encrypted == nil {
-			return errors.New("encrypted chat message is missing its encrypted envelope")
-		}
-		plain, err := c.DecryptE2EEEnvelopeWithContext(ctx, m.Encrypted)
-		if err != nil {
-			return err
-		}
-		if m.MessageID != plain.MessageID || m.ConversationID != plain.ConversationID {
-			// Decryption authenticated the envelope and its inner IDs. Keep
-			// the original outer projection visible when it disagrees.
-			m.VerificationStatus = Failed
-			return nil
-		}
-
-		m.Body = plain.Body
-		m.Attachments, m.AttachmentsAvailable = DecodeAttachmentContent(plain.Attachments)
-		binding.TeamID = plain.From.TeamID
-		applyE2EEPlaintextChatMetadata(m, plain)
-		m.VerificationStatus = Verified
-	}
-	if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok && m.ContentMode != ContentModeEncryptedV2 {
-		if meta.FromDID != "" {
-			m.FromDID = meta.FromDID
-		}
-		if meta.ToDID != "" {
-			m.ToDID = meta.ToDID
-		}
-		if m.FromStableID == "" {
-			m.FromStableID = meta.FromStableID
-		}
-		if m.ToStableID == "" {
-			m.ToStableID = meta.ToStableID
-		}
-		// A signed member name is not a public address. Preserve an explicit
-		// server projection; only suppress alias-to-address fallback.
-		stableAlias := strings.HasPrefix(meta.FromStableID, "did:aw:") && !strings.Contains(meta.From, "/")
-		if m.FromAddress == "" && meta.From != "" && !stableAlias {
-			m.FromAddress = meta.From
-		}
-		if m.ToAddress == "" && meta.To != "" {
-			m.ToAddress = meta.To
-		}
-		if stableAlias {
-			m.FromStableID = meta.FromStableID
-		}
-	}
-	from := m.FromAgent
-	if m.FromAddress != "" {
-		from = m.FromAddress
-	}
-	if m.ContentMode == ContentModeEncryptedV2 {
-		// The v2 envelope signature was verified before decrypting above.
-	} else if m.SignedPayload != "" {
-		m.VerificationStatus, _ = VerifySignedPayload(m.SignedPayload, m.Signature, m.FromDID, m.SigningKeyID)
-		if m.VerificationStatus == Verified {
-			m.VerificationStatus = SignedPayloadConversationStatus(m.SignedPayload, m.ConversationID)
-		}
-	} else {
-		to := ""
-		if m.ToAddress != "" {
-			to = m.ToAddress
-		}
-		env := &MessageEnvelope{
-			From:           from,
-			FromDID:        m.FromDID,
-			To:             to,
-			ToDID:          m.ToDID,
-			Type:           "chat",
-			Body:           m.Body,
-			Timestamp:      m.Timestamp,
-			FromStableID:   m.FromStableID,
-			ToStableID:     m.ToStableID,
-			MessageID:      m.MessageID,
-			ConversationID: m.ConversationID,
-			Signature:      m.Signature,
-			SigningKeyID:   m.SigningKeyID,
-		}
-		m.VerificationStatus, _ = VerifyMessage(env)
-		if m.VerificationStatus == Failed && m.ConversationID != "" {
-			env.ConversationID = ""
-			legacyStatus, _ := VerifyMessage(env)
-			if legacyStatus == Verified {
-				m.VerificationStatus = VerifiedLegacy
-			}
-		}
-	}
-	m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, trustAlias, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact, binding)
-	// A message is bound to its signed recipient; a message this client
-	// authored names someone else and is exempt.
-	if !c.messageAuthoredByClientDID(m.FromDID) {
-		m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID, m.ToStableID)
-	}
+	r.applyToChat(m)
 	return nil
 }
 
-func applyE2EEPlaintextChatMetadata(m *ChatMessage, plain *E2EEInnerPayload) {
-	if m == nil || plain == nil {
-		return
+func receivedChatMessage(m *ChatMessage, trustAlias string) receivedMessage {
+	return receivedMessage{
+		kind:                    receivedChat,
+		fromAlias:               m.FromAgent,
+		trustAlias:              trustAlias,
+		timestamp:               m.Timestamp,
+		messageID:               m.MessageID,
+		conversationID:          m.ConversationID,
+		contentMode:             m.ContentMode,
+		messageVersion:          m.MessageVersion,
+		encrypted:               m.Encrypted,
+		signature:               m.Signature,
+		signingKeyID:            m.SigningKeyID,
+		signedPayload:           m.SignedPayload,
+		senderMembership:        m.SenderMembership,
+		rotationAnnouncement:    m.RotationAnnouncement,
+		replacementAnnouncement: m.ReplacementAnnouncement,
+		body:                    m.Body,
+		fromDID:                 m.FromDID,
+		toDID:                   m.ToDID,
+		fromStableID:            m.FromStableID,
+		toStableID:              m.ToStableID,
+		fromAddress:             m.FromAddress,
+		toAddress:               m.ToAddress,
+		attachments:             m.Attachments,
+		attachmentsAvailable:    m.AttachmentsAvailable,
+		status:                  m.VerificationStatus,
+		isContact:               m.IsContact,
 	}
-	if strings.TrimSpace(plain.From.DID) != "" {
-		m.FromDID = strings.TrimSpace(plain.From.DID)
-	}
-	m.FromStableID = strings.TrimSpace(plain.From.StableID)
-	// An authenticated empty address is meaningful; never retain a projected
-	// alias/address here. Server-attested membership remains separate.
-	m.FromAddress = strings.TrimSpace(plain.From.Address)
-	// A single authenticated recipient is the message's recipient binding.
-	if len(plain.Recipients) == 1 {
-		m.ToDID = strings.TrimSpace(plain.Recipients[0].DID)
-		m.ToStableID = strings.TrimSpace(plain.Recipients[0].StableID)
-	}
+}
+
+func (r *receivedMessage) applyToChat(m *ChatMessage) {
+	m.Body = r.body
+	m.FromDID = r.fromDID
+	m.ToDID = r.toDID
+	m.FromStableID = r.fromStableID
+	m.ToStableID = r.toStableID
+	m.FromAddress = r.fromAddress
+	m.ToAddress = r.toAddress
+	m.Attachments = r.attachments
+	m.AttachmentsAvailable = r.attachmentsAvailable
+	m.VerificationStatus = r.status
+	m.IsContact = r.isContact
 }
 
 type ChatMarkReadRequest struct {
