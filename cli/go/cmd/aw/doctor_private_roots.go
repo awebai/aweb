@@ -126,7 +126,7 @@ func (fix privateRootPermissionsFix) Plan(_ context.Context, ctx doctorFixContex
 		plan.Status = doctorFixStatusNoop
 		return plan, nil
 	}
-	plan.PlannedMutations = []doctorFixMutation{{Operation: "chmod", Path: path, Description: "Restrict the explicitly selected private directory to 0700."}}
+	plan.PlannedMutations = []doctorFixMutation{{Operation: doctorFixChmod, permissionMode: 0o700, Path: path, Description: "Restrict the explicitly selected private directory to 0700."}}
 	return plan, nil
 }
 

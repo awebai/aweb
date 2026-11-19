@@ -112,3 +112,10 @@ leave existing parent directories alone. Permission-based refusal
 is deferred by the operator's ruling relayed in
 `90ff2d44-fcf8-40a7-ad60-d779b8b38a25` and clarified in
 `f865acca-9b36-4f18-9bc4-11b902db3553`.
+
+The doctor safety gate evaluates the registered repair owner's typed operation,
+selected path and permission mode. Metadata repairs are limited to their named
+local field and target. A plan's description never grants or removes permission;
+key-content writes, replacement/deletion, identity lifecycle and coordination
+cleanup remain outside these safe local repairs. Serialized output explains a
+plan; it is not an execution capability or a persisted-plan interface.

@@ -1,49 +1,89 @@
 package main
 
 import (
-	"log"
 	"os"
+	"path/filepath"
+
+	"github.com/awebai/aw/awconfig"
 )
 
 const privateKeyPermissionMode os.FileMode = 0o600
 
-type privateKeyPermissionPaths map[string]os.FileMode
-
-// ownedPrivateKeyPermissionPaths limits the mode-only repair exception to the
-// two concrete local owners and their currently selected paths. Check IDs alone
-// grant no exception (docs/signature-primitives.md, Local private keys).
-func ownedPrivateKeyPermissionPaths(ctx doctorFixContext, check doctorCheck, plan doctorFixPlan) privateKeyPermissionPaths {
-	if check.Source != doctorSourceLocal || plan.Source != doctorSourceLocal || plan.CheckID != check.ID {
-		return nil
-	}
-	handler, registered := doctorFixHandlers[check.ID]
-	if !registered || handler == nil || handler.CheckID() != check.ID {
-		return nil
-	}
-	switch handler.(type) {
-	case signingKeyPermissionsFix:
-		return privateKeyPermissionPaths{doctorFixIdentityPath(ctx, "signing.key"): privateKeyPermissionMode}
-	case additionalPrivateKeyPermissionsFix:
-		findings, err := additionalPrivateKeyPermissionFindings(ctx)
-		if err != nil {
-			log.Printf("aw doctor: cannot confirm private-key permission scope: %v. Inspect the private roots and rerun doctor.", err)
-			return privateKeyPermissionPaths{}
-		}
-		paths := make(privateKeyPermissionPaths, len(findings))
-		for _, finding := range findings {
-			paths[finding.Path] = privateKeyPermissionMode
-		}
-		return paths
-	default:
-		return nil
-	}
+// A registered owner describes its allowed local effects independently of the
+// prose shown to operators (docs/signature-primitives.md:116-121).
+type doctorFixMutationOwner interface {
+	doctorMutationScope(doctorFixContext) (doctorMutationScope, error)
 }
 
-// permits admits only chmod0600 of a path owned by this repair. Metadata writes,
-// replacement, deletion, other modes and additional resource targets refuse.
-func (paths privateKeyPermissionPaths) permits(mutation doctorFixMutation) bool {
-	mode, owned := paths[mutation.Path]
-	return owned && mutation.Path != "" &&
-		mutation.Operation == doctorFixChmod && mutation.permissionMode == mode &&
-		mutation.Target == nil && mutation.Resource == "" && mutation.SourceOfTruth == ""
+type doctorMetadataMutation struct {
+	Operation  doctorFixOperation
+	Path       string
+	TargetPath string
+	Resource   doctorFixMetadataField
+}
+
+type doctorMutationScope struct {
+	CheckID     string
+	Permissions map[string]os.FileMode
+	Metadata    *doctorMetadataMutation
+	Refusal     doctorFixSafetyReason
+}
+
+func (scope doctorMutationScope) permits(mutation doctorFixMutation) bool {
+	if mode, owned := scope.Permissions[mutation.Path]; owned {
+		return mutation.Operation == doctorFixChmod && mutation.permissionMode == mode &&
+			mutation.Target == nil && mutation.Resource == "" && mutation.SourceOfTruth == ""
+	}
+	metadata := scope.Metadata
+	if metadata == nil || mutation.Target == nil {
+		return false
+	}
+	return mutation.Operation == metadata.Operation && mutation.permissionMode == 0 &&
+		mutation.Path == metadata.Path && mutation.Resource == metadata.Resource &&
+		mutation.Target.Type == "local_path" &&
+		filepath.Clean(mutation.Target.ID) == filepath.Clean(metadata.TargetPath)
+}
+
+func (fix signingKeyPermissionsFix) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	return doctorMutationScope{CheckID: fix.CheckID(), Refusal: doctorFixPrivateKeyMaterial,
+		Permissions: map[string]os.FileMode{doctorFixIdentityPath(ctx, "signing.key"): privateKeyPermissionMode}}, nil
+}
+
+func (fix additionalPrivateKeyPermissionsFix) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	findings, err := additionalPrivateKeyPermissionFindings(ctx)
+	if err != nil {
+		return doctorMutationScope{}, err
+	}
+	paths := make(map[string]os.FileMode, len(findings))
+	for _, finding := range findings {
+		paths[finding.Path] = privateKeyPermissionMode
+	}
+	return doctorMutationScope{CheckID: fix.CheckID(), Refusal: doctorFixPrivateKeyMaterial, Permissions: paths}, nil
+}
+
+func (fix privateRootPermissionsFix) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	path, err := privateRootPath(fix.Root.Kind, ctx)
+	if err != nil {
+		return doctorMutationScope{}, err
+	}
+	return doctorMutationScope{CheckID: fix.CheckID(), Refusal: doctorFixUnsafe,
+		Permissions: map[string]os.FileMode{path: 0o700}}, nil
+}
+
+func (fix localActiveTeamFixHandler) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	return doctorMutationScope{CheckID: fix.CheckID(), Refusal: doctorFixUnsafe, Metadata: &doctorMetadataMutation{
+		Operation: doctorFixRewriteTeamsMetadata, Path: awconfig.DefaultTeamStateRelativePath(),
+		TargetPath: doctorFixIdentityPath(ctx, "teams.yaml"), Resource: doctorFixActiveTeamField}}, nil
+}
+
+func (fix localWorkspaceURLFixHandler) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	return doctorMutationScope{CheckID: fix.CheckID(), Refusal: doctorFixUnsafe, Metadata: &doctorMetadataMutation{
+		Operation: doctorFixRewriteWorkspaceMetadata, Path: awconfig.DefaultWorktreeWorkspaceRelativePath(),
+		TargetPath: doctorFixIdentityPath(ctx, "workspace.yaml"), Resource: doctorFixAwebURLField}}, nil
+}
+
+func (fix localIdentityRegistryURLFixHandler) doctorMutationScope(ctx doctorFixContext) (doctorMutationScope, error) {
+	return doctorMutationScope{CheckID: fix.CheckID(), Refusal: doctorFixUnsafe, Metadata: &doctorMetadataMutation{
+		Operation: doctorFixRewriteIdentityMetadata, Path: awconfig.DefaultWorktreeIdentityRelativePath(),
+		TargetPath: doctorFixIdentityPath(ctx, "identity.yaml"), Resource: doctorFixRegistryURLField}}, nil
 }
