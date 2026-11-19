@@ -7590,7 +7590,7 @@ async def test_send_message_accepts_local_to_address_binding_when_awid_misses(
         resp = await client.post("/v1/messages", json=payload)
 
     assert resp.status_code == 200, resp.text
-    registry.resolve_address.assert_awaited_once_with("test.local", "gsk")
+    registry.resolve_address.assert_not_awaited()
     row = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT to_did, to_agent_id, to_alias
