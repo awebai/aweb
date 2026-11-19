@@ -36,12 +36,13 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 			const team = "staff:example.test"
 			var mu sync.Mutex
 			var did, pub string
-			calls, issued, registered := 0, 0, 0
+			calls, issued, registered, teamReads := 0, 0, 0, 0
 			server := newLocalHTTPServerHandlerWithURL(t, func(base string, w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
 				case r.Method == "GET" && r.URL.Path == "/api/v1/teams/current":
+					teamReads++
 					if r.Header.Get("Authorization") != "Bearer "+provisioningKey {
 						t.Error("team selection did not use original authority")
 					}
@@ -288,7 +289,7 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				}
 			} else {
 				mu.Lock()
-				beforeCalls, beforeIssued := calls, issued
+				beforeCalls, beforeIssued, beforeTeamReads := calls, issued, teamReads
 				mu.Unlock()
 				if beforeCalls != 1 || beforeIssued != 1 {
 					t.Fatalf("lost response auto-retried: %d/%d", beforeCalls, beforeIssued)
@@ -303,7 +304,7 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 					t.Fatal(err)
 				}
 				mu.Lock()
-				unchanged := calls == beforeCalls
+				unchanged := calls == beforeCalls && teamReads == beforeTeamReads
 				mu.Unlock()
 				if changedCode == 0 || !unchanged || string(after) != string(partial) {
 					t.Fatal("changed context did not refuse intact before hosted call")
