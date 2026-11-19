@@ -9,7 +9,7 @@
   but `authority_unavailable` (capabilities: a fixed list reporting the send
   facade as refused); neither aweb nor aweb Cloud configured the service. They
   now answer 404, and grant-authenticated requests to them are refused as outside
-  the grant surface. Migration 054 drops the three outbox tables only that
+  the grant surface. Migration 056 drops the three outbox tables only that
   service wrote. `GET /v1/messaging/participants/{alias}` is unchanged.
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate

@@ -9,7 +9,7 @@ embedding and its routes `GET /v1/messaging/capabilities`,
 aweb Cloud configured the service, so resolve, prepare and ingress-results only
 ever answered `authority_unavailable`, and capabilities only ever returned a
 fixed list reporting the send facade as refused. Migration
-`054_drop_native_send_tables.sql` drops the tables only that service wrote.
+`056_drop_native_send_tables.sql` drops the tables only that service wrote.
 
 A human alias names the human's existing actor in the authenticated, selected
 public team, under the [human-channel contract](human-channels-contract-v1.md).
