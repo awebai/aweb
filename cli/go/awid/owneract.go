@@ -3,11 +3,11 @@ package awid
 import (
 	"bytes"
 	"crypto/ed25519"
-	"encoding/base64"
 	"regexp"
 	"sort"
 	"time"
 
+	"github.com/awebai/aw/signaturewire"
 	"github.com/awebai/aw/strictjson"
 )
 
@@ -259,7 +259,7 @@ func SignOwnerAct(teamKey ed25519.PrivateKey, act map[string]any) ([]byte, strin
 	if act["team_key_did"] != ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)) {
 		return nil, "", strictjson.Refuse("owner_required", "the key is not the act's team key")
 	}
-	return signing, base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, signing)), nil
+	return signing, signaturewire.SignStd(teamKey, signing), nil
 }
 
 // OwnerActVerifyOptions are the verifier's own facts, all required.
@@ -331,7 +331,7 @@ func VerifyOwnerAct(signing []byte, signature string, opts OwnerActVerifyOptions
 	if err != nil {
 		return nil, err
 	}
-	if !ed25519.Verify(public, signing, sig) {
+	if !signaturewire.Verify(signaturewire.Proof{PublicKey: public, Payload: signing, Signature: sig}) {
 		return nil, strictjson.Refuse("bad_signature", "signature does not verify under the team key")
 	}
 	if opts.NonceUsed(act.Nonce) {

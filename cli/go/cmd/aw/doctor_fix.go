@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"strings"
 )
 
@@ -33,13 +34,23 @@ type doctorFixPlan struct {
 	NextStep         string                  `json:"next_step,omitempty"`
 }
 
+type doctorFixOperation string
+
+const doctorFixChmod doctorFixOperation = "chmod"
+const doctorFixPrivateKeyMaterial = "private_key_material"
+
+const doctorFixSafetyNextStep = "Run aw doctor without --fix to inspect this check, then follow its next step."
+
 type doctorFixMutation struct {
-	Operation     string        `json:"operation"`
-	Description   string        `json:"description,omitempty"`
-	Target        *doctorTarget `json:"target,omitempty"`
-	Path          string        `json:"path,omitempty"`
-	Resource      string        `json:"resource,omitempty"`
-	SourceOfTruth string        `json:"source_of_truth,omitempty"`
+	// permissionMode is an internal constraint for mode-only repairs. Doctor
+	// exports a description; serialized plans are not an execution capability.
+	permissionMode os.FileMode
+	Operation      doctorFixOperation `json:"operation"`
+	Description    string             `json:"description,omitempty"`
+	Target         *doctorTarget      `json:"target,omitempty"`
+	Path           string             `json:"path,omitempty"`
+	Resource       string             `json:"resource,omitempty"`
+	SourceOfTruth  string             `json:"source_of_truth,omitempty"`
 }
 
 type doctorFixPrecondition struct {
@@ -127,8 +138,8 @@ func (r *doctorRunner) runFixForCheck(ctx doctorFixContext, check doctorCheck) {
 		r.addFixPlan(plan)
 		return
 	}
-	if detail := validateDoctorFixPlan(check, plan); detail != "" {
-		r.addFixPlan(refusedDoctorFixPlan(check.ID, &check, "safety_refused", detail, "Common doctor fix safety gates refused this plan."))
+	if detail := validateDoctorFixPlan(ctx, check, plan); detail != "" {
+		r.addFixPlan(refusedDoctorFixPlan(check.ID, &check, "safety_refused", detail, doctorFixSafetyNextStep))
 		return
 	}
 	if ctx.DryRun {
@@ -173,7 +184,7 @@ func normalizeDoctorFixPlan(plan doctorFixPlan, check doctorCheck, ctx doctorFix
 	return plan
 }
 
-func validateDoctorFixPlan(check doctorCheck, plan doctorFixPlan) string {
+func validateDoctorFixPlan(ctx doctorFixContext, check doctorCheck, plan doctorFixPlan) string {
 	switch {
 	case check.Fix == nil || !check.Fix.Available:
 		return "fix_not_advertised"
@@ -191,7 +202,14 @@ func validateDoctorFixPlan(check doctorCheck, plan doctorFixPlan) string {
 			return "precondition"
 		}
 	}
+	permissionPaths := ownedPrivateKeyPermissionPaths(ctx, check, plan)
 	for _, mutation := range plan.PlannedMutations {
+		if permissionPaths != nil {
+			if !permissionPaths.permits(mutation) {
+				return doctorFixPrivateKeyMaterial
+			}
+			continue
+		}
 		if reason := prohibitedDoctorFixMutation(mutation); reason != "" {
 			return reason
 		}
@@ -201,7 +219,7 @@ func validateDoctorFixPlan(check doctorCheck, plan doctorFixPlan) string {
 
 func prohibitedDoctorFixMutation(mutation doctorFixMutation) string {
 	text := strings.ToLower(strings.Join([]string{
-		mutation.Operation,
+		string(mutation.Operation),
 		mutation.Description,
 		mutation.Path,
 		mutation.Resource,
@@ -210,7 +228,7 @@ func prohibitedDoctorFixMutation(mutation doctorFixMutation) string {
 	normalized := strings.NewReplacer("_", " ", "-", " ", "\\", "/", ".", " ").Replace(text)
 	switch {
 	case hasDoctorFixTerm(text, ".aw/signing.key", "signing.key") || hasDoctorFixTerm(normalized, "signing key", "private key", "private key material"):
-		return "private_key_material"
+		return doctorFixPrivateKeyMaterial
 	case strings.Contains(normalized, "unclaim") || (strings.Contains(normalized, "presence") && hasDoctorFixTerm(normalized, "cleanup", "clear", "delete")):
 		return "coordination_cleanup"
 	case doctorFixLifecycleMutation(text, normalized):

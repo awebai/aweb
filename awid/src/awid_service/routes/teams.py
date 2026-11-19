@@ -5,32 +5,11 @@ from __future__ import annotations
 import base64
 import json
 import re
-import secrets
 from datetime import datetime, timezone
 from typing import Literal
 
 import asyncpg
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pgdbm.errors import QueryError
-from fastapi.exceptions import RequestValidationError
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
-
-
-from awid_service.deps import get_db
 from awid.contract import normalize_identity_scope
-from awid.pagination import encode_cursor, validate_pagination_params
-from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, rate_limit_dep
-from awid.dns_auth import validate_did_key as _validate_did_key
-from awid.dns_auth import (
-    enforce_timestamp_skew,
-    parse_didkey_auth,
-    require_timestamp,
-)
-from awid.did import public_key_from_did
-from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
-from awid.team_ids import build_team_id
-from awid.team_server_record import TeamServerRecordError, verify_team_server_record
-from awid_service.delivery_origin import validate_delivery_origin
 from awid.controller_request import (
     PATH_SIGNED_READ_EVENT,
     ControllerAuthRoute,
@@ -38,11 +17,54 @@ from awid.controller_request import (
     verified_controller_proof,
     verify_controller_json_request,
 )
-from awid_service.attestation_rotation import ResignedRecords, SignedRecord, apply_resigned_records, record_member_records
+from awid.did import public_key_from_did
+from awid.dns_auth import (
+    enforce_timestamp_skew,
+    parse_didkey_auth,
+    require_timestamp,
+)
+from awid.dns_auth import validate_did_key as _validate_did_key
+from awid.pagination import encode_cursor, validate_pagination_params
+from awid.ratelimit import (
+    AWID_SERVICE_TOKEN_HEADER,
+    rate_limit_dep,
+    trusted_service_token_matches,
+)
+from awid.signing import (
+    VerifyResult,
+    canonical_json_bytes,
+    verify_signature_with_public_key,
+)
+from awid.team_ids import build_team_id
+from awid.team_server_record import TeamServerRecordError, verify_team_server_record
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from pgdbm.errors import QueryError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+
+from awid_service.attestation_rotation import (
+    ResignedRecords,
+    SignedRecord,
+    apply_resigned_records,
+    record_member_records,
+)
+from awid_service.delivery_origin import validate_delivery_origin
+from awid_service.deps import get_db
 
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
-router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
+router = APIRouter(
+    prefix="/v1/namespaces/{domain}/teams",
+    tags=["teams"],
+    route_class=ControllerAuthRoute,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +86,15 @@ async def _verify_signed_request(
     return await verify_controller_json_request(request, payload_dict=payload)
 
 
-async def _require_namespace_controller(request: Request, db, *, domain: str, operation: str, **extra) -> str:
+async def _require_namespace_controller(
+    request: Request, db, *, domain: str, operation: str, **extra
+) -> str:
     """Verify auth and check that the signer is the namespace controller. Returns caller DID."""
     caller_did = await _verify_signed_request(
-        request, domain=domain, operation=operation, extra_payload=extra or None,
+        request,
+        domain=domain,
+        operation=operation,
+        extra_payload=extra or None,
     )
     row = await db.fetch_one(
         """
@@ -80,16 +107,26 @@ async def _require_namespace_controller(request: Request, db, *, domain: str, op
     if row is None:
         raise HTTPException(status_code=404, detail="Namespace not found")
     if caller_did != row["controller_did"]:
-        raise HTTPException(status_code=403, detail="Only the namespace controller can manage teams")
+        raise HTTPException(
+            status_code=403, detail="Only the namespace controller can manage teams"
+        )
     return caller_did
 
 
 async def _require_team_controller(
-    request: Request, db, *, domain: str, name: str, operation: str, **extra,
+    request: Request,
+    db,
+    *,
+    domain: str,
+    name: str,
+    operation: str,
+    **extra,
 ) -> tuple[str, dict]:
     """Verify auth against the team's own public key. Returns (caller_did, team_row)."""
     caller_did = await _verify_signed_request(
-        request, domain=domain, operation=operation,
+        request,
+        domain=domain,
+        operation=operation,
         extra_payload={"team_name": name, **extra} if extra else {"team_name": name},
     )
     row = await db.fetch_one(
@@ -104,11 +141,15 @@ async def _require_team_controller(
     if row is None:
         raise HTTPException(status_code=404, detail="Team not found")
     if caller_did != row["team_did_key"]:
-        raise HTTPException(status_code=403, detail="Only the team controller can perform this action")
+        raise HTTPException(
+            status_code=403, detail="Only the team controller can perform this action"
+        )
     return caller_did, row
 
 
-async def _require_team_key_unchanged(tx, *, domain: str, name: str, team_did_key: str) -> None:
+async def _require_team_key_unchanged(
+    tx, *, domain: str, name: str, team_did_key: str
+) -> None:
     """Lock the team row, as rotate_team_key does, and refuse 409
     team_key_not_current when the team's key is no longer ``team_did_key``,
     the key the request was authorized and verified under. Held to the end
@@ -128,7 +169,10 @@ async def _require_team_key_unchanged(tx, *, domain: str, name: str, team_did_ke
     if row["team_did_key"] != team_did_key:
         raise HTTPException(
             status_code=409,
-            detail={"code": "team_key_not_current", "message": "The team key changed while this request was checked"},
+            detail={
+                "code": "team_key_not_current",
+                "message": "The team key changed while this request was checked",
+            },
         )
 
 
@@ -144,11 +188,15 @@ def _validate_team_name_path(name: str) -> str:
 def _parse_member_address(member_address: str) -> tuple[str, str]:
     parts = member_address.strip().split("/", 1)
     if len(parts) != 2:
-        raise HTTPException(status_code=422, detail="member_address must be domain/name")
+        raise HTTPException(
+            status_code=422, detail="member_address must be domain/name"
+        )
     domain = parts[0].strip().lower().rstrip(".")
     name = parts[1].strip().lower()
     if not domain or not name:
-        raise HTTPException(status_code=422, detail="member_address must be domain/name")
+        raise HTTPException(
+            status_code=422, detail="member_address must be domain/name"
+        )
     return domain, name
 
 
@@ -201,18 +249,26 @@ def _parse_certificate_blob(value: str | None) -> dict | None:
         raw = base64.b64decode(value, validate=True)
         cert = json.loads(raw)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail="certificate must be base64-encoded JSON") from exc
+        raise HTTPException(
+            status_code=422, detail="certificate must be base64-encoded JSON"
+        ) from exc
     if not isinstance(cert, dict):
-        raise HTTPException(status_code=422, detail="certificate must decode to a JSON object")
+        raise HTTPException(
+            status_code=422, detail="certificate must decode to a JSON object"
+        )
     return cert
 
 
 def _certificate_scope_from_payload(cert: dict) -> str:
     """Return canonical identity_scope from current or legacy certificate JSON."""
     if cert.get("identity_scope") is None and cert.get("lifetime") is None:
-        raise HTTPException(status_code=422, detail="certificate identity_scope is required")
+        raise HTTPException(
+            status_code=422, detail="certificate identity_scope is required"
+        )
     try:
-        return normalize_identity_scope(cert.get("identity_scope") or cert.get("lifetime"))
+        return normalize_identity_scope(
+            cert.get("identity_scope") or cert.get("lifetime")
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -226,7 +282,9 @@ def _verify_certificate_blob(
 ) -> None:
     cert = _parse_certificate_blob(certificate)
     if cert is None:
-        raise HTTPException(status_code=422, detail="team-signed certificate blob is required")
+        raise HTTPException(
+            status_code=422, detail="team-signed certificate blob is required"
+        )
 
     expected = {
         "version": 1,
@@ -243,14 +301,21 @@ def _verify_certificate_blob(
 
     for key, expected_value in expected.items():
         if cert.get(key) != expected_value:
-            raise HTTPException(status_code=422, detail=f"certificate {key} does not match registration")
+            raise HTTPException(
+                status_code=422, detail=f"certificate {key} does not match registration"
+            )
 
     if _certificate_scope_from_payload(cert) != body.identity_scope:
-        raise HTTPException(status_code=422, detail="certificate identity_scope does not match registration")
+        raise HTTPException(
+            status_code=422,
+            detail="certificate identity_scope does not match registration",
+        )
 
     for key in ("member_did_aw", "member_address"):
         if not expected.get(key) and cert.get(key):
-            raise HTTPException(status_code=422, detail=f"certificate {key} does not match registration")
+            raise HTTPException(
+                status_code=422, detail=f"certificate {key} does not match registration"
+            )
 
     signature = cert.get("signature")
     if not isinstance(signature, str) or not signature.strip():
@@ -264,8 +329,15 @@ def _verify_certificate_blob(
         public_key = public_key_from_did(team_did_key)
     except Exception as exc:
         raise HTTPException(status_code=422, detail="team_did_key is invalid") from exc
-    if verify_signature_with_public_key(public_key, canonical_json_bytes(payload), signature) != VerifyResult.VERIFIED:
-        raise HTTPException(status_code=422, detail="certificate signature verification failed")
+    if (
+        verify_signature_with_public_key(
+            public_key, canonical_json_bytes(payload), signature
+        )
+        != VerifyResult.VERIFIED
+    ):
+        raise HTTPException(
+            status_code=422, detail="certificate signature verification failed"
+        )
 
 
 def _verify_path_signature(request: Request, authorization: str | None) -> str:
@@ -274,7 +346,10 @@ def _verify_path_signature(request: Request, authorization: str | None) -> str:
         timestamp = require_timestamp(request)
         enforce_timestamp_skew(timestamp)
         payload = f"{timestamp}\n{request.method}\n{request.url.path}".encode("utf-8")
-        if verify_signature_with_public_key(public_key_from_did(did_key), payload, sig) != VerifyResult.VERIFIED:
+        if (
+            verify_signature_with_public_key(public_key_from_did(did_key), payload, sig)
+            != VerifyResult.VERIFIED
+        ):
             raise ValueError("invalid signature")
         return did_key
     except HTTPException:
@@ -287,7 +362,9 @@ READ_TEAM_OPERATION = "read_team"
 _SIGNED_PAYLOAD_HEADER = "X-AWEB-Signed-Payload"
 
 
-async def _signed_reader(request: Request, *, domain: str, name: str | None) -> str | None:
+async def _signed_reader(
+    request: Request, *, domain: str, name: str | None
+) -> str | None:
     """The did:key that signed this team read, or None when it is unsigned.
 
     A covering envelope (operation read_team, claims domain and, for one team,
@@ -336,11 +413,7 @@ def _presents_trusted_service_token(request: Request) -> bool:
     """
     expected = getattr(request.app.state, "awid_service_token", None)
     presented = (request.headers.get(AWID_SERVICE_TOKEN_HEADER) or "").strip()
-    return bool(
-        expected
-        and presented
-        and secrets.compare_digest(expected.encode("utf-8"), presented.encode("utf-8"))
-    )
+    return trusted_service_token_matches(expected, presented)
 
 
 async def _require_team_read_access(
@@ -403,7 +476,9 @@ class TeamCreateRequest(BaseModel):
     @classmethod
     def validate_name(cls, value: str) -> str:
         if not _TEAM_NAME_PATTERN.fullmatch(value):
-            raise ValueError("must be lowercase alphanumeric with hyphens (e.g. 'backend', 'my-team')")
+            raise ValueError(
+                "must be lowercase alphanumeric with hyphens (e.g. 'backend', 'my-team')"
+            )
         return value
 
     @field_validator("team_did_key")
@@ -501,7 +576,8 @@ class CertificateRegisterRequest(BaseModel):
             legacy_scope = normalize_identity_scope(str(lifetime))
             if (
                 values.get("identity_scope") is not None
-                and normalize_identity_scope(str(values["identity_scope"])) != legacy_scope
+                and normalize_identity_scope(str(values["identity_scope"]))
+                != legacy_scope
             ):
                 raise ValueError("lifetime does not match identity_scope")
             values.setdefault("identity_scope", legacy_scope)
@@ -625,7 +701,11 @@ async def create_team(
 ) -> TeamResponse:
     db = db_infra.get_manager("aweb")
     caller_did = await _require_namespace_controller(
-        request, db, domain=domain, operation="create_team", name=body.name,
+        request,
+        db,
+        domain=domain,
+        operation="create_team",
+        name=body.name,
     )
 
     now = datetime.now(timezone.utc)
@@ -695,7 +775,9 @@ async def list_teams(
     if decoded_cursor is not None:
         cursor_created_at = decoded_cursor.get("created_at")
         cursor_team_uuid = decoded_cursor.get("team_uuid")
-        if not isinstance(cursor_created_at, str) or not isinstance(cursor_team_uuid, str):
+        if not isinstance(cursor_created_at, str) or not isinstance(
+            cursor_team_uuid, str
+        ):
             raise HTTPException(status_code=400, detail="Invalid cursor")
         try:
             cursor_ts = datetime.fromisoformat(cursor_created_at.replace("Z", "+00:00"))
@@ -710,8 +792,7 @@ async def list_teams(
     query = (
         "SELECT t.team_uuid, t.domain, t.name, t.display_name, t.team_did_key, t.visibility, t.created_at"
         " FROM {{tables.teams}} t"
-        " WHERE " + " AND ".join(where_clauses)
-        + f" ORDER BY t.created_at, t.team_uuid"
+        " WHERE " + " AND ".join(where_clauses) + f" ORDER BY t.created_at, t.team_uuid"
         f" LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
@@ -720,10 +801,12 @@ async def list_teams(
     next_cursor = None
     if has_more and page_rows:
         last = page_rows[-1]
-        next_cursor = encode_cursor({
-            "created_at": last["created_at"].isoformat(),
-            "team_uuid": str(last["team_uuid"]),
-        })
+        next_cursor = encode_cursor(
+            {
+                "created_at": last["created_at"].isoformat(),
+                "team_uuid": str(last["team_uuid"]),
+            }
+        )
 
     return TeamListResponse(
         teams=[_team_response(r) for r in page_rows],
@@ -832,7 +915,11 @@ async def delete_team(
 ) -> dict:
     db = db_infra.get_manager("aweb")
     await _require_namespace_controller(
-        request, db, domain=domain, operation="delete_team", team_name=name,
+        request,
+        db,
+        domain=domain,
+        operation="delete_team",
+        team_name=name,
     )
 
     async with db.transaction() as tx:
@@ -876,7 +963,12 @@ async def delete_team(
             now,
         )
 
-    return {"deleted": True, "team_id": build_team_id(domain, name), "domain": domain, "name": name}
+    return {
+        "deleted": True,
+        "team_id": build_team_id(domain, name),
+        "domain": domain,
+        "name": name,
+    }
 
 
 async def _bounded_rotate_body(request: Request) -> TeamRotateKeyRequest:
@@ -893,7 +985,10 @@ async def _bounded_rotate_body(request: Request) -> TeamRotateKeyRequest:
         if len(raw) > limit:
             raise HTTPException(
                 status_code=413,
-                detail={"code": "rotation_too_large", "message": "The re-signed record set exceeds the rotate body limit"},
+                detail={
+                    "code": "rotation_too_large",
+                    "message": "The re-signed record set exceeds the rotate body limit",
+                },
             )
     request._body = bytes(raw)
     try:
@@ -903,7 +998,12 @@ async def _bounded_rotate_body(request: Request) -> TeamRotateKeyRequest:
 
 
 async def _replace_member_certificates(
-    tx, *, team_uuid, team_id: str, new_team_did_key: str, changes: list[MemberCertificateChange],
+    tx,
+    *,
+    team_uuid,
+    team_id: str,
+    new_team_did_key: str,
+    changes: list[MemberCertificateChange],
 ) -> None:
     """In the rotation's transaction, revoke each named active certificate and
     register its replacement: the same member, alias and identity scope,
@@ -917,12 +1017,16 @@ async def _replace_member_certificates(
             WHERE team_uuid = $1 AND certificate_id = $2 AND revoked_at IS NULL
             FOR UPDATE
             """,
-            team_uuid, change.old_certificate_id,
+            team_uuid,
+            change.old_certificate_id,
         )
         if old is None:
             raise HTTPException(
                 status_code=409,
-                detail={"code": "member_certificate_not_active", "message": f"No active certificate {change.old_certificate_id} in this team"},
+                detail={
+                    "code": "member_certificate_not_active",
+                    "message": f"No active certificate {change.old_certificate_id} in this team",
+                },
             )
         cert = _parse_certificate_blob(change.certificate) or {}
         try:
@@ -936,14 +1040,22 @@ async def _replace_member_certificates(
                 certificate=change.certificate,
             )
         except ValidationError as exc:
-            raise HTTPException(status_code=422, detail="member certificate is not a team certificate") from exc
-        _verify_certificate_blob(change.certificate, team_id=team_id, team_did_key=new_team_did_key, body=replacement)
+            raise HTTPException(
+                status_code=422, detail="member certificate is not a team certificate"
+            ) from exc
+        _verify_certificate_blob(
+            change.certificate,
+            team_id=team_id,
+            team_did_key=new_team_did_key,
+            body=replacement,
+        )
         await tx.execute(
             """
             UPDATE {{tables.team_certificates}} SET revoked_at = NOW()
             WHERE team_uuid = $1 AND certificate_id = $2
             """,
-            team_uuid, change.old_certificate_id,
+            team_uuid,
+            change.old_certificate_id,
         )
         await tx.execute(
             """
@@ -952,13 +1064,25 @@ async def _replace_member_certificates(
                  member_address, alias, identity_scope, certificate)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """,
-            team_uuid, replacement.certificate_id, replacement.member_did_key, replacement.member_did_aw,
-            replacement.member_address, replacement.alias, replacement.identity_scope, change.certificate,
+            team_uuid,
+            replacement.certificate_id,
+            replacement.member_did_key,
+            replacement.member_did_aw,
+            replacement.member_address,
+            replacement.alias,
+            replacement.identity_scope,
+            change.certificate,
         )
         await record_member_records(
-            tx, team_uuid=team_uuid, team_id=team_id, new_team_did_key=new_team_did_key,
-            certificate_id=replacement.certificate_id, member_did_key=replacement.member_did_key,
-            custody=change.custody, person=change.person, now=now,
+            tx,
+            team_uuid=team_uuid,
+            team_id=team_id,
+            new_team_did_key=new_team_did_key,
+            certificate_id=replacement.certificate_id,
+            member_did_key=replacement.member_did_key,
+            custody=change.custody,
+            person=change.person,
+            now=now,
         )
 
 
@@ -976,8 +1100,12 @@ async def rotate_team_key(
     body = await _bounded_rotate_body(request)
     db = db_infra.get_manager("aweb")
     await _require_namespace_controller(
-        request, db, domain=domain, operation="rotate_team_key",
-        name=name, new_team_did_key=body.new_team_did_key,
+        request,
+        db,
+        domain=domain,
+        operation="rotate_team_key",
+        name=name,
+        new_team_did_key=body.new_team_did_key,
     )
 
     async with db.transaction() as tx:
@@ -995,8 +1123,11 @@ async def rotate_team_key(
 
         key_changed = old_row["team_did_key"] != body.new_team_did_key
         await apply_resigned_records(
-            tx, team_uuid=old_row["team_uuid"], team_id=build_team_id(domain, name),
-            new_team_did_key=body.new_team_did_key, resigned=body.resigned_records,
+            tx,
+            team_uuid=old_row["team_uuid"],
+            team_id=build_team_id(domain, name),
+            new_team_did_key=body.new_team_did_key,
+            resigned=body.resigned_records,
         )
         row = await tx.fetch_one(
             """
@@ -1010,8 +1141,11 @@ async def rotate_team_key(
             body.new_team_did_key,
         )
         await _replace_member_certificates(
-            tx, team_uuid=old_row["team_uuid"], team_id=build_team_id(domain, name),
-            new_team_did_key=body.new_team_did_key, changes=body.member_certificates,
+            tx,
+            team_uuid=old_row["team_uuid"],
+            team_id=build_team_id(domain, name),
+            new_team_did_key=body.new_team_did_key,
+            changes=body.member_certificates,
         )
         proof = verified_controller_proof(request)
         await tx.execute(
@@ -1037,7 +1171,9 @@ async def rotate_team_key(
 @router.post(
     "/{name}/certificates",
     response_model=CertificateRegisterResponse,
-    dependencies=[Depends(rate_limit_dep("certificate_register", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("certificate_register", allow_trusted_service=True))
+    ],
 )
 async def register_certificate(
     request: Request,
@@ -1048,8 +1184,12 @@ async def register_certificate(
 ) -> CertificateRegisterResponse:
     db = db_infra.get_manager("aweb")
     _, team_row = await _require_team_controller(
-        request, db, domain=domain, name=name,
-        operation="register_certificate", certificate_id=body.certificate_id,
+        request,
+        db,
+        domain=domain,
+        name=name,
+        operation="register_certificate",
+        certificate_id=body.certificate_id,
     )
     await _require_member_address_owned_by_did_aw(
         db,
@@ -1066,7 +1206,9 @@ async def register_certificate(
 
     try:
         async with db.transaction() as tx:
-            await _require_team_key_unchanged(tx, domain=domain, name=name, team_did_key=team_row["team_did_key"])
+            await _require_team_key_unchanged(
+                tx, domain=domain, name=name, team_did_key=team_row["team_did_key"]
+            )
             await tx.execute(
                 """
                 INSERT INTO {{tables.team_certificates}}
@@ -1092,7 +1234,10 @@ async def register_certificate(
         if constraint_name == "idx_team_certificates_alias_active":
             raise HTTPException(
                 status_code=409,
-                detail={"code": "alias_active", "message": "Alias already active in team"},
+                detail={
+                    "code": "alias_active",
+                    "message": "Alias already active in team",
+                },
             )
         raise HTTPException(
             status_code=409,
@@ -1102,7 +1247,9 @@ async def register_certificate(
             },
         )
 
-    return CertificateRegisterResponse(registered=True, certificate_id=body.certificate_id)
+    return CertificateRegisterResponse(
+        registered=True, certificate_id=body.certificate_id
+    )
 
 
 @router.post(
@@ -1119,8 +1266,12 @@ async def set_team_visibility(
 ) -> TeamResponse:
     db = db_infra.get_manager("aweb")
     await _require_team_controller(
-        request, db, domain=domain, name=name,
-        operation="set_team_visibility", visibility=body.visibility,
+        request,
+        db,
+        domain=domain,
+        name=name,
+        operation="set_team_visibility",
+        visibility=body.visibility,
     )
 
     row = await db.fetch_one(
@@ -1142,7 +1293,9 @@ async def set_team_visibility(
 @router.get(
     "/{name}/certificates",
     response_model=CertificateListResponse,
-    dependencies=[Depends(rate_limit_dep("certificate_list", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("certificate_list", allow_trusted_service=True))
+    ],
 )
 async def list_certificates(
     request: Request,
@@ -1160,7 +1313,8 @@ async def list_certificates(
     team_row = await db.fetch_one(
         "SELECT team_uuid, team_did_key, visibility FROM {{tables.teams}}"
         " WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
-        domain, name,
+        domain,
+        name,
     )
     if team_row is None:
         raise HTTPException(status_code=404, detail="Team not found")
@@ -1189,7 +1343,9 @@ async def list_certificates(
         try:
             since_ts = datetime.fromisoformat(since.replace("Z", "+00:00"))
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid since timestamp") from exc
+            raise HTTPException(
+                status_code=400, detail="Invalid since timestamp"
+            ) from exc
         params.append(since_ts)
         where_clauses.append(f"tc.issued_at > ${len(params)}::timestamptz")
 
@@ -1213,8 +1369,7 @@ async def list_certificates(
         " tc.alias, tc.identity_scope, tc.issued_at, tc.revoked_at, t.domain, t.name"
         " FROM {{tables.team_certificates}} tc"
         " JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid"
-        " WHERE " + " AND ".join(where_clauses)
-        + f" ORDER BY tc.issued_at, tc.id"
+        " WHERE " + " AND ".join(where_clauses) + f" ORDER BY tc.issued_at, tc.id"
         f" LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
@@ -1223,10 +1378,12 @@ async def list_certificates(
     next_cursor = None
     if has_more and page_rows:
         last = page_rows[-1]
-        next_cursor = encode_cursor({
-            "issued_at": last["issued_at"].isoformat(),
-            "id": str(last["id"]),
-        })
+        next_cursor = encode_cursor(
+            {
+                "issued_at": last["issued_at"].isoformat(),
+                "id": str(last["id"]),
+            }
+        )
 
     return CertificateListResponse(
         certificates=[_cert_response(r) for r in page_rows],
@@ -1238,7 +1395,9 @@ async def list_certificates(
 @router.get(
     "/{name}/members/{alias}",
     response_model=TeamMemberReferenceResponse,
-    dependencies=[Depends(rate_limit_dep("team_member_get", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("team_member_get", allow_trusted_service=True))
+    ],
 )
 async def get_team_member(
     request: Request,
@@ -1251,7 +1410,8 @@ async def get_team_member(
     team_row = await db.fetch_one(
         "SELECT team_uuid, team_did_key, visibility FROM {{tables.teams}}"
         " WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
-        domain, name,
+        domain,
+        name,
     )
     if team_row is None:
         raise HTTPException(status_code=404, detail="Team member not found")
@@ -1296,7 +1456,9 @@ async def get_team_member(
 @router.get(
     "/{name}/certificates/{certificate_id}/status",
     response_model=CertificateStatusResponse,
-    dependencies=[Depends(rate_limit_dep("certificate_status", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("certificate_status", allow_trusted_service=True))
+    ],
 )
 async def certificate_status(
     domain: str,
@@ -1318,7 +1480,9 @@ async def certificate_status(
         WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
           AND tc.certificate_id = $3
         """,
-        domain, name, certificate_id,
+        domain,
+        name,
+        certificate_id,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
@@ -1367,13 +1531,17 @@ async def _team_server_body(request: Request) -> TeamServerRecordBody:
     try:
         return TeamServerRecordBody.model_validate(json.loads(bytes(body)))
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail="request body must be {record, signature}") from exc
+        raise HTTPException(
+            status_code=422, detail="request body must be {record, signature}"
+        ) from exc
 
 
 @router.put(
     "/{name}/server",
     response_model=TeamServerRecordBody,
-    dependencies=[Depends(rate_limit_dep("team_server_publish", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("team_server_publish", allow_trusted_service=True))
+    ],
 )
 async def publish_team_server(
     request: Request,
@@ -1427,7 +1595,10 @@ async def publish_team_server(
             team["team_uuid"],
         )
         if stored is not None:
-            if stored["record_json"] == record_json and stored["signature"] == body.signature:
+            if (
+                stored["record_json"] == record_json
+                and stored["signature"] == body.signature
+            ):
                 return body
             if verified.issued_at <= stored["issued_at"]:
                 raise _team_server_refusal("not_newer")
@@ -1458,7 +1629,9 @@ async def publish_team_server(
 @router.get(
     "/{name}/server",
     response_model=TeamServerRecordBody,
-    dependencies=[Depends(rate_limit_dep("team_server_get", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("team_server_get", allow_trusted_service=True))
+    ],
 )
 async def get_team_server(
     domain: str,
@@ -1484,13 +1657,17 @@ async def get_team_server(
     )
     if row is None:
         raise HTTPException(status_code=404, detail=_TEAM_SERVER_NOT_FOUND)
-    return TeamServerRecordBody(record=json.loads(row["record_json"]), signature=row["signature"])
+    return TeamServerRecordBody(
+        record=json.loads(row["record_json"]), signature=row["signature"]
+    )
 
 
 @router.get(
     "/{name}/certificates/{certificate_id}",
     response_model=CertificateFetchResponse,
-    dependencies=[Depends(rate_limit_dep("certificate_fetch", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("certificate_fetch", allow_trusted_service=True))
+    ],
 )
 async def fetch_certificate(
     request: Request,
@@ -1525,7 +1702,9 @@ async def fetch_certificate(
         raise HTTPException(status_code=404, detail="Certificate not found")
 
     if caller_did != row["member_did_key"]:
-        raise HTTPException(status_code=403, detail="Certificate is not readable by this DID")
+        raise HTTPException(
+            status_code=403, detail="Certificate is not readable by this DID"
+        )
     if row["revoked_at"] is not None:
         raise HTTPException(status_code=409, detail="Certificate has been revoked")
 
@@ -1545,7 +1724,9 @@ async def fetch_certificate(
 @router.post(
     "/{name}/certificates/revoke",
     response_model=CertificateRevokeResponse,
-    dependencies=[Depends(rate_limit_dep("certificate_revoke", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("certificate_revoke", allow_trusted_service=True))
+    ],
 )
 async def revoke_certificate(
     request: Request,
@@ -1556,8 +1737,12 @@ async def revoke_certificate(
 ) -> CertificateRevokeResponse:
     db = db_infra.get_manager("aweb")
     _, team_row = await _require_team_controller(
-        request, db, domain=domain, name=name,
-        operation="revoke_certificate", certificate_id=body.certificate_id,
+        request,
+        db,
+        domain=domain,
+        name=name,
+        operation="revoke_certificate",
+        certificate_id=body.certificate_id,
     )
 
     row = await db.fetch_one(
@@ -1593,7 +1778,9 @@ async def revoke_certificate(
     # authenticated request they serve for the team. A backend presenting the
     # configured service token bypasses the per-IP bucket, the same exemption
     # did_key/did_addresses already use; anonymous callers keep the limit.
-    dependencies=[Depends(rate_limit_dep("revocation_list", allow_trusted_service=True))],
+    dependencies=[
+        Depends(rate_limit_dep("revocation_list", allow_trusted_service=True))
+    ],
 )
 async def list_revocations(
     request: Request,
@@ -1609,7 +1796,8 @@ async def list_revocations(
     team_row = await db.fetch_one(
         "SELECT team_uuid, team_did_key, visibility FROM {{tables.teams}}"
         " WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
-        domain, name,
+        domain,
+        name,
     )
     if team_row is None:
         raise HTTPException(status_code=404, detail="Team not found")
@@ -1645,7 +1833,9 @@ async def list_revocations(
         try:
             since_ts = datetime.fromisoformat(since.replace("Z", "+00:00"))
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid since timestamp") from exc
+            raise HTTPException(
+                status_code=400, detail="Invalid since timestamp"
+            ) from exc
         params.append(since_ts)
         where_clauses.append(f"revoked_at > ${len(params)}::timestamptz")
 
@@ -1670,8 +1860,7 @@ async def list_revocations(
     query = (
         "SELECT id, certificate_id, revoked_at"
         " FROM {{tables.team_certificates}}"
-        " WHERE " + " AND ".join(where_clauses)
-        + " ORDER BY revoked_at, id"
+        " WHERE " + " AND ".join(where_clauses) + " ORDER BY revoked_at, id"
         f" LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
@@ -1680,10 +1869,12 @@ async def list_revocations(
     next_cursor = None
     if has_more and page_rows:
         last = page_rows[-1]
-        next_cursor = encode_cursor({
-            "revoked_at": last["revoked_at"].isoformat(),
-            "id": str(last["id"]),
-        })
+        next_cursor = encode_cursor(
+            {
+                "revoked_at": last["revoked_at"].isoformat(),
+                "id": str(last["id"]),
+            }
+        )
 
     return RevocationListResponse(
         revocations=[

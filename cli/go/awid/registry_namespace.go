@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 type namespaceRegisterRequest struct {
@@ -478,7 +480,7 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		return nil, err
 	}
 	identitySignature := base64.RawStdEncoding.EncodeToString(
-		ed25519.Sign(params.IdentitySigningKey, []byte(identityCanonical)),
+		signaturewire.SignBytes(params.IdentitySigningKey, []byte(identityCanonical)),
 	)
 	identityProofHash, err := AtomicAddressClaimIdentityProofHash(identityCanonical, identitySignature)
 	if err != nil {
@@ -489,7 +491,7 @@ func (c *RegistryClient) ClaimIdentityAddressAt(
 		return nil, err
 	}
 	namespaceSignature := base64.RawStdEncoding.EncodeToString(
-		ed25519.Sign(params.NamespaceControllerSigningKey, []byte(namespaceCanonical)),
+		signaturewire.SignBytes(params.NamespaceControllerSigningKey, []byte(namespaceCanonical)),
 	)
 
 	body := atomicAddressClaimRequest{
@@ -549,7 +551,7 @@ func (c *RegistryClient) atomicAddressClaimDIDLogProof(ctx context.Context, regi
 			AuthorizedBy:   currentDIDKey,
 			Timestamp:      timestamp,
 			Signature: base64.RawStdEncoding.EncodeToString(
-				ed25519.Sign(signingKey, []byte(didLogPayload)),
+				signaturewire.SignBytes(signingKey, []byte(didLogPayload)),
 			),
 		}, nil
 	}

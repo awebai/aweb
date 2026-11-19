@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/awebai/aw/signaturewire"
 )
 
 // signedFields holds the identity fields attached to outgoing messages
@@ -1916,7 +1918,7 @@ func SignRequestCredential(key ed25519.PrivateKey, method string, target *url.UR
 		return "", "", "", err
 	}
 	didKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
-	return didKey, base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, payload)), string(payload), nil
+	return didKey, signaturewire.SignStd(key, payload), string(payload), nil
 }
 
 // signRequest is shared by JSON/raw, event SSE and chat SSE requests. Grant

@@ -17,7 +17,6 @@ from fastapi import Depends, HTTPException, Request, Response
 
 from .client_ip import resolve_client_ip
 
-
 logger = logging.getLogger(__name__)
 
 AWID_SERVICE_TOKEN_HEADER = "X-AWID-Service-Token"
@@ -298,13 +297,7 @@ def rate_limit_dep(
         if allow_trusted_service:
             expected = getattr(request.app.state, "awid_service_token", None)
             presented = (request.headers.get(AWID_SERVICE_TOKEN_HEADER) or "").strip()
-            if (
-                expected
-                and presented
-                and secrets.compare_digest(
-                    expected.encode("utf-8"), presented.encode("utf-8")
-                )
-            ):
+            if trusted_service_token_matches(expected, presented):
                 _record_trusted_service_exemption(request, bucket)
                 return
             if presented:
@@ -333,3 +326,12 @@ def rate_limit_dep(
         )
 
     return _dep
+
+
+def trusted_service_token_matches(expected: str | None, presented: str | None) -> bool:
+    """Constant-time configured token check; an unconfigured token admits none."""
+    return bool(
+        expected
+        and presented
+        and secrets.compare_digest(expected.encode("utf-8"), presented.encode("utf-8"))
+    )

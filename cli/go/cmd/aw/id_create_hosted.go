@@ -17,6 +17,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/pathpreflight"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/spf13/cobra"
 )
 
@@ -258,7 +259,7 @@ func runHostedIdentityCreate(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	request := map[string]any{"org": org, "team_id": teamID, "name": name, "did": material.DIDKey, "inbound_mode": mode, "proof": workspaceTeamEnrollProof{Type: "didkey-intent-v1", Timestamp: timestamp, Signature: base64.RawStdEncoding.EncodeToString(ed25519.Sign(material.SigningKey, []byte(canonical)))}}
+	request := map[string]any{"org": org, "team_id": teamID, "name": name, "did": material.DIDKey, "inbound_mode": mode, "proof": workspaceTeamEnrollProof{Type: "didkey-intent-v1", Timestamp: timestamp, Signature: signaturewire.SignStd(material.SigningKey, []byte(canonical))}}
 	if treeRequest != nil {
 		request["id_tree"] = treeRequest
 	}

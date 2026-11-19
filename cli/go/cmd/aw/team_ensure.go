@@ -19,6 +19,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/signaturewire"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -467,7 +468,7 @@ func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *wor
 	if err != nil {
 		return nil, err
 	}
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(material.SigningKey, []byte(canonical)))
+	signature := signaturewire.SignStd(material.SigningKey, []byte(canonical))
 	req := workspaceTeamEnrollRequest{
 		Org:                org,
 		WorkspaceKeyFormat: workspaceTeamKeyFormat,
