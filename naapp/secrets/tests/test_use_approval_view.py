@@ -9,7 +9,7 @@ import pytest
 
 from aweb_secrets.use_approval import ApprovalUnrenderable, use_approval_view
 
-VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "use-approval-v1.json").read_text())
+VECTOR = json.loads((Path(__file__).parents[1] / "vectors" / "use-approval-v2.json").read_text())
 
 
 def _request(name: str) -> dict:
@@ -49,7 +49,10 @@ def test_an_open_request_shows_the_full_url_with_its_host_apart_and_the_whole_bo
     assert shown.url_before_host + shown.host + shown.url_after_host == (
         "https://api.payments.example/v1/refunds"
     )
-    assert shown.header_names == ("content-type", "idempotency-key")
+    assert [(h.name, h.value) for h in shown.headers] == [
+        ("content-type", "application/json"),
+        ("idempotency-key", "refund-1042"),
+    ]
     assert shown.body_text == '{"amount_minor_units":1250,"charge":"ch_3Pq"}'
 
 
@@ -65,3 +68,18 @@ def test_a_request_of_another_type_is_not_rendered():
     request = {**_request("broker-operation"), "type": "aweb.secrets.change"}
     with pytest.raises(ApprovalUnrenderable):
         use_approval_view(request)
+
+
+def test_pending_names_only_v1_approval_is_refused_instead_of_shown():
+    request = {**_request("broker-operation"), "v": 1}
+    with pytest.raises(ApprovalUnrenderable) as refused:
+        use_approval_view(request)
+    assert refused.value.code == "approval_unrenderable"
+
+
+def test_a_named_operation_shows_each_agent_header_in_submitted_order():
+    shown = use_approval_view(_request("broker-operation")).operation
+    assert [(header.name, header.value) for header in shown.headers] == [
+        ("x-project", "project-A"),
+        ("x-account", "account-A"),
+    ]

@@ -59,7 +59,7 @@ async def test_open_request_returns_upstream_json_without_a_named_media_type_pol
             clock=lambda: NOW,
             derived_max_ttl_s=3600,
             internal_destinations=InternalDestinations.ALLOWED,
-            open_call=BrokerOpen("POST", upstream.url("/bearer/echo"), (), b"hello"),
+            open_call=BrokerOpen(method="POST", canonical_url=upstream.url("/bearer/echo"), headers=(), body=b"hello"),
         )
         async with db.transaction() as tx:
             await prepared.prepare(tx)

@@ -52,6 +52,7 @@ from aweb_secrets.use_approval import (
     RunJob,
     UseApprovalRefused,
     use_approval_request,
+    use_approval_view,
 )
 
 MIGRATIONS = Path(__file__).parent / "use_approval_migrations"
@@ -482,6 +483,8 @@ async def admit_approved_use(
         policy=policy,
     )
     try:
+        # Names-only versions cannot authorize a fresh send (§10.4).
+        use_approval_view(request)
         # retrieve holds B2's row lock in tx even when it returns None. Only
         # after this classification may an authority refusal void the attempt.
         retrieved = await approvals.retrieve(approval_id, request, str(dispatch_id), tx=tx)

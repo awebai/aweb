@@ -21,7 +21,7 @@ CATALOG_DOCUMENT = json.loads(CATALOG_BYTES)
 CATALOG = load_catalog(CATALOG_BYTES)
 TABLE = json.loads((Path(__file__).parents[1] / "vectors" / "hook-actions-v1.json").read_text())
 USE_APPROVAL = json.loads(
-    (Path(__file__).parents[1] / "vectors" / "use-approval-v1.json").read_text()
+    (Path(__file__).parents[1] / "vectors" / "use-approval-v2.json").read_text()
 )
 
 USE = "post-secret-use-hook"

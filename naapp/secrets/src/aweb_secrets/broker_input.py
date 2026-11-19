@@ -167,10 +167,10 @@ class BrokerInput:
         if opened is None:
             return None
         return BrokerOpen(
-            opened["method"],
-            opened["url"],
-            tuple(name for name, _ in model["headers"]),
-            base64.b64decode(opened["body_b64"], validate=True),
+            method=opened["method"],
+            canonical_url=opened["url"],
+            headers=self.headers,
+            body=base64.b64decode(opened["body_b64"], validate=True),
         )
 
     async def check_binding(

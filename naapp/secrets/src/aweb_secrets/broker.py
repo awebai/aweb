@@ -41,16 +41,17 @@ from aweb_naapp.egress import (
     EgressRefused,
     HeaderRules,
 )
+from aweb_secrets_values import ValueInvalid, ValueInvalidReason, ValueKind, validate_value
 
 from aweb_secrets.credential_shapes import is_credential_shaped_value
-from aweb_secrets.injection import Injection, inject
+from aweb_secrets.injection import Injection, inject, required_kind_parameter
 from aweb_secrets.operation_request import OperationRequest
 from aweb_secrets.redaction import KnownValues
 from aweb_secrets.response_audit import ResponseAudit, ResponseKey, ResponseKeyInvalid
 from aweb_secrets.responses import BrokeredResult, handle_response
 from aweb_secrets.tokens import TokenCache, TokenKey
 
-OAUTH2 = "oauth2-client-credentials"
+OAUTH2 = ValueKind.OAUTH2_CLIENT_CREDENTIALS
 # A cached access token is dropped this long before the upstream says it expires.
 TOKEN_EXPIRY_MARGIN = timedelta(seconds=60)
 
@@ -81,13 +82,6 @@ class BrokeredCall:
     audit: ResponseAudit
 
 
-def _required(values: Mapping[str, str], name: str) -> str:
-    value = values.get(name)
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"the secret has no {name}")
-    return value
-
-
 async def _exchange(
     egress: Egress,
     *,
@@ -105,7 +99,7 @@ async def _exchange(
     elif kind_params["client_auth"] == "client_secret_post":
         form |= {"client_id": client_id, "client_secret": client_secret}
     else:
-        raise ValueError("client_auth must be client_secret_basic or client_secret_post")
+        raise ValueInvalid(ValueInvalidReason.INJECTION_CONFIGURATION)
     try:
         response = await egress.send(
             "POST",
@@ -151,12 +145,13 @@ async def _oauth2_injection(
     tokens: TokenCache | None,
     secret: SecretVersion | None,
 ) -> Injection:
-    client_id = _required(value, "client_id")
-    client_secret = _required(value, "client_secret")
+    value = validate_value(OAUTH2, value)
+    client_id = value["client_id"]
+    client_secret = value["client_secret"]
     for name in ("token_endpoint", "client_auth", "scope"):
-        _required(kind_params, name)
+        required_kind_parameter(kind_params, name=name)
     if destination is None or tokens is None or secret is None:
-        raise ValueError("an OAuth2 secret needs its token destination, token cache and version")
+        raise ValueInvalid(ValueInvalidReason.INJECTION_CONFIGURATION)
     key = TokenKey(
         installation_id=secret.installation_id,
         team_id=secret.team_id,

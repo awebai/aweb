@@ -330,7 +330,7 @@ async def test_open_request_is_bounded_and_has_no_token_issuing_authority(
             admitted,
             request,
             dispatch_id,
-            open_call=BrokerOpen("GET", "https://api.example/v1/status", (), b""),
+            open_call=BrokerOpen(method="GET", canonical_url="https://api.example/v1/status", headers=(), body=b""),
         )
         await state.admit(tx, dispatch_id, fence=prepared)
         assert prepared.call.operation is None

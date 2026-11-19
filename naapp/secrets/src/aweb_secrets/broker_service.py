@@ -66,8 +66,9 @@ from aweb_secrets.broker_audit import (
 )
 from aweb_secrets.broker_fence import BrokerFence, PreparedBrokerCall
 from aweb_secrets.broker_input import BrokerInput
-from aweb_secrets.broker_outcomes import durable_broker_receipt
+from aweb_secrets.broker_outcomes import NOT_SENT_MESSAGE, durable_broker_receipt
 from aweb_secrets.custody import CustodyUnavailable, SealContext, ValueInvalid, decode_value
+from aweb_secrets.custody.onepassword import SecretValueInvalid
 from aweb_secrets.custody.opening import BackendObservation, UseSecretOpener
 from aweb_secrets.member_types import MemberSubmission, ToolReply, broker_result_reply
 from aweb_secrets.onepassword_reconciliation import BackendReconciler
@@ -558,9 +559,10 @@ class BrokerRequests:
                                 opened
                                 if opened is not None
                                 else BrokerOperation(
-                                    inputs.request.operation_id or "",
-                                    inputs.operation_digest or "",
-                                    inputs.request.params or {},
+                                    operation_id=inputs.request.operation_id or "",
+                                    operation_digest=inputs.operation_digest or "",
+                                    params=inputs.request.params or {},
+                                    headers=inputs.headers,
                                 )
                             )
                             if self._use_audit is None:
@@ -859,6 +861,7 @@ class BrokerRequests:
         The caller settles this result against the original dispatch attempt.
         """
         audit = None
+        message = NOT_SENT_MESSAGE
         sending = False
         try:
             async with asyncio.timeout_at(send_until):
@@ -885,7 +888,9 @@ class BrokerRequests:
             state = State.OUTCOME_UNKNOWN
         except TimeoutError:
             state = State.OUTCOME_UNKNOWN if sending else State.NOT_SENT
-        except (CustodyUnavailable, ValueInvalid, EgressRefused, EgressNotSent):
+        except (ValueInvalid, SecretValueInvalid) as invalid:
+            state, message = State.NOT_SENT, str(invalid)
+        except (CustodyUnavailable, EgressRefused, EgressNotSent):
             state = State.NOT_SENT
         if state is State.OUTCOME_UNKNOWN:
             reply = ToolReply(
@@ -895,7 +900,8 @@ class BrokerRequests:
             reply = ToolReply(
                 503,
                 {
-                    "state": "not_sent",
+                    "state": State.NOT_SENT.value,
+                    "message": message,
                     "request_id": request_id,
                     "request_ref": request_ref,
                     "next": "resubmit",

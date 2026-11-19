@@ -453,6 +453,11 @@ async def approval_request(root, kind, *, agent_headers=(), operation=None, para
     installation_id = installed["installation_id"]
     holder = await enrolled_owner(root)
     body, device = holder.body, holder.device
+    fixed_header_names = (
+        ()
+        if operation is None
+        else tuple(name.lower() for name in operation.after["headers"]["fixed"])
+    )
     operations = (
         []
         if operation is None
@@ -528,7 +533,11 @@ async def approval_request(root, kind, *, agent_headers=(), operation=None, para
                         "methods": ["POST"],
                         "query_rules": {},
                         "header_allow": sorted(
-                            {"content-type", *(name.lower() for name, _ in agent_headers)}
+                            {
+                                "content-type",
+                                *fixed_header_names,
+                                *(name.lower() for name, _ in agent_headers),
+                            }
                         ),
                         "network": "public",
                         "cidr": None,

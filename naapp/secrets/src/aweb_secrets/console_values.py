@@ -23,7 +23,12 @@ from aweb_secrets.custody import (
     ValueInvalid,
     encode_value,
 )
-from aweb_secrets.custody.onepassword import OnePasswordRead, OnePasswordReference, OnePasswordSDK
+from aweb_secrets.custody.onepassword import (
+    OnePasswordRead,
+    OnePasswordReference,
+    OnePasswordSDK,
+    SecretValueInvalid,
+)
 from aweb_secrets.custody.store import BACKEND_CREDENTIAL_ID, StagedOnePasswordReference
 from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.owners import owner_scope
@@ -202,8 +207,8 @@ def console_values_router(services: ConsoleValues, *, prefix: str = "") -> APIRo
                     headers={"Set-Cookie": response.headers["set-cookie"]},
                 ) from None
             raise
-        except ValueInvalid:
-            raise HTTPException(status_code=400, detail="request_invalid") from None
+        except (ValueInvalid, SecretValueInvalid) as invalid:
+            raise HTTPException(status_code=400, detail=str(invalid)) from None
         except InstallationRefused as refused:
             raise HTTPException(status_code=refused.status, detail=refused.code) from None
         except LookupError:

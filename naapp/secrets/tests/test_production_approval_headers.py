@@ -2,8 +2,13 @@
 
 import copy
 import json
+import secrets
+from enum import StrEnum
+from uuid import uuid4
 
 import pytest
+from aweb_naapp.dispatch import State as DispatchState
+from aweb_naapp.runtime.approvals import Decision
 
 from aweb_secrets.operation import OperationTemplate
 from tests.test_operation_record import REFUND
@@ -13,9 +18,14 @@ from tests.test_production_bootstrap import root as root
 AGENT_HEADERS = (("X-Project", "project-A"), ("X-Account", "account-A"))
 
 
-async def header_request(root, named):
+class RequestKind(StrEnum):
+    OPEN = "open"
+    NAMED_OPERATION = "named-operation"
+
+
+async def header_request(root, *, request_kind: RequestKind):
     operation = None
-    if named:
+    if request_kind is RequestKind.NAMED_OPERATION:
         after = copy.deepcopy(REFUND)
         after["headers"]["allowed"] = ["x-account", "x-project"]
         operation = OperationTemplate.from_after(after)
@@ -28,9 +38,11 @@ async def header_request(root, named):
     )
 
 
-@pytest.mark.parametrize("named", [False, True], ids=["open", "named-operation"])
-async def test_the_production_approver_view_discloses_each_agent_header_name_and_value(root, named):
-    pending = await header_request(root, named)
+@pytest.mark.parametrize("request_kind", list(RequestKind), ids=lambda kind: kind.value)
+async def test_the_production_approver_view_discloses_each_agent_header_name_and_value(
+    root, request_kind
+):
+    pending = await header_request(root, request_kind=request_kind)
     service, client, configured, *_ = root
     db = service.runtime.db()
     frozen = json.loads(await db.fetch_value("SELECT request FROM use_approvals"))
@@ -60,9 +72,9 @@ async def test_the_production_approver_view_discloses_each_agent_header_name_and
         headers=csrf,
     )
     assert viewed.status_code == 200
-    key = "operation" if named else "open_request"
+    key = "operation" if request_kind is RequestKind.NAMED_OPERATION else "open_request"
     assert viewed.json()["view"][key]["headers"] == expected
-    decision = {"token": pending.token, "decision": "approve"}
+    decision = {"token": pending.token, "decision": Decision.APPROVE.value}
     options = await client.post(
         human + "/use-approvals/decision-options", json=decision, headers=csrf
     )
@@ -88,5 +100,34 @@ async def test_the_production_approver_view_discloses_each_agent_header_name_and
         },
     )
     assert rejected.status_code == 409
-    assert await db.fetch_value("SELECT state FROM dispatches") == "awaiting_approval"
+    assert (
+        await db.fetch_value("SELECT state FROM dispatches")
+        == DispatchState.AWAITING_APPROVAL.value
+    )
     assert await db.fetch_value("SELECT consumed_operation_id FROM approvals") is None
+
+
+@pytest.mark.parametrize("request_kind", list(RequestKind), ids=lambda kind: kind.value)
+async def test_credential_shaped_agent_headers_are_refused_before_freezing(root, request_kind):
+    pending = await header_request(root, request_kind=request_kind)
+    service, client, configured, member, *_ = root
+    body = json.loads(pending.raw)
+    body["request_id"] = uuid4().hex
+    body["headers"][1] = "X-Account: Bearer " + secrets.token_urlsafe(32)
+    raw = json.dumps(body).encode()
+    response = await client.post(
+        configured.public_origin + pending.path,
+        content=raw,
+        headers={
+            **member.headers(
+                aud=configured.public_origin, method="POST", path=pending.path, body=raw
+            ),
+            "Content-Type": "application/json",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["code"] == "header_not_allowed"
+    db = service.runtime.db()
+    assert await db.fetch_value("SELECT count(*) FROM use_approvals") == 1
+    assert await db.fetch_value("SELECT count(*) FROM approvals") == 1
+    assert await db.fetch_value("SELECT count(*) FROM dispatches") == 1

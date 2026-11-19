@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from aweb_secrets.use_approval import UNRENDERABLE_MESSAGE, UseApprovalRefusalCode
+
 
 def _envelope(state: str, request_id: str | None) -> dict[str, Any]:
     if request_id is not None and (not isinstance(request_id, str) or not request_id):
@@ -40,6 +42,8 @@ def awaiting_approval(*, request_id: str, request_ref: str, approval_ref: str) -
 def refused(code: str, *, request_id: str | None, use_ref: str | None = None) -> dict[str, Any]:
     """Present an audit ref only after its caller's refusal transaction commits."""
     result = {**_envelope("refused", request_id), "code": code}
+    if code == UseApprovalRefusalCode.UNRENDERABLE:
+        result["message"] = UNRENDERABLE_MESSAGE
     if use_ref is not None:
         result["use_ref"] = use_ref
     return result

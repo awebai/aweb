@@ -243,7 +243,7 @@ def open_action(body: bytes = BODY) -> BrokerOpen:
     return BrokerOpen(
         method="POST",
         canonical_url="https://api.payments.example/v1/refunds",
-        header_names=("content-type",),
+        headers=(("content-type", "application/json"),),
         body=body,
     )
 

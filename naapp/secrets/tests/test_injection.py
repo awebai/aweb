@@ -11,6 +11,7 @@ import secrets
 
 import pytest
 from aweb_naapp.egress import EgressRefused
+from aweb_secrets_values import ValueInvalid, ValueInvalidReason
 
 from aweb_secrets.injection import inject
 
@@ -41,9 +42,10 @@ def test_basic_sets_the_composite_and_redacts_it(value: str) -> None:
     assert count == 2
 
 
-def test_a_basic_username_with_a_colon_is_refused(value: str) -> None:
-    with pytest.raises(ValueError):
+def test_basic_injection_preserves_the_codecs_username_refusal(value: str) -> None:
+    with pytest.raises(ValueInvalid) as refused:
         inject("basic", {"username": "a:b", "password": value}, {}, secret_ref="db", url=URL)
+    assert refused.value.reason is ValueInvalidReason.BASIC_USERNAME
 
 
 def test_header_uses_the_owner_set_name_and_prefix(value: str) -> None:
@@ -62,7 +64,7 @@ def test_header_uses_the_owner_set_name_and_prefix(value: str) -> None:
     "name", ["Host", "Content-Length", "User-Agent", "Connection", "Bad Name", ""]
 )
 def test_a_header_kind_cannot_set_a_guard_header_or_a_malformed_name(value: str, name: str) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueInvalid):
         inject("header", {"value": value}, {"name": name, "prefix": ""}, secret_ref="u", url=URL)
 
 
@@ -113,12 +115,12 @@ def test_every_injected_value_is_a_known_value(value: str) -> None:
 
 
 def test_an_unknown_kind_is_refused(value: str) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueInvalid):
         inject("mtls-client-cert", {"value": value}, {}, secret_ref="r", url=URL)
 
 
 def test_an_empty_value_is_refused() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueInvalid):
         inject("bearer", {"value": ""}, {}, secret_ref="r", url=URL)
 
 
@@ -201,7 +203,7 @@ def test_sigv4_redacts_the_secret_key() -> None:
 @pytest.mark.parametrize("missing", ["region", "service"])
 def test_sigv4_needs_the_owner_set_region_and_service(missing: str) -> None:
     params = {k: v for k, v in SIGV4_PARAMS.items() if k != missing}
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueInvalid):
         _sigv4(_aws_value(), params=params)
 
 
