@@ -2,13 +2,15 @@
 
 Only the external 1Password SDK boundary is replaced. It returns actual Item
 models; custody, the codec, installation/owner/passkey checks and dispatch use
-the production instances. Confirmed configuration is fixture state.
+the production instances. Configuration is approved and confirmed through the
+mounted console with the canonical owner's passkey.
 """
 
 import json
 import secrets
 from enum import StrEnum
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import httpx
@@ -18,13 +20,13 @@ from aweb_naapp.egress import InternalDestinations
 from aweb_secrets_values import ValueKind
 from onepassword import Client
 
-from aweb_secrets import records
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 from tests.custody.test_onepassword import ITEM, VAULT, field, reference, sdk_item
 from tests.production_approvals import requester_status
+from tests.test_console_bootstrap import delivered_url
 from tests.test_production_bootstrap import enrolled_owner
 from tests.test_production_bootstrap import root as root
 from tests.test_use_approvals import POLICY_BODY, SECRET
@@ -38,7 +40,7 @@ class SDKValueScenario(StrEnum):
 
 @pytest.fixture
 async def vault(root, monkeypatch):
-    service, client, configured, member, installed, *_ = root
+    service, client, configured, member, installed, smtp, *_ = root
     owner = await enrolled_owner(root)
     username, password = secrets.token_hex(12), secrets.token_urlsafe(32)
     backend_token = secrets.token_urlsafe(32)
@@ -102,6 +104,8 @@ async def vault(root, monkeypatch):
         member=member,
         installed=installed,
         root=root,
+        owner=owner,
+        smtp=smtp,
     )
 
 
@@ -119,66 +123,103 @@ async def test_staging_a_basic_reference_refuses_a_colon_username_without_alloca
     )
 
 
+def basic_configuration(vault, *, binding: dict) -> list[dict]:
+    """Build the metadata submitted to the existing change-set route (§6.3)."""
+    policy = Policy.from_body({**POLICY_BODY, "approval": "none", "approvers": []})
+    grant = GrantRecord.from_after(
+        {
+            "v": 1,
+            "grant_id": "grt_value_kind",
+            "secret_id": vault.record.secret_id,
+            "subject": {"principal": vault.member.extra_cert_fields["member_did_aw"]},
+            "capability": "use",
+            "operations": [],
+            "open_request": True,
+            "jobs": [],
+            "policy_digest": policy.digest,
+        }
+    )
+    destination = DestinationRecord.from_after(
+        {
+            "v": 1,
+            "destination_id": "dst_value_kind",
+            "secret_id": vault.record.secret_id,
+            "scheme": "https",
+            "host": "api.payments.example",
+            "port": 443,
+            "path": "/v1/**",
+            "methods": ["POST"],
+            "query_rules": {},
+            "header_allow": [],
+            "network": "public",
+            "cidr": None,
+        },
+        internal_destinations=InternalDestinations.DISABLED,
+    )
+    return [
+        {"kind": "secret", "op": "create", "ref": vault.record.ref, "after": vault.record.after},
+        {"kind": "backend_credential", "op": "create", "ref": "onepassword", "after": vault.token},
+        {
+            "kind": "onepassword_binding",
+            "op": "create",
+            "ref": vault.record.secret_id,
+            "after": binding,
+        },
+        {"kind": "policy", "op": "create", "ref": policy.digest, "after": {"v": 1, **policy.body}},
+        {
+            "kind": "destination",
+            "op": "create",
+            "ref": destination.destination_id,
+            "after": destination.after,
+        },
+        {"kind": "grant", "op": "create", "ref": grant.grant_id, "after": grant.after},
+    ]
+
+
+async def confirm_basic_configuration(vault, *, binding: dict) -> None:
+    """Use the delivered approval and real passkey before configuration takes effect."""
+    changes = vault.prefix + "/change-sets"
+    mail_start = len(vault.smtp.received)
+    drafted = await vault.client.post(
+        changes,
+        headers=vault.headers,
+        json={
+            "changes": basic_configuration(vault, binding=binding),
+            "sealed": [
+                {"secret_id": vault.token["credential_id"], "version": vault.token["version"]},
+                {"secret_id": binding["secret_id"], "version": binding["version"]},
+            ],
+            "reason": "Allow the certified agent to use the Basic reference",
+        },
+    )
+    assert drafted.status_code == 201, "the production owner must draft the configuration"
+    path = changes + "/" + drafted.json()["change_id"]
+    premature = await vault.client.post(path + "/confirm", json={}, headers=vault.headers)
+    assert premature.status_code == 409, "unapproved configuration must remain inert"
+    link = delivered_url(
+        vault.smtp.received[mail_start:], contact=vault.owner.body["contact"], path="/approvals"
+    )
+    [token] = parse_qs(urlsplit(link).fragment)["token"]
+    options = await vault.client.post(
+        path + "/approval-options", json={"token": token}, headers=vault.headers
+    )
+    assert options.status_code == 200
+    approved = await vault.client.post(
+        path + "/approve",
+        json={"token": token, "assertion": vault.owner.device.get(options.json())},
+        headers=vault.headers,
+    )
+    assert approved.status_code == 200
+    confirmed = await vault.client.post(path + "/confirm", json={}, headers=vault.headers)
+    assert confirmed.status_code == 200, "the approved configuration must apply through production"
+
+
 async def configured_basic(vault):
     staged = await vault.client.post(
         vault.prefix + "/onepassword/references", json=vault.request, headers=vault.headers
     )
     assert staged.status_code == 201
-    db = vault.service.runtime.db()
-    installation, team = vault.installed["installation_id"], vault.member.team_id
-    policy = Policy.from_body({**POLICY_BODY, "approval": "none", "approvers": []})
-    async with db.transaction() as tx:
-        await records.create_secret(tx, installation, team, vault.record)
-        await records.set_active_version(
-            tx, installation, team, vault.record.secret_id, staged.json()["version"]
-        )
-        await tx.execute(
-            "UPDATE onepassword_credentials SET active_version=$1 WHERE installation_id=$2 AND team_id=$3",
-            vault.token["version"],
-            installation,
-            team,
-        )
-        await records.create_policy(tx, installation, policy, team_id=team)
-        await records.create_grant(
-            tx,
-            installation,
-            team,
-            GrantRecord.from_after(
-                {
-                    "v": 1,
-                    "grant_id": "grt_value_kind",
-                    "secret_id": vault.record.secret_id,
-                    "subject": {"principal": vault.member.extra_cert_fields["member_did_aw"]},
-                    "capability": "use",
-                    "operations": [],
-                    "open_request": True,
-                    "jobs": [],
-                    "policy_digest": policy.digest,
-                }
-            ),
-        )
-        await records.create_destination(
-            tx,
-            installation,
-            team,
-            DestinationRecord.from_after(
-                {
-                    "v": 1,
-                    "destination_id": "dst_value_kind",
-                    "secret_id": vault.record.secret_id,
-                    "scheme": "https",
-                    "host": "api.payments.example",
-                    "port": 443,
-                    "path": "/v1/**",
-                    "methods": ["POST"],
-                    "query_rules": {},
-                    "header_allow": [],
-                    "network": "public",
-                    "cidr": None,
-                },
-                internal_destinations=InternalDestinations.DISABLED,
-            ),
-        )
+    await confirm_basic_configuration(vault, binding=staged.json())
 
 
 async def submit(vault, *, request_id: str):
