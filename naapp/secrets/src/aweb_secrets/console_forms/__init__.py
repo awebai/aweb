@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from aweb_secrets.console_changes import ConsoleChanges, _errors
 from aweb_secrets.console_forms.grants import grant_forms_router
-from aweb_secrets.console_forms.kinds import KIND_NAMES, kind_parameter_controls
+from aweb_secrets.console_forms.kinds import CONSOLE_KINDS, KIND_NAMES, kind_parameter_controls
 from aweb_secrets.console_forms.native import native_value_forms_router
 from aweb_secrets.console_ui import _login_redirect, _page, console_page
 from aweb_secrets.operation import CAPTURE_FIELDS
@@ -36,7 +36,7 @@ _REVIEW = (
 
 def _reference_kinds() -> str:
     fields = []
-    for kind in SecretKind:
+    for kind in CONSOLE_KINDS:
         inactive = " hidden disabled" if kind != SecretKind.BEARER else ""
         fields.append(f'<fieldset data-kind="{kind}"{inactive}><legend>{KIND_NAMES[kind]}</legend>')
         fields.append(kind_parameter_controls(kind, prefix="reference"))
@@ -60,7 +60,8 @@ def _reference_kinds() -> str:
 def _reference_form(installation_id: str, credential_version: int) -> str:
     action = "/installations/" + installation_id + "/onepassword/references"
     options = "".join(
-        f'<option value="{kind}" data-auth-kind>{KIND_NAMES[kind]}</option>' for kind in SecretKind
+        f'<option value="{kind}" data-auth-kind>{KIND_NAMES[kind]}</option>'
+        for kind in CONSOLE_KINDS
     )
     return (
         "<p>Select the item and field IDs from your connected vault. Enter references here; "

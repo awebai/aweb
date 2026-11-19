@@ -4,7 +4,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
-from aweb_secrets.secret import ClientAuthentication, SecretKind
+from aweb_secrets.secret import KINDS, ClientAuthentication, SecretKind
+
+CONSOLE_KINDS = tuple(SecretKind(kind) for kind in KINDS)
 
 KIND_NAMES: Mapping[str, str] = {
     SecretKind.BEARER: "Bearer token",

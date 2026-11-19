@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
 from aweb_secrets.console_changes import ConsoleChanges, _errors
-from aweb_secrets.console_forms.kinds import KIND_NAMES, kind_parameter_controls
+from aweb_secrets.console_forms.kinds import CONSOLE_KINDS, KIND_NAMES, kind_parameter_controls
 from aweb_secrets.console_ui import _login_redirect, console_page
 from aweb_secrets.console_values import native_value_refusals
 from aweb_secrets.operation import CAPTURE_FIELDS
@@ -65,7 +65,7 @@ def _native_value_fields(kind: SecretKind) -> str:
 
 def _native_kind_controls() -> str:
     fields = []
-    for kind in SecretKind:
+    for kind in CONSOLE_KINDS:
         inactive = " hidden disabled" if kind is not SecretKind.BEARER else ""
         fields.append(
             f'<fieldset data-kind="{kind}"{inactive}><legend>{KIND_NAMES[kind]}</legend>'
@@ -77,7 +77,9 @@ def _native_kind_controls() -> str:
 
 
 def native_value_form(*, installation_id: str) -> str:
-    options = "".join(f'<option value="{kind}">{KIND_NAMES[kind]}</option>' for kind in SecretKind)
+    options = "".join(
+        f'<option value="{kind}">{KIND_NAMES[kind]}</option>' for kind in CONSOLE_KINDS
+    )
     installation = escape(installation_id, quote=True)
     return (
         "<h1>Store a native secret</h1>"

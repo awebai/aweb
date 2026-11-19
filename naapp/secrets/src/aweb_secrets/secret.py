@@ -15,15 +15,7 @@ from enum import StrEnum
 from typing import Any
 
 from aweb_naapp.egress import EgressRefused, canonical_url
-
-
-class SecretKind(StrEnum):
-    BEARER = "bearer"
-    BASIC = "basic"
-    HEADER = "header"
-    QUERY = "query"
-    OAUTH2_CLIENT_CREDENTIALS = "oauth2-client-credentials"
-    AWS_SIGV4 = "aws-sigv4"
+from aweb_secrets_values import ValueKind as SecretKind
 
 
 class SecretBackend(StrEnum):
@@ -41,7 +33,17 @@ class ClientAuthentication(StrEnum):
     POST = "client_secret_post"
 
 
-KINDS = tuple(kind.value for kind in SecretKind)
+KINDS = tuple(
+    kind.value
+    for kind in (
+        SecretKind.BEARER,
+        SecretKind.BASIC,
+        SecretKind.HEADER,
+        SecretKind.QUERY,
+        SecretKind.OAUTH2_CLIENT_CREDENTIALS,
+        SecretKind.AWS_SIGV4,
+    )
+)
 SENSITIVITIES = tuple(level.value for level in SecretSensitivity)
 BACKENDS = tuple(backend.value for backend in SecretBackend)
 CLIENT_AUTHS = tuple(method.value for method in ClientAuthentication)

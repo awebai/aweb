@@ -8,7 +8,18 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from enum import StrEnum
 from typing import Any
+
+
+class ValueKind(StrEnum):
+    BEARER = "bearer"
+    HEADER = "header"
+    QUERY = "query"
+    BASIC = "basic"
+    OAUTH2_CLIENT_CREDENTIALS = "oauth2-client-credentials"
+    AWS_SIGV4 = "aws-sigv4"
+
 
 # The structured value fields of each kind, which a derived secret captures (§6.2).
 CAPTURE_FIELDS: Mapping[str, tuple[frozenset[str], frozenset[str]]] = {
