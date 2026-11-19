@@ -1761,7 +1761,7 @@ func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 		IdentityScope: awid.IdentityModeLocal,
 		Secret:        "legacy-secret",
 		RegistryURL:   server.URL,
-		CreatedAt:     "2026-08-22T00:00:00Z",
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	writeTeamInviteForTest(t, home, legacyInvite)
 	legacyToken, err := awconfig.EncodeInviteToken(legacyInvite)
@@ -3357,7 +3357,7 @@ func TestTeamAcceptInviteGlobalDefaultClaimUsesNamespaceAuthority(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	invite := &awconfig.TeamInvite{InviteID: inviteID, Domain: "acme.com", TeamName: "backend", Secret: secret, RegistryURL: server.URL, CreatedAt: "2026-06-30T00:00:00Z"}
+	invite := &awconfig.TeamInvite{InviteID: inviteID, Domain: "acme.com", TeamName: "backend", Secret: secret, RegistryURL: server.URL, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	writeTeamInviteForTest(t, home, invite)
 	token, err := awconfig.EncodeInviteToken(invite)
 	if err != nil {
@@ -3493,7 +3493,7 @@ func TestTeamAcceptInviteGlobalDefaultClaimResumesAfterClaimRollbackFailure(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	invite := &awconfig.TeamInvite{InviteID: inviteID, Domain: "acme.com", TeamName: "backend", Secret: secret, RegistryURL: server.URL, CreatedAt: "2026-06-30T00:00:00Z"}
+	invite := &awconfig.TeamInvite{InviteID: inviteID, Domain: "acme.com", TeamName: "backend", Secret: secret, RegistryURL: server.URL, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	writeTeamInviteForTest(t, home, invite)
 	token, err := awconfig.EncodeInviteToken(invite)
 	if err != nil {
@@ -3670,7 +3670,7 @@ func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 		TeamName:    "backend",
 		Secret:      secret,
 		RegistryURL: server.URL,
-		CreatedAt:   "2026-04-16T00:00:00Z",
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	writeTeamInviteForTest(t, tmp, invite)
 	token, err := awconfig.EncodeInviteToken(invite)
@@ -3737,7 +3737,7 @@ func TestTeamAcceptInviteRejectsAddressOnLocalInvite(t *testing.T) {
 		TeamName:      "default",
 		IdentityScope: awid.IdentityModeLocal,
 		Secret:        secret,
-		CreatedAt:     "2026-04-16T00:00:00Z",
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	writeTeamInviteForTest(t, tmp, invite)
 	token, err := awconfig.EncodeInviteToken(invite)
@@ -3836,7 +3836,7 @@ func TestTeamAcceptInviteAddressOverrideRejectsDifferentDID(t *testing.T) {
 		TeamName:    "backend",
 		Secret:      secret,
 		RegistryURL: server.URL,
-		CreatedAt:   "2026-04-16T00:00:00Z",
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	writeTeamInviteForTest(t, tmp, invite)
 	token, err := awconfig.EncodeInviteToken(invite)
@@ -3917,7 +3917,7 @@ func TestLocalAcceptInviteRejectsPreseededGlobalIdentity(t *testing.T) {
 		IdentityScope: awid.IdentityModeLocal,
 		Secret:        secret,
 		RegistryURL:   server.URL,
-		CreatedAt:     "2026-04-13T00:00:00Z",
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	writeTeamInviteForTest(t, tmp, invite)
 	token, err := awconfig.EncodeInviteToken(invite)

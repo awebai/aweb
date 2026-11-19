@@ -550,7 +550,11 @@ func TestHostedInviteIssuePresentsSelectedAgentChain(t *testing.T) {
 			if err := awconfig.SaveInstalledIDChain(filepath.Join(principal, ".aw"), chain); err != nil {
 				t.Fatal(err)
 			}
-			created, err := createHostedTeamInvite(decoy, filepath.Join(principal, ".aw"), team, true)
+			domain, name, err := awid.ParseTeamID(team)
+			if err != nil {
+				t.Fatal(err)
+			}
+			created, err := createHostedTeamInvite(teamInviteMintRequest{Plan: teamInvitePlan{Kind: inviteAuthorityHosted, Source: teamInviteSource{WorkingDir: decoy, Home: awconfig.IdentityHome{Root: filepath.Join(principal, ".aw"), Source: awconfig.IdentityHomeFlag}, Domain: domain, Team: name}}, Scope: inviteMemberLocal})
 			if (err != nil) != wrongIssuer || calls != 1 || (!wrongIssuer && created.Token == "") {
 				t.Fatalf("err=%v calls=%d", err, calls)
 			}

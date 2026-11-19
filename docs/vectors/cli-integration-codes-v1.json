@@ -4,7 +4,7 @@
   "cli_error_codes": [
     "invite_not_created", "alias_conflict", "outcome_unknown",
     "controller_key_missing", "team_name_taken", "grant_not_found",
-    "certificate_persistence_incomplete", "invite_issuance_pending",
+    "certificate_persistence_incomplete", "invite_issuance_pending", "invite_unknown_or_expired",
     "team_server_record_missing", "invalid_alias", "invalid_team_id",
     "invalid_team_server_url"
   ],
@@ -14,8 +14,8 @@
     "linked_child_dispositions": ["none", "voided", "already_issued", "absent", "retained"]
   },
   "invite_inspection": {
-    "states": ["unused", "attempted", "consumed"],
-    "codes": ["invite_unused", "invite_already_used", "invite_issuance_pending", "invite_certificate_active", "invite_certificate_revoked"],
+    "states": ["unused", "expired", "attempted", "consumed"],
+    "codes": ["invite_unused", "invite_expired", "invite_already_used", "invite_issuance_pending", "invite_certificate_active", "invite_certificate_revoked", "outcome_unknown"],
     "unknown_check_exits_nonzero": true,
     "absent_after_uncertain_submission_allows_cancellation": false
   },

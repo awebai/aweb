@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -68,7 +69,9 @@ func runTeamRevokeInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	}
 	out.NextStep = formatShellCommand([]string{"aw", "id", "team", "remove-member", "--team", invite.TeamName, "--namespace", invite.Domain, "--cert-id", "<certificate-id>"})
 	issuance, inspectErr := awconfig.InspectTeamInviteIssuance(invite)
-	if inspectErr != nil || (issuance != nil && issuance.State == awconfig.RecoveryAttempted) {
+	lifecycle, lifecycleErr := awconfig.InspectTeamInviteLifecycle(awconfig.TeamInviteLifecycleRequest{Invite: invite, Now: time.Now()})
+	inspectErr = errors.Join(inspectErr, lifecycleErr)
+	if inspectErr != nil || lifecycle.State == awconfig.TeamInviteAttempted || lifecycle.State == awconfig.TeamInviteUnknown {
 		out.Status, out.Code = inviteAttempted, "invite_issuance_pending"
 		out.Message = "This invite has an attempted or unknown issuance. Cancellation cannot determine whether its certificate was issued."
 		out.NextStep = formatShellCommand(nativeInviteCheckArgv(invite))
@@ -84,7 +87,7 @@ func runTeamRevokeInvite(cmd *cobra.Command, args []string) (resultErr error) {
 		}
 		return nativeInviteIssuanceRefusal(invite, inspectErr)
 	}
-	if invite.ConsumedAt != "" {
+	if lifecycle.State == awconfig.TeamInviteConsumed {
 		out.Status, out.Code, out.Message = inviteAlreadyUsed, "invite_already_used", "This invite was already used. Cancelling an unused invite does not revoke an issued certificate."
 		if invite.IDChild != nil {
 			out.LinkedChild = inviteChildIssued

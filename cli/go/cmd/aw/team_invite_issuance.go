@@ -25,14 +25,14 @@ type nativeInviteRegistrationRequest struct {
 }
 
 // An inconclusive reconciliation must not be mistaken for a definite refusal
-// of the original write (docs/cli-integration-contract.md:151-175).
+// of the original write (docs/cli-integration-contract.md:161-198).
 type nativeInviteRegistrationUnknownError struct{ cause error }
 
 func (e *nativeInviteRegistrationUnknownError) Error() string { return e.cause.Error() }
 func (e *nativeInviteRegistrationUnknownError) Unwrap() error { return e.cause }
 
 // An already-registered reply succeeds only after fetching the exact signed
-// effect, not merely a certificate for the same alias (docs/cli-integration-contract.md:151-175).
+// effect, not merely a certificate for the same alias (docs/cli-integration-contract.md:161-198).
 func registerExactNativeInviteCertificate(ctx context.Context, request nativeInviteRegistrationRequest) error {
 	err := request.Registry.RegisterCertificate(ctx, request.RegistryURL, request.Invite.Domain, request.Invite.TeamName, request.Certificate, request.TeamKey)
 	if err == nil {
@@ -89,6 +89,13 @@ func nativeInviteIssuanceRefusal(invite *awconfig.TeamInvite, cause error) error
 	return withErrorCode("invite_issuance_pending", fmt.Errorf("invite %s issuance is incomplete or unknown: %w; retain the recipient key and invite record, then run `%s` to check its exact certificate before cancelling or resuming", invite.InviteID, cause, check))
 }
 
+func nativeInviteRenewalRefusal(cause error) error {
+	if cause == nil {
+		cause = awconfig.ErrTeamInviteLifetime
+	}
+	return withErrorCode("invite_unknown_or_expired", &plainRefusal{text: "This invitation is unknown or expired; ask its issuer for a new invite.", err: cause})
+}
+
 func nativeInviteCheckArgv(invite *awconfig.TeamInvite) []string {
 	args := []string{"aw"}
 	issuance, err := awconfig.InspectTeamInviteIssuance(invite)
@@ -106,7 +113,7 @@ type nativeInviteResumeRequest struct {
 }
 
 // Resumption holds the invite lock and replays only the frozen effect; neither
-// enrollment selection nor certificate signing runs again (docs/cli-integration-contract.md:151-175).
+// enrollment selection nor certificate signing runs again (docs/cli-integration-contract.md:161-198).
 func resumeNativeInviteIssuance(ctx context.Context, request nativeInviteResumeRequest) (*acceptedTeamInvite, error) {
 	invite, issuance := request.Invite, request.Issuance
 	cert := &issuance.PreparedEffect

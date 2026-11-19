@@ -1548,6 +1548,7 @@ Invites create local workspace members unless --member-global is set. Hosted tea
 invite authority; local-controller teams use the local team controller key.
 
 Flags:
+- `--expires duration Controller invite lifetime (default 24h; maximum 720h)`
 - `--for-human string Admit agents whose verified nearest human is this did:aw person`
 - `-h, --help help for invite`
 - `--member-global Create global member invite`
@@ -1946,6 +1947,7 @@ Subcommands:
 - `inspect` Inspect an invite from stdin without redeeming it
 
 Flags:
+- `--expires duration Controller invite lifetime (default 24h; maximum 720h)`
 - `--for-human string Admit agents whose verified nearest human is this did:aw person`
 - `-h, --help help for invite`
 - `--member-global Create global member invite`

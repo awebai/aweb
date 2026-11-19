@@ -136,6 +136,16 @@ or identity key. An unknown expiry is an empty string; consumers display the
 returned expiry rather than infer a lifetime. Mint output includes `invite_id`
 and its known `expires_at`.
 
+Controller invites expire after 24 hours by default. `--expires 48h` selects
+a different controller lifetime, up to `720h` (30 days); hosted overrides are
+refused because their service owns expiry. Controller preflight computes the
+same default or requested lifetime without creating anything. Saved invitations
+without an explicit expiry use their creation time plus 24 hours. Native
+acceptance reads routing and lifetime from the saved issuer record, never from
+unsigned token hints. Unknown or expired invitations refuse with
+`invite_unknown_or_expired` and the issuer-reissue action. An attempted issuance
+always takes precedence over age and retains its exact recovery record.
+
 `aw id team revoke-invite --invite-id ID --json` locally cancels an unused
 controller enrollment. It makes no network request. `status` and `code` are
 `cancelled`/`invite_cancelled`, `absent`/`invite_absent`, or
@@ -166,6 +176,11 @@ registry. It returns `state`, `code`, `certificate_id`, `identity_home`,
 `registry_url` and `next_step`, without a token or private key. A failed check
 exits nonzero. An absent certificate after an uncertain submission does not
 clear the attempt or authorize cancellation: the earlier write may still finish.
+Unfenced inspection reports `unused`, `expired` or `consumed` from the shared
+lifecycle owner, including a validated `expires_at` when available. Unknown
+lifecycle evidence is a refusal, not unused state. A revoked certificate returns
+an empty `next_step` and a `message` requesting a new invitation from its issuer;
+nonempty recovery steps are complete commands rather than guessed issuer homes.
 
 `aw --identity-home HOME id team resume-invite --invite-id ID --json` requires
 the original recipient key and home and resumes that same certificate, member

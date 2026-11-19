@@ -124,6 +124,12 @@ func loadSelectedGrantHome() (*awconfig.GrantHome, error) {
 	if err != nil {
 		return nil, err
 	}
+	return loadGrantHomeAt(home)
+}
+
+// loadGrantHomeAt preserves selection errors for explicit-home consumers such
+// as mint planning; absence alone permits root authority (docs/cli-identity-selection.md:13-17).
+func loadGrantHomeAt(home awconfig.IdentityHome) (*awconfig.GrantHome, error) {
 	if _, err := os.Lstat(awconfig.GrantHomeStatePath(home.Root)); errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	} else if err != nil {

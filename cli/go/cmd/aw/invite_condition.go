@@ -97,20 +97,6 @@ func unjoinedChainSigningKey(home string) (ed25519.PrivateKey, error) {
 	return key, nil
 }
 
-func requestedInviteHuman(values []string) (*string, error) {
-	if len(values) == 0 {
-		return nil, nil
-	}
-	if len(values) != 1 {
-		return nil, usageError("one --for-human value is required")
-	}
-	if err := validateInviteHuman(values[0]); err != nil {
-		return nil, err
-	}
-	value := values[0]
-	return &value, nil
-}
-
 // --parent names an explicit local creator. The private invitation and child
 // request are retained so a failed join resumes with that same key and parent.
 func completeExplicitInviteParent(ctx context.Context, wd, home, token, parentHome string) error {

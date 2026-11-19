@@ -47,7 +47,10 @@ func TestOATSNativeInviteConnectionFailureRetainsTheExactAttempt(t *testing.T) {
 	if err := awconfig.SaveTeamInvite(invite); err != nil {
 		t.Fatal(err)
 	}
-	token, err := awconfig.EncodeInviteToken(invite)
+	// Routing fields in the unsigned bearer cannot replace the saved selection.
+	modified := *invite
+	modified.RegistryURL = "http://127.0.0.1:1"
+	token, err := awconfig.EncodeInviteToken(&modified)
 	if err != nil {
 		t.Fatal(err)
 	}

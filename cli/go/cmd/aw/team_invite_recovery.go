@@ -5,27 +5,22 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/spf13/cobra"
 )
 
-type inviteInspectionState string
-
-const (
-	inviteInspectionUnused    inviteInspectionState = "unused"
-	inviteInspectionAttempted inviteInspectionState = "attempted"
-	inviteInspectionConsumed  inviteInspectionState = "consumed"
-)
-
 type inviteInspectionOutput struct {
-	InviteID      string                `json:"invite_id"`
-	State         inviteInspectionState `json:"state"`
-	Code          string                `json:"code"`
-	CertificateID string                `json:"certificate_id,omitempty"`
-	RegistryURL   string                `json:"registry_url,omitempty"`
-	IdentityHome  string                `json:"identity_home,omitempty"`
-	NextStep      string                `json:"next_step"`
+	InviteID      string                            `json:"invite_id"`
+	State         awconfig.TeamInviteLifecycleState `json:"state"`
+	Code          string                            `json:"code"`
+	CertificateID string                            `json:"certificate_id,omitempty"`
+	ExpiresAt     string                            `json:"expires_at,omitempty"`
+	RegistryURL   string                            `json:"registry_url,omitempty"`
+	IdentityHome  string                            `json:"identity_home,omitempty"`
+	NextStep      string                            `json:"next_step"`
+	Message       string                            `json:"message,omitempty"`
 }
 
 var teamCheckInviteID string
@@ -42,7 +37,7 @@ var teamResumeInviteCmd = &cobra.Command{
 }
 
 // Checking never clears an attempted fence: absence after an uncertain write
-// cannot prove that submission will not commit (docs/cli-integration-contract.md:151-175).
+// cannot prove that submission will not commit (docs/cli-integration-contract.md:161-198).
 func runTeamCheckInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	id := strings.TrimSpace(teamCheckInviteID)
 	if id == "" {
@@ -59,24 +54,34 @@ func runTeamCheckInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	}
 	issuance, err := awconfig.InspectTeamInviteIssuance(invite)
 	if err != nil {
-		return nativeInviteIssuanceRefusal(invite, err)
+		return withErrorCode("invite_issuance_pending", fmt.Errorf("inspect retained issuance: %w; retain the original record and restore it or upgrade its reader before reconciling the exact certificate", err))
 	}
-	out := inviteInspectionOutput{InviteID: id}
+	lifecycle, lifecycleErr := awconfig.InspectTeamInviteLifecycle(awconfig.TeamInviteLifecycleRequest{Invite: invite, Now: time.Now()})
+	if lifecycleErr != nil {
+		return withErrorCode("invite_issuance_pending", fmt.Errorf("inspect saved invite: %w; retain and restore its original record before reconciling its certificate", lifecycleErr))
+	}
+	out := inviteInspectionOutput{InviteID: id, State: lifecycle.State}
+	if !lifecycle.ExpiresAt.IsZero() {
+		out.ExpiresAt = lifecycle.ExpiresAt.Format(time.RFC3339Nano)
+	}
 	if issuance == nil {
-		if invite.ConsumedAt != "" {
-			out.State, out.Code = inviteInspectionConsumed, "invite_already_used"
+		if lifecycle.State == awconfig.TeamInviteConsumed {
+			out.State, out.Code = awconfig.TeamInviteConsumed, "invite_already_used"
 			out.NextStep = formatShellCommand([]string{"aw", "id", "team", "remove-member", "--namespace", invite.Domain, "--team", invite.TeamName, "--cert-id", "<certificate-id>"})
 		} else {
 			if invite.Secret == "" {
 				return nativeInviteIssuanceRefusal(invite, awconfig.ErrInviteIssuanceUnknown)
 			}
-			out.State, out.Code = inviteInspectionUnused, "invite_unused"
+			out.Code = "invite_unused"
+			if lifecycle.State == awconfig.TeamInviteExpired {
+				out.Code = "invite_expired"
+			}
 			out.NextStep = formatShellCommand([]string{"aw", "id", "team", "revoke-invite", "--invite-id", id})
 		}
 		printOutput(out, formatJSONOutput)
 		return nil
 	}
-	out.State, out.Code = inviteInspectionAttempted, "invite_issuance_pending"
+	out.Code = "invite_issuance_pending"
 	out.CertificateID, out.RegistryURL, out.IdentityHome = issuance.PreparedEffect.CertificateID, issuance.Context.RegistryURL, issuance.Context.IdentityHome
 	out.NextStep = formatShellCommand([]string{"aw", "--identity-home", out.IdentityHome, "id", "team", "resume-invite", "--invite-id", id})
 	registry, err := newConfiguredRegistryClient(nil)
@@ -88,8 +93,9 @@ func runTeamCheckInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	status, err := registry.GetTeamCertificateStatus(ctx, out.RegistryURL, invite.Domain, invite.TeamName, out.CertificateID)
 	if err != nil {
 		// Print the retained selection even on an inconclusive online check.
+		out.Code = "outcome_unknown"
 		printOutput(out, formatJSONOutput)
-		return nativeInviteIssuanceRefusal(invite, err)
+		return withErrorCode("outcome_unknown", fmt.Errorf("online certificate check was inconclusive: %w; retain the original recipient and record, then run `%s` to resume its exact effect", err, out.NextStep))
 	}
 	if status.TeamID != issuance.PreparedEffect.Team || status.TeamDIDKey != issuance.PreparedEffect.TeamDIDKey {
 		return nativeInviteIssuanceRefusal(invite, errors.New("registry status differs from the retained team or controller"))
@@ -98,19 +104,20 @@ func runTeamCheckInvite(cmd *cobra.Command, args []string) (resultErr error) {
 		out.Code = "invite_certificate_active"
 	} else if status.Status == "revoked" && status.RevokedAt != nil {
 		out.Code = "invite_certificate_revoked"
-		out.NextStep = "The retained certificate is revoked; retain the invite history and request a new unused invitation."
+		out.NextStep = ""
+		out.Message = "The retained certificate is revoked; retain the invite history and request a new unused invitation from its issuer."
 	} else {
 		return nativeInviteIssuanceRefusal(invite, errors.New("registry returned an unknown certificate status"))
 	}
 	if issuance.State == awconfig.RecoveryConfirmed {
-		out.State = inviteInspectionConsumed
+		out.State = awconfig.TeamInviteConsumed
 	}
 	printOutput(out, formatJSONOutput)
 	return nil
 }
 
 // Recovery requires the recorded recipient's own key and exact home; knowing
-// an invite ID never permits replacing another identity (docs/cli-integration-contract.md:151-175).
+// an invite ID never permits replacing another identity (docs/cli-integration-contract.md:161-198).
 func runTeamResumeInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	id := strings.TrimSpace(teamResumeInviteID)
 	if id == "" {

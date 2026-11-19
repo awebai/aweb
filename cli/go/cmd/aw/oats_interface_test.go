@@ -577,6 +577,18 @@ func TestOATSInvitePreflightUsesMintAuthorityWithoutCreatingRecords(t *testing.T
 			if result["kind"] != kind || result["team_id"] != teamID {
 				t.Fatalf("wrong authority plan: %s", out)
 			}
+			if kind == "controller" {
+				expiry, valid := result["expires_at"].(string)
+				if !valid || result["expiry_known"] != true {
+					t.Fatalf("controller preflight omitted its authoritative lifetime: %s", out)
+				}
+				parsed, err := time.Parse(time.RFC3339Nano, expiry)
+				if err != nil || time.Until(parsed) < 23*time.Hour || time.Until(parsed) > 24*time.Hour {
+					t.Fatalf("controller preflight did not use the 24h policy: %s; %v", out, err)
+				}
+			} else if result["expiry_known"] != false || result["expires_at"] != "" {
+				t.Fatalf("hosted preflight guessed an unreported expiry: %s", out)
+			}
 			if _, exists := result["token"]; exists {
 				t.Fatalf("preflight minted a token: %s", out)
 			}

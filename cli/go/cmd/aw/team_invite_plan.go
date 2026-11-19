@@ -61,6 +61,7 @@ type teamInvitePreflightOutput struct {
 }
 
 var teamInvitePreflight bool
+var teamInviteExpiresAfter time.Duration
 
 const identityReadOnlyFlagAnnotation = "aw.identity-read-only-flag"
 
@@ -69,7 +70,11 @@ const identityReadOnlyFlagAnnotation = "aw.identity-read-only-flag"
 // (docs/cli-identity-selection.md:13,28-33). Planning creates no ID-child or token.
 func planTeamInvite(source teamInviteSource) (teamInvitePlan, error) {
 	plan := teamInvitePlan{Source: source, Kind: inviteAuthorityController}
-	if !awconfig.IsGrantHome(source.Home.Root) {
+	grant, err := loadGrantHomeAt(source.Home)
+	if err != nil {
+		return plan, err
+	}
+	if grant == nil {
 		hasKey, err := awconfig.TeamKeyExists(source.Domain, source.Team)
 		if err != nil {
 			return plan, err
@@ -89,17 +94,11 @@ func mintPlannedTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, err
 	if err := request.Scope.validate(); err != nil {
 		return mintedTeamInvite{}, err
 	}
-	source := request.Plan.Source
-	var humanOption []string
-	if request.ForHuman != nil {
-		humanOption = []string{*request.ForHuman}
-	}
-	localMember := request.Scope == inviteMemberLocal
 	if request.Plan.Kind == inviteAuthorityHosted {
 		if request.ExpiresAfter != 0 {
 			return mintedTeamInvite{}, usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
 		}
-		created, err := createHostedTeamInvite(source.WorkingDir, externalIdentityHomeRoot(source.Home), awid.BuildTeamID(source.Domain, source.Team), localMember, humanOption...)
+		created, err := createHostedTeamInvite(request)
 		if err != nil {
 			return mintedTeamInvite{}, err
 		}
@@ -120,12 +119,40 @@ func (scope teamInviteMemberScope) validate() error {
 	}
 }
 
+// Preflight reads the same lifetime owner as controller minting and creates no
+// bearer or child invitation (docs/cli-integration-contract.md:131-147).
+func preflightTeamInviteMint(request teamInviteMintRequest) (teamInvitePreflightOutput, error) {
+	if err := request.Scope.validate(); err != nil {
+		return teamInvitePreflightOutput{}, err
+	}
+	out := teamInvitePreflightOutput{TeamID: awid.BuildTeamID(request.Plan.Source.Domain, request.Plan.Source.Team), Kind: request.Plan.Kind}
+	switch request.Plan.Kind {
+	case inviteAuthorityHosted:
+		if request.Scope != inviteMemberLocal {
+			return out, usageError("--member-global is not supported for hosted team invites")
+		}
+		if request.ExpiresAfter != 0 {
+			return out, usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
+		}
+	case inviteAuthorityController:
+		lifetime, err := resolveControllerInviteLifetime(awconfig.TeamInviteLifetimeRequest{Now: time.Now(), Duration: request.ExpiresAfter})
+		if err != nil {
+			return out, err
+		}
+		out.ExpiryKnown, out.ExpiresAt = true, lifetime.ExpiresAt.Format(time.RFC3339Nano)
+	default:
+		return out, usageError("unknown invite authority; select the team and retry")
+	}
+	return out, nil
+}
+
 func init() {
 	teamInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team ID; use instead of --team and --namespace")
 	teamInviteCmd.MarkFlagsMutuallyExclusive("team-id", "team")
 	teamInviteCmd.MarkFlagsMutuallyExclusive("team-id", "namespace")
 	for _, cmd := range []*cobra.Command{teamInviteCmd, teamHumanInviteCmd} {
 		cmd.Flags().BoolVar(&teamInvitePreflight, "preflight", false, "Show the mint authority without creating a token or child invitation")
+		cmd.Flags().DurationVar(&teamInviteExpiresAfter, "expires", 0, "Controller invite lifetime (default 24h; maximum 720h)")
 		if cmd.Annotations == nil {
 			cmd.Annotations = map[string]string{}
 		}

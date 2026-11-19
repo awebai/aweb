@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 // docs/cli-identity-selection.md:10-17 forbids treating an unreadable selected
@@ -49,5 +50,32 @@ func TestSelectedGrantHomeNeverTreatsBrokenGrantStateAsRootAuthority(t *testing.
 				}
 			}
 		})
+	}
+}
+
+func TestInvitePlanCannotBorrowControllerAuthorityFromBrokenGrantState(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	_, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamKey("example.com", "one", key); err != nil {
+		t.Fatal(err)
+	}
+	path := awconfig.GrantHomeStatePath(root)
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := teamInviteSource{WorkingDir: root, Home: awconfig.IdentityHome{Root: root, Source: awconfig.IdentityHomeFlag}, Domain: "example.com", Team: "one", AwebURL: "https://service.invalid"}
+	if _, err := planTeamInvite(source); err == nil {
+		t.Fatal("broken grant borrowed the host's controller key")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := planTeamInvite(source)
+	if err != nil || plan.Kind != inviteAuthorityController {
+		t.Fatalf("actual root controller neighbor refused: %v", err)
 	}
 }

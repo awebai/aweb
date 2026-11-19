@@ -240,7 +240,8 @@ func TestLocalTeamInviteKeepsTheInvitersRegistry(t *testing.T) {
 			if err := awconfig.SaveTeamKey(teamDomain, "backend", teamKey); err != nil {
 				t.Fatal(err)
 			}
-			_, token, err := createTeamInviteTokenAt(teamDomain, "backend", operationRegistry, "https://service.example", true, dir, "")
+			created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: teamInvitePlan{Kind: inviteAuthorityController, Source: teamInviteSource{WorkingDir: dir, Home: awconfig.IdentityHome{Root: filepath.Join(dir, ".aw"), Source: awconfig.IdentityHomeFlag}, Domain: teamDomain, Team: "backend", RegistryURL: operationRegistry, AwebURL: "https://service.example"}}, Scope: inviteMemberLocal})
+			token := created.Token
 			refused := scenario == "contradictory authority" || scenario == "stale key" || scenario == "unknown enrollment"
 			if refused {
 				if err == nil || token != "" {

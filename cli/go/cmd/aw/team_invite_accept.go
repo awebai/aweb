@@ -20,6 +20,13 @@ type teamInviteAcceptanceRequest struct {
 	Options    teamAcceptInviteOptions
 }
 
+type teamInviteCompletionMode uint8
+
+const (
+	teamInviteInstallMembership teamInviteCompletionMode = iota + 1
+	teamInviteConnectWorkspace
+)
+
 // Local membership cannot acquire global address authority (docs/identity.md:247-253).
 func validateTeamInviteAcceptance(request teamInviteAcceptanceRequest) (string, error) {
 	workingDir, opts := request.WorkingDir, request.Options

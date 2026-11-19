@@ -802,15 +802,23 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, style teamInvite
 	if err != nil {
 		return err
 	}
-	if teamInvitePreflight {
-		printOutput(teamInvitePreflightOutput{TeamID: awid.BuildTeamID(domain, team), Kind: plan.Kind}, formatJSONOutput)
-		return nil
-	}
 	scope := inviteMemberLocal
 	if global {
 		scope = inviteMemberGlobal
 	}
-	created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: scope, ForHuman: humanCondition})
+	request := teamInviteMintRequest{Plan: plan, Scope: scope, ForHuman: humanCondition, ExpiresAfter: teamInviteExpiresAfter}
+	if plan.Kind == inviteAuthorityHosted && cmd.Flags().Changed("expires") {
+		return usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
+	}
+	if teamInvitePreflight {
+		preview, err := preflightTeamInviteMint(request)
+		if err != nil {
+			return err
+		}
+		printOutput(preview, formatJSONOutput)
+		return nil
+	}
+	created, err := mintPlannedTeamInvite(request)
 	if err != nil {
 		return err
 	}
@@ -833,10 +841,9 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, style teamInvite
 // invite's output is unchanged; --json output carries expires_at and writes
 // nothing to stderr.
 // It names only the flags that the printed join command has, and the expiry
-// when the invite carries one; a local invite records none and is valid
-// until it is used.
+// when the issuer reports one; an absent expiry never implies unlimited life.
 func teamInviteTokenWarning(expiresAt string) string {
-	validity := "until it is used"
+	validity := "while the invitation remains valid"
 	if expiresAt = strings.TrimSpace(expiresAt); expiresAt != "" {
 		validity = "until it is used or until " + expiresAt
 	}
@@ -1137,7 +1144,7 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return runTeamAcceptInviteWithConnect(cmd, args, false)
+	return runTeamInviteAcceptance(cmd, args, teamInviteInstallMembership)
 }
 
 func runTeamHumanJoin(cmd *cobra.Command, args []string) error {
@@ -1151,10 +1158,14 @@ func runTeamHumanJoin(cmd *cobra.Command, args []string) error {
 	if teamHumanJoinSetupOnly {
 		return runJoinHarnessSetupOnly(cmd)
 	}
-	return runTeamAcceptInviteWithConnect(cmd, args, true)
+	return runTeamInviteAcceptance(cmd, args, teamInviteConnectWorkspace)
 }
 
-func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWorkspace bool) error {
+func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamInviteCompletionMode) error {
+	if completion != teamInviteInstallMembership && completion != teamInviteConnectWorkspace {
+		return usageError("unknown invite completion; use id team accept-invite to install membership, or team join to connect it")
+	}
+	connectWorkspace := completion == teamInviteConnectWorkspace
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
@@ -1211,7 +1222,10 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 		}
 	}
 	if connectWorkspace || externalHostedLocalAccept {
-		connectURL := firstNonEmpty(inviteAwebURL, accepted.AwebURL)
+		connectURL := accepted.AwebURL
+		if awid.IsHostedSpawnInviteToken(rawToken) {
+			connectURL = firstNonEmpty(inviteAwebURL, accepted.AwebURL)
+		}
 		if connectURL == "" {
 			connectURL = awebURLForTeamInviteAt(workingDir, externalIdentityHomeRoot(home), accepted.Output.TeamID)
 		}
@@ -1766,22 +1780,13 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func createHostedTeamInviteToken(workingDir, teamID string, localMember bool) (string, string, error) {
-	return createHostedTeamInviteTokenAt(workingDir, "", teamID, localMember)
-}
-
-func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, localMember bool) (string, string, error) {
-	created, err := createHostedTeamInvite(workingDir, identityHome, teamID, localMember)
-	if err != nil {
-		return "", "", err
-	}
-	return strings.TrimSpace(created.InviteID), strings.TrimSpace(created.Token), nil
-}
-
 // createHostedTeamInvite creates a single-use hosted invite and returns the
 // service's response, which carries its expiry.
-func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember bool, forHuman ...string) (*awid.SpawnCreateInviteResponse, error) {
-	if !localMember {
+func createHostedTeamInvite(request teamInviteMintRequest) (*awid.SpawnCreateInviteResponse, error) {
+	source := request.Plan.Source
+	workingDir, identityHome := source.WorkingDir, externalIdentityHomeRoot(source.Home)
+	teamID := awid.BuildTeamID(source.Domain, source.Team)
+	if request.Scope != inviteMemberLocal {
 		return nil, usageError("--member-global is not supported for hosted team invites")
 	}
 	var client *aweb.Client
@@ -1807,21 +1812,26 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 		return nil, err
 	}
 	var bundle map[string]any
+	var leaf awid.IDCertificateView
 	if chain != nil {
 		bundle = chain.Bundle
-		certificates := bundle["certificates"].([]any)
-		leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+		leaf, err = chain.Leaf()
+		if err != nil {
+			return nil, err
+		}
 		subject := selected.StableID
 		if subject == "" {
 			subject = selected.DID
 		}
-		if leaf["id"] != subject || leaf["kind"] != "agent" {
+		if leaf.ID() != subject || leaf.Kind() != awid.IDCertificateKindAgent {
 			return nil, errors.New("hosted invites require the selected agent's own chain")
 		}
 	}
-	requested, err := requestedInviteHuman(forHuman)
-	if err != nil {
-		return nil, err
+	requested := request.ForHuman
+	if requested != nil {
+		if err := validateInviteHuman(*requested); err != nil {
+			return nil, err
+		}
 	}
 	created, err := client.CreateSpawnInvite(ctx, &awid.SpawnCreateInviteRequest{
 		IDChain:    bundle,
@@ -1836,9 +1846,7 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 		return nil, errors.New("hosted service did not retain --for-human; upgrade the service before issuing this invite")
 	}
 	if chain != nil && (created.IDTree != nil || requested == nil) {
-		certificates := bundle["certificates"].([]any)
-		leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
-		if created.IDTree == nil || created.IDTree.V != 1 || created.IDTree.IssuerID != leaf["id"] || created.IDTree.Domain != leaf["domain"] || created.IDTree.ChildKind != "agent" || (created.IDTree.Mode != "host_managed" && created.IDTree.Mode != "self_custodial") {
+		if created.IDTree == nil || created.IDTree.V != 1 || created.IDTree.IssuerID != leaf.ID() || created.IDTree.Domain != leaf.Domain() || created.IDTree.ChildKind != "agent" || (created.IDTree.Mode != "host_managed" && created.IDTree.Mode != "self_custodial") {
 			return nil, errors.New("hosted invite did not retain the selected agent issuer binding")
 		}
 	}
@@ -1875,12 +1883,15 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 
 	decoded, err := awconfig.DecodeInviteToken(token)
 	if err != nil {
-		return nil, err
+		return nil, nativeInviteRenewalRefusal(err)
 	}
 
 	invite, err := awconfig.LoadTeamInvite(decoded.InviteID)
 	if err != nil {
-		return nil, fmt.Errorf("invite not found (token may be invalid or expired): %w", err)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nativeInviteRenewalRefusal(err)
+		}
+		return nil, nativeInviteIssuanceRefusal(&awconfig.TeamInvite{InviteID: decoded.InviteID}, err)
 	}
 	inviteLock, err := awconfig.LockTeamInvite(decoded.InviteID)
 	if err != nil {
@@ -1889,7 +1900,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	defer closeTeamInviteLock(inviteLock)
 	invite, err = awconfig.LoadTeamInvite(decoded.InviteID)
 	if err != nil {
-		return nil, err
+		return nil, nativeInviteIssuanceRefusal(&awconfig.TeamInvite{InviteID: decoded.InviteID}, err)
 	}
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
@@ -1900,13 +1911,20 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if issuance != nil {
 		return resumeNativeInviteIssuance(ctx, nativeInviteResumeRequest{WorkingDir: workingDir, Options: opts, Invite: invite, Issuance: issuance})
 	}
+	lifecycle, err := awconfig.InspectTeamInviteLifecycle(awconfig.TeamInviteLifecycleRequest{Invite: invite, Now: time.Now()})
+	if err != nil || lifecycle.State == awconfig.TeamInviteExpired || lifecycle.State == awconfig.TeamInviteUnknown {
+		return nil, nativeInviteRenewalRefusal(err)
+	}
+	if lifecycle.State == awconfig.TeamInviteConsumed {
+		return nil, withErrorCode("invite_already_used", usageError("this invite was already used; retain its recipient home and recover that membership instead of accepting it again"))
+	}
 	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{WorkingDir: workingDir, Options: opts})
 	if err != nil {
 		return nil, err
 	}
 
 	if invite.Secret != decoded.Secret {
-		return nil, fmt.Errorf("invalid invite token: secret mismatch")
+		return nil, nativeInviteRenewalRefusal(errors.New("invite secret mismatch"))
 	}
 
 	teamID := awid.BuildTeamID(invite.Domain, invite.TeamName)
@@ -1920,7 +1938,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if err != nil {
 		return nil, err
 	}
-	registryURL := strings.TrimSpace(decoded.RegistryURL)
+	registryURL := strings.TrimSpace(invite.RegistryURL)
 	if registryURL == "" {
 		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
 	}
@@ -1990,7 +2008,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		},
 		Certificate: cert,
 		RegistryURL: registryURL,
-		AwebURL:     strings.TrimSpace(decoded.AwebURL),
+		AwebURL:     strings.TrimSpace(invite.AwebURL),
 		Domain:      invite.Domain,
 		TeamName:    invite.TeamName,
 	}, nil

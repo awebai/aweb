@@ -122,4 +122,14 @@ func TestOATSRealInviteResumesExactIssuanceAfterControllerPersistenceFailure(t *
 	if err != nil || accepted.Certificate.CertificateID == cert.CertificateID {
 		t.Fatalf("valid alias retry failed: %v", err)
 	}
+	if err := world.Registry.RevokeCertificate(world.Context, world.Stack.RegistryURL, world.Domain, "backend", cert.CertificateID, world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
+	var revoked inviteInspectionOutput
+	if err := json.Unmarshal([]byte(world.requireCommand(t, source.Home, "id", "team", "check-invite", "--invite-id", minted.InviteID)), &revoked); err != nil {
+		t.Fatal(err)
+	}
+	if revoked.State != awconfig.TeamInviteConsumed || revoked.Code != "invite_certificate_revoked" || revoked.NextStep != "" || !strings.Contains(revoked.Message, "request a new unused invitation from its issuer") {
+		t.Fatalf("revoked history became unused or offered a guessed recovery command: %#v", revoked)
+	}
 }
