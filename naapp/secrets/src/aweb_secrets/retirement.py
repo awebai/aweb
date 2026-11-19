@@ -66,6 +66,7 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
         destroyed["run_redaction_pins"] = await run_pin_store.discard_installation(
             tx, installation_id=installation_id, team_id=team_id
         )
+        # erasure/schema.sql records the tombstone in this transaction.
         for table in ("sealed_versions", "onepassword_credentials"):
             removed = await tx.fetch_all(
                 f"DELETE FROM {{{{tables.{table}}}}} WHERE installation_id=$1 AND team_id=$2 RETURNING 1",
@@ -79,6 +80,7 @@ async def retire_team(tx: TransactionManager, team_id: str, *, app_id: str) -> N
             installation_id,
             team_id,
         )
+        # erasure/schema.sql records reference destruction in this transaction.
         await tx.execute(
             "UPDATE {{tables.onepassword_versions}} SET binding=NULL,destroyed_at=clock_timestamp()"
             " WHERE installation_id=$1 AND team_id=$2 AND destroyed_at IS NULL",

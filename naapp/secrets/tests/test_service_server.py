@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from service_server import Listener, ServiceServerError, serving
 
 from aweb_secrets.composition import create_service
+from tests.production_database import prepared_service_databases as prepared_service_databases
 from tests.test_composition import settings
 
 
@@ -184,11 +185,12 @@ async def test_bind_failure_never_constructs_an_app():
 
 async def test_actual_production_root_serves_both_tls_origins_once(
     test_db_factory,
+    prepared_service_databases,
     registry,
     tmp_path,
     tls,
 ):
-    database = await test_db_factory.create_db(suffix="s19_real_startup")
+    database = await prepared_service_databases.create_db(suffix="s19_real_startup")
     with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(24)) as smtp:
         configured = settings(database, tmp_path, smtp)
 

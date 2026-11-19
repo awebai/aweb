@@ -24,6 +24,7 @@ from aweb_secrets.composition import create_service
 from aweb_secrets.deployment import DeploymentSettings, create_deployment
 from tests.human_owner import member_key
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
+from tests.production_database import prepared_service_databases as prepared_service_databases
 from tests.production_logs import logs_receiver
 from tests.test_composition import settings
 from tests.test_production_bootstrap import enrolled_owner
@@ -42,6 +43,7 @@ from tests.test_production_bootstrap import enrolled_owner
 )
 async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_network(
     test_db_factory,
+    prepared_service_databases,
     registry,
     tmp_path,
     monkeypatch,
@@ -104,7 +106,9 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                 else:
                     await target.start()
                     origin = f"https://{name}:{target.port}"
-                database = await test_db_factory.create_db(suffix="production_hook_network")
+                database = await prepared_service_databases.create_db(
+                    suffix="production_hook_network"
+                )
                 with SmtpServer(tmp_path / "smtp") as smtp:
                     configured = settings(database, tmp_path, smtp).model_copy(
                         update={

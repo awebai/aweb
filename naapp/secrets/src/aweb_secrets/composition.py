@@ -39,7 +39,7 @@ from aweb_naapp.runtime.approvals import (
     PgApprovalStore,
 )
 from aweb_naapp.runtime.credential_audit import CredentialAudit, GovernanceUnavailable
-from aweb_naapp.runtime.db import ApplyMigrations
+from aweb_naapp.runtime.db import VerifyPreparedSchema
 from aweb_naapp.runtime.health import CheckResult
 from aweb_naapp.runtime.human_role_acts import HumanRoleActs
 from aweb_naapp.runtime.installation import AdmittedInstallation
@@ -49,6 +49,7 @@ from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty
 from aweb_naapp.signing_key import read_signing_key_file
 from awid.dns_verify import DomainVerifier
 from fastapi import APIRouter, Request
+from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
 from aweb_secrets.activity_service import ActivityReads
@@ -104,6 +105,8 @@ from aweb_secrets.custody import (
     SecretOpener,
 )
 from aweb_secrets.custody.opening import UseSecretOpener
+from aweb_secrets.erasure import check_erasure_store
+from aweb_secrets.erasure_boundary import mount_erasure_failures
 from aweb_secrets.human_holders import OwnerHoldingAuthority
 from aweb_secrets.human_holding_identity import owner_holding_identity
 from aweb_secrets.installation_lookup import InstallationLookup
@@ -128,7 +131,7 @@ from aweb_secrets.retirement import retire_team
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_routes import runner_dispatch_router, runner_registration_router
-from aweb_secrets.schema import prepare_business_schema
+from aweb_secrets.schema import service_schema_fingerprint
 from aweb_secrets.status_service import UseStatus
 from aweb_secrets.tokens import ProcessTokenCache
 from aweb_secrets.use_approvals import UseApprovers, UsePolicies
@@ -369,10 +372,7 @@ async def _compose(
     # Configure the shared fence; never create another G1 source or fence.
     fence.on_retire = partial(retire_team, app_id=settings.app_id)
     registrations = runtime.hook_registrations()
-    if isinstance(runtime.schema_preparation, ApplyMigrations):
-        store = await prepare_business_schema(db)
-    else:
-        store = PgApprovalStore(db)
+    store = PgApprovalStore(db)
 
     approval_services = await _compose_approvals(
         runtime=runtime, settings=settings, store=store, mailer=mailer
@@ -600,6 +600,11 @@ async def _recover(services: SecretsServices, stop: asyncio.Event, interval: int
             pass
 
 
+async def _check_prepared_schema(db: AsyncDatabaseManager) -> None:
+    # deploy/team/OPERATIONS.md §Backup: runtime must never rebuild erasure authority.
+    await check_erasure_store(db, expected_schema_digest=service_schema_fingerprint())
+
+
 def create_service(
     settings: ServiceSettings,
     *,
@@ -773,6 +778,8 @@ def create_service(
             ),
             lambda rt: runner_dispatch_router(service=lambda: current().runs),
         ),
-        schema_preparation=ApplyMigrations(),
+        schema_preparation=VerifyPreparedSchema(check=_check_prepared_schema),
     )
+    mount_erasure_failures(service.api_app)
+    mount_erasure_failures(service.console_app)
     return service

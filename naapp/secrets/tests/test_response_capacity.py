@@ -7,6 +7,7 @@ from fastapi import Request, Response
 from upstream.app import _ResetResponse
 
 from tests.harness import running_upstream
+from tests.production_database import prepared_service_databases as prepared_service_databases
 from tests.test_admission import POLICY_BODY, SECRET
 from tests.test_broker_service import db as db
 from tests.test_broker_service import fence as fence
@@ -144,7 +145,7 @@ async def test_response_capacity_is_released_after_success_failure_and_cancellat
 
 @pytest.mark.parametrize("maximum", [None, 64 * 1024 * 1024, 32 * 1024 * 1024, 0, -1])
 async def test_response_budget_environment_is_validated_by_the_actual_root(
-    test_db_factory, registry, tmp_path, monkeypatch, maximum
+    test_db_factory, prepared_service_databases, registry, tmp_path, monkeypatch, maximum
 ):
     from aweb_naapp_testing.smtp import SmtpServer
 
@@ -153,7 +154,7 @@ async def test_response_budget_environment_is_validated_by_the_actual_root(
     from tests.test_composition import settings
 
     monkeypatch.delenv("SECRETS_BROKER_RESPONSE_BUDGET_BYTES", raising=False)
-    database = await test_db_factory.create_db(suffix="response_budget_config")
+    database = await prepared_service_databases.create_db(suffix="response_budget_config")
     with SmtpServer(tmp_path / "smtp") as smtp:
         data = settings(database, tmp_path, smtp).model_dump(
             exclude={"broker_response_budget_bytes"}

@@ -13,11 +13,13 @@ from aweb_naapp_testing.smtp import SmtpServer
 from aweb_secrets.composition import create_service
 from aweb_secrets.config import ServiceSettings
 from aweb_secrets.custody import Custody, LocalKeyFileProvider, encode_value
+from aweb_secrets.erasure import ErasureFailure, ErasureUnavailable
+from tests.production_database import prepared_service_databases as prepared_service_databases
 from tests.test_app import API, CONSOLE, _settings
 
 
 async def test_failed_kms_health_keeps_the_selected_custody_mode(
-    test_db_factory, registry, tmp_path, monkeypatch
+    test_db_factory, prepared_service_databases, registry, tmp_path, monkeypatch
 ):
     """Real SDK failure at an owned endpoint; this is not an AWS KMS proof."""
     import boto3
@@ -56,7 +58,7 @@ async def test_failed_kms_health_keeps_the_selected_custody_mode(
     # Use the test's synthetic environment, never a previously cached session.
     monkeypatch.setattr(boto3, "DEFAULT_SESSION", None)
     try:
-        database = await test_db_factory.create_db(suffix="secrets_kms_mode")
+        database = await prepared_service_databases.create_db(suffix="secrets_kms_mode")
         with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
             configured = settings(database, tmp_path, smtp).model_copy(
                 update={
@@ -110,11 +112,33 @@ def settings(database, directory, smtp):
     )
 
 
-async def test_production_startup_prepares_every_store_before_serving_and_cleans_up(
-    test_db_factory, registry, tmp_path, monkeypatch
+async def test_uninitialised_production_root_refuses_without_creating_erasure_authority(
+    test_db_factory, registry, tmp_path
+):
+    database = await test_db_factory.create_db(suffix="uninitialised_root", schema="public")
+    with SmtpServer(tmp_path / "smtp") as smtp:
+        service = create_service(
+            settings(database, tmp_path, smtp), awid_transport=registry.transport
+        )
+        with pytest.raises(ErasureUnavailable) as refusal:
+            async with service.api_app.router.lifespan_context(service.api_app):
+                pytest.fail("Uninitialised erasure authority must refuse before serving")
+        assert refusal.value.reason is ErasureFailure.UNINITIALISED
+        assert service.runtime.connected_db() is None
+        assert service.services is None
+        assert not await database.fetch_value(
+            "SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='secrets_erasure')"
+        )
+        assert await database.fetch_value("SELECT to_regclass('public.schema_migrations')") is None
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
+            assert (await client.get(CONSOLE + "/enrolment")).status_code == 404
+
+
+async def test_operator_prepared_stores_serve_without_runtime_ddl_and_cleanup(
+    test_db_factory, prepared_service_databases, registry, tmp_path, monkeypatch
 ):
     monkeypatch.setenv("APP_ENV", "production")
-    database = await test_db_factory.create_db(suffix="secrets_production_root")
+    database = await prepared_service_databases.create_db(suffix="secrets_production_root")
     with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
         service = create_service(
             settings(database, tmp_path, smtp), awid_transport=registry.transport
@@ -164,9 +188,9 @@ async def test_production_startup_prepares_every_store_before_serving_and_cleans
 
 
 async def test_missing_required_custody_key_refuses_the_production_constructor(
-    test_db_factory, registry, tmp_path
+    test_db_factory, prepared_service_databases, registry, tmp_path
 ):
-    database = await test_db_factory.create_db(suffix="secrets_production_missing_key")
+    database = await prepared_service_databases.create_db(suffix="secrets_production_missing_key")
     with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
         configured = settings(database, tmp_path, smtp)
         configured.custody_key_file.unlink()
@@ -175,9 +199,9 @@ async def test_missing_required_custody_key_refuses_the_production_constructor(
 
 
 async def test_restarted_service_requires_the_key_for_its_retained_ciphertext(
-    test_db_factory, registry, tmp_path
+    test_db_factory, prepared_service_databases, registry, tmp_path
 ):
-    database = await test_db_factory.create_db(suffix="secrets_replaced_custody_key")
+    database = await prepared_service_databases.create_db(suffix="secrets_replaced_custody_key")
     with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
         configured = settings(database, tmp_path, smtp)
         key_file = configured.custody_key_file
@@ -221,9 +245,9 @@ async def test_restarted_service_requires_the_key_for_its_retained_ciphertext(
 
 
 async def test_request_response_and_runner_keys_require_independent_material(
-    test_db_factory, registry, tmp_path
+    test_db_factory, prepared_service_databases, registry, tmp_path
 ):
-    database = await test_db_factory.create_db(suffix="secrets_production_reused_key")
+    database = await prepared_service_databases.create_db(suffix="secrets_production_reused_key")
     with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
         configured = settings(database, tmp_path, smtp)
         # Different file paths must not conceal reuse of the same key material.
@@ -233,9 +257,9 @@ async def test_request_response_and_runner_keys_require_independent_material(
 
 
 async def test_default_hook_guard_adds_deployment_denials_without_broker_network_options(
-    test_db_factory, registry, tmp_path
+    test_db_factory, prepared_service_databases, registry, tmp_path
 ):
-    database = await test_db_factory.create_db(suffix="secrets_default_hook_guard")
+    database = await prepared_service_databases.create_db(suffix="secrets_default_hook_guard")
     with SmtpServer(tmp_path / "smtp") as smtp:
         configured = settings(database, tmp_path, smtp).model_copy(
             update={

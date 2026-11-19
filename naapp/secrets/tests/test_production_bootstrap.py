@@ -47,6 +47,7 @@ from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretBackend, SecretRecord
 from tests.human_owner import apply_holder, fixture_principal, member_key
 from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
+from tests.production_database import prepared_service_databases as prepared_service_databases
 from tests.test_composition import settings
 from tests.test_console_bootstrap import delivered_url
 from tests.test_jobs import after as job_after
@@ -66,7 +67,15 @@ async def envelopes(db, team_id):
 
 
 @pytest.fixture
-async def root(test_db_factory, registry, tmp_path, request, monkeypatch, production_settings):
+async def root(
+    test_db_factory,
+    prepared_service_databases,
+    registry,
+    tmp_path,
+    request,
+    monkeypatch,
+    production_settings,
+):
     member = Member(team_id="root:example.com", member_key=member_key("alice"))
     options = getattr(request, "param", {})
 
@@ -82,7 +91,7 @@ async def root(test_db_factory, registry, tmp_path, request, monkeypatch, produc
     async with authority(
         test_db_factory, registry, member, visibility="private" if private else "public"
     ) as (aweb_db, transport):
-        database = await test_db_factory.create_db(suffix="production_bootstrap")
+        database = await prepared_service_databases.create_db(suffix="production_bootstrap")
         with SmtpServer(tmp_path / "smtp") as smtp:
             configured = settings(database, tmp_path, smtp).model_copy(
                 update={
