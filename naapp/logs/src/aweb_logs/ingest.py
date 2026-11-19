@@ -32,6 +32,7 @@ from aweb_naapp.runtime.hook_resolver import (
     HookBinding,
     HookBindingRequired,
     HookResolutionUnavailable,
+    HookTeamServerNotAllowed,
     OwnHookBinding,
 )
 from aweb_naapp.runtime.manifest_hooks import bounded_body
@@ -270,6 +271,8 @@ class Ingestor:
     ) -> OwnHookBinding:
         try:
             resolution = await self.resolver.own_bindings(event.team_id, binding_id=binding_id)
+        except HookTeamServerNotAllowed as exc:
+            raise IngestRefused(403, "team_server_not_allowed") from exc
         except (HookBindingRequired, HookResolutionUnavailable) as exc:
             raise IngestRefused(503, "binding_authority_unavailable") from exc
         for binding in resolution.items:
@@ -319,6 +322,8 @@ class Ingestor:
             )
         except HookBindingRequired as exc:
             raise IngestRefused(403, "provenance_app_production") from exc
+        except HookTeamServerNotAllowed as exc:
+            raise IngestRefused(403, "team_server_not_allowed") from exc
         except HookResolutionUnavailable as exc:
             raise IngestRefused(503, "provenance_authority_unavailable") from exc
         for production in productions.items:
