@@ -12,6 +12,12 @@ the caller ignores the error. The per-run refused-host report remains visible.
 `make test-cli` sets `TMPDIR` to the canonical form of `/tmp` (`/private/tmp`
 on macOS), keeping custody paths free of symlink parents and Unix sockets short.
 
+Tests that need the real service stack (AWID, the aweb server, PostgreSQL,
+Redis, Docker) start it only when the run sets `AWEB_TEST_SERVICES=1`, as
+`make test-cli`, the gate and the development VMs do. Without it they fail
+with "this test needs the real service stack; run it on the gate or a dev VM
+(AWEB_TEST_SERVICES=1)", so a plain local `go test` never starts services.
+
 Server preparation builds the distribution once before entering the guard, warming
 uv's build-backend cache as well as its runtime dependencies. The guarded server
 suite exports `UV_OFFLINE=1`, which also reaches the package-data test's `uv build`

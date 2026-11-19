@@ -23,8 +23,19 @@ from contextlib import contextmanager
 from docker import memory_postgres_options, require_memory_postgres, wait_for_postgres
 
 OWNER_LABEL = "aw-test-services.owner-pid"
+TEST_SERVICES_REFUSAL = (
+    "this test needs the real service stack; run it on the gate or a dev VM "
+    "(AWEB_TEST_SERVICES=1)"
+)
 # One PostgreSQL serves a whole package run: the runner's serial cap.
 POSTGRES_MEMORY = "2g"
+
+
+def require_test_services() -> None:
+    """Refuse to start real services in a run that did not opt in; the gate
+    and the development VMs set AWEB_TEST_SERVICES=1."""
+    if os.environ.get("AWEB_TEST_SERVICES") != "1":
+        raise SystemExit(TEST_SERVICES_REFUSAL)
 
 
 def run(*args: str) -> str:
@@ -159,6 +170,7 @@ def disposable_postgres_and_redis(*, password: str) -> Generator[dict[str, str]]
 
 
 def main() -> None:
+    require_test_services()
     with disposable_postgres_and_redis(password=os.environ["PGPASSWORD"]) as services:
         print(json.dumps(services), flush=True)
         sys.stdin.read()

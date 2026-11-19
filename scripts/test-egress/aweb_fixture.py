@@ -256,6 +256,11 @@ async def main(services: dict[str, str]) -> None:
 def run() -> None:
     """Run on the PG/Redis the caller supplies: the isolated runner's, or the
     cmd/aw package's disposable pair. Never a host database it was not given."""
+    # -P keeps this directory off the path; only this sibling is wanted.
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from disposable_services import require_test_services
+
+    require_test_services()
     if not os.environ.get("PGHOST") or not os.environ.get("REDIS_URL"):
         raise SystemExit(
             "PGHOST and REDIS_URL are required: the isolated runner or the cmd/aw "

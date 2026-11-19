@@ -56,6 +56,11 @@ def fixture_app():
 
 
 def main():
+    # Imported here: the AWID child loads this file through runpy, without
+    # this directory on its path, for fixture_app alone.
+    from disposable_services import require_test_services
+
+    require_test_services()
     if not os.environ.get("PGHOST") or not os.environ.get("REDIS_URL"):
         raise SystemExit(
             "PGHOST and REDIS_URL are required: the isolated runner or the "

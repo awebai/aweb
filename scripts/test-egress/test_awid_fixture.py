@@ -1,6 +1,7 @@
 """Exercise the disposable services the AWID and command-stack fixtures own."""
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -124,6 +125,31 @@ class OrphanedContainerReaping(unittest.TestCase):
         recorded = calls.read_text().splitlines()
         self.assertIn(f'ps -a --filter label={OWNER_LABEL} --format {{{{.ID}}}} {{{{.Label "{OWNER_LABEL}"}}}}', recorded)
         self.assertEqual([call for call in recorded if call.startswith('rm ')], ['rm -f -v orphan'])
+
+
+class ServiceEntryPointsRequireTheOptIn(unittest.TestCase):
+    """Without a daemon: a docker on PATH that records any call."""
+
+    def test_entry_points_refuse_before_any_docker_call(self):
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        calls = directory / 'calls'
+        docker = directory / 'docker'
+        docker.write_text('#!/bin/sh\necho "$@" >> "$DOCKER_CALLS"\n')
+        docker.chmod(0o755)
+        here = Path(__file__).resolve().parent
+        env = {key: value for key, value in os.environ.items()
+               if key not in ('AWEB_TEST_SERVICES', 'PGHOST', 'REDIS_URL')}
+        env.update(PATH=f"{directory}{os.pathsep}{os.environ['PATH']}", DOCKER_CALLS=str(calls),
+                   PGPASSWORD='unused')
+        for script in ('disposable_services.py', 'awid_fixture.py'):
+            with self.subTest(script=script):
+                result = subprocess.run([sys.executable, str(here / script)], env=env,
+                                        stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stderr.strip(),
+                                 'this test needs the real service stack; run it on the gate or a dev VM '
+                                 '(AWEB_TEST_SERVICES=1)')
+                self.assertFalse(calls.exists(), calls.read_text() if calls.exists() else '')
 
 
 if __name__ == '__main__':

@@ -5,6 +5,8 @@ uv run --offline --frozen --project server python -P <this file>
 """
 
 import json
+import os
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -209,6 +211,25 @@ class CommandTests(unittest.TestCase):
         reply = run(self.zone, self.registry, {"id": 2, "reset_rate_limits": {}})
         self.assertEqual(reply, {"id": 2, "ok": True})
         self.assertIsNot(self.registry.state.rate_limiter, self.limiter)
+
+
+class StackRequiresTheOptIn(unittest.TestCase):
+    def test_stack_refuses_before_starting_anything(self):
+        env = {k: v for k, v in os.environ.items() if k != "AWEB_TEST_SERVICES"}
+        result = subprocess.run(
+            [sys.executable, "-P", str(Path(__file__).resolve().parent / "aweb_fixture.py")],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(
+            result.stderr.strip(),
+            "this test needs the real service stack; run it on the gate or a dev VM "
+            "(AWEB_TEST_SERVICES=1)",
+        )
 
 
 if __name__ == "__main__":
