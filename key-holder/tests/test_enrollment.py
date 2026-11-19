@@ -13,13 +13,14 @@ from approval_service.requester import AdmittedRequester
 from approval_service.seams import check_enrollment_intent, commitment
 from approval_service.verify import Refused as ApprovalRefused
 from authenticator import Passkey
-from aweb_key_holder.auth import Caller
-from aweb_key_holder.enrollment import Holder
-from aweb_key_holder.refusals import Refusal
-from aweb_key_holder.keys import KeyStore, Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from pending import expire_pending
 from policy_inputs import policy_file
+
+from aweb_key_holder.auth import Caller
+from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.keys import KeyStore, Refused
+from aweb_key_holder.refusals import Refusal
 
 
 @pytest.fixture

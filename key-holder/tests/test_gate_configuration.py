@@ -2,6 +2,7 @@
 
 import pytest
 from approval_service.grading import EnrollmentGrading
+
 from aweb_key_holder.enrollment import Holder
 from aweb_key_holder.keys import KeyStore, Refused
 
@@ -69,6 +70,7 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
 @pytest.mark.parametrize("level", ["email", "unrecognised"])
 def test_rendered_but_unsupported_level_refuses_start(tmp_path, level):
     import json
+
     from approval_service.verify import Refused as ApprovalRefused
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
@@ -95,6 +97,7 @@ def test_rendered_but_unsupported_level_refuses_start(tmp_path, level):
 
 def test_unknown_action_and_unreadable_source_never_enable_off(tmp_path):
     import json
+
     from approval_service.verify import Refused as ApprovalRefused
     from policy_inputs import policy_file
 
@@ -162,10 +165,11 @@ def test_actual_legacy_cli_names_the_replacement_section(tmp_path):
 
 
 def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tmp_path):
+    import base64
+
     from approval_service.canonical import parse
     from approval_service.gate import Policy
     from policy_inputs import policy_file
-    import base64
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     with store.connection() as db, db:
@@ -207,7 +211,7 @@ def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tm
 def test_effect_in_older_source_less_process_cannot_disable_applied_requirement(
     tmp_path,
 ):
-    from awid.did import generate_keypair, did_from_public_key, stable_id_from_did_key
+    from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
     from policy_inputs import policy_file
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
@@ -280,6 +284,7 @@ def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(tm
 def test_cli_hardware_grading_uses_policy_site_and_names_missing_cache(tmp_path):
     import subprocess
     import sys
+
     from policy_inputs import policy_file
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
@@ -315,6 +320,7 @@ def test_cli_policy_refusal_explains_the_operator_action(tmp_path, problem):
     import os
     import subprocess
     import sys
+
     from approval_service.gate import Policy
     from policy_inputs import policy_file
 

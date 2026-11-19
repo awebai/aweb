@@ -8,8 +8,6 @@ from datetime import UTC, datetime
 
 import httpx
 import pytest
-from aweb_key_holder.enrollment import Holder
-from aweb_key_holder.http import create_app
 from awid.controller_signing import (
     parse_controller_object,
     parse_controller_request,
@@ -18,6 +16,9 @@ from awid.controller_signing import (
 from policy_inputs import policy_file
 from test_native_holder import call, commit_identity, register_identity
 from test_native_review import first_person, revoke
+
+from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.http import create_app
 
 
 async def request_add(holder, own, target):
@@ -141,10 +142,11 @@ async def test_receipt_is_rechecked_after_the_actual_effect_lock_wait(
     import asyncio
     import threading
     import time
+
     from approval_service.canonical import canonical
     from approval_service.encoding import encode
-    from approval_service.seams import check_presentation
     from approval_service.grading import EnrollmentGrading
+    from approval_service.seams import check_presentation
     from awid.id_certificates import id_certificate_id
 
     if change == "policy":

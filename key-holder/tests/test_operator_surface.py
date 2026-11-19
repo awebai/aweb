@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pytest
+
 from aweb_key_holder.enrollment import Holder
 
 
@@ -66,6 +67,7 @@ def test_hardware_manifest_flag_keeps_unattested_enrollment_available(tmp_path):
     import time
 
     import httpx
+
     from aweb_key_holder.keys import KeyStore
 
     state = tmp_path / "private"

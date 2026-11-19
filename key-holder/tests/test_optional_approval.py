@@ -7,12 +7,13 @@ import sys
 import httpx
 import pytest
 from approval_service.grading import EnrollmentGrading
-from aweb_key_holder.enrollment import Holder
-from aweb_key_holder.http import create_app
-from aweb_key_holder.keys import KeyStore, Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.id_certificates import verify_id_certificate
 from policy_inputs import policy_file
+
+from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.http import create_app
+from aweb_key_holder.keys import KeyStore, Refused
 
 
 def target():
@@ -137,6 +138,7 @@ def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
 def test_applied_policy_changes_are_audited_atomically(tmp_path):
     import base64
     import sqlite3
+
     from approval_service.canonical import parse
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")

@@ -9,12 +9,13 @@ import httpx
 import pytest
 from approval_service.enrollment import PublicIssuer
 from approval_service.grading import EnrollmentGrading
+from awid.id_certificates import id_certificate_id
+from policy_inputs import policy_file
+from test_enrollment import creation, owner, person
+
 from aweb_key_holder.enrollment import Holder
 from aweb_key_holder.http import create_app
 from aweb_key_holder.keys import KeyStore, Refused
-from awid.id_certificates import id_certificate_id
-from test_enrollment import creation, owner, person
-from policy_inputs import policy_file
 
 
 def world(tmp_path, *, approved=True):

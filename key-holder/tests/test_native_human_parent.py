@@ -1,13 +1,12 @@
 """A currently valid person need not have the namespace as their direct parent."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 import pytest
 from approval_service.canonical import parse
 from approval_service.encoding import decode
 from awid.id_certificates import sign_id_certificate
-from aweb_key_holder.http import create_app
 from test_native_holder import (
     call,
     commit_identity,
@@ -17,6 +16,8 @@ from test_native_holder import (
     signature,
 )
 from test_native_review import first_person
+
+from aweb_key_holder.http import create_app
 
 
 @pytest.mark.asyncio
@@ -35,7 +36,7 @@ async def test_human_parented_person_enrolls_and_approves_at_namespace_holder(
             "parent": {"kind": "human", "id": parent["identity"]},
             "kind": "human",
             "issuer_key": parent["key"],
-            "issued_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         },
         signer=lambda payload: (parent["key"], signature(parent["seed"], payload)),
     )

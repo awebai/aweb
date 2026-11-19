@@ -1,8 +1,8 @@
 .PHONY: check test
 
 check:
-	uv run --frozen ruff check src
-	uv run --frozen ruff format --check src
+	uv run --frozen ruff check src tests
+	uv run --frozen ruff format --check src tests
 	uv run --frozen mypy
 
 # Dependencies are prepared by the caller; native fixtures use its private services.

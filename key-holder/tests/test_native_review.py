@@ -6,12 +6,11 @@ import sys
 
 import httpx
 import pytest
-from policy_inputs import policy_file
 from approval_service.canonical import parse
 from approval_service.encoding import decode
-from aweb_key_holder.http import create_app
 from awid.controller_signing import parse_controller_request
 from awid.id_certificates import id_certificate_id
+from policy_inputs import policy_file
 from test_native_holder import (
     call,
     commit_identity,
@@ -20,6 +19,8 @@ from test_native_holder import (
     register_identity,
     signature,
 )
+
+from aweb_key_holder.http import create_app
 
 
 def retire(holder, person):

@@ -7,10 +7,11 @@ import httpx
 import pytest
 from approval_service.binding_refresh import check_refresh_replacement
 from approval_service.seams import commitment
-from aweb_key_holder.http import create_app
 from awid.id_certificates import sign_id_certificate
 from test_native_holder import call, commit_identity, register_identity, signature
 from test_native_review import first_person
+
+from aweb_key_holder.http import create_app
 
 
 @pytest.mark.asyncio

@@ -13,15 +13,16 @@ import dns.rrset
 import httpx
 import pytest_asyncio
 from approval_service.grading import EnrollmentGrading
-from aweb_key_holder.enrollment import Holder
-from aweb_key_holder.keys import KeyStore
 from awid.db_config import build_database_config
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app
 from pgdbm import AsyncDatabaseManager
-from redis.asyncio import Redis
 from policy_inputs import policy_file
+from redis.asyncio import Redis
+
+from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.keys import KeyStore
 
 pytest_plugins = ("pgdbm.fixtures.conftest",)
 
