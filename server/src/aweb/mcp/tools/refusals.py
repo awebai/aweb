@@ -8,7 +8,6 @@ from enum import Enum, auto
 from fastapi import HTTPException
 from aweb.service_errors import (
     ServiceError,
-    IdentityBindingCode,
     IdentityBindingError,
     INTERNAL_SERVICE_ERROR_MESSAGE,
 )
@@ -29,7 +28,9 @@ from aweb.messaging.chat_send import LOCAL_DID_KEY_RECIPIENT_UNREACHABLE
 REGISTRY_CANNOT_CONFIRM_ADDRESS = (
     "the registry can't confirm {address} right now; try again, or check the address"
 )
-SENDER_KEY_NOT_PUBLISHED = "your encryption key isn't published yet; try again shortly, and if it persists contact support"
+SENDER_KEY_NOT_PUBLISHED = (
+    "your encryption key isn't published yet; try again shortly, and if it persists contact support"
+)
 SENDER_KEY_NOT_VERIFIABLE = (
     "your published encryption key can't be verified right now; try again shortly, "
     "and if it persists contact support"
@@ -39,10 +40,6 @@ RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE = (
     "and if it persists contact support"
 )
 RECIPIENT_KEY_CHANGED = "this recipient's key changed; resend the message"
-RECIPIENT_NOT_AS_REGISTERED = "this recipient's identity or key no longer matches the registry; check the address and resend"
-REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY = (
-    "the registry can't confirm this recipient's key right now; try again shortly"
-)
 RECIPIENT_UNREACHABLE_IN_CONVERSATION = (
     "this recipient can no longer be reached in this conversation; "
     "start a new conversation with them by alias or address"
@@ -59,10 +56,6 @@ _HOSTED_ENVELOPE_NEXT_ACTIONS = {
     "federation_envelope_invalid": SENDER_KEY_NOT_VERIFIABLE,
     "recipient_encryption_assertion_invalid_or_stale": RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE,
 }
-_IDENTITY_BINDING_NEXT_ACTIONS = {
-    IdentityBindingCode.MISMATCH: RECIPIENT_NOT_AS_REGISTERED,
-    IdentityBindingCode.UNAVAILABLE: REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY,
-}
 
 
 class SendRefusalMode(Enum):
@@ -75,9 +68,7 @@ class SendRefusalMode(Enum):
 def require_send_refusal_mode(mode: SendRefusalMode) -> None:
     """Reject unnamed formatting intent before interpreting any refusal subtype."""
     if not isinstance(mode, SendRefusalMode):
-        raise TypeError(
-            "Pass a named SendRefusalMode value before formatting a send refusal."
-        )
+        raise TypeError("Pass a named SendRefusalMode value before formatting a send refusal.")
 
 
 def send_refusal(
@@ -107,9 +98,7 @@ def send_refusal(
     if isinstance(exc, ContactIdentityBindingRequired):
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
     if isinstance(exc, RecipientNotResidentError):
-        return json.dumps(
-            {"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable}
-        )
+        return json.dumps({"error": exc.detail, "reason": exc.reason, "retryable": exc.retryable})
     if isinstance(exc, FederationAuthorityError):
         if address and exc.reason in (
             "recipient_identity_not_found",
@@ -139,21 +128,9 @@ def send_refusal(
         and isinstance(detail, dict)
         and detail.get("code") == "address_evidence_unavailable"
     ):
-        return json.dumps(
-            {"error": detail["message"], "reason": detail["code"], "retryable": True}
-        )
+        return json.dumps({"error": detail["message"], "reason": detail["code"], "retryable": True})
     if isinstance(exc.__cause__, E2EERecipientKeyMismatch):
         return json.dumps({"error": RECIPIENT_KEY_CHANGED})
-    if (
-        isinstance(exc, (ServiceError, HTTPException))
-        and isinstance(detail, str)
-        and detail in _IDENTITY_BINDING_NEXT_ACTIONS
-    ):
-        return json.dumps(
-            {"error": _IDENTITY_BINDING_NEXT_ACTIONS[detail], "reason": detail}
-        )
     if detail == LOCAL_DID_KEY_RECIPIENT_UNREACHABLE:
         return json.dumps({"error": RECIPIENT_UNREACHABLE_IN_CONVERSATION})
-    return json.dumps(
-        {"error": detail if detail is not None else INTERNAL_SERVICE_ERROR_MESSAGE}
-    )
+    return json.dumps({"error": detail if detail is not None else INTERNAL_SERVICE_ERROR_MESSAGE})

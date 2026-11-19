@@ -39,6 +39,7 @@ from aweb.id_chain_auth import authenticate_id_chain
 from aweb.identity_binding import verify_identity_binding
 from aweb.member_team_key import read_participant_identity_projection
 from aweb.messaging.address_auth import local_recipient_for_address_binding
+from aweb.messaging.recipient import Recipient
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +261,7 @@ def _stable_error_response(request: Request, error: FederationAuthorityError) ->
 
 async def _local_envelope_recipient(
     db, *, envelope: FederationEnvelope, address_binding: Address | None
-) -> dict:
+) -> Recipient:
     """Residence for a validated address or an already-authorized participant.
 
     identity-messaging-contract.md:272-277 makes exact-DID residence
@@ -274,9 +275,10 @@ async def _local_envelope_recipient(
             address=envelope.target_address,
         )
     else:
-        recipient = await read_participant_identity_projection(
+        projection = await read_participant_identity_projection(
             db, participant_did=envelope.target_did_aw
         )
+        recipient = Recipient.from_local_projection(projection) if projection is not None else None
     if recipient is None:
         raise FederationAuthorityError("recipient_identity_not_found")
     if (
@@ -285,6 +287,8 @@ async def _local_envelope_recipient(
     ):
         raise FederationAuthorityError("recipient_current_key_mismatch")
     return recipient
+
+
 async def _verified_delivery_replay(
     request: Request, *, payload: FederatedDeliveryRequest, db
 ) -> tuple[FederationEnvelope, str, StoredFederationReceipt | None]:

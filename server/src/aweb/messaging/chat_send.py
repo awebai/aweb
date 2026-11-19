@@ -126,6 +126,8 @@ from aweb.messaging.signatures import (
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import (
     ConflictError,
+    IdentityBindingCode,
+    IdentityBindingError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -431,9 +433,7 @@ async def deliver_federated_chat(
     local = await local_recipient_for_own_route(db, route, runtime)
     if local is not None:
         if envelope.target_current_did_key != local.get("did_key"):
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.FORBIDDEN, detail="identity_binding_mismatch"
-            )
+            raise IdentityBindingError(IdentityBindingCode.MISMATCH)
         await require_agent_chat(db, [local])
         await authorize_message_delivery(
             db,
@@ -1215,11 +1215,14 @@ async def _resolve_session_recipient_rows(
     recipient_rows: list[dict[str, Any]] = []
     for row in rows:
         participant = dict(row)
-        resolved = await read_participant_identity_projection(
+        projection = await read_participant_identity_projection(
             db, participant_did=participant.get("did") or ""
         )
-        if resolved is not None:
-            resolved = identity_recipient(resolved, str(participant.get("address") or ""))
+        resolved = (
+            identity_recipient(projection, str(participant.get("address") or ""))
+            if projection is not None
+            else None
+        )
         policy_rows = await policy_rows_for_participant(db, participant)
         policy: Mapping[str, Any] = resolved or (policy_rows[0] if policy_rows else {})
         resolved_projection: Mapping[str, Any] = resolved or {}
