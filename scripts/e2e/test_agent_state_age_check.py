@@ -65,6 +65,9 @@ class CallTests(unittest.TestCase):
 
         with self.assertRaises(KeyboardInterrupt):
             check.terminated_in_progress(call, started)
+        # The call stays owned for the check's handler, which ends it.
+        self.assertIs(check.Call.current, call)
+        self.assertTrue(check.stop_in_flight())
         self.assertTrue(check.group_gone(call.process.pid))
         self.assertTrue(call.process.stdout.closed and call.process.stderr.closed)
         self.assertIsNone(check.Call.current)
@@ -171,6 +174,50 @@ class VerdictTests(unittest.TestCase):
         self.assertTrue(call.process.stdout.closed and call.process.stderr.closed)
         self.assertIsNone(check.Call.current)
         call.process.wait(timeout=10)
+
+
+class OwnershipOnEveryExitTests(unittest.TestCase):
+    def test_an_interrupted_wait_keeps_the_call_owned_until_the_handler_ends_it(self):
+        # SIGTERM during an ordinary result(): the call stays registered, the
+        # handler's end observes the group, and the receipt matches the
+        # observation made before any fixture cleanup.
+        import signal
+        import threading
+
+        previous = signal.signal(signal.SIGTERM, check.terminate)
+        call = check.Call(SLEEPER, budget=60)
+        threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+        try:
+            with self.assertRaises(check.Terminated):
+                call.result()
+            self.assertIs(check.Call.current, call)
+            self.assertFalse(check.group_gone(call.process.pid))
+            receipt = check.stop_in_flight()
+            observed = check.group_gone(call.process.pid)
+        finally:
+            signal.signal(signal.SIGTERM, previous)
+            if not check.group_gone(call.process.pid):
+                os.killpg(call.process.pid, signal.SIGKILL)
+        self.assertTrue(observed)
+        self.assertEqual(receipt, observed)
+        self.assertIsNone(check.Call.current)
+        self.assertTrue(call.process.stdout.closed)
+
+    def test_a_leader_that_exits_with_its_group_still_running_is_not_complete(self):
+        # The leader exits 0; a descendant in its group, with its output
+        # closed, keeps running: no completion, and the group is ended.
+        script = ("import subprocess, sys\n"
+                  "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],"
+                  " stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n")
+        call = check.Call([sys.executable, "-c", script], budget=60)
+        answer = call.result()
+        observed = check.group_gone(call.process.pid)
+        if not observed:
+            os.killpg(call.process.pid, 9)
+        self.assertEqual(answer.returncode, 0)
+        self.assertFalse(answer.complete)
+        self.assertIn("still running", answer.stderr)
+        self.assertTrue(observed)
 
 
 if __name__ == "__main__":

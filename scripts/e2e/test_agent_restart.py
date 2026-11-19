@@ -333,10 +333,13 @@ class MailTests(unittest.TestCase):
             agent.mail(SEAT_DID, SEAT_DID)
         self.assertEqual(self.peer_calls, [])
 
-    def test_a_reply_from_another_identity_or_unverified_is_refused(self):
-        for agent in (self.agent(reply_from="did:key:z6MkOther"), self.agent(reply_status="unverified")):
-            with self.assertRaisesRegex(restart.Failed, "the seat's reply"):
-                agent.mail(SEAT_DID, PEER_DID)
+    def test_a_verified_reply_from_another_identity_is_refused(self):
+        with self.assertRaisesRegex(restart.Failed, "from did:key:z6MkOther, verified"):
+            self.agent(reply_from="did:key:z6MkOther").mail(SEAT_DID, PEER_DID)
+
+    def test_an_unverified_reply_from_the_seat_is_refused(self):
+        with self.assertRaisesRegex(restart.Failed, f"from {SEAT_DID}, unverified"):
+            self.agent(reply_status="unverified").mail(SEAT_DID, PEER_DID)
 
 
 if __name__ == "__main__":

@@ -182,7 +182,15 @@ class Call:
             self.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
             pass
-        return group_gone(self.process.pid)
+        # A killed descendant can linger as a zombie until init reaps it, and
+        # a probe of its group can be refused meanwhile: absence is observed,
+        # within the reserve, not read once.
+        deadline = time.monotonic() + 10
+        gone = group_gone(self.process.pid)
+        while gone is not True and time.monotonic() < deadline:
+            time.sleep(0.1)
+            gone = group_gone(self.process.pid)
+        return gone
 
     def release(self) -> None:
         """Closes the call's pipes, and lets it go."""
@@ -192,29 +200,49 @@ class Call:
         Call.current = None
 
     def result(self) -> Answer:
-        """Waits for the call within what is left of its deadline; past it,
-        ends the group, and the answer is not complete whatever the exit code.
-        The pipes are released on every path."""
-        complete = False
-        stdout, stderr, note = "", "", ""
+        """Waits for the call within what is left of its deadline. It is
+        complete only when it ended by itself in time and its whole group is
+        observed gone; otherwise the group is ended (bounded) and the answer
+        is incomplete, whatever the exit code. An interrupt or termination
+        during the wait leaves the call registered, for the check's handler
+        to end and release (stop_in_flight)."""
+        note = ""
         try:
+            stdout, stderr = self.process.communicate(timeout=self.remaining())
+            complete = True
+        except subprocess.TimeoutExpired:
+            complete = False
+            gone = self.end()
+            note = f"\n[check] the call passed its deadline; its group was ended; group gone: {gone}: INCOMPLETE"
             try:
-                stdout, stderr = self.process.communicate(timeout=self.remaining())
-                complete = True
+                # Within the end's reserve: a process outside the group can
+                # hold the pipes open, and is not waited for.
+                stdout, stderr = self.process.communicate(timeout=10)
             except subprocess.TimeoutExpired:
-                gone = self.end()
-                note = f"\n[check] the call passed its deadline; its group was ended; group gone: {gone}: INCOMPLETE"
-                try:
-                    # Within the end's reserve: a process outside the group can
-                    # hold the pipes open, and is not waited for.
-                    stdout, stderr = self.process.communicate(timeout=10)
-                except subprocess.TimeoutExpired:
-                    note += "; its output could not be collected (a process outside its group holds it)"
-        finally:
-            self.release()
+                stdout, stderr = "", ""
+                note += "; its output could not be collected (a process outside its group holds it)"
+        if complete:
+            gone = group_gone(self.process.pid)
+            if gone is not True:
+                complete = False
+                ended = self.end()
+                note = (f"\n[check] the call's leader exited but its group was still running"
+                        f" (observed: {gone}); the group was ended; group gone: {ended}: INCOMPLETE")
+        self.release()
         answer = Answer(self.process.args, self.process.returncode, stdout or "", (stderr or "") + note)
         answer.complete = complete
         return answer
+
+
+def stop_in_flight() -> bool | None:
+    """Ends the call in flight, if any, records whether its group is gone,
+    then releases it: the one owner's cleanup on every exceptional exit."""
+    call = Call.current
+    if call is None:
+        return True
+    gone = call.end()
+    call.release()
+    return gone
 
 
 def tool(*args: str) -> list[str]:
@@ -265,12 +293,10 @@ def terminated_in_progress(call: Call, started) -> dict:
         answer = call.result()
     except Exception as error:
         seen.update(error=f"{type(error).__name__}: {error}", group_gone=call.end())
-        return seen
-    except BaseException:
-        call.end()
-        raise
-    finally:
         call.release()
+        return seen
+    # Any other exit (an interrupt, a termination) leaves the call
+    # registered: the check's handler ends it and records the outcome.
     seen.update(rc=answer.returncode, stderr=answer.stderr.strip()[-400:], complete=answer.complete,
                 group_gone=group_gone(call.process.pid))
     return seen
@@ -295,10 +321,7 @@ def main() -> int:
     except BaseException as stopped:
         # Every exit that is not the check's own verdict ends the call in
         # flight first, and says whether its group is gone.
-        gone = True
-        if Call.current is not None:
-            gone = Call.current.end()
-            Call.current.release()
+        gone = stop_in_flight()
         reason = "the check was terminated" if isinstance(stopped, Terminated) else (
             f"the check stopped on {type(stopped).__name__}: {stopped}")
         print(json.dumps({"result": "INCOMPLETE", "reason": reason, "call_in_flight_group_gone": gone},
