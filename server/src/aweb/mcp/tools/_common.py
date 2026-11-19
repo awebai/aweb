@@ -5,7 +5,9 @@ import json
 from aweb.mcp.auth import AuthContext, get_auth
 from aweb.team_auth_deps import TeamIdentity
 
-TEAM_CONTEXT_ERROR = json.dumps({"error": "This tool requires team context. Use a team certificate."})
+TEAM_CONTEXT_ERROR = json.dumps(
+    {"error": "This tool requires team context. Use a team certificate."}
+)
 
 
 def require_team_context() -> tuple[AuthContext | None, str | None]:
