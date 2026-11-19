@@ -14,10 +14,8 @@ from aweb.member_team_key import (
     GRANT_ISSUER_RECOVERY_DETAIL,
     member_key_columns_sql,
 )
-from aweb.team_auth_deps import (
-    TeamIdentity,
-    _aweb_db,
-)
+from aweb.auth_context import TeamIdentity
+from aweb.team_registry import native_database_manager
 
 GRANT_STREAM_RECHECK_SECONDS = 30
 
@@ -73,7 +71,7 @@ async def grant_terminal_reason(
     if not grant.never_expires and _as_utc(grant.expires_at) <= now:
         return "grant_expired"
 
-    aweb_db = _aweb_db(db)
+    aweb_db = native_database_manager(db)
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.issued_at, g.expires_at, g.revoked_at,

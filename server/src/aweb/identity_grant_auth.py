@@ -18,6 +18,7 @@ from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 from fastapi import HTTPException, Request
 
+from aweb.request_body import request_body_sha256
 from aweb.auth_context import GRANT_SCOPE_ANY, GrantContext
 from aweb.auth_context import GRANT_SCOPES as GRANT_SCOPES
 from aweb.config import get_settings
@@ -28,13 +29,11 @@ from aweb.member_team_key import (
 )
 from aweb.identity_grant_status import GrantValidityState, grant_validity
 from aweb.grant_expiry import never_expires
-from aweb.identity_auth_deps import MessagingAuth
+from aweb.auth_context import MessagingAuth
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.id_chain_auth import authenticate_id_chain
-from aweb.team_auth_deps import (
-    TeamIdentity,
-    _aweb_db,
-)
+from aweb.auth_context import TeamIdentity
+from aweb.team_registry import native_database_manager
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
 GRANT_AUTH_SCHEME = "AWEB-Grant "
@@ -135,14 +134,7 @@ async def _verify_identity_grant_row(
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is None:
-        import hashlib as _hashlib
-
-        body_sha256 = _hashlib.sha256(
-            getattr(request.state, "cached_body", b"") or b""
-        ).hexdigest()
-
+    body_sha256 = request_body_sha256(request)
     try:
         canonical = decode_signed_payload_header(
             str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()
@@ -186,7 +178,7 @@ async def _verify_identity_grant_row(
     except ValueError as exc:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL) from exc
 
-    aweb_db = _aweb_db(db)
+    aweb_db = native_database_manager(db)
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.scopes, g.issued_at, g.expires_at, g.revoked_at,

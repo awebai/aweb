@@ -99,7 +99,7 @@ async def grant_validity(
     distinct from unavailable evidence; staged registration never waives the
     ordinary issuer revocation check or adds an off-mode refusal.
     """
-    from aweb.team_auth_deps import revoked_certificates
+    from aweb.team_registry import revoked_certificates
 
     state = _stored_grant_validity(row, now=now)
     if state is not GrantValidityState.ACTIVE:

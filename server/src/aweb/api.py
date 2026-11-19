@@ -17,7 +17,6 @@ from awid.dns_verify import DomainVerifier
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from awid.federation_errors import FederationAuthorityError
-from .application_state import RegistryClientUnavailable
 from .config import get_public_origin, get_settings
 from awid.log import canonical_server_origin
 from .connection_scope import ConnectionScopeMiddleware
@@ -28,6 +27,7 @@ from .federation.errors import authority_error_body
 from .agent_wake import AgentWakeHub, AgentWakePublisher
 from .outbox_recovery import OutboxRecoveryStarter
 from .routing_utils import move_mount_before_spa_fallback
+from .auth_error_transport import install_auth_error_handlers
 from .service_errors import ServiceError
 from .messaging.chat_policy import HumanChatRefused
 from .install_admins import install_admin_setup_message
@@ -101,7 +101,9 @@ def _max_request_body_bytes() -> int:
     except ValueError:
         value = 0
     if value < 1:
-        raise ValueError("AWEB_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes")
+        raise ValueError(
+            "AWEB_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes"
+        )
     return value
 
 
@@ -118,14 +120,18 @@ class RequestBodyCacheMiddleware:
     streaming response.
     """
 
-    def __init__(self, app, *, max_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES) -> None:
+    def __init__(
+        self, app, *, max_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES
+    ) -> None:
         if max_body_bytes < 1:
             raise ValueError("max_body_bytes must be positive")
         self.app = app
         self.max_body_bytes = max_body_bytes
 
     async def _refuse(self, scope, receive, send) -> None:
-        await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
+        await JSONResponse({"detail": "Request body too large"}, status_code=413)(
+            scope, receive, send
+        )
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
@@ -137,8 +143,19 @@ class RequestBodyCacheMiddleware:
             state["body_sha256"] = hashlib.sha256(b"").hexdigest()
             await self.app(scope, receive, send)
             return
-        declared = next((value for name, value in scope.get("headers", []) if name.lower() == b"content-length"), None)
-        if declared is not None and declared.isdigit() and int(declared) > self.max_body_bytes:
+        declared = next(
+            (
+                value
+                for name, value in scope.get("headers", [])
+                if name.lower() == b"content-length"
+            ),
+            None,
+        )
+        if (
+            declared is not None
+            and declared.isdigit()
+            and int(declared) > self.max_body_bytes
+        ):
             await self._refuse(scope, receive, send)
             return
         chunks, received = [], 0
@@ -231,7 +248,8 @@ async def _validate_awid_registry_client(registry_client: RegistryClient) -> Non
                 f"Failed to reach AWID registry at {registry_client.registry_url}: {exc}"
             ) from exc
         logger.warning(
-            "AWID registry at %s reports a failed dependency; starting", registry_client.registry_url
+            "AWID registry at %s reports a failed dependency; starting",
+            registry_client.registry_url,
         )
 
 
@@ -260,7 +278,9 @@ def _make_standalone_lifespan(*, host_runs_outbox_recovery: bool = False):
             cleanup.push_async_callback(default_db_infra.close)
             await default_db_infra.initialize()
             if getattr(app.state, "install_admin_policy", None) is None:
-                setup_message = await install_admin_setup_message(default_db_infra.get_manager())
+                setup_message = await install_admin_setup_message(
+                    default_db_infra.get_manager()
+                )
                 if setup_message:
                     logger.info(setup_message)
             registry = _build_awid_registry_client(app, redis)
@@ -392,27 +412,43 @@ def create_app(
 
     from aweb.attachment_service import router as attachment_router
 
-    app = RequestDecompressionFastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
+    app = RequestDecompressionFastAPI(
+        title="aweb coordination core", version="0.1.0", lifespan=lifespan
+    )
     app.state.attachment_backend = attachment_backend
     # DNS names the namespace controller whose act may move a pinned team key
     # (aweb.team_key_pins); an embedding host may replace the resolver.
     app.state.awid_txt_resolver = SystemTXTOutcomeResolver()
     app.state.public_origin = (
-        canonical_server_origin(public_origin) if public_origin is not None else get_public_origin()
+        canonical_server_origin(public_origin)
+        if public_origin is not None
+        else get_public_origin()
     )
     app.include_router(attachment_router)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
-    app.add_middleware(RequestBodyCacheMiddleware, max_body_bytes=_max_request_body_bytes())
+    app.add_middleware(
+        RequestBodyCacheMiddleware, max_body_bytes=_max_request_body_bytes()
+    )
 
     @app.exception_handler(RequestValidationError)
     async def _request_validation_error_handler(
         request: Request, exc: RequestValidationError
     ):
         matched_route_path = getattr(request.scope.get("route"), "path", "")
-        if (matched_route_path in {"/v1/messages", "/v1/chat/sessions", "/v1/chat/sessions/{session_id}/messages"}
-                and isinstance(exc.body, dict) and ({"attachments", "attachment_refs"} & exc.body.keys())):
-            return JSONResponse(status_code=422, content={"detail": {"code": "request_invalid"}})
+        if (
+            matched_route_path
+            in {
+                "/v1/messages",
+                "/v1/chat/sessions",
+                "/v1/chat/sessions/{session_id}/messages",
+            }
+            and isinstance(exc.body, dict)
+            and ({"attachments", "attachment_refs"} & exc.body.keys())
+        ):
+            return JSONResponse(
+                status_code=422, content={"detail": {"code": "request_invalid"}}
+            )
         if isinstance(matched_route_path, str) and matched_route_path.startswith(
             "/v1/federation/"
         ):
@@ -428,7 +464,8 @@ def create_app(
                 status_code=error.http_status,
                 content=authority_error_body(
                     error,
-                    correlation_id=request.headers.get("X-Correlation-ID") or str(uuid4()),
+                    correlation_id=request.headers.get("X-Correlation-ID")
+                    or str(uuid4()),
                 ),
             )
         return await request_validation_exception_handler(request, exc)
@@ -449,19 +486,22 @@ def create_app(
 
     @app.exception_handler(HumanChatRefused)
     async def _human_chat_refused_handler(request: Request, exc: HumanChatRefused):
-        return JSONResponse(status_code=422, content=exc.body(
-            correlation_id=request.headers.get("X-Correlation-ID"),
-        ))
+        return JSONResponse(
+            status_code=422,
+            content=exc.body(
+                correlation_id=request.headers.get("X-Correlation-ID"),
+            ),
+        )
 
-    @app.exception_handler(RegistryClientUnavailable)
-    async def _registry_client_unavailable_handler(request: Request, exc: RegistryClientUnavailable):
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    install_auth_error_handlers(app)
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
         if exc.status_code >= 500:
             logger.exception("Unhandled ServiceError", exc_info=exc)
-            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+            return JSONResponse(
+                status_code=500, content={"detail": "Internal server error"}
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
@@ -529,6 +569,7 @@ def create_app(
     app.include_router(federation_router)
     app.include_router(identity_grants_router)
     from aweb.routes.messaging import router as messaging_router
+
     app.include_router(messaging_router)
     app.include_router(messages_router)
     app.include_router(room_router)

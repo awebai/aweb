@@ -34,13 +34,15 @@ def application_registry_client(state: State) -> RegistryClient:
     """
     resources = getattr(state, "native_resources", None)
     client = (
-        getattr(resources, "registry_client", None) if resources is not None
+        getattr(resources, "registry_client", None)
+        if resources is not None
         else getattr(state, "awid_registry_client", None)
     )
     if not isinstance(client, RegistryClient):
         logger.error(
             "Native serving registry client is missing or invalid; source=%s",
-            "resources" if resources is not None
+            "resources"
+            if resources is not None
             else "application-state awid_registry_client slot (server without a native resources object)",
         )
         raise RegistryClientUnavailable()

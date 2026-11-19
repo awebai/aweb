@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 
 RESOURCE_NOT_FOUND_DETAIL = "Not found"
 
@@ -53,3 +55,27 @@ class BadRequestError(ServiceError):
 
     def __init__(self, detail: str = "Bad request") -> None:
         super().__init__(detail)
+
+
+class IdentityBindingCode(StrEnum):
+    """Wire reasons distinguishing invalid authority from unavailable evidence."""
+
+    MISMATCH = "identity_binding_mismatch"
+    UNAVAILABLE = "identity_binding_unavailable"
+
+
+class IdentityBindingError(ServiceError):
+    """Native binding refusal; HTTP and MCP adapters retain its reason and retry hint."""
+
+    def __init__(
+        self, code: IdentityBindingCode, *, headers: dict[str, str] | None = None
+    ):
+        self.code = IdentityBindingCode(code)
+        self.status_code = 403 if self.code is IdentityBindingCode.MISMATCH else 503
+        self.headers = headers
+        self.message = (
+            "This signing key does not match the claimed identity. Use the identity's current credentials."
+            if self.code is IdentityBindingCode.MISMATCH
+            else "Identity verification is unavailable. Retry when the identity registry is available."
+        )
+        super().__init__(self.code.value)

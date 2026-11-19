@@ -183,7 +183,7 @@ async def read_certificate_registration(
     Invalid authority scope is rejected before acquisition, never counted as
     an unavailable observation. Adapters retain their existing wire outcomes.
     """
-    from aweb.team_auth_deps import registered_certificates
+    from aweb.team_registry import registered_certificates
 
     member_team_scope(team_id)
     try:

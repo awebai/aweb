@@ -18,8 +18,12 @@ from collections.abc import Collection
 
 from fastapi import HTTPException
 
-from awid.team_certificate import TeamCertificateError, check_team_certificate, refusal_answer
-from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
+from awid.team_certificate import (
+    TeamCertificateError,
+    check_team_certificate,
+    refusal_answer,
+)
+from aweb.identity_scope import normalize_identity_scope
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +64,7 @@ def parse_and_verify_certificate(
 
     Returns:
         Dict with team_id, alias, did_key, identity_scope, certificate_id,
-        member_did_aw, member_address, plus compatibility lifetime. The last
+        member_did_aw and member_address. The last
         two identity fields are empty strings for local certificates.
 
     Raises:
@@ -79,13 +83,14 @@ def parse_and_verify_certificate(
     member_did_key = cert["member_did_key"]
     certificate_id = cert["certificate_id"]
 
-    identity_scope = normalize_identity_scope(cert.get("identity_scope") or cert.get("lifetime"))
+    identity_scope = normalize_identity_scope(
+        cert.get("identity_scope") or cert.get("lifetime")
+    )
     return {
         "team_id": team_id,
         "alias": cert["alias"],
         "did_key": member_did_key,
         "identity_scope": identity_scope,
-        "lifetime": legacy_lifetime_for_scope(identity_scope),
         "certificate_id": certificate_id,
         "member_did_aw": cert.get("member_did_aw", ""),
         "member_address": cert.get("member_address", ""),
@@ -121,7 +126,9 @@ def verify_dashboard_token(
 
     try:
         # docs/aweb-sot.md:1260,1280-1286: dashboard authority is short-lived.
-        payload = pyjwt.decode(token, secret, algorithms=["HS256"], options={"require": ["exp"]})
+        payload = pyjwt.decode(
+            token, secret, algorithms=["HS256"], options={"require": ["exp"]}
+        )
     except pyjwt.MissingRequiredClaimError as exc:
         if exc.claim == "exp":
             raise ValueError(
