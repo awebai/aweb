@@ -23,7 +23,13 @@ from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
 from aweb_secrets.composition import create_service
 from aweb_secrets.deployment import DeploymentSettings, create_deployment
 from tests.human_owner import member_key
-from tests.production_authority import authority, install, install_audit_receiver, no_dns_override
+from tests.production_authority import (
+    SERVER,
+    authority,
+    install,
+    install_audit_receiver,
+    no_dns_override,
+)
 from tests.production_logs import logs_receiver
 from tests.test_composition import settings
 from tests.test_production_bootstrap import enrolled_owner
@@ -110,6 +116,7 @@ async def test_production_hook_delivery_uses_explicit_dns_ca_and_internal_networ
                         update={
                             "public_origin": AUDIENCE,
                             "awid_service_token": SERVICE_TOKEN,
+                            "team_server_internal_origins": frozenset({SERVER}),
                             "egress_denied_networks": (
                                 ip_network(f"{host}/32" if denied else "192.0.2.0/24"),
                             ),
