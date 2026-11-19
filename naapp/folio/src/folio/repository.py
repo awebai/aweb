@@ -18,7 +18,7 @@ from pgdbm.core import TransactionManager
 
 from folio.cloudflare_stream import (
     CloudflareStreamClient,
-    UnrecognizedStreamState,
+    UndocumentedStreamReply,
     stream_direct_upload_expires_at,
 )
 from folio.config import Settings
@@ -685,11 +685,11 @@ async def get_asset_metadata(
             status = await CloudflareStreamClient(settings).get_video_status(
                 stream_uid=str(data["stream_uid"])
             )
-        except UnrecognizedStreamState as exc:
+        except UndocumentedStreamReply as exc:
             logger.error("Refused the Cloudflare Stream status of asset %s: %s", asset_id, exc)
             raise HTTPException(
                 status_code=502,
-                detail="Cloudflare Stream reported a video state Folio does not recognize",
+                detail="Cloudflare Stream reported a video status Folio does not recognize",
             ) from exc
         except HTTPException as exc:
             if exc.status_code != 503:

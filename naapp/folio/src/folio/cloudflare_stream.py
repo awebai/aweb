@@ -27,12 +27,21 @@ CLOUDFLARE_VIDEO_STATES: dict[str, StreamStatus] = {
 }
 
 
-class UnrecognizedStreamState(Exception):
+class UndocumentedStreamReply(Exception):
+    """A Cloudflare Stream status reply whose ``field`` holds a value its documentation does not allow."""
+
+    def __init__(self, field: str, value: object) -> None:
+        self.field = field
+        self.value = value
+        super().__init__(f"Cloudflare Stream reported an undocumented {field}: {value!r:.80}")
+
+
+class UnrecognizedStreamState(UndocumentedStreamReply):
     """Cloudflare reported a video state outside CLOUDFLARE_VIDEO_STATES, or none."""
 
     def __init__(self, state: object) -> None:
         self.state = state
-        super().__init__(f"Cloudflare Stream reported an unrecognized video state: {state!r:.80}")
+        super().__init__("status.state", state)
 
 
 @dataclass(frozen=True)
@@ -121,8 +130,11 @@ class CloudflareStreamClient:
 def video_status_from_cloudflare(result: dict[str, Any]) -> StreamStatus:
     """A video's status from the ``result`` of Cloudflare Stream's GET /stream/<uid>.
 
-    Rule: docs/sot.md §1, Video. An unrecognized or missing state raises UnrecognizedStreamState, so it is never
-    stored. readyToStream means at least one quality level plays, which is all an
+    Rule: docs/sot.md §1, Video. A reply outside the documented contract raises
+    UndocumentedStreamReply, so it is never stored: an unrecognized or missing
+    state, or a readyToStream that is neither a boolean nor empty (absent or
+    null, which the documentation gives for a video not ready to view).
+    readyToStream true means at least one quality level plays, which is all an
     embed needs, so it makes the video ready before every quality is encoded.
     """
     status_data = result.get("status")
@@ -130,7 +142,10 @@ def video_status_from_cloudflare(result: dict[str, Any]) -> StreamStatus:
     status = CLOUDFLARE_VIDEO_STATES.get(state) if isinstance(state, str) else None
     if status is None:
         raise UnrecognizedStreamState(state)
-    return StreamStatus.READY if bool(result.get("readyToStream")) else status
+    ready_to_stream = result.get("readyToStream")
+    if ready_to_stream is not None and not isinstance(ready_to_stream, bool):
+        raise UndocumentedStreamReply("readyToStream", ready_to_stream)
+    return StreamStatus.READY if ready_to_stream is True else status
 
 
 def _cloudflare_json(response: httpx.Response, *, context: str) -> dict[str, Any]:
