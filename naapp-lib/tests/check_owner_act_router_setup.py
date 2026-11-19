@@ -78,7 +78,7 @@ def main():
     registry = Registry(registry_app, db, ServiceTransport(registry_app))
     server_app = FastAPI()
     server = Server(server_app, DatabaseInfra(), ServiceTransport(server_app))
-    coordination = Coordination(registry, server)
+    coordination = Coordination(registry, server, "postgresql://fixture@127.0.0.1:1/fixture")
     member = Member(team_id=route_tests.TEAM)
     member.extra_cert_fields = {"member_did_aw": PRINCIPAL}
     identity_client = RegistryClient(REGISTRY_URL, transport=registry.transport)

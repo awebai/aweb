@@ -43,10 +43,14 @@ from aweb_naapp_testing import Member
 
 @dataclass
 class Coordination:
-    """AWID and a coordination server, the teams' server once each publishes it."""
+    """AWID and a coordination server, the teams' server once each publishes it.
+
+    ``server_database_url`` is the server's own database, for the operator
+    commands a server's operator runs against it."""
 
     registry: Registry
     server: Server
+    server_database_url: str
 
     async def add_member(self, member: Member) -> None:
         """Registers the member's team, if new, and its certificate in AWID."""
@@ -142,4 +146,8 @@ async def coordination(
             awid_transport=coordination_registry.transport,
             domain_verifier=awid_dns(coordination_registry),
         ) as server:
-            yield Coordination(registry=coordination_registry, server=server)
+            yield Coordination(
+                registry=coordination_registry,
+                server=server,
+                server_database_url=server_db.config.get_dsn(),
+            )
