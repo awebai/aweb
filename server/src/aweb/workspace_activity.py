@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -50,6 +51,36 @@ class WorkspaceActivity:
         if not self.is_online(now=now):
             return PresenceStatus.OFFLINE
         return (self.presence or {}).get("status") or PresenceStatus.ACTIVE
+
+
+@dataclass(frozen=True)
+class AgentWorkspaceActivity:
+    workspace: Mapping[str, Any]
+    activity: WorkspaceActivity | None
+
+
+def latest_workspace_activity(
+    rows: Sequence[Mapping[str, Any]],
+    observations: Mapping[str, WorkspaceActivity],
+) -> dict[str, AgentWorkspaceActivity]:
+    """Choose one agent context by effective activity, preserving row order for ties."""
+    selected: dict[str, AgentWorkspaceActivity] = {}
+    for row in rows:
+        agent_id = str(row["agent_id"])
+        candidate = observations.get(str(row["workspace_id"]))
+        prior = selected.get(agent_id)
+        previous = prior.activity if prior else None
+        if prior is None or (
+            candidate
+            and candidate.last_seen_at
+            and (
+                previous is None
+                or previous.last_seen_at is None
+                or candidate.last_seen_at > previous.last_seen_at
+            )
+        ):
+            selected[agent_id] = AgentWorkspaceActivity(row, candidate)
+    return selected
 
 
 def _presence_timestamp(presence: Mapping[str, str]) -> datetime | None:

@@ -214,14 +214,20 @@ async def test_a_rotated_team_key_stops_verifying(db, registry, team_key) -> Non
     assert await effects(db) == 2
 
 
-async def test_a_registry_substituted_team_key_cannot_sign_owner_acts(db, registry, team_key) -> None:
+async def test_a_registry_substituted_team_key_cannot_sign_owner_acts(
+    db, registry, team_key
+) -> None:
     verify = verifier(registry)
     await apply_effect(db, verify, *owner_act(team_key, issued=datetime.now(UTC)))
     substituted = SigningKey.generate()
     await registry.rotate_team_key(TEAM_ID, did_key(substituted))
     with pytest.raises(HTTPException) as refused:
         await apply_effect(db, verify, *owner_act(substituted, issued=datetime.now(UTC)))
-    assert (refused.value.status_code, refused.value.detail) == (401, "team_key_unverified")
+    assert (refused.value.status_code, refused.value.detail) == (
+        401,
+        "team_key_unverified: The team key change could not be verified. "
+        "Ask the team administrator to verify the namespace controller's current key-change record, then retry.",
+    )
     assert await effects(db) == 1
 
 

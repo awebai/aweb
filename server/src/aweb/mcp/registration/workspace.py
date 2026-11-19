@@ -19,5 +19,8 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
     async def workspace_status(limit: int = 15) -> str:
         """Show self/team coordination status for the current agent."""
         return await _workspace_status_impl(
-            dependencies.db_infra, dependencies.redis, limit=limit
+            dependencies.db_infra,
+            dependencies.redis,
+            registry_client=dependencies.registry_client,
+            limit=limit,
         )

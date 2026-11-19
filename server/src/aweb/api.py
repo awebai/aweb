@@ -21,6 +21,7 @@ from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
 from .application_state import RegistryClientUnavailable
+from .auth_error_transport import install_auth_error_handlers
 from .attachments import AttachmentBackend
 from .certificate_error_transport import install_certificate_error_handlers
 from .team_control_error_transport import install_team_control_error_handlers
@@ -107,7 +108,9 @@ def _max_request_body_bytes() -> int:
     except ValueError:
         value = 0
     if value < 1:
-        raise ValueError("AWEB_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes")
+        raise ValueError(
+            "AWEB_MAX_REQUEST_BODY_BYTES must be a positive whole number of bytes"
+        )
     return value
 
 
@@ -124,14 +127,18 @@ class RequestBodyCacheMiddleware:
     streaming response.
     """
 
-    def __init__(self, app, *, max_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES) -> None:
+    def __init__(
+        self, app, *, max_body_bytes: int = DEFAULT_MAX_REQUEST_BODY_BYTES
+    ) -> None:
         if max_body_bytes < 1:
             raise ValueError("max_body_bytes must be positive")
         self.app = app
         self.max_body_bytes = max_body_bytes
 
     async def _refuse(self, scope, receive, send) -> None:
-        await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
+        await JSONResponse({"detail": "Request body too large"}, status_code=413)(
+            scope, receive, send
+        )
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http":
@@ -143,8 +150,19 @@ class RequestBodyCacheMiddleware:
             state["body_sha256"] = hashlib.sha256(b"").hexdigest()
             await self.app(scope, receive, send)
             return
-        declared = next((value for name, value in scope.get("headers", []) if name.lower() == b"content-length"), None)
-        if declared is not None and declared.isdigit() and int(declared) > self.max_body_bytes:
+        declared = next(
+            (
+                value
+                for name, value in scope.get("headers", [])
+                if name.lower() == b"content-length"
+            ),
+            None,
+        )
+        if (
+            declared is not None
+            and declared.isdigit()
+            and int(declared) > self.max_body_bytes
+        ):
             await self._refuse(scope, receive, send)
             return
         chunks, received = [], 0
@@ -176,7 +194,9 @@ async def _mount_mcp_app(
     if any(isinstance(r, Mount) and r.path == "/mcp" for r in app.router.routes):
         return
     app.mount("/mcp", mcp_app)
-    app.state.native_mcp_mount = next(r for r in app.router.routes if isinstance(r, Mount) and r.path == "/mcp")
+    app.state.native_mcp_mount = next(
+        r for r in app.router.routes if isinstance(r, Mount) and r.path == "/mcp"
+    )
     move_mount_before_spa_fallback(app, "/mcp")
     logger.info("MCP endpoint mounted at /mcp/")
 
@@ -214,10 +234,6 @@ def _build_awid_registry_client(
     return RegistryClient(**client_kwargs)
 
 
-
-
-
-
 def _make_standalone_lifespan(*, host_runs_outbox_recovery: bool = False):
     """Own standalone connections; share the native serving-resource owner."""
     # API module construction also creates the default app; defer this import
@@ -232,24 +248,36 @@ def _make_standalone_lifespan(*, host_runs_outbox_recovery: bool = False):
     async def lifespan(app: FastAPI):
         """Run the shared native resource owner for this application lifespan."""
         settings = get_settings()
-        configure_logging(log_level=settings.log_level, json_format=os.getenv("AWEB_LOG_JSON", "true").lower() == "true")
+        configure_logging(
+            log_level=settings.log_level,
+            json_format=os.getenv("AWEB_LOG_JSON", "true").lower() == "true",
+        )
         logger.info("Starting aweb coordination server (standalone mode)")
         async with AsyncExitStack() as cleanup:
-            redis = await async_redis_from_url(settings.redis_url, decode_responses=True)
+            redis = await async_redis_from_url(
+                settings.redis_url, decode_responses=True
+            )
             cleanup.push_async_callback(redis.aclose)
             await redis.ping()
             cleanup.push_async_callback(default_db_infra.close)
             await default_db_infra.initialize()
             if getattr(app.state, "install_admin_policy", None) is None:
-                setup_message = await install_admin_setup_message(default_db_infra.get_manager())
+                setup_message = await install_admin_setup_message(
+                    default_db_infra.get_manager()
+                )
                 if setup_message:
                     logger.info(setup_message)
             registry = _build_awid_registry_client(app, redis)
             cleanup.push_async_callback(registry.aclose)
             async with start_native_resources(
-                api_app=app, db_infra=default_db_infra, redis=redis, registry_client=registry,
+                api_app=app,
+                db_infra=default_db_infra,
+                redis=redis,
+                registry_client=registry,
                 mcp_factory=default_mcp_factory,
-                outbox_recovery=OutboxRecoveryOwnership.HOST if host_runs_outbox_recovery else OutboxRecoveryOwnership.NATIVE,
+                outbox_recovery=OutboxRecoveryOwnership.HOST
+                if host_runs_outbox_recovery
+                else OutboxRecoveryOwnership.NATIVE,
             ) as resources:
                 await _mount_mcp_app(app, resources.mcp_app)
                 yield
@@ -262,7 +290,8 @@ def _make_library_lifespan(
     redis: Redis,
     awid_transport: httpx.AsyncBaseTransport | None,
     domain_verifier: DomainVerifier | None,
-    *, host_runs_outbox_recovery: bool = False,
+    *,
+    host_runs_outbox_recovery: bool = False,
 ):
     """Borrow host connections; close only this lifespan's registry client."""
     # API module construction also creates the default app; defer this import
@@ -278,12 +307,19 @@ def _make_library_lifespan(
         """Run the shared native resource owner for this application lifespan."""
         logger.info("Starting aweb coordination server (library mode)")
         async with AsyncExitStack() as cleanup:
-            registry = _build_awid_registry_client(app, redis, awid_transport, domain_verifier)
+            registry = _build_awid_registry_client(
+                app, redis, awid_transport, domain_verifier
+            )
             cleanup.push_async_callback(registry.aclose)
             async with start_native_resources(
-                api_app=app, db_infra=db_infra, redis=redis, registry_client=registry,
+                api_app=app,
+                db_infra=db_infra,
+                redis=redis,
+                registry_client=registry,
                 mcp_factory=default_mcp_factory,
-                outbox_recovery=OutboxRecoveryOwnership.HOST if host_runs_outbox_recovery else OutboxRecoveryOwnership.NATIVE,
+                outbox_recovery=OutboxRecoveryOwnership.HOST
+                if host_runs_outbox_recovery
+                else OutboxRecoveryOwnership.NATIVE,
             ) as resources:
                 await _mount_mcp_app(app, resources.mcp_app)
                 yield
@@ -377,38 +413,61 @@ def create_app(
                 "Call 'await db_infra.initialize()' before creating the app."
             )
         assert redis is not None  # Required when db_infra is provided
-        lifespan = _make_library_lifespan(db_infra, redis, awid_transport, domain_verifier, host_runs_outbox_recovery=host_runs_outbox_recovery)
+        lifespan = _make_library_lifespan(
+            db_infra,
+            redis,
+            awid_transport,
+            domain_verifier,
+            host_runs_outbox_recovery=host_runs_outbox_recovery,
+        )
     else:
-        lifespan = _make_standalone_lifespan(host_runs_outbox_recovery=host_runs_outbox_recovery)
+        lifespan = _make_standalone_lifespan(
+            host_runs_outbox_recovery=host_runs_outbox_recovery
+        )
 
     from aweb.attachment_service import router as attachment_router
 
-    app = RequestDecompressionFastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
+    app = RequestDecompressionFastAPI(
+        title="aweb coordination core", version="0.1.0", lifespan=lifespan
+    )
     proxy_configuration.install(app)
     app.state.attachment_backend = attachment_backend
     # DNS names the namespace controller whose act may move a pinned team key
     # (aweb.team_key_pins); an embedding host may replace the resolver.
     app.state.awid_txt_resolver = SystemTXTOutcomeResolver()
     app.state.public_origin = (
-        canonical_server_origin(public_origin) if public_origin is not None else get_public_origin()
+        canonical_server_origin(public_origin)
+        if public_origin is not None
+        else get_public_origin()
     )
     app.include_router(attachment_router)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
-    app.add_middleware(RequestBodyCacheMiddleware, max_body_bytes=_max_request_body_bytes())
+    app.add_middleware(
+        RequestBodyCacheMiddleware, max_body_bytes=_max_request_body_bytes()
+    )
 
     @app.exception_handler(RequestValidationError)
     async def _request_validation_error_handler(
         request: Request, exc: RequestValidationError
     ):
         matched_route_path = getattr(request.scope.get("route"), "path", "")
-        if (matched_route_path in {"/v1/messages", "/v1/chat/sessions", "/v1/chat/sessions/{session_id}/messages"}
-                and isinstance(exc.body, dict) and ({"attachments", "attachment_refs"} & exc.body.keys())):
-            return JSONResponse(status_code=422, content={"detail": {"code": "request_invalid"}})
+        if (
+            matched_route_path
+            in {
+                "/v1/messages",
+                "/v1/chat/sessions",
+                "/v1/chat/sessions/{session_id}/messages",
+            }
+            and isinstance(exc.body, dict)
+            and ({"attachments", "attachment_refs"} & exc.body.keys())
+        ):
+            return JSONResponse(
+                status_code=422, content={"detail": {"code": "request_invalid"}}
+            )
         if isinstance(matched_route_path, str) and matched_route_path.startswith(
             "/v1/federation/"
         ):
-
             reason = (
                 "federation_timestamp_invalid"
                 if any("timestamp" in error.get("loc", ()) for error in exc.errors())
@@ -419,7 +478,8 @@ def create_app(
                 status_code=error.http_status,
                 content=authority_error_body(
                     error,
-                    correlation_id=request.headers.get("X-Correlation-ID") or str(uuid4()),
+                    correlation_id=request.headers.get("X-Correlation-ID")
+                    or str(uuid4()),
                 ),
             )
         return await request_validation_exception_handler(request, exc)
@@ -439,12 +499,19 @@ def create_app(
 
     @app.exception_handler(HumanChatRefused)
     async def _human_chat_refused_handler(request: Request, exc: HumanChatRefused):
-        return JSONResponse(status_code=422, content=exc.body(
-            correlation_id=request.headers.get("X-Correlation-ID"),
-        ))
+        return JSONResponse(
+            status_code=422,
+            content=exc.body(
+                correlation_id=request.headers.get("X-Correlation-ID"),
+            ),
+        )
+
+    install_auth_error_handlers(app)
 
     @app.exception_handler(RegistryClientUnavailable)
-    async def _registry_client_unavailable_handler(request: Request, exc: RegistryClientUnavailable):
+    async def _registry_client_unavailable_handler(
+        request: Request, exc: RegistryClientUnavailable
+    ):
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     install_certificate_error_handlers(app)
@@ -454,7 +521,9 @@ def create_app(
     async def _service_error_handler(request: Request, exc: ServiceError):
         if exc.status_code >= 500:
             logger.exception("Unhandled ServiceError", exc_info=exc)
-            return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+            return JSONResponse(
+                status_code=500, content={"detail": "Internal server error"}
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
@@ -476,7 +545,9 @@ def create_app(
         resources = getattr(request.app.state, "native_resources", None)
         resource_readiness = resources.readiness if resources is not None else None
         if resource_readiness is not None:
-            checks["native_resources"] = "ok" if resource_readiness.ready else "unavailable"
+            checks["native_resources"] = (
+                "ok" if resource_readiness.ready else "unavailable"
+            )
             healthy = resource_readiness.ready
 
         # Check Redis
@@ -524,6 +595,7 @@ def create_app(
     app.include_router(federation_router)
     app.include_router(identity_grants_router)
     from aweb.routes.messaging import router as messaging_router
+
     app.include_router(messaging_router)
     app.include_router(messages_router)
     app.include_router(room_router)

@@ -97,12 +97,13 @@ type doctorTeamStateYAML struct {
 }
 
 type doctorTeamMembershipYAML struct {
-	TeamID      string `yaml:"team_id,omitempty"`
-	Alias       string `yaml:"alias,omitempty"`
-	CertPath    string `yaml:"cert_path,omitempty"`
-	JoinedAt    string `yaml:"joined_at,omitempty"`
-	RegistryURL string `yaml:"registry_url,omitempty"`
-	AwebURL     string `yaml:"aweb_url,omitempty"`
+	TeamKey     *awid.TeamKeyEvidence `yaml:"team_key,omitempty"`
+	TeamID      string                `yaml:"team_id,omitempty"`
+	Alias       string                `yaml:"alias,omitempty"`
+	CertPath    string                `yaml:"cert_path,omitempty"`
+	JoinedAt    string                `yaml:"joined_at,omitempty"`
+	RegistryURL string                `yaml:"registry_url,omitempty"`
+	AwebURL     string                `yaml:"aweb_url,omitempty"`
 }
 
 func (r *doctorRunner) runLocalChecks() {
@@ -423,7 +424,13 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 			map[string]any{"error": err.Error()},
 		))
 	} else {
-		r.add(localCheck(doctorCheckCertificateSignature, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, "Team certificate verifies with its team_did_key.", "", nil))
+		message := "Team certificate signature verifies under the key it names. This does not show that the agent is a current member of the team; run aw doctor --online to check current membership."
+		if state.teamState != nil {
+			if membership := state.teamState.Membership(cert.Team); membership != nil && membership.TeamKey != nil && (membership.TeamKey.State == awid.TeamKeyUnconfirmed || membership.TeamKey.DIDKey != cert.TeamDIDKey) {
+				message += " " + teamKeyConfirmationText(&awid.TeamKeyEvidence{DIDKey: cert.TeamDIDKey, State: awid.TeamKeyUnconfirmed})
+			}
+		}
+		r.add(localCheck(doctorCheckCertificateSignature, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, message, "", nil))
 	}
 }
 
@@ -915,7 +922,13 @@ func loadDoctorTeamStateAt(workingDir, identityHome string) (*awconfig.TeamState
 		ActiveTeam: strings.TrimSpace(raw.ActiveTeam),
 	}
 	for _, membership := range raw.Memberships {
+		if membership.TeamKey != nil {
+			if err := membership.TeamKey.Validate(); err != nil {
+				return nil, err
+			}
+		}
 		state.Memberships = append(state.Memberships, awconfig.TeamMembership{
+			TeamKey:     membership.TeamKey,
 			TeamID:      strings.TrimSpace(membership.TeamID),
 			Alias:       strings.TrimSpace(membership.Alias),
 			CertPath:    filepath.ToSlash(strings.TrimSpace(membership.CertPath)),

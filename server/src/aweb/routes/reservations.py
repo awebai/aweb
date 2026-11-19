@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from aweb.event_types import MutationEventType
-from aweb.hook_contexts import ReservationAcquiredContext, ReservationReleasedContext, ReservationRenewedContext
+from aweb.hook_contexts import (
+    ReservationAcquiredContext,
+    ReservationRenewedContext,
+)
 
 import json
 from datetime import datetime, timedelta, timezone
@@ -14,13 +17,26 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import JSONResponse
 
+from aweb.audit import OperatorAuditRoute, audit_success
 from aweb.deps import get_db
-from aweb.hooks import fire_mutation_hook
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.hooks import fire_mutation_hook, mutation_callback
+from aweb.reservation_release import (
+    EmergencyRelease,
+    HolderRelease,
+    ReservationReleaseConflict,
+    ReservationReleaseOutcome,
+    publish_reservation_releases,
+    release_reservations_on,
+)
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
 from ._reservation_utils import reservation_metadata, reservation_prefix_like
 
-router = APIRouter(prefix="/v1", tags=["reservations"])
+router = APIRouter(prefix="/v1", tags=["reservations"], route_class=OperatorAuditRoute)
 
 DEFAULT_RESERVATION_TTL_SECONDS = 3600
 
@@ -109,7 +125,9 @@ def _reservation_reason(metadata: dict[str, Any]) -> Optional[str]:
     return reason or None
 
 
-def _reservation_conflict_response(*, holder_agent_id: str, holder_alias: str, expires_at: str) -> JSONResponse:
+def _reservation_conflict_response(
+    *, holder_agent_id: str, holder_alias: str, expires_at: str
+) -> JSONResponse:
     return JSONResponse(
         status_code=409,
         content={
@@ -139,7 +157,9 @@ def _reservation_view(row, *, now: datetime) -> ReservationView:
 @router.get("/reservations")
 async def list_reservations(
     request: Request,
-    prefix: Optional[str] = Query(None, description="Optional resource key prefix filter"),
+    prefix: Optional[str] = Query(
+        None, description="Optional resource key prefix filter"
+    ),
     db=Depends(get_db),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ReservationListResponse:
@@ -201,7 +221,11 @@ async def acquire_reservation(
             payload.resource_key,
         )
 
-        if row and row["expires_at"] > now and str(row["holder_agent_id"]) != identity.agent_id:
+        if (
+            row
+            and row["expires_at"] > now
+            and str(row["holder_agent_id"]) != identity.agent_id
+        ):
             return _reservation_conflict_response(
                 holder_agent_id=str(row["holder_agent_id"]),
                 holder_alias=row["holder_alias"],
@@ -210,7 +234,9 @@ async def acquire_reservation(
 
         # An empty metadata object means "preserve existing metadata" so the
         # current CLI acquire path does not silently clear reason/context fields.
-        metadata = payload.metadata or (reservation_metadata(row["metadata_json"]) if row else {})
+        metadata = payload.metadata or (
+            reservation_metadata(row["metadata_json"]) if row else {}
+        )
         if row:
             await tx.execute(
                 """
@@ -249,7 +275,13 @@ async def acquire_reservation(
     await fire_mutation_hook(
         request,
         MutationEventType.RESERVATION_ACQUIRED.value,
-        ReservationAcquiredContext(team_id=identity.team_id, holder_agent_id=identity.agent_id, alias=identity.alias, resource_key=payload.resource_key, ttl_seconds=payload.ttl_seconds).to_context(),
+        ReservationAcquiredContext(
+            team_id=identity.team_id,
+            holder_agent_id=identity.agent_id,
+            alias=identity.alias,
+            resource_key=payload.resource_key,
+            ttl_seconds=payload.ttl_seconds,
+        ).to_context(),
     )
 
     return ReservationAcquireResponse(
@@ -313,7 +345,13 @@ async def renew_reservation(
     await fire_mutation_hook(
         request,
         MutationEventType.RESERVATION_RENEWED.value,
-        ReservationRenewedContext(team_id=identity.team_id, holder_agent_id=identity.agent_id, alias=identity.alias, resource_key=payload.resource_key, ttl_seconds=payload.ttl_seconds).to_context(),
+        ReservationRenewedContext(
+            team_id=identity.team_id,
+            holder_agent_id=identity.agent_id,
+            alias=identity.alias,
+            resource_key=payload.resource_key,
+            ttl_seconds=payload.ttl_seconds,
+        ).to_context(),
     )
 
     return ReservationRenewResponse(
@@ -339,43 +377,31 @@ async def release_reservation(
     now = datetime.now(timezone.utc)
 
     async with aweb_db.transaction() as tx:
-        row = await tx.fetch_one(
-            """
-            SELECT holder_agent_id, holder_alias, expires_at
-            FROM {{tables.reservations}}
-            WHERE team_id = $1 AND resource_key = $2
-            FOR UPDATE
-            """,
-            identity.team_id,
-            payload.resource_key,
+        result = await release_reservations_on(
+            tx,
+            team_id=identity.team_id,
+            selection=HolderRelease(
+                resource_key=payload.resource_key,
+                holder_agent_id=UUID(identity.agent_id),
+            ),
+            now=now,
         )
-
-        if row is not None and row["expires_at"] > now and str(row["holder_agent_id"]) != identity.agent_id:
+        if isinstance(result, ReservationReleaseConflict):
+            reservation = result.reservation
             return _reservation_conflict_response(
-                holder_agent_id=str(row["holder_agent_id"]),
-                holder_alias=row["holder_alias"],
-                expires_at=row["expires_at"].isoformat(),
+                holder_agent_id=str(reservation.holder_agent_id),
+                holder_alias=reservation.holder_alias,
+                expires_at=reservation.expires_at.isoformat(),
             )
-
-        released = row is not None
-        if released:
-            await tx.execute(
-                """
-                DELETE FROM {{tables.reservations}}
-                WHERE team_id = $1 AND resource_key = $2
-                """,
-                identity.team_id,
-                payload.resource_key,
-            )
-
-    if released:
-        await fire_mutation_hook(
-            request,
-            MutationEventType.RESERVATION_RELEASED.value,
-            ReservationReleasedContext(team_id=identity.team_id, holder_agent_id=identity.agent_id, alias=identity.alias, resource_key=payload.resource_key).to_context(),
-        )
-
-    return ReservationReleaseResponse(status="released", resource_key=payload.resource_key)
+    await publish_reservation_releases(
+        callback=mutation_callback(request),
+        team_id=identity.team_id,
+        actor_agent_id=identity.agent_id,
+        reservations=result,
+    )
+    return ReservationReleaseResponse(
+        status=ReservationReleaseOutcome.RELEASED, resource_key=payload.resource_key
+    )
 
 
 @router.post("/reservations/revoke", response_model=ReservationRevokeResponse)
@@ -387,24 +413,25 @@ async def revoke_reservations(
 ) -> ReservationRevokeResponse:
     """Revoke reservations within the authenticated team authority scope."""
     aweb_db = db.get_manager("aweb")
-
-    params: list[object] = [identity.team_id]
-    where = ["team_id = $1", "expires_at > NOW()"]
-    if payload.prefix:
-        where.append(f"resource_key LIKE ${len(params) + 1} ESCAPE '\\'")
-        params.append(reservation_prefix_like(payload.prefix))
-
-    rows = await aweb_db.fetch_all(
-        f"""
-        DELETE FROM {{{{tables.reservations}}}}
-        WHERE {' AND '.join(where)}
-        RETURNING resource_key
-        """,
-        *params,
+    async with aweb_db.transaction() as tx:
+        result = await release_reservations_on(
+            tx,
+            team_id=identity.team_id,
+            selection=EmergencyRelease(prefix=payload.prefix),
+            now=datetime.now(timezone.utc),
+        )
+        if isinstance(result, ReservationReleaseConflict):
+            raise RuntimeError(
+                "Emergency release unexpectedly required holder permission"
+            )
+        await audit_success(tx, request, identity.team_id)
+    await publish_reservation_releases(
+        callback=mutation_callback(request),
+        team_id=identity.team_id,
+        actor_agent_id=identity.agent_id,
+        reservations=result,
     )
-
-    revoked_keys = [row["resource_key"] for row in rows]
     return ReservationRevokeResponse(
-        revoked_count=len(revoked_keys),
-        revoked_keys=revoked_keys,
+        revoked_count=len(result),
+        revoked_keys=[reservation.resource_key for reservation in result],
     )

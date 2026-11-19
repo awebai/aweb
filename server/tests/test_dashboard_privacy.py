@@ -25,6 +25,7 @@ from starlette.requests import Request
 import uvicorn
 
 from aweb.api import create_app
+from aweb.embedding import OutboxRecoveryOwnership
 from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.db import DatabaseInfra
 from aweb.events import MessageDeliveredEvent, ChatMessageEvent, TaskCreatedEvent, publish_event, team_events_channel_name
@@ -36,7 +37,7 @@ from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
-from test_dashboard import _JWT_SECRET, _make_jwt
+from dashboard_test_support import _JWT_SECRET, _make_jwt
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
@@ -61,7 +62,7 @@ async def privacy_app(shared_test_pool, monkeypatch, request):
 
 
 @asynccontextmanager
-async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, proxy_verification=None):
+async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, outbox_recovery=OutboxRecoveryOwnership.NATIVE, proxy_verification=None):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
@@ -91,7 +92,10 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, proxy_verifi
                 transport=httpx.ASGITransport(app=registry_app),
                 service_token=service_token,
             )
-            app = create_app(proxy_verification=proxy_verification)
+            app = create_app(
+                host_runs_outbox_recovery=outbox_recovery is OutboxRecoveryOwnership.HOST,
+                proxy_verification=proxy_verification,
+            )
             # Externally provisioned resources, exactly as an embedding host
             # supplies them; lifecycle startup would create different ones.
             app.state.db = db
@@ -103,7 +107,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, proxy_verifi
 
             async def observe_mutation(event_type, context):
                 dispatched.append((event_type, dict(context)))
-                await handler(event_type, context)
+                return await handler(event_type, context)
 
             app.state.on_mutation = observe_mutation
             manager = db.get_manager("aweb")

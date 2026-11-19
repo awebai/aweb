@@ -19,7 +19,11 @@ def register_tools(mcp: FastMCP, dependencies: ToolDependencies) -> None:
     )
     async def list_agents() -> str:
         """List all agents in the current team with online status."""
-        return await _list_agents_impl(dependencies.db_infra, dependencies.redis)
+        return await _list_agents_impl(
+            dependencies.db_infra,
+            dependencies.redis,
+            registry_client=dependencies.registry_client,
+        )
 
     @mcp.tool(
         name="heartbeat",

@@ -8,10 +8,15 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-from aweb.grant_expiry import never_expires
-from aweb.config import require_registered_certificates
-from aweb.member_team_key import grant_issuer_current, member_key_columns_sql
-from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_registered_certificates, _get_revoked_certificates
+from aweb.application_state import application_registry_client
+from aweb.auth_context import TeamIdentity
+from aweb.certificate_registration import configured_registration_mode
+from aweb.identity_grant_status import GrantValidityState, grant_validity
+from aweb.member_team_key import (
+    GRANT_ISSUER_RECOVERY_DETAIL,
+    member_key_columns_sql,
+)
+from aweb.team_registry import native_database_manager
 
 GRANT_STREAM_RECHECK_SECONDS = 30
 
@@ -20,7 +25,7 @@ GRANT_TERMINAL_DETAILS = {
     "grant_expired": "identity grant expired",
     "grant_revoked": "identity grant revoked",
     "grant_subject_inactive": "identity grant subject inactive",
-    "grant_issuer_revoked": "identity grant issuer revoked",
+    "grant_issuer_revoked": "identity grant issuer revoked. " + GRANT_ISSUER_RECOVERY_DETAIL,
 }
 
 
@@ -38,7 +43,11 @@ def grant_terminal_sse(reason: str) -> str:
 
 
 def grant_expiry_reason(identity: TeamIdentity) -> str | None:
-    if identity.grant is not None and not identity.grant.never_expires and _as_utc(identity.grant.expires_at) <= datetime.now(timezone.utc):
+    if (
+        identity.grant is not None
+        and not identity.grant.never_expires
+        and _as_utc(identity.grant.expires_at) <= datetime.now(timezone.utc)
+    ):
         return "grant_expired"
     return None
 
@@ -58,13 +67,15 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
     if not grant.never_expires and _as_utc(grant.expires_at) <= now:
         return "grant_expired"
 
-    aweb_db = _aweb_db(db)
+    aweb_db = native_database_manager(db)
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
-               a.agent_id, a.status, a.deleted_at,
-               a.certificate_id, """ + member_key_columns_sql("a") + """
+               a.agent_id, a.status AS subject_status, a.deleted_at AS subject_deleted_at,
+               a.certificate_id, """
+        + member_key_columns_sql("a")
+        + """
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
         WHERE g.grant_id = $1::UUID
@@ -73,25 +84,25 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
     )
     if row is None or row["grant_did_key"] != grant.session_did_key:
         return "grant_revoked"
-    if row["revoked_at"] is not None:
-        return "grant_revoked"
-    if not never_expires(row.get("issued_at"), row["expires_at"]) and _as_utc(row["expires_at"]) <= now:
-        return "grant_expired"
-    if str(row["agent_id"]) != str(identity.agent_id) or row["status"] != "active" or row["deleted_at"] is not None:
+    if str(row["agent_id"]) != str(identity.agent_id):
         return "grant_subject_inactive"
-    if not grant_issuer_current(row):
-        return "grant_issuer_revoked"
-
-    issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
-    if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(request, row["team_id"], certificate_ids=[issuing_certificate_id])
-        if issuing_certificate_id in revoked_certs:
-            return "grant_issuer_revoked"
-        if require_registered_certificates():
-            registered_certs = await _get_registered_certificates(request, row["team_id"])
-            if issuing_certificate_id not in registered_certs:
-                return "grant_issuer_revoked"
-    return None
+    observation = await grant_validity(
+        row=row,
+        now=now,
+        registry_client=application_registry_client(request.app.state),
+        registration_mode=configured_registration_mode(),
+        request=request,
+    )
+    observation.raise_if_unavailable()
+    return {
+        GrantValidityState.ACTIVE: None,
+        GrantValidityState.REVOKED: "grant_revoked",
+        GrantValidityState.EXPIRED: "grant_expired",
+        GrantValidityState.SUBJECT_INACTIVE: "grant_subject_inactive",
+        GrantValidityState.ISSUER_SUPERSEDED: "grant_issuer_revoked",
+        GrantValidityState.ISSUER_REVOKED: "grant_issuer_revoked",
+        GrantValidityState.ISSUER_UNREGISTERED: "grant_issuer_revoked",
+    }[observation.state]
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -148,6 +159,7 @@ def status_event_allowed(identity: TeamIdentity, event: dict[str, Any]) -> bool:
 
 class NeverGrantStreamGuard:
     """Retain finite-stream behavior; never grants revalidate at most every 30s."""
+
     def __init__(self, request, db, identity, expiry_reason=grant_expiry_reason):
         self.request, self.db, self.identity = request, db, identity
         self.expiry_reason = expiry_reason
@@ -164,5 +176,7 @@ class NeverGrantStreamGuard:
         try:
             return await grant_terminal_reason(self.request, self.db, self.identity)
         except Exception:
-            logging.getLogger(__name__).warning("Never-grant stream revalidation failed", exc_info=True)
+            logging.getLogger(__name__).warning(
+                "Never-grant stream revalidation failed", exc_info=True
+            )
             return "verification_unavailable"

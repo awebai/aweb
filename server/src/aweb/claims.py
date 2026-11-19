@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
 from awid.team_ids import team_slug
+from .service_errors import ConflictError
+from .task_refs import format_task_ref, task_ref_suffix
 
 if TYPE_CHECKING:
     from .db import DatabaseInfra
@@ -112,9 +114,7 @@ async def resolve_task_claim_apex_on(
     """
     slug = team_slug(team_id)
 
-    prefix = slug + "-"
-    ref_suffix = task_ref[len(prefix) :] if task_ref.startswith(prefix) else task_ref
-    ref_suffix = ref_suffix.strip()
+    ref_suffix = task_ref_suffix(team_id=team_id, ref=task_ref)
     if not ref_suffix:
         return None
 
@@ -132,7 +132,9 @@ async def resolve_task_claim_apex_on(
 
     epic_ref: Optional[str] = None
     if (current.get("task_type") or "").strip().lower() == "epic":
-        epic_ref = f"{slug}-{current['task_ref_suffix']}"
+        epic_ref = format_task_ref(
+            team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+        )
 
     # Walk parent chain to root
     depth = 0
@@ -149,10 +151,14 @@ async def resolve_task_claim_apex_on(
             break
         current = parent
         if (current.get("task_type") or "").strip().lower() == "epic":
-            epic_ref = f"{slug}-{current['task_ref_suffix']}"
+            epic_ref = format_task_ref(
+                team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+            )
         depth += 1
 
-    return epic_ref or f"{slug}-{current['task_ref_suffix']}"
+    return epic_ref or format_task_ref(
+        team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
+    )
 
 
 async def _is_open_task_ref(
@@ -161,9 +167,7 @@ async def _is_open_task_ref(
     team_id: str,
     task_ref: str,
 ) -> bool:
-    slug = team_slug(team_id)
-    prefix = slug + "-"
-    ref_suffix = task_ref[len(prefix):] if task_ref.startswith(prefix) else task_ref
+    ref_suffix = task_ref_suffix(team_id=team_id, ref=task_ref)
 
     row = await tx.fetch_one(
         """
@@ -182,43 +186,81 @@ async def _is_open_task_ref(
     return (row["status"] or "").strip().lower() != "closed"
 
 
-async def upsert_claim(
-    db_infra: DatabaseInfra,
+async def lock_task_claim_workspaces_on(
+    tx,
     *,
     team_id: str,
-    workspace_id: str,
-    alias: str,
-    human_name: str,
     task_ref: str,
-) -> Optional[dict[str, Any]]:
-    """Attempt to claim a task.
+    workspace_id: str | None = None,
+    actor_agent_id: str | None = None,
+):
+    """Lock the complete claimant/actor workspace set before claim or agent locks."""
+    return await tx.fetch_all(
+        """
+        SELECT w.workspace_id, w.agent_id, w.alias, w.human_name, w.last_seen_at, w.deleted_at
+        FROM {{tables.workspaces}} w
+        WHERE w.team_id=$1 AND (
+          ($4::uuid IS NOT NULL AND w.agent_id=$4 AND w.deleted_at IS NULL)
+          OR EXISTS (
+            SELECT 1 FROM {{tables.task_claims}} c
+            WHERE c.team_id=$1 AND c.task_ref=$2 AND c.workspace_id=w.workspace_id
+              AND ($3::uuid IS NULL OR c.workspace_id=$3)
+          ))
+        ORDER BY w.workspace_id FOR UPDATE
+        """,
+        team_id,
+        task_ref,
+        UUID(workspace_id) if workspace_id else None,
+        UUID(actor_agent_id) if actor_agent_id else None,
+    )
 
-    Returns ``None`` on success, or the conflicting
-    claim dict (with alias, human_name, workspace_id) if already held by
-    another workspace."""
-    aweb_db = db_infra.get_manager("aweb")
 
-    apex_task_ref = await resolve_task_claim_apex(db_infra, team_id, task_ref)
+async def acquire_task_claim_on(
+    tx, *, team_id: str, actor_agent_id: str, task_ref: str, now: datetime
+) -> UUID | None:
+    """Take a task claim under its row lock (docs/aweb-sot.md:1151–1162).
 
-    async with aweb_db.transaction() as tx:
-        # Check if another workspace already holds this claim.
-        existing = await tx.fetch_one(
-            """
-            SELECT workspace_id, alias, human_name
-            FROM {{tables.task_claims}}
-            WHERE team_id = $1 AND task_ref = $2 AND workspace_id != $3
-            """,
-            team_id,
-            task_ref,
-            UUID(workspace_id),
-        )
-        if existing:
-            return {
-                "workspace_id": str(existing["workspace_id"]),
-                "alias": existing["alias"],
-                "human_name": existing["human_name"],
-            }
+    Conflicts apply even when the authenticated actor has no workspace. The
+    actor's actual workspace, rather than an alias match, owns a taken claim.
+    """
+    apex_task_ref = await resolve_task_claim_apex_on(tx, team_id, task_ref)
+    locked = await lock_task_claim_workspaces_on(
+        tx,
+        team_id=team_id,
+        task_ref=task_ref,
+        actor_agent_id=actor_agent_id,
+    )
+    # Retained deleted claimant rows must stay locked for cleanup, but cannot
+    # become an eligible workspace merely because they belong to this actor.
+    candidates = [
+        row
+        for row in locked
+        if str(row["agent_id"]) == actor_agent_id and row["deleted_at"] is None
+    ]
+    # Stable UUID order breaks equal/null activity ties; do not select a newly
+    # inserted workspace after acquiring this transaction's complete lock set.
+    workspace = max(
+        candidates,
+        key=lambda row: (
+            row["last_seen_at"] or datetime.min.replace(tzinfo=timezone.utc)
+        ),
+        default=None,
+    )
+    conflicting_claim = await tx.fetch_one(
+        """
+        SELECT workspace_id, alias
+        FROM {{tables.task_claims}}
+        WHERE team_id = $1 AND task_ref = $2 AND ($3::uuid IS NULL OR workspace_id != $3)
+        LIMIT 1
+        """,
+        team_id,
+        task_ref,
+        workspace["workspace_id"] if workspace is not None else None,
+    )
+    if conflicting_claim:
+        raise ConflictError("Task is already in progress by another agent")
 
+    if workspace is not None:
         await tx.execute(
             """
             INSERT INTO {{tables.task_claims}} (
@@ -234,26 +276,28 @@ async def upsert_claim(
                 claimed_at = EXCLUDED.claimed_at
             """,
             team_id,
-            UUID(workspace_id),
-            alias,
-            human_name,
+            workspace["workspace_id"],
+            workspace["alias"],
+            workspace["human_name"] or "",
             task_ref,
             apex_task_ref,
-            _now(),
+            now,
         )
+
         await tx.execute(
             """
             UPDATE {{tables.workspaces}}
             SET focus_task_ref = $1,
-                focus_updated_at = NOW(),
-                updated_at = NOW()
-            WHERE team_id = $2 AND workspace_id = $3
+                focus_updated_at = $2,
+                updated_at = $2
+            WHERE team_id = $3 AND workspace_id = $4
             """,
             claim_focus_task_ref(task_ref, apex_task_ref),
+            now,
             team_id,
-            UUID(workspace_id),
+            workspace["workspace_id"],
         )
-
+        return workspace["workspace_id"]
     return None
 
 
@@ -276,11 +320,26 @@ async def release_task_claims(
     """
     aweb_db = db_infra.get_manager("aweb")
     async with aweb_db.transaction() as tx:
-        return await release_task_claims_on(tx, team_id=team_id, task_ref=task_ref, workspace_id=workspace_id)
+        return await release_task_claims_on(
+            tx, team_id=team_id, task_ref=task_ref, workspace_id=workspace_id
+        )
 
 
-async def release_task_claims_on(tx, *, team_id: str, task_ref: str, workspace_id: str | None = None) -> list[str]:
-    """Release task claims/focus in an existing lifecycle transaction."""
+async def release_task_claims_on(
+    tx, *, team_id: str, task_ref: str, workspace_id: str | None = None
+) -> list[str]:
+    """Release claims and focus with workspace-before-claim lock ordering.
+
+    Status writers hold the task row; deletion hooks act on a deleted task.
+    Lock workspaces in UUID order, matching acquisition and lifecycle cleanup,
+    before deleting claims (docs/aweb-sot.md:1151–1166).
+    """
+    await lock_task_claim_workspaces_on(
+        tx,
+        team_id=team_id,
+        task_ref=task_ref,
+        workspace_id=workspace_id,
+    )
     released_focus_by_workspace: dict[str, str] = {}
     if workspace_id:
         released_rows = await tx.fetch_all(
@@ -329,7 +388,9 @@ async def release_task_claims_on(tx, *, team_id: str, task_ref: str, workspace_i
         )
         next_focus = None
         if next_claim:
-            next_focus = claim_focus_task_ref(next_claim["task_ref"], next_claim["apex_task_ref"])
+            next_focus = claim_focus_task_ref(
+                next_claim["task_ref"], next_claim["apex_task_ref"]
+            )
         else:
             released_focus = released_focus_by_workspace.get(str(ws_id))
             if released_focus and await _is_open_task_ref(

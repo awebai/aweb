@@ -86,7 +86,9 @@ class PlannedIdentityIds:
     workspace_id: uuid.UUID
 
     def __post_init__(self) -> None:
-        if not isinstance(self.agent_id, uuid.UUID) or not isinstance(self.workspace_id, uuid.UUID):
+        if not isinstance(self.agent_id, uuid.UUID) or not isinstance(
+            self.workspace_id, uuid.UUID
+        ):
             raise TypeError("Pass UUID values for the planned agent and workspace IDs.")
 
 
@@ -124,12 +126,9 @@ class ConnectIdentityRefusal(ValueError):
         super().__init__(reason.value)
         self.reason = reason
         messages = {
-            ConnectIdentityRefusalReason.BINDING_MISMATCH:
-                "Verify the certificate's exact identity and address before connecting this agent.",
-            ConnectIdentityRefusalReason.KIND_MISMATCH:
-                "Verify the certificate's exact identity kind before connecting this agent.",
-            ConnectIdentityRefusalReason.GENERATION_MISMATCH:
-                "Use the verified generation's exact certificate claims and current team key, then retry connecting.",
+            ConnectIdentityRefusalReason.BINDING_MISMATCH: "Verify the certificate's exact identity and address before connecting this agent.",
+            ConnectIdentityRefusalReason.KIND_MISMATCH: "Verify the certificate's exact identity kind before connecting this agent.",
+            ConnectIdentityRefusalReason.GENERATION_MISMATCH: "Use the verified generation's exact certificate claims and current team key, then retry connecting.",
         }
         messages[ConnectIdentityRefusalReason.GENERATION_STALE] = (
             "Verify the retained certificate under the team's current controller key, then retry connecting."
@@ -283,7 +282,9 @@ async def _ensure_agent(
 
     inbound_mode = "open"
     if str(did_aw or "").startswith("did:aw:"):
-        inbound_mode = await effective_inbound_mode(db, did_aw, for_share=True, default="open")
+        inbound_mode = await effective_inbound_mode(
+            db, did_aw, for_share=True, default="open"
+        )
     agent_id = planned_agent_id or uuid.uuid4()
     try:
         async with db.transaction() as insert_tx:
@@ -313,7 +314,9 @@ async def _ensure_agent(
                 accepted_team_did_key,
             )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
-        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
+        if isinstance(exc, QueryError) and not isinstance(
+            exc.__cause__, asyncpg.exceptions.UniqueViolationError
+        ):
             raise
         existing_agent = await db.fetch_one(
             """
@@ -465,8 +468,8 @@ async def _ensure_workspace(
                 """
                 INSERT INTO {{tables.workspaces}}
                     (workspace_id, team_id, agent_id, repo_id, alias, human_name,
-                     role, hostname, workspace_path, workspace_type)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     role, hostname, workspace_path, workspace_type, last_seen_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
                 RETURNING workspace_id
                 """,
                 workspace_id,
@@ -483,7 +486,9 @@ async def _ensure_workspace(
         assert row is not None  # This INSERT always returns the workspace it created.
         return _ConnectedWorkspace(str(row["workspace_id"]), workspace_type)
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
-        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
+        if isinstance(exc, QueryError) and not isinstance(
+            exc.__cause__, asyncpg.exceptions.UniqueViolationError
+        ):
             raise
         existing = await _get_existing_workspace()
         if existing and str(existing["agent_id"]) == agent_id:
@@ -505,7 +510,9 @@ async def _ensure_repo(
     try:
         return await ensure_repo(db, team_id, repo_origin)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=f"invalid repo_origin: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"invalid repo_origin: {exc}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -598,7 +605,9 @@ async def connect_agent(
         workspace_profile = WorkspaceProfile.MANUAL
     if generation is not None:
         if not isinstance(generation, VerifiedCertificateGeneration):
-            raise TypeError("Pass the result of verify_certificate_generation for generation admission.")
+            raise TypeError(
+                "Pass the result of verify_certificate_generation for generation admission."
+            )
         claims = generation.certificate.claims
         verified = dict(claims)
         verified["did_key"] = claims["member_did_key"]
@@ -616,7 +625,9 @@ async def connect_agent(
     team_id = cert_info["team_id"]
     alias = cert_info["alias"]
     did_key = cert_info["did_key"]
-    identity_scope = normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime"))
+    identity_scope = normalize_identity_scope(
+        cert_info.get("identity_scope") or cert_info.get("lifetime")
+    )
     claimed_did_aw = cert_info.get("member_did_aw") or ""
     claimed_address = cert_info.get("member_address") or ""
     has_claims = bool(claimed_did_aw or claimed_address)
@@ -635,10 +646,13 @@ async def connect_agent(
 
     if identity_kind is not None and (
         not isinstance(identity_kind, IdentityKindObservation)
-        or identity_kind.did_key != did_key or identity_kind.did_aw != did_aw
+        or identity_kind.did_key != did_key
+        or identity_kind.did_aw != did_aw
     ):
         raise ConnectIdentityRefusal(ConnectIdentityRefusalReason.KIND_MISMATCH)
-    human_verified_key = did_key if identity_kind is not None and identity_kind.is_human else None
+    human_verified_key = (
+        did_key if identity_kind is not None and identity_kind.is_human else None
+    )
     if human_verified_key:
         agent_type = "human"
     elif agent_type == "human":
@@ -692,7 +706,10 @@ async def connect_agent(
             controller_import.require_freshness()
         if identity_binding is not None:
             await refresh_projection_binding(
-                tx, agent_id=agent_id, did_key=did_key, binding=identity_binding,
+                tx,
+                agent_id=agent_id,
+                did_key=did_key,
+                binding=identity_binding,
             )
 
         workspace = await _ensure_workspace(
@@ -705,7 +722,9 @@ async def connect_agent(
             repo_origin=repo_origin,
             role=role,
             human_name=human_name,
-            planned_workspace_id=planned_ids.workspace_id if planned_ids is not None else None,
+            planned_workspace_id=planned_ids.workspace_id
+            if planned_ids is not None
+            else None,
             workspace_profile=workspace_profile,
             profile_update=profile_update,
         )
@@ -765,7 +784,9 @@ async def connect_endpoint(
             agent_type=payload.agent_type,
         )
     except AliasConflictError as exc:
-        raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+        raise HTTPException(
+            status_code=409, detail={"code": exc.code, "message": str(exc)}
+        ) from exc
     except ConnectIdentityRefusal as exc:
         return JSONResponse(
             status_code=403,
@@ -786,9 +807,7 @@ class TeamInfoResponse(BaseModel):
 
 
 @router.get("/team", response_model=TeamInfoResponse)
-async def get_team_info(
-    request: Request, db=Depends(get_db)
-) -> TeamInfoResponse:
+async def get_team_info(request: Request, db=Depends(get_db)) -> TeamInfoResponse:
     """Get team info from the authenticated certificate."""
 
     identity = await get_team_identity(request, db)

@@ -73,7 +73,18 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			status := v.Statuses["normal"]
 			worktree := strings.HasPrefix(scenario, "cert-only")
 			var revoked atomic.Bool
+			teamPublic, teamKey, keyErr := awid.GenerateKeypair()
+			if keyErr != nil {
+				t.Fatal(keyErr)
+			}
+			var receivedMember atomic.Pointer[awid.TeamCertificate]
 			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if cert := receivedMember.Load(); cert != nil && strings.HasSuffix(r.URL.Path, "/certificates/"+cert.CertificateID+"/status") {
+					if err := json.NewEncoder(w).Encode(awid.TeamCertificateStatus{TeamID: cert.Team, TeamDIDKey: awid.ComputeDIDKey(teamPublic), Status: "active"}); err != nil {
+						t.Error(err)
+					}
+					return
+				}
 				if r.URL.Path != "/v1/id-certificates/status" {
 					t.Errorf("unexpected registry call %s", r.URL.Path)
 					http.NotFound(w, r)
@@ -90,7 +101,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 			t.Setenv("AWID_REGISTRY_URL", registryURL)
 			serveRosterTXT(t, idCreateDNSRecordValue(v.Keys["root"].DIDKey, registryURL))
 			const team = "backend:example.com"
-			_, teamKey, _ := awid.GenerateKeypair()
+
 			previews, accepts := 0, 0
 			var origin string
 			service := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -203,6 +214,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 						}
 					}
 					cert, _ := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: team, MemberDIDKey: req.DID, Alias: req.Alias, IdentityScope: "local"})
+					receivedMember.Store(cert)
 					encoded, _ := awid.EncodeTeamCertificateHeader(cert)
 					json.NewEncoder(w).Encode(map[string]any{"team_id": "cloud-team", "team_slug": "backend", "namespace": "example.com", "identity_id": "cloud-" + req.Alias, "alias": req.Alias, "server_url": origin, "did": req.DID, "identity_scope": "local", "custody": "self", "created": true, "team_cert": encoded, "id_chain": chain, "registration_request": nil})
 				case "/v1/connect":

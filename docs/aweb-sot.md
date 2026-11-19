@@ -1167,7 +1167,14 @@ events. Answering a task (`POST /v1/tasks/{ref}/answer`) and cancelling an app
 request close the task and release its claims the same way. Closing a parent
 closes its open descendants without changing their claims, and deleting a task
 releases its claims through the `task.deleted` hook cascade rather than in the
-deleting transaction.
+deleting transaction. If deletion commits but the hook leaves claims held or
+cleanup cannot be verified, the response is `503 task_deleted_cleanup_pending`
+and says that deletion committed. Retrying the same team-scoped DELETE, by ID
+or task reference, retries the cleanup on the same deleted row. A notification
+failure after claims were released is reported separately as
+`task_deleted_notification_failed`; it does not mean the claims remain held.
+An embedding host holding events for an outer transaction retains the explicit
+`DEFERRED` outcome until that transaction commits.
 
 Task claims have no time-based expiry or implicit lease in v1.
 `GET /v1/tasks/active` includes `owner_last_seen_at` for claim-backed tasks.
@@ -1203,10 +1210,67 @@ metadata.
 `DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone local
 workspace and its bound agent row, plus releases any task claims held by
 the workspace. It returns `409` if the bound agent is global
-(global identities outlive workspaces) or if `last_seen_at` is
-within the 30-minute presence TTL and the workspace is not yet
-considered gone. The caller must present a team certificate for the same
+(global identities outlive workspaces), or when another member targets a
+workspace whose activity is within the presence TTL (30 minutes by default,
+configured by `AWEB_PRESENCE_TTL_SECONDS`). Activity is the newest workspace
+`last_seen_at`, Redis heartbeat timestamp, or currently valid grant-liveness
+timestamp. The lifecycle planner, cascade and agent list use the same activity
+owner, as do HTTP/MCP workspace status, online lists, dashboard snapshots and
+agent-health observations. Omitted heartbeat metadata is preserved; narrow
+heartbeats renew only the current metadata's Redis indices. Dashboard streams
+are read-only: the shared native/HOST maintenance operation reconciles presence
+without viewers, atomically recording a transition and publishing its canonical
+team event once. Unknown authority or a failed publication retains the previous
+projection and makes maintenance report failure. Malformed pub/sub frames are
+ignored by the reader and cannot create a presence transition.
+First connect and MCP heartbeats record `last_seen_at`; grant heartbeats
+keep their separate liveness records and do not overwrite shared metadata.
+Expired, revoked or stale grants do not keep a workspace live. Self cleanup
+remains immediate. The caller must present a team certificate for the same
 `team_id` as the target workspace.
+
+Repo deletion applies that same local-workspace cleanup owner to every workspace
+in the repo. It reports ineligible targets in `skipped_workspaces` with their
+refusal codes. A repo with skipped live or global workspaces stays available
+(`repo_deleted: false`); eligible cleanup still commits and emits the lifecycle
+events. Redis cleanup failures remain in the outbox and set `cleanup_pending`.
+
+Ordinary reservation release protects another active holder. Emergency
+`POST /v1/reservations/revoke` remains available to any team-certificate member,
+including an empty prefix to revoke all active team reservations. It records the
+verified actor in the operator audit transaction, emits the ordinary
+`reservation.released` event for each affected reservation and notifies its
+holder's workspace. Grants cannot invoke emergency revoke. Neither operation
+deletes coordination history.
+
+The Python coordination lifecycle owner accepts a named `AgentDisposition`
+(`PRESERVED`, `DELETED`, `RETIRED`, `PREPARED_REMOVAL`) in
+`LifecycleCascadeRequest.agent_disposition`. This is an embedding API, not an
+HTTP authority flag. `MemberStatus` is the one stored `agents.status`
+vocabulary; each disposition maps explicitly to its constants. Native state
+writes and coordination cleanup require a nonempty team ID. A released Python
+request that omits it must resolve exactly one canonical target team before
+writing; omission never authorizes cross-team cleanup. The existing local-delete
+boolean remains a compatibility adapter for released embedding callers while they convert to the named choice;
+it is removed in a separate change after those callers have migrated. Native
+workspace cleanup already uses the named choice. Explicit `target_agent_id`
+cleanup works with zero or already-deleted workspaces; `all_for_agent` cleans all active workspace paths. Claims on deleted
+paths, reservations, session admission leases, grant liveness, pending controls,
+status and presence are also cleared. Pending controls become consumed history;
+chat participants become left, retaining chat/mail/identity history. Cleanup
+locks the complete active/retained-claim workspace set in UUID order before
+claim/focus writes; claim acquisition/release uses the same workspace order.
+Bulk repo cleanup locks its combined target set before invoking each cleanup.
+
+`DELETED` and `RETIRED` set the corresponding native status and `deleted_at`.
+`PREPARED_REMOVAL` atomically requires the agent still be active, then sets
+`deleted_at` while retaining native status `active`, reports neither terminal identity flag, and denies ordinary native activity.
+The embedding host owns the exact removal ledger, restricted completion access,
+external certificate revocation and credential/custody disposal. Clearing grant
+liveness does not revoke retained session grants. `PRESERVED` leaves identity
+state unchanged while cleaning coordination. Named dispositions never destroy
+host credentials. The released archive option still archives native state;
+hosted custody cleanup belongs to the embedding host in that path as well.
 
 Lifecycle Redis effects are driven by `lifecycle_side_effect_outbox`, not by
 reconstructing deleted claim rows. Claim release captures workspace/team
@@ -1219,7 +1283,9 @@ commit and attempt replay before returning. A transaction-handle cascade
 returns its `LifecycleCascadeResult.outbox_operation_id`; an outer caller that
 requires synchronous post-commit effects invokes the canonical
 `replay_lifecycle_side_effects(..., operation_id=...)` only after its own
-transaction exits.
+transaction exits. A cascade with no side effects reports post-commit completion
+with no outbox operation and schedules no replay, including an idempotent
+workspace-removal retry inside an outer transaction.
 
 Replay locks pending rows and records each delivered effect so an ordinary
 retry does not publish it twice. Chat-waiting delivery uses a strict Redis path;

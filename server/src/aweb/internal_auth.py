@@ -2,18 +2,28 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Optional, TypedDict
 
-import re
-
 from fastapi import HTTPException
 from starlette.requests import Request
+
+from aweb.member_team_key import (
+    CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+    MemberStatus,
+    current_member,
+    read_member_projection,
+)
+
 from starlette.applications import Starlette
 from starlette.datastructures import State
+
+logger = logging.getLogger(__name__)
 
 _TEAM_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 _DOMAIN_INVALID_RE = re.compile(r"[:/\s]")
@@ -207,7 +217,7 @@ def parse_internal_auth_context(
     }
 
 
-async def resolve_internal_actor(aweb_db, internal: InternalAuthContext):
+async def read_internal_actor_projection(aweb_db, internal: InternalAuthContext):
     """The agent a trusted proxy forwards a request for.
 
     The proxy's signature says which actor the request is for; it does not say
@@ -223,16 +233,27 @@ async def resolve_internal_actor(aweb_db, internal: InternalAuthContext):
     agent row that is not an active member of that team: one that is retired,
     archived, deleted, or another team's.
     """
-    row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, team_id, status, deleted_at, alias, did_key, did_aw, address, identity_scope
-        FROM {{tables.agents}}
-        WHERE agent_id = $1
-        """,
-        uuid.UUID(internal["actor_id"]),
-    )
+    row = await read_member_projection(aweb_db, agent_id=internal["actor_id"])
     if row is None:
         return None
-    if row["team_id"] != internal["team_id"] or row["status"] != "active" or row["deleted_at"] is not None:
+    if (
+        row["team_id"] != internal["team_id"]
+        or row["status"] != MemberStatus.ACTIVE.value
+        or row["deleted_at"] is not None
+    ):
         raise HTTPException(status_code=403, detail="Agent not connected")
+    if not current_member(row):
+        logger.warning(
+            "Forwarded actor refused: membership not admitted under the current team key"
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+        )
     return row
+
+
+async def resolve_internal_actor(aweb_db, internal: InternalAuthContext):
+    """Return marker-verified actor metadata after current-member eligibility."""
+    row = await read_internal_actor_projection(aweb_db, internal)
+    return row.verified_identity() if row is not None else None

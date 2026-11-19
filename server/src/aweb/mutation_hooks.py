@@ -13,7 +13,7 @@ from uuid import UUID
 
 from redis.asyncio import Redis
 
-from .claims import fetch_workspace_aliases, release_task_claims, upsert_claim
+from .claims import fetch_workspace_aliases, release_task_claims
 from .event_types import MutationEventType
 from .events import (
     ChatMessageEvent,
@@ -66,15 +66,17 @@ logger = logging.getLogger(__name__)
 
 # These mutations remain available to host callbacks. They deliberately have no
 # native SSE projection; deletion has its separate coordination cascade.
-INTENTIONALLY_UNPUBLISHED_EVENTS = frozenset({
-    MutationEventType.TASK_UPDATED,
-    MutationEventType.TASK_COMMENT_ADDED,
-    MutationEventType.TASK_DEPENDENCY_ADDED,
-    MutationEventType.TASK_DEPENDENCY_REMOVED,
-    MutationEventType.AGENT_DELETED,
-    MutationEventType.TASK_DELETED,
-    MutationEventType.ROOM_MESSAGE_SENT,
-})
+INTENTIONALLY_UNPUBLISHED_EVENTS = frozenset(
+    {
+        MutationEventType.TASK_UPDATED,
+        MutationEventType.TASK_COMMENT_ADDED,
+        MutationEventType.TASK_DEPENDENCY_ADDED,
+        MutationEventType.TASK_DEPENDENCY_REMOVED,
+        MutationEventType.AGENT_DELETED,
+        MutationEventType.TASK_DELETED,
+        MutationEventType.ROOM_MESSAGE_SENT,
+    }
+)
 
 
 def _event_is_encrypted(ctx: dict) -> bool:
@@ -98,12 +100,14 @@ async def _enrich_identity_context(db_infra: "DatabaseInfra", context: dict) -> 
     agent_ids = [
         str(ctx.get(agent_key, "")).strip()
         for agent_key, _, stable_key in identity_fields
-        if not str(ctx.get(stable_key, "")).strip() and str(ctx.get(agent_key, "")).strip()
+        if not str(ctx.get(stable_key, "")).strip()
+        and str(ctx.get(agent_key, "")).strip()
     ]
     dids = [
         str(ctx.get(did_key, "")).strip()
         for _, did_key, stable_key in identity_fields
-        if not str(ctx.get(stable_key, "")).strip() and str(ctx.get(did_key, "")).strip()
+        if not str(ctx.get(stable_key, "")).strip()
+        and str(ctx.get(did_key, "")).strip()
     ]
 
     agent_meta = await lookup_identity_metadata_by_agent_id(db_infra, agent_ids)
@@ -134,7 +138,8 @@ async def _enrich_workspace_context(db_infra: "DatabaseInfra", context: dict) ->
     agent_ids = [
         str(ctx.get(agent_key, "")).strip()
         for workspace_key, agent_key, _team_key in workspace_fields
-        if not str(ctx.get(workspace_key, "")).strip() and str(ctx.get(agent_key, "")).strip()
+        if not str(ctx.get(workspace_key, "")).strip()
+        and str(ctx.get(agent_key, "")).strip()
     ]
     if not agent_ids:
         return ctx
@@ -163,7 +168,11 @@ async def _enrich_workspace_context(db_infra: "DatabaseInfra", context: dict) ->
             continue
         agent_id = str(ctx.get(agent_key, "")).strip()
         team_id = str(ctx.get(team_key, "")).strip()
-        workspace_id = workspace_by_agent_team.get((agent_id, team_id), "") if team_id else workspace_by_agent.get(agent_id, "")
+        workspace_id = (
+            workspace_by_agent_team.get((agent_id, team_id), "")
+            if team_id
+            else workspace_by_agent.get(agent_id, "")
+        )
         if workspace_id:
             ctx[workspace_key] = workspace_id
     return ctx
@@ -183,7 +192,9 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra) -> MutationCa
         def outcome() -> MutationDeliveryOutcome:
             """Return all reached failures while preserving first-failure order."""
             return MutationDeliveryOutcome(
-                status=MutationDeliveryStatus.FAILED if failures else MutationDeliveryStatus.DELIVERED,
+                status=MutationDeliveryStatus.FAILED
+                if failures
+                else MutationDeliveryStatus.DELIVERED,
                 failed_stages=tuple(dict.fromkeys(failures)),
             )
 
@@ -226,13 +237,17 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra) -> MutationCa
                 return outcome()
             if event is not None:
                 if not event.workspace_id:
-                    logger.warning("Skipping %s event: no workspace_id in context", event_type)
+                    logger.warning(
+                        "Skipping %s event: no workspace_id in context", event_type
+                    )
                 else:
                     try:
                         await _enrich(event, redis, db_infra, context)
                     except Exception:
                         logger.warning(
-                            "Enrichment failed for %s, publishing with defaults", event_type, exc_info=True
+                            "Enrichment failed for %s, publishing with defaults",
+                            event_type,
+                            exc_info=True,
                         )
                     await publish_event(redis, event)
             if team_event is not None:
@@ -296,10 +311,12 @@ async def _cascade_agent_deleted(
                 "errors": [error.code for error in result.errors],
             },
         )
-        raise MutationDeliveryFailed(MutationDeliveryOutcome(
-            status=MutationDeliveryStatus.FAILED,
-            failed_stages=(MutationDeliveryStage.AGENT_CASCADE,),
-        ))
+        raise MutationDeliveryFailed(
+            MutationDeliveryOutcome(
+                status=MutationDeliveryStatus.FAILED,
+                failed_stages=(MutationDeliveryStage.AGENT_CASCADE,),
+            )
+        )
 
     logger.info(
         "Cascaded agent deletion coordination cleanup "
@@ -316,9 +333,8 @@ async def _cascade_task_status_changed(
 ) -> None:
     """Announce the claim changes of a task status change.
 
-    When an aweb task moves to in_progress, create a task claim for the
-    acting workspace unless the status transaction already holds it, and
-    announce the claim. When it moves to any other status, announce the
+    When an aweb task moves to in_progress, announce the claim already acquired
+    by the task transaction. When it moves to any other status, announce the
     claims the status transaction released, which the context lists in
     ``released_claim_workspace_ids``; no claim is changed here.
     """
@@ -328,40 +344,18 @@ async def _cascade_task_status_changed(
     title = context.get("title")
     claim_preacquired = bool(context.get("claim_preacquired", False))
 
-    if not actor_workspace_id or not task_ref:
+    if not task_ref:
         return
-
     aweb_db = db_infra.get_manager("aweb")
-    workspace = await aweb_db.fetch_one(
-        """
-        SELECT team_id, alias, human_name
-        FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND deleted_at IS NULL
-        """,
-        actor_workspace_id,
+    task = await aweb_db.fetch_one(
+        "SELECT team_id FROM {{tables.tasks}} WHERE task_id=$1",
+        context.get("task_id"),
     )
-    if workspace is None:
-        logger.warning("task.status_changed: no workspace for actor %s", actor_workspace_id)
+    if task is None:
         return
-
-    team_id = str(workspace["team_id"])
-    alias = workspace["alias"]
-    if new_status == "in_progress":
-        if not claim_preacquired:
-            conflict = await upsert_claim(
-                db_infra,
-                team_id=team_id,
-                workspace_id=actor_workspace_id,
-                alias=alias,
-                human_name=workspace["human_name"] or "",
-                task_ref=task_ref,
-            )
-            if conflict:
-                logger.info(
-                    "Task %s already claimed by %s, skipping event", task_ref, conflict["alias"]
-                )
-                return
-
+    team_id = str(task["team_id"])
+    alias = context.get("actor_alias") or ""
+    if new_status == "in_progress" and claim_preacquired and actor_workspace_id:
         await publish_event(
             redis,
             TaskClaimedEvent(
@@ -381,9 +375,13 @@ async def _cascade_task_status_changed(
             ),
         )
     else:
-        claimant_ids = [str(cid) for cid in context.get("released_claim_workspace_ids") or []]
+        claimant_ids = [
+            str(cid) for cid in context.get("released_claim_workspace_ids") or []
+        ]
         if claimant_ids:
-            claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
+            claimant_aliases = await fetch_workspace_aliases(
+                db_infra, team_id, claimant_ids
+            )
             for cid in claimant_ids:
                 await publish_event(
                     redis,
@@ -404,20 +402,24 @@ async def _cascade_task_status_changed(
                     ),
                 )
 
-    await publish_event(
-        redis,
-        TaskStatusChangedEvent(
-            workspace_id=actor_workspace_id,
-            team_id=team_id,
-            task_ref=task_ref,
-            old_status=context.get("old_status", "") or "",
-            new_status=new_status,
-            title=title,
-            alias=alias,
-        ),
-    )
+    if actor_workspace_id:
+        await publish_event(
+            redis,
+            TaskStatusChangedEvent(
+                workspace_id=actor_workspace_id,
+                team_id=team_id,
+                task_ref=task_ref,
+                old_status=context.get("old_status", "") or "",
+                new_status=new_status,
+                title=title,
+                alias=alias,
+            ),
+        )
 
-async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context: dict) -> None:
+
+async def _cascade_task_deleted(
+    redis: Redis, db_infra: "DatabaseInfra", context: dict
+) -> None:
     """Release all claims on a deleted task and publish unclaim events.
 
     The task.deleted hook provides {task_id, task_ref}; use task_id as the
@@ -446,14 +448,18 @@ async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context
         )
 
     except Exception as exc:
-        raise MutationDeliveryFailed(MutationDeliveryOutcome(
-            status=MutationDeliveryStatus.FAILED,
-            failed_stages=(MutationDeliveryStage.TASK_CLAIM_RELEASE,),
-        )) from exc
+        raise MutationDeliveryFailed(
+            MutationDeliveryOutcome(
+                status=MutationDeliveryStatus.FAILED,
+                failed_stages=(MutationDeliveryStage.TASK_CLAIM_RELEASE,),
+            )
+        ) from exc
 
     try:
         if claimant_ids:
-            claimant_aliases = await fetch_workspace_aliases(db_infra, team_id, claimant_ids)
+            claimant_aliases = await fetch_workspace_aliases(
+                db_infra, team_id, claimant_ids
+            )
             for cid in claimant_ids:
                 await publish_event(
                     redis,
@@ -475,10 +481,12 @@ async def _cascade_task_deleted(redis: Redis, db_infra: "DatabaseInfra", context
                 )
 
     except Exception as exc:
-        raise MutationDeliveryFailed(MutationDeliveryOutcome(
-            status=MutationDeliveryStatus.FAILED,
-            failed_stages=(MutationDeliveryStage.PUBLICATION,),
-        )) from exc
+        raise MutationDeliveryFailed(
+            MutationDeliveryOutcome(
+                status=MutationDeliveryStatus.FAILED,
+                failed_stages=(MutationDeliveryStage.PUBLICATION,),
+            )
+        ) from exc
 
 
 async def _alias_for(redis: Redis, workspace_id: str) -> str:
@@ -489,7 +497,9 @@ async def _alias_for(redis: Redis, workspace_id: str) -> str:
     return presence.get("alias", "")
 
 
-async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra, context: dict) -> None:
+async def _enrich(
+    event: Event, redis: Redis, db_infra: DatabaseInfra, context: dict
+) -> None:
     """Add aliases, subjects, and previews via Redis/DB lookups."""
 
     if isinstance(event, MessageDeliveredEvent):
@@ -505,7 +515,9 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra, context: 
             )
             if row:
                 event.from_alias = row["from_alias"]
-                event.content_mode = str(row.get("content_mode") or "legacy_plaintext_v1")
+                event.content_mode = str(
+                    row.get("content_mode") or "legacy_plaintext_v1"
+                )
                 event.encrypted = event.content_mode == "encrypted_v2"
                 event.subject = "" if event.encrypted else (row["subject"] or "")
 
@@ -546,46 +558,94 @@ async def _enrich(event: Event, redis: Redis, db_infra: DatabaseInfra, context: 
         else:
             event.alias = await _alias_for(redis, event.workspace_id)
 
-    elif isinstance(event, (ReservationAcquiredEvent, ReservationReleasedEvent, ReservationRenewedEvent)):
+    elif isinstance(
+        event,
+        (ReservationAcquiredEvent, ReservationReleasedEvent, ReservationRenewedEvent),
+    ):
         event.alias = await _alias_for(redis, event.workspace_id)
 
 
 def _workspace_mail_sent(ctx: dict) -> Event | None:
     encrypted = _event_is_encrypted(ctx)
-    return MessageDeliveredEvent(workspace_id=ctx.get('to_agent_id', ''), message_id=ctx.get('message_id', ''), from_workspace=ctx.get('from_agent_id', ''), subject=_event_subject(ctx), content_mode=str(ctx.get('content_mode') or 'legacy_plaintext_v1'), encrypted=encrypted)
+    return MessageDeliveredEvent(
+        workspace_id=ctx.get("to_agent_id", ""),
+        message_id=ctx.get("message_id", ""),
+        from_workspace=ctx.get("from_agent_id", ""),
+        subject=_event_subject(ctx),
+        content_mode=str(ctx.get("content_mode") or "legacy_plaintext_v1"),
+        encrypted=encrypted,
+    )
 
 
 def _workspace_mail_acknowledged(ctx: dict) -> Event | None:
     encrypted = _event_is_encrypted(ctx)
-    return MessageAcknowledgedEvent(workspace_id=ctx.get('agent_id', ''), message_id=ctx.get('message_id', ''), subject=_event_subject(ctx), content_mode=str(ctx.get('content_mode') or 'legacy_plaintext_v1'), encrypted=encrypted)
+    return MessageAcknowledgedEvent(
+        workspace_id=ctx.get("agent_id", ""),
+        message_id=ctx.get("message_id", ""),
+        subject=_event_subject(ctx),
+        content_mode=str(ctx.get("content_mode") or "legacy_plaintext_v1"),
+        encrypted=encrypted,
+    )
 
 
 def _workspace_chat_message_sent(ctx: dict) -> Event | None:
-    return ChatMessageEvent(workspace_id=ctx.get('from_agent_id', ''), session_id=ctx.get('session_id', ''), message_id=ctx.get('message_id', ''), to_aliases=list(ctx.get('to_aliases') or []), preview=str(ctx.get('preview') or ''))
+    return ChatMessageEvent(
+        workspace_id=ctx.get("from_agent_id", ""),
+        session_id=ctx.get("session_id", ""),
+        message_id=ctx.get("message_id", ""),
+        to_aliases=list(ctx.get("to_aliases") or []),
+        preview=str(ctx.get("preview") or ""),
+    )
 
 
 def _workspace_task_created(ctx: dict) -> Event | None:
-    return TaskCreatedEvent(workspace_id=ctx.get('actor_workspace_id', ''), team_id=ctx.get('team_id', ''), task_ref=ctx.get('task_ref', ''), title=ctx.get('title'))
+    return TaskCreatedEvent(
+        workspace_id=ctx.get("actor_workspace_id", ""),
+        team_id=ctx.get("team_id", ""),
+        task_ref=ctx.get("task_ref", ""),
+        title=ctx.get("title"),
+    )
 
 
 def _workspace_task_claimed(ctx: dict) -> Event | None:
-    return TaskClaimedEvent(workspace_id=ctx.get('actor_workspace_id', '') or ctx.get('workspace_id', ''), task_ref=ctx.get('task_ref', ''), alias=ctx.get('actor_alias', '') or ctx.get('alias', ''), title=ctx.get('title'))
+    return TaskClaimedEvent(
+        workspace_id=ctx.get("actor_workspace_id", "") or ctx.get("workspace_id", ""),
+        task_ref=ctx.get("task_ref", ""),
+        alias=ctx.get("actor_alias", "") or ctx.get("alias", ""),
+        title=ctx.get("title"),
+    )
 
 
 def _workspace_task_unclaimed(ctx: dict) -> Event | None:
-    return TaskUnclaimedEvent(workspace_id=ctx.get('actor_workspace_id', '') or ctx.get('workspace_id', ''), task_ref=ctx.get('task_ref', ''), alias=ctx.get('actor_alias', '') or ctx.get('alias', ''), title=ctx.get('title'))
+    return TaskUnclaimedEvent(
+        workspace_id=ctx.get("actor_workspace_id", "") or ctx.get("workspace_id", ""),
+        task_ref=ctx.get("task_ref", ""),
+        alias=ctx.get("actor_alias", "") or ctx.get("alias", ""),
+        title=ctx.get("title"),
+    )
 
 
 def _workspace_reservation_acquired(ctx: dict) -> Event | None:
-    return ReservationAcquiredEvent(workspace_id=ctx.get('holder_workspace_id', ''), paths=[ctx['resource_key']] if ctx.get('resource_key') else [], ttl_seconds=ctx.get('ttl_seconds', 0))
+    return ReservationAcquiredEvent(
+        workspace_id=ctx.get("holder_workspace_id", ""),
+        paths=[ctx["resource_key"]] if ctx.get("resource_key") else [],
+        ttl_seconds=ctx.get("ttl_seconds", 0),
+    )
 
 
 def _workspace_reservation_released(ctx: dict) -> Event | None:
-    return ReservationReleasedEvent(workspace_id=ctx.get('holder_workspace_id', ''), paths=[ctx['resource_key']] if ctx.get('resource_key') else [])
+    return ReservationReleasedEvent(
+        workspace_id=ctx.get("holder_workspace_id", ""),
+        paths=[ctx["resource_key"]] if ctx.get("resource_key") else [],
+    )
 
 
 def _workspace_reservation_renewed(ctx: dict) -> Event | None:
-    return ReservationRenewedEvent(workspace_id=ctx.get('holder_workspace_id', ''), paths=[ctx['resource_key']] if ctx.get('resource_key') else [], ttl_seconds=ctx.get('ttl_seconds', 0))
+    return ReservationRenewedEvent(
+        workspace_id=ctx.get("holder_workspace_id", ""),
+        paths=[ctx["resource_key"]] if ctx.get("resource_key") else [],
+        ttl_seconds=ctx.get("ttl_seconds", 0),
+    )
 
 
 _WORKSPACE_BUILDERS: dict[str, Callable[[dict], Event | None]] = {
@@ -623,63 +683,118 @@ def _team_agent_status(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
         return None
-    return TeamAgentStatusEvent(team_id=team_id, agent_id=str(ctx.get('agent_id', '') or ''), alias=str(ctx.get('alias', '') or ''), reachable=str(ctx.get('reachable', '') or ''), reason_code=ctx.get('reason_code'), reason_text=ctx.get('reason_text'), fixing_by=ctx.get('fixing_by'), fixing_text=ctx.get('fixing_text'), observed_at=str(ctx.get('observed_at', '') or ''), valid_until=str(ctx.get('valid_until', '') or ''))
+    return TeamAgentStatusEvent(
+        team_id=team_id,
+        agent_id=str(ctx.get("agent_id", "") or ""),
+        alias=str(ctx.get("alias", "") or ""),
+        reachable=str(ctx.get("reachable", "") or ""),
+        reason_code=ctx.get("reason_code"),
+        reason_text=ctx.get("reason_text"),
+        fixing_by=ctx.get("fixing_by"),
+        fixing_text=ctx.get("fixing_text"),
+        observed_at=str(ctx.get("observed_at", "") or ""),
+        valid_until=str(ctx.get("valid_until", "") or ""),
+    )
 
 
 def _team_task_created(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
         return None
-    return TeamTaskCreatedEvent(team_id=team_id, task_ref=str(ctx.get('task_ref', '')).strip(), alias=str(ctx.get('actor_alias', '') or ''), title=str(ctx.get('title', '') or ''), status='open', assignee_alias=ctx.get('assignee_alias'))
+    return TeamTaskCreatedEvent(
+        team_id=team_id,
+        task_ref=str(ctx.get("task_ref", "")).strip(),
+        alias=str(ctx.get("actor_alias", "") or ""),
+        title=str(ctx.get("title", "") or ""),
+        status="open",
+        assignee_alias=ctx.get("assignee_alias"),
+    )
 
 
 def _team_task_status_changed(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
         return None
-    return TeamTaskStatusChangedEvent(team_id=team_id, task_ref=str(ctx.get('task_ref', '')).strip(), alias=str(ctx.get('actor_alias', '') or ''), title=str(ctx.get('title', '') or ''), old_status=str(ctx.get('old_status', '') or ''), new_status=str(ctx.get('new_status', '') or ''), assignee_alias=ctx.get('assignee_alias'))
+    return TeamTaskStatusChangedEvent(
+        team_id=team_id,
+        task_ref=str(ctx.get("task_ref", "")).strip(),
+        alias=str(ctx.get("actor_alias", "") or ""),
+        title=str(ctx.get("title", "") or ""),
+        old_status=str(ctx.get("old_status", "") or ""),
+        new_status=str(ctx.get("new_status", "") or ""),
+        assignee_alias=ctx.get("assignee_alias"),
+    )
 
 
 def _team_task_assignee_changed(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
         return None
-    return TeamTaskAssigneeChangedEvent(team_id=team_id, task_ref=str(ctx.get('task_ref', '')).strip(), alias=str(ctx.get('actor_alias', '') or ''), title=str(ctx.get('title', '') or ''), old_assignee_alias=ctx.get('old_assignee_alias'), assignee_alias=ctx.get('assignee_alias'))
+    return TeamTaskAssigneeChangedEvent(
+        team_id=team_id,
+        task_ref=str(ctx.get("task_ref", "")).strip(),
+        alias=str(ctx.get("actor_alias", "") or ""),
+        title=str(ctx.get("title", "") or ""),
+        old_assignee_alias=ctx.get("old_assignee_alias"),
+        assignee_alias=ctx.get("assignee_alias"),
+    )
 
 
 def _team_task_claimed(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
         return None
-    return TeamTaskClaimedEvent(team_id=team_id, task_ref=str(ctx.get('task_ref', '')).strip(), alias=str(ctx.get('actor_alias', '') or ctx.get('alias', '') or ''), title=str(ctx.get('title', '') or ''))
+    return TeamTaskClaimedEvent(
+        team_id=team_id,
+        task_ref=str(ctx.get("task_ref", "")).strip(),
+        alias=str(ctx.get("actor_alias", "") or ctx.get("alias", "") or ""),
+        title=str(ctx.get("title", "") or ""),
+    )
 
 
 def _team_task_unclaimed(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
         return None
-    return TeamTaskUnclaimedEvent(team_id=team_id, task_ref=str(ctx.get('task_ref', '')).strip(), alias=str(ctx.get('actor_alias', '') or ctx.get('alias', '') or ''), title=str(ctx.get('title', '') or ''))
+    return TeamTaskUnclaimedEvent(
+        team_id=team_id,
+        task_ref=str(ctx.get("task_ref", "")).strip(),
+        alias=str(ctx.get("actor_alias", "") or ctx.get("alias", "") or ""),
+        title=str(ctx.get("title", "") or ""),
+    )
 
 
 def _team_reservation_acquired(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
         return None
-    return TeamReservationAcquiredEvent(team_id=team_id, alias=str(ctx.get('alias', '') or ctx.get('holder_alias', '')).strip(), paths=_paths_from_context(ctx))
+    return TeamReservationAcquiredEvent(
+        team_id=team_id,
+        alias=str(ctx.get("alias", "") or ctx.get("holder_alias", "")).strip(),
+        paths=_paths_from_context(ctx),
+    )
 
 
 def _team_reservation_released(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
         return None
-    return TeamReservationReleasedEvent(team_id=team_id, alias=str(ctx.get('alias', '') or ctx.get('holder_alias', '')).strip(), paths=_paths_from_context(ctx))
+    return TeamReservationReleasedEvent(
+        team_id=team_id,
+        alias=str(ctx.get("alias", "") or ctx.get("holder_alias", "")).strip(),
+        paths=_paths_from_context(ctx),
+    )
 
 
 def _team_reservation_renewed(ctx: dict) -> TeamEvent | None:
     team_id = _team_id_from_context(ctx)
     if not team_id:
         return None
-    return TeamReservationRenewedEvent(team_id=team_id, alias=str(ctx.get('alias', '') or ctx.get('holder_alias', '')).strip(), paths=_paths_from_context(ctx))
+    return TeamReservationRenewedEvent(
+        team_id=team_id,
+        alias=str(ctx.get("alias", "") or ctx.get("holder_alias", "")).strip(),
+        paths=_paths_from_context(ctx),
+    )
 
 
 _TEAM_BUILDERS: dict[str, Callable[[dict], TeamEvent | None]] = {

@@ -2313,6 +2313,8 @@ transition. When a real local home has lost signing.key, --generate-new-key crea
 and retains a replacement key without overwriting an existing one. Hosted teams require
 the pending AC owner/admin integration or operator support.
 
+The new key will not have the old key's mail or chat conversations.
+
 Flags:
 - `--aweb-url string Aweb service URL override`
 - `--generate-new-key Generate a replacement signing key in --home when signing.key is absent (cannot be combined with --new-did-key)`

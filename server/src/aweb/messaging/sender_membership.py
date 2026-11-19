@@ -1,23 +1,44 @@
 """Read-time delivery-team membership, independent of message claims."""
-from typing import Literal
+
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+import logging
+from enum import StrEnum
 from uuid import UUID
 
 from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from aweb.member_team_key import member_key_columns_sql, member_key_current
-from aweb.team_auth_deps import _get_revoked_certificates
+from aweb.member_team_key import member_key_columns_sql, current_member
+from aweb.certificate_registration import (
+    configured_registration_mode,
+    read_certificate_registration,
+)
+from aweb.application_state import application_registry_client
+from aweb.team_registry import request_revoked_certificates
+
+
+logger = logging.getLogger(__name__)
+
+
+class SenderMembershipState(StrEnum):
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    UNKNOWN = "unknown"
 
 
 class SenderMembership(BaseModel):
     team_id: str
     member_did_aw: str | None = None
-    state: Literal["active", "inactive", "unknown"] = "unknown"
+    state: SenderMembershipState = SenderMembershipState.UNKNOWN
 
 
 async def sender_memberships(
-    request: Request | None, db, rows, *, member_rows: list[dict] | None = None,
+    request: Request | None,
+    db,
+    rows,
+    *,
+    member_rows: list[dict] | None = None,
 ) -> dict[tuple[str, str], SenderMembership]:
     """Project only stored sender IDs in their stored delivery teams.
 
@@ -33,10 +54,16 @@ async def sender_memberships(
     ids = [UUID(agent) for team, agent in keys if team and agent]
     if not ids:
         return result
-    members = member_rows if member_rows is not None else await db.get_manager("aweb").fetch_all(
-        "SELECT a.agent_id, a.team_id, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw, "
-        "a.status, a.deleted_at, a.certificate_id, " + member_key_columns_sql("a") + " "
-        "FROM {{tables.agents}} AS a WHERE a.agent_id = ANY($1::uuid[])", ids,
+    members = (
+        member_rows
+        if member_rows is not None
+        else await db.get_manager("aweb").fetch_all(
+            f"""SELECT a.agent_id, a.team_id, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent="a")} AS did_aw, a.status, a.deleted_at, a.certificate_id, """
+            + member_key_columns_sql("a")
+            + " "
+            "FROM {{tables.agents}} AS a WHERE a.agent_id = ANY($1::uuid[])",
+            ids,
+        )
     )
     team_certificates: dict[str, list[str]] = {}
     for member in members:
@@ -52,8 +79,8 @@ async def sender_memberships(
             continue
         projection = result[key]
         projection.member_did_aw = str(member.get("did_aw") or "").strip() or None
-        if member["status"] != "active" or member.get("deleted_at") is not None or not member_key_current(member):
-            projection.state = "inactive"
+        if not current_member(member):
+            projection.state = SenderMembershipState.INACTIVE
             continue
         certificate_id = str(member.get("certificate_id") or "").strip()
         if not certificate_id:
@@ -63,13 +90,30 @@ async def sender_memberships(
             try:
                 parse_team_id(team)
             except ValueError:
+                logger.warning("Sender membership has invalid team scope", exc_info=True)
                 continue
             try:
-                revocations[team] = await _get_revoked_certificates(request, team, certificate_ids=team_certificates[team])
+                revocations[team] = await request_revoked_certificates(
+                    request, team, certificate_ids=team_certificates[team]
+                )
             except HTTPException:
-                # The existing revocation helper logs dependency failures.
+                logger.warning("Sender certificate revocations unavailable", exc_info=True)
                 revocations[team] = None
         revoked = revocations[team]
-        if revoked is not None:
-            projection.state = "inactive" if certificate_id in revoked else "active"
+        if revoked is None:
+            continue
+        if certificate_id in revoked:
+            projection.state = SenderMembershipState.INACTIVE
+            continue
+        registration = await read_certificate_registration(
+            registry_client=application_registry_client(request.app.state),
+            team_id=team,
+            certificate_id=certificate_id,
+            mode=configured_registration_mode(),
+            request=request,
+        )
+        if registration.allows_registration:
+            projection.state = SenderMembershipState.ACTIVE
+        elif registration.unavailable_cause is None:
+            projection.state = SenderMembershipState.INACTIVE
     return result

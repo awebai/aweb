@@ -129,6 +129,7 @@ class TaskStatusChangedContext(CoordinationContext):
     actor_agent_id: str | None | AbsentContextField = AbsentContextField.ABSENT
     actor_alias: str | None | AbsentContextField = AbsentContextField.ABSENT
     actor_did_aw: str | None | AbsentContextField = AbsentContextField.ABSENT
+    actor_workspace_id: str | AbsentContextField = AbsentContextField.ABSENT
     claim_preacquired: bool | AbsentContextField = AbsentContextField.ABSENT
     released_claim_workspace_ids: list[str] | AbsentContextField = (
         AbsentContextField.ABSENT

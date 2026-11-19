@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 from urllib.parse import quote
 
 from redis.asyncio import Redis
+from redis.exceptions import WatchError
 
 from .coordination.roles import ROLE_MAX_LENGTH, is_valid_role, normalize_role
 
@@ -76,7 +77,7 @@ async def update_agent_presence(
     team_id: Optional[str] = None,
     repo_id: Optional[str] = None,
     agent_id: Optional[str] = None,
-    member_email: str = "",
+    member_email: Optional[str] = None,
     status: str = "active",
     current_branch: Optional[str] = None,
     role: Optional[str] = None,
@@ -97,28 +98,33 @@ async def update_agent_presence(
         role: Brief description of workspace purpose (max 50 chars).
         canonical_origin: Normalized repo origin (e.g. "github.com/org/repo").
         timezone: IANA timezone (e.g. "Europe/Madrid"). Preserved when None.
-        ttl_seconds: How long until presence expires if not refreshed. Default 5 minutes.
+        ttl_seconds: How long until presence expires if not refreshed. Defaults to the configured heartbeat window at each serving caller.
     """
     workspace_id = workspace_id or agent_id
     if not workspace_id:
         raise ValueError("workspace_id or agent_id is required")
 
-    key = _presence_key(workspace_id)
     now = datetime.now(timezone_mod.utc).isoformat()
 
     fields = {
         "workspace_id": workspace_id,
         "alias": alias,
-        "human_name": human_name or "",
         "team_id": team_id or "",
-        "repo_id": repo_id or "",
-        "member_email": member_email,
-        "program": program or "",
-        "model": model or "",
         "status": status,
-        "current_branch": current_branch or "",
         "last_seen": now,
     }
+    # None means this heartbeat did not carry the coordinate. An explicit
+    # empty string still clears it; narrow heartbeats cannot erase richer ones.
+    for name, value in {
+        "human_name": human_name,
+        "repo_id": repo_id,
+        "member_email": member_email,
+        "program": program,
+        "model": model,
+        "current_branch": current_branch,
+    }.items():
+        if value is not None:
+            fields[name] = value
     if canonical_origin is not None:
         fields["canonical_origin"] = canonical_origin
     if role is not None and len(role) <= ROLE_MAX_LENGTH and is_valid_role(role):
@@ -126,40 +132,72 @@ async def update_agent_presence(
     if timezone is not None:
         fields["timezone"] = timezone
 
-    # Primary, indices, and their reverse cleanup coordinates commit in one
-    # Redis transaction. The coordinate hash accumulates every index key ever
-    # written for this presence lifetime, including historical repo/branch and
-    # alias values. Coordinates are intentionally durable until lifecycle
-    # cleanup; shared set TTLs can be refreshed forever by other workspaces, so
-    # no finite coordinate TTL can safely outlive an individual membership.
-    index_ttl = ttl_seconds * 2
-    coordinates_key = _presence_coordinates_key(workspace_id)
-    all_idx_key = _all_workspaces_index_key()
-    set_indices = [all_idx_key]
-    alias_indices: list[str] = []
-    if team_id:
-        set_indices.append(_team_workspaces_index_key(team_id))
-        alias_indices.append(_alias_index_key(team_id, alias))
-    if repo_id:
-        set_indices.append(_repo_workspaces_index_key(repo_id))
-        if current_branch:
-            set_indices.append(_branch_workspaces_index_key(repo_id, current_branch))
-
-    reverse_coordinates = {f"set:{index_key}": "1" for index_key in set_indices}
-    reverse_coordinates.update({f"alias:{index_key}": workspace_id for index_key in alias_indices})
-    pipe = redis.pipeline(transaction=True)
-    pipe.hset(key, mapping=fields)
-    pipe.expire(key, ttl_seconds)
-    for index_key in set_indices:
-        pipe.sadd(index_key, workspace_id)
-        pipe.expire(index_key, index_ttl)
-    for index_key in alias_indices:
-        pipe.set(index_key, workspace_id, ex=index_ttl)
-    pipe.hset(coordinates_key, mapping=reverse_coordinates)
-    pipe.persist(coordinates_key)
-    await pipe.execute()
+    await _store_presence_fields(
+        redis,
+        workspace_id=workspace_id,
+        fields=fields,
+        ttl_seconds=ttl_seconds,
+    )
 
     return now
+
+
+async def _store_presence_fields(
+    redis: Redis,
+    *,
+    workspace_id: str,
+    fields: dict[str, str],
+    ttl_seconds: int,
+) -> None:
+    """Commit one metadata generation and its current indices atomically."""
+    key = _presence_key(workspace_id)
+    # Read the same generation whose optional coordinates we preserve. Only its
+    # current repo/branch is renewed; cleanup coordinates also retain historical
+    # indices so lifecycle can remove them without scanning Redis.
+    index_ttl = ttl_seconds * 2
+    coordinates_key = _presence_coordinates_key(workspace_id)
+    for _ in range(4):
+        async with redis.pipeline(transaction=True) as pipe:
+            try:
+                await pipe.watch(key)
+                current = {**await pipe.hgetall(key), **fields}
+                set_indices = [_all_workspaces_index_key()]
+                alias_indices = []
+                if current.get("team_id"):
+                    set_indices.append(_team_workspaces_index_key(current["team_id"]))
+                    alias_indices.append(
+                        _alias_index_key(current["team_id"], current["alias"])
+                    )
+                if current.get("repo_id"):
+                    set_indices.append(_repo_workspaces_index_key(current["repo_id"]))
+                    if current.get("current_branch"):
+                        set_indices.append(
+                            _branch_workspaces_index_key(
+                                current["repo_id"], current["current_branch"]
+                            )
+                        )
+                reverse_coordinates = {
+                    f"set:{index_key}": "1" for index_key in set_indices
+                }
+                reverse_coordinates.update(
+                    {f"alias:{index_key}": workspace_id for index_key in alias_indices}
+                )
+                pipe.multi()
+                pipe.hset(key, mapping=fields)
+                pipe.expire(key, ttl_seconds)
+                for index_key in set_indices:
+                    pipe.sadd(index_key, workspace_id)
+                    pipe.expire(index_key, index_ttl)
+                for index_key in alias_indices:
+                    pipe.set(index_key, workspace_id, ex=index_ttl)
+                pipe.hset(coordinates_key, mapping=reverse_coordinates)
+                pipe.persist(coordinates_key)
+                await pipe.execute()
+                break
+            except WatchError:
+                continue
+    else:
+        raise RuntimeError("Concurrent workspace heartbeats did not converge")
 
 
 async def get_agent_presence(
@@ -276,7 +314,8 @@ async def _filter_valid_workspace_ids(
 
     # Normalize to strings
     workspace_ids = [
-        ws_id.decode("utf-8") if isinstance(ws_id, bytes) else ws_id for ws_id in members
+        ws_id.decode("utf-8") if isinstance(ws_id, bytes) else ws_id
+        for ws_id in members
     ]
 
     # Batch EXISTS checks with pipeline (N round-trips → 1)
@@ -397,12 +436,14 @@ async def clear_workspace_presence(
     deleted_count = 0
     for ws_id in workspace_ids:
         await recover_pre_coordinate_indices(ws_id)
-        deleted_count += int(await redis.eval(
-            cleanup_script,
-            2,
-            _presence_key(ws_id),
-            _presence_coordinates_key(ws_id),
-            ws_id,
-            _all_workspaces_index_key(),
-        ))
+        deleted_count += int(
+            await redis.eval(
+                cleanup_script,
+                2,
+                _presence_key(ws_id),
+                _presence_coordinates_key(ws_id),
+                ws_id,
+                _all_workspaces_index_key(),
+            )
+        )
     return deleted_count

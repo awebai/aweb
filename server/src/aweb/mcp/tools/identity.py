@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 import json
 
 from aweb.mcp.auth import get_auth
@@ -14,9 +16,9 @@ async def whoami(db_infra) -> str:
 
     if auth.team_id:
         row = await aweb_db.fetch_one(
-            """
-            SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address
-            FROM {{tables.agents}}
+            f"""
+            SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address
+            FROM {{{{tables.agents}}}}
             WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
             """,
             auth.team_id,
@@ -24,9 +26,9 @@ async def whoami(db_infra) -> str:
         )
     else:
         row = await aweb_db.fetch_one(
-            """
-            SELECT CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address
-            FROM {{tables.agents}}
+            f"""
+            SELECT {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address
+            FROM {{{{tables.agents}}}}
             WHERE did_key = $1 AND deleted_at IS NULL
             ORDER BY created_at DESC
             LIMIT 1

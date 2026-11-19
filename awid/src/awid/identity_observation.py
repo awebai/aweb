@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Literal
 
@@ -29,8 +30,10 @@ class IdentityObservationRefused(ValueError):
     """A binding mismatch or unavailable evidence; no web-framework dependency."""
 
     def __init__(
-        self, code: Literal["identity_binding_mismatch", "identity_binding_unavailable"],
-        *, retry_after_seconds: float | None = None,
+        self,
+        code: Literal["identity_binding_mismatch", "identity_binding_unavailable"],
+        *,
+        retry_after_seconds: float | None = None,
     ) -> None:
         if code not in ("identity_binding_mismatch", "identity_binding_unavailable"):
             raise ValueError("unknown identity observation refusal")
@@ -122,6 +125,14 @@ async def observe_identity_binding(
     )
 
 
+class IdentityKind(StrEnum):
+    """An exact-subject verifier's kind tag; it carries no authority itself."""
+
+    HUMAN = "human"
+    AGENT = "agent"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class IdentityKindObservation:
     """Trusted in-process verifier output, not a request DTO or credential."""
@@ -134,8 +145,19 @@ class IdentityKindObservation:
     evidence_age_seconds: float | None = field(default=None, compare=False)
 
     @property
+    def kind(self) -> IdentityKind:
+        """Name only verified kind; preserve the complete observation as proof."""
+        if self.result["identity_valid"] is not True:
+            return IdentityKind.UNKNOWN
+        if self.result["kind"] == IdentityKind.HUMAN.value:
+            return IdentityKind.HUMAN
+        if self.result["kind"] == IdentityKind.AGENT.value:
+            return IdentityKind.AGENT
+        return IdentityKind.UNKNOWN
+
+    @property
     def is_human(self) -> bool:
-        return self.result["identity_valid"] is True and self.result["kind"] == "human"
+        return self.kind is IdentityKind.HUMAN
 
 
 def unverified_kind(reason: str) -> dict[str, Any]:
@@ -143,9 +165,7 @@ def unverified_kind(reason: str) -> dict[str, Any]:
     return {
         "outcome": "unavailable" if unavailable else "unknown",
         "human_id": None,
-        "identity_valid": None
-        if unavailable or reason == "unregistered_identity"
-        else False,
+        "identity_valid": None if unavailable or reason == "unregistered_identity" else False,
         "kind": None,
         "reason": reason,
     }
@@ -168,10 +188,7 @@ async def observe_identity_kind(
         if binding.did_aw and enrollment is None:
             result = unverified_kind("evidence_unavailable")
         elif (
-            binding.did_aw
-            and enrollment is not None
-            and not enrollment.enrolled
-            and bundle is None
+            binding.did_aw and enrollment is not None and not enrollment.enrolled and bundle is None
         ):
             result = unverified_kind("unregistered_identity")
         else:
@@ -186,16 +203,12 @@ async def observe_identity_kind(
                 cached_evidence = getattr(registry_client, "id_chain_evidence", None)
                 if callable(cached_evidence):
                     try:
-                        evidence = await cached_evidence(
-                            bundle, subject, domain=plan["domain"]
-                        )
+                        evidence = await cached_evidence(bundle, subject, domain=plan["domain"])
                     except Exception:
                         logger.warning("ID-tree cached evidence failed", exc_info=True)
             if evidence is not None:
                 evidence_age_seconds = evidence.age_seconds
-            result = verify_id_chain(
-                bundle, subject=subject, evidence=evidence, domain=domain
-            )
+            result = verify_id_chain(bundle, subject=subject, evidence=evidence, domain=domain)
     except IDCertificateError as exc:
         result = unverified_kind(exc.code)
     return IdentityKindObservation(
