@@ -74,6 +74,19 @@ def sent_identity(sent, kind, conversation=None):
     return message_id, thread
 
 
+def identity_parent_arguments(help_output: str) -> tuple[str, ...]:
+    """Keep each lane on its own CLI (docs/user-path-e2e.md, actor setup)."""
+    flags = set(re.findall(r"^\s+--([a-z][a-z-]*)(?:\s|$)", help_output, re.M))
+    if (
+        "aw id create [flags]" not in help_output
+        or not {"domain", "name", "registry"} <= flags
+    ):
+        raise RuntimeError(
+            "Unrecognized identity creation help. Inspect the selected CLI's id create --help and rerun."
+        )
+    return ("--root-parent",) if "root-parent" in flags else ()
+
+
 class Lane:
     def __init__(self, name, binary):
         self.name, self.binary = name, binary
@@ -119,6 +132,15 @@ class Lane:
             and tuple(map(int, match.groups())) <= (1, 36, 54)
         )
         (self.root / "version.txt").write_text(version_output)
+        self.identity_create_help = subprocess.run(
+            [self.binary, "id", "create", "--help"],
+            env=self.environment,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        ).stdout
+        (self.root / "identity-create-help.txt").write_text(self.identity_create_help)
 
     def capture_failure(self, case, sender, receiver, kind, encrypted):
         """Retain public bindings, never private identity files, on a failed path."""
@@ -384,7 +406,7 @@ class Lane:
                 name,
                 "--registry",
                 REGISTRY,
-                "--root-parent",
+                *identity_parent_arguments(self.identity_create_help),
             )
             actor["address"] = actor["domain"] + "/" + name
             if name == "nonresident":

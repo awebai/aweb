@@ -14,7 +14,9 @@ help:
 	@echo "  clean   Remove built binary"
 
 build:
-	$(GOENV) go build -o aw ./cmd/aw
+	@source_commit=$$(git rev-parse --verify HEAD) || { \
+		echo "Cannot identify the source commit. Build from a Git checkout with a committed HEAD." >&2; exit 1; }; \
+	$(GOENV) go build -ldflags "-X main.commit=$$source_commit" -o aw ./cmd/aw
 
 test:
 	$(GOENV) go test ./...
