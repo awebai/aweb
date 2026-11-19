@@ -29,7 +29,11 @@ An inherited database URL or host/port that names a non-loopback host or port
 It does not attach to an existing host database. Each xdist worker binds its own
 ports before fixtures import their database settings.
 
-The target requires a local Docker socket and delegates its free-disk check to
+The target resolves Docker's context-over-host precedence before any daemon
+operation, refuses remote endpoints, and pins the selected Unix socket for disk
+inspection, provisioning, readback, suite children and cleanup. A later change
+to Docker's current context cannot redirect these operations. It delegates the
+free-disk check to
 `candidate-docker-gate.sh --check-disk`. A refusal stops the command. Reclaim
 unused Docker objects with `docker system prune` and reclaim the Docker VM disk
 with `fstrim` using the host's approved maintenance procedure; review the affected

@@ -72,7 +72,7 @@ class NativeLocalServices(unittest.TestCase):
         self.assertNotIn("Local test project:", result.stdout)
 
     def test_real_database_cleanup_for_normal_failure_int_and_term(self):
-        local.check_docker()
+        selected = local.check_docker()
         for outcome in (0, 42, signal.SIGINT, signal.SIGTERM):
             with (
                 self.subTest(outcome=outcome),
@@ -110,7 +110,8 @@ class NativeLocalServices(unittest.TestCase):
                             process.wait(timeout=90), expected, path.read_text()
                         )
                         self.assertIn("Local project cleanup PASSED:", path.read_text())
-                        local.assert_project_absent(project)
+                        with local.pinned_docker_environment(environ=selected):
+                            local.assert_project_absent(project)
                     finally:
                         if process.poll() is None:
                             process.terminate()
