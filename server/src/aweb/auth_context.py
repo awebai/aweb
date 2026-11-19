@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+
 from aweb.identity_address import AddressResolution
-from aweb.identity_scope import IdentityScope
+from aweb.identity_scope import IdentityScope, normalize_identity_scope
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,9 @@ class TeamIdentity:
     grant: GrantContext | None = None
     address_resolution: AddressResolution = field(default_factory=AddressResolution)
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "identity_scope", normalize_identity_scope(self.identity_scope))
+
 
 @dataclass(frozen=True)
 class IdentityAuth:
@@ -83,3 +87,9 @@ class MessagingAuth:
     grant: GrantContext | None = None
     id_chain: dict | None = None
     address_resolution: AddressResolution = field(default_factory=AddressResolution)
+
+    def __post_init__(self) -> None:
+        if self.identity_scope is not None:
+            object.__setattr__(
+                self, "identity_scope", normalize_identity_scope(self.identity_scope)
+            )

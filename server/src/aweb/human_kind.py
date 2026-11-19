@@ -11,6 +11,8 @@ from collections.abc import Mapping
 
 from awid.identity_observation import (
     IdentityKind as IdentityKind,
+)
+from awid.identity_observation import (
     IdentityKindObservation as IdentityKindObservation,
 )
 from awid.identity_observation import (
@@ -24,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_verified_human(row: Mapping) -> bool:
+    """Read the stored current-key marker; this performs no fresh ID-chain check."""
     return (
         row.get("agent_type") == IdentityKind.HUMAN.value
         and bool(row.get("did_key"))
@@ -32,6 +35,10 @@ def is_verified_human(row: Mapping) -> bool:
 
 
 def effective_agent_type(row: Mapping) -> str:
+    """Return display classification while withholding an unverified human label.
+
+    Other runtime labels are retained as provenance, not credential authority.
+    """
     runtime = row.get("agent_type") or IdentityKind.AGENT.value
     return (
         IdentityKind.UNKNOWN.value

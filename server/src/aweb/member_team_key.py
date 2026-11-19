@@ -20,7 +20,7 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
-
+from aweb.identity_scope import IdentityScope
 from aweb.member_status import MemberStatus as MemberStatus
 from aweb.service_errors import NotFoundError
 from aweb.team_scope import member_team_scope as member_team_scope
@@ -116,6 +116,9 @@ class MemberProjection(Mapping[str, Any]):
         # PostgreSQL row_to_json/to_jsonb encodes UUIDs/timestamps as strings.
         # A host's joined snapshot and the native SELECT have one public shape.
         values["agent_id"] = UUID(str(values["agent_id"]))
+        # These are NOT NULL constrained native columns, not optional host overlays.
+        values["status"] = MemberStatus(values["status"])
+        values["identity_scope"] = IdentityScope(values["identity_scope"])
         if isinstance(values["deleted_at"], str):
             values["deleted_at"] = datetime.fromisoformat(
                 values["deleted_at"].replace("Z", "+00:00")
@@ -229,7 +232,7 @@ def current_member(row: Mapping[str, Any] | None) -> bool:
     """
     return bool(
         row
-        and row.get("status") == MemberStatus.ACTIVE.value
+        and row.get("status") == MemberStatus.ACTIVE
         and row.get("deleted_at") is None
         and member_key_current(row)
     )
