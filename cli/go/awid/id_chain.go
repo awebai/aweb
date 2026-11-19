@@ -10,17 +10,25 @@ import (
 	"time"
 )
 
+// IDChainSubject binds a chain's subject to its authenticated current key and,
+// when present, to the independently verified team-certificate identity.
 type IDChainSubject struct {
 	ID               string `json:"id"`
 	DIDKey           string `json:"did_key"`
 	TeamMemberDIDAW  string `json:"team_member_did_aw"`
 	TeamMemberDIDKey string `json:"team_member_did_key"`
 }
+
+// IDChainEvidence carries caller-selected registry/DNS facts and their age.
+// An assertion's carrier cannot supply its own trust or choose the namespace.
 type IDChainEvidence struct {
 	Status             map[string]any
 	NamespaceAuthority map[string]any
 	AgeSeconds         *float64
 }
+
+// IDChainResult is the released string-based verdict profile. CheckIDChain
+// returns the typed equivalent; its Legacy adapter preserves these JSON fields.
 type IDChainResult struct {
 	Outcome       string  `json:"outcome"`
 	HumanID       *string `json:"human_id"`
@@ -29,75 +37,107 @@ type IDChainResult struct {
 	Reason        string  `json:"reason"`
 }
 
-func idChainFailure(reason string) IDChainResult {
-	r := IDChainResult{Outcome: "unknown", Reason: reason}
+func idChainFailure(reason IDRefusal) IDChainVerdict {
+	result := IDChainVerdict{Outcome: IDChainOutcomeUnknown, Refusal: reason}
 	switch reason {
-	case "status_expired", "evidence_unavailable":
-		r.Outcome = "unavailable"
-	case "legacy_no_chain", "unregistered_identity":
+	case IDRefusalStatusExpired, IDRefusalEvidenceUnavailable:
+		result.Outcome = IDChainOutcomeUnavailable
+	case IDRefusalLegacyNoChain, IDRefusalUnregisteredIdentity:
 	default:
-		b := false
-		r.IdentityValid = &b
+		valid := false
+		result.IdentityValid = &valid
 	}
-	return r
+	return result
 }
-func IDStatusCacheMode(age *float64) string {
+
+// StatusCacheFreshness applies the 60-second current-evidence window; future,
+// missing and non-finite ages are unavailable rather than clamped.
+func StatusCacheFreshness(age *float64) IDStatusFreshness {
 	if age == nil || math.IsNaN(*age) || math.IsInf(*age, 0) || *age < 0 {
-		return "unavailable"
+		return IDStatusUnavailable
 	}
 	if *age <= 60 {
-		return "fresh"
+		return IDStatusFresh
 	}
-	return "unavailable"
+	return IDStatusUnavailable
 }
+
+// IDStatusCacheMode preserves the released string result of StatusCacheFreshness.
+func IDStatusCacheMode(age *float64) string { return string(StatusCacheFreshness(age)) }
 
 // idEvidenceUsable refuses evidence that is not fresh: status_expired once it
 // is older than the fresh window, evidence_unavailable otherwise.
 func idEvidenceUsable(evidence *IDChainEvidence) error {
-	if IDStatusCacheMode(evidence.AgeSeconds) != "unavailable" {
+	if StatusCacheFreshness(evidence.AgeSeconds) != IDStatusUnavailable {
 		return nil
 	}
 	if evidence.AgeSeconds != nil && !math.IsInf(*evidence.AgeSeconds, 0) && *evidence.AgeSeconds > 60 {
-		return idCertificateRefusal("status_expired")
+		return idCertificateRefusal(IDRefusalStatusExpired)
 	}
-	return idCertificateRefusal("evidence_unavailable")
+	return idCertificateRefusal(IDRefusalEvidenceUnavailable)
 }
-func IDRequestDisposition(r IDChainResult, subject IDChainSubject, originalAuthPassed, humanRequired bool) string {
-	if !originalAuthPassed {
-		return "refuse"
+
+// IDRequestInput makes the authentication and human-ancestry policies explicit.
+// A chain result cannot substitute for the request's original authentication.
+type IDRequestInput struct {
+	Verdict              IDChainVerdict
+	Subject              IDChainSubject
+	AuthenticationPassed bool
+	HumanRequired        bool
+}
+
+// DecideIDRequest applies docs/id-certificates.md §4's request policy to the
+// verified result. A local key may continue with unavailable advisory ancestry;
+// it cannot satisfy a human-required operation without verified human evidence.
+func DecideIDRequest(in IDRequestInput) IDRequestAction {
+	if !in.AuthenticationPassed {
+		return IDRequestRefuse
 	}
-	valid := r.IdentityValid != nil && *r.IdentityValid
-	if humanRequired {
-		if valid && r.Outcome == "nearest_human" {
-			return "continue"
+	verdict := in.Verdict
+	valid := verdict.IdentityValid != nil && *verdict.IdentityValid
+	if in.HumanRequired {
+		if valid && verdict.Outcome == IDChainOutcomeNearestHuman {
+			return IDRequestContinue
 		}
-		return "refuse"
+		return IDRequestRefuse
 	}
-	if valid || r.Reason == "legacy_no_chain" || r.Reason == "unregistered_identity" {
-		return "continue"
+	if valid || verdict.Refusal == IDRefusalLegacyNoChain || verdict.Refusal == IDRefusalUnregisteredIdentity {
+		return IDRequestContinue
 	}
-	if strings.HasPrefix(subject.ID, "did:key:") && (r.Reason == "stale_issuer_key" || r.Reason == "status_expired" || r.Reason == "evidence_unavailable") {
-		return "continue"
+	if strings.HasPrefix(in.Subject.ID, "did:key:") && (verdict.Refusal == IDRefusalStaleIssuerKey || verdict.Refusal == IDRefusalStatusExpired || verdict.Refusal == IDRefusalEvidenceUnavailable) {
+		return IDRequestContinue
 	}
-	return "refuse"
+	return IDRequestRefuse
 }
+
+// IDRequestDisposition preserves the released positional API. New callers use
+// DecideIDRequest so authentication and human requirements are named inputs.
+func IDRequestDisposition(result IDChainResult, subject IDChainSubject, originalAuthPassed, humanRequired bool) string {
+	return string(DecideIDRequest(IDRequestInput{
+		Verdict: IDChainVerdict{Outcome: IDChainOutcome(result.Outcome), IdentityValid: result.IdentityValid, Refusal: IDRefusal(result.Reason)},
+		Subject: subject, AuthenticationPassed: originalAuthPassed, HumanRequired: humanRequired,
+	}))
+}
+
+// IDStatusRequest selects the domain and registered identity IDs needed to
+// verify this exact subject. A nil request means advisory chainless local identity.
 func IDStatusRequest(bundle map[string]any, subject IDChainSubject, domain string) (map[string]any, error) {
 	if bundle == nil {
 		if strings.HasPrefix(subject.ID, "did:key:") {
 			return nil, nil
 		}
 		if domain == "" {
-			return nil, idCertificateRefusal("evidence_unavailable")
+			return nil, idCertificateRefusal(IDRefusalEvidenceUnavailable)
 		}
 		if !idCertificateDomain(domain) {
-			return nil, idCertificateRefusal("invalid_domain")
+			return nil, idCertificateRefusal(IDRefusalInvalidDomain)
 		}
 		return map[string]any{"v": 1, "domain": domain, "ids": []string{subject.ID}}, nil
 	}
 	if raw, err := idCertificateCanonical(bundle); err != nil {
 		return nil, err
 	} else if len(raw) > IDChainMaxBytes {
-		return nil, idCertificateRefusal("bundle_too_large")
+		return nil, idCertificateRefusal(IDRefusalBundleTooLarge)
 	}
 	if err := idCertificateBundleShape(bundle); err != nil {
 		return nil, err
@@ -105,7 +145,7 @@ func IDStatusRequest(bundle map[string]any, subject IDChainSubject, domain strin
 	certs := idChainCertificates(bundle)
 	selected := certs[0]["certificate"].(map[string]any)["domain"].(string)
 	if domain != "" && domain != selected {
-		return nil, idCertificateRefusal("domain_mismatch")
+		return nil, idCertificateRefusal(IDRefusalDomainMismatch)
 	}
 	ids := []string{}
 	seen := map[string]bool{}
@@ -131,7 +171,7 @@ func idChainStructure(certs []map[string]any) error {
 		c := s["certificate"].(map[string]any)
 		id := c["id"].(string)
 		if by[id] != nil {
-			return idCertificateRefusal("duplicate_id")
+			return idCertificateRefusal(IDRefusalDuplicateId)
 		}
 		by[id] = c
 	}
@@ -139,7 +179,7 @@ func idChainStructure(certs []map[string]any) error {
 		seen := map[string]bool{}
 		for by[id] != nil {
 			if seen[id] {
-				return idCertificateRefusal("cycle")
+				return idCertificateRefusal(IDRefusalCycle)
 			}
 			seen[id] = true
 			p := by[id]["parent"].(map[string]any)
@@ -154,19 +194,19 @@ func idChainStructure(certs []map[string]any) error {
 		c := s["certificate"].(map[string]any)
 		p := c["parent"].(map[string]any)
 		if c["domain"] != domain {
-			return idCertificateRefusal("domain_mismatch")
+			return idCertificateRefusal(IDRefusalDomainMismatch)
 		}
 		if n == 0 {
 			if p["kind"] != "namespace" || p["id"] != domain {
-				return idCertificateRefusal("missing_parent")
+				return idCertificateRefusal(IDRefusalMissingParent)
 			}
 		} else {
 			prev := certs[n-1]["certificate"].(map[string]any)
 			if p["kind"] != "identity" || p["id"] != prev["id"] {
-				return idCertificateRefusal("missing_parent")
+				return idCertificateRefusal(IDRefusalMissingParent)
 			}
 			if c["kind"] == "human" && prev["kind"] != "human" {
-				return idCertificateRefusal("human_issuer_is_agent")
+				return idCertificateRefusal(IDRefusalHumanIssuerIsAgent)
 			}
 		}
 	}
@@ -220,11 +260,11 @@ type idStatusSnapshot struct {
 
 func idWitness(s string) (time.Time, error) {
 	if len(s) != 27 || s[26] != 'Z' {
-		return time.Time{}, idCertificateRefusal("evidence_unavailable")
+		return time.Time{}, idCertificateRefusal(IDRefusalEvidenceUnavailable)
 	}
 	t, e := time.Parse("2006-01-02T15:04:05.000000Z", s)
 	if e != nil || t.Year() < 1 {
-		return time.Time{}, idCertificateRefusal("evidence_unavailable")
+		return time.Time{}, idCertificateRefusal(IDRefusalEvidenceUnavailable)
 	}
 	return t, nil
 }
@@ -287,7 +327,7 @@ func idStatusRequired(s map[string]any) bool {
 	return true
 }
 func parseIDStatus(e *IDChainEvidence, domain string) (*idStatusSnapshot, error) {
-	bad := idCertificateRefusal("evidence_unavailable")
+	bad := idCertificateRefusal(IDRefusalEvidenceUnavailable)
 	raw, err := idCertificateCanonical(e.Status)
 	if err != nil || len(raw) > 131072 || !idStatusRequired(e.Status) {
 		return nil, bad
@@ -438,11 +478,11 @@ func parseIDStatus(e *IDChainEvidence, domain string) (*idStatusSnapshot, error)
 }
 func (s *idStatusSnapshot) row(id string) (*idStatusIdentity, error) {
 	if s.missing[id] {
-		return nil, idCertificateRefusal("unregistered_identity")
+		return nil, idCertificateRefusal(IDRefusalUnregisteredIdentity)
 	}
 	r := s.byID[id]
 	if r == nil {
-		return nil, idCertificateRefusal("evidence_unavailable")
+		return nil, idCertificateRefusal(IDRefusalEvidenceUnavailable)
 	}
 	return r, nil
 }
@@ -457,7 +497,7 @@ func (s *idStatusSnapshot) revision(id string, at time.Time) (*idStatusRevision,
 			return r, nil
 		}
 	}
-	return nil, idCertificateRefusal("evidence_unavailable")
+	return nil, idCertificateRefusal(IDRefusalEvidenceUnavailable)
 }
 func (s *idStatusSnapshot) currentKey(id string) (string, error) {
 	if strings.HasPrefix(id, "did:key:") {
@@ -476,73 +516,73 @@ func (s *idStatusSnapshot) issuer(c map[string]any, r *idStatusRevision) (string
 			return s.Namespace.Epochs[len(s.Namespace.Epochs)-1].DIDKey, nil
 		}
 		if r.IssuerKeySeq > len(s.Namespace.Epochs) {
-			return "", idCertificateRefusal("evidence_unavailable")
+			return "", idCertificateRefusal(IDRefusalEvidenceUnavailable)
 		}
 		return s.Namespace.Epochs[r.IssuerKeySeq-1].DIDKey, nil
 	}
 	id := p["id"].(string)
 	if r != nil {
 		if strings.HasPrefix(id, "did:key:") {
-			return "", idCertificateRefusal("unregistered_parent")
+			return "", idCertificateRefusal(IDRefusalUnregisteredParent)
 		}
 		row, err := s.row(id)
 		if err != nil {
 			return "", err
 		}
 		if r.IssuerKeySeq > len(row.KeyHistory) {
-			return "", idCertificateRefusal("evidence_unavailable")
+			return "", idCertificateRefusal(IDRefusalEvidenceUnavailable)
 		}
 		return row.KeyHistory[r.IssuerKeySeq-1].Entry.NewDIDKey, nil
 	}
 	return s.currentKey(id)
 }
-func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDChainEvidence, domain string) (IDChainResult, error) {
-	bad := func(code string) (IDChainResult, error) { return IDChainResult{}, idCertificateRefusal(code) }
+func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDChainEvidence, domain string) (IDChainVerdict, error) {
+	bad := func(code IDRefusal) (IDChainVerdict, error) { return IDChainVerdict{}, idCertificateRefusal(code) }
 	plan, err := IDStatusRequest(bundle, subject, domain)
 	if err != nil {
-		return IDChainResult{}, err
+		return IDChainVerdict{}, err
 	}
 	if plan == nil {
-		return bad("legacy_no_chain")
+		return bad(IDRefusalLegacyNoChain)
 	}
 	domain = plan["domain"].(string)
 	var certs []map[string]any
 	if bundle != nil {
 		raw, er := idCertificateCanonical(bundle)
 		if er != nil {
-			return IDChainResult{}, er
+			return IDChainVerdict{}, er
 		}
 		if len(raw) > IDChainMaxBytes {
-			return bad("bundle_too_large")
+			return bad(IDRefusalBundleTooLarge)
 		}
 		certs = idChainCertificates(bundle)
 		if err = idChainStructure(certs); err != nil {
-			return IDChainResult{}, err
+			return IDChainVerdict{}, err
 		}
 		if certs[len(certs)-1]["certificate"].(map[string]any)["id"] != subject.ID {
-			return bad("subject_mismatch")
+			return bad(IDRefusalSubjectMismatch)
 		}
 	}
 	if (subject.TeamMemberDIDKey != "" && subject.TeamMemberDIDKey != subject.DIDKey) || (subject.TeamMemberDIDAW != "" && subject.TeamMemberDIDAW != subject.ID) || (strings.HasPrefix(subject.ID, "did:key:") && subject.ID != subject.DIDKey) {
-		return bad("subject_mismatch")
+		return bad(IDRefusalSubjectMismatch)
 	}
 	if evidence == nil {
-		return bad("evidence_unavailable")
+		return bad(IDRefusalEvidenceUnavailable)
 	}
 	if err = idEvidenceUsable(evidence); err != nil {
-		return IDChainResult{}, err
+		return IDChainVerdict{}, err
 	}
 	status, err := parseIDStatus(evidence, domain)
 	if err != nil {
-		return IDChainResult{}, err
+		return IDChainVerdict{}, err
 	}
 	if strings.HasPrefix(subject.ID, "did:aw:") {
 		key, err := status.currentKey(subject.ID)
 		if err != nil {
-			return IDChainResult{}, err
+			return IDChainVerdict{}, err
 		}
 		if key != subject.DIDKey {
-			return bad("subject_mismatch")
+			return bad(IDRefusalSubjectMismatch)
 		}
 	}
 	if certs == nil {
@@ -550,15 +590,15 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 		seen := map[string]bool{}
 		for {
 			if seen[id] {
-				return bad("cycle")
+				return bad(IDRefusalCycle)
 			}
 			if len(certs) >= IDChainMaxDepth {
-				return bad("depth_exceeded")
+				return bad(IDRefusalDepthExceeded)
 			}
 			seen[id] = true
 			r, err := status.revision(id, status.now)
 			if err != nil {
-				return IDChainResult{}, err
+				return IDChainVerdict{}, err
 			}
 			certs = append([]map[string]any{r.Signed}, certs...)
 			p := r.Signed["certificate"].(map[string]any)["parent"].(map[string]any)
@@ -568,7 +608,7 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 			id = p["id"].(string)
 		}
 		if err = idChainStructure(certs); err != nil {
-			return IDChainResult{}, err
+			return IDChainVerdict{}, err
 		}
 	}
 	by := map[string]map[string]any{}
@@ -579,11 +619,11 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 		if strings.HasPrefix(id, "did:aw:") {
 			row, err := status.row(id)
 			if err != nil {
-				return IDChainResult{}, err
+				return IDChainVerdict{}, err
 			}
 			digest, _ := IDCertificateID(c)
 			if row.CurrentCertificateID != digest {
-				return bad("superseded_certificate")
+				return bad(IDRefusalSupersededCertificate)
 			}
 		}
 	}
@@ -593,27 +633,27 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 		if strings.HasPrefix(c["id"].(string), "did:aw:") {
 			r, err = status.revision(c["id"].(string), status.now)
 			if err != nil {
-				return IDChainResult{}, err
+				return IDChainVerdict{}, err
 			}
 		}
 		key, err := status.issuer(c, r)
 		if err != nil {
-			return IDChainResult{}, err
+			return IDChainVerdict{}, err
 		}
 		if key != c["issuer_key"] {
-			return bad("stale_issuer_key")
+			return bad(IDRefusalStaleIssuerKey)
 		}
 		if err = VerifyIDCertificate(signed, key); err != nil {
-			return IDChainResult{}, err
+			return IDChainVerdict{}, err
 		}
 	}
 	var evaluate func(string, time.Time, map[string]bool) (string, error)
 	evaluate = func(id string, at time.Time, path map[string]bool) (string, error) {
 		if path[id] {
-			return "", idCertificateRefusal("cycle")
+			return "", idCertificateRefusal(IDRefusalCycle)
 		}
 		if len(path) >= IDChainMaxDepth {
-			return "", idCertificateRefusal("depth_exceeded")
+			return "", idCertificateRefusal(IDRefusalDepthExceeded)
 		}
 		path[id] = true
 		defer delete(path, id)
@@ -627,28 +667,28 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 			}
 			signed = r.Signed
 			if idKnownTime(r.RegisteredAt).Before(status.cutoff) {
-				return "", idCertificateRefusal("root_replaced")
+				return "", idCertificateRefusal(IDRefusalRootReplaced)
 			}
 			row, _ := status.row(id)
 			if row.Revocation != nil && !idKnownTime(row.Revocation.EffectiveFrom).After(at) {
-				return "", idCertificateRefusal("revoked")
+				return "", idCertificateRefusal(IDRefusalRevoked)
 			}
 		} else {
 			signed = by[id]
 		}
 		if signed == nil {
-			return "", idCertificateRefusal("evidence_unavailable")
+			return "", idCertificateRefusal(IDRefusalEvidenceUnavailable)
 		}
 		c := signed["certificate"].(map[string]any)
 		if c["domain"] != domain {
-			return "", idCertificateRefusal("domain_mismatch")
+			return "", idCertificateRefusal(IDRefusalDomainMismatch)
 		}
 		key, err := status.issuer(c, r)
 		if err != nil {
 			return "", err
 		}
 		if c["issuer_key"] != key {
-			return "", idCertificateRefusal("stale_issuer_key")
+			return "", idCertificateRefusal(IDRefusalStaleIssuerKey)
 		}
 		if err = VerifyIDCertificate(signed, key); err != nil {
 			return "", err
@@ -672,10 +712,10 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 				parent = by[parentID]
 			}
 			if parent == nil {
-				return "", idCertificateRefusal("evidence_unavailable")
+				return "", idCertificateRefusal(IDRefusalEvidenceUnavailable)
 			}
 			if c["kind"] == "human" && parent["certificate"].(map[string]any)["kind"] != "human" {
-				return "", idCertificateRefusal("human_issuer_is_agent")
+				return "", idCertificateRefusal(IDRefusalHumanIssuerIsAgent)
 			}
 			human, err = evaluate(parentID, parentAt, path)
 			if err != nil {
@@ -689,27 +729,36 @@ func verifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDCh
 	}
 	human, err := evaluate(subject.ID, status.now, map[string]bool{})
 	if err != nil {
-		return IDChainResult{}, err
+		return IDChainVerdict{}, err
 	}
 	valid := true
-	kind := certs[len(certs)-1]["certificate"].(map[string]any)["kind"].(string)
-	r := IDChainResult{Outcome: "no_human", IdentityValid: &valid, Kind: &kind, Reason: "verified"}
+	kind := IDCertificateKind(certs[len(certs)-1]["certificate"].(map[string]any)["kind"].(string))
+	r := IDChainVerdict{Outcome: IDChainOutcomeNoHuman, IdentityValid: &valid, Kind: &kind}
 	if human != "" {
-		r.Outcome = "nearest_human"
+		r.Outcome = IDChainOutcomeNearestHuman
 		r.HumanID = &human
 	}
 	return r, nil
 }
 
-// VerifyIDChain performs no I/O and grants no authentication, membership or role.
-func VerifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDChainEvidence, domain string) IDChainResult {
-	r, err := verifyIDChain(bundle, subject, evidence, domain)
+// CheckIDChain verifies current identity and ancestry against caller-selected
+// status/DNS evidence (docs/id-certificates.md §4). It performs no I/O and grants
+// no authentication, membership or role. Refusal reasons are typed independently
+// of Go error text; absent and unavailable evidence retain different outcomes.
+func CheckIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDChainEvidence, domain string) IDChainVerdict {
+	result, err := verifyIDChain(bundle, subject, evidence, domain)
 	if err != nil {
-		code := IDCertificateErrorCode(err)
+		code := IDRefusalCode(err)
 		if code == "" {
-			code = "evidence_unavailable"
+			code = IDRefusalEvidenceUnavailable
 		}
 		return idChainFailure(code)
 	}
-	return r
+	return result
+}
+
+// VerifyIDChain is the released string-based result adapter for CheckIDChain.
+// It performs no I/O and grants no authentication, membership or role.
+func VerifyIDChain(bundle map[string]any, subject IDChainSubject, evidence *IDChainEvidence, domain string) IDChainResult {
+	return CheckIDChain(bundle, subject, evidence, domain).Legacy()
 }

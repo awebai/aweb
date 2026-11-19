@@ -10,7 +10,7 @@ import (
 // TXT anchor. Inherited TXT authenticates AWID's parent-authorized child
 // record, never the child's controller directly (docs/id-certificates.md §2).
 func verifyIDNamespaceAuthority(domain string, authority DomainAuthority, controller string, delegation map[string]any) error {
-	bad := idCertificateRefusal("evidence_unavailable")
+	bad := idCertificateRefusal(IDRefusalEvidenceUnavailable)
 	if !idCertificateDomain(domain) || !idCertificateIDValid(controller, true) || !idCertificateIDValid(authority.ControllerDID, true) {
 		return bad
 	}
@@ -41,12 +41,12 @@ func (c *RegistryClient) IDNamespaceController(ctx context.Context, domain, regi
 		if err != nil {
 			var refused *RegistryError
 			if errors.As(err, &refused) && refused.StatusCode == 404 {
-				return "", idCertificateRefusal("evidence_unavailable")
+				return "", idCertificateRefusal(IDRefusalEvidenceUnavailable)
 			}
 			return "", err
 		}
 		if namespace.Domain != domain {
-			return "", idCertificateRefusal("evidence_unavailable")
+			return "", idCertificateRefusal(IDRefusalEvidenceUnavailable)
 		}
 		controller, delegation = namespace.ControllerDID, namespace.Delegation
 	}

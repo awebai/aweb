@@ -93,7 +93,7 @@ func IDChainFromBundle(bundle map[string]any) (IDChain, error) {
 		return IDChain{}, err
 	}
 	if len(canonical) > IDChainMaxBytes {
-		return IDChain{}, idCertificateRefusal("bundle_too_large")
+		return IDChain{}, idCertificateRefusal(IDRefusalBundleTooLarge)
 	}
 	if err := idCertificateBundleShape(bundle); err != nil {
 		return IDChain{}, err
@@ -101,13 +101,13 @@ func IDChainFromBundle(bundle map[string]any) (IDChain, error) {
 	snapshot := copyIDObject(bundle)
 	entries, ok := snapshot["certificates"].([]any)
 	if !ok {
-		return IDChain{}, idCertificateRefusal("invalid_shape")
+		return IDChain{}, idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	chain := IDChain{bundle: snapshot, certificates: make([]IDCertificateView, 0, len(entries))}
 	for _, entry := range entries {
 		signed, ok := entry.(map[string]any)
 		if !ok {
-			return IDChain{}, idCertificateRefusal("invalid_shape")
+			return IDChain{}, idCertificateRefusal(IDRefusalInvalidShape)
 		}
 		certificate, err := checkedIDCertificateView(signed)
 		if err != nil {
@@ -161,12 +161,12 @@ func checkedIDCertificateView(signed map[string]any) (IDCertificateView, error) 
 	issuedAt, issuedOK := fields["issued_at"].(string)
 	parent, parentOK := fields["parent"].(map[string]any)
 	if !idOK || !domainOK || !kindOK || !issuerOK || !issuedOK || !parentOK {
-		return IDCertificateView{}, idCertificateRefusal("invalid_shape")
+		return IDCertificateView{}, idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	parentID, parentIDOK := parent["id"].(string)
 	parentKind, parentKindOK := parent["kind"].(string)
 	if !parentIDOK || !parentKindOK {
-		return IDCertificateView{}, idCertificateRefusal("invalid_shape")
+		return IDCertificateView{}, idCertificateRefusal(IDRefusalInvalidShape)
 	}
 	return IDCertificateView{
 		id: id, domain: domain, kind: IDCertificateKind(kind), issuerKey: issuerKey, issuedAt: issuedAt,

@@ -38,14 +38,14 @@ func RegisteredIDChain(status map[string]any, id string) (map[string]any, error)
 			return nil, ErrMalformedIDStatus
 		}
 	}
-	return nil, idCertificateRefusal("chain_too_deep")
+	return nil, idCertificateRefusal(IDRefusalChainTooDeep)
 }
 
 // currentIDCertificate is the signed certificate among row's revisions whose
 // ID is row's current certificate ID.
 func currentIDCertificate(row map[string]any) (map[string]any, error) {
 	if row == nil {
-		return nil, idCertificateRefusal("unregistered_identity")
+		return nil, idCertificateRefusal(IDRefusalUnregisteredIdentity)
 	}
 	current, _ := row["current_certificate_id"].(string)
 	revisions, _ := row["certificates"].([]any)
@@ -60,7 +60,7 @@ func currentIDCertificate(row map[string]any) (map[string]any, error) {
 			return signed, nil
 		}
 	}
-	return nil, idCertificateRefusal("evidence_unavailable")
+	return nil, idCertificateRefusal(IDRefusalEvidenceUnavailable)
 }
 
 // RegisteredIDHead is id's current certificate ID as evidence states it, only

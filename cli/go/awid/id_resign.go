@@ -30,15 +30,15 @@ func resignIDCertificate(req IDResignRequest, parentID string, parentChain []any
 		return nil, err
 	}
 	if !idCertificateExactFields(req.Requested, "id", "domain", "parent", "kind") {
-		return nil, idCertificateRefusal("resign_binding_mismatch")
+		return nil, idCertificateRefusal(IDRefusalResignBindingMismatch)
 	}
 	for field, value := range req.Requested {
 		if !reflect.DeepEqual(old[field], value) {
-			return nil, idCertificateRefusal("resign_binding_mismatch")
+			return nil, idCertificateRefusal(IDRefusalResignBindingMismatch)
 		}
 	}
 	if !reflect.DeepEqual(old["parent"], map[string]any{"kind": "identity", "id": parentID}) {
-		return nil, idCertificateRefusal("resign_binding_mismatch")
+		return nil, idCertificateRefusal(IDRefusalResignBindingMismatch)
 	}
 	var current string
 	var keyInHistory func(string) bool
@@ -54,10 +54,10 @@ func resignIDCertificate(req IDResignRequest, parentID string, parentChain []any
 		return nil, err
 	}
 	if req.SubjectKey == "" || req.SubjectKey != old["id"] {
-		return nil, idCertificateRefusal("subject_mismatch")
+		return nil, idCertificateRefusal(IDRefusalSubjectMismatch)
 	}
 	if !keyInHistory(old["issuer_key"].(string)) {
-		return nil, idCertificateRefusal("invalid_signature")
+		return nil, idCertificateRefusal(IDRefusalInvalidSignature)
 	}
 	if err = VerifyIDCertificate(req.Signed, old["issuer_key"].(string)); err != nil {
 		return nil, err
@@ -84,7 +84,7 @@ func resignIDCertificate(req IDResignRequest, parentID string, parentChain []any
 // registration. It returns the parent's status row, current key and kind.
 func idSigningParent(parentID string, evidence *IDChainEvidence, domain string) (*idStatusIdentity, string, string, error) {
 	if evidence == nil {
-		return nil, "", "", idCertificateRefusal("evidence_unavailable")
+		return nil, "", "", idCertificateRefusal(IDRefusalEvidenceUnavailable)
 	}
 	if err := idEvidenceUsable(evidence); err != nil {
 		return nil, "", "", err
@@ -98,7 +98,7 @@ func idSigningParent(parentID string, evidence *IDChainEvidence, domain string) 
 		return nil, "", "", err
 	}
 	if parent.Revocation != nil {
-		return nil, "", "", idCertificateRefusal("parent_revoked")
+		return nil, "", "", idCertificateRefusal(IDRefusalParentRevoked)
 	}
 	current, err := status.currentKey(parentID)
 	if err != nil {
@@ -106,7 +106,7 @@ func idSigningParent(parentID string, evidence *IDChainEvidence, domain string) 
 	}
 	verdict := VerifyIDChain(nil, IDChainSubject{ID: parentID, DIDKey: current}, evidence, domain)
 	if verdict.IdentityValid == nil || !*verdict.IdentityValid || verdict.Kind == nil {
-		return nil, "", "", idCertificateRefusal(verdict.Reason)
+		return nil, "", "", idCertificateRefusal(IDRefusal(verdict.Reason))
 	}
 	return parent, current, *verdict.Kind, nil
 }
