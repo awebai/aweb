@@ -128,7 +128,7 @@ class Call:
     at launch, owned until its group is gone. Ending it (TERM, then KILL,
     then reaping) has its own reserve beyond that deadline."""
 
-    current: "Call | None" = None
+    current: Call | None = None
 
     def __init__(self, command: list[str], budget: float = CALL_BUDGET):
         self.deadline = time.monotonic() + budget

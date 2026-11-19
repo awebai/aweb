@@ -61,8 +61,9 @@ import sys
 import tarfile
 import tempfile
 import threading
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Callable
+from typing import BinaryIO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -144,7 +145,7 @@ def capture(root: Path, sink: BinaryIO, endpoints: Endpoints = DEFAULT_ENDPOINTS
         planned = [probe.gettarinfo(path, arcname) for path, arcname in members]
     check(planned)
     with tarfile.open(fileobj=sink, mode="w|", format=tarfile.PAX_FORMAT) as tar:
-        for (path, arcname), expected in zip(members, planned):
+        for (path, arcname), expected in zip(members, planned, strict=True):
             info = tar.gettarinfo(path, arcname)
             if (info.type, info.size, info.mtime, info.linkname) != (expected.type, expected.size, expected.mtime,
                                                                       expected.linkname):
@@ -445,7 +446,7 @@ def capture_command(args: argparse.Namespace) -> None:
     manifest = {
         "format": 1,
         "kind": "agent-state",
-        "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "createdAt": datetime.datetime.now(datetime.UTC).isoformat(timespec="seconds"),
         "source": {"path": str(args.state), "uid": root.st_uid, "gid": root.st_gid,
                    "mode": oct(stat.S_IMODE(root.st_mode)), "writer": fence},
         "members": captured["members"],
