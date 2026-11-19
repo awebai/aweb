@@ -197,7 +197,7 @@ func Execute() {
 	if argsContainTraceFlag(os.Args[1:]) {
 		if err := os.Setenv("AW_TRACE", "1"); err != nil {
 			finishHTTPDiagnostics(err)
-			reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))
+			reportCLIError(cliErrorReport{Cause: err, Text: err.Error(), Presentation: errorPresentationInput{Arguments: os.Args[1:]}})
 			os.Exit(exitCode(err))
 		}
 	}
@@ -205,7 +205,7 @@ func Execute() {
 	if err != nil {
 		finishHTTPDiagnostics(err)
 		err = normalizeStatusCommandError(os.Args[1:], err)
-		reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))
+		reportCLIError(cliErrorReport{Cause: err, Text: err.Error(), Presentation: errorPresentationInput{Arguments: os.Args[1:]}})
 		os.Exit(exitCode(err))
 	}
 	defer restorePluginIdentityHome()
@@ -230,7 +230,7 @@ func Execute() {
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint
 		}
-		reportCLIError(err, msg, jsonErrorsRequested(errorPresentationInput{ParsedJSON: jsonFlag, Arguments: os.Args[1:]}))
+		reportCLIError(cliErrorReport{Cause: err, Text: msg, Presentation: errorPresentationInput{ParsedJSON: jsonFlag, Arguments: os.Args[1:]}})
 		os.Exit(exitCode(err))
 	}
 }
@@ -346,14 +346,20 @@ func checkVersionFromHeader() {
 	}
 }
 
+type cliErrorReport struct {
+	Cause        error
+	Text         string
+	Presentation errorPresentationInput
+}
+
 // reportCLIError prints a failed command's error on stderr and, under --json,
 // its error envelope on stdout. stdout carries one document: a command that
 // already printed its own output keeps it, without a second document.
-func reportCLIError(err error, msg string, asJSON bool) {
-	msg = codedRefusalText(err, msg)
-	writeCLIError(os.Stderr, msg)
-	if asJSON && !commandStdout.written {
-		writeCLIErrorEnvelope(commandStdout, err, msg)
+func reportCLIError(input cliErrorReport) {
+	message := codedRefusalText(input.Cause, input.Text)
+	writeCLIError(os.Stderr, message)
+	if jsonErrorsRequested(input.Presentation) && !commandStdout.written {
+		writeCLIErrorEnvelope(commandStdout, input.Cause, message)
 	}
 }
 
