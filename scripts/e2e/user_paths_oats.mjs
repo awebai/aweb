@@ -102,7 +102,6 @@ try {
     command({ argv: ["git", "-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args] });
   }
   writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\nsettings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\nlaunch-configs:\n  passive:\n    harness: claude\n    executable: ${JSON.stringify(join(bin, "passive-session"))}\nsouls:\n  launch:\n    '*': passive\n`);
-  const brokerLog = join(root, "broker.log");
   // Capture bounded public failure text; credentials remain in the owned volume.
   const startOwnedBroker = () => {
     const child = spawn(join(bin, "aw"), ["wake", "run"], { cwd: home, env, stdio: ["ignore", "ignore", "pipe"] });
@@ -151,7 +150,6 @@ try {
   evidence.permissions_after = [join(home, ".config/aw"), state, cache].map(permission);
   evidence.kernel_events = oats("instance", "events", instance, "--json");
   evidence.kernel_status_after = parseObject(oats("status", "--json"));
-  writeFileSync(brokerLog, brokerErrors);
   evidence.result = ProbeOutcome.Passed;
 } catch (error) {
   evidence.result = ProbeOutcome.Failed;
