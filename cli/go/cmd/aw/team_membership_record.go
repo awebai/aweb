@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,14 +69,25 @@ func recordAcceptedTeamMembership(request acceptedTeamMembershipRequest) error {
 	if request.Binding != membershipLeaveWorkspaceBinding && request.Binding != membershipWriteWorkspaceBinding {
 		return errors.New("membership workspace binding is unknown")
 	}
-	if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
+	update := teamMembershipStateUpdate{
 		Location:    teamMembershipLocation{WorkingDir: request.WorkingDir, IdentityHome: identityHomeRoot},
 		Output:      request.Output,
 		Certificate: request.Certificate,
 		RegistryURL: request.RegistryURL,
 		AwebURL:     request.AwebURL,
 		Activation:  request.Activation,
-	}); err != nil {
+	}
+	if err := update.validate(); err != nil {
+		return err
+	}
+	if err := upsertAcceptedTeamMembershipState(update); err != nil {
+		if request.Binding == membershipWriteWorkspaceBinding {
+			home := awconfig.IdentityHome{Root: identityHomeRoot}
+			if home.Root == "" {
+				home.Root = awconfig.WorktreeIdentityHome(request.WorkingDir)
+			}
+			return retainProvisionedRecordFailure(provisionedRecordFailure{Home: home, Certificate: *request.Certificate, RegistryURL: request.RegistryURL, AwebURL: request.AwebURL, Cause: err})
+		}
 		return err
 	}
 	if request.Binding == membershipWriteWorkspaceBinding {
@@ -94,16 +104,10 @@ func recordAcceptedTeamMembership(request acceptedTeamMembershipRequest) error {
 // on reinstallation, activating a membership only on request or for an empty
 // store (docs/cli-identity-selection.md:28-33).
 func upsertAcceptedTeamMembershipState(request teamMembershipStateUpdate) error {
-	if err := request.Location.validate(); err != nil {
+	if err := request.validate(); err != nil {
 		return err
 	}
-	if request.Activation != membershipPreserveActive && request.Activation != membershipMakeActive {
-		return errors.New("membership activation is unknown")
-	}
 	output, cert := request.Output, request.Certificate
-	if output == nil || cert == nil {
-		return fmt.Errorf("accepted team membership is required")
-	}
 	teamState, err := loadOptionalTeamState(request.Location)
 	if err != nil {
 		return err
@@ -136,6 +140,19 @@ func upsertAcceptedTeamMembershipState(request teamMembershipStateUpdate) error 
 		return awconfig.SaveTeamStateToIdentityHome(request.Location.IdentityHome, teamState)
 	}
 	return awconfig.SaveTeamState(request.Location.WorkingDir, teamState)
+}
+
+func (request teamMembershipStateUpdate) validate() error {
+	if err := request.Location.validate(); err != nil {
+		return err
+	}
+	if request.Activation != membershipPreserveActive && request.Activation != membershipMakeActive {
+		return errors.New("membership activation is unknown")
+	}
+	if request.Output == nil || request.Certificate == nil {
+		return errors.New("accepted team membership is required")
+	}
+	return nil
 }
 
 func (location teamMembershipLocation) validate() error {

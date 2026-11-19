@@ -2,9 +2,11 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 type provisionedTeamMembership struct {
@@ -47,4 +49,31 @@ func completeProvisionedTeamMembership(request provisionedTeamMembership) error 
 		return &provisionedMembershipIncompleteError{cause: &plainRefusal{text: "Membership is connected; E2E key publication is not confirmed. Run `" + setupCommand + "` to publish it.", err: err}}
 	}
 	return &provisionedMembershipIncompleteError{cause: &plainRefusal{text: "Membership is saved; the E2E key is NOT published by this provisioning attempt. Run `" + connectCommand + "` to connect and publish it.", err: err}}
+}
+
+type provisionedRecordFailure struct {
+	Home        awconfig.IdentityHome
+	Certificate awid.TeamCertificate
+	RegistryURL string
+	AwebURL     string
+	Cause       error
+}
+
+// retainProvisionedRecordFailure protects an accepted member even when its
+// local membership row could not be saved. Repair uses the installed exact
+// certificate, followed by normal admission; no replacement key is created.
+func retainProvisionedRecordFailure(input provisionedRecordFailure) error {
+	path, err := awconfig.TeamCertificatePathFromIdentityHome(input.Home.Root, input.Certificate.Team)
+	if err != nil {
+		return &provisionedMembershipIncompleteError{cause: fmt.Errorf("accepted member retained in %s; repair its local storage before continuing: %w", input.Home.Root, errors.Join(input.Cause, err))}
+	}
+	args := []string{"aw", "--identity-home", input.Home.Root, "id", "team", "install-cert", "--certificate", path}
+	if input.RegistryURL != "" {
+		args = append(args, "--registry", input.RegistryURL)
+	}
+	service := input.AwebURL
+	if service == "" {
+		service = "<service-url>"
+	}
+	return &provisionedMembershipIncompleteError{cause: &plainRefusal{text: fmt.Sprintf("Accepted membership is retained in %s; local recording failed: %v. Repair that local file error, then run `%s` and `%s` to record the same certificate and connect. Keep this home's key and certificate.", input.Home.Root, input.Cause, formatShellCommand(args), workspaceConnectCommandForIdentityHome(service, input.Home.Root)), err: input.Cause}}
 }
