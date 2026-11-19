@@ -3,7 +3,7 @@ from __future__ import annotations
 from aweb.messaging.kinds import ContentMode
 from aweb.messaging.chat_storage import (
     store_chat as _store_chat,
-    _uuid_or_none,
+    parse_optional_uuid,
 )
 
 from aweb.messaging.recipient_lookup import (
@@ -31,7 +31,8 @@ from aweb.messaging.conversations import (
     find_active_one_to_one_conversation_between,
 )
 
-# Public Python consumers retain this name; storage has one implementation.
+# Public Python port: native chat_send/human_channels.native and Cloud
+# v0.8.80 auth_bridge_oss_cases consume send_in_session. Keep one callable.
 send_in_session = _store_chat
 
 logger = logging.getLogger(__name__)
@@ -221,7 +222,7 @@ async def ensure_session(
             {
                 "did": did,
                 "did_key": (row.get("did_key") or "").strip() or None,
-                "agent_id": _uuid_or_none(row.get("agent_id")),
+                "agent_id": parse_optional_uuid(row.get("agent_id")),
                 "alias": (row.get("alias") or did).strip(),
                 "address": (row.get("address") or "").strip() or None,
                 "delivery_origin": delivery_origin,
@@ -315,7 +316,7 @@ async def get_pending_conversations(
 ) -> list[dict[str, Any]]:
     """Read pending chat state for the caller's participant DIDs, including departed sessions."""
     aweb_db = db.get_manager("aweb")
-    participant_agent_uuid = _uuid_or_none(participant_agent_id)
+    participant_agent_uuid = parse_optional_uuid(participant_agent_id)
     # Materialize the viewer's session set before the per-session work. Keep
     # the existing did-first preference and include departed participants;
     # left_at is not a pending-conversation authorization or unread filter.
@@ -473,7 +474,7 @@ async def get_message_history(
     if not is_participant:
         raise NotFoundError()
 
-    message_uuid = _uuid_or_none(message_id)
+    message_uuid = parse_optional_uuid(message_id)
 
     if message_uuid is not None:
         rows = await aweb_db.fetch_all(
@@ -568,7 +569,7 @@ async def mark_messages_read(
 ) -> dict[str, Any]:
     """Acknowledge only presented messages belonging to the authenticated session participant."""
     aweb_db = db.get_manager("aweb")
-    participant_agent_uuid = _uuid_or_none(participant_agent_id)
+    participant_agent_uuid = parse_optional_uuid(participant_agent_id)
     if not message_ids:
         raise ValidationError("message_ids is required")
     if len(message_ids) > MAX_CHAT_MARK_READ_IDS:
@@ -659,7 +660,7 @@ async def mark_messages_read_up_to(
 ) -> dict[str, Any]:
     """Resolve a deployed-client watermark into exact per-message reads."""
     aweb_db = db.get_manager("aweb")
-    participant_agent_uuid = _uuid_or_none(participant_agent_id)
+    participant_agent_uuid = parse_optional_uuid(participant_agent_id)
     up_to_uuid = UUID(up_to_message_id)
 
     is_participant = await aweb_db.fetch_one(
