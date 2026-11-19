@@ -55,8 +55,10 @@ RUN uv run --frozen --no-sync --project naapp-lib \
 # no image builds, dependency installs or registry pulls.
 RUN uv sync --frozen --no-dev --project server
 COPY cli/go /opt/user-paths/go
-ARG USER_PATHS_SOURCE_SHA
-ARG USER_PATHS_CLI_VERSION
+# Standalone tool-image callers retain development builds; the candidate driver
+# supplies exact identity, which the released-kernel probe checks before use.
+ARG USER_PATHS_SOURCE_SHA=dev
+ARG USER_PATHS_CLI_VERSION=dev
 RUN test -n "$USER_PATHS_SOURCE_SHA" && test -n "$USER_PATHS_CLI_VERSION" \
     && cd /opt/user-paths/go && CGO_ENABLED=0 go build -trimpath \
        -ldflags "-X main.version=${USER_PATHS_CLI_VERSION} -X main.commit=${USER_PATHS_SOURCE_SHA} -X main.commitRepo=github.com/awebai/aweb" \
