@@ -606,7 +606,7 @@ async def test_ensure_session_reuses_the_same_identity_across_membership_project
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "state", ["time_expired", "closed", "expired", "active", "legacy_only"]
+    "state", ["time_expired", "closed", "expired", "active", "migrated_history"]
 )
 async def test_session_reuse_respects_canonical_conversation_lifecycle(
     aweb_cloud_db, state
@@ -619,11 +619,12 @@ async def test_session_reuse_respects_canonical_conversation_lifecycle(
         participant_rows=[alice, bob],
         created_by="alice",
     )
-    if state == "legacy_only":
+    if state == "migrated_history":
         await aweb_cloud_db.aweb_db.execute(
             "DELETE FROM {{tables.conversations}} WHERE conversation_id = $1",
             old_id,
         )
+        await migrate_chat_conversation_coverage(aweb_cloud_db.aweb_db)
     elif state == "time_expired":
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.conversations}} SET expires_at = NOW() - INTERVAL '1 day' WHERE conversation_id = $1",
@@ -642,7 +643,7 @@ async def test_session_reuse_respects_canonical_conversation_lifecycle(
         participant_rows=[alice, bob],
         created_by="alice",
     )
-    if state in {"active", "legacy_only"}:
+    if state in {"active", "migrated_history"}:
         assert new_id == old_id
     else:
         assert new_id != old_id
