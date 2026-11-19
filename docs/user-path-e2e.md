@@ -64,6 +64,9 @@ continuation stdout and stderr separately.
 Refusal controls check the actual user-facing diagnostic and no delivery:
 
 - A local sender to a global `contacts_only` recipient without a contact.
+  aw 1.36.40 normalizes that CLI spelling to `team_and_contacts`; the driver
+  checks the returned policy and its corresponding `403 recipient_policy_rejected`
+  diagnostic. It does not claim to have configured `contacts_only` in that lane.
   Same-team `team_and_contacts` delivery remains a positive neighbor.
 - An address published in real AWID whose identity has not connected residence.
 - A local first-contact sender to the real second-server recipient without an
@@ -71,11 +74,15 @@ Refusal controls check the actual user-facing diagnostic and no delivery:
   `local_sender_route_mismatch` refusal with HTTP 422; actf-only certificate and
   team-server discovery errors are not this server's contract.
 
-Released 1.36.53/1.36.54 diagnose a nonresident target during CLI preflight;
-the current client reaches the server's `recipient_identity_not_found` response.
+Released 1.36.40 reports `agent not found: <address>` during nonresident
+preflight; 1.36.53/1.36.54 use their longer team-or-address diagnostic.
+The current client reaches the server's `recipient_identity_not_found` response.
 The suite checks each documented release's exact diagnostic rather than
 requiring a historical binary to produce a newer error envelope. Transport
-errors never count as these refusals.
+errors never count as these refusals. Older stderr-only errors retain their
+actual exit status and HTTP carrier when present; preflight errors are never
+assigned a synthetic HTTP status. Public reads and channel sinks still prove
+no delivery independently of the diagnostic format.
 
 ## Required human coverage
 
