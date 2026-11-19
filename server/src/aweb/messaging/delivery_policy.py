@@ -1,6 +1,7 @@
 """One recipient policy decision for native and federated mail/chat."""
 
 import logging
+from awid.federation_errors import FederationAuthorityError
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -158,6 +159,12 @@ async def authorize_delivery(
             "Local recipient only accepts same-team, exact-contact, or stored-route continuation delivery. "
             + _POLICY_ACTION
         )
+    if not global_recipient:
+        # docs/federation-error-reference.md:40: an outsider gets no evidence
+        # that a local identity exists. The owner retains the released 404.
+        code = DeliveryRefusalCode.LOCAL_RECIPIENT_ROUTE_MISSING
+        logger.warning("delivery_policy_refused reason=%s", code.value)
+        raise FederationAuthorityError(code.value) from ForbiddenError(detail)
     raise DeliveryPolicyRefused(
         code=DeliveryRefusalCode.RECIPIENT_POLICY_REJECTED, detail=detail
     )
