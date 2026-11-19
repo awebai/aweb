@@ -69,7 +69,9 @@ async def recipient_inbound_mode(db, recipient: Mapping) -> InboundMode:
     policy_did = recipient.get("policy_did_aw", recipient.get("did_aw"))
     try:
         mode = (
-            await effective_inbound_mode(db.get_manager("aweb"), str(policy_did))
+            await effective_inbound_mode(
+                db.get_manager("aweb"), str(policy_did), for_share=True
+            )
             if policy_did
             else normalize_inbound_mode(recipient.get("inbound_mode"), default="")
         )
