@@ -1730,10 +1730,6 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 }
 
 func createTeamInviteToken(domain, team, registryURL, awebURL string, local bool, forHuman ...string) (string, string, error) {
-	return createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL, local, "", forHuman...)
-}
-
-func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL string, local bool, operationID string, forHuman ...string) (string, string, error) {
 	wd, err := os.Getwd()
 	if err != nil {
 		return "", "", err
@@ -1742,7 +1738,7 @@ func createTeamInviteTokenWithOperation(domain, team, registryURL, awebURL strin
 	if err != nil {
 		return "", "", err
 	}
-	return createTeamInviteTokenAt(domain, team, registryURL, awebURL, local, operationID, wd, home.Root, forHuman...)
+	return createTeamInviteTokenAt(domain, team, registryURL, awebURL, local, wd, home.Root, forHuman...)
 }
 
 func createHostedTeamInviteToken(workingDir, teamID string, localMember bool) (string, string, error) {

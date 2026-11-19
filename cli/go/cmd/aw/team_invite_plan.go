@@ -2,6 +2,7 @@ package main
 
 import (
 	"strings"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -34,9 +35,10 @@ type teamInvitePlan struct {
 }
 
 type teamInviteMintRequest struct {
-	Plan     teamInvitePlan
-	Scope    teamInviteMemberScope
-	ForHuman *string
+	Plan         teamInvitePlan
+	Scope        teamInviteMemberScope
+	ForHuman     *string
+	ExpiresAfter time.Duration
 }
 
 type mintedTeamInvite struct {
@@ -68,6 +70,9 @@ func planTeamInvite(source teamInviteSource) (teamInvitePlan, error) {
 }
 
 func mintPlannedTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, error) {
+	if err := request.Scope.validate(); err != nil {
+		return mintedTeamInvite{}, err
+	}
 	source := request.Plan.Source
 	var humanOption []string
 	if request.ForHuman != nil {
@@ -75,6 +80,9 @@ func mintPlannedTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, err
 	}
 	localMember := request.Scope == inviteMemberLocal
 	if request.Plan.Kind == inviteAuthorityHosted {
+		if request.ExpiresAfter != 0 {
+			return mintedTeamInvite{}, usageError("--expires selects a local controller invite lifetime; the hosted service sets its own expiry")
+		}
 		created, err := createHostedTeamInvite(source.WorkingDir, externalIdentityHomeRoot(source.Home), awid.BuildTeamID(source.Domain, source.Team), localMember, humanOption...)
 		if err != nil {
 			return mintedTeamInvite{}, err
@@ -84,13 +92,14 @@ func mintPlannedTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, err
 	if request.Plan.Kind != inviteAuthorityController {
 		return mintedTeamInvite{}, usageError("unknown invite authority; run the invite preflight before minting")
 	}
-	inviteID, token, err := createTeamInviteTokenAt(source.Domain, source.Team, source.RegistryURL, source.AwebURL, localMember, "", source.WorkingDir, externalIdentityHomeRoot(source.Home), humanOption...)
-	if err != nil {
-		return mintedTeamInvite{}, err
+	return createControllerTeamInvite(request)
+}
+
+func (scope teamInviteMemberScope) validate() error {
+	switch scope {
+	case inviteMemberLocal, inviteMemberGlobal:
+		return nil
+	default:
+		return usageError("invitation member scope must be local or global")
 	}
-	saved, err := awconfig.LoadTeamInvite(inviteID)
-	if err != nil {
-		return mintedTeamInvite{}, err
-	}
-	return mintedTeamInvite{InviteID: inviteID, Token: token, ExpiresAt: saved.ExpiresAt, ForHuman: saved.ForHuman}, nil
 }

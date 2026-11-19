@@ -91,11 +91,29 @@ func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity
 // selecting an invite condition. Present unreadable/malformed files refuse.
 // A team key is never an ID-parent credential.
 func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconfig.TeamInviteIDChild, error) {
-	link, _, err := prepareTeamInviteAuthority(ctx, opts, true, nil)
+	link, _, err := prepareTeamInviteAuthority(ctx, teamInviteAuthorityRequest{Issuer: opts, Child: inviteCreatesChild})
 	return link, err
 }
 
-func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, createChild bool, requested *string) (*awconfig.TeamInviteIDChild, *string, error) {
+type teamInviteChildPolicy uint8
+
+const (
+	inviteMembershipOnly teamInviteChildPolicy = iota
+	inviteCreatesChild
+)
+
+type teamInviteAuthorityRequest struct {
+	Issuer    idChildOptions
+	Child     teamInviteChildPolicy
+	ForHuman  *string
+	ExpiresAt time.Time
+}
+
+func prepareTeamInviteAuthority(ctx context.Context, input teamInviteAuthorityRequest) (*awconfig.TeamInviteIDChild, *string, error) {
+	if input.Child != inviteMembershipOnly && input.Child != inviteCreatesChild {
+		return nil, nil, errors.New("unknown invite parentage policy")
+	}
+	opts, requested := input.Issuer, input.ForHuman
 	identity, err := resolveIDExchangeIdentity(opts.WorkingDir, opts.IdentityHome)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil
@@ -113,8 +131,11 @@ func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, create
 	}
 	domain := identity.Domain
 	if chain != nil {
-		certificates := chain.Bundle["certificates"].([]any)
-		domain = certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)["domain"].(string)
+		leaf, err := chain.Leaf()
+		if err != nil {
+			return nil, nil, err
+		}
+		domain = leaf.Domain()
 	}
 	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, domain)
 	if err != nil {
@@ -148,10 +169,22 @@ func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, create
 	if err != nil {
 		return nil, nil, err
 	}
-	if !createChild || (requested != nil && (verdict.HumanID == nil || *requested != *verdict.HumanID)) {
+	if input.Child == inviteMembershipOnly || (requested != nil && (verdict.HumanID == nil || *requested != *verdict.HumanID)) {
 		return nil, verdict.HumanID, nil
 	}
-	out, err := executeIDChildInvite(ctx, opts, "agent", "agent spawn", 7*24*time.Hour)
+	expiresAfter := 7 * 24 * time.Hour
+	if !input.ExpiresAt.IsZero() {
+		now := time.Now()
+		if opts.Now != nil {
+			now = opts.Now()
+		}
+		expiresAfter = input.ExpiresAt.Sub(now)
+		if expiresAfter <= 0 {
+			return nil, nil, awconfig.ErrTeamInviteLifetime
+		}
+		opts.Now = func() time.Time { return now }
+	}
+	out, err := executeIDChildInvite(ctx, opts, "agent", "agent spawn", expiresAfter)
 	if err != nil {
 		return nil, nil, err
 	}

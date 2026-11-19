@@ -10,23 +10,52 @@ import (
 	"strings"
 )
 
-func addWorktreeViaLocalTeamKey(
-	worktreePath, root, branchName string, branchCreated bool,
-	teamID, teamDomain, teamName, sourceServerURL, workingDir, sourceIdentityHome string,
-	alias, role string, state *awconfig.WorktreeWorkspace,
-) (connectOutput, error) {
+// worktreeAgentCreation keeps the creator, new home and cleanup context
+// explicit across the controller, signed-invitation and setup-key paths.
+type worktreeAgentCreation struct {
+	WorkingDir    string
+	CreatorHome   awconfig.IdentityHome
+	WorktreePath  string
+	RepoRoot      string
+	BranchName    string
+	BranchCreated bool
+	ServerURL     string
+	TeamID        string
+	Alias         string
+	Role          string
+	Workspace     *awconfig.WorktreeWorkspace
+	APIKey        string
+	SelectedTeam  *apiKeyCreationTeam
+}
+
+func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, error) {
+	worktreePath, root, branchName := input.WorktreePath, input.RepoRoot, input.BranchName
+	branchCreated := input.BranchCreated
+	teamID, workingDir := input.TeamID, input.WorkingDir
+	sourceServerURL, sourceIdentityHome := input.ServerURL, externalIdentityHomeRoot(input.CreatorHome)
+	alias, role, state := input.Alias, input.Role, input.Workspace
+	teamDomain, teamName, err := awid.ParseTeamID(teamID)
+	if err != nil {
+		return connectOutput{}, err
+	}
 	registryURL, err := resolveWorkspaceTeamRegistryURLAt(workingDir, sourceIdentityHome, sourceServerURL, teamDomain)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, err
 	}
 
-	_, inviteToken, err := createTeamInviteTokenAt(teamDomain, teamName, registryURL, sourceServerURL, true, "", workingDir, sourceIdentityHome)
+	created, err := mintPlannedTeamInvite(teamInviteMintRequest{
+		Plan: teamInvitePlan{Kind: inviteAuthorityController, Source: teamInviteSource{
+			WorkingDir: workingDir, Home: input.CreatorHome, Domain: teamDomain, Team: teamName,
+			RegistryURL: registryURL, AwebURL: sourceServerURL,
+		}},
+		Scope: inviteMemberLocal,
+	})
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("create local team invite for %s: %w", teamID, err)
 	}
-	acceptedInvite, err := acceptTeamInviteWithDetails(worktreePath, inviteToken, teamAcceptInviteOptions{
+	acceptedInvite, err := acceptTeamInviteWithDetails(worktreePath, created.Token, teamAcceptInviteOptions{
 		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
 		Name:         alias,
 		Scope:        awid.IdentityModeLocal,
@@ -63,10 +92,11 @@ func addWorktreeViaLocalTeamKey(
 	return connectResult, nil
 }
 
-func addWorktreeViaCloudBootstrap(
-	worktreePath, root, branchName string, branchCreated bool,
-	sourceServerURL, alias, role string, state *awconfig.WorktreeWorkspace, apiKey string, selectedTeam *apiKeyCreationTeam,
-) (connectOutput, error) {
+func addWorktreeViaCloudBootstrap(input worktreeAgentCreation) (connectOutput, error) {
+	worktreePath, root, branchName := input.WorktreePath, input.RepoRoot, input.BranchName
+	branchCreated := input.BranchCreated
+	sourceServerURL, alias, role, state := input.ServerURL, input.Alias, input.Role, input.Workspace
+	apiKey, selectedTeam := input.APIKey, input.SelectedTeam
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
@@ -107,10 +137,11 @@ func addWorktreeViaCloudBootstrap(
 	return result, nil
 }
 
-func addWorktreeViaPrimaryInvite(
-	primaryDir, primaryIdentityHome, worktreePath, root, branchName string, branchCreated bool,
-	sourceServerURL, alias, role string, state *awconfig.WorktreeWorkspace,
-) (connectOutput, error) {
+func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, error) {
+	worktreePath, root, branchName := input.WorktreePath, input.RepoRoot, input.BranchName
+	branchCreated := input.BranchCreated
+	primaryDir, primaryIdentityHome := input.WorkingDir, externalIdentityHomeRoot(input.CreatorHome)
+	sourceServerURL, alias, role, state := input.ServerURL, input.Alias, input.Role, input.Workspace
 	invite, err := createWorkspaceTeamInviteAt(primaryDir, primaryIdentityHome)
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)

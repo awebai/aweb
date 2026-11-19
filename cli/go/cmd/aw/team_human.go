@@ -2394,25 +2394,22 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 			memberAddress = strings.TrimSpace(identity.Address)
 		}
 	}
-	localInvite := !global
-	hasTeamKey := false
-	if !awconfig.IsGrantHome(actorHome.Root) {
-		hasTeamKey, err = awconfig.TeamKeyExists(domain, team)
-		if err != nil {
-			return nil, err
-		}
-	}
-	var token string
-	if hasTeamKey {
-		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localInvite, "", anchorDir, actorHome.Root)
-	} else if strings.TrimSpace(awebURL) != "" {
-		_, token, err = createHostedTeamInviteToken(anchorDir, awid.BuildTeamID(domain, team), localInvite)
-	} else {
-		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localInvite, "", anchorDir, actorHome.Root)
-	}
+
+	plan, err := planTeamInvite(teamInviteSource{
+		WorkingDir: anchorDir, Home: actorHome, Domain: domain, Team: team, RegistryURL: registryURL, AwebURL: awebURL,
+	})
 	if err != nil {
 		return nil, err
 	}
+	scope := inviteMemberLocal
+	if global {
+		scope = inviteMemberGlobal
+	}
+	created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: scope})
+	if err != nil {
+		return nil, err
+	}
+	token := created.Token
 	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress, ParentHome: parentHome}
 	accepted, err := acceptProvisionedTeamInvite(anchorDir, actorHome.Root, homeDir, token, acceptOpts)
 	if err != nil {

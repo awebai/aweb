@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,7 +52,7 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 	var token, expiry string
 	if hasTeamKey {
 		registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
-		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localMember, "", workingDir, identityHome)
+		_, token, err = createTeamInviteTokenAt(domain, team, registryURL, awebURL, localMember, workingDir, identityHome)
 	} else if strings.TrimSpace(awebURL) != "" {
 		var created *awid.SpawnCreateInviteResponse
 		created, err = createHostedTeamInvite(workingDir, identityHome, teamID, localMember)
@@ -61,7 +60,7 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 			token, expiry = created.Token, created.ExpiresAt
 		}
 	} else {
-		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, localMember, "", workingDir, identityHome)
+		_, token, err = createTeamInviteTokenAt(domain, team, "", awebURL, localMember, workingDir, identityHome)
 	}
 	if err != nil {
 		return workspaceTeamInvite{}, err

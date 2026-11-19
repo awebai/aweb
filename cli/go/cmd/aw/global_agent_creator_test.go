@@ -45,7 +45,7 @@ func TestTeamAdminGlobalAgentGetsRegisteredCreatorsChain(t *testing.T) {
 			}
 			status["identities"] = rows
 			status["missing"] = []any{target.DIDAW}
-			idWrites, teamWrites := 0, 0
+			idWrites, teamWrites, creatorKeyReads := 0, 0, 0
 			var signed map[string]any
 			registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
@@ -54,7 +54,12 @@ func TestTeamAdminGlobalAgentGetsRegisteredCreatorsChain(t *testing.T) {
 					json.NewEncoder(w).Encode(status)
 				case strings.HasSuffix(r.URL.Path, "/encryption-key"):
 					writeRegistryEncryptionKeyAssertionForTest(t, w, r)
-				case strings.HasSuffix(r.URL.Path, "/key"):
+				case r.URL.Path == "/v1/did/"+actor.DIDAW+"/key":
+					creatorKeyReads++
+					// A chainless registered creator needs a current,
+					// explicitly not-enrolled key response of its own.
+					json.NewEncoder(w).Encode(map[string]any{"did_aw": actor.DIDAW, "current_did_key": actor.DIDKey, "id_tree": map[string]any{"enrolled": chained}})
+				case r.URL.Path == "/v1/did/"+target.DIDAW+"/key":
 					tree := map[string]any{"enrolled": idWrites > 0}
 					if idWrites > 0 {
 						tree["domain"] = "example.com"
@@ -141,6 +146,9 @@ func TestTeamAdminGlobalAgentGetsRegisteredCreatorsChain(t *testing.T) {
 			accepted, err := createAndAcceptTeamInviteForEmptyAgent(root, child, "child", true)
 			if err != nil {
 				t.Fatalf("global creator provisioning (%d ID writes/%d membership writes): %v", idWrites, teamWrites, err)
+			}
+			if !chained && creatorKeyReads != 1 {
+				t.Fatalf("chainless creator key reads=%d; want one authoritative absence check", creatorKeyReads)
 			}
 			wantIDWrites := 0
 			if chained {
