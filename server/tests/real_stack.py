@@ -29,9 +29,6 @@ from awid.team_server_record import record_signing_bytes
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
 from redis.asyncio import Redis
-from awid_service.routes.attestation_records import (
-    router as awid_attestation_records_router,
-)
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 
