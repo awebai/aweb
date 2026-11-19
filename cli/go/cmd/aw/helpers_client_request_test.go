@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"errors"
-	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -109,23 +106,14 @@ func TestClientRequestUsesSelectedCertificateAndBaseResolver(t *testing.T) {
 	}
 }
 
-func TestClientSelectionReportsWorkingDirectoryFailureBeforeSelectingAGrant(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows cannot remove the current directory")
-	}
-	workingDir := t.TempDir()
-	home := filepath.Join(t.TempDir(), "grant")
-	writeGrantHomeForTest(t, home, "https://app.example.test")
-	previous := activeIdentityHome
-	activeIdentityHome = awconfig.IdentityHome{Root: home}
-	t.Cleanup(func() { activeIdentityHome = previous })
-	t.Chdir(workingDir)
-	if err := os.Remove(workingDir); err != nil {
-		t.Fatal(err)
-	}
-	client, selection, err := resolveClientSelection()
-	var pathError *os.PathError
-	if !errors.As(err, &pathError) || pathError.Op != "getwd" || client != nil || selection != nil {
-		t.Fatalf("working directory failure was lost: client=%v selection=%+v err=%v", client, selection, err)
+func TestClientRequestRequiresWorkingDirectoryBeforeSelectingAGrant(t *testing.T) {
+	home := awconfig.IdentityHome{Root: filepath.Join(t.TempDir(), "grant")}
+	writeGrantHomeForTest(t, home.Root, "https://app.example.test")
+	client, selected, err := newClient(context.Background(), clientRequest{
+		Home:    home,
+		BaseURL: func(_ context.Context, raw string) (string, error) { return raw, nil },
+	})
+	if err == nil || err.Error() != "client request requires a working directory" || client != nil || selected != nil {
+		t.Fatalf("missing directory fell back to a selected credential: client=%v selection=%+v err=%v", client, selected, err)
 	}
 }

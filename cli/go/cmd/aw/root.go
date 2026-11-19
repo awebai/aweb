@@ -195,7 +195,11 @@ func Execute() {
 	finishHTTPDiagnostics := awid.StartHTTPDiagnostics()
 	refuseUnknownSubcommands(rootCmd)
 	if argsContainTraceFlag(os.Args[1:]) {
-		_ = os.Setenv("AW_TRACE", "1")
+		if err := os.Setenv("AW_TRACE", "1"); err != nil {
+			finishHTTPDiagnostics(err)
+			reportCLIError(err, err.Error(), argsContainJSONFlag(os.Args[1:]))
+			os.Exit(exitCode(err))
+		}
 	}
 	restorePluginIdentityHome, err := activateIdentityHomeForPluginDispatch(os.Args[1:])
 	if err != nil {
@@ -235,7 +239,7 @@ func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
 	if namesOfflineCommand(args) {
 		return func() {}, nil
 	}
-	previous, existed := os.LookupEnv(awconfig.IdentityHomeEnv)
+	previous := captureIdentityHomeEnvironment()
 	explicit := identityHomeForPluginDispatch(args)
 	home, err := awconfig.ResolveIdentityHome("", explicit)
 	if err != nil {
@@ -247,10 +251,8 @@ func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
 		}
 	}
 	return func() {
-		if existed {
-			_ = os.Setenv(awconfig.IdentityHomeEnv, previous)
-		} else {
-			_ = os.Unsetenv(awconfig.IdentityHomeEnv)
+		if err := previous.restore(); err != nil {
+			debugLog("restore identity selection after plugin dispatch: %v", err)
 		}
 	}, nil
 }

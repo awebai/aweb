@@ -63,7 +63,10 @@ func isIdentityMismatchError(err error) bool {
 }
 
 func resolveClientSelection() (*aweb.Client, *awconfig.Selection, error) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, nil, err
+	}
 	return resolveClientSelectionForDir(wd)
 }
 
@@ -126,7 +129,10 @@ func resolveSelectionAtIdentityHome(workingDir, teamIDOverride string, identityH
 }
 
 func resolveIdentity() (*awconfig.ResolvedIdentity, error) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
 	return resolveIdentityForDir(wd)
 }
 
@@ -258,7 +264,10 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		return nil, fmt.Errorf("current signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
 	}
 
-	domain, _, _ := awid.ParseTeamID(cert.Team)
+	domain, _, err := awid.ParseTeamID(cert.Team)
+	if err != nil {
+		return nil, fmt.Errorf("invalid active team certificate team: %w", err)
+	}
 	return &awconfig.ResolvedIdentity{
 		WorkingDir:     strings.TrimSpace(workingDir),
 		IdentityPath:   "",
@@ -378,7 +387,10 @@ func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, iden
 }
 
 func resolveIdentityMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, nil, err
+	}
 	return resolveIdentityMessagingClientSelectionForDir(wd)
 }
 
@@ -486,7 +498,10 @@ const aliasTeamSearchHelp = "\n\nA bare recipient name is looked up in the selec
 	"recipient before delivery."
 
 func resolveClientSelectionForAliasTarget(ctx context.Context, targetAlias string) (*aweb.Client, *awconfig.Selection, error) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, nil, err
+	}
 	c, sel, err := resolveClientSelectionForDir(wd)
 	if err != nil {
 		return nil, nil, err

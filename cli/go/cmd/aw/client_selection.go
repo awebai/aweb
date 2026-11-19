@@ -31,6 +31,9 @@ type clientRequest struct {
 // Inputs are captured by the command boundary; this owner never reads selection
 // flags or changes command state for a detached client.
 func newClient(ctx context.Context, request clientRequest) (*aweb.Client, *awconfig.Selection, error) {
+	if strings.TrimSpace(request.WorkingDir) == "" {
+		return nil, nil, errors.New("client request requires a working directory")
+	}
 	if request.BaseURL == nil {
 		return nil, nil, errors.New("client request requires a base URL resolver")
 	}
