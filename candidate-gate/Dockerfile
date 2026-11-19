@@ -62,6 +62,17 @@ RUN npm ci
 COPY channel-core/tsconfig.json ./
 COPY channel-core/src ./src
 RUN npm run build
+# Released kernel/provider inputs are installed only while preparing this image.
+COPY candidate-gate/released-oats /opt/user-paths/released-oats/
+RUN npm ci --ignore-scripts --no-audit --no-fund --prefix /opt/user-paths/released-oats \
+    && test "$(node -p 'require("/opt/user-paths/released-oats/node_modules/@awebai/oats/package.json").version')" = "0.69.19" \
+    && OATS_PROBE_PROVIDER_COMMIT="$(node -p 'require("/opt/user-paths/released-oats/provider.json").commit')" \
+    && OATS_PROBE_PROVIDER_REPO="$(node -p 'require("/opt/user-paths/released-oats/provider.json").repository')" \
+    && git init --bare /opt/user-paths/provider.git \
+    && git --git-dir=/opt/user-paths/provider.git fetch --depth=1 "$OATS_PROBE_PROVIDER_REPO" "$OATS_PROBE_PROVIDER_COMMIT" \
+    && test "$(git --git-dir=/opt/user-paths/provider.git rev-parse FETCH_HEAD)" = "$OATS_PROBE_PROVIDER_COMMIT" \
+    && mkdir /opt/user-paths/oats-aweb \
+    && git --git-dir=/opt/user-paths/provider.git archive FETCH_HEAD oats-package | tar -x -C /opt/user-paths/oats-aweb
 COPY --from=coredns/coredns:1.11.3 /coredns /opt/user-paths/coredns
 ARG USER_PATHS_SOURCE_TREE
 LABEL aweb.user-paths-ready="1" aweb.user-paths-source-tree="${USER_PATHS_SOURCE_TREE}"

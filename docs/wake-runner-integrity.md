@@ -18,3 +18,8 @@ Windows uses inherited ACLs; Unix mode checks do not establish Windows permissio
 
 An invalid child status JSON line increments an invalid-output count without
 retaining its contents or stopping valid neighboring status delivery.
+
+The user-paths gate qualifies the released OATS kernel against candidate aw using
+the real messaging provider and an isolated passive tmux session. This kernel
+wake receipt is required for the lane to pass; ordinary channel-core delivery
+alone does not qualify it. This does not qualify a deployed image or Helm storage.

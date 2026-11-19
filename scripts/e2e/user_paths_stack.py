@@ -8,11 +8,11 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 import uuid
 from user_paths_result import qualification
+from user_paths_kernel_result import add_kernel_wake_result
 
 REPO = Path(__file__).resolve().parents[2]
 BASELINE_WHEEL = os.environ.get("USER_PATHS_BASELINE_WHEEL")
@@ -278,6 +278,7 @@ def main():
         "scripts/fetch_released_aw.py",
         "scripts/e2e/user_paths.py",
         "scripts/e2e/user_paths_receive.mjs",
+        "scripts/e2e/user_paths_oats.mjs",
         "scripts/e2e/user_paths_result.py",
     ):
         shutil.copy2(REPO / source, WORK / Path(source).name)
@@ -527,6 +528,32 @@ def main():
                     )
                 except subprocess.CalledProcessError:
                     lane_failures.append(lane)
+        probe_lane, probe_binary = selected_lanes[0]
+        with phase("released-kernel-wake"):
+            try:
+                compose(
+                    "exec",
+                    "-T",
+                    "cli",
+                    "node",
+                    "/work/user_paths_oats.mjs",
+                    "--aw",
+                    probe_binary,
+                    "--root",
+                    "/identities/kernel-wake",
+                    "--seat",
+                    f"/identities/{probe_lane}/g1",
+                    "--sender",
+                    f"/identities/{probe_lane}/t1",
+                    "--team",
+                    f"members:{probe_lane}-g1.test",
+                    "--source-commit",
+                    run("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
+                    "--output",
+                    "/work/released-kernel-wake.json",
+                )
+            except subprocess.CalledProcessError:
+                lane_failures.append("released-kernel-wake")
         status = 1 if lane_failures else 0
     finally:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -550,6 +577,14 @@ def main():
                     timeout=15,
                 ),
             )
+            if (WORK / "released-kernel-wake.json").exists():
+                cleanup_action(
+                    "released kernel wake evidence",
+                    lambda: shutil.copy2(
+                        WORK / "released-kernel-wake.json",
+                        EVIDENCE / "released-kernel-wake.json",
+                    ),
+                )
             # Retain actual source, artifact identity, named case output and timings.
             for lane in ["head", "released", "forward", "reverse"]:
                 if (WORK / lane).exists():
@@ -604,6 +639,13 @@ def main():
             if (EVIDENCE / lane / "results.json").exists()
         }
         result = qualification(lanes, TIMINGS["total"], cleanup_errors)
+        kernel_path = EVIDENCE / "released-kernel-wake.json"
+        result = add_kernel_wake_result(
+            qualification=result,
+            kernel_receipt=json.loads(kernel_path.read_text())
+            if kernel_path.exists()
+            else None,
+        )
         (EVIDENCE / "qualification.json").write_text(
             json.dumps(result, indent=2) + "\n"
         )

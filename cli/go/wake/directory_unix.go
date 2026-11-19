@@ -58,7 +58,7 @@ func warnWakeDirectory(path string) {
 		log.Printf("Warning: %v. Check directory access before running the wake broker.", err)
 		return
 	}
-	log.Printf("Warning: wake state directory %s is shared or owned by uid %d. To make this directory private, run: %s. State operations remain available; executable-cache access is checked when the runner starts.", path, directory.Owner, directory.repairAdvice())
+	log.Printf("Warning: wake state directory %s is shared or owned by uid %d. To make this directory private, run: %s. State operations remain available; runner execution uses a separate private snapshot.", path, directory.Owner, directory.repairAdvice())
 }
 
 // writableByAnotherUser implements docs/wake-runner-integrity.md:11-14.
