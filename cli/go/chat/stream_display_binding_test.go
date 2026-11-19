@@ -16,7 +16,6 @@ import (
 const (
 	streamConversationID = "22222222-2222-4222-8222-222222222222"
 	streamReplyID        = "11111111-1111-4111-8111-111111111111"
-	streamReaderDID      = "did:key:z6MkpTyWJw55qh8q1UnzsepWtL4yJ534Ezx6Wmgj6mR3zPFk"
 )
 
 // signedStreamReply returns a stream message row as the server delivers it:
@@ -34,7 +33,7 @@ func signedStreamReply(t *testing.T, displayedBody string) (map[string]any, stri
 		From:           "myco/bob",
 		FromDID:        did,
 		To:             "myco/alice",
-		ToDID:          streamReaderDID,
+		ToDID:          streamReader.did,
 		Type:           "chat",
 		Body:           "the text bob signed",
 		Timestamp:      "2026-01-01T00:00:00Z",
@@ -56,7 +55,7 @@ func signedStreamReply(t *testing.T, displayedBody string) (map[string]any, stri
 		"to_address":      "myco/alice",
 		"from_did":        stableID,
 		"from_stable_id":  stableID,
-		"to_did":          streamReaderDID,
+		"to_did":          streamReader.did,
 		"body":            displayedBody,
 		"timestamp":       "2026-01-01T00:00:00Z",
 		"signature":       sig,
@@ -64,20 +63,48 @@ func signedStreamReply(t *testing.T, displayedBody string) (map[string]any, stri
 	}, did
 }
 
-func parseStreamRow(t *testing.T, row map[string]any) Event {
+// streamReader is the identity that receives the streamed replies.
+var streamReader = func() parityKey {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		panic(err)
+	}
+	return parityKey{did: awid.ComputeDIDKey(pub), priv: priv}
+}()
+
+// parseStreamRow decodes a stream row and verifies it as aw chat send-and-wait
+// does, for a reader whose registry names myco/bob with senderDID.
+func parseStreamRow(t *testing.T, row map[string]any, senderDID string) Event {
 	t.Helper()
 	data, err := json.Marshal(row)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return parseSSEEvent(&awid.SSEEvent{Event: "message", Data: string(data)})
+	ev := parseSSEEvent(&awid.SSEEvent{Event: "message", Data: string(data)})
+	c, err := awid.NewWithIdentity("http://unused.invalid", streamReader.priv, streamReader.did)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetAddress("myco/alice")
+	c.SetResolver(stubIdentityResolver{
+		resolve: func(_ context.Context, address string) (*awid.ResolvedIdentity, error) {
+			if address != "myco/bob" {
+				return nil, fmt.Errorf("no identity at %s", address)
+			}
+			return &awid.ResolvedIdentity{DID: senderDID, Address: address, StableID: "did:aw:stable-sender", IdentityScope: awid.IdentityModeGlobal, ResolvedVia: "registry"}, nil
+		},
+	})
+	if err := verifyStreamMessage(context.Background(), c, &ev, nil); err != nil {
+		t.Fatal(err)
+	}
+	return ev
 }
 
 func TestStreamReplyMatchingItsSignedPayloadIsVerified(t *testing.T) {
 	t.Parallel()
 
 	row, did := signedStreamReply(t, "the text bob signed")
-	ev := parseStreamRow(t, row)
+	ev := parseStreamRow(t, row, did)
 	if ev.VerificationStatus != awid.Verified {
 		t.Fatalf("verification_status=%s, want %s", ev.VerificationStatus, awid.Verified)
 	}
@@ -91,8 +118,8 @@ func TestStreamReplyMatchingItsSignedPayloadIsVerified(t *testing.T) {
 func TestStreamReplyWhoseBodyDiffersFromItsSignedPayloadFails(t *testing.T) {
 	t.Parallel()
 
-	row, _ := signedStreamReply(t, "text bob never wrote")
-	ev := parseStreamRow(t, row)
+	row, did := signedStreamReply(t, "text bob never wrote")
+	ev := parseStreamRow(t, row, did)
 	if ev.VerificationStatus != awid.Failed {
 		t.Fatalf("verification_status=%s, want %s", ev.VerificationStatus, awid.Failed)
 	}
@@ -110,12 +137,12 @@ func TestStreamReplyWhoseIdentifiersDifferFromItsSignedPayloadFails(t *testing.T
 		"to_did":          "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
 	} {
 		t.Run(field, func(t *testing.T) {
-			row, _ := signedStreamReply(t, "the text bob signed")
+			row, did := signedStreamReply(t, "the text bob signed")
 			row[field] = value
 			if field == "conversation_id" {
 				row["session_id"] = value
 			}
-			ev := parseStreamRow(t, row)
+			ev := parseStreamRow(t, row, did)
 			if ev.VerificationStatus != awid.Failed {
 				t.Fatalf("verification_status=%s, want %s", ev.VerificationStatus, awid.Failed)
 			}
@@ -158,11 +185,11 @@ func TestStreamReplyCarryingASignedRequestEnvelopeFails(t *testing.T) {
 				"message_id":      streamReplyID,
 				"from_agent":      "bob",
 				"from_did":        request.DIDKey,
-				"to_did":          streamReaderDID,
+				"to_did":          streamReader.did,
 				"body":            "text the sender never wrote",
 				"signed_payload":  request.CanonicalPayload,
 				"signature":       request.SignatureB64,
-			})
+			}, request.DIDKey)
 			if ev.VerificationStatus != awid.Failed {
 				t.Fatalf("verification_status=%s, want %s", ev.VerificationStatus, awid.Failed)
 			}

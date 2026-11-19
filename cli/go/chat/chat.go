@@ -16,26 +16,6 @@ import (
 	"github.com/awebai/aw/internal/identityutil"
 )
 
-type signedEnvelopeMetadata struct {
-	From         string `json:"from"`
-	To           string `json:"to"`
-	FromDID      string `json:"from_did"`
-	ToDID        string `json:"to_did"`
-	FromStableID string `json:"from_stable_id"`
-	ToStableID   string `json:"to_stable_id"`
-}
-
-func parseSignedEnvelopeMetadata(payload string) (signedEnvelopeMetadata, bool) {
-	if payload == "" {
-		return signedEnvelopeMetadata{}, false
-	}
-	var meta signedEnvelopeMetadata
-	if err := json.Unmarshal([]byte(payload), &meta); err != nil {
-		return signedEnvelopeMetadata{}, false
-	}
-	return meta, true
-}
-
 const DefaultWait = 120 // Default wait timeout in seconds for replies
 const maxOpenUnreadMessages = 1000
 
@@ -276,103 +256,51 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		}
 	}
 
-	if ev.ContentMode != awid.ContentModeEncryptedV2 && ev.MessageVersion != awid.E2EEMessageVersion && ev.Encrypted == nil && ev.SignedPayload != "" &&
-		!awid.SignedChatDisplayMatches(ev.SignedPayload, awid.ChatDisplay{
-			Body:           ev.Body,
-			MessageID:      ev.MessageID,
-			ConversationID: ev.SessionID,
-			FromDID:        ev.FromDID,
-			ToDID:          ev.ToDID,
-		}) {
-		// Keep the observed row: a mismatch must not be hidden by projecting
-		// signed metadata over it.
-		ev.VerificationStatus = awid.Failed
-		return ev
-	}
-
-	if meta, ok := parseSignedEnvelopeMetadata(ev.SignedPayload); ok {
-		// The chat stream row may carry a stable DID in from_did/to_did when the
-		// session participant was stored under did:aw. The signed payload is the
-		// verification authority and carries the did:key that signed the message;
-		// match ChatHistory normalization so live SSE rendering does not show a
-		// verified message as [unverified].
-		if meta.FromDID != "" {
-			ev.FromDID = meta.FromDID
-		}
-		if meta.ToDID != "" {
-			ev.ToDID = meta.ToDID
-		}
-		if ev.FromStableID == "" {
-			ev.FromStableID = meta.FromStableID
-		}
-		if ev.ToStableID == "" {
-			ev.ToStableID = meta.ToStableID
-		}
-		if ev.FromAddress == "" {
-			ev.FromAddress = meta.From
-		}
-		if ev.ToAddress == "" {
-			ev.ToAddress = meta.To
-		}
-	}
-
-	// Verify message signature when identity fields are present.
-	from := ev.FromAgent
-	if ev.FromAddress != "" {
-		from = ev.FromAddress
-	}
-	env := &awid.MessageEnvelope{
-		From:         from,
-		FromDID:      ev.FromDID,
-		To:           ev.ToAddress,
-		ToDID:        ev.ToDID,
-		Type:         "chat",
-		Body:         ev.Body,
-		Timestamp:    ev.Timestamp,
-		FromStableID: ev.FromStableID,
-		ToStableID:   ev.ToStableID,
-		MessageID:    ev.MessageID,
-		Signature:    ev.Signature,
-		SigningKeyID: ev.SigningKeyID,
-	}
-	// Error is encoded in VerificationStatus; discard it.
-	if ev.SignedPayload != "" {
-		ev.VerificationStatus, _ = awid.VerifySignedPayload(ev.SignedPayload, ev.Signature, ev.FromDID, ev.SigningKeyID)
-	} else {
-		ev.VerificationStatus, _ = awid.VerifyMessage(env)
-	}
-
 	return ev
 }
 
-func decryptChatEvent(client *awid.Client, ev *Event) error {
-	if ev != nil {
-		ev.Attachments = nil
-		ev.AttachmentsAvailable = true
-	}
-	if ev == nil || (ev.ContentMode != awid.ContentModeEncryptedV2 && ev.MessageVersion != awid.E2EEMessageVersion && ev.Encrypted == nil) {
+// verifyStreamMessage verifies a message received on the live stream with the
+// same rule chat history uses (awid.Client.VerifyReceivedChatMessage). An
+// event whose row could not be decoded keeps its Failed status.
+func verifyStreamMessage(ctx context.Context, client *awid.Client, ev *Event, participants []awid.ChatParticipant) error {
+	if ev.VerificationStatus == awid.Failed {
 		return nil
 	}
-	if ev.Encrypted == nil {
-		return fmt.Errorf("encrypted chat event is missing encrypted envelope")
+	m := awid.ChatMessage{
+		IDChain:                 ev.IDChain,
+		SenderMembership:        ev.SenderMembership,
+		MessageID:               ev.MessageID,
+		ConversationID:          ev.SessionID,
+		FromAgent:               ev.FromAgent,
+		FromAddress:             ev.FromAddress,
+		ToAddress:               ev.ToAddress,
+		Body:                    ev.Body,
+		ContentMode:             ev.ContentMode,
+		MessageVersion:          ev.MessageVersion,
+		Encrypted:               ev.Encrypted,
+		Timestamp:               ev.Timestamp,
+		SenderLeaving:           ev.SenderLeaving,
+		ReplyToMessageID:        ev.ReplyToMessageID,
+		FromDID:                 ev.FromDID,
+		ToDID:                   ev.ToDID,
+		FromStableID:            ev.FromStableID,
+		ToStableID:              ev.ToStableID,
+		Signature:               ev.Signature,
+		SigningKeyID:            ev.SigningKeyID,
+		SignedPayload:           ev.SignedPayload,
+		RotationAnnouncement:    ev.RotationAnnouncement,
+		ReplacementAnnouncement: ev.ReplacementAnnouncement,
+		IsContact:               ev.IsContact,
 	}
-	plain, err := client.DecryptE2EEEnvelope(ev.Encrypted)
-	if err != nil {
+	if err := client.VerifyReceivedChatMessage(ctx, &m, chatEventTrustAddress(*ev, participants)); err != nil {
 		return err
 	}
-	if plain.MessageID != ev.MessageID || plain.ConversationID != ev.SessionID {
-		return fmt.Errorf("encrypted chat event identity mismatch")
-	}
-	ev.FromDID, ev.FromStableID, ev.FromAddress = plain.From.DID, plain.From.StableID, plain.From.Address
-	if len(plain.Recipients) == 1 {
-		ev.ToDID, ev.ToStableID = plain.Recipients[0].DID, plain.Recipients[0].StableID
-	}
-	ev.Body = plain.Body
-	ev.Attachments, ev.AttachmentsAvailable = awid.DecodeAttachmentContent(plain.Attachments)
-	// Verified means the encrypted-envelope signature is valid, not that the
-	// signer owns the claimed address. The inbound caller must immediately pass
-	// this result through Client.NormalizeSenderTrust.
-	ev.VerificationStatus = awid.Verified
+	ev.FromDID, ev.ToDID = m.FromDID, m.ToDID
+	ev.FromStableID, ev.ToStableID = m.FromStableID, m.ToStableID
+	ev.FromAddress, ev.ToAddress = m.FromAddress, m.ToAddress
+	ev.Body = m.Body
+	ev.Attachments, ev.AttachmentsAvailable = m.Attachments, m.AttachmentsAvailable
+	ev.VerificationStatus, ev.IsContact = m.VerificationStatus, m.IsContact
 	return nil
 }
 
@@ -1345,12 +1273,11 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				}
 				return nil, fmt.Errorf("chat stream closed: %s", detail)
 			}
-			if err := decryptChatEvent(client, &chatEvent); err != nil {
-				return nil, err
+			if chatEvent.Type == "message" {
+				if err := verifyStreamMessage(ctx, client, &chatEvent, participants); err != nil {
+					return nil, err
+				}
 			}
-			tofuFrom := chatEventTrustAddress(chatEvent, participants)
-			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeReceivedSenderTrust(ctx, chatEvent.VerificationStatus, chatEvent.FromAddress, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.SenderMembership, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact)
-			chatEvent.VerificationStatus = client.NormalizeRecipientBinding(chatEvent.VerificationStatus, chatEvent.ToDID, chatEvent.ToStableID)
 
 			if chatEvent.Type == "read_receipt" {
 				readerLabel := inferReadReceiptLabel(ctx, client, selfAlias, chatEvent.ReaderAlias, participants)

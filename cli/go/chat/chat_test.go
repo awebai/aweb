@@ -6026,12 +6026,11 @@ func TestParseSSEEventIdentityFields(t *testing.T) {
 	if ev.SigningKeyID != did {
 		t.Fatalf("signing_key_id=%s", ev.SigningKeyID)
 	}
-	if ev.VerificationStatus != awid.Verified {
-		t.Fatalf("verification_status=%s", ev.VerificationStatus)
-	}
+	// Verification is not the parser's: received_chat_parity_test.go checks
+	// the stream and history verify this row alike.
 }
 
-func TestParseSSEEventNoIdentityUnverified(t *testing.T) {
+func TestParseSSEEventWithoutIdentityHasNoSenderDID(t *testing.T) {
 	t.Parallel()
 
 	ev := parseSSEEvent(&awid.SSEEvent{
@@ -6042,12 +6041,11 @@ func TestParseSSEEventNoIdentityUnverified(t *testing.T) {
 	if ev.FromDID != "" {
 		t.Fatalf("from_did=%s", ev.FromDID)
 	}
-	if ev.VerificationStatus != awid.Unverified {
-		t.Fatalf("verification_status=%s, want %s", ev.VerificationStatus, awid.Unverified)
-	}
+	// Verification is not the parser's: received_chat_parity_test.go checks
+	// the stream and history verify this row alike.
 }
 
-func TestParseSSEEventSignedPayloadOverridesStableDIDForVerification(t *testing.T) {
+func TestParseSSEEventKeepsTheRowsStableDIDUntilVerification(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -6077,10 +6075,9 @@ func TestParseSSEEventSignedPayloadOverridesStableDIDForVerification(t *testing.
 	signedPayload := awid.CanonicalJSON(env)
 
 	// Live stream rows can carry the participant stable DID in from_did while
-	// the signed payload carries the signing did:key. The parser must verify
-	// against the signed-payload did:key, matching ChatHistory normalization.
-	// The row carries the identifiers and the signed recipient as the server
-	// streams them.
+	// the signed payload carries the signing did:key. The parser decodes the
+	// row as sent; verification replaces from_did with the signed did:key
+	// (the "row from_did is the stable id" case of the parity test).
 	data := fmt.Sprintf(`{"session_id":%q,"conversation_id":%q,"message_id":%q,"from_agent":"alice","from_address":"myco/alice","to_address":"myco/bob","body":"signed hello","from_did":%q,"from_stable_id":%q,"to_did":%q,"signature":%q,"signed_payload":%q,"timestamp":"2026-01-01T00:00:00Z"}`, env.ConversationID, env.ConversationID, env.MessageID, stableID, stableID, toDID, sig, signedPayload)
 
 	ev := parseSSEEvent(&awid.SSEEvent{
@@ -6088,18 +6085,17 @@ func TestParseSSEEventSignedPayloadOverridesStableDIDForVerification(t *testing.
 		Data:  data,
 	})
 
-	if ev.FromDID != did {
-		t.Fatalf("from_did=%q, want signed payload did:key %q", ev.FromDID, did)
+	if ev.FromDID != stableID {
+		t.Fatalf("from_did=%q, want the row's %q before verification", ev.FromDID, stableID)
 	}
 	if ev.FromStableID != stableID {
 		t.Fatalf("from_stable_id=%q, want %q", ev.FromStableID, stableID)
 	}
-	if ev.VerificationStatus != awid.Verified {
-		t.Fatalf("verification_status=%s, want verified", ev.VerificationStatus)
-	}
+	// Verification is not the parser's: received_chat_parity_test.go checks
+	// the stream and history verify this row alike.
 }
 
-func TestParseSSEEventUsesFromAddressForVerification(t *testing.T) {
+func TestParseSSEEventDecodesFromAddress(t *testing.T) {
 	t.Parallel()
 
 	pub, priv, err := ed25519.GenerateKey(nil)
@@ -6132,10 +6128,8 @@ func TestParseSSEEventUsesFromAddressForVerification(t *testing.T) {
 	if ev.FromAddress != "myco/alice" {
 		t.Fatalf("from_address=%q, want myco/alice", ev.FromAddress)
 	}
-	// Verification should succeed because From in envelope uses from_address.
-	if ev.VerificationStatus != awid.Verified {
-		t.Fatalf("verification_status=%s, want verified (from_address should be used)", ev.VerificationStatus)
-	}
+	// Verification is not the parser's: received_chat_parity_test.go checks
+	// the stream and history verify this row alike.
 }
 
 func TestParseSSEEventWiresIsContact(t *testing.T) {
