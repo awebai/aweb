@@ -76,14 +76,19 @@ def _accepted_plaintext_request(row):
 
 
 @pytest.mark.asyncio
-async def test_exact_continued_plaintext_retry_survives_recipient_leaving(chat_server):
+async def test_exact_continued_plaintext_retry_survives_retained_departure(chat_server):
     env = chat_server
     session_id, _ = await env.first_chat("mcp", "pilot", "opened", to_alias="bob")
     message_id = await env.continued_chat("mcp", "pilot", session_id, "accepted original")
     row = await env.db.fetch_one(
         "SELECT * FROM {{tables.chat_messages}} WHERE message_id=$1", UUID(message_id)
     )
-    await env.rest_chat("bob", {"body": "leaving now", "leaving": True}, session_id=session_id)
+    # Current sends' `leaving` flag ends a wait; it does not write left_at.
+    # Exercise the retained legacy departure shape on actual accepted parties.
+    await env.db.execute(
+        "UPDATE {{tables.chat_participants}} SET left_at=NOW() WHERE session_id=$1 AND did=$2",
+        UUID(session_id), env.dids["bob"],
+    )
     before = list(env.mutations)
     payload = _accepted_plaintext_request(row)
     raw = json.dumps(payload).encode()
@@ -95,8 +100,8 @@ async def test_exact_continued_plaintext_retry_survives_recipient_leaving(chat_s
     )
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()["message_id"] == message_id
-    assert repeated.json()["session_id"] == session_id
-    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 3
+    assert repeated.json()["conversation_id"] == session_id
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 2
     assert env.mutations == before
 
 
@@ -106,9 +111,9 @@ async def test_named_exact_retry_retains_local_party_after_current_key_gains_glo
     from test_local_policy_refusal_boundaries import admitted_local_recipient
 
     env = mail_server
-    bob = await admitted_local_recipient(env)
+    bob = await admitted_local_recipient(env, team="ops:acme.com")
     accepted = await env.mcp_call(
-        "send_chat", to="eng~local-bob", message="accepted before registration", plaintext=True
+        "send_chat", to="local-bob", message="accepted before registration", plaintext=True
     )
     assert "error" not in accepted, accepted
     message_id, session_id = accepted["message_id"], accepted["session_id"]
@@ -127,7 +132,7 @@ async def test_named_exact_retry_retains_local_party_after_current_key_gains_glo
     before = list(env.custody.payloads)
     payload = _accepted_plaintext_request(row)
     payload["message"] = payload.pop("body")
-    payload.update(session_id=session_id, to_aliases=["eng~local-bob"])
+    payload.update(session_id=session_id, to_aliases=["local-bob"])
     raw = json.dumps(payload).encode()
     repeated = await env.client.post(
         "/v1/chat/sessions", content=raw,
