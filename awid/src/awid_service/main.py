@@ -4,6 +4,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from importlib.metadata import version as pkg_version
+from enum import StrEnum
 from typing import Optional
 
 from fastapi import FastAPI, Request
@@ -168,6 +169,12 @@ def _service_version() -> str:
         return "dev"
 
 
+class RegistryHealthStatus(StrEnum):
+    OK = "ok"
+    DEGRADED = "degraded"
+    UNHEALTHY = "unhealthy"
+
+
 def mount_registry(app: FastAPI) -> None:
     """AWID's routes on ``app``, its ops routes and its registry, with the
     configuration they read and the request body limit. The ops routes include
@@ -181,7 +188,7 @@ def mount_registry(app: FastAPI) -> None:
 
     async def _health_payload(request: Request) -> dict:
         checks: dict[str, str] = {}
-        healthy = True
+        status = RegistryHealthStatus.OK
 
         try:
             redis_client: Redis = request.app.state.redis
@@ -189,7 +196,7 @@ def mount_registry(app: FastAPI) -> None:
             checks["redis"] = "ok"
         except Exception as exc:
             _public_health_error(component="redis", exc=exc, checks=checks)
-            healthy = False
+            status = RegistryHealthStatus.DEGRADED
 
         try:
             db = request.app.state.db.get_manager("aweb")
@@ -197,12 +204,15 @@ def mount_registry(app: FastAPI) -> None:
             checks["database"] = "ok"
         except Exception as exc:
             _public_health_error(component="database", exc=exc, checks=checks)
-            healthy = False
+            status = RegistryHealthStatus.UNHEALTHY
 
         checks["schema"] = str(getattr(request.app.state, "db_schema", "awid"))
-        checks["rate_limiter"] = type(request.app.state.rate_limiter).__name__
+        limiter = request.app.state.rate_limiter
+        checks["rate_limiter"] = limiter.health_name
+        if limiter.is_degraded and status is RegistryHealthStatus.OK:
+            status = RegistryHealthStatus.DEGRADED
         return {
-            "status": "ok" if healthy else "unhealthy",
+            "status": status,
             "version": service_version,
             "checks": checks,
         }
@@ -219,7 +229,10 @@ def mount_registry(app: FastAPI) -> None:
     async def health(request: Request) -> JSONResponse:
         payload = await _health_payload(request)
         return JSONResponse(
-            status_code=200 if payload["status"] == "ok" else 503, content=payload
+            status_code=(
+                503 if payload["status"] is RegistryHealthStatus.UNHEALTHY else 200
+            ),
+            content=payload,
         )
 
     app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()

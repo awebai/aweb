@@ -12,8 +12,11 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from enum import StrEnum
 
 from fastapi import Depends, HTTPException, Request, Response
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from .client_ip import resolve_client_ip
 
@@ -54,6 +57,16 @@ class RateLimitDecision:
 
 
 class RateLimiter:
+    @property
+    def is_degraded(self) -> bool:
+        """Whether requests currently rely on a dependency-outage fallback."""
+        return False
+
+    @property
+    def health_name(self) -> str:
+        """The implementation currently enforcing this process's limits."""
+        return type(self).__name__
+
     async def hit(
         self, *, bucket: str, key: str, limit: int, window_seconds: int
     ) -> RateLimitDecision:
@@ -90,19 +103,18 @@ class MemoryFixedWindowRateLimiter(RateLimiter):
 
         async with self._lock:
             if now - self._last_prune > 60:
-                cutoff = window_id - 1
-                for k, (w, _c) in list(self._counts.items()):
-                    if w < cutoff:
+                for k, (expires_at, _count) in list(self._counts.items()):
+                    if expires_at <= now:
                         del self._counts[k]
                 self._last_prune = now
 
             stored = self._counts.get(map_key)
-            if stored is None or stored[0] != window_id:
+            if stored is None or stored[0] != reset_epoch:
                 count = 0
             else:
                 count = stored[1]
             count += 1
-            self._counts[map_key] = (window_id, count)
+            self._counts[map_key] = (reset_epoch, count)
 
         allowed = count <= limit
         remaining = max(0, limit - count)
@@ -114,31 +126,76 @@ class MemoryFixedWindowRateLimiter(RateLimiter):
         )
 
 
+class _RedisLimitState(StrEnum):
+    SHARED = "shared"
+    PROCESS_LOCAL = "process_local"
+
+
 class RedisFixedWindowRateLimiter(RateLimiter):
+    """Shared limits with bounded process-local continuity during Redis outage.
+
+    Antares f9b99e24 / coordinator7afba778 requires limits to remain on.
+    Mirroring local hits also preserves the local bound across recovery; a
+    failed connection is retried at most once per five seconds per process.
+    """
+
     def __init__(self, *, redis) -> None:
         self._redis = redis
+        self._memory = MemoryFixedWindowRateLimiter()
+        self._state = _RedisLimitState.SHARED
+        self._retry_after = 0.0
         self._lua = (
             "local v = redis.call('INCR', KEYS[1]);"
             "if v == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]); end;"
             "return v;"
         )
 
+    @property
+    def is_degraded(self) -> bool:
+        return self._state is _RedisLimitState.PROCESS_LOCAL
+
+    @property
+    def health_name(self) -> str:
+        return self._memory.health_name if self.is_degraded else type(self).__name__
+
+    def _redis_unavailable(self) -> None:
+        if self._state is _RedisLimitState.SHARED:
+            logger.error(
+                "AWID Redis rate limiting is unavailable; using bounded per-process limits. "
+                "Restore Redis connectivity to restore shared limits.",
+                exc_info=True,
+            )
+        self._state = _RedisLimitState.PROCESS_LOCAL
+        self._retry_after = time.monotonic() + 5.0
+
     async def hit(
         self, *, bucket: str, key: str, limit: int, window_seconds: int
     ) -> RateLimitDecision:
+        local = await self._memory.hit(
+            bucket=bucket, key=key, limit=limit, window_seconds=window_seconds
+        )
+        if self.is_degraded and time.monotonic() < self._retry_after:
+            return local
         now = time.time()
         window_id = int(now // window_seconds)
         reset_epoch = int((window_id + 1) * window_seconds)
         redis_key = f"aweb:rl:{bucket}:{key}:{window_id}"
-
-        v = await self._redis.eval(self._lua, 1, redis_key, int(window_seconds) + 2)
-        count = int(v)
-        allowed = count <= limit
-        remaining = max(0, limit - count)
+        try:
+            count = await self._redis.eval(
+                self._lua, 1, redis_key, int(window_seconds) + 2
+            )
+        except (RedisConnectionError, RedisTimeoutError):
+            self._redis_unavailable()
+            return local
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            raise TypeError("Redis rate-limit counter must be a positive integer")
+        if self.is_degraded:
+            logger.info("AWID Redis rate limiting restored; shared limits are active.")
+        self._state = _RedisLimitState.SHARED
         return RateLimitDecision(
-            allowed=allowed,
+            allowed=count <= limit and local.allowed,
             limit=limit,
-            remaining=remaining,
+            remaining=min(max(0, limit - count), local.remaining),
             reset_epoch_seconds=reset_epoch,
         )
 
