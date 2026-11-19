@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from enum import StrEnum
 from datetime import datetime, timedelta, timezone
 
 from .auth_context import GrantContext
@@ -9,6 +10,14 @@ from .identity_grant_status import GrantValidityState, grant_validity
 from .grant_expiry import never_expires
 from .certificate_registration import configured_registration_mode
 from starlette.requests import Request
+
+
+class GrantLivenessFailurePolicy(StrEnum):
+    """How a consumer treats a grant whose authority cannot be observed."""
+
+    OMIT_UNPROVEN = "omit_unproven"
+    REQUIRE_KNOWN = "require_known"
+
 
 DEFAULT_GRANT_LIVENESS_TTL_SECONDS = 1800
 
@@ -48,6 +57,7 @@ async def valid_grant_liveness_by_workspace(
     registry_client,
     request: Request | None = None,
     ttl_seconds: int = DEFAULT_GRANT_LIVENESS_TTL_SECONDS,
+    failure_policy: GrantLivenessFailurePolicy = GrantLivenessFailurePolicy.OMIT_UNPROVEN,
 ) -> dict[str, dict[str, Any]]:
     """Return the newest valid grant liveness row for each workspace.
 
@@ -55,8 +65,11 @@ async def valid_grant_liveness_by_workspace(
     unrevoked, unexpired, bound to the same session did:key and subject, and the
     subject agent is still active under its current team key and issuing
     certificate. Reacceptance cannot revive a previous delegation. Stale rows
-    are ignored even before cleanup.
+    are ignored even before cleanup. REQUIRE_KNOWN retains unavailable
+    authority as a failure for consumers that decide stale deletion.
     """
+    if not isinstance(failure_policy, GrantLivenessFailurePolicy):
+        raise TypeError("Grant liveness requires a named failure policy")
     if not workspace_ids:
         return {}
     rows = await db.fetch_all(
@@ -97,8 +110,12 @@ async def valid_grant_liveness_by_workspace(
             registration_mode=configured_registration_mode(),
             request=request,
         )
+        if failure_policy is GrantLivenessFailurePolicy.REQUIRE_KNOWN:
+            # docs/aweb-sot.md:1199-1209: unknown authority is not proof of
+            # inactivity for a stale-workspace deletion. Displays can omit an
+            # unproven online state; destructive eligibility must fail visibly.
+            validity.raise_if_unavailable()
         if validity.state is not GrantValidityState.ACTIVE:
-            # Unknown registry evidence cannot assert that this worker is online.
             continue
         if (
             not never_expires(row["issued_at"], row["expires_at"])
