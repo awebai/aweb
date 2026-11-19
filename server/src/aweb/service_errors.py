@@ -6,6 +6,7 @@ from enum import StrEnum
 
 
 RESOURCE_NOT_FOUND_DETAIL = "Not found"
+INTERNAL_SERVICE_ERROR_MESSAGE = "The server could not complete this request. Try again; if it keeps failing, contact the server operator."
 
 
 class ServiceError(Exception):
@@ -69,7 +70,9 @@ class IdentityBindingCode(StrEnum):
 class IdentityBindingError(ServiceError):
     """Native binding refusal; HTTP and MCP adapters retain its reason and retry hint."""
 
-    def __init__(self, code: IdentityBindingCode, *, headers: dict[str, str] | None = None):
+    def __init__(
+        self, code: IdentityBindingCode, *, headers: dict[str, str] | None = None
+    ):
         self.code = IdentityBindingCode(code)
         self.status_code = 403 if self.code is IdentityBindingCode.MISMATCH else 503
         self.headers = headers

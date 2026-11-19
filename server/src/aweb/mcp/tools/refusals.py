@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 
 from fastapi import HTTPException
-from aweb.service_errors import ServiceError, IdentityBindingCode, IdentityBindingError
+from aweb.service_errors import (
+    ServiceError,
+    IdentityBindingCode,
+    IdentityBindingError,
+    INTERNAL_SERVICE_ERROR_MESSAGE,
+)
 from aweb.application_state import RegistryClientUnavailable
 
 from awid.federation_errors import FederationAuthorityError
@@ -105,7 +110,7 @@ def send_refusal(
                 ),
             }
         )
-    detail = getattr(exc, "detail", None)
+    detail = exc.detail if isinstance(exc, (ServiceError, HTTPException)) else None
     if (
         isinstance(exc, (ServiceError, HTTPException))
         and isinstance(detail, dict)
@@ -126,4 +131,6 @@ def send_refusal(
         )
     if detail == LOCAL_DID_KEY_RECIPIENT_UNREACHABLE:
         return json.dumps({"error": RECIPIENT_UNREACHABLE_IN_CONVERSATION})
-    return json.dumps({"error": detail or str(exc)})
+    return json.dumps(
+        {"error": detail if detail is not None else INTERNAL_SERVICE_ERROR_MESSAGE}
+    )
