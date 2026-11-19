@@ -151,6 +151,11 @@ async def test_generation_never_uses_the_minted_controller_as_current_evidence(
         alias="worker",
         identity_scope="local",
     )
+    before = sum(
+        request.method == "GET"
+        and request.url.path == "/v1/namespaces/local/teams/generation"
+        for request in real_stack.awid.calls
+    )
     async with aclosing(sdk):
         with pytest.raises(TeamCertificateError) as refused:
             await verify_certificate_generation(
@@ -160,3 +165,12 @@ async def test_generation_never_uses_the_minted_controller_as_current_evidence(
                 member_did_key=did_key_from_signing_key(member),
             )
     assert refused.value.reason == "bad_signature"
+    assert (
+        sum(
+            request.method == "GET"
+            and request.url.path == "/v1/namespaces/local/teams/generation"
+            for request in real_stack.awid.calls
+        )
+        - before
+        == 1
+    )

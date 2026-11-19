@@ -147,7 +147,8 @@ async def _refresh_rejected_controller(
                 domain, name, rejected_key=rejected_key
             )
         else:
-            key = await client.get_team_public_key_fresh(domain, name)
+            # An uncached client's first key read was already live.
+            return rejected_key
         return await _admit_controller_key(
             context=context, team_id=team_id, served_key=key
         )
@@ -177,7 +178,10 @@ async def verify_certificate_generation(
             encoded_certificate, subject_did_key=member_did_key, team_did_key=key
         )
     except TeamCertificateError as exc:
-        if exc.reason != CertificateVerificationReason.BAD_SIGNATURE:
+        if (
+            exc.reason != CertificateVerificationReason.BAD_SIGNATURE
+            or evidence is EvidenceMode.FRESH
+        ):
             raise
         refreshed_key = await _refresh_rejected_controller(
             context=context, team_id=team_id, rejected_key=key
