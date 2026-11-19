@@ -87,7 +87,7 @@ def test_basic_username_separator_is_rejected_at_opening():
     assert refused.value.reason is ValueInvalidReason.BASIC_USERNAME
 
 
-def test_injection_uses_the_same_basic_username_rule():
+def test_in_memory_validation_rejects_the_basic_username_separator():
     with pytest.raises(ValueInvalid) as refused:
         validate_value("basic", {"username": "account:other", "password": "fixture"})
     assert refused.value.reason is ValueInvalidReason.BASIC_USERNAME
