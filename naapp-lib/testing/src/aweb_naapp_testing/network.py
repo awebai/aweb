@@ -169,7 +169,9 @@ def make_certificates(directory: Path, names: list[str], addresses: list[str]) -
     alt_names += [x509.IPAddress(ipaddress.ip_address(address)) for address in addresses]
     cert = (
         x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, names[0])]))
+        # Clients verify the subject alternative names; a common name holds at
+        # most 64 characters, fewer than a stack's scoped service names.
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "aweb test server")]))
         .issuer_name(ca_name)
         .public_key(key.public_key())
         .serial_number(x509.random_serial_number())
