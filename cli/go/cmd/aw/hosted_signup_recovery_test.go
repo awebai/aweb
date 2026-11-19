@@ -116,6 +116,10 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 			t.Setenv("AWID_REGISTRY_URL", server.URL)
 			var output bytes.Buffer
 			request := guidedOnboardingRequest{WorkingDir: directory, BaseURL: server.URL, Username: "recover", Alias: "terminal", NonInteractive: true, PromptOut: &output, PromptIn: strings.NewReader(""), DoNotTouchAgentsMD: true}
+			if failure == "lost signup response" {
+				t.Setenv("AWEB_URL", server.URL)
+				request.BaseURL = ""
+			}
 			if _, err := executeGuidedOnboardingWizard(request); err == nil {
 				t.Fatal("expected interrupted signup/install")
 			}
@@ -173,7 +177,7 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 			if !foundRecovery || bytes.Contains(diagnosed, []byte(credential)) {
 				t.Fatalf("doctor lost or exposed recovery: %s", diagnosed)
 			}
-			command := exec.CommandContext(ctx, binary, "init", "--json", "--do-not-touch-agents-md")
+			command := exec.CommandContext(ctx, binary, "init", "--json", "--do-not-touch-agents-md", "--url", server.URL)
 			command.Dir, command.Env = directory, idCreateCommandEnv(directory)
 			if raw, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("command resume: %v %s", err, raw)
