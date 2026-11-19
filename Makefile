@@ -113,7 +113,7 @@ help:
 
 .PHONY: e2e-naapp e2e-folio-wakes naapp-e2e-packages
 # A new package joins the integration gate by joining this list.
-NAAPP_E2E_PACKAGES := naapp/folio naapp/library
+NAAPP_E2E_PACKAGES := naapp/folio naapp/library naapp/secrets
 
 naapp-e2e-packages:
 	@printf '%s\n' $(NAAPP_E2E_PACKAGES)
