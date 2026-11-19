@@ -57,6 +57,9 @@ def test_invalid_material_is_not_retained_in_errors(raw):
     with pytest.raises(ValueInvalid) as error:
         decode_value("bearer", raw)
     assert error.value.reason is ValueInvalidReason.SHAPE
+    assert str(error.value) == (
+        "The secret value does not match its kind. Correct its fields and stage it again."
+    )
     assert error.value.__cause__ is None
 
 
