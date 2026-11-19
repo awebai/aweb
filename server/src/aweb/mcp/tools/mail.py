@@ -43,7 +43,7 @@ from aweb.mcp.tools.federation import (
     mcp_messaging_auth,
     mcp_messaging_runtime,
 )
-from aweb.mcp.tools.refusals import send_refusal
+from aweb.mcp.tools.refusals import SendRefusalMode, send_refusal
 from aweb.messaging import mail_send
 from aweb.messaging.mail_ack import acknowledge_mail
 from aweb.messaging.sender_address import sender_address as _sender_address
@@ -429,7 +429,13 @@ async def send_mail(
         sent = await mail_send.send_mail(db_infra, sender, target, message, runtime)
     except (ServiceError, HTTPException, FederationAuthorityError) as exc:
         return send_refusal(
-            exc, address=address_ref, hosted_envelope=encrypted is not None
+            exc,
+            address=address_ref,
+            mode=(
+                SendRefusalMode.HOSTED_ENVELOPE
+                if encrypted is not None
+                else SendRefusalMode.STANDARD
+            ),
         )
 
     return json.dumps(

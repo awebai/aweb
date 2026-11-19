@@ -12,6 +12,8 @@ from uuid import UUID, uuid4
 import asyncpg
 import httpx
 import pytest
+
+from aweb.mcp.tools.refusals import SendRefusalMode
 from aweb.messaging.refusals import RecipientAddressNotFound
 import pytest_asyncio
 from pgdbm.errors import QueryError
@@ -968,7 +970,7 @@ NEXT_ACTIONS = [
     ),
     (
         lambda: _authority_refusal("recipient_custodial_no_e2ee"),
-        {"hosted_envelope": True},
+        {"mode": SendRefusalMode.HOSTED_ENVELOPE},
         {
             "error": "your encryption key isn't published yet; try again shortly, and if it persists contact support",
             "reason": "recipient_custodial_no_e2ee",
@@ -976,7 +978,7 @@ NEXT_ACTIONS = [
     ),
     (
         lambda: _authority_refusal("federation_envelope_invalid"),
-        {"hosted_envelope": True},
+        {"mode": SendRefusalMode.HOSTED_ENVELOPE},
         {
             "error": "your published encryption key can't be verified right now; try again shortly, "
             "and if it persists contact support",
@@ -985,7 +987,7 @@ NEXT_ACTIONS = [
     ),
     (
         lambda: _authority_refusal("recipient_encryption_assertion_invalid_or_stale"),
-        {"hosted_envelope": True},
+        {"mode": SendRefusalMode.HOSTED_ENVELOPE},
         {
             "error": "this recipient's published encryption key can't be verified right now; try again later, "
             "and if it persists contact support",
@@ -1112,7 +1114,9 @@ def test_an_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_chang
         422,
         "encrypted envelope recipient did mismatch",
     )
-    assert json.loads(send_refusal(refused.value, hosted_envelope=True)) == {
+    assert json.loads(
+        send_refusal(refused.value, mode=SendRefusalMode.HOSTED_ENVELOPE)
+    ) == {
         "error": "this recipient's key changed; resend the message",
     }
 
@@ -1130,7 +1134,9 @@ def test_a_refusal_whose_detail_is_an_object_is_answered_with_that_object():
     }
     assert json.loads(
         send_refusal(
-            _binding_refusal(410, retired), address="a.test/b", hosted_envelope=True
+            _binding_refusal(410, retired),
+            address="a.test/b",
+            mode=SendRefusalMode.HOSTED_ENVELOPE,
         )
     ) == {
         "error": retired,

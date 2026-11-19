@@ -178,3 +178,17 @@ def test_unexpected_refusal_input_never_exposes_exception_content():
     assert json.loads(send_refusal(RuntimeError("private internal field"))) == {
         "error": INTERNAL_DELIVERY_ERROR,
     }
+
+
+@pytest.mark.parametrize("mode", [True, False, "hosted_envelope", None])
+def test_send_refusal_rejects_unnamed_mode_before_inspecting_the_error(mode):
+    class UnreadableError(Exception):
+        @property
+        def detail(self):
+            raise AssertionError("A wrong mode must not reach error interpretation")
+
+    with pytest.raises(TypeError) as refused:
+        send_refusal(UnreadableError(), mode=mode)
+    assert str(refused.value) == (
+        "Pass a named SendRefusalMode value before formatting a send refusal."
+    )

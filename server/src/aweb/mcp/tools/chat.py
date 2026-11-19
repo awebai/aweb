@@ -53,7 +53,11 @@ from aweb.mcp.tools.federation import (
     mcp_messaging_auth,
     mcp_messaging_runtime,
 )
-from aweb.mcp.tools.refusals import CONVERSATION_CHANGED_DURING_SEND, send_refusal
+from aweb.mcp.tools.refusals import (
+    CONVERSATION_CHANGED_DURING_SEND,
+    SendRefusalMode,
+    send_refusal,
+)
 from aweb.messaging.chat_send import (
     ChatSessionChanged,
     ChatSessionSelection,
@@ -185,12 +189,15 @@ def _signed_chat_fields(
 
 
 def _send_refusal(
-    exc: Exception, *, address: str = "", hosted_envelope: bool = False
+    exc: Exception,
+    *,
+    address: str = "",
+    mode: SendRefusalMode = SendRefusalMode.STANDARD,
 ) -> str:
     """A chat send the service refused, in this tool's error shape."""
     if isinstance(exc, HumanChatRefused):
         return json.dumps({"error": exc.detail, **exc.body()})
-    return send_refusal(exc, address=address, hosted_envelope=hosted_envelope)
+    return send_refusal(exc, address=address, mode=mode)
 
 
 def _chat_recipient_for_encryptor(row: dict) -> dict:
@@ -567,7 +574,13 @@ async def chat_send(
             continue
         except (ServiceError, HTTPException, FederationAuthorityError) as exc:
             return _send_refusal(
-                exc, address=address_ref, hosted_envelope=encrypted is not None
+                exc,
+                address=address_ref,
+                mode=(
+                    SendRefusalMode.HOSTED_ENVELOPE
+                    if encrypted is not None
+                    else SendRefusalMode.STANDARD
+                ),
             )
         break
     else:
