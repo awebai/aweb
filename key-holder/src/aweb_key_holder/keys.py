@@ -17,7 +17,6 @@ from pathlib import Path
 from uuid import uuid4
 
 from approval_service.canonical import canonical, parse
-from approval_service.verify import Refused as ApprovalRefused
 from awid.controller_signing import (
     ControllerDescriptor,
     ControllerObjectRequest,
@@ -28,12 +27,8 @@ from awid.did import did_from_public_key, did_key_from_signing_key, generate_key
 from awid.signing import sign_message
 from nacl.public import PublicKey, SealedBox
 
-
-class Refused(ApprovalRefused):
-    def __init__(self, code):
-        self.code = code
-        super().__init__(code)
-
+from .refusals import Refusal
+from .refusals import Refused as Refused
 
 HUMAN_APPROVAL_MESSAGES = {
     "human_approval_source_required": (
@@ -81,10 +76,10 @@ def _private(path, mode, *, directory=False):
     try:
         info = path.lstat()
     except OSError as error:
-        raise Refused("storage_unavailable") from error
+        raise Refused(Refusal.STORAGE_UNAVAILABLE) from error
     kind_ok = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
     if not kind_ok or stat.S_IMODE(info.st_mode) != mode or info.st_uid != os.getuid():
-        raise Refused("storage_permissions")
+        raise Refused(Refusal.STORAGE_PERMISSIONS)
 
 
 class KeyStore:
@@ -105,7 +100,7 @@ class KeyStore:
         try:
             store.directory.mkdir(mode=0o700)
         except FileExistsError as error:
-            raise Refused("already_initialized") from error
+            raise Refused(Refusal.ALREADY_INITIALIZED) from error
         _private(store.directory, 0o700, directory=True)
         database = store.directory / "holder.sqlite"
         fd = os.open(database, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -138,9 +133,9 @@ class KeyStore:
         with store.connection() as db:
             store._refuse_legacy_configuration(db)
             if db.execute("PRAGMA user_version").fetchone()[0] != 5:
-                raise Refused("schema_unavailable")
+                raise Refused(Refusal.SCHEMA_UNAVAILABLE)
             if db.execute("SELECT count(*) FROM configuration").fetchone()[0] != 1:
-                raise Refused("storage_unavailable")
+                raise Refused(Refusal.STORAGE_UNAVAILABLE)
         return store
 
     def migrate(self, *, policy=None):
@@ -181,7 +176,7 @@ class KeyStore:
                 if approved and (
                     policy is None or policy.grade("organisation.human.add") is None
                 ):
-                    raise Refused("legacy_human_issuance_write_human_approval")
+                    raise Refused(Refusal.LEGACY_HUMAN_ISSUANCE_WRITE_HUMAN_APPROVAL)
                 db.executescript(
                     "BEGIN IMMEDIATE;\n"
                     + files(__package__)
@@ -192,13 +187,13 @@ class KeyStore:
                     self.observe_policy(db, policy, legacy_approved=approved)
                 db.execute("COMMIT")
             elif version != 5:
-                raise Refused("schema_unavailable")
+                raise Refused(Refusal.SCHEMA_UNAVAILABLE)
 
     @staticmethod
     def _refuse_legacy_configuration(db):
         columns = {row[1] for row in db.execute("PRAGMA table_info(configuration)")}
         if "human_issuance" in columns:
-            raise Refused("legacy_human_issuance_write_human_approval")
+            raise Refused(Refusal.LEGACY_HUMAN_ISSUANCE_WRITE_HUMAN_APPROVAL)
 
     def observe_policy(
         self, db, policy, *, legacy_approved=False, source_configured=True
@@ -217,12 +212,12 @@ class KeyStore:
         if previous:
             raw = base64.b64decode(previous["payload"], validate=True)
             if not raw.startswith(prefix):
-                raise Refused("storage_unavailable")
+                raise Refused(Refusal.STORAGE_UNAVAILABLE)
             before = parse(raw[len(prefix) :])["to"]
         elif legacy_approved:
             before = {"legacy_human_issuance": "approved"}
         if not source_configured and before.get("require"):
-            raise Refused("human_approval_source_required")
+            raise Refused(Refusal.HUMAN_APPROVAL_SOURCE_REQUIRED)
         if before == section:
             return
         payload = prefix + canonical({"version": 1, "from": before, "to": section})
@@ -259,7 +254,7 @@ class KeyStore:
             (scope, team or ""),
         ).fetchone()
         if row is None:
-            raise Refused("key_unavailable")
+            raise Refused(Refusal.KEY_UNAVAILABLE)
         organisation = db.execute("SELECT organisation FROM configuration").fetchone()[
             0
         ]
@@ -293,7 +288,7 @@ class KeyStore:
             if db.execute(
                 "SELECT 1 FROM keys WHERE scope='team' AND team=?", (name,)
             ).fetchone():
-                raise Refused("key_already_exists")
+                raise Refused(Refusal.KEY_ALREADY_EXISTS)
             db.execute(
                 "INSERT INTO keys VALUES (?, ?, ?, ?, ?, ?)",
                 (
@@ -317,22 +312,22 @@ class KeyStore:
         if type(context) is not ControllerSigningContext or type(
             context.request
         ) not in (ControllerRequest, ControllerObjectRequest):
-            raise Refused("operation_invalid")
+            raise Refused(Refusal.OPERATION_INVALID)
         request = context.request
         if request.operation not in ROUTINE:
-            raise Refused("operation_not_served")
+            raise Refused(Refusal.OPERATION_NOT_SERVED)
         if (
             request.operation == "namespace_id_issue"
             and request.parameters["kind"] == "human"
         ):
-            raise Refused("human_approval_required")
+            raise Refused(Refusal.HUMAN_APPROVAL_REQUIRED)
         if type(actor) is not str or not actor:
-            raise Refused("caller_required")
+            raise Refused(Refusal.CALLER_REQUIRED)
         with self.connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             expected = self.descriptor_in_transaction(db, team=context.controller.team)
             if context.controller != expected:
-                raise Refused("controller_mismatch")
+                raise Refused(Refusal.CONTROLLER_MISMATCH)
             payload = context.signing_bytes()
             signature = self.sign_authorized_payload(
                 db, expected, payload, operation=request.operation, actor=actor
@@ -356,12 +351,12 @@ class KeyStore:
         current owned controller; the operation's handler authorizes the act.
         """
         if descriptor != self.descriptor_in_transaction(db, team=descriptor.team):
-            raise Refused("controller_mismatch")
+            raise Refused(Refusal.CONTROLLER_MISMATCH)
         row = db.execute(
             "SELECT seed FROM keys WHERE reference=?", (descriptor.key_reference,)
         ).fetchone()
         if did_key_from_signing_key(row["seed"]) != descriptor.did_key:
-            raise Refused("key_unavailable")
+            raise Refused(Refusal.KEY_UNAVAILABLE)
         signature = base64.b64decode(
             sign_message(row["seed"], payload) + "==", validate=True
         )
@@ -415,7 +410,7 @@ class KeyStore:
                 "SELECT retired_at FROM enrollments WHERE person=?", (person,)
             ).fetchone()
             if row is None:
-                raise Refused("enrollment_unknown")
+                raise Refused(Refusal.ENROLLMENT_UNKNOWN)
             if row[0] is None:
                 self.sign_authorized_payload(
                     db,
@@ -433,7 +428,7 @@ class KeyStore:
 
     def audit(self, *, after=0, limit=1000):
         if after < 0 or not 1 <= limit <= 1000:
-            raise Refused("audit_page_invalid")
+            raise Refused(Refusal.AUDIT_PAGE_INVALID)
         with self.connection() as db:
             return [
                 dict(row)

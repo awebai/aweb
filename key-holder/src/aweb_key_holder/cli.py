@@ -14,7 +14,8 @@ from approval_service.verify import Refused as ApprovalRefused
 from awid.registry import RegistryError
 from jsonschema import ValidationError
 
-from .keys import HUMAN_APPROVAL_MESSAGES, KeyStore, Refused
+from .keys import HUMAN_APPROVAL_MESSAGES, KeyStore
+from .refusals import Refusal, Refused
 
 
 async def operate(args, parser):
@@ -48,7 +49,7 @@ async def operate(args, parser):
 
     async def pinned(domain):
         if domain != store.descriptor().domain:
-            raise Refused("organisation_mismatch")
+            raise Refused(Refusal.ORGANISATION_MISMATCH)
         return args.registry_origin
 
     registry = RegistryClient(args.registry_origin, domain_registry_resolver=pinned)
@@ -97,7 +98,7 @@ async def operate(args, parser):
             return await holder.bootstrap(args.person, args.identity_key)
         request = parse_controller_request(body())
         if request.domain != store.descriptor().domain:
-            raise Refused("organisation_mismatch")
+            raise Refused(Refusal.ORGANISATION_MISMATCH)
         return await registry.controller_request(
             request,
             controllers={"controller": store.descriptor(team=args.team)},

@@ -15,7 +15,7 @@ from approval_service.verify import Trust
 from approval_service.wire import domain, validate
 
 from .auth import Caller
-from .keys import Refused
+from .refusals import Refusal, Refused
 
 if TYPE_CHECKING:
     from .enrollment import Holder
@@ -25,35 +25,27 @@ class HolderOperation(StrEnum):
     BINDING_REFRESH = "binding_refresh"
 
 
-class RefreshFailure(StrEnum):
-    REQUEST_INVALID = "binding_refresh_request_invalid"
-    ENROLLMENT_CHANGED = "binding_refresh_enrollment_changed"
-    PERSON_REQUIRED = "binding_refresh_person_required"
-    IDENTITY_KEY_CHANGED = "binding_refresh_identity_key_changed"
-    AUTHORITY_UNAVAILABLE = "identity_unavailable"
-
-
 REFRESH_ADVICE = {
-    RefreshFailure.REQUEST_INVALID: "Use the current live binding commitment saved by the person's approval client.",
-    RefreshFailure.ENROLLMENT_CHANGED: "Refresh only this person's active enrollment with the same identity key. Replacing a lost enrolled key is not implemented; ask the operator to issue a new ID and revoke the old one.",
-    RefreshFailure.IDENTITY_KEY_CHANGED: "The person's identity key changed. Binding refresh cannot replace it; ask the operator for enrolment or recovery. In this release the operator must revoke the old ID, issue a new ID and enrol again.",
-    RefreshFailure.PERSON_REQUIRED: "Run binding refresh with this person's own current identity key.",
-    RefreshFailure.AUTHORITY_UNAVAILABLE: "Check the person's registry status and this holder's current namespace authority, then retry refresh.",
+    Refusal.BINDING_REFRESH_REQUEST_INVALID: "Use the current live binding commitment saved by the person's approval client.",
+    Refusal.BINDING_REFRESH_ENROLLMENT_CHANGED: "Refresh only this person's active enrollment with the same identity key. Replacing a lost enrolled key is not implemented; ask the operator to issue a new ID and revoke the old one.",
+    Refusal.BINDING_REFRESH_IDENTITY_KEY_CHANGED: "The person's identity key changed. Binding refresh cannot replace it; ask the operator for enrolment or recovery. In this release the operator must revoke the old ID, issue a new ID and enrol again.",
+    Refusal.BINDING_REFRESH_PERSON_REQUIRED: "Run binding refresh with this person's own current identity key.",
+    Refusal.IDENTITY_UNAVAILABLE: "Check the person's registry status and this holder's current namespace authority, then retry refresh.",
 }
 
 
 def check_active_enrollment(row: dict, *, caller: Caller, trust: Trust) -> None:
     """README.md: refresh preserves the enrolled person and identity key."""
     if caller.identity != trust.person or caller.key != trust.identity_key:
-        raise Refused(RefreshFailure.PERSON_REQUIRED)
+        raise Refused(Refusal.BINDING_REFRESH_PERSON_REQUIRED)
     if (
         row["person"] != trust.person
         or not row["active"]
         or row["retired_at"] is not None
     ):
-        raise Refused(RefreshFailure.ENROLLMENT_CHANGED)
+        raise Refused(Refusal.BINDING_REFRESH_ENROLLMENT_CHANGED)
     if row["identity_key"] != trust.identity_key:
-        raise Refused(RefreshFailure.IDENTITY_KEY_CHANGED)
+        raise Refused(Refusal.BINDING_REFRESH_IDENTITY_KEY_CHANGED)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -72,7 +64,7 @@ class HolderBindingRefresher:
         await holder.admit(caller, chain)
         holder.require_approval()
         if caller.identity != person:
-            raise Refused(RefreshFailure.PERSON_REQUIRED)
+            raise Refused(Refusal.BINDING_REFRESH_PERSON_REQUIRED)
         if (
             not isinstance(body, dict)
             or set(body) != {"previous_binding_commitment"}
@@ -80,7 +72,7 @@ class HolderBindingRefresher:
             or re.fullmatch(r"sha256:[0-9a-f]{64}", body["previous_binding_commitment"])
             is None
         ):
-            raise Refused(RefreshFailure.REQUEST_INVALID)
+            raise Refused(Refusal.BINDING_REFRESH_REQUEST_INVALID)
         root = holder.store.descriptor()
         trust = await holder.public.person(
             chain, person=person, identity_key=caller.key, organisation=root.domain
@@ -94,7 +86,7 @@ class HolderBindingRefresher:
                 "SELECT * FROM enrollments WHERE person=?", (person,)
             ).fetchone()
             if row is None or not row["binding"]:
-                raise Refused(RefreshFailure.ENROLLMENT_CHANGED)
+                raise Refused(Refusal.BINDING_REFRESH_ENROLLMENT_CHANGED)
             check_active_enrollment(dict(row), caller=caller, trust=trust)
             original = json.loads(row["binding"])
             validate("binding", original)
@@ -110,7 +102,7 @@ class HolderBindingRefresher:
                 or binding_body["identity_key"] != caller.key
                 or binding_body["organisation"] != current.domain
             ):
-                raise Refused(RefreshFailure.ENROLLMENT_CHANGED)
+                raise Refused(Refusal.BINDING_REFRESH_ENROLLMENT_CHANGED)
             signed = {
                 "binding": binding_body,
                 "signature": encode(
@@ -139,4 +131,4 @@ class HolderBindingRefresher:
             trust.namespace_issuer != root.did_key
             or not 0 <= int(time.time()) - trust.observed_at <= 60
         ):
-            raise Refused(RefreshFailure.AUTHORITY_UNAVAILABLE)
+            raise Refused(Refusal.IDENTITY_UNAVAILABLE)

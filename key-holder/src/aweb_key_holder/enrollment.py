@@ -17,8 +17,8 @@ from approval_service.answers import read_answer
 from approval_service.canonical import canonical, parse
 from approval_service.definitions import check_definition, definition_ref
 from approval_service.encoding import decode, encode
-from approval_service.gate import Gate, load_policy
 from approval_service.enrollment import PublicIssuer
+from approval_service.gate import Gate, load_policy
 from approval_service.public import PublicReader, public_errors
 from approval_service.requester import AdmittedRequester, admit_enrollment_target
 from approval_service.seams import (
@@ -35,7 +35,7 @@ from awid.log import require_canonical_server_origin
 from awid.registry import DIDKeyNotFoundError
 from jsonschema import ValidationError
 
-from .keys import Refused
+from .refusals import Refusal, Refused
 
 
 def now():
@@ -69,7 +69,7 @@ class Holder:
         )
         if policy.service is not None:
             if approval_origin is not None and approval_origin != policy.service:
-                raise Refused("human_approval_invalid")
+                raise Refused(Refusal.HUMAN_APPROVAL_INVALID)
             from approval_service.grading import EnrollmentGrading
 
             approval_origin = policy.service
@@ -77,12 +77,12 @@ class Holder:
             grading = grading or EnrollmentGrading("passkey_only", None)
         if approval_origin is not None or rp_id is not None or grading is not None:
             if not all((approval_origin, rp_id, grading)):
-                raise Refused("approval_not_configured")
+                raise Refused(Refusal.APPROVAL_NOT_CONFIGURED)
             validate_site(approval_origin, rp_id)
             try:
                 validate_site(origin, urlsplit(origin).hostname)
             except (ValueError, TypeError, ValidationError) as error:
-                raise Refused("enforcer_origin_invalid") from error
+                raise Refused(Refusal.ENFORCER_ORIGIN_INVALID) from error
         require_canonical_server_origin(origin)
         self.store, self.registry = store, registry
         self.origin, self.approval_origin, self.rp_id = origin, approval_origin, rp_id
@@ -97,9 +97,9 @@ class Holder:
             self.human_approval_config, organisation=self.store.descriptor().domain
         )
         if policy.service is not None and policy.service != self.approval_origin:
-            raise Refused("human_approval_invalid")
+            raise Refused(Refusal.HUMAN_APPROVAL_INVALID)
         if not all((self.approval_origin, self.rp_id, self.grading)):
-            raise Refused("approval_not_configured")
+            raise Refused(Refusal.APPROVAL_NOT_CONFIGURED)
 
     def gate(self, db=None):
         if db is None:
@@ -112,12 +112,12 @@ class Holder:
         if policy.grade("organisation.human.add") is not None:
             self.require_approval()
             if policy.service != self.approval_origin:
-                raise Refused("human_approval_invalid")
+                raise Refused(Refusal.HUMAN_APPROVAL_INVALID)
             if (
                 policy.grade("organisation.human.add") == "certified_hardware"
                 and self.grading.mode != "hardware"
             ):
-                raise Refused("human_approval_hardware_grading_required")
+                raise Refused(Refusal.HUMAN_APPROVAL_HARDWARE_GRADING_REQUIRED)
         if db is not None:
             self.store.observe_policy(
                 db, policy, source_configured=self.human_approval_config is not None
@@ -131,7 +131,7 @@ class Holder:
         with self.store.connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             if self.gate(db).policy.grade("organisation.human.add") is not None:
-                raise Refused("human_approval_required")
+                raise Refused(Refusal.HUMAN_APPROVAL_REQUIRED)
             return self._issue_person_certificate(
                 db, person, identity_key, actor="operator"
             )
@@ -164,7 +164,7 @@ class Holder:
 
     async def issue_person(self, person, identity_key):
         if self.gate().policy.grade("organisation.human.add") is not None:
-            raise Refused("human_approval_required")
+            raise Refused(Refusal.HUMAN_APPROVAL_REQUIRED)
         await self._new_identity(person, identity_key)
         return self.issue_person_certificate(person, identity_key)
 
@@ -183,19 +183,19 @@ class Holder:
             caller.check_time()
             gate = self.gate(db)
             if gate.policy.grade("organisation.human.add") is not None:
-                raise Refused("state_changed")
+                raise Refused(Refusal.STATE_CHANGED)
             gate.evaluate("organisation.human.add")
             if (
                 self.store.descriptor_in_transaction(db) != root
                 or trust.namespace_issuer != root.did_key
                 or not 0 <= now() - trust.observed_at <= 60
             ):
-                raise Refused("status_unavailable")
+                raise Refused(Refusal.STATUS_UNAVAILABLE)
             retired = db.execute(
                 "SELECT retired_at FROM enrollments WHERE person=?", (caller.identity,)
             ).fetchone()
             if retired is not None and retired["retired_at"] is not None:
-                raise Refused("person_retired")
+                raise Refused(Refusal.PERSON_RETIRED)
             self._check_enrollment_available(db, person)
             return self._issue_person_certificate(
                 db, person, identity_key, actor=caller.key
@@ -244,7 +244,7 @@ class Holder:
     def _certificate(self, root, person, identity_key, start):
         # First-path creation is a fresh stable ID; this is not key recovery.
         if stable_id_from_did_key(identity_key) != person:
-            raise Refused("identity_key_mismatch")
+            raise Refused(Refusal.IDENTITY_KEY_MISMATCH)
         return {
             "v": 1,
             "type": "aweb.id-certificate",
@@ -275,9 +275,9 @@ class Holder:
             "SELECT * FROM enrollments WHERE person=?", (person,)
         ).fetchone()
         if previous and (previous["active"] or previous["retired_at"] is not None):
-            raise Refused("enrollment_replacement_unavailable")
+            raise Refused(Refusal.ENROLLMENT_REPLACEMENT_UNAVAILABLE)
         if previous and not expired_pending(previous):
-            raise Refused("person_already_exists")
+            raise Refused(Refusal.PERSON_ALREADY_EXISTS)
         return previous
 
     def _pending(
@@ -369,9 +369,9 @@ class Holder:
             "SELECT * FROM enrollments WHERE person=?", (person,)
         ).fetchone()
         if row is None:
-            raise Refused("enrollment_unknown")
+            raise Refused(Refusal.ENROLLMENT_UNKNOWN)
         if row["retired_at"] is not None:
-            raise Refused("enrollment_replacement_unavailable")
+            raise Refused(Refusal.ENROLLMENT_REPLACEMENT_UNAVAILABLE)
         return row
 
     def pending(self, person):
@@ -386,7 +386,7 @@ class Holder:
                 (person,),
             ).fetchone()
             if row is None:
-                raise Refused("approver_not_active")
+                raise Refused(Refusal.APPROVER_NOT_ACTIVE)
             return dict(row)
 
     def bootstrap_pending(self, person, identity_key):
@@ -400,13 +400,13 @@ class Holder:
             ).fetchone()
             if old:
                 if old["retired_at"] is not None:
-                    raise Refused("enrollment_replacement_unavailable")
+                    raise Refused(Refusal.ENROLLMENT_REPLACEMENT_UNAVAILABLE)
                 if (
                     old["person"] != person
                     or old["identity_key"] != identity_key
                     or json.loads(old["requester"]) != requester
                 ):
-                    raise Refused("bootstrap_closed")
+                    raise Refused(Refusal.BOOTSTRAP_CLOSED)
                 if not expired_pending(old):
                     return {
                         "state": "enrollment_pending",
@@ -415,7 +415,7 @@ class Holder:
             elif db.execute(
                 "SELECT 1 FROM enrollments WHERE retired_at IS NULL LIMIT 1"
             ).fetchone():
-                raise Refused("bootstrap_closed")
+                raise Refused(Refusal.BOOTSTRAP_CLOSED)
             certificate = self._certificate(root, person, identity_key, now())
             return self._pending(
                 db,
@@ -436,7 +436,7 @@ class Holder:
         result = self.bootstrap_pending(person, identity_key)
         issuer = await self.public.issuer(result["intent"])
         if issuer.key != self.store.descriptor().did_key:
-            raise Refused("issuer_changed")
+            raise Refused(Refusal.ISSUER_CHANGED)
         return result
 
     @public_errors
@@ -449,22 +449,22 @@ class Holder:
         else:
             enrollment = current.id_tree
             if current.current_did_key != identity_key:
-                raise Refused("identity_key_mismatch")
+                raise Refused(Refusal.IDENTITY_KEY_MISMATCH)
         if enrollment is None:
-            raise Refused("status_unavailable")
+            raise Refused(Refusal.STATUS_UNAVAILABLE)
         if enrollment.enrolled:
-            raise Refused("fresh_enrollment_required")
+            raise Refused(Refusal.FRESH_ENROLLMENT_REQUIRED)
 
     async def enroll_existing(self, caller, *, person, chain):
         self.require_approval()
         if caller.identity != person:
-            raise Refused("requester_mismatch")
+            raise Refused(Refusal.REQUESTER_MISMATCH)
         root = self.store.descriptor()
         trust = await self.public.person(
             chain, person=person, identity_key=caller.key, organisation=root.domain
         )
         if trust.namespace_issuer != root.did_key:
-            raise Refused("issuer_changed")
+            raise Refused(Refusal.ISSUER_CHANGED)
         caller.check_time()
         with self.store.connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -472,7 +472,7 @@ class Holder:
                 self.store.descriptor_in_transaction(db) != root
                 or not 0 <= now() - trust.observed_at <= 60
             ):
-                raise Refused("status_unavailable")
+                raise Refused(Refusal.STATUS_UNAVAILABLE)
             old = db.execute(
                 "SELECT * FROM enrollments WHERE person=?", (person,)
             ).fetchone()
@@ -533,7 +533,7 @@ class Holder:
             self.store.advance_person(db, person)
             caller.check_time()
             if not 0 <= now() - trust.observed_at <= 60:
-                raise Refused("status_unavailable")
+                raise Refused(Refusal.STATUS_UNAVAILABLE)
             return {"state": "enrollment_pending", "intent": signed}
 
     async def enrollment_admission(self, person, caller, chain, *, purpose):
@@ -543,14 +543,14 @@ class Holder:
         else:
             observation = await self.public.key_observation(person)
             if observation.current_key != caller.key:
-                raise Refused("identity_key_mismatch")
+                raise Refused(Refusal.IDENTITY_KEY_MISMATCH)
             caller.check_time()
         self.require_approval()
         signed = self.pending(person)["intent"]
         i = signed["intent"]
         if i["purpose"] == "enroll_existing_person":
             if caller.descriptor != i["requester"]:
-                raise Refused("requester_mismatch")
+                raise Refused(Refusal.REQUESTER_MISMATCH)
             trust = await self.public.person(
                 chain,
                 person=person,
@@ -558,7 +558,7 @@ class Holder:
                 organisation=i["organisation"],
             )
             if trust.namespace_issuer != self.store.descriptor().did_key:
-                raise Refused("issuer_changed")
+                raise Refused(Refusal.ISSUER_CHANGED)
             caller.check_time()
             return AdmittedRequester(
                 canonical(caller.descriptor), caller.key, trust.observed_at
@@ -595,19 +595,19 @@ class Holder:
         original = json.loads(row["requester"])
         caller.check_time()
         if admitted is None or not 0 <= now() - admitted.observed_at <= 60:
-            raise Refused("status_unavailable")
+            raise Refused(Refusal.STATUS_UNAVAILABLE)
         if (
             admitted.descriptor_bytes != canonical(caller.descriptor)
             or admitted.key != caller.key
         ):
-            raise Refused("requester_mismatch")
+            raise Refused(Refusal.REQUESTER_MISMATCH)
         own_activation = (
             activation
             and caller.identity == row["person"]
             and caller.key == row["identity_key"]
         )
         if original != caller.descriptor and not own_activation:
-            raise Refused("requester_mismatch")
+            raise Refused(Refusal.REQUESTER_MISMATCH)
 
     async def prepare(self, caller, *, person, identity_key, approver, chain):
         if self.gate().policy.grade("organisation.human.add") is None:
@@ -628,10 +628,10 @@ class Holder:
         await self._new_identity(person, identity_key)
         caller.check_time()
         if person == approver:
-            raise Refused("target_is_approver")
+            raise Refused(Refusal.TARGET_IS_APPROVER)
         with self.store.connection() as db:
             if not 0 <= now() - admitted.observed_at <= 60:
-                raise Refused("status_unavailable")
+                raise Refused(Refusal.STATUS_UNAVAILABLE)
             root, start = self.store.descriptor_in_transaction(db), now()
             certificate = self._certificate(root, person, identity_key, start)
             request = self._request(
@@ -650,7 +650,7 @@ class Holder:
             )
             gate = self.gate()
             if gate.policy.grade("organisation.human.add") is None:
-                raise Refused("state_changed")
+                raise Refused(Refusal.STATE_CHANGED)
             return gate.evaluate("organisation.human.add", request=request)
 
     async def present(self, caller, value, *, chain):
@@ -686,23 +686,23 @@ class Holder:
                     raise
         caller.check_time()
         if trust.namespace_issuer != root.did_key:
-            raise Refused("issuer_changed")
+            raise Refused(Refusal.ISSUER_CHANGED)
         with self.store.connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             caller.check_time()
             if not 0 <= now() - admitted.observed_at <= 60:
-                raise Refused("status_unavailable")
+                raise Refused(Refusal.STATUS_UNAVAILABLE)
             if request["organisation"] != root.domain or request["enforcer"] != {
                 "audience": self.origin
             }:
-                raise Refused("enforcer_mismatch")
+                raise Refused(Refusal.ENFORCER_MISMATCH)
             if (
                 request["act"]["operation"] != "human.add"
                 or request["purpose"] != "act_approval"
             ):
-                raise Refused("operation_invalid")
+                raise Refused(Refusal.OPERATION_INVALID)
             if request["requester"] != caller.descriptor:
-                raise Refused("requester_mismatch")
+                raise Refused(Refusal.REQUESTER_MISMATCH)
             nonce = request["nonce"]["value"]
             digest = hashlib.sha256(canonical(request)).hexdigest()
             previous = db.execute(
@@ -713,7 +713,7 @@ class Holder:
                     previous["request_digest"] != digest
                     or previous["requester"] != canonical(caller.descriptor).decode()
                 ):
-                    raise Refused("nonce_conflict")
+                    raise Refused(Refusal.NONCE_CONFLICT)
                 old = self._row(db, previous["person"])
                 return {
                     "state": "active" if old["active"] else "enrollment_pending",
@@ -722,12 +722,12 @@ class Holder:
             if request["act"]["expected_revision"] != self.store.person_revision(
                 db, request["act"]["target"]["person"]
             ):
-                raise Refused("state_changed")
+                raise Refused(Refusal.STATE_CHANGED)
             if not self._row(db, request["approver"])["active"]:
-                raise Refused("approver_not_active")
+                raise Refused(Refusal.APPROVER_NOT_ACTIVE)
             gate = self.gate(db)
             if gate.policy.grade("organisation.human.add") is None:
-                raise Refused("state_changed")
+                raise Refused(Refusal.STATE_CHANGED)
             gate.evaluate(
                 "organisation.human.add",
                 request=request,
@@ -739,12 +739,12 @@ class Holder:
             )
             target = request["act"]["target"]
             if target["person"] == request["approver"]:
-                raise Refused("target_is_approver")
+                raise Refused(Refusal.TARGET_IS_APPROVER)
             certificate = self._certificate(
                 root, target["person"], target["identity_key"], request["not_before"]
             )
             if id_certificate_id(certificate) != target["certificate"]:
-                raise Refused("certificate_mismatch")
+                raise Refused(Refusal.CERTIFICATE_MISMATCH)
             result = self._pending(
                 db,
                 person=target["person"],
@@ -788,9 +788,9 @@ class Holder:
                 or not 1 <= registration_count <= 8
                 or len(answer["registrations"]) != registration_count
             ):
-                raise Refused("registration_count_mismatch")
+                raise Refused(Refusal.REGISTRATION_COUNT_MISMATCH)
             if not intent["not_before"] <= now() < intent["deadline"]:
-                raise Refused("enrollment_expired")
+                raise Refused(Refusal.ENROLLMENT_EXPIRED)
             credentials = [
                 self.grading.check(
                     item["registration"],
@@ -802,14 +802,14 @@ class Holder:
                 for item in answer["registrations"]
             ]
             if len({item["id"] for item in credentials}) != len(credentials):
-                raise Refused("credential_duplicate")
+                raise Refused(Refusal.CREDENTIAL_DUPLICATE)
             root = self.store.descriptor_in_transaction(db)
             if (
                 intent["purpose"] != "enroll_existing_person"
                 and root.did_key
                 != intent["pending_certificate"]["certificate"]["issuer_key"]
             ):
-                raise Refused("issuer_changed")
+                raise Refused(Refusal.ISSUER_CHANGED)
             if intent["purpose"] == "enroll_existing_person":
                 self._existing_current(intent, current, root)
             body = {
@@ -828,7 +828,7 @@ class Holder:
             if row["binding"]:
                 binding = json.loads(row["binding"])
                 if binding["binding"] != body:
-                    raise Refused("registration_changed")
+                    raise Refused(Refusal.REGISTRATION_CHANGED)
                 confirmation = json.loads(row["confirmation"])
             else:
                 binding = {
@@ -862,7 +862,7 @@ class Holder:
                 )
             self._owner(row, caller, admitted)
             if not intent["not_before"] <= now() < intent["deadline"]:
-                raise Refused("enrollment_expired")
+                raise Refused(Refusal.ENROLLMENT_EXPIRED)
             if intent["purpose"] == "enroll_existing_person":
                 self._existing_current(intent, current, root)
             return {
@@ -875,7 +875,7 @@ class Holder:
     @staticmethod
     def _existing_current(intent, current, root):
         if current is None or not 0 <= now() - current.observed_at <= 60:
-            raise Refused("identity_unavailable")
+            raise Refused(Refusal.IDENTITY_UNAVAILABLE)
         if (
             current.person,
             current.organisation,
@@ -889,7 +889,7 @@ class Holder:
             id_certificate_id(intent["pending_certificate"]["certificate"]),
             root.did_key,
         ):
-            raise Refused("enrollment_identity_mismatch")
+            raise Refused(Refusal.ENROLLMENT_IDENTITY_MISMATCH)
 
     def finish_creation(
         self, person, receipt, *, issuer, caller, admitted, current=None
@@ -899,20 +899,20 @@ class Holder:
             row = self._row(db, person)
             self._owner(row, caller, admitted)
             if not row["binding"] or issuer is None:
-                raise Refused("creation_required")
+                raise Refused(Refusal.CREATION_REQUIRED)
             root = self.store.descriptor_in_transaction(db)
             signed, binding = json.loads(row["intent"]), json.loads(row["binding"])
             intent, confirmation = signed["intent"], json.loads(row["confirmation"])
             if issuer.key != root.did_key:
-                raise Refused("issuer_changed")
+                raise Refused(Refusal.ISSUER_CHANGED)
             if (
                 receipt.get("request_bytes") != encode(canonical(confirmation))
                 or receipt.get("binding") != binding
             ):
-                raise Refused("creation_mismatch")
+                raise Refused(Refusal.CREATION_MISMATCH)
             if row["evidence"]:
                 if json.loads(row["creation_receipt"]) != receipt:
-                    raise Refused("creation_changed")
+                    raise Refused(Refusal.CREATION_CHANGED)
                 return self._activation(row)
             later = intent["purpose"] == "enroll_existing_person"
             if later:
@@ -1005,7 +1005,7 @@ class Holder:
             )
             self._owner(row, caller, admitted)
             if not intent["not_before"] <= now() < intent["deadline"]:
-                raise Refused("enrollment_expired")
+                raise Refused(Refusal.ENROLLMENT_EXPIRED)
             if later:
                 self._existing_current(intent, current, root)
             return self._activation(self._row(db, person))
@@ -1062,7 +1062,7 @@ class Holder:
             row = self._row(db, person)
             self._owner(row, caller, admitted, activation=True)
             if self._activation(row) != value:
-                raise Refused("enrollment_changed")
+                raise Refused(Refusal.ENROLLMENT_CHANGED)
             result = check_activation(
                 value,
                 issuer_key=self.store.descriptor_in_transaction(db).did_key,
@@ -1075,5 +1075,5 @@ class Holder:
             db.execute("UPDATE enrollments SET active=1 WHERE person=?", (person,))
             self._owner(row, caller, admitted, activation=True)
             if not 0 <= now() - trust.observed_at <= 60:
-                raise Refused("status_unavailable")
+                raise Refused(Refusal.STATUS_UNAVAILABLE)
             return result

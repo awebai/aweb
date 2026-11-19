@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 from contextlib import asynccontextmanager
+from http import HTTPStatus
 
 from approval_service.canonical import InvalidJSON, parse
 from approval_service.grading import watch_metadata
@@ -14,8 +15,9 @@ from fastapi.responses import JSONResponse
 from jsonschema import ValidationError
 
 from .auth import authenticate
-from .binding_refresh import REFRESH_ADVICE, HolderBindingRefresher, RefreshFailure
-from .keys import HUMAN_APPROVAL_MESSAGES, Refused
+from .binding_refresh import REFRESH_ADVICE, HolderBindingRefresher
+from .keys import HUMAN_APPROVAL_MESSAGES
+from .refusals import Refusal, Refused, refusal_status
 
 logger = logging.getLogger(__name__)
 
@@ -39,52 +41,9 @@ def create_app(holder):
     @app.exception_handler(ApprovalRefused)
     async def refused(_request, error):
         code = error.code
-        if code in {
-            RefreshFailure.REQUEST_INVALID,
-            "request_invalid",
-            "identity_key_mismatch",
-            "registration_count_mismatch",
-            "certificate_mismatch",
-        }:
-            status = 400
-        elif code in {
-            "status_unavailable",
-            "issuer_unavailable",
-            "identity_unavailable",
-            "human_approval_unavailable",
-            "human_approval_invalid",
-            "human_approval_source_required",
-            "human_approval_hardware_grading_required",
-        }:
-            status = 503
-        elif code in {
-            RefreshFailure.ENROLLMENT_CHANGED,
-            RefreshFailure.IDENTITY_KEY_CHANGED,
-            "state_changed",
-            "enrollment_changed",
-            "person_already_exists",
-            "enrollment_replacement_unavailable",
-            "nonce_conflict",
-            "registration_changed",
-            "creation_changed",
-            "fresh_enrollment_required",
-            "enrollment_expired",
-        }:
-            status = 409
-        elif code == "enrollment_unknown":
-            status = 404
-        elif code in {
-            RefreshFailure.PERSON_REQUIRED,
-            "approver_not_active",
-            "person_retired",
-            "target_is_approver",
-            "bootstrap_closed",
-            "operation_not_served",
-            "approval_not_configured",
-        }:
-            status = 403
-        else:
-            status = 401
+        status = refusal_status(error)
+        if status == HTTPStatus.INTERNAL_SERVER_ERROR:
+            logger.error("Unmapped holder refusal code: %r", code)
         body = {"error": {"code": code}}
         if code in REFRESH_ADVICE:
             body["error"]["message"] = REFRESH_ADVICE[code]
@@ -125,7 +84,7 @@ def create_app(holder):
             header = request.headers.get("X-AWID-ID-Chain", "")
             bundle = decode_id_chain_header(header) if header else {"certificates": []}
         except IDCertificateError as error:
-            raise Refused("identity_chain_required") from error
+            raise Refused(Refusal.IDENTITY_CHAIN_REQUIRED) from error
         value = parse(caller.body)
         return caller, value, bundle["certificates"]
 
@@ -137,7 +96,7 @@ def create_app(holder):
             result = await holder.present(caller, value, chain=chain)
             return JSONResponse(result, headers={"Cache-Control": "no-store"})
         if set(value) != {"person", "identity_key", "approver"}:
-            raise Refused("request_invalid")
+            raise Refused(Refusal.REQUEST_INVALID)
         status, result = await holder.prepare(caller, chain=chain, **value)
         return JSONResponse(
             result, status_code=status, headers={"Cache-Control": "no-store"}
@@ -153,14 +112,14 @@ def create_app(holder):
             or value["requester"] != caller.descriptor
             or caller.identity != person
         ):
-            raise Refused("requester_mismatch")
+            raise Refused(Refusal.REQUESTER_MISMATCH)
         return await holder.enroll_existing(caller, person=person, chain=chain)
 
     @app.post("/v1/enrollments/{person}/binding")
     async def binding(person: str, request: Request):
         caller, value, chain = await input_for(request)
         if set(value) != {"material", "registration_count"}:
-            raise Refused("request_invalid")
+            raise Refused(Refusal.REQUEST_INVALID)
         admitted, current = await holder.enrollment_admission(
             person, caller, chain, purpose="holder_binding"
         )
@@ -179,7 +138,7 @@ def create_app(holder):
     async def activate(person: str, request: Request):
         caller, value, chain = await input_for(request)
         if value != {}:
-            raise Refused("request_invalid")
+            raise Refused(Refusal.REQUEST_INVALID)
         result = await holder.activate(person, caller=caller, chain=chain)
         return JSONResponse(result, headers={"Cache-Control": "no-store"})
 

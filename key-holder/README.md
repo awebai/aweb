@@ -198,3 +198,11 @@ changed receives `binding_refresh_identity_key_changed` with enrolment or recove
 advice; another caller receives `binding_refresh_person_required`. Refresh cannot
 replace an identity key or credential set. In this release the operator must
 revoke the old ID, issue a new ID and enrol again.
+
+### Refusal status
+
+The holder keeps a closed `Refusal` catalogue with the HTTP status beside each
+wire code. Malformed input is 400; missing authentication is 401; an ineligible
+caller is 403; conflicting enrollment state is 409; unavailable storage or
+public authority is 503. A previously unknown approval-library failure is 500
+and is logged, rather than being reported as invalid caller credentials.

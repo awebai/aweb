@@ -15,6 +15,7 @@ from approval_service.verify import Refused as ApprovalRefused
 from authenticator import Passkey
 from aweb_key_holder.auth import Caller
 from aweb_key_holder.enrollment import Holder
+from aweb_key_holder.refusals import Refusal
 from aweb_key_holder.keys import KeyStore, Refused
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from pending import expire_pending
@@ -263,5 +264,9 @@ async def test_error_status_distinguishes_input_state_and_authentication(
 ):
     from aweb_key_holder.http import create_app
 
-    response = await create_app(holder).exception_handlers[Refused](None, Refused(code))
+    try:
+        error = Refused(Refusal(code))
+    except ValueError:
+        error = ApprovalRefused(code)
+    response = await create_app(holder).exception_handlers[Refused](None, error)
     assert response.status_code == status
