@@ -20,9 +20,9 @@ from datetime import UTC, datetime
 import pytest
 from aweb_naapp.console.handoff_requester import RequesterEvidence, requester_parent
 from aweb_naapp.roles import PrincipalKey, lock_holding, read_holding
+from aweb_naapp.runtime.human_member import PrincipalStatusUnavailable
 from aweb_naapp_testing import Member, did_key
 from awid.id_certificates import encode_id_chain_header, id_certificate_signing_bytes
-from fastapi import HTTPException
 from nacl.signing import SigningKey
 
 from aweb_secrets.owners import OWNER_ROLE
@@ -216,7 +216,7 @@ async def test_a_credential_start_whose_holding_proof_fails_refreshes_nothing(jo
     old = await retained(journey)
 
     async def unavailable(team_id, *, principal, certificate):
-        raise HTTPException(503, "principal_status_unavailable")
+        raise PrincipalStatusUnavailable()
 
     journey.factory.human_member = unavailable
     response = await start(journey, journey.member, None, purpose="credential")
