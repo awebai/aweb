@@ -87,8 +87,7 @@ func streamToChannel(ctx context.Context, stream *awid.SSEStream) (<-chan sseRes
 	return ch, cleanup
 }
 
-// isGrantTerminalEvent reports a stream event that ends the stream because
-// the identity grant behind it can no longer be used.
+// isGrantTerminalEvent identifies stream events that end the session grant.
 func isGrantTerminalEvent(eventType EventType) bool {
 	switch strings.TrimSpace(string(eventType)) {
 	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
@@ -98,8 +97,7 @@ func isGrantTerminalEvent(eventType EventType) bool {
 	}
 }
 
-// parseSSEEvent converts an SSE event to a chat Event. It only decodes:
-// verification is the caller's (verifyStreamMessage).
+// parseSSEEvent converts an SSE event to a chat Event.
 func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	ev := Event{
 		Type: EventType(sseEvent.Event),
@@ -1328,16 +1326,8 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 }
 
 func shouldProbeExistingSession(target string) bool {
-	// Probe for any non-empty target. The previous narrow gate (did:/-prefixed
-	// or address-shaped only) skipped bare aliases, which made the CLI fall
-	// through to ChatCreateSession with a fresh auto-generated session_id
-	// (cli/go/awid/chat.go:159 generates UUID4 when signingKey is set). With
-	// the post-aame server-side 'one active 1:1' dedup, that fresh UUID
-	// conflicts with the existing session and 409s. Probing for bare aliases
-	// lets findSessionWithOptions(latestSession) discover the existing session_id, route via
-	// ChatSendMessage on the per-session endpoint, and bypass the conflict
-	// entirely. Ambiguous targets are surfaced by that lookup as
-	// ErrAmbiguousConversation and propagate up.
+	// Every non-empty target may name an existing session. Lookup reuses its
+	// session ID or reports ambiguity before a new conversation is created.
 	return strings.TrimSpace(target) != ""
 }
 
