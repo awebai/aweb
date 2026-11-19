@@ -322,12 +322,49 @@ def test_with_no_daemon_to_ask_the_writer_is_not_fenced(tmp_path, monkeypatch):
         agent_state.writer("agent", tmp_path)
 
 
+def fake_age(directory: Path, version: str = "v1.3.2") -> tuple[Path, str]:
+    import hashlib
+
+    directory.mkdir(parents=True, exist_ok=True)
+    binary = directory / "age"
+    binary.write_text(f"#!/bin/sh\necho {version}\n")
+    binary.chmod(0o755)
+    return binary, hashlib.sha256(binary.read_bytes()).hexdigest()
+
+
 def test_an_age_binary_other_than_the_pinned_one_refuses(tmp_path):
-    impostor = tmp_path / "age"
-    impostor.write_text("#!/bin/sh\necho v1.3.2\n")
-    impostor.chmod(0o755)
+    impostor, _ = fake_age(tmp_path / "bin")
     with pytest.raises(agent_state.Refused, match="is not the pinned age binary"):
         agent_state.pinned_age(impostor, "0" * 64)
+
+
+def test_the_pinned_age_is_one_absolute_file_hashed_and_run_by_the_same_path(tmp_path):
+    binary, pin = fake_age(tmp_path / "bin")
+    (tmp_path / "linked").symlink_to(binary)
+    path, version = agent_state.pinned_age(tmp_path / "linked", pin)
+    assert path == str(binary) and version == "v1.3.2"
+
+
+def test_a_relative_age_is_refused_whatever_path_would_find(tmp_path, monkeypatch):
+    # "./age" becomes the bare name "age" through pathlib, which PATH resolves:
+    # the file hashed and the file run could differ.
+    here, pin = fake_age(tmp_path / "here")
+    other, _ = fake_age(tmp_path / "elsewhere", version="v0.0.0-other")
+    monkeypatch.chdir(tmp_path / "here")
+    monkeypatch.setenv("PATH", str(other.parent))
+    with pytest.raises(agent_state.Refused, match="not an absolute path"):
+        agent_state.pinned_age(Path("./age"), pin)
+
+
+@pytest.mark.parametrize("make_open", [
+    lambda binary: binary.chmod(0o777),
+    lambda binary: binary.parent.chmod(0o777),
+])
+def test_an_age_others_can_replace_is_refused(tmp_path, make_open):
+    binary, pin = fake_age(tmp_path / "bin")
+    make_open(binary)
+    with pytest.raises(agent_state.Refused, match="writable by others"):
+        agent_state.pinned_age(binary, pin)
 
 
 def test_an_interrupt_while_the_last_read_drains_the_child_kills_and_reaps_it(tmp_path):

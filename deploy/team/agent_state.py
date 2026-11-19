@@ -370,14 +370,29 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def pinned_age(path: Path, expected: str) -> str:
-    """The age binary, checked against its pinned SHA-256; its version."""
-    if sha256(path) != expected:
+def pinned_age(path: Path, expected: str) -> tuple[str, str]:
+    """The age binary as one file: given as an absolute path, resolved through
+    any link, under ancestors no one but root or this user can change, itself
+    a regular file no one else can write, and matching its pinned SHA-256.
+    Returns that resolved path, the one hashed and the one every age command
+    runs (a bare or relative name would go through PATH), and its version."""
+    if not path.is_absolute():
+        raise Refused(f"{path} is not an absolute path; the age binary is named by its absolute path")
+    resolved = Path(os.path.realpath(path))
+    secure_parent(resolved)
+    info = resolved.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        raise Refused(f"{resolved} is not a regular file")
+    if info.st_uid not in (0, os.geteuid()):
+        raise Refused(f"{resolved} belongs to uid {info.st_uid}, neither root nor this user")
+    if info.st_mode & 0o022:
+        raise Refused(f"{resolved} is writable by others")
+    if sha256(resolved) != expected:
         raise Refused(f"{path} is not the pinned age binary")
-    answer = subprocess.run([str(path), "--version"], capture_output=True, text=True, timeout=30, check=False)
+    answer = subprocess.run([str(resolved), "--version"], capture_output=True, text=True, timeout=30, check=False)
     if answer.returncode != 0:
-        raise Refused(f"{path} --version failed")
-    return answer.stdout.strip()
+        raise Refused(f"{resolved} --version failed")
+    return str(resolved), answer.stdout.strip()
 
 
 def docker(*args: str) -> subprocess.CompletedProcess:
@@ -439,12 +454,12 @@ def new_directory(path: Path) -> None:
 
 def capture_command(args: argparse.Namespace) -> None:
     fence = writer(args.container, args.state)
-    version = pinned_age(args.age, args.age_sha256)
+    age, version = pinned_age(args.age, args.age_sha256)
     new_directory(args.out)
     partial = args.out / "state.tar.age.partial"
     endpoints = Endpoints(args.wake_store or ["home/.config/aw/wake"], args.custody_root or [])
     captured = encrypt(args.state, partial,
-                       [str(args.age), "--encrypt", "--recipients-file", str(args.recipients), "--output", str(partial)],
+                       [age, "--encrypt", "--recipients-file", str(args.recipients), "--output", str(partial)],
                        args.deadline, endpoints)
     final = args.out / "state.tar.age"
     partial.rename(final)
@@ -459,7 +474,7 @@ def capture_command(args: argparse.Namespace) -> None:
         "omitted": captured["omitted"],
         "endpointRules": sorted(endpoints.rules.values()),
         "ciphertext": {"file": final.name, "sha256": sha256(final), "bytes": final.stat().st_size},
-        "age": {"version": version, "sha256": args.age_sha256,
+        "age": {"path": age, "version": version, "sha256": args.age_sha256,
                 "recipients": [line.strip() for line in args.recipients.read_text().splitlines()
                                if line.strip() and not line.startswith("#")]},
     }
@@ -477,7 +492,7 @@ def restore_command(args: argparse.Namespace) -> None:
     manifest = json.loads((args.backup / "manifest.json").read_text())
     if manifest.get("format") != 1 or manifest.get("kind") != "agent-state":
         raise Refused("the manifest is not an agent-state manifest of format 1")
-    pinned_age(args.age, args.age_sha256)
+    age, _ = pinned_age(args.age, args.age_sha256)
     name = manifest["ciphertext"]["file"]
     if PurePosixPath(name).name != name or not parts(name):
         raise Refused(f"the manifest names {name!r}, not a file of the backup")
@@ -489,7 +504,7 @@ def restore_command(args: argparse.Namespace) -> None:
         shutil.copyfile(args.backup / name, copy)
         if sha256(copy) != manifest["ciphertext"]["sha256"]:
             raise Refused(f"{name} does not match the manifest's digest")
-        command = [str(args.age), "--decrypt", "--identity", str(args.identity), str(copy)]
+        command = [age, "--decrypt", "--identity", str(args.identity), str(copy)]
         restored = restore(lambda: Decrypted(command, args.deadline), args.target, manifest["members"])
     finally:
         shutil.rmtree(private)
