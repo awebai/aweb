@@ -1,9 +1,13 @@
 """The Secrets e2e lane's composition, read as files: what both lanes run
 before any container starts (docker-compose.e2e.yml and the lane fixtures)."""
 
+import ast
 import json
+import os
 import re
+import sys
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 
 import dns.asyncresolver
 import pytest
@@ -13,6 +17,7 @@ from awid.did import did_from_public_key
 from awid.dns_verify import discover_registry_override
 from nacl.signing import SigningKey
 
+from tests import test_e2e_owner_acts as owner_lane
 from tests.test_e2e_owner_acts import (
     APP_DIR,
     CONSOLE,
@@ -149,3 +154,135 @@ async def test_the_lanes_apps_accept_the_registry_the_lanes_dns_names(
         assert await discover_registry_override(DOMAIN) == REGISTRY
     finally:
         server.close()
+
+
+def test_bootstrap_credentials_separate_runtime_from_operator(tmp_path):
+    (tmp_path / "keys").mkdir()
+    owner_lane.write_secrets_database_files(SimpleNamespace(runtime=tmp_path))
+    runtime_file = tmp_path / "keys" / "database-url"
+    operator_file = tmp_path / "operator" / "database-url"
+    runtime = urlsplit(runtime_file.read_text().strip())
+    operator = urlsplit(operator_file.read_text().strip())
+    if (runtime.username, operator.username) != ("secrets_runtime", "secrets"):
+        raise AssertionError("Secrets must use a distinct runtime LOGIN")
+    if runtime.path != "/secrets_content" or operator.path != runtime.path:
+        raise AssertionError("Both roles must target the dedicated Secrets database")
+    if runtime.password == operator.password or not runtime.password:
+        raise AssertionError("Runtime credentials must differ from operator credentials")
+    assert operator_file.stat().st_mode & 0o777 == 0o400
+    assert operator_file.parent.stat().st_mode & 0o777 == 0o700
+    assert runtime_file.stat().st_mode & 0o777 == 0o444
+    env = secrets_env()
+    assert "SECRETS_DATABASE_URL" not in env
+    assert env["SECRETS_DATABASE_URL_FILE"] == "/run/secrets-keys/database-url"
+    assert all("/operator" not in mount for mount in LANE["services"]["secrets"]["volumes"])
+
+
+def test_bootstrap_is_explicit_before_starting_the_production_services():
+    source = ast.parse((APP_DIR / "tests" / "test_e2e_owner_acts.py").read_text())
+    start = next(
+        node
+        for node in source.body
+        if isinstance(node, ast.FunctionDef) and node.name == "start_apps"
+    )
+    calls = [
+        node.value
+        for node in start.body
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+    ]
+    names = [call.func.id if isinstance(call.func, ast.Name) else call.func.attr for call in calls]
+    assert names == [
+        "write_service_member",
+        "write_logs_files",
+        "create_logs_databases",
+        "prepare_secrets_database",
+        "up",
+    ]
+    query = next(
+        node
+        for node in source.body
+        if isinstance(node, ast.FunctionDef) and node.name == "secrets_query"
+    )
+    read = next(
+        node
+        for node in ast.walk(query)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "read_only_psql"
+    )
+    assert isinstance(read.args[1], ast.Name) and read.args[1].id == "SECRETS_DATABASE"
+
+
+def test_bootstrap_refuses_to_replace_retained_runtime_credentials(tmp_path):
+    (tmp_path / "keys").mkdir()
+    retained = tmp_path / "keys" / "database-url"
+    retained.write_text("retained-lane-credentials")
+    with pytest.raises(FileExistsError):
+        owner_lane.write_secrets_database_files(SimpleNamespace(runtime=tmp_path))
+    if retained.read_text() != "retained-lane-credentials":
+        raise AssertionError("Bootstrap replaced existing runtime credentials")
+
+
+@pytest.mark.parametrize("failed_step", [0, 1, 2])
+def test_bootstrap_provisions_then_initialises_and_stops_on_either_refusal(tmp_path, failed_step):
+    # External Docker recorder; it discards SQL stdin without recording keys.
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    recorder = binary / "docker"
+    recorder.write_text(
+        f"#!{sys.executable}\n"
+        + """
+import json, os, sys
+from pathlib import Path
+path = Path(os.environ["BOOTSTRAP_CALLS"])
+calls = json.loads(path.read_text()) if path.exists() else []
+has_input = bool(sys.stdin.read()) if "psql" in sys.argv else False
+calls.append({"args": sys.argv[1:], "sql_stdin": has_input})
+path.write_text(json.dumps(calls))
+sys.exit(77 if len(calls) == int(os.environ["BOOTSTRAP_FAIL_STEP"]) else 0)
+"""
+    )
+    recorder.chmod(0o755)
+    (tmp_path / "keys").mkdir()
+    journal = tmp_path / "calls.json"
+    lane = owner_lane.Lane(
+        "synthetic-bootstrap",
+        tmp_path,
+        {
+            **os.environ,
+            "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+            "BOOTSTRAP_CALLS": str(journal),
+            "BOOTSTRAP_FAIL_STEP": str(failed_step),
+        },
+    )
+    if failed_step:
+        with pytest.raises(AssertionError):
+            owner_lane.prepare_secrets_database(lane)
+    else:
+        owner_lane.prepare_secrets_database(lane)
+    entries = json.loads(journal.read_text())
+    calls = [entry["args"] for entry in entries]
+    assert len(calls) == (1 if failed_step == 1 else 2)
+    assert entries[0]["sql_stdin"] is True
+    assert "psql" in calls[0] and "postgres" in calls[0]
+    assert "init-erasure" not in calls[0]
+    if len(calls) == 2:
+        command = calls[1]
+        assert command[-11:] == [
+            "-m",
+            "aweb_secrets.erasure",
+            "init-erasure",
+            "--operator-dsn-file",
+            "/run/operator/database-url",
+            "--application-role",
+            "secrets_runtime",
+            "--content-schema",
+            owner_lane.SECRETS_SCHEMA,
+            "--max-backup-age-seconds",
+            "604800",
+        ]
+        assert all(flag in command for flag in ("run", "--rm", "--no-deps", "--build"))
+        assert str(tmp_path / "operator") + ":/run/operator:ro" in command
+    password = urlsplit((tmp_path / "keys" / "database-url").read_text().strip()).password
+    if password in json.dumps(calls):
+        raise AssertionError("A runtime credential reached a process argument")
