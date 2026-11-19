@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID
 
 from awid.team_ids import team_slug
+from .service_errors import ConflictError
 from .task_refs import format_task_ref, task_ref_suffix
 
 if TYPE_CHECKING:
@@ -183,6 +184,75 @@ async def _is_open_task_ref(
     if not row:
         return False
     return (row["status"] or "").strip().lower() != "closed"
+
+
+async def acquire_task_claim_on(
+    tx, *, team_id: str, actor_alias: str, task_ref: str, now: datetime
+) -> bool:
+    """Acquire a claim while the caller holds its task row lock."""
+    apex_task_ref = await resolve_task_claim_apex_on(tx, team_id, task_ref)
+    workspace = await tx.fetch_one(
+        """
+        SELECT workspace_id, alias, human_name
+        FROM {{tables.workspaces}}
+        WHERE alias = $1 AND team_id = $2 AND deleted_at IS NULL
+        """,
+        actor_alias,
+        team_id,
+    )
+    if workspace is not None:
+        conflicting_claim = await tx.fetch_one(
+            """
+            SELECT workspace_id, alias
+            FROM {{tables.task_claims}}
+            WHERE team_id = $1 AND task_ref = $2 AND workspace_id != $3
+            LIMIT 1
+            """,
+            team_id,
+            task_ref,
+            workspace["workspace_id"],
+        )
+        if conflicting_claim:
+            raise ConflictError("Task is already in progress by another agent")
+
+        await tx.execute(
+            """
+            INSERT INTO {{tables.task_claims}} (
+                team_id, workspace_id, alias, human_name, task_ref,
+                apex_task_ref, claimed_at
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (team_id, task_ref, workspace_id)
+            DO UPDATE SET
+                alias = EXCLUDED.alias,
+                human_name = EXCLUDED.human_name,
+                apex_task_ref = EXCLUDED.apex_task_ref,
+                claimed_at = EXCLUDED.claimed_at
+            """,
+            team_id,
+            workspace["workspace_id"],
+            workspace["alias"],
+            workspace["human_name"] or "",
+            task_ref,
+            apex_task_ref,
+            now,
+        )
+
+        await tx.execute(
+            """
+            UPDATE {{tables.workspaces}}
+            SET focus_task_ref = $1,
+                focus_updated_at = $2,
+                updated_at = $2
+            WHERE team_id = $3 AND workspace_id = $4
+            """,
+            claim_focus_task_ref(task_ref, apex_task_ref),
+            now,
+            team_id,
+            workspace["workspace_id"],
+        )
+        return True
+    return False
 
 
 async def upsert_claim(
