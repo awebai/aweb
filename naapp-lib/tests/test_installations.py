@@ -17,9 +17,11 @@ from nacl.signing import SigningKey
 from aweb_naapp.manifest import canonical_bytes
 from aweb_naapp.runtime.app import NaappRuntime, mount_manifest_routes
 from aweb_naapp.runtime.app_credentials import APP_GRANT_READ
-from tests.runtime.test_served_manifest import HOSTED_ID, ExampleSettings, _key_file, _v2_template
+from tests.runtime.test_served_manifest import ExampleSettings, _key_file, _v2_template
 
 SCOPES = ["example:write"]
+# This deployment's own app id; the template's hosted id belongs to its hosted origin.
+APP_ID = "example-local"
 
 
 def _member() -> Member:
@@ -40,6 +42,7 @@ def _runtime(tmp_path, *, origin: str, registry_url: str, database_url: str) -> 
             _env_file=None,
             app_key_files=files,
             public_origin=origin,
+            app_id=APP_ID,
             database_url=database_url,
             awid_registry_url=registry_url,
             awid_service_token=SERVICE_TOKEN,
@@ -77,7 +80,7 @@ async def test_install_uninstall_and_reinstall_reach_the_naapp(
         origin.serve(app)
         async with app.router.lifespan_context(app):
             installed = await installations.install(
-                origin, app_id=HOSTED_ID, manifest=runtime.manifest_bytes, granted_scopes=SCOPES
+                origin, app_id=APP_ID, manifest=runtime.manifest_bytes, granted_scopes=SCOPES
             )
             assert (installed["state"], installed["generation"]) == ("active", 1)
 
@@ -90,14 +93,14 @@ async def test_install_uninstall_and_reinstall_reach_the_naapp(
             )
             assert active.granted_scopes == frozenset(SCOPES)
 
-            removed = await installations.uninstall(app_id=HOSTED_ID, expected_generation=1)
+            removed = await installations.uninstall(app_id=APP_ID, expected_generation=1)
             assert removed["state"] == "uninstalled"
             gone = await _status_after_freshness(runtime, member.team_id, active)
             assert gone is not None and gone.state == "uninstalled"
 
             again = await installations.install(
                 origin,
-                app_id=HOSTED_ID,
+                app_id=APP_ID,
                 manifest=runtime.manifest_bytes,
                 granted_scopes=SCOPES,
                 expected_generation=removed["generation"],
@@ -122,6 +125,6 @@ async def test_a_member_who_is_not_an_install_admin_is_refused(
     async with app_origin(tmp_path / "origin") as origin:
         with pytest.raises(InstallRefused) as refused:
             await Installations(listening_coordination, other).install(
-                origin, app_id=HOSTED_ID, manifest=b"{}", granted_scopes=SCOPES
+                origin, app_id=APP_ID, manifest=b"{}", granted_scopes=SCOPES
             )
     assert refused.value.status == 403
