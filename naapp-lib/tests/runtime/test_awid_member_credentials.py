@@ -43,8 +43,8 @@ async def private_team(registry) -> tuple[Member, Member]:
         team_id=TEAM_ID, team_key=caller.team_key, certificate_id="service", alias="logs"
     )
     await registry.add_team(TEAM_ID, caller.team_did_key, visibility="private")
-    await registry.add_certificate(caller.certificate())
-    await registry.add_certificate(service.certificate())
+    await registry.add_certificate(caller.certificate(), team_key=caller.team_key)
+    await registry.add_certificate(service.certificate(), team_key=service.team_key)
     return caller, service
 
 

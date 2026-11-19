@@ -257,7 +257,14 @@ async def explicit_mail_target_matches_participant(
         address_matches = participant_address.lower() == str(to_address).strip().lower()
         checks.append(address_matches)
     if to_did is not None and str(to_did).strip():
-        did_matches = participant_did == str(to_did).strip()
+        supplied_did = str(to_did).strip()
+        # docs/identity-messaging-contract.md:134-140: a thread retains this
+        # participant's key reference. Matching it identifies the same party;
+        # current signature, encryption and delivery admission still run.
+        recorded_key = str(participant.get("current_did_key") or "").strip()
+        did_matches = participant_did == supplied_did or (
+            bool(recorded_key) and recorded_key == supplied_did
+        )
         # Signed clients often include the recipient's current did:key as an
         # extra binding while the conversation participant stores the stable
         # did:aw. Accept that only when another stable participant field has

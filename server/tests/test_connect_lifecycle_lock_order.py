@@ -4,7 +4,7 @@ import asyncio
 from uuid import UUID
 
 import pytest
-from pgdbm.errors import QueryError
+from asyncpg.exceptions import LockNotAvailableError
 
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_member_team_key import _connect
@@ -45,7 +45,7 @@ async def test_reconnect_locks_its_workspace_before_waiting_for_its_member(priva
             assert len(waiters) == 1
             reconnect_pid = waiters[0]["pid"]
             assert reconnect_pid != holder_pid
-            with pytest.raises(QueryError) as refused:
+            with pytest.raises(LockNotAvailableError) as refused:
                 async with env.db.transaction() as probe:
                     probe_pid = await probe.fetch_value("SELECT pg_backend_pid()")
                     assert probe_pid not in (holder_pid, reconnect_pid)
@@ -55,7 +55,7 @@ async def test_reconnect_locks_its_workspace_before_waiting_for_its_member(priva
                         TEAM,
                         workspace_id,
                     )
-            assert getattr(refused.value.__cause__, "sqlstate", None) == "55P03"
+            assert refused.value.sqlstate == "55P03"
     finally:
         # Releasing the actual agent lock must let the real request finish.
         if reconnect is not None:

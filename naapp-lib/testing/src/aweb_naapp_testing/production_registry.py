@@ -195,6 +195,7 @@ async def running_production_registry(
         )
     db: AsyncDatabaseManager | None = None
     transport: ProductionServiceTransport | None = None
+    registry: Registry | None = None
     try:
         async with httpx.AsyncClient(base_url=origin, timeout=1) as client:
             async with asyncio.timeout(60):
@@ -210,20 +211,25 @@ async def running_production_registry(
         db = AsyncDatabaseManager(DatabaseConfig(connection_string=database_url, schema=schema))
         await db.connect()
         transport = ProductionServiceTransport(origin)
-        yield Registry(app=app, db=db, transport=transport)  # type: ignore[arg-type]
+        registry = Registry(app=app, db=db, transport=transport)  # type: ignore[arg-type]
+        yield registry
     finally:
-        if process.returncode is None:
-            process.terminate()
-            try:
-                async with asyncio.timeout(10):
+        try:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    async with asyncio.timeout(10):
+                        await process.wait()
+                except TimeoutError:
+                    process.kill()
                     await process.wait()
-            except TimeoutError:
-                process.kill()
-                await process.wait()
-        authority.close()
-        await authority.wait_closed()
-        if transport is not None:
-            await transport._inner.aclose()
-        if db is not None:
-            await db.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
-            await db.disconnect()
+            authority.close()
+            await authority.wait_closed()
+            if transport is not None:
+                await transport._inner.aclose()
+            if db is not None:
+                await db.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                await db.disconnect()
+        finally:
+            if registry is not None:
+                await registry.aclose()

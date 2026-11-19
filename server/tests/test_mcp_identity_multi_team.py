@@ -16,7 +16,6 @@ from test_messages_http import (
     _signed_identity_headers,
     _signed_team_headers,
 )
-from test_team_key_pinning import register_namespace_controller
 
 
 async def _connect_global_member(env, *, actor, team_id: str, stable_did: str) -> str:
@@ -91,7 +90,6 @@ async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app,
         if membership_count == 2:
             # Namespace control is fixture provisioning; team creation and
             # admission go through real signed registry and native routes.
-            await register_namespace_controller(env, env.team_did)
             second_name = "second-" + uuid4().hex[:12]
             second = await registry.register_team(
                 domain="example.test",
@@ -99,7 +97,7 @@ async def test_global_identity_reads_use_same_auth_for_http_and_mcp(privacy_app,
                 display_name="Second team",
                 team_did_key=env.team_did,
                 visibility="public",
-                namespace_controller_signing_key=env.team_sk,
+                namespace_controller_signing_key=env.namespace_sk,
             )
             certificates[second.team_id] = await _connect_global_member(
                 env, actor=actor, team_id=second.team_id, stable_did=stable

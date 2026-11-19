@@ -83,7 +83,7 @@ async def db(test_db_factory) -> AsyncIterator[AsyncDatabaseManager]:
 @pytest_asyncio.fixture
 async def team_key(registry) -> SigningKey:
     key = SigningKey.generate()
-    await registry.add_team(TEAM_ID, did_key(key))
+    await registry.add_team(TEAM_ID, did_key(key), namespace_controller=NAMESPACE_KEY)
     return key
 
 

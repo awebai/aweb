@@ -34,8 +34,10 @@ def _controller_headers(sk, did, payload):
 
 async def register_namespace_controller(env, did: str) -> None:
     await env.registry_db.execute(
-        "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-        "VALUES ('example.test', $1, 'verified')",
+        # Most callers retain the controller established by the shared fixture.
+        # The adversarial registry-operator case deliberately replaces this row;
+        # its independent DNS answer stays with the actual namespace controller.
+        "UPDATE {{tables.dns_namespaces}} SET controller_did=$1 WHERE domain='example.test'",
         did,
     )
 
@@ -121,7 +123,6 @@ async def _pin(env):
 def pinning(privacy_app, monkeypatch):
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
     env = privacy_app
-    env.namespace_sk, _, env.namespace_did = _make_keypair()
     env.dns = TXTAnswers({"_awid.example.test": env.namespace_did})
     env.app.state.awid_txt_resolver = env.dns
     return env
