@@ -612,7 +612,7 @@ async def test_an_address_send_records_the_senders_contact_through_both_adapters
         """SELECT owner_did, contact_address, contact_did_aw, binding_controller_did, status
            FROM {{tables.contacts}} ORDER BY owner_did"""
     )
-    assert [dict(row) for row in contacts] == [
+    assert sorted((dict(row) for row in contacts), key=lambda row: row["owner_did"]) == [
         {
             "owner_did": owner,
             "contact_address": "acme.com/bob",
