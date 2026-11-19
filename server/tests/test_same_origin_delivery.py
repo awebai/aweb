@@ -20,6 +20,7 @@ import pytest_asyncio
 import uvicorn
 from nacl.signing import SigningKey
 
+from awid.did import did_from_public_key
 from awid.dns_verify import DomainAuthority
 from awid.external_authority import DNSLookup
 from awid.registry import CachedRegistryClient
@@ -98,6 +99,7 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
         registry_origin,
     ):
         stable = await register_global_identity(env, target, address)
+        recipient_namespace_key = await env.registry.ensure_namespace(domain="recipient.test")
         await env.registry_db.execute(
             "UPDATE {{tables.dns_namespaces}} SET default_delivery_origin=$1",
             env.app.state.public_origin,
@@ -118,22 +120,26 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
         human_namespace_registered = False
         env.registry_app.state.awid_public_origins = (registry_origin,)
 
+        namespace_controllers = {
+            human_domain: ROOT["did_key"],
+            "example.test": env.namespace_did,
+            "recipient.test": did_from_public_key(bytes(recipient_namespace_key.verify_key)),
+        }
+
         async def exact_dns(domain):
-            assert domain == human_domain
-            return DomainAuthority(ROOT["did_key"], registry_origin, "_awid." + domain)
+            assert domain in namespace_controllers
+            return DomainAuthority(
+                namespace_controllers[domain], registry_origin, "_awid." + domain
+            )
 
         async def lookup_txt(name):
-            controllers = {
-                "_awid." + human_domain: ROOT["did_key"],
-                "_awid.example.test": env.namespace_did,
-                "_awid.recipient.test": (
-                    await env.registry.namespace_authority("recipient.test")
-                ).controller_did,
-            }
-            assert name in controllers
+            domain = name.removeprefix("_awid.")
+            assert name == "_awid." + domain and domain in namespace_controllers
             return DNSLookup(
                 "record",
-                (f"awid=v1; controller={controllers[name]}; registry={registry_origin};",),
+                (
+                    f"awid=v1; controller={namespace_controllers[domain]}; registry={registry_origin};",
+                ),
             )
 
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns

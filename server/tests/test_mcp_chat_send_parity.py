@@ -4,8 +4,6 @@ The database cases run through the real mounted MCP app and the REST app over
 ASGI, with real PostgreSQL. The cases without a fixture read no database.
 """
 
-from identity_binding_support import seed_verified_bindings
-
 import asyncio
 import json
 from dataclasses import replace
@@ -13,7 +11,6 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
-import httpx
 import pytest
 
 from aweb.federation.errors import LocalRecipientNotFoundError
@@ -33,15 +30,10 @@ from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payloa
 from aweb.messaging.address_auth import unreachable_address_refusal
 from aweb.messaging.chat_policy import HumanChatRefused
 from aweb.messaging.runtime import messaging_runtime
-from aweb.routes.chat import router as chat_router
-from test_mcp_mail_conversation_parity import _AddressRegistry
 from test_messages_http import (
-    _build_test_app,
-    _insert_agent,
-    _insert_agent_encryption_assertion,
-    _insert_team,
     _make_keypair,
     _signed_identity_headers,
+    _signed_team_headers,
 )
 
 TEAM = "ops:acme.com"
@@ -49,113 +41,99 @@ INTERNAL_SECRET = "chat-parity-test-secret"
 
 
 @pytest_asyncio.fixture
-async def chat_server(aweb_cloud_db, monkeypatch):
-    db = aweb_cloud_db.aweb_db
-    await _insert_team(db, TEAM)
-    registry = _AddressRegistry()
-    keys, agents, custody = {}, {}, {}
-    for alias in ("pilot", "bob"):
-        sk, _, did_key = _make_keypair()
-        keys[alias] = (sk, did_key)
-        agents[alias] = await _insert_agent(
-            db,
-            team_id=TEAM,
-            alias=alias,
-            did_key=did_key,
-            did_aw=f"did:aw:{alias}",
-            address=f"acme.com/{alias}",
-        )
-        await db.execute(
-            """INSERT INTO {{tables.workspaces}}
-               (workspace_id, team_id, agent_id, alias, workspace_type)
-               VALUES ($1, $2, $3, $4, 'hosted_mcp')""",
-            uuid4(),
-            TEAM,
-            UUID(agents[alias]),
-            alias,
-        )
-        registry.bind(f"acme.com/{alias}", f"did:aw:{alias}", did_key)
-        # The identity hosted custody encrypts as and to: its signing key and
-        # an encryption key it asserts as held in hosted custody.
-        _, encryption_public_key = generate_x25519_keypair()
-        custody[alias] = {
-            "signing_key": sk,
-            "did": did_key,
-            "stable_id": f"did:aw:{alias}",
-            "address": f"acme.com/{alias}",
-            "encryption_key": build_encryption_key_assertion(
-                signing_key=sk,
-                identity_did=did_key,
-                identity_stable_id=f"did:aw:{alias}",
-                encryption_public_key=encryption_public_key,
-                custody="hosted_custodial",
-            ),
-        }
+async def chat_server(shared_test_pool, monkeypatch):
+    from awid.identity_observation import IdentityKind
+    from aweb.application_state import application_registry_client
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from test_dashboard_privacy import privacy_stack
+
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", INTERNAL_SECRET)
-    signed_payloads = []
-    alias_of = {agent_id: alias for alias, agent_id in agents.items()}
-    # When set, custody holds each signature until two sends are waiting for
-    # one, so both resolved their recipient before either stores anything.
-    together = SimpleNamespace(waiting=0, released=None)
+    async with privacy_stack(shared_test_pool, monkeypatch) as stack:
+        await register_messaging_team(stack, team_id=TEAM)
+        keys, agents, custody, actor_records, dids = {}, {}, {}, {}, {}
+        for alias in ("pilot", "bob"):
+            actor = await admit_messaging_actor(
+                stack,
+                alias=alias,
+                team_id=TEAM,
+                address=f"acme.com/{alias}",
+                kind=IdentityKind.AGENT,
+            )
+            actor_records[alias] = actor
+            keys[alias] = (actor.signing_key, actor.did_key)
+            agents[alias], dids[alias] = actor.agent_id, actor.stable_id
+            _, encryption_public_key = generate_x25519_keypair()
+            custody[alias] = {
+                "signing_key": actor.signing_key,
+                "did": actor.did_key,
+                "stable_id": actor.stable_id,
+                "address": actor.address,
+                "encryption_key": build_encryption_key_assertion(
+                    signing_key=actor.signing_key,
+                    identity_did=actor.did_key,
+                    identity_stable_id=actor.stable_id,
+                    encryption_public_key=encryption_public_key,
+                    custody="hosted_custodial",
+                ),
+            }
+        signed_payloads, mutations = [], []
+        alias_of = {agent_id: alias for alias, agent_id in agents.items()}
+        together = SimpleNamespace(waiting=0, released=None)
 
-    async def signer(**kwargs):
-        sk, did_key = keys[alias_of[kwargs["agent_id"]]]
-        if together.released is not None:
-            together.waiting += 1
-            if together.waiting >= 2:
-                together.released.set()
-            await together.released.wait()
-        signed_payloads.append(dict(kwargs["payload"]))
-        signed = canonical_signed_payload(dict(kwargs["payload"]))
-        return HostedMessageSigningResult(
-            from_did=did_key,
-            signing_key_id=did_key,
-            signed_payload=signed,
-            signature=sign_message(sk, signed.encode()),
+        async def signer(**kwargs):
+            sk, did_key = keys[alias_of[kwargs["agent_id"]]]
+            if together.released is not None:
+                together.waiting += 1
+                if together.waiting >= 2:
+                    together.released.set()
+                await together.released.wait()
+            signed_payloads.append(dict(kwargs["payload"]))
+            signed = canonical_signed_payload(dict(kwargs["payload"]))
+            return HostedMessageSigningResult(
+                from_did=did_key,
+                signing_key_id=did_key,
+                signed_payload=signed,
+                signature=sign_message(sk, signed.encode()),
+            )
+
+        async def encryptor(**kwargs):
+            payload = kwargs["payload"]
+            by_did = {identity["did"]: identity for identity in custody.values()}
+            envelope = encrypt_e2ee_chat(
+                sender=custody[alias_of[kwargs["agent_id"]]],
+                recipients=[by_did[recipient["did_key"]] for recipient in kwargs["recipients"]],
+                body=payload["body"],
+                message_id=payload["message_id"],
+                conversation_id=payload["conversation_id"],
+                created_at=datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00")),
+            )
+            return {
+                "content_mode": "encrypted_v2",
+                "message_version": 2,
+                "encrypted_envelope": envelope,
+            }
+
+        app, client, db = stack.app, stack.client, stack.db
+        actual_mutation_handler = app.state.on_mutation
+
+        async def record_mutation(event_type, context):
+            mutations.append((event_type, dict(context)))
+            await actual_mutation_handler(event_type, context)
+
+        app.state.on_mutation = record_mutation
+        registry = application_registry_client(app.state)
+        mcp = create_mcp_app(
+            db_infra=stack.infra,
+            redis=stack.redis,
+            registry_client=registry,
+            hosted_signer=signer,
+            hosted_encryptor=encryptor,
+            public_origin=app.state.public_origin,
         )
-
-    async def encryptor(**kwargs):
-        payload = kwargs["payload"]
-        by_did = {identity["did"]: identity for identity in custody.values()}
-        envelope = encrypt_e2ee_chat(
-            sender=custody[alias_of[kwargs["agent_id"]]],
-            recipients=[by_did[recipient["did_key"]] for recipient in kwargs["recipients"]],
-            body=payload["body"],
-            message_id=payload["message_id"],
-            conversation_id=payload["conversation_id"],
-            created_at=datetime.fromisoformat(payload["timestamp"].replace("Z", "+00:00")),
-        )
-        return {
-            "content_mode": "encrypted_v2",
-            "message_version": 2,
-            "encrypted_envelope": envelope,
-        }
-
-    mutations = []
-
-    async def record_mutation(event_type, context):
-        mutations.append((event_type, dict(context)))
-
-    app = _build_test_app(db, registry)
-    app.include_router(chat_router)
-    seed_verified_bindings(
-        app,
-        *((f"did:aw:{alias}", did, f"acme.com/{alias}") for alias, (_, did) in keys.items()),
-    )
-    app.state.on_mutation = record_mutation
-    mcp = create_mcp_app(
-        db_infra=app.state.db,
-        registry_client=registry,
-        hosted_signer=signer,
-        hosted_encryptor=encryptor,
-    )
-    app.mount("/mcp", mcp)
-    await mcp.startup()
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        app.mount("/mcp", mcp)
+        await mcp.startup()
+        try:
 
             async def mcp_chat(alias, **arguments):
                 principal = str(uuid4())
@@ -200,7 +178,8 @@ async def chat_server(aweb_cloud_db, monkeypatch):
                     content=data,
                     headers={
                         "Content-Type": "application/json",
-                        **_signed_identity_headers(sk, did_key, "", data),
+                        **_signed_identity_headers(sk, did_key, dids[alias], data),
+                        "X-Team-ID": TEAM,
                     },
                 )
                 assert response.status_code == 200, response.text
@@ -256,10 +235,17 @@ async def chat_server(aweb_cloud_db, monkeypatch):
 
             yield SimpleNamespace(
                 db=db,
+                client=client,
                 agents=agents,
                 keys=keys,
                 custody=custody,
                 registry=registry,
+                fixture=stack,
+                actors=actor_records,
+                dids=dids,
+                namespace_controller_did=(
+                    await stack.registry.namespace_authority("acme.com")
+                ).controller_did,
                 mutations=mutations,
                 signed_payloads=signed_payloads,
                 mcp_chat=mcp_chat,
@@ -270,8 +256,8 @@ async def chat_server(aweb_cloud_db, monkeypatch):
                 infra=app.state.db,
                 runtime=messaging_runtime(app.state),
             )
-    finally:
-        await mcp.shutdown()
+        finally:
+            await mcp.shutdown()
 
 
 @pytest.mark.asyncio
@@ -287,10 +273,10 @@ async def test_a_first_chat_to_an_address_records_the_senders_contact(chat_serve
     )
     assert [dict(row) for row in contacts] == [
         {
-            "owner_did": "did:aw:pilot",
+            "owner_did": server.dids["pilot"],
             "contact_address": "acme.com/bob",
-            "contact_did_aw": "did:aw:bob",
-            "binding_controller_did": server.registry.controller_did,
+            "contact_did_aw": server.dids["bob"],
+            "binding_controller_did": server.namespace_controller_did,
             "status": "active",
         }
     ]
@@ -346,13 +332,13 @@ async def _pending_for_bob_while_pilot_waits(server, sending, *, earlier_message
         await mark_messages_read(
             server.infra,
             session_id=UUID(session_id),
-            participant_did="did:aw:bob",
+            participant_did=server.dids["bob"],
             participant_agent_id=server.agents["bob"],
             message_ids=[*earlier_message_ids, message_id],
         )
         pending = await get_pending_conversations(
             server.infra,
-            participant_did="did:aw:bob",
+            participant_did=server.dids["bob"],
             participant_agent_id=server.agents["bob"],
         )
         await server.rest_chat("bob", {"body": "here"}, session_id=session_id)
@@ -479,7 +465,7 @@ async def test_two_interleaved_sends_that_reuse_or_create_share_one_session_and_
     server = chat_server
     pilot = MessagingAuth(
         did_key=server.keys["pilot"][1],
-        did_aw="did:aw:pilot",
+        did_aw=server.dids["pilot"],
         address="acme.com/pilot",
         team_id=TEAM,
         alias="pilot",
@@ -579,8 +565,8 @@ async def test_chat_message_sent_has_one_context(chat_server, via):
             "message_id": message_id,
             "from_agent_id": server.agents["pilot"],
             "from_alias": "pilot",
-            "from_did": "did:aw:pilot",
-            "from_did_aw": "did:aw:pilot",
+            "from_did": server.dids["pilot"],
+            "from_did_aw": server.dids["pilot"],
             "to_aliases": ["bob"],
             "preview": preview,
             "content_mode": "legacy_plaintext_v1",
@@ -602,7 +588,7 @@ async def test_mcp_signed_chat_payloads_are_stored_as_signed_for_each_way_of_nam
     assert "error" not in by_alias, by_alias
     session_id = by_alias["session_id"]
     later = [
-        await server.mcp_chat("pilot", to="did:aw:bob", message="by did", plaintext=True),
+        await server.mcp_chat("pilot", to=server.dids["bob"], message="by did", plaintext=True),
         await server.mcp_chat("pilot", to="acme.com/bob", message="by address", plaintext=True),
         await server.mcp_chat(
             "pilot",
@@ -653,9 +639,9 @@ async def test_mcp_signed_chat_payloads_are_stored_as_signed_for_each_way_of_nam
         assert (payload["to"], payload["to_did"], payload["to_stable_id"]) == (
             "bob",
             bob_did,
-            "did:aw:bob",
+            server.dids["bob"],
         )
-        assert (payload["from"], payload["from_stable_id"]) == ("pilot", "did:aw:pilot")
+        assert (payload["from"], payload["from_stable_id"]) == ("pilot", server.dids["pilot"])
     assert [payload.get("wait_seconds") for payload in signed] == [
         0,
         None,
@@ -691,12 +677,19 @@ async def test_mcp_encrypted_chat_to_a_hosted_recipient_needs_the_senders_hosted
     server = chat_server
     published = ["bob", "pilot"] if sender_key_published else ["bob"]
     for alias in published:
-        await _insert_agent_encryption_assertion(
-            server.db,
-            agent_id=UUID(server.agents[alias]),
-            team_id=TEAM,
-            assertion=server.custody[alias]["encryption_key"],
+        actor = server.actors[alias]
+        raw = json.dumps(server.custody[alias]["encryption_key"]).encode()
+        published_key = await server.client.put(
+            "/v1/agents/me/encryption-key",
+            content=raw,
+            headers={
+                **_signed_team_headers(
+                    actor.signing_key, actor.did_key, TEAM, actor.certificate, raw
+                ),
+                "Content-Type": "application/json",
+            },
         )
+        assert published_key.status_code == 200, published_key.text
 
     sent = await server.mcp_chat("pilot", to="bob", message="for bob only")
 
@@ -1179,10 +1172,13 @@ def test_a_chat_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_c
             ],
         )
 
-    # The route's answer is unchanged.
+    # The same key mismatch retains 422 and the encrypted retry recovery action.
     assert (refused.value.status_code, refused.value.detail) == (
         422,
-        "encrypted envelope recipient did mismatch",
+        (
+            "encrypted envelope recipient did mismatch. "
+            "Check whether the original message was delivered before preparing a new encrypted message."
+        ),
     )
     assert json.loads(_send_refusal(refused.value, mode=SendRefusalMode.HOSTED_ENVELOPE)) == {
         "error": "this recipient's key changed; resend the message",
