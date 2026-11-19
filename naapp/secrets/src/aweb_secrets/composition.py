@@ -187,7 +187,7 @@ class _Approvers:
 
 
 @dataclass(kw_only=True)
-class _Services:
+class SecretsServices:
     owner: OwnerApplicationServices
     owner_delivery: APIRouter
     handoffs: ConsoleHandoffs
@@ -396,7 +396,7 @@ async def _compose(
     committer: UseCommitter,
     response_key: ResponseKey,
     run_dispatch: Callable[..., RunDispatch],
-) -> _Services:
+) -> SecretsServices:
     db = runtime.db()
     fence = runtime.installation_fence()
     # Configure the shared fence; never create another G1 source or fence.
@@ -592,7 +592,7 @@ async def _compose(
         ),
         approvals=approvals,
     )
-    return _Services(
+    return SecretsServices(
         owner=OwnerApplicationServices(console=console, verifier=owner_delivery.verifier),
         owner_delivery=owner_delivery.router,
         handoffs=handoffs,
@@ -617,7 +617,7 @@ async def _compose(
     )
 
 
-async def _recover(services: _Services, stop: asyncio.Event, interval: int) -> None:
+async def _recover(services: SecretsServices, stop: asyncio.Event, interval: int) -> None:
     while not stop.is_set():
         for service in (services.broker, services.runs):
             try:
@@ -687,17 +687,16 @@ def create_service(
     if settings.email_ca_file is not None:
         email["EMAIL_CA_FILE"] = str(settings.email_ca_file)
     mailer = Mailer(EmailSettings.from_env("", environ=email))
-    active: _Services | None = None
 
-    def current() -> _Services:
-        if active is None:
+    def current() -> SecretsServices:
+        if service.services is None:
             raise RuntimeError("secrets services are not initialized")
-        return active
+        return service.services
 
     async def kms():
-        if active is None:
+        if service.services is None:
             return CheckResult(ok=False)
-        return CheckResult(ok=(await active.custody.health()).ok)
+        return CheckResult(ok=(await service.services.custody.health()).ok)
 
     async def tool_policy(request, principal, tool):
         # B1 validates member/manifest/context/granted scopes. Each business
@@ -706,13 +705,11 @@ def create_service(
 
     @asynccontextmanager
     async def prepare(runtime):
-        nonlocal active
-        active = await _compose(
+        service.services = await _compose(
             runtime, settings, provider, mailer, committer, response_key, run_dispatch
         )
-        service.owner_services = active.owner
         stop = asyncio.Event()
-        recovery = asyncio.create_task(_recover(active, stop, settings.sweep_interval_seconds))
+        recovery = asyncio.create_task(_recover(current(), stop, settings.sweep_interval_seconds))
         try:
             yield
         finally:
@@ -720,8 +717,7 @@ def create_service(
             try:
                 await recovery
             finally:
-                active = None
-                service.owner_services = None
+                service.services = None
 
     def metadata(runtime: NaappRuntime, authorized: Authorized) -> APIRouter:
         return metadata_router(
@@ -742,7 +738,7 @@ def create_service(
     def contain(runtime: NaappRuntime, authorized: Authorized) -> APIRouter:
         return containment_api_router(current().containment, authorized=authorized)
 
-    def human(factory: Callable[[_Services], APIRouter]) -> ConsoleRouter:
+    def human(factory: Callable[[SecretsServices], APIRouter]) -> ConsoleRouter:
         def build(runtime: NaappRuntime) -> APIRouter:
             return factory(current())
 

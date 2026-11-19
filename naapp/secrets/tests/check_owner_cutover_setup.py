@@ -587,7 +587,10 @@ def main():
     router.include_router(owner_console_router(console))
     app.include_router(router)
     service = SimpleNamespace(
-        console_app=app, owner_services=OwnerApplicationServices(console=console, verifier=verifier)
+        console_app=app,
+        services=SimpleNamespace(
+            owner=OwnerApplicationServices(console=console, verifier=verifier)
+        ),
     )
     mounted = mounted_owner_console(service)
     assert mounted is console

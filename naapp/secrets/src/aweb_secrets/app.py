@@ -52,6 +52,7 @@ from aweb_secrets.surfaces import mount_public_surfaces
 if TYPE_CHECKING:
     from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier
 
+    from aweb_secrets.composition import SecretsServices
     from aweb_secrets.console import OwnerConsole
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
@@ -86,7 +87,7 @@ class SecretsService(OriginApps):
             human_origin=settings.console_origin,
         )
         self.runtime = runtime
-        self.owner_services: OwnerApplicationServices | None = None
+        self.services: SecretsServices | None = None
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["path"] not in {"/ready", "/live"}:

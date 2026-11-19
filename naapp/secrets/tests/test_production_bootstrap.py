@@ -182,9 +182,9 @@ class EnrolledOwner:
 
 
 def _production_owner_services(service):
-    if service.owner_services is None:
+    if service.services is None:
         raise RuntimeError("the production owner services are not running")
-    return service.owner_services
+    return service.services.owner
 
 
 def mounted_owner_console(service):
