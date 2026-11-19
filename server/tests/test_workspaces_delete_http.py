@@ -105,6 +105,13 @@ async def test_team_roster_keeps_live_presence_outside_sql_candidate_window(
             now - timedelta(days=60 if alias == "alice" else 2),
             actor.workspace,
         )
+    for index in range(4):
+        actor = await _connect_member(env, alias=f"offline-{index}")
+        await env.db.execute(
+            "UPDATE {{tables.workspaces}} SET last_seen_at=$1 WHERE workspace_id=$2",
+            now - timedelta(days=2),
+            actor.workspace,
+        )
     await update_agent_presence(
         env.redis,
         workspace_id=str(env.actors["alice"].workspace),

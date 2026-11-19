@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from aweb.application_state import RegistryClientUnavailable, application_registry_client
+from aweb.application_state import (
+    RegistryClientUnavailable,
+    application_registry_client,
+)
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.workspace_activity import WorkspaceActivity, workspace_activity_by_id
 
@@ -280,7 +283,7 @@ async def heartbeat(
             redis,
             workspace_id=payload.workspace_id,
             alias=payload.alias,
-            human_name=payload.human_name or "",
+            human_name=payload.human_name,
             team_id=team_id,
             repo_id=str(existing["repo_id"]) if existing.get("repo_id") else None,
             program="aw",
