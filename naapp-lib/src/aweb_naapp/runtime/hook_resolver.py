@@ -114,6 +114,16 @@ class HookResolutionUnavailable(Exception):
         self.code = code
 
 
+class HookTeamServerNotAllowed(HookResolutionUnavailable):
+    """The team's published server is not one this app may reach. Not
+    transient: only the team's controller can fix it
+    (docs/design/app-team-server-api.md §1, trust chain step 4)."""
+
+    def __init__(self, server_url: str) -> None:
+        super().__init__("team_server_not_allowed")
+        self.server_url = server_url
+
+
 class HookBindingRequired(Exception):
     """The caller holds no active binding of the complementary kind for the hook."""
 
@@ -347,7 +357,7 @@ class HookResolver:
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
         except TeamServerRefused as exc:
-            raise HookResolutionUnavailable("team_server_not_allowed") from exc
+            raise HookTeamServerNotAllowed(exc.server_url) from exc
         except TeamServerUnreachable as exc:
             raise HookResolutionUnavailable("server_unreachable") from exc
         if answer.truncated:
