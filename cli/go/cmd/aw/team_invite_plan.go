@@ -10,14 +10,14 @@ import (
 )
 
 type teamInviteAuthorityKind string
-type teamInviteMemberScope string
+type teamInviteMemberScope = awid.IdentityScope
 type teamInviteOutputStyle uint8
 
 const (
 	inviteAuthorityController teamInviteAuthorityKind = "controller"
 	inviteAuthorityHosted     teamInviteAuthorityKind = "hosted"
-	inviteMemberLocal         teamInviteMemberScope   = "local"
-	inviteMemberGlobal        teamInviteMemberScope   = "global"
+	inviteMemberLocal         teamInviteMemberScope   = awid.IdentityScopeLocal
+	inviteMemberGlobal        teamInviteMemberScope   = awid.IdentityScopeGlobal
 )
 
 const (
@@ -102,7 +102,7 @@ func planTeamInvite(source teamInviteSource) (teamInvitePlan, error) {
 }
 
 func mintPlannedTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, error) {
-	if err := request.Scope.validate(); err != nil {
+	if err := validateInviteMemberScope(request.Scope); err != nil {
 		return mintedTeamInvite{}, err
 	}
 	if request.Plan.Kind == inviteAuthorityHosted {
@@ -121,7 +121,7 @@ func mintPlannedTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, err
 	return createControllerTeamInvite(request)
 }
 
-func (scope teamInviteMemberScope) validate() error {
+func validateInviteMemberScope(scope teamInviteMemberScope) error {
 	switch scope {
 	case inviteMemberLocal, inviteMemberGlobal:
 		return nil
@@ -133,7 +133,7 @@ func (scope teamInviteMemberScope) validate() error {
 // Preflight reads the same lifetime owner as controller minting and creates no
 // bearer or child invitation (docs/cli-integration-contract.md:131-147).
 func preflightTeamInviteMint(request teamInviteMintRequest) (teamInvitePreflightOutput, error) {
-	if err := request.Scope.validate(); err != nil {
+	if err := validateInviteMemberScope(request.Scope); err != nil {
 		return teamInvitePreflightOutput{}, err
 	}
 	out := teamInvitePreflightOutput{TeamID: awid.BuildTeamID(request.Plan.Source.Domain, request.Plan.Source.Team), Kind: request.Plan.Kind}

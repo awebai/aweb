@@ -13,7 +13,7 @@ import (
 // createControllerTeamInvite binds the local bearer to the issuer's saved
 // lifetime and routing (docs/identity.md). The token contains no expiry authority.
 func createControllerTeamInvite(request teamInviteMintRequest) (mintedTeamInvite, error) {
-	if err := request.Scope.validate(); err != nil {
+	if err := validateInviteMemberScope(request.Scope); err != nil {
 		return mintedTeamInvite{}, err
 	}
 	source := request.Plan.Source
