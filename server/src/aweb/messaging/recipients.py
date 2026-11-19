@@ -8,6 +8,7 @@ from collections.abc import Mapping
 
 from aweb.messaging.refusals import (
     registry_configuration_refusal,
+    RecipientAddressNotFound,
 )
 from aweb.messaging.refusals import DeliveryRefusal
 from http import HTTPStatus
@@ -221,10 +222,7 @@ async def _resolve_address_identity(
             raise registry_configuration_refusal(
                 operation="AWID messaging recipient address lookup"
             )
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail=f"Recipient address not found: {address}. Check the address and try again.",
-        )
+        raise RecipientAddressNotFound(address=address)
     if (
         registry is not None
         and requires_registry_address_binding(local)
@@ -235,10 +233,7 @@ async def _resolve_address_identity(
             )
         )
     ):
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.NOT_FOUND,
-            detail=f"Recipient address not found: {address}. Check the address and try again.",
-        )
+        raise RecipientAddressNotFound(address=address)
     recipient = identity_recipient(local, address)
     if not (recipient.get("did_aw") or recipient.get("did_key")):
         raise DeliveryRefusal(

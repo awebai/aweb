@@ -15,6 +15,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from aweb.messaging.refusals import RecipientAddressNotFound
 import pytest_asyncio
 from fastapi import HTTPException
 
@@ -771,7 +772,7 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
     assert await server.mcp_chat(
         "pilot", to="pilot", message="hello", plaintext=True
     ) == {
-        "error": "Self-chat is not supported",
+        "error": "Self-chat is not supported. Choose another recipient and retry.",
     }
     assert await server.mcp_chat(
         "pilot", to="acme.com/nobody", message="hello", plaintext=True
@@ -1118,25 +1119,27 @@ def test_mcp_chat_refusals_name_the_next_action_and_keep_their_code(
     assert json.loads(_send_refusal(refusal(), **known)) == answer
 
 
-def test_mcp_chat_codes_without_a_next_action_are_answered_as_the_code():
+def test_mcp_chat_codes_keep_their_code_and_add_a_recovery_action():
     from aweb.mcp.tools.chat import _send_refusal
 
-    # Outside a hosted envelope the custody refusal says nothing about the sender's key.
+    # Without custody context, keep the code and give a general recovery action.
     assert json.loads(
         _send_refusal(_authority_refusal("recipient_custodial_no_e2ee"))
     ) == {
         "error": "recipient_custodial_no_e2ee",
+        "message": "The federation service refused this send. Check the recipient and signed message with the server operator, then retry.",
     }
     assert json.loads(
         _send_refusal(_authority_refusal("federation_rate_limited"), address="a.test/b")
     ) == {
         "error": "federation_rate_limited",
+        "message": "The federation service cannot complete this send now. Wait briefly and retry.",
     }
     # An address that reaches no one is refused in the words for a name nobody holds.
     for refusal in (
         _authority_refusal("recipient_identity_not_found"),
         _authority_refusal("local_recipient_route_missing"),
-        _refusal(404, "Recipient address not found: a.test/b"),
+        RecipientAddressNotFound(address="a.test/b"),
     ):
         assert json.loads(_send_refusal(refusal, address="a.test/b")) == {
             "error": unreachable_address_refusal("a.test/b"),
@@ -1169,6 +1172,7 @@ def test_a_person_named_as_a_chat_recipient_is_refused_with_the_mail_direction()
 def test_a_chat_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_changed_key():
     from aweb.identity_auth_deps import MessagingAuth
     from aweb.mcp.tools.chat import _send_refusal
+    from aweb.messaging.refusals import DeliveryRefusal
     from aweb.messaging.chat_send import validate_encrypted_chat_payload
     from aweb.routes.chat import SendMessageRequest
 
@@ -1207,7 +1211,7 @@ def test_a_chat_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_c
         encrypted_envelope=envelope,
     )
 
-    with pytest.raises(HTTPException) as refused:
+    with pytest.raises(DeliveryRefusal) as refused:
         validate_encrypted_chat_payload(
             payload,
             auth=MessagingAuth(

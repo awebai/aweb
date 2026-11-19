@@ -23,13 +23,15 @@ async def service_error_handler(request: Request, exc: ServiceError) -> JSONResp
     from its service owner; this adapter does not reinterpret its human detail.
     """
     if exc.status_code >= 500 and not isinstance(exc, DeliveryRefusal):
-        logger.error("Unhandled service error", exc_info=exc)
+        logger.error("Unhandled service error failure_type=%s", type(exc).__name__)
         return JSONResponse(
             status_code=500, content={"detail": "Internal server error"}
         )
     if exc.status_code >= 500:
         logger.warning(
-            "Delivery dependency refused status=%s", exc.status_code, exc_info=exc
+            "Delivery dependency refused status=%s failure_type=%s",
+            exc.status_code,
+            type(exc).__name__,
         )
     content = {"detail": exc.detail}
     if exc.recovery_action is not None:

@@ -5,12 +5,14 @@ from __future__ import annotations
 import json
 
 from fastapi import HTTPException
-from aweb.service_errors import ServiceError
+from aweb.service_errors import ServiceError, IdentityBindingCode, IdentityBindingError
+from aweb.application_state import RegistryClientUnavailable
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import (
     ContactIdentityBindingRequired,
     MailConversationExists,
+    RecipientAddressNotFound,
 )
 from aweb.e2ee_messages import E2EERecipientKeyMismatch
 from aweb.federation.errors import RecipientNotResidentError
@@ -51,8 +53,8 @@ _HOSTED_ENVELOPE_NEXT_ACTIONS = {
     "recipient_encryption_assertion_invalid_or_stale": RECIPIENT_ENCRYPTION_KEY_NOT_VERIFIABLE,
 }
 _IDENTITY_BINDING_NEXT_ACTIONS = {
-    "identity_binding_mismatch": RECIPIENT_NOT_AS_REGISTERED,
-    "identity_binding_unavailable": REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY,
+    IdentityBindingCode.MISMATCH: RECIPIENT_NOT_AS_REGISTERED,
+    IdentityBindingCode.UNAVAILABLE: REGISTRY_CANNOT_CONFIRM_RECIPIENT_KEY,
 }
 
 
@@ -68,6 +70,10 @@ def send_refusal(
     in one set of words, which do not say whether a local identity holds that
     name.
     """
+    if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
+        return json.dumps({"error": exc.message, "reason": exc.code})
+    if isinstance(exc, RecipientAddressNotFound) and address:
+        return json.dumps({"error": unreachable_address_refusal(address)})
     if isinstance(exc, MailConversationExists):
         return json.dumps({"error": exc.recovery_action, "reason": exc.code.value})
     if isinstance(exc, ContactIdentityBindingRequired):
@@ -89,7 +95,16 @@ def send_refusal(
             next_action = _HOSTED_ENVELOPE_NEXT_ACTIONS.get(exc.reason)
         if next_action is not None:
             return json.dumps({"error": next_action, "reason": exc.reason})
-        return json.dumps({"error": exc.reason})
+        return json.dumps(
+            {
+                "error": exc.reason,
+                "message": (
+                    "The federation service cannot complete this send now. Wait briefly and retry."
+                    if exc.retryable
+                    else "The federation service refused this send. Check the recipient and signed message with the server operator, then retry."
+                ),
+            }
+        )
     detail = getattr(exc, "detail", None)
     if (
         isinstance(exc, (ServiceError, HTTPException))
@@ -99,13 +114,6 @@ def send_refusal(
         return json.dumps(
             {"error": detail["message"], "reason": detail["code"], "retryable": True}
         )
-    # Mail refuses an unknown address without naming it; chat names it.
-    if (
-        address
-        and isinstance(detail, str)
-        and detail.startswith("Recipient address not found")
-    ):
-        return json.dumps({"error": unreachable_address_refusal(address)})
     if isinstance(exc.__cause__, E2EERecipientKeyMismatch):
         return json.dumps({"error": RECIPIENT_KEY_CHANGED})
     if (
