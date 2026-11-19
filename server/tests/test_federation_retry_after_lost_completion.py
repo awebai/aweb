@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import httpx
@@ -17,6 +17,7 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_mail_retry_after_lost_completion import (
     HOLD_COMPLETION_SECONDS,
+    INITIAL_ATTESTATION_AGE_SECONDS,
     HeldMailCompletions,
 )
 from test_messages_http import _signed_team_headers
@@ -41,7 +42,12 @@ class PreparedSend:
 
 
 def prepare_send(
-    template, *, kind: MessageKind, conversation_id: UUID, signer
+    template,
+    *,
+    kind: MessageKind,
+    conversation_id: UUID,
+    signer,
+    attestation_age_seconds: int = 0,
 ) -> PreparedSend:
     signed = {
         key: value
@@ -60,7 +66,11 @@ def prepare_send(
         type=kind.value,
         message_id=str(uuid4()),
         conversation_id=str(conversation_id),
-        timestamp=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        timestamp=(
+            datetime.now(timezone.utc) - timedelta(seconds=attestation_age_seconds)
+        )
+        .replace(microsecond=0)
+        .isoformat(),
         body="Retained completion " + kind.value,
     )
     if kind is MessageKind.MAIL:
@@ -152,7 +162,7 @@ async def table_counts(manager):
 
 
 @pytest.mark.asyncio
-async def test_plaintext_outbound_and_ingress_retries_after_301_second_lost_completion(
+async def test_plaintext_outbound_and_ingress_retry_after_completion_fault_crosses_window(
     same_origin,
     foreign_receiver,
 ):
@@ -188,12 +198,14 @@ async def test_plaintext_outbound_and_ingress_retries_after_301_second_lost_comp
             kind=MessageKind.MAIL,
             conversation_id=submitted.conversation_id,
             signer=actor,
+            attestation_age_seconds=INITIAL_ATTESTATION_AGE_SECONDS,
         ),
         prepare_send(
             submitted.signed,
             kind=MessageKind.CHAT,
             conversation_id=UUID(created.json()["session_id"]),
             signer=actor,
+            attestation_age_seconds=INITIAL_ATTESTATION_AGE_SECONDS,
         ),
     ]
     proxy = HeldMailCompletions(upstream_url=str(env.client.base_url), response_count=2)
@@ -239,11 +251,18 @@ async def test_plaintext_outbound_and_ingress_retries_after_301_second_lost_comp
                 list(env.dispatched),
             )
             for item in prepared:
-                changed = dict(item.signed, body="fresh conflicting signed content")
+                changed = dict(
+                    item.signed,
+                    body="fresh conflicting signed content",
+                    timestamp=datetime.now(timezone.utc)
+                    .replace(microsecond=0)
+                    .isoformat(),
+                )
                 payload = json.loads(item.content)
                 encoded = canonical_json_bytes(changed)
                 payload.update(
                     body=changed["body"],
+                    timestamp=changed["timestamp"],
                     signed_payload=encoded.decode(),
                     signature=sign_message(actor.sk, encoded),
                 )
@@ -270,7 +289,15 @@ async def test_plaintext_outbound_and_ingress_retries_after_301_second_lost_comp
             started = time.monotonic()
             await asyncio.sleep(HOLD_COMPLETION_SECONDS)
             proxy.release.set()
-            assert time.monotonic() - started > 300
+            assert time.monotonic() - started >= HOLD_COMPLETION_SECONDS
+            assert all(
+                (
+                    datetime.now(timezone.utc)
+                    - datetime.fromisoformat(item.signed["timestamp"])
+                ).total_seconds()
+                > 300
+                for item in prepared
+            )
             losses = await asyncio.wait_for(
                 asyncio.gather(*attempts, return_exceptions=True), timeout=10
             )
@@ -313,6 +340,9 @@ async def test_plaintext_outbound_and_ingress_retries_after_301_second_lost_comp
                 },
             )
             assert refused.status_code == 422, refused.text
+            assert (
+                refused.headers["X-AWEB-Error-Code"] == "message_timestamp_outside_skew"
+            )
             assert refused.json()["detail"].endswith(
                 "Sign the message again with the current UTC time and retry."
             )
@@ -348,6 +378,9 @@ async def test_plaintext_outbound_and_ingress_retries_after_301_second_lost_comp
                 },
             )
             assert missing.status_code == 422, missing.text
+            assert (
+                missing.headers["X-AWEB-Error-Code"] == "message_timestamp_outside_skew"
+            )
             assert missing.json()["detail"].endswith(
                 "Sign the message again with the current UTC time and retry."
             )

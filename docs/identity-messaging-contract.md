@@ -357,8 +357,12 @@ chat projection and to an established federation ingress receipt. The outbound
 projection must match the sender, conversation, message ID, signature and signed
 payload; the receiver requires its identical canonical envelope receipt. The
 signature, recipient binding and current authority checks still run. An outbound
-retry retains the remote call to recover the original established response,
-then returns the existing local projection without another send event. A changed
+mail retry retains the remote call to recover its original established response,
+then returns the existing local projection without another send event. Chat
+create and continuation return the identical accepted message from local storage
+after current admission; they do not repeat session, wait, contact or event effects.
+Inside the existing encrypted window an exact encrypted chat retry also returns
+its stored message; it does not gain the plaintext age exemption. A changed
 artifact or missing proof is a new attestation and takes the age check, including
 a changed artifact reusing an accepted UUID. The encrypted ingestion window is
 unchanged. This is Antares ruling69b3a50a (relay a491ccc8).
