@@ -8,6 +8,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -383,6 +384,8 @@ def _running_folio(
         env.pop("FOLIO_AWID_SERVICE_TOKEN", None)
         if awid_service_token is not None:
             env["FOLIO_AWID_SERVICE_TOKEN"] = awid_service_token
+        stdout_log = setup.enter_context(tempfile.TemporaryFile(mode="w+t"))
+        stderr_log = setup.enter_context(tempfile.TemporaryFile(mode="w+t"))
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -396,8 +399,8 @@ def _running_folio(
             env=env,
             pass_fds=(listener.fileno(),),
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=stdout_log,
+            stderr=stderr_log,
         )
         listener.close()
         thread = threading.Thread(target=proxy.serve_forever, name="folio-e2e-proxy", daemon=True)
@@ -443,12 +446,10 @@ def _running_folio(
                 proc.wait(timeout=10)
             failed = proc.returncode not in (0, -15, -9, None)
             show_logs = failed or setup_error is not None
-            stdout = proc.stdout.read() if show_logs and proc.stdout else ""
-            stderr = proc.stderr.read() if show_logs and proc.stderr else ""
-            if proc.stdout:
-                proc.stdout.close()
-            if proc.stderr:
-                proc.stderr.close()
+            stdout_log.seek(0)
+            stderr_log.seek(0)
+            stdout = stdout_log.read() if show_logs else ""
+            stderr = stderr_log.read() if show_logs else ""
             if show_logs:
                 raise RuntimeError(
                     f"uvicorn exited with {proc.returncode}; setup error: {setup_error}\n"

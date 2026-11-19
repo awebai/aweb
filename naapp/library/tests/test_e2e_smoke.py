@@ -5,6 +5,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -352,6 +353,8 @@ def _running_library(
                 "LIBRARY_PUBLIC_ORIGIN": proxy_origin,
             }
         )
+        stdout_log = setup.enter_context(tempfile.TemporaryFile(mode="w+t"))
+        stderr_log = setup.enter_context(tempfile.TemporaryFile(mode="w+t"))
         proc = subprocess.Popen(
             [
                 sys.executable,
@@ -365,8 +368,8 @@ def _running_library(
             env=env,
             pass_fds=(listener.fileno(),),
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=stdout_log,
+            stderr=stderr_log,
         )
         listener.close()
         thread = threading.Thread(target=proxy.serve_forever, name="library-e2e-proxy", daemon=True)
@@ -385,12 +388,10 @@ def _running_library(
                 proc.kill()
                 proc.wait(timeout=10)
             failed = proc.returncode not in (0, -15, -9, None)
-            stdout = proc.stdout.read() if failed and proc.stdout else ""
-            stderr = proc.stderr.read() if failed and proc.stderr else ""
-            if proc.stdout:
-                proc.stdout.close()
-            if proc.stderr:
-                proc.stderr.close()
+            stdout_log.seek(0)
+            stderr_log.seek(0)
+            stdout = stdout_log.read() if failed else ""
+            stderr = stderr_log.read() if failed else ""
             if failed:
                 raise RuntimeError(
                     f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}"
