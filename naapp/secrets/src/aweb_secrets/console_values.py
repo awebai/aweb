@@ -8,7 +8,10 @@ metadata enters the final, reauthorized staging transaction. The later console
 draft/approve/confirm flow owns activation of both candidates.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from http import HTTPStatus
 
 from aweb_naapp.console import ConsoleRoute, ConsoleSession, KeyBoundConsoleSession
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationRefused
@@ -166,13 +169,42 @@ class ConsoleValues:
         return context
 
 
-def console_values_router(services: ConsoleValues, *, prefix: str = "") -> APIRouter:
-    """Mount alongside owner_console_router only on the human-origin app."""
-    router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+@asynccontextmanager
+async def _value_staging_errors(
+    console: OwnerConsole, *, current: ConsoleSession
+) -> AsyncIterator[None]:
+    """Preserve session cookie retirement after a rolled-back staging write."""
+    try:
+        yield
+    except HTTPException as refused:
+        if refused.status_code == HTTPStatus.UNAUTHORIZED:
+            await console.sessions.close(current)
+            response = Response()
+            console.sessions.clear_cookie(response)
+            raise HTTPException(
+                status_code=HTTPStatus.UNAUTHORIZED,
+                detail="console_session_required",
+                headers={"Set-Cookie": response.headers["set-cookie"]},
+            ) from None
+        raise
+    except ValueInvalid:
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="request_invalid") from None
+    except InstallationRefused as refused:
+        raise HTTPException(status_code=refused.status, detail=refused.code) from None
+    except LookupError:
+        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail="owner_required") from None
+    except CustodyUnavailable:
+        raise HTTPException(
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail="custody_unavailable"
+        ) from None
+
+
+def _onepassword_reference_router(services: ConsoleValues) -> APIRouter:
+    router = APIRouter(route_class=ConsoleRoute)
 
     @router.post(
         "/installations/{installation_id}/onepassword/references",
-        status_code=201,
+        status_code=HTTPStatus.CREATED,
         dependencies=[Depends(_require_json)],
     )
     async def onepassword_reference(installation_id: str, request: Request) -> dict:
@@ -182,8 +214,10 @@ def console_values_router(services: ConsoleValues, *, prefix: str = "") -> APIRo
             initial = SecretRecord.from_after(body["secret"])
             reference = OnePasswordReference.from_config(initial.kind, body["reference"])
         except (SecretInvalid, CustodyUnavailable):
-            raise HTTPException(status_code=400, detail="request_invalid") from None
-        try:
+            raise HTTPException(
+                status_code=HTTPStatus.BAD_REQUEST, detail="request_invalid"
+            ) from None
+        async with _value_staging_errors(services.console, current=current):
             staged = await services.stage_onepassword_reference(
                 current,
                 installation_id=installation_id,
@@ -191,63 +225,29 @@ def console_values_router(services: ConsoleValues, *, prefix: str = "") -> APIRo
                 reference=reference,
                 credential_version=body["credential_version"],
             )
-        except HTTPException as refused:
-            if refused.status_code == 401:
-                await services.console.sessions.close(current)
-                response = Response()
-                services.console.sessions.clear_cookie(response)
-                raise HTTPException(
-                    status_code=401,
-                    detail="console_session_required",
-                    headers={"Set-Cookie": response.headers["set-cookie"]},
-                ) from None
-            raise
-        except ValueInvalid:
-            raise HTTPException(status_code=400, detail="request_invalid") from None
-        except InstallationRefused as refused:
-            raise HTTPException(status_code=refused.status, detail=refused.code) from None
-        except LookupError:
-            raise HTTPException(status_code=403, detail="owner_required") from None
-        except CustodyUnavailable:
-            raise HTTPException(status_code=503, detail="custody_unavailable") from None
         return staged.after
+
+    return router
+
+
+def _backend_credential_router(services: ConsoleValues) -> APIRouter:
+    router = APIRouter(route_class=ConsoleRoute)
 
     @router.post(
         "/installations/{installation_id}/backend-credentials/onepassword/versions",
-        status_code=201,
+        status_code=HTTPStatus.CREATED,
         dependencies=[Depends(_require_json)],
     )
     async def backend_credential(installation_id: str, request: Request) -> dict[str, str | int]:
         current = await services.console.sessions.current(request)
         body = await _body(request, {"value"})
-        try:
+        async with _value_staging_errors(services.console, current=current):
             value = encode_value("bearer", {"value": _text(body, "value")})
             context = await services.stage_backend_credential(
                 current,
                 installation_id=installation_id,
                 value=value,
             )
-        except HTTPException as refused:
-            if refused.status_code == 401:
-                # The write transaction has rolled back. Preserve S4's normal
-                # close/clearing-cookie behavior for a session lost mid-request.
-                await services.console.sessions.close(current)
-                response = Response()
-                services.console.sessions.clear_cookie(response)
-                raise HTTPException(
-                    status_code=401,
-                    detail="console_session_required",
-                    headers={"Set-Cookie": response.headers["set-cookie"]},
-                ) from None
-            raise
-        except ValueInvalid:
-            raise HTTPException(status_code=400, detail="request_invalid") from None
-        except InstallationRefused as refused:
-            raise HTTPException(status_code=refused.status, detail=refused.code) from None
-        except LookupError:
-            raise HTTPException(status_code=403, detail="owner_required") from None
-        except CustodyUnavailable:
-            raise HTTPException(status_code=503, detail="custody_unavailable") from None
         return {
             "v": 1,
             "backend": "onepassword",
@@ -255,4 +255,12 @@ def console_values_router(services: ConsoleValues, *, prefix: str = "") -> APIRo
             "version": context.version,
         }
 
+    return router
+
+
+def console_values_router(services: ConsoleValues, *, prefix: str = "") -> APIRouter:
+    """Mount owner-only value stages together on the human-origin app."""
+    router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+    router.include_router(_onepassword_reference_router(services))
+    router.include_router(_backend_credential_router(services))
     return router
