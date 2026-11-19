@@ -17,7 +17,7 @@ from aweb.attachment_service import attachment_transaction
 from aweb.messaging.kinds import ContentMode
 
 
-def _uuid_or_none(value: str | UUID | None) -> UUID | None:
+def parse_optional_uuid(value: str | UUID | None) -> UUID | None:
     if value is None:
         return None
     if isinstance(value, UUID):
@@ -74,7 +74,9 @@ async def store_chat(
     # two values intentionally use different clocks and may disagree.
     effective_created_at = datetime.now(timezone.utc)
     effective_message_id = message_id if message_id is not None else uuid_mod.uuid4()
-    sender_agent_uuid = _uuid_or_none(sender_agent_id) or participant.get("agent_id")
+    sender_agent_uuid = parse_optional_uuid(sender_agent_id) or participant.get(
+        "agent_id"
+    )
     encrypted_metadata = encrypted_metadata or {}
 
     # One statement inserts the message and the sender's read receipt for it,

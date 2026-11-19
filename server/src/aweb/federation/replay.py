@@ -8,7 +8,6 @@ from aweb.messaging.kinds import MessageKind
 from aweb.messaging.message_replay import (
     ChatReplayControls,
     StoredMessageClaim,
-    StoredMessageState,
     StoredMessageLookup,
     PlaintextReplayArtifact,
     read_stored_message,
@@ -47,8 +46,7 @@ class PlaintextProjectionClaim:
         )
 
 
-# Existing consumer ports retain the canonical result/enum identities.
-PlaintextProjectionState = StoredMessageState
+# The used result port retains the canonical lookup identity.
 PlaintextProjectionLookup = StoredMessageLookup
 
 

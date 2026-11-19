@@ -8,6 +8,7 @@ from aweb.messaging.message_replay import established_federation_receipt
 from aweb.messaging.mail_storage import (
     store_mail,
     MailStorageInput,
+    MailIdAvailability,
     MailSender,
     MailRecipient,
     MailAttestation,
@@ -668,6 +669,10 @@ async def _store_mail(
             priority=envelope.priority or MessagePriority.NORMAL,
             message_id=UUID(envelope.message_id),
             conversation_id=envelope.conversation_id,
+            # Phase B has locked/claimed the UUID receipt. Migration015's
+            # insert trigger couples every prior native row to a receipt, so
+            # any existing message was already refused/answered at that check.
+            id_availability=MailIdAvailability.CONFIRMED_UNUSED,
         ),
     )
     await db.get_manager("aweb").execute(
