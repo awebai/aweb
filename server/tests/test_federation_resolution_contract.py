@@ -9,7 +9,7 @@ import pytest
 from aweb.federation.activation import build_federation_authority_activation
 from identity_binding_support import register_global_identity
 from test_cli_never_grants import registry_listener
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 
 

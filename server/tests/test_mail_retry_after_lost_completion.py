@@ -16,7 +16,7 @@ import pytest
 
 from awid.signing import canonical_json_bytes, sign_message
 from identity_binding_support import register_global_identity
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 
 HOLD_COMPLETION_SECONDS = 6
@@ -96,7 +96,7 @@ class HeldMailCompletions:
             if len(self.responses) == self.response_count:
                 self.all_held.set()
             await self.release.wait()
-        except Exception as exc:
+        except (OSError, asyncio.IncompleteReadError, ValueError, KeyError) as exc:
             self.failures.append(exc)
             self.all_held.set()
         finally:
