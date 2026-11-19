@@ -1,9 +1,6 @@
 package main
 
-import (
-	"os"
-	"strings"
-)
+import "os"
 
 type humanServiceSelection struct {
 	AwebURL       string
@@ -11,6 +8,8 @@ type humanServiceSelection struct {
 	MembershipURL string
 }
 
+// humanParticipationServiceURL implements docs/configuration.md's Resolution
+// Order: explicit service flags, environment, then the selected membership.
 func humanParticipationServiceURL(input humanServiceSelection) string {
-	return firstNonEmpty(input.AwebURL, input.URL, input.MembershipURL, strings.TrimSpace(os.Getenv("AWEB_URL")))
+	return firstNonEmptyString(input.AwebURL, input.URL, os.Getenv("AWEB_URL"), input.MembershipURL)
 }
