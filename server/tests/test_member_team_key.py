@@ -14,6 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from starlette.requests import Request
 from aweb.member_team_key import read_member_projection
 
 from aweb.identity_auth_deps import current_membership
@@ -330,7 +331,7 @@ async def test_sender_membership_is_inactive_under_a_superseded_key(pinning):
     ).status_code == 200
     agent_id = str((await _row(env, member))["agent_id"])
     rows = [{"team_id": TEAM, "from_agent_id": agent_id}]
-    request = SimpleNamespace(app=env.app)
+    request = Request({"type": "http", "app": env.app, "headers": []})
     assert (await sender_memberships(request, env.infra, rows))[(TEAM, agent_id)].state == "active"
 
     await _change_key(env)

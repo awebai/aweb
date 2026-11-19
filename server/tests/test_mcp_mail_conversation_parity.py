@@ -13,6 +13,7 @@ import asyncpg
 import httpx
 import pytest
 
+from aweb.federation.errors import LocalRecipientNotFoundError
 from aweb.mcp.tools.refusals import SendRefusalMode
 from aweb.service_errors import IdentityBindingCode, IdentityBindingError
 from aweb.messaging.refusals import RecipientAddressNotFound
@@ -924,6 +925,16 @@ def _binding_refusal(status, code):
 
 # (the refusal the send raises, what the tool knows about the send, what the tool answers)
 NEXT_ACTIONS = [
+    (
+        LocalRecipientNotFoundError,
+        {"address": "example.test/member"},
+        {
+            "error": "Recipient not found. Check the address. "
+            "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+            "reason": "recipient_identity_not_found",
+            "retryable": False,
+        },
+    ),
     (
         lambda: _authority_refusal("sender_registry_unavailable"),
         {"address": "jane.aweb.ai/c3po"},

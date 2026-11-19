@@ -13,6 +13,7 @@ from aweb.messaging.refusals import (
 from aweb.messaging.refusals import DeliveryRefusal
 from http import HTTPStatus
 from awid.federation_errors import FederationAuthorityError
+from aweb.federation.errors import LocalRecipientNotFoundError
 
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
@@ -215,7 +216,7 @@ async def _resolve_address_identity(
     local = await _local_recipient_at_address(db, domain=domain, name=name)
     if local is None:
         if await namespace_exists(db, domain):
-            raise FederationAuthorityError("recipient_identity_not_found")
+            raise LocalRecipientNotFoundError()
         if registry is None:
             raise registry_configuration_refusal(
                 operation="AWID messaging recipient address lookup"
