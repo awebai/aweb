@@ -28,6 +28,7 @@ const maxWorkspaceAPIKeyLength = 4096
 const apiKeyPartialInitVersion = 1
 
 type apiKeyInitRequest struct {
+	ContextFile        workspaceContextPolicy
 	SelectedTeam       *apiKeyCreationTeam
 	CreationInvitation *awid.IDCreationInvitation
 	WorkingDir         string
@@ -143,6 +144,9 @@ func resolveAPIKeyInitAwebURL() (string, error) {
 }
 
 func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr error) {
+	if err := req.ContextFile.validate(); err != nil {
+		return out, err
+	}
 	if strings.TrimSpace(req.WorkingDir) == "" {
 		return connectOutput{}, fmt.Errorf("working directory is required")
 	}
@@ -322,7 +326,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	}
 
 	out, err = initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
-		Role:         strings.TrimSpace(req.Role),
+		ContextFile: req.ContextFile, Role: strings.TrimSpace(req.Role),
 		HumanName:    strings.TrimSpace(req.HumanName),
 		AgentType:    strings.TrimSpace(req.AgentType),
 		APIKey:       strings.TrimSpace(resp.APIKey),

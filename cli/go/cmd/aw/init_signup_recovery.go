@@ -68,7 +68,8 @@ func resumeSignupFromInit(input initSignupResumeInput) (initDispatchResult, erro
 		}
 	}
 	result, err := resumeHostedSignup(guidedOnboardingRequest{
-		WorkingDir: input.WorkingDir, PromptIn: os.Stdin, PromptOut: input.Command.ErrOrStderr(), BaseURL: baseURL,
+		ContextFile: input.Identity.ContextFile,
+		WorkingDir:  input.WorkingDir, PromptIn: os.Stdin, PromptOut: input.Command.ErrOrStderr(), BaseURL: baseURL,
 		Username: strings.TrimSpace(initUsername), Alias: firstNonEmptyString(initName, initAlias),
 		Role: input.Identity.Role, HumanName: input.Identity.HumanName, AgentType: input.Identity.AgentType,
 		Global: initGlobal, InboundMode: canonicalInitInboundModeForWire(initInboundMode),

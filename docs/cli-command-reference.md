@@ -30,7 +30,7 @@ to refresh it.
 - `--human-domain string Namespace of the selected human ID`
 - `--identity-home string Use this absolute credential directory (contains signing.key or grant.yaml; usually <workspace>/.aw, not its parent)`
 - `--json Output as JSON`
-- `--server-name string Override the server host or name for this command`
+- `--server-name string Server label for workspace commands; service URL for auth and admission`
 - `--trace Trace redacted HTTP requests and responses to stderr`
 
 ## Errors under `--json`

@@ -119,7 +119,7 @@ func init() {
 	rootCmd.SetHelpCommandGroupID(groupUtility)
 	rootCmd.SetCompletionCommandGroupID(groupUtility)
 
-	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Override the server host or name for this command")
+	rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Server label for workspace commands; service URL for auth and admission")
 	rootCmd.PersistentFlags().StringVar(&humanFlag, "human", "", "Sign interactively as this locally enrolled human did:aw")
 	rootCmd.PersistentFlags().StringVar(&humanDomainFlag, "human-domain", "", "Namespace of the selected human ID")
 	rootCmd.PersistentFlags().StringVar(&identityHomeFlag, "identity-home", "", "Use this absolute credential directory (contains signing.key or grant.yaml; usually <workspace>/.aw, not its parent)")

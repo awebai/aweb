@@ -32,6 +32,7 @@ var (
 const guidedOnboardingDefaultTeamName = "default"
 
 type guidedOnboardingRequest struct {
+	ContextFile workspaceContextPolicy
 	WorkingDir  string
 	PromptIn    io.Reader
 	PromptOut   io.Writer
@@ -68,6 +69,9 @@ type guidedBYODProvision struct {
 }
 
 func executeGuidedOnboardingWizard(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+	if err := req.ContextFile.validate(); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(req.WorkingDir) == "" {
 		return nil, fmt.Errorf("working directory is required")
 	}
@@ -99,7 +103,7 @@ func executeReconnectPath(req guidedOnboardingRequest) (*guidedOnboardingResult,
 	}
 
 	result, err := guidedOnboardingConnect(req.WorkingDir, serviceURLs.AwebURL, certificateConnectOptions{
-		Role: req.Role,
+		ContextFile: req.ContextFile, Role: req.Role,
 	})
 	if err != nil {
 		return nil, err
@@ -229,7 +233,7 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	}
 
 	result, err := guidedOnboardingConnect(req.WorkingDir, serviceURLs.AwebURL, certificateConnectOptions{
-		Role:      req.Role,
+		ContextFile: req.ContextFile, Role: req.Role,
 		HumanName: req.HumanName,
 		AgentType: req.AgentType,
 	})

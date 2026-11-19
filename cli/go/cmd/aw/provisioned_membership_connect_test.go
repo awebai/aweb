@@ -70,6 +70,9 @@ func TestProvisionedMembershipConnectsBeforePublishingItsKey(t *testing.T) {
 				if err != nil || connectCalls != 1 || publishCalls == 0 {
 					t.Fatalf("not admitted before publish: connect=%d publish=%d err=%v", connectCalls, publishCalls, err)
 				}
+				if _, err := os.Stat(filepath.Join(target, ".aw", "context")); err != nil {
+					t.Fatalf("default admission did not create context: %v", err)
+				}
 				state, err := awconfig.LoadEncryptionKeyStateFrom(awconfig.WorktreeEncryptionStatePath(target))
 				if err != nil || state.ActiveRecord() == nil || state.ActiveRecord().PublishedAt == "" {
 					t.Fatalf("successful provisioning has no publication receipt: %v", err)

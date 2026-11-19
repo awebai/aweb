@@ -17,6 +17,7 @@ const implicitLocalDomain = "local"
 const implicitLocalTeamName = "default"
 
 type implicitLocalInitRequest struct {
+	ContextFile workspaceContextPolicy
 	WorkingDir  string
 	AwebURL     string
 	RegistryURL string
@@ -129,6 +130,9 @@ func recordLocalControllerRegistry(registryURL string) error {
 }
 
 func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
+	if err := req.ContextFile.validate(); err != nil {
+		return connectOutput{}, err
+	}
 	if strings.TrimSpace(req.WorkingDir) == "" {
 		return connectOutput{}, fmt.Errorf("working directory is required")
 	}
@@ -204,7 +208,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 	}
 
 	return initCertificateConnectWithOptions(req.WorkingDir, req.AwebURL, certificateConnectOptions{
-		Role:      strings.TrimSpace(req.Role),
+		ContextFile: req.ContextFile, Role: strings.TrimSpace(req.Role),
 		HumanName: strings.TrimSpace(req.HumanName),
 		AgentType: strings.TrimSpace(req.AgentType),
 	})

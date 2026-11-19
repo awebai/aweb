@@ -394,9 +394,10 @@ func dispatchExplicitInitOutcome(cmd *cobra.Command, input initInviteInput) (ini
 }
 
 type initIdentityInput struct {
-	Role      string
-	HumanName string
-	AgentType string
+	ContextFile workspaceContextPolicy
+	Role        string
+	HumanName   string
+	AgentType   string
 }
 
 // initConnectIdentity normalizes requested display/runtime hints. A runtime
@@ -404,9 +405,10 @@ type initIdentityInput struct {
 // creation and reconnect keep only an explicitly supplied human display name.
 func initConnectIdentity(input initIdentityInput) certificateConnectOptions {
 	return certificateConnectOptions{
-		Role:      resolveRequestedRole(strings.TrimSpace(input.Role)),
-		HumanName: strings.TrimSpace(input.HumanName),
-		AgentType: resolveAgentTypeValue(strings.TrimSpace(input.AgentType)),
+		ContextFile: input.ContextFile,
+		Role:        resolveRequestedRole(strings.TrimSpace(input.Role)),
+		HumanName:   strings.TrimSpace(input.HumanName),
+		AgentType:   resolveAgentTypeValue(strings.TrimSpace(input.AgentType)),
 	}
 }
 
@@ -576,11 +578,12 @@ func acceptInitInviteAndConnectWithSource(cmd *cobra.Command, workingDir, token,
 }
 
 func connectInitAcceptedInvite(cmd *cobra.Command, workingDir, awebURL string) error {
-	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	result, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
-		Role:      identity.Role,
-		HumanName: identity.HumanName,
-		AgentType: identity.AgentType,
+		ContextFile: identity.ContextFile,
+		Role:        identity.Role,
+		HumanName:   identity.HumanName,
+		AgentType:   identity.AgentType,
 	})
 	if err != nil {
 		return err
@@ -641,7 +644,7 @@ func filepathAbs(path string) (string, error) {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	if activeHuman != nil {
 		return runHumanConnect(cmd)
 	}
@@ -785,7 +788,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				}
 			}
 			result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
-				WorkingDir:  wd,
+				ContextFile: identity.ContextFile, WorkingDir: wd,
 				AwebURL:     awebURL,
 				RegistryURL: registryURL,
 				Alias:       resolveAliasValue(resolveInitLocalName()),
@@ -827,7 +830,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		}
 		askPostCreateSetup := canPrompt && !initHasExplicitOnboardingArgs()
 		result, err := guidedOnboardingWizard(guidedOnboardingRequest{
-			WorkingDir:  wd,
+			ContextFile: identity.ContextFile, WorkingDir: wd,
 			PromptIn:    os.Stdin,
 			PromptOut:   os.Stderr,
 			BaseURL:     awebURL,
@@ -891,7 +894,7 @@ type initAPIKeySelection struct {
 }
 
 func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
-	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	creationDir, apiKey, apiSelected := selected.WorkingDir, selected.APIKey, selected.SelectedTeam
 	wd := creationDir
 	awebURL, err := resolveAPIKeyInitAwebURL()
@@ -914,7 +917,7 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 	}
 	requestedAlias := resolveAliasValue(resolveInitLocalName())
 	result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
-		SelectedTeam: apiSelected,
+		ContextFile: identity.ContextFile, SelectedTeam: apiSelected,
 		WorkingDir:   wd,
 		IdentityHome: identityHome.Root,
 		AwebURL:      awebURL,
@@ -943,7 +946,7 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 }
 
 func runInitFromExistingCertificate(cmd *cobra.Command) (initDispatchResult, error) {
-	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	identity := initConnectIdentity(initIdentityInput{ContextFile: requestedInitContextPolicy(), Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	wd, err := os.Getwd()
 	if err != nil {
 		return initDispatchComplete, err
@@ -966,9 +969,10 @@ func runInitFromExistingCertificate(cmd *cobra.Command) (initDispatchResult, err
 			return initDispatchComplete, err
 		}
 		result, err := initCertificateConnectWithOptions(wd, serviceURLs.AwebURL, certificateConnectOptions{
-			Role:      identity.Role,
-			HumanName: identity.HumanName,
-			AgentType: identity.AgentType,
+			ContextFile: identity.ContextFile,
+			Role:        identity.Role,
+			HumanName:   identity.HumanName,
+			AgentType:   identity.AgentType,
 		})
 		if err != nil {
 			return initDispatchComplete, err
