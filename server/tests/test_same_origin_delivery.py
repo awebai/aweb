@@ -63,6 +63,7 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "disposable-acst-proxy-secret")
     target_team = "recipients:recipient.test"
+    await env.registry.ensure_namespace(domain="recipient.test")
     await env.db.execute(
         "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
         "VALUES ($1, 'recipient.test', 'recipients', $2)",
@@ -120,8 +121,10 @@ async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
         async def lookup_txt(name):
             controllers = {
                 "_awid." + human_domain: ROOT["did_key"],
-                "_awid.example.test": env.team_did,
-                "_awid.recipient.test": env.team_did,
+                "_awid.example.test": env.namespace_did,
+                "_awid.recipient.test": (
+                    await env.registry.namespace_authority("recipient.test")
+                ).controller_did,
             }
             assert name in controllers
             return DNSLookup(
