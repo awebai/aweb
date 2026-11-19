@@ -20,10 +20,10 @@ from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
-from awid.team_ids import parse_team_id
 
 from aweb.member_status import MemberStatus as MemberStatus
-from aweb.service_errors import AuthenticationError, NotFoundError
+from aweb.service_errors import NotFoundError
+from aweb.team_scope import member_team_scope as member_team_scope
 
 
 class MemberReadLock(Enum):
@@ -54,19 +54,6 @@ def recipient_not_found(*, label: str | None = None) -> NotFoundError:
     if label:
         detail += f": {label}"
     return NotFoundError(detail + ". " + RECIPIENT_RECONNECT_DETAIL)
-
-
-def member_team_scope(team_id: str) -> tuple[str, str]:
-    """Require the team:domain scope in docs/identity.md:93-95.
-
-    A malformed authority scope never means an empty revocation list.
-    """
-    try:
-        return parse_team_id(team_id)
-    except ValueError as exc:
-        raise AuthenticationError(
-            "Team identity is invalid. Reconnect using a certificate for a canonical team ID."
-        ) from exc
 
 
 _MEMBER_COLUMNS = (

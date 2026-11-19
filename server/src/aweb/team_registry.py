@@ -20,7 +20,7 @@ from aweb.awid_error_handling import (
     serves_team,
     team_not_served_exception,
 )
-from aweb.member_team_key import member_team_scope
+from aweb.team_scope import member_team_scope
 from aweb.team_key_pins import (
     pinned_team_key,
     team_key_unverified_exception,
