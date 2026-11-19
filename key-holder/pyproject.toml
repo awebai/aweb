@@ -18,11 +18,26 @@ packages = ["src/aweb_key_holder"]
 [tool.uv.sources]
 awid-service = { path = "../awid", editable = true }
 aweb-naapp = { path = "../naapp-lib", editable = true }
-aweb-approval-service = { git = "https://github.com/awebai/approval-service.git", rev = "0bd8fe6a085d640559df5aa5c5d442abb48c6503" }
+aweb-approval-service = { git = "https://github.com/awebai/approval-service.git", rev = "b6e661a74cb055063cfbcf46cad5a6ff2e2e4de0" }
 
 [dependency-groups]
-dev = ["pytest>=9.0.0", "pytest-asyncio>=1.2.0"]
+dev = ["pytest>=9.0.0", "pytest-asyncio>=1.2.0", "ruff==0.15.0", "mypy==1.19.1"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "BLE", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/aweb_key_holder"]
+ignore_missing_imports = true
+warn_unused_configs = true
+check_untyped_defs = true
+disallow_untyped_defs = true

@@ -30,7 +30,7 @@ from urllib.parse import quote
 
 import tomllib
 
-APPROVAL = "0bd8fe6a085d640559df5aa5c5d442abb48c6503"
+APPROVAL = "b6e661a74cb055063cfbcf46cad5a6ff2e2e4de0"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
 SITE = "https://approval.adcl6.test"
