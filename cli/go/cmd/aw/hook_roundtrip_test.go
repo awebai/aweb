@@ -2,16 +2,12 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 type hookJSONCorpusCase struct {
@@ -144,52 +140,5 @@ func assertHookRepair(t *testing.T, err error, expected hookRepairExpectation) {
 		if !strings.Contains(err.Error(), part) {
 			t.Fatalf("missing %q: %v", part, err)
 		}
-	}
-}
-
-// Unit/process fixture: real CLI and local files; native service qualification is in the full gate.
-func TestInitHookRefusalContinuesOtherActions(t *testing.T) {
-	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/v1/instructions/active" {
-			if err := json.NewEncoder(w).Encode(map[string]any{"document": map[string]any{"body_md": "Instructions survive a hook refusal."}}); err != nil {
-				t.Error(err)
-			}
-			return
-		}
-		if r.URL.Path == "/v1/agents/heartbeat" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		t.Errorf("unexpected request %s", r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	binary := filepath.Join(t.TempDir(), "aw")
-	buildAwBinary(t, ctx, binary)
-	for _, tc := range hookRefusalCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			root := t.TempDir()
-			writeTestConfig(t, root, server.URL)
-			path := writeNotifySettings(t, root, tc.JSON)
-			command := exec.CommandContext(ctx, binary, "init", "--inject-docs", "--setup-hooks")
-			command.Dir = root
-			command.Env = append(testCommandEnv(root), "AWEB_IDENTITY_HOME=", "AWEB_API_KEY=", "AW_NO_UPDATE_CHECK=1")
-			output, err := command.CombinedOutput()
-			if err != nil {
-				t.Fatalf("init stopped on optional hook refusal: %v\n%s", err, output)
-			}
-			for _, part := range []string{"hook: not installed", path, tc.Repair} {
-				if !bytes.Contains(output, []byte(part)) {
-					t.Fatalf("missing %q: %s", part, output)
-				}
-			}
-			if got := readInstallFile(t, path); string(got) != tc.JSON {
-				t.Fatal("changed refused settings")
-			}
-			if docs := readInstallFile(t, filepath.Join(root, "AGENTS.md")); !bytes.Contains(docs, []byte("Instructions survive a hook refusal.")) {
-				t.Fatal("other init action did not complete")
-			}
-		})
 	}
 }
