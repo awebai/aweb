@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
@@ -192,11 +193,18 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	return world
 }
 
+// runInIdentityHome returns the command's stdout, where --json output goes.
+// A failure's error carries the command's stderr.
 func (world *realCommandWorld) runInIdentityHome(home string, args ...string) (string, error) {
 	command := exec.CommandContext(world.Context, world.Binary, append([]string{"--identity-home", home, "--json"}, args...)...)
 	command.Dir = filepath.Dir(home)
 	command.Env = append(idCreateCommandEnv(filepath.Dir(home)), "AWID_REGISTRY_URL="+world.Stack.RegistryURL, "AW_NO_UPDATE_CHECK=1")
-	out, err := command.CombinedOutput()
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	out, err := command.Output()
+	if err != nil {
+		err = fmt.Errorf("%w\nstderr:\n%s", err, stderr.String())
+	}
 	return string(out), err
 }
 
