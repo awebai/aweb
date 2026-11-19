@@ -342,6 +342,7 @@ ns IN A 127.0.0.1
 _awid.alpha IN TXT "awid=v1; controller=$alpha_controller; registry=http://awid:8010;"
 _awid.beta IN TXT "awid=v1; controller=$beta_controller; registry=http://awid:8010;"
 EOF
+  chmod 0644 "$zone_tmp"
   mv "$zone_tmp" "$DNS_ZONE"
   sleep 2
 }
@@ -548,6 +549,10 @@ $TTL 1
 @ IN NS ns.test.local.
 ns IN A 127.0.0.1
 EOF
+
+# CoreDNS reads these public inputs as its own container user.
+chmod 0755 "$DNS_DIR"
+chmod 0644 "$DNS_COREFILE" "$DNS_ZONE"
 
 echo "=== Phase 1: Write and start federation compose ==="
 cat > "$COMPOSE_FILE" <<EOF
