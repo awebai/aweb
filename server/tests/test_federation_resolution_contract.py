@@ -174,9 +174,12 @@ async def test_mounted_mcp_budget_uses_authenticated_sender_regardless_of_proxy_
                 )
                 assert response.status_code == 200, response.text
                 result = json.loads(response.json()["result"]["content"][0]["text"])
-                assert result["error"] == (
-                    f"{address} is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry."
+                expected_error = (
+                    "recipient_identity_not_found"
+                    if surface == "contact"
+                    else f"{address} is not a registered address. A local identity has no address and is reachable only from inside its own team, by alias; a global identity is reachable by address once one is assigned. Check the address or use a teammate alias and retry."
                 )
+                assert result["error"] == expected_error
             sources = await env.db.fetch_all(
                 "SELECT bucket_key FROM {{tables.federation_authority_token_buckets}} "
                 "WHERE bucket_kind='source_ip' ORDER BY bucket_key",
