@@ -27,6 +27,9 @@ RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-$(dpkg --print-architect
       | tar -C /usr/local -xz
 ENV PATH="/usr/local/go/bin:/opt/uv:${PATH}"
 ENV GOTOOLCHAIN=local
+# All pytest runners inherit this, including the isolated unit child image.
+# Keep fast cases too; pytest otherwise hides durations below its threshold.
+ENV PYTEST_ADDOPTS="--durations=0 --durations-min=0"
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /opt/uv/
 
