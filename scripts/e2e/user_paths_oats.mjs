@@ -10,6 +10,8 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
+const KernelBackend = Object.freeze({ Tmux: "tmux" });
+const OWNED_TMUX = ["tmux", "-L", "oats"];
 const ProbeOutcome = Object.freeze({ Passed: "PASSED", Failed: "FAILED" });
 const STAGED = "/opt/user-paths/released-oats";
 const KERNEL = join(STAGED, "node_modules/@awebai/oats/bin/oats.mjs");
@@ -110,13 +112,13 @@ try {
   };
   broker = startOwnedBroker();
   const wakeStatus = () => parseObject(command({ argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
-  await until({ read: wakeStatus, ready: (status) => status.daemon_running === true, label: "isolated broker" });
-  const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--json"));
+  await until({ read: wakeStatus, ready: (status) => status.daemon_running === true && status.daemon_pid === broker.pid, label: "isolated broker" });
+  const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--backend", KernelBackend.Tmux, "--json"));
   assert.equal(spawned.ok, true);
   ({ instance, home: instanceHome } = spawned.result);
   assert.ok(instance && instanceHome, "kernel spawn must return its instance and home");
   evidence.kernel_status_before = parseObject(oats("status", "--json"));
-  const runnerReady = (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
+  const runnerReady = (status) => status.daemon_running === true && status.daemon_pid === broker.pid && wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
   const fresh = await until({ read: wakeStatus, ready: runnerReady, label: "kernel-registered wake runner" });
   evidence.wake_fresh = fresh;
   evidence.private_execution_fresh = executionPermissions(fresh);
@@ -141,9 +143,9 @@ try {
   evidence.message_id = sent.message_id;
   evidence.wake_after = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.last_input_at && row.channel_core.last_input_at !== wakeInstances(before).find((entry) => entry.home === instanceHome)?.channel_core?.last_input_at), label: "broker input receipt" });
   const capture = () => {
-    const panes = command({ argv: ["tmux", "-L", "oats", "list-panes", "-a", "-F", "#{pane_id}"] }).trim().split("\n");
+    const panes = command({ argv: [...OWNED_TMUX, "list-panes", "-a", "-F", "#{pane_id}"] }).trim().split("\n");
     assert.ok(panes.length && panes.every((pane) => /^%[0-9]+$/.test(pane)), "owned kernel server reports valid panes");
-    return panes.map((pane) => command({ argv: ["tmux", "-L", "oats", "capture-pane", "-p", "-S", "-400", "-t", pane] })).join("\n");
+    return panes.map((pane) => command({ argv: [...OWNED_TMUX, "capture-pane", "-p", "-S", "-400", "-t", pane] })).join("\n");
   };
   evidence.presented_wake = await until({ read: capture, ready: (text) => text.includes(sent.message_id) && text.includes(subject), label: "fresh wake in the isolated kernel session" });
   evidence.permissions_after = [join(home, ".config/aw"), state, cache].map(permission);
@@ -158,7 +160,7 @@ try {
 } finally {
   if (instance) { try { evidence.retire = parseObject(oats("retire", instance, "--json")); } catch (error) { cleanupErrors.push(String(error)); } }
   await stopOwnedBroker(broker);
-  const stopped = spawnSync("tmux", ["-L", "oats", "kill-server"], { cwd: deployment, env, encoding: "utf8" });
+  const stopped = spawnSync(OWNED_TMUX[0], [...OWNED_TMUX.slice(1), "kill-server"], { cwd: deployment, env, encoding: "utf8" });
   if (stopped.error || (stopped.status !== 0 && !/no server running|No such file or directory/.test(stopped.stderr))) cleanupErrors.push(String(stopped.error || stopped.stderr));
   evidence.cleanup_errors = cleanupErrors;
   if (evidence.result === ProbeOutcome.Failed) evidence.broker_stderr = brokerErrors;
