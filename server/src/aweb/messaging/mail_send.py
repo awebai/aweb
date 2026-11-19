@@ -39,7 +39,6 @@ from aweb.messaging.message_replay import (
     replay_artifact,
 )
 
-from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.agent_wake import agent_wake_scope

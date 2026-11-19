@@ -1,6 +1,8 @@
 """The same configured origin set governs federation ingress and forwarding."""
 from __future__ import annotations
 
+from collections.abc import Set
+
 from awid.log import canonical_server_origin
 from aweb.config import get_public_origin
 
@@ -24,7 +26,7 @@ def application_public_origins(state, *, public_origin: str | None = None) -> se
     return origins or {canonical_server_origin(get_public_origin())}
 
 
-def is_own_origin(delivery_origin: str, origins: set[str]) -> bool:
+def is_own_origin(delivery_origin: str, origins: Set[str]) -> bool:
     try:
         return canonical_server_origin(delivery_origin) in origins
     except ValueError:

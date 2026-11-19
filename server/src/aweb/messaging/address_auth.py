@@ -6,6 +6,7 @@ import json
 import logging
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Mapping
+from collections.abc import Set
 
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import Address, RegistryError
@@ -97,7 +98,7 @@ def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
     return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 
 
-def refuse_same_origin_nonresident(delivery_origin: str, *, origins: set[str]) -> None:
+def refuse_same_origin_nonresident(delivery_origin: str, *, origins: Set[str]) -> None:
     """After an exact-DID residence miss, an own-origin route is not external."""
     if is_own_origin(delivery_origin, origins):
         logging.getLogger(__name__).warning(
@@ -132,7 +133,8 @@ async def local_recipient_for_own_route(
 
         recipient = await resolve_agent_by_did(db, did)
     if recipient is None:
-        return refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
+        refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
+        return None
     if did.startswith("did:aw:"):
         # As with a stable-only signed continuation, discover the current key
         # through the existing binding authority, outside database transactions.
