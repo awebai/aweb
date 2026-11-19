@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `aw id request --raw` writes the response body to stdout byte for byte, so
+  `--raw > chart.png` saves an image intact. It no longer appends a newline to
+  a body that lacks one; JSON printed to a terminal may now end without one.
+  The `HTTP <status>` line stays on stderr.
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep
