@@ -31,6 +31,9 @@ var (
 	teamHumanReplaceKeyRegistryURL    string
 )
 
+// Antares 3c441dfd: local replacement grants no predecessor participation.
+const replacementConversationNotice = "The new key will not have the old key's mail or chat conversations."
+
 var teamHumanReplaceKeyCmd = &cobra.Command{
 	Use:   "replace-key <agent-alias>",
 	Short: "Replace a local agent identity key under team-controller authority",
@@ -39,7 +42,7 @@ var teamHumanReplaceKeyCmd = &cobra.Command{
 		"team certificate, registers a new certificate, and records the controller-authorized\n" +
 		"transition. When a real local home has lost signing.key, --generate-new-key creates\n" +
 		"and retains a replacement key without overwriting an existing one. Hosted teams require\n" +
-		"the pending AC owner/admin integration or operator support.",
+		"the pending AC owner/admin integration or operator support.\n\n" + replacementConversationNotice,
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamHumanReplaceKey,
 }
@@ -80,21 +83,22 @@ type localIdentityKeyReplacementResponse struct {
 }
 
 type teamHumanReplaceKeyOutput struct {
-	Status           string `json:"status"`
-	TeamID           string `json:"team_id"`
-	Alias            string `json:"alias"`
-	OldDIDKey        string `json:"old_did_key"`
-	NewDIDKey        string `json:"new_did_key"`
-	OldCertificateID string `json:"old_certificate_id"`
-	NewCertificateID string `json:"new_certificate_id"`
-	AuditID          string `json:"audit_id"`
-	AuthorizedBy     string `json:"authorized_by"`
-	AuthorizedAt     string `json:"authorized_at"`
-	CertificatePath  string `json:"certificate_path,omitempty"`
-	SigningKeyPath   string `json:"signing_key_path,omitempty"`
-	EncryptionKeyID  string `json:"encryption_key_id,omitempty"`
-	TeamCertificate  string `json:"team_certificate,omitempty"`
-	Placement        string `json:"placement,omitempty"`
+	Status             string `json:"status"`
+	TeamID             string `json:"team_id"`
+	Alias              string `json:"alias"`
+	OldDIDKey          string `json:"old_did_key"`
+	NewDIDKey          string `json:"new_did_key"`
+	OldCertificateID   string `json:"old_certificate_id"`
+	NewCertificateID   string `json:"new_certificate_id"`
+	AuditID            string `json:"audit_id"`
+	AuthorizedBy       string `json:"authorized_by"`
+	AuthorizedAt       string `json:"authorized_at"`
+	CertificatePath    string `json:"certificate_path,omitempty"`
+	SigningKeyPath     string `json:"signing_key_path,omitempty"`
+	EncryptionKeyID    string `json:"encryption_key_id,omitempty"`
+	TeamCertificate    string `json:"team_certificate,omitempty"`
+	Placement          string `json:"placement,omitempty"`
+	ConversationAccess string `json:"conversation_access"`
 }
 
 func init() {
@@ -180,6 +184,13 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 		return err
 	}
 	controllerDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
+
+	// Disclose this before generating a key or changing any remote state.
+	if cmd != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), replacementConversationNotice)
+	} else {
+		fmt.Fprintln(os.Stderr, replacementConversationNotice)
+	}
 
 	homeDir := strings.TrimSpace(teamHumanReplaceKeyHome)
 	oldCertificateID := strings.TrimSpace(teamHumanReplaceKeyOldCertID)
@@ -267,6 +278,7 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 		OldDIDKey: oldDIDKey, NewDIDKey: newDIDKey,
 		OldCertificateID: oldCertificateID, NewCertificateID: newCertificate.CertificateID,
 		AuditID: rosterResult.AuditID, AuthorizedBy: controllerDID, AuthorizedAt: rosterResult.AuthorizedAt,
+		ConversationAccess: replacementConversationNotice,
 	}
 	if homeDir != "" {
 		certPath, err := awconfig.SaveTeamCertificateForTeam(homeDir, teamID, newCertificate)
@@ -474,6 +486,7 @@ func formatTeamHumanReplaceKey(v any) string {
 	out := v.(teamHumanReplaceKeyOutput)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Replaced local identity key for %s in %s\n", out.Alias, out.TeamID)
+	fmt.Fprintln(&b, replacementConversationNotice)
 	fmt.Fprintf(&b, "  old did:key: %s\n  new did:key: %s\n", out.OldDIDKey, out.NewDIDKey)
 	fmt.Fprintf(&b, "  audit: %s (authorized by %s at %s)\n", out.AuditID, out.AuthorizedBy, out.AuthorizedAt)
 	if out.CertificatePath != "" {

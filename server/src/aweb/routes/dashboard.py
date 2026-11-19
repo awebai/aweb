@@ -6,6 +6,8 @@ All endpoints are read-only.
 
 from __future__ import annotations
 
+from aweb.identity_binding import IdentityProjectionField, verified_identity_field_sql
+
 from aweb.human_kind import agent_listing_predicate_sql, effective_agent_type
 
 import asyncio
@@ -364,7 +366,7 @@ async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -
 
     rows = await aweb_db.fetch_all(
         f"""
-        SELECT a.agent_id, a.alias, a.did_key, a.human_name, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address, a.agent_type, a.human_verified_key,
+        SELECT a.agent_id, a.alias, a.did_key, a.human_name, {verified_identity_field_sql(IdentityProjectionField.ADDRESS, agent="a")} AS address, a.agent_type, a.human_verified_key,
                a.role, a.status, a.identity_scope, a.created_at
         FROM {{{{tables.agents}}}} a
         WHERE a.team_id = $1 AND a.deleted_at IS NULL
@@ -459,7 +461,7 @@ async def get_team_agent(
 
     row = await aweb_db.fetch_one(
         f"""
-        SELECT agent_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, role, status, identity_scope,
+        SELECT agent_id, alias, did_key, {verified_identity_field_sql(IdentityProjectionField.STABLE_DID)} AS did_aw, {verified_identity_field_sql(IdentityProjectionField.ADDRESS)} AS address, role, status, identity_scope,
                human_name, agent_type, human_verified_key, created_at
         FROM {{{{tables.agents}}}}
         WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL

@@ -1290,6 +1290,10 @@ func TestAwDoctorOfflineLocalChecksDoNotContactNetwork(t *testing.T) {
 	if requests.Load() != 0 {
 		t.Fatalf("offline local doctor contacted network %d times", requests.Load())
 	}
+	check := requireDoctorCheckStatus(t, decodeDoctorOutput(t, out), doctorCheckCertificateSignature, doctorStatusOK)
+	if !strings.Contains(check.Message, "does not show that the agent is a current member of the team") || !strings.Contains(check.Message, "aw doctor --online") {
+		t.Fatalf("offline signature result must distinguish current authority and name its next check: %s", check.Message)
+	}
 }
 
 func TestAwDoctorLocalOutputDoesNotLeakSecrets(t *testing.T) {

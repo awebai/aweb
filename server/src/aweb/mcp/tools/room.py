@@ -6,23 +6,29 @@ import json
 import logging
 from dataclasses import replace
 from datetime import datetime, timezone
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from fastapi import HTTPException
-from aweb.id_chain_auth import authenticate_id_chain
-from aweb.identity_binding import verify_identity_binding
-from aweb.identity_auth_deps import _enforce_current_membership
-from aweb.member_team_key import member_key_columns_sql
+
 from aweb.agent_wake import agent_wake_scope
+from aweb.id_chain_auth import authenticate_id_chain
+from aweb.identity_auth_deps import current_membership
+from aweb.application_state import application_registry_client
+from aweb.identity_binding import verify_identity_binding
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
 from aweb.mcp.signing import sign_hosted_message
 from aweb.mcp.tools._common import team_identity
+from aweb.member_team_key import (
+    CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
+    current_member,
+    read_member_projection,
+)
 from aweb.messaging.room import (
     RoomPost,
-    room_metadata,
-    read_room,
     post_room_message,
     present_room,
+    read_room,
+    room_metadata,
 )
 from aweb.messaging.room_notices import count_room_notices, pending_room_notices
 
@@ -38,27 +44,25 @@ async def _room_actor(db):
         or not (auth.certificate_id or auth.trusted_proxy)
     ):
         raise HTTPException(403, "Room requires authenticated team context")
-    row = await db.get_manager("aweb").fetch_one(
-        """
-        SELECT a.agent_id,a.team_id,a.did_key,a.certificate_id,a.status,a.deleted_at,"""
-        + member_key_columns_sql("a")
-        + """ FROM {{tables.agents}} AS a
-        WHERE a.agent_id=$1 AND a.team_id=$2 AND a.did_key=$3
-    """,
-        UUID(auth.agent_id),
-        auth.team_id,
-        auth.did_key,
+    row = await read_member_projection(
+        db.get_manager("aweb"),
+        agent_id=auth.agent_id,
+        team_id=auth.team_id,
     )
     if (
         not row
         or not row["certificate_id"]
-        or row["status"] != "active"
-        or row["deleted_at"] is not None
+        or row["did_key"] != auth.did_key
+        or not current_member(row)
     ):
-        raise HTTPException(403, "Room requires current team membership")
-    row = await _enforce_current_membership(auth.request, dict(row))
+        raise HTTPException(403, CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
+    row = await current_membership(
+        application_registry_client(auth.request.app.state),
+        dict(row),
+        request=auth.request,
+    )
     if not row or row["team_id"] != auth.team_id:
-        raise HTTPException(403, "Room requires current team membership")
+        raise HTTPException(403, CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
     if auth.trusted_proxy:
         # Original proxy actor authentication is already complete. Admit the
         # existing adjacent carrier against that exact actor, not a room key.

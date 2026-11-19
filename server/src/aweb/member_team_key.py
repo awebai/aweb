@@ -15,13 +15,22 @@ import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum, auto
 from types import MappingProxyType
 from typing import Any
 from uuid import UUID
 
+
 from aweb.member_status import MemberStatus as MemberStatus
 from aweb.service_errors import NotFoundError
 from aweb.team_scope import member_team_scope as member_team_scope
+
+
+class MemberReadLock(Enum):
+    """Row protection requested inside the caller's existing transaction."""
+
+    NONE = auto()
+    SHARE = auto()
 
 
 RECIPIENT_RECONNECT_DETAIL = "Check the name; if the agent exists, ask it to reconnect with a current team certificate."
@@ -30,6 +39,12 @@ RECIPIENT_RECONNECT_DETAIL = "Check the name; if the agent exists, ask it to rec
 CURRENT_MEMBERSHIP_REQUIRED_DETAIL = (
     "Team membership is no longer current. "
     "Reconnect with a certificate issued under the team's current key."
+)
+
+
+GRANT_ISSUER_RECOVERY_DETAIL = (
+    "This grant was issued from a certificate that is no longer current. "
+    "Ask the issuer for a new grant, or enable renewal on launch and restart the seat if you use OATS."
 )
 
 
@@ -167,6 +182,29 @@ async def read_member_projection(
     return MemberProjection.from_row(row) if row is not None else None
 
 
+async def lock_member_projections(
+    tx, *, agent_ids: list[UUID]
+) -> list[MemberProjection]:
+    """Read complete native actor facts under caller-owned row locks.
+
+    Actor-ID ordering preserves the public embedding transaction contract.
+    Callers apply current_member and compare their retained identity facts;
+    these row locks do not grant a team or participant identity.
+    """
+    if not agent_ids:
+        return []
+    rows = await tx.fetch_all(
+        "SELECT "
+        + member_projection_columns_sql("a")
+        + """
+        FROM {{tables.agents}} a WHERE a.agent_id=ANY($1::uuid[])
+        ORDER BY a.agent_id FOR UPDATE OF a
+        """,
+        sorted(set(agent_ids)),
+    )
+    return [MemberProjection.from_row(row) for row in rows]
+
+
 def current_team_key_sql(agent: str) -> str:
     """SQL for the current key of the team of the agents row aliased ``agent``."""
     return f"(SELECT team_did_key FROM {{{{tables.teams}}}} WHERE team_id = {agent}.team_id)"
@@ -224,14 +262,21 @@ async def current_member_projections(
     aliases: list[str] | None = None,
     dids: list[str] | None = None,
     namespace: str | None = None,
+    read_lock: MemberReadLock = MemberReadLock.NONE,
 ) -> list[MemberProjection]:
     """Select members by identity or membership without a newest-row winner.
 
     docs/identity.md:93-107 scopes a member name to a team. Verified global
     claims are selected through identity_binding, never raw metadata.
+    SHARE holds eligible rows through the caller's transaction, preserving
+    delivery policy through commit (identity-messaging-contract.md:314-320).
+    It creates no transaction and adds no lock to the ordinary default read.
     """
     from aweb.identity_binding import verified_key_sql
 
+    if not isinstance(read_lock, MemberReadLock):
+        raise TypeError("Member reads require a named MemberReadLock")
+    lock_sql = " FOR SHARE OF a" if read_lock is MemberReadLock.SHARE else ""
     if all(value is None for value in (agent_id, team_id, aliases, dids, namespace)):
         raise ValueError("Select a current member by identity, team, name or namespace")
     manager = db.get_manager("aweb") if hasattr(db, "get_manager") else db
@@ -250,7 +295,8 @@ async def current_member_projections(
               SELECT 1 FROM {{{{tables.teams}}}} t
               WHERE t.team_id=a.team_id AND t.namespace=$5))
         ORDER BY a.agent_id
-        """,
+        """
+        + lock_sql,
         agent_id,
         team_id,
         aliases,
@@ -312,13 +358,18 @@ async def read_participant_identity_projection(
     return recipient
 
 
-async def current_member_team_ids_for_identity(db, dids: list[str]) -> set[str]:
+async def current_member_team_ids_for_identity(
+    db, dids: list[str], *, read_lock: MemberReadLock = MemberReadLock.NONE
+) -> set[str]:
     """All current memberships of the exact verified identity, for R5 policy."""
     selected = [did.strip() for did in dids if did and did.strip()]
     if not selected:
         return set()
     return {
-        row["team_id"] for row in await current_member_projections(db, dids=selected)
+        row["team_id"]
+        for row in await current_member_projections(
+            db, dids=selected, read_lock=read_lock
+        )
     }
 
 
@@ -327,9 +378,27 @@ def grant_issuer_current(row) -> bool:
     (certificate_id and member_key_columns_sql), still has its issuing
     certificate: the subject is a member under the current key and that
     member's certificate is the one the grant was issued from. A credential
-    issued from a superseded certificate does not return."""
+    issued from a superseded certificate does not return: reaccepting the
+    member does not renew an earlier delegation (docs/identity.md:766-769).
+    """
     if not member_key_current(row):
         return False
     issuer = str(row.get("issued_by_certificate_id") or "").strip()
     current = str(row.get("certificate_id") or "").strip()
     return not issuer or not current or issuer == current
+
+
+def grant_issuer_current_sql(*, agent: str, grant: str) -> str:
+    """The SQL form of grant_issuer_current for joined presence readers.
+
+    docs/identity.md:775-779 retains exact issuing-certificate equality after
+    reacceptance. Legacy issuer-ID-less grants keep their existing lifetime.
+    Both aliases are source-code identifiers, never request values.
+    """
+    for alias in (agent, grant):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", alias):
+            raise ValueError("Invalid grant eligibility SQL alias")
+    current_key = member_key_current_sql(agent)
+    issuer = f"NULLIF(BTRIM({grant}.issued_by_certificate_id), '')"
+    current = f"NULLIF(BTRIM({agent}.certificate_id), '')"
+    return f"({current_key} AND ({issuer} IS NULL OR {current} IS NULL OR {issuer}={current}))"

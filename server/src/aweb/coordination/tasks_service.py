@@ -39,6 +39,7 @@ from ..service_errors import (
     ValidationError,
 )
 from ..team_auth_deps import TeamIdentity
+from ..identity_binding import verified_principal_did_sql
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,29 @@ async def get_task_answer_on(
     )
 
 
+async def _read_answer_member_principal_on(tx, *, agent_id: str, team_id: str):
+    """Read the answer actor under the existing shared member lock."""
+    return await tx.fetch_one(
+        f"""SELECT {verified_principal_did_sql()} AS principal_did, certificate_id
+           FROM {{{{tables.agents}}}} WHERE agent_id = $1 AND team_id = $2
+             AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
+        UUID(agent_id),
+        team_id,
+    )
+
+
+async def _read_claimant_principal_on(tx, *, team_id: str, alias: str):
+    """Read a claim's principal under the existing shared member lock."""
+    return await tx.fetch_one(
+        f"""SELECT {verified_principal_did_sql()} AS principal_did
+           FROM {{{{tables.agents}}}}
+           WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+           FOR SHARE""",
+        team_id,
+        alias,
+    )
+
+
 async def answer_task_on(
     tx,
     *,
@@ -268,12 +292,8 @@ async def answer_task_on(
         ),
     )
     principal = actor.did_aw or actor.did_key
-    member = await tx.fetch_one(
-        """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
-           FROM {{tables.agents}} WHERE agent_id = $1 AND team_id = $2
-             AND deleted_at IS NULL AND status = 'active' FOR SHARE""",
-        UUID(actor.agent_id),
-        team_id,
+    member = await _read_answer_member_principal_on(
+        tx, agent_id=actor.agent_id, team_id=team_id
     )
     if (
         actor.team_id != team_id
@@ -761,9 +781,9 @@ async def _resolve_assignee_on(
     except ValueError:
         agent_id = None
     row = await manager.fetch_one(
-        """
-        SELECT alias, COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
-        FROM {{tables.agents}}
+        f"""
+        SELECT alias, {verified_principal_did_sql()} AS principal_did
+        FROM {{{{tables.agents}}}}
         WHERE team_id = $1 AND deleted_at IS NULL
           AND (($2::uuid IS NOT NULL AND agent_id = $2)
                OR ($2::uuid IS NULL AND alias = $3))
@@ -1561,13 +1581,8 @@ async def update_task(
         auto_closed: list[dict[str, Any]] = []
         if status is not None:
             if status == "in_progress":
-                claimant = await tx.fetch_one(
-                    """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
-                       FROM {{tables.agents}}
-                       WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-                       FOR SHARE""",
-                    team_id,
-                    actor_alias,
+                claimant = await _read_claimant_principal_on(
+                    tx, team_id=team_id, alias=actor_alias
                 )
 
                 sets.append(f"assignee_alias = ${idx}")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.identity_binding import verified_key_sql
+
 import logging
 import re
 from collections.abc import Sequence
@@ -501,18 +503,18 @@ async def resolve_handle_contact_agent(
     if agent_name is not None:
         address = f"{namespace}/{agent_name}"
         row = await aweb_db.fetch_one(
-            """
+            f"""
             SELECT a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                    a.identity_scope, a.status, a.created_at,
                    MAX(w.last_seen_at) AS last_seen_at
-            FROM {{tables.agents}} a
-            LEFT JOIN {{tables.workspaces}} w
+            FROM {{{{tables.agents}}}} a
+            LEFT JOIN {{{{tables.workspaces}}}} w
               ON w.agent_id = a.agent_id
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
               AND a.status = 'active'
               AND a.identity_scope = 'global'
-              AND a.did_aw_verified_key = a.did_key
+              AND {verified_key_sql("a")}
               AND a.address = $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                      a.identity_scope, a.status, a.created_at
@@ -523,18 +525,18 @@ async def resolve_handle_contact_agent(
         )
     else:
         row = await aweb_db.fetch_one(
-            """
+            f"""
             SELECT a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                    a.identity_scope, a.status, a.created_at,
                    MAX(w.last_seen_at) AS last_seen_at
-            FROM {{tables.agents}} a
-            LEFT JOIN {{tables.workspaces}} w
+            FROM {{{{tables.agents}}}} a
+            LEFT JOIN {{{{tables.workspaces}}}} w
               ON w.agent_id = a.agent_id
              AND w.deleted_at IS NULL
             WHERE a.deleted_at IS NULL
               AND a.status = 'active'
               AND a.identity_scope = 'global'
-              AND a.did_aw_verified_key = a.did_key
+              AND {verified_key_sql("a")}
               AND a.address LIKE $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                      a.identity_scope, a.status, a.created_at

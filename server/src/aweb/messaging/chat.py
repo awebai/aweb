@@ -1,27 +1,39 @@
 from __future__ import annotations
 
-from aweb.human_kind import human_predicate_sql
-
-from aweb.human_channels.contract import ContractError
-from aweb.human_channels.participants import require_native_participant_input
-from aweb.service_errors import ValidationError
-
-from aweb.agent_wake import agent_wake_scope, record_did_wakes
-from aweb.attachment_service import attachment_transaction
-
+import json
 import logging
 import uuid as uuid_mod
 from datetime import datetime, timezone
-import json
 from typing import Any
 from uuid import UUID
 
 import asyncpg
 from pgdbm.errors import QueryError
 
-from aweb.service_errors import ConflictError, NotFoundError, ServiceError
+from aweb.agent_wake import agent_wake_scope, record_did_wakes
+from aweb.attachment_service import attachment_transaction
+from aweb.human_channels.contract import ContractError
+from aweb.human_channels.participants import require_native_participant_input
 from aweb.messaging.conversations import (
     find_active_one_to_one_conversation_between,
+)
+from aweb.messaging.messages import (
+    get_agent_by_alias as get_agent_by_alias,
+)
+from aweb.messaging.messages import (
+    get_agent_by_id as get_agent_by_id,
+)
+from aweb.messaging.messages import (
+    get_agents_by_aliases as get_agents_by_aliases,
+)
+from aweb.messaging.messages import (
+    resolve_agent_by_did as resolve_agent_by_did,
+)
+from aweb.service_errors import (
+    ConflictError,
+    NotFoundError,
+    ServiceError,
+    ValidationError,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,78 +111,6 @@ async def wake_chat_session_participants(aweb_db, publisher, *, session_id: UUID
             await record_chat_session_wakes(aweb_db, session_id=session_id)
     except Exception:
         logger.warning("Chat session wake failed for %s", session_id, exc_info=True)
-
-
-async def get_agent_by_id(db, *, agent_id: str, team_id: str | None = None) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    if team_id is None:
-        row = await aweb_db.fetch_one(
-            """
-            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-            FROM {{tables.agents}}
-            WHERE agent_id = $1 AND deleted_at IS NULL
-            """,
-            _uuid_or_none(agent_id),
-        )
-    else:
-        row = await aweb_db.fetch_one(
-            """
-            SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-            FROM {{tables.agents}}
-            WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
-            """,
-            _uuid_or_none(agent_id),
-            team_id,
-        )
-    return None if not row else dict(row)
-
-
-async def get_agent_by_alias(db, *, team_id: str, alias: str) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        f"""
-        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-          AND NOT {human_predicate_sql()}
-        """,
-        team_id,
-        alias,
-    )
-    return None if not row else dict(row)
-
-
-async def get_agents_by_aliases(db, *, team_id: str, aliases: list[str]) -> list[dict[str, Any]]:
-    if not aliases:
-        return []
-    aweb_db = db.get_manager("aweb")
-    rows = await aweb_db.fetch_all(
-        f"""
-        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-        FROM {{{{tables.agents}}}}
-        WHERE team_id = $1 AND alias = ANY($2::text[]) AND deleted_at IS NULL
-          AND NOT {human_predicate_sql()}
-        """,
-        team_id,
-        aliases,
-    )
-    return [dict(row) for row in rows]
-
-
-async def resolve_agent_by_did(db, did: str) -> dict[str, Any] | None:
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT agent_id, team_id, alias, did_key, CASE WHEN did_aw_verified_key = did_key THEN did_aw END AS did_aw, CASE WHEN did_aw_verified_key = did_key THEN address END AS address, identity_scope, (NULLIF(did_aw, '') IS NOT NULL) AS has_global_claim, did_aw AS policy_did_aw, inbound_mode, deleted_at
-        FROM {{tables.agents}}
-        WHERE deleted_at IS NULL
-          AND ((did_aw = $1 AND did_aw_verified_key = did_key) OR did_key = $1)
-        ORDER BY CASE WHEN did_aw = $1 THEN 0 ELSE 1 END, created_at DESC
-        LIMIT 1
-        """,
-        did,
-    )
-    return None if not row else dict(row)
 
 
 async def find_session_between(
@@ -288,12 +228,16 @@ async def _chat_session_state(db, *, session_id: UUID, actor_dids: list[str]) ->
         FULL OUTER JOIN {{tables.chat_sessions}} s ON s.session_id = c.conversation_id
         WHERE COALESCE(c.conversation_id, s.session_id) = $1
         """,
-        session_id, actor_dids,
+        session_id,
+        actor_dids,
     )
     if row is None:
         return False, False
-    if (row["conversation_type"] not in (None, "chat")
-            or row["session_id"] is None or not row["caller_participant"]):
+    if (
+        row["conversation_type"] not in (None, "chat")
+        or row["session_id"] is None
+        or not row["caller_participant"]
+    ):
         raise ConflictError("session_id is not an existing chat session of the caller")
     return True, row["conversation_type"] is not None
 
@@ -307,7 +251,8 @@ async def _backfill_legacy_chat_conversation(db, *, session_id: UUID) -> None:
             session_id,
         )
         conversation = await tx.fetch_one(
-            "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1", session_id,
+            "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1",
+            session_id,
         )
         if conversation is not None:
             if conversation["conversation_type"] != "chat":
@@ -322,11 +267,16 @@ async def _backfill_legacy_chat_conversation(db, *, session_id: UUID) -> None:
             """,
             session_id,
         )
-        creator = next((p["did"] for p in participants
-                        if session["created_by"] in (p["did"], p["alias"])), participants[0]["did"])
+        creator = next(
+            (p["did"] for p in participants if session["created_by"] in (p["did"], p["alias"])),
+            participants[0]["did"],
+        )
         await _ensure_chat_conversation(
-            tx, session_id=session_id, team_id=session["team_id"],
-            created_by_did=creator, participants=participants,
+            tx,
+            session_id=session_id,
+            team_id=session["team_id"],
+            created_by_did=creator,
+            participants=participants,
         )
 
 
@@ -356,19 +306,23 @@ async def ensure_session(
                 "alias": (row.get("alias") or did).strip(),
                 "address": (row.get("address") or "").strip() or None,
                 "delivery_origin": delivery_origin,
-                "current_did_key": (row.get("current_did_key") or row.get("did_key") or "").strip() or None,
-                "transport_hint": transport_hint or (
-                    "federation:" + delivery_origin if delivery_origin else "local"
-                ),
+                "current_did_key": (row.get("current_did_key") or row.get("did_key") or "").strip()
+                or None,
+                "transport_hint": transport_hint
+                or ("federation:" + delivery_origin if delivery_origin else "local"),
             }
         )
     if len(normalized_participants) < 2:
         raise ServiceError("Chat session requires at least two participants")
 
-    actor = normalized_participants[0]  # Supplied by the authenticated adapter, never by target resolution.
+    actor = normalized_participants[
+        0
+    ]  # Supplied by the authenticated adapter, never by target resolution.
     actor_dids = [actor["did"]]
     if session_id is not None:
-        exists, has_conversation = await _chat_session_state(db, session_id=session_id, actor_dids=actor_dids)
+        exists, has_conversation = await _chat_session_state(
+            db, session_id=session_id, actor_dids=actor_dids
+        )
         if exists:
             if not has_conversation:
                 await _backfill_legacy_chat_conversation(db, session_id=session_id)
@@ -381,7 +335,9 @@ async def ensure_session(
             did_b=normalized_participants[1]["did"],
         )
         if existing is not None:
-            _, has_conversation = await _chat_session_state(db, session_id=existing, actor_dids=actor_dids)
+            _, has_conversation = await _chat_session_state(
+                db, session_id=existing, actor_dids=actor_dids
+            )
             if not has_conversation:
                 await _backfill_legacy_chat_conversation(db, session_id=existing)
             return existing
@@ -401,7 +357,9 @@ async def ensure_session(
             if not row:
                 raise ServiceError("Failed to create chat session")
             session_id = row["session_id"]
-            created_by_did = created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
+            created_by_did = (
+                created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
+            )
 
             for participant in normalized_participants:
                 await tx.execute(
@@ -523,9 +481,15 @@ async def send_in_session(
         signed_payload,
         content_mode,
         int(message_version or 1),
-        json.dumps(encrypted_envelope, sort_keys=True, separators=(",", ":")) if encrypted_envelope is not None else None,
+        json.dumps(encrypted_envelope, sort_keys=True, separators=(",", ":"))
+        if encrypted_envelope is not None
+        else None,
         encrypted_metadata.get("encrypted_ciphertext"),
-        json.dumps(encrypted_metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")) if encrypted_metadata.get("encrypted_key_wraps") is not None else None,
+        json.dumps(
+            encrypted_metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")
+        )
+        if encrypted_metadata.get("encrypted_key_wraps") is not None
+        else None,
         encrypted_metadata.get("encrypted_ciphertext_hash"),
         encrypted_metadata.get("encrypted_ciphertext_size"),
         encrypted_metadata.get("encrypted_key_wraps_hash"),
@@ -536,7 +500,11 @@ async def send_in_session(
         effective_created_at,
         json.dumps(id_chain) if id_chain is not None else None,
     )
-    msg_row = {"message_id": inserted["message_id"], "created_at": inserted["created_at"], "seq": inserted["seq"]}
+    msg_row = {
+        "message_id": inserted["message_id"],
+        "created_at": inserted["created_at"],
+        "seq": inserted["seq"],
+    }
 
     # Departed participants are woken too: leaving does not end their pending state.
     record_did_wakes(inserted["wake_dids"] or (), "chat")
@@ -657,7 +625,8 @@ async def get_pending_conversations(
             "participant_dids": list(row["participant_dids"] or []),
             "participant_addresses": list(row["participant_addresses"] or []),
             "last_message": row["last_message"] or "",
-            "last_message_content_mode": row.get("last_message_content_mode") or "legacy_plaintext_v1",
+            "last_message_content_mode": row.get("last_message_content_mode")
+            or "legacy_plaintext_v1",
             "last_message_version": int(row.get("last_message_version") or 1),
             "last_encrypted_envelope": _json_object(row.get("last_encrypted_envelope")),
             "last_from": row["last_from"] or "",
@@ -668,7 +637,9 @@ async def get_pending_conversations(
             ),
             "unread_count": int(row["unread_count"] or 0),
             "last_activity": row["last_activity"],
-            "wait_seconds": int(row["wait_seconds"]) if row.get("wait_seconds") is not None else None,
+            "wait_seconds": int(row["wait_seconds"])
+            if row.get("wait_seconds") is not None
+            else None,
             "wait_started_at": row.get("wait_started_at"),
             "wait_started_by": (
                 str(row["wait_started_by"]) if row.get("wait_started_by") is not None else None

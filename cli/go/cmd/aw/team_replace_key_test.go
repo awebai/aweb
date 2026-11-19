@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -17,7 +18,20 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/spf13/cobra"
 )
+
+func TestReplaceKeyDisclosesConversationBoundaryInHelpAndResult(t *testing.T) {
+	const notice = "The new key will not have the old key's mail or chat conversations."
+	for name, text := range map[string]string{
+		"before acting": teamHumanReplaceKeyCmd.Long,
+		"result":        formatTeamHumanReplaceKey(teamHumanReplaceKeyOutput{Alias: "alice", TeamID: "backend:acme.com"}),
+	} {
+		if !strings.Contains(text, notice) {
+			t.Errorf("%s omits conversation boundary: %s", name, text)
+		}
+	}
+}
 
 // A compromised or MITM'd aweb server must not be able to exhaust client memory
 // by returning an unbounded body to a signed key-rotation request. Because the
@@ -426,9 +440,12 @@ func TestTeamReplaceKeyWithoutHomePrintsCertificatePlacementMaterial(t *testing.
 	teamHumanReplaceKeyOldCertID = oldCert.CertificateID
 	teamHumanReplaceKeyHome = ""
 	jsonFlag = true
+	var notice bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetErr(&notice)
 	var runErr error
 	printed := captureIDCommandStdout(t, func() {
-		runErr = runTeamHumanReplaceKey(nil, []string{"alice"})
+		runErr = runTeamHumanReplaceKey(cmd, []string{"alice"})
 	})
 	if runErr != nil {
 		t.Fatal(runErr)
@@ -439,6 +456,10 @@ func TestTeamReplaceKeyWithoutHomePrintsCertificatePlacementMaterial(t *testing.
 	}
 	if output["team_certificate"] == "" || !strings.Contains(output["placement"].(string), ".aw/team-certs") {
 		t.Fatalf("output=%v", output)
+	}
+	const expected = "The new key will not have the old key's mail or chat conversations."
+	if notice.String() != expected+"\n" || output["conversation_access"] != expected {
+		t.Fatalf("conversation notice: stderr=%q result=%v", notice.String(), output)
 	}
 }
 

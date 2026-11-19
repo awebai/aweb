@@ -8,6 +8,8 @@ an affected mail thread, never authentication or current AWID binding evidence.
 
 from __future__ import annotations
 
+from aweb.identity_binding import verified_key_sql
+
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -91,8 +93,8 @@ async def succeed_local_human_participant_on(
             "Human succession requires distinct predecessor and successor identities"
         )
     old_rows = await tx.fetch_all(
-        """SELECT * FROM {{tables.agents}}
-           WHERE did_key=$1 OR (did_aw=$1 AND did_aw_verified_key=did_key)
+        f"""SELECT * FROM {{{{tables.agents}}}}
+           WHERE did_key=$1 OR (did_aw=$1 AND {verified_key_sql()})
            ORDER BY agent_id FOR UPDATE""",
         predecessor_did,
     )

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-from aweb.human_kind import is_verified_human
-
 from dataclasses import dataclass
 from typing import Iterable
+from uuid import UUID
 
+from aweb.human_kind import is_verified_human
+from aweb.identity_binding import verified_key_sql
+from aweb.member_team_key import (
+    read_member_projection,
+    read_participant_identity_projection,
+)
 from aweb.messaging.address_auth import identity_recipient
 from aweb.messaging.conversations import (
     list_conversation_participants,
     require_active_conversation_participant,
 )
-from aweb.messaging.messages import get_agent_by_id, resolve_agent_by_did
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import ValidationError
 
@@ -19,10 +23,12 @@ class ParticipantRetiredError(ValidationError):
     status_code = 410
 
     def __init__(self, alias: str, team: str):
-        super().__init__({
-            "code": "participant_retired",
-            "message": f"{alias} has moved; start a new mail to {alias} in {team}",
-        })
+        super().__init__(
+            {
+                "code": "participant_retired",
+                "message": f"{alias} has moved; start a new mail to {alias} in {team}",
+            }
+        )
 
 
 async def _require_live_mail_participant(
@@ -30,8 +36,8 @@ async def _require_live_mail_participant(
 ) -> None:
     did = participant["did"]
     rows = await db.get_manager("aweb").fetch_all(
-        """SELECT agent_id, agent_type, human_verified_key, did_key, alias, team_id, deleted_at FROM {{tables.agents}}
-           WHERE COALESCE(CASE WHEN did_aw_verified_key=did_key THEN NULLIF(did_aw,'') END, did_key)=$1
+        f"""SELECT agent_id, agent_type, human_verified_key, did_key, alias, team_id, deleted_at FROM {{{{tables.agents}}}}
+           WHERE COALESCE(CASE WHEN {verified_key_sql()} THEN NULLIF(did_aw,'') END, did_key)=$1
            ORDER BY team_id, agent_id""",
         did,
     )
@@ -70,7 +76,7 @@ def participant_delivery_origin(participant: dict) -> str:
     transport_hint = str(participant.get("transport_hint") or "").strip()
     for prefix in ("federation:", "federated:"):
         if transport_hint.startswith(prefix):
-            return transport_hint[len(prefix):].strip()
+            return transport_hint[len(prefix) :].strip()
     return ""
 
 
@@ -93,15 +99,17 @@ def participant_recipient(participant: dict) -> dict:
 
 async def recipient_for_conversation_participant(db, participant: dict) -> dict:
     did = str(participant.get("did") or "").strip()
-    local = await resolve_agent_by_did(db, did)
+    local = await read_participant_identity_projection(db, participant_did=did)
     if local is not None:
         recipient = identity_recipient(local, str(participant.get("address") or "").strip())
         recipient["alias"] = participant.get("alias") or did
         return recipient
     if did.startswith("did:key:") and not participant_delivery_origin(participant):
         alias = str(participant.get("alias") or did)
-        raise ValidationError(f'Conversation recipient "{alias}" has been retired and is unreachable. '
-                              'Start a new conversation with an active recipient.')
+        raise ValidationError(
+            f'Conversation recipient "{alias}" has been retired and is unreachable. '
+            "Start a new conversation with an active recipient."
+        )
     return participant_recipient({**participant, "agent_id": None})
 
 
@@ -123,7 +131,9 @@ async def remote_recipient_from_participant(registry_client, participant: dict) 
                 "external": True,
             }
         raise ValidationError("Remote mail recipient has no stored routable identity")
-    current_did = str(participant.get("current_did_key") or participant.get("did_key") or "").strip()
+    current_did = str(
+        participant.get("current_did_key") or participant.get("did_key") or ""
+    ).strip()
     if not current_did:
         raise ValidationError("Remote mail recipient stored route is missing current did:key")
     if not current_did.startswith("did:key:"):
@@ -161,9 +171,7 @@ async def mail_continuation_context(
     participants = await list_conversation_participants(db, conversation_id=conversation_id)
     sender_participant_did = auth_context["participant"]["did"]
     recipients = [
-        participant
-        for participant in participants
-        if participant["did"] != sender_participant_did
+        participant for participant in participants if participant["did"] != sender_participant_did
     ]
     if len(recipients) == 0 and len(participants) == 1:
         # Defensive self-loopback for a malformed historical conversation.
@@ -187,7 +195,8 @@ async def mail_continuation_context(
 
 
 async def explicit_mail_target_matches_participant(
-    db, participant: dict,
+    db,
+    participant: dict,
     *,
     to_agent_id: str | None = None,
     to_alias: str | None = None,
@@ -205,10 +214,25 @@ async def explicit_mail_target_matches_participant(
     address_matches = False
 
     if to_agent_id is not None and str(to_agent_id).strip():
-        selected = await get_agent_by_id(db, agent_id=str(to_agent_id).strip())
-        selected_did = str((selected or {}).get("did_aw") or (selected or {}).get("did_key") or "")
-        selected_identity_matches = selected_did == participant_did
-        checks.append(selected_identity_matches)
+        try:
+            selected_id = str(UUID(str(to_agent_id).strip()))
+        except (ValueError, TypeError, AttributeError) as error:
+            raise ValidationError(
+                "Recipient reference is invalid. Use the agent ID recorded on this conversation."
+            ) from error
+        if str(participant.get("agent_id") or "") == selected_id:
+            # This is a consistency check against the already-authorized
+            # participant, not a new member selector or routing authority.
+            checks.append(True)
+        else:
+            selected = await read_member_projection(db.get_manager("aweb"), agent_id=selected_id)
+            projected = (
+                selected.verified_identity()
+                if selected is not None and selected["deleted_at"] is None
+                else {}
+            )
+            selected_did = str(projected.get("did_aw") or projected.get("did_key") or "")
+            checks.append(selected_did == participant_did)
     if to_alias is not None and str(to_alias).strip():
         checks.append(participant_alias == str(to_alias).strip())
     if to_stable_id is not None and str(to_stable_id).strip():
@@ -223,6 +247,8 @@ async def explicit_mail_target_matches_participant(
         # extra binding while the conversation participant stores the stable
         # did:aw. Accept that only when another stable participant field has
         # already identified the recorded recipient.
-        checks.append(did_matches or stable_id_matches or address_matches or selected_identity_matches)
+        checks.append(
+            did_matches or stable_id_matches or address_matches or selected_identity_matches
+        )
 
     return bool(checks) and all(checks)
