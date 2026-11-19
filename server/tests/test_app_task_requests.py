@@ -801,16 +801,18 @@ async def test_stalled_awid_does_not_block_installation_retirement(
     entered, resume = asyncio.Event(), asyncio.Event()
     registry_path = f"/v1/namespaces/example.test/teams/{TEAM.split(':', 1)[0]}" + registry_suffix
 
-    async def stalled_registry(scope, receive, send):
-        # Delay only the external HTTP boundary; all registry handlers and
-        # cryptographic checks still execute against the real registry.
-        if scope["type"] == "http" and scope["path"] == registry_path:
+    transport = env.app.state.awid_registry_client.transport
+    handle_request = transport.handle_async_request
+
+    async def stalled_registry(request: httpx.Request) -> httpx.Response:
+        # Pause the public HTTP transport boundary; resume the same real
+        # registry handler and cryptographic checks after retirement commits.
+        if request.url.path == registry_path:
             entered.set()
             await resume.wait()
-        await env.registry_app(scope, receive, send)
+        return await handle_request(request)
 
-    transport = env.app.state.awid_registry_client.transport
-    monkeypatch.setattr(transport, "app", stalled_registry)
+    monkeypatch.setattr(transport, "handle_async_request", stalled_registry)
     creating = asyncio.create_task(
         _app_http(
             app_request_context,

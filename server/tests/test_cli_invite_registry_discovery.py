@@ -54,14 +54,20 @@ async def test_global_inviter_without_registry_pins_uses_real_discovery(
     env = privacy_app
     actor = env.actors["bob"]
     calls = []
-    original_registry = env.app.state.awid_registry_client.transport.app
+    original_registry = env.registry_app
 
     async def observe_registry(scope, receive, send):
         if scope["type"] == "http":
             calls.append((scope["method"], scope["path"]))
         await original_registry(scope, receive, send)
 
-    monkeypatch.setattr(env.app.state.awid_registry_client.transport, "app", observe_registry)
+    class ObservedRegistry:
+        state = original_registry.state
+
+        async def __call__(self, scope, receive, send):
+            await observe_registry(scope, receive, send)
+
+    monkeypatch.setattr(env, "registry_app", ObservedRegistry())
     async with registry_listener(env) as (registry, registry_origin):
         stable = await register_global_identity(env, actor, "example.test/bob")
         actor.certificate = certificate(env, actor, stable, "example.test/bob")
