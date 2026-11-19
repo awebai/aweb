@@ -92,7 +92,7 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 						if err := json.NewEncoder(w).Encode(retainedResponse); err != nil {
 							t.Error(err)
 						}
-					case "/api/v1/connect":
+					case "/api/v1/connect", "/v1/connect":
 						connectCalls++
 						if failure == "connect after response" && connectCalls == 1 {
 							http.Error(w, "connect interrupted", 500)
