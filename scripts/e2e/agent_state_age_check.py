@@ -58,6 +58,9 @@ import time
 from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[2] / "deploy" / "team" / "agent_state.py"
+sys.path.insert(0, str(TOOL.parent))
+
+from agent_state import signals_held, unheld  # noqa: E402
 UID = GID = 20001
 # One age process may run this long; a CLI call holds at most two.
 AGE_DEADLINE = 60
@@ -132,9 +135,12 @@ class Call:
 
     def __init__(self, command: list[str], budget: float = CALL_BUDGET):
         self.deadline = time.monotonic() + budget
-        self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                        start_new_session=True)
-        Call.current = self
+        # The call is registered before an interrupt can be raised, so that
+        # every exit of the check finds it to end.
+        with signals_held():
+            self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                            start_new_session=True, preexec_fn=unheld)
+            Call.current = self
 
     def remaining(self) -> float:
         return max(0.0, self.deadline - time.monotonic())
@@ -173,10 +179,17 @@ class Call:
             note = ""
         except subprocess.TimeoutExpired:
             gone = self.end()
-            stdout, stderr = self.process.communicate()
             note = f"\n[check] the call passed its deadline; its group was ended; group gone: {gone}"
-        Call.current = None
-        return subprocess.CompletedProcess(self.process.args, self.process.returncode, stdout, stderr + note)
+            try:
+                # Within the end's reserve: a process outside the group can
+                # hold the pipes open, and is not waited for.
+                stdout, stderr = self.process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                stdout, stderr = "", ""
+                note += "; its output could not be collected (a process outside its group holds it): INCOMPLETE"
+        self.release()
+        return subprocess.CompletedProcess(self.process.args, self.process.returncode, stdout or "",
+                                           (stderr or "") + note)
 
 
 def tool(*args: str) -> list[str]:

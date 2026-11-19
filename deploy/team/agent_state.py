@@ -56,6 +56,7 @@ source host and on the restore host only for the restore.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import hashlib
 import json
@@ -200,21 +201,43 @@ def settle(stream: BinaryIO, failed: bool) -> str | None:
         return str(error)
 
 
-def read_whole(read: Callable[[], BinaryIO], each: Callable[[tarfile.TarFile], object]) -> None:
-    """One whole read of the stream, ended on every path, its final drain
-    and close included: a failure aborts the stream (an age child is killed
-    and reaped) and reports what the abort said beside the first error."""
-    stream = read()
+@contextlib.contextmanager
+def signals_held():
+    """SIGINT and SIGTERM held while a child is started and its owner
+    recorded: one that arrives meanwhile is raised once the owner can end
+    the child, not in between."""
+    held = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
     try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, held)
+
+
+def unheld() -> None:
+    """In a child, before it execs: the parent's hold on SIGINT and SIGTERM
+    is not the child's, which must end on the SIGTERM sent to it."""
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGINT, signal.SIGTERM})
+
+
+def read_whole(read: Callable[[], BinaryIO], each: Callable[[tarfile.TarFile], object]) -> None:
+    """One whole read of the stream, ended on every path, from its start
+    to its final drain and close: a failure aborts the stream (an age child
+    is killed and reaped) and reports what the abort said beside the first
+    error."""
+    stream = None
+    try:
+        with signals_held():
+            stream = read()
         with tarfile.open(fileobj=stream, mode="r|") as tar:
             each(tar)
         settle(stream, False)
     except (Refused, tarfile.TarError, OSError) as error:
-        said = settle(stream, True)
+        said = settle(stream, True) if stream is not None else None
         message = str(error)
         raise Refused(message + (f"; {said}" if said and said not in message else "")) from None
     except BaseException:
-        settle(stream, True)
+        if stream is not None:
+            settle(stream, True)
         raise
 
 
@@ -284,7 +307,7 @@ class Child:
     def __init__(self, command: list[str], deadline: float, **popen):
         self.command = command
         self.expired = False
-        self.process = subprocess.Popen(command, **popen)
+        self.process = subprocess.Popen(command, preexec_fn=unheld, **popen)
         try:
             self.timer = threading.Timer(deadline, self.expire)
             self.timer.daemon = True
@@ -350,17 +373,20 @@ def encrypt(state: Path, partial: Path, command: list[str], deadline: float, end
     """state captured into command's standard input, which writes partial;
     on any failure the child is killed and reaped and partial removed, and
     the first error is the one raised."""
-    child = Child(command, deadline, stdin=subprocess.PIPE)
+    child = None
     try:
+        with signals_held():
+            child = Child(command, deadline, stdin=subprocess.PIPE)
         captured = capture(state, child.process.stdin, endpoints)  # type: ignore[arg-type]
         child.process.stdin.close()  # type: ignore[union-attr]
         child.finish()
     except (Refused, OSError, tarfile.TarError) as error:
-        said = child.abort()
+        said = child.abort() if child is not None else "age was not started"
         partial.unlink(missing_ok=True)
         raise Refused(f"{error}; {said}; no backup was written") from None
     except BaseException:
-        child.abort()
+        if child is not None:
+            child.abort()
         partial.unlink(missing_ok=True)
         raise
     return captured

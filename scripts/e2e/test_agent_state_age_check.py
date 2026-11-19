@@ -8,6 +8,7 @@ is tested is the check's ownership, not the CLI.
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 import unittest
@@ -73,6 +74,61 @@ class CallTests(unittest.TestCase):
         answer = check.Call.result(call)
         self.assertIn("group gone: True", answer.stderr)
         self.assertTrue(check.group_gone(call.process.pid))
+
+
+
+class AcquisitionTests(unittest.TestCase):
+    def test_an_interrupt_between_launch_and_registration_still_leaves_the_call_owned(self):
+        # Deterministic: the interrupt is sent inside Popen, once the process
+        # exists and before the call is registered.
+        import signal
+        import subprocess
+
+        real = subprocess.Popen
+
+        def interrupted(*args, **kwargs):
+            process = real(*args, **kwargs)
+            os.kill(os.getpid(), signal.SIGINT)
+            return process
+
+        previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+        check.subprocess.Popen = interrupted
+        try:
+            with self.assertRaises(KeyboardInterrupt):
+                check.Call(SLEEPER, budget=60)
+        finally:
+            check.subprocess.Popen = real
+            signal.signal(signal.SIGINT, previous)
+        owned = check.Call.current
+        self.assertIsNotNone(owned)
+        self.assertTrue(owned.end())
+        owned.release()
+
+    def test_a_call_whose_output_outlives_its_group_returns_within_its_reserve(self):
+        # A grandchild in its own session keeps the call's stdout open: ending
+        # the group cannot close it, and the collect must not wait for ever.
+        import signal
+        import tempfile
+
+        marker = Path(tempfile.mkdtemp()) / "grandchild.pid"
+        script = ("import subprocess, sys, time\n"
+                  "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'],"
+                  " start_new_session=True)\n"
+                  f"open({str(marker)!r}, 'w').write(str(p.pid))\n"
+                  "time.sleep(600)\n")
+        call = check.Call([sys.executable, "-c", script], budget=2)
+        began = time.monotonic()
+        try:
+            answer = call.result()
+            self.assertLess(time.monotonic() - began, 2 + 45)
+            self.assertIn("could not be collected", answer.stderr)
+            self.assertIsNone(check.Call.current)
+        finally:
+            if marker.exists():
+                try:
+                    os.kill(int(marker.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
 
 if __name__ == "__main__":

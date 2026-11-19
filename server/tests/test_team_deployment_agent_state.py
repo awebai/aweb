@@ -535,3 +535,64 @@ def test_the_capture_fence_is_the_container_removed(tmp_path, monkeypatch):
 def test_with_the_container_removed_the_capture_records_the_daemon_and_its_absence(tmp_path, monkeypatch):
     daemon_answers(monkeypatch, line("agent-two") + "\n")
     assert agent_state.writer("agent") == {"daemon": "daemon-1", "container": "agent", "state": "absent"}
+
+
+def test_an_interrupt_as_a_decrypt_child_is_acquired_still_ends_it(tmp_path):
+    # Deterministic: the interrupt is sent inside read(), after the child
+    # exists and before read_whole holds it.
+    import signal
+
+    command = emits(tmp_path, "acquired", TWO, "time.sleep(120)")
+    children = []
+
+    def read():
+        children.append(agent_state.Decrypted(command, 60))
+        os.kill(os.getpid(), signal.SIGINT)
+        return children[-1]
+
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            agent_state.read_whole(read, lambda tar: list(tar))
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert children[0].process.returncode is not None
+
+
+def test_an_interrupt_as_an_encrypt_child_is_acquired_still_ends_it(tmp_path, monkeypatch):
+    import signal
+
+    root = state(tmp_path)
+    partial = tmp_path / "state.tar.age.partial"
+    children = []
+
+    class Interrupted(agent_state.Child):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            children.append(self)
+            os.kill(os.getpid(), signal.SIGINT)
+
+    monkeypatch.setattr(agent_state, "Child", Interrupted)
+    command = child(tmp_path, "encrypt-sleeps", "time.sleep(120)")
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            agent_state.encrypt(root, partial, command, 60, agent_state.DEFAULT_ENDPOINTS)
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert children[0].process.returncode is not None
+    assert not partial.exists()
+
+
+def test_a_child_started_while_signals_are_held_does_not_inherit_the_hold(tmp_path):
+    # The hold covers only the parent's acquisition: a child that inherited
+    # it would ignore the SIGTERM that ends it.
+    import signal
+
+    probe = [sys.executable, "-c", "import signal; print(sorted(int(s) for s in signal.pthread_sigmask(signal.SIG_BLOCK, [])))"]
+    with agent_state.signals_held():
+        child = agent_state.Child(probe, 30, stdout=subprocess.PIPE, text=True)
+    out, _ = child.process.communicate(timeout=30)
+    child.finish()
+    blocked = json.loads(out)
+    assert int(signal.SIGTERM) not in blocked and int(signal.SIGINT) not in blocked
