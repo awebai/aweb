@@ -185,6 +185,23 @@ human_app.include_router(
 )
 ```
 
+The production human console offers native entry at `/secrets/native/new`, also
+linked from `/secrets/new`. The form supports each authentication kind's
+structured value and shares the non-secret parameter controls with reference
+entry. It clears entered values before sending, retains them in no browser
+storage, and shows only the staged version and creation time.
+
+`POST /installations/{installation_id}/native/versions` takes exactly
+`{secret, value}`: a complete native secret record and the kind's structured
+value. The current owner passkey session and tab CSRF are required. The sole
+native ingress writer reuses the shared codec and sealer, then rechecks the
+installation and session after allocation. It returns only
+`{secret_id, version, created_at}`. Staging creates no active secret or grant.
+The form drafts `secret/create` and `secret_value/create` with the sealed locator;
+the existing fresh passkey approval and confirmation activate the value and
+record its governance events. Granting an agent access remains a separate
+owner-confirmed change.
+
 `POST /installations/{installation_id}/backend-credentials/onepassword/versions`
 accepts a JSON object with one `value` string and the current tab's
 `X-CSRF-Token`. It uses the authoritative installation lookup, current owner

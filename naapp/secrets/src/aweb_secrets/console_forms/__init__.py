@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse, Response
 from aweb_secrets.console_changes import ConsoleChanges, _errors
 from aweb_secrets.console_forms.grants import grant_forms_router
 from aweb_secrets.console_forms.kinds import KIND_NAMES, kind_parameter_controls
+from aweb_secrets.console_forms.native import native_value_forms_router
 from aweb_secrets.console_ui import _login_redirect, _page, console_page
 from aweb_secrets.operation import CAPTURE_FIELDS
 from aweb_secrets.secret import SecretKind, mint_secret_id
@@ -131,7 +132,11 @@ def _reference_review_forms_router(*, changes: ConsoleChanges) -> APIRouter:
         return console_page(
             title="Link a 1Password secret",
             session=current,
-            body_html="<h1>Link a 1Password secret</h1>" + body + _STATUS + _SCRIPT,
+            body_html="<h1>Link a 1Password secret</h1>"
+            '<p><a href="/secrets/native/new">Store a native secret instead</a></p>'
+            + body
+            + _STATUS
+            + _SCRIPT,
         )
 
     @router.get("/secrets/new", response_class=HTMLResponse)
@@ -228,4 +233,5 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
     router = APIRouter(route_class=ConsoleRoute)
     router.include_router(grant_forms_router(changes=changes))
     router.include_router(_reference_review_forms_router(changes=changes))
+    router.include_router(native_value_forms_router(changes=changes))
     return router

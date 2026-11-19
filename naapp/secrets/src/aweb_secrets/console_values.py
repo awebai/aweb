@@ -2,7 +2,7 @@
 
 Composition shares OwnerConsole's sessions, authoritative installation lookup,
 F6 and role directory with the broker. Only the human app mounts this router.
-The entered token uses native custody's inert allocator. Reference validation
+Entered native values and vault tokens use native custody's inert allocator. Reference validation
 opens that scoped token and calls the SDK outside authority transactions; only
 metadata enters the final, reauthorized staging transaction. The later console
 draft/approve/confirm flow owns activation of both candidates.
@@ -10,7 +10,9 @@ draft/approve/confirm flow owns activation of both candidates.
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from http import HTTPStatus
 
 from aweb_naapp.console import ConsoleRoute, ConsoleSession, KeyBoundConsoleSession
@@ -30,7 +32,51 @@ from aweb_secrets.custody.onepassword import OnePasswordRead, OnePasswordReferen
 from aweb_secrets.custody.store import BACKEND_CREDENTIAL_ID, StagedOnePasswordReference
 from aweb_secrets.owners import hold_owner as hold_owner_holding
 from aweb_secrets.owners import owner_scope
-from aweb_secrets.secret import SecretInvalid, SecretRecord
+from aweb_secrets.secret import SecretBackend, SecretInvalid, SecretKind, SecretRecord
+
+
+class ValueStagingCode(StrEnum):
+    INVALID_REQUEST = "request_invalid"
+    JSON_REQUIRED = "json_required"
+    CSRF_REQUIRED = "csrf_token_required"
+    OWNER_REQUIRED = "owner_required"
+    SESSION_REQUIRED = "console_session_required"
+    CUSTODY_UNAVAILABLE = "custody_unavailable"
+
+
+_NATIVE_REFUSALS = {
+    ValueStagingCode.INVALID_REQUEST: "Check the secret details and value fields, then submit again.",
+    ValueStagingCode.JSON_REQUIRED: "Use the console form to submit the value as JSON.",
+    ValueStagingCode.CSRF_REQUIRED: "Sign in with your passkey in this tab, then enter the value again.",
+    ValueStagingCode.OWNER_REQUIRED: "Sign in with the current installation owner's passkey to store a value.",
+    ValueStagingCode.SESSION_REQUIRED: "Sign in again with your owner passkey before storing this value.",
+    ValueStagingCode.CUSTODY_UNAVAILABLE: "The value could not be sealed. Ask the operator to check custody readiness, then enter it again.",
+}
+
+
+@dataclass(frozen=True, kw_only=True)
+class StagedNativeValue:
+    context: SealContext
+    created_at: datetime
+
+
+@asynccontextmanager
+async def native_value_refusals() -> AsyncIterator[None]:
+    """Render value-free console failures as actions (secrets.md §6.1)."""
+    try:
+        yield
+    except HTTPException as refused:
+        try:
+            code = ValueStagingCode(refused.detail)
+        except ValueError:
+            message = (
+                f"{refused.detail.rstrip('.')}. Check the value fields and try again."
+                if refused.status_code == HTTPStatus.BAD_REQUEST and isinstance(refused.detail, str)
+                else "Check that the installation is active, sign in as its owner, and try again."
+            )
+        else:
+            message = _NATIVE_REFUSALS[code]
+        raise HTTPException(refused.status_code, message, headers=refused.headers) from None
 
 
 class ConsoleValues:
@@ -39,6 +85,52 @@ class ConsoleValues:
     def __init__(self, *, console: OwnerConsole, custody: Custody) -> None:
         self.console = console
         self._custody = custody
+
+    async def stage_native_value(
+        self,
+        current: ConsoleSession,
+        *,
+        installation_id: str,
+        initial: SecretRecord,
+        value: dict[str, str],
+    ) -> StagedNativeValue:
+        """§6.1 (secrets.md:596-606): owner-only ingress, inert until confirmation."""
+        if initial.backend != SecretBackend.NATIVE:
+            raise HTTPException(
+                HTTPStatus.BAD_REQUEST, "Choose a native secret before entering its value"
+            )
+        admitted = await self.console.session_installation(current, installation_id)
+        if admitted.installation_id != installation_id:
+            raise HTTPException(HTTPStatus.FORBIDDEN, ValueStagingCode.OWNER_REQUIRED)
+        async with self.console.db.transaction() as tx:
+            await self._authorize(tx, current, admitted)
+            version = await self._custody.sealer.ingest(
+                tx,
+                installation_id=admitted.installation_id,
+                team_id=admitted.team_id,
+                secret_id=initial.secret_id,
+                value=encode_value(initial.kind, value),
+                initial=initial,
+            )
+            created_at = await tx.fetch_value(
+                "SELECT created_at FROM {{tables.sealed_versions}}"
+                " WHERE installation_id=$1 AND team_id=$2 AND secret_id=$3 AND version=$4",
+                admitted.installation_id,
+                admitted.team_id,
+                initial.secret_id,
+                version,
+            )
+            if not isinstance(created_at, datetime):
+                raise CustodyUnavailable("staged version metadata is unavailable")
+            # The allocator/KMS may wait; consume no stale authority after it.
+            await self.console.fence.check(tx, admitted)
+            await self._session_open(tx, current)
+        return StagedNativeValue(
+            context=SealContext(
+                admitted.installation_id, admitted.team_id, initial.secret_id, version
+            ),
+            created_at=created_at,
+        )
 
     async def _session_open(self, tx: TransactionManager, current: ConsoleSession) -> None:
         if isinstance(current, KeyBoundConsoleSession):
@@ -51,7 +143,7 @@ class ConsoleValues:
             " AND closed_at IS NULL AND expires_at>clock_timestamp()",
             current.token_sha256,
         ):
-            raise HTTPException(status_code=401, detail="console_session_required")
+            raise HTTPException(status_code=401, detail=ValueStagingCode.SESSION_REQUIRED)
 
     async def _authorize(
         self, tx: TransactionManager, current: ConsoleSession, admitted: AdmittedInstallation
@@ -65,7 +157,7 @@ class ConsoleValues:
             != owner_scope(admitted.installation_id, admitted.team_id, owner.principal_did)
             or not await hold_owner_holding(tx, owner, installation_id=admitted.installation_id)
         ):
-            raise HTTPException(status_code=403, detail="owner_required")
+            raise HTTPException(status_code=403, detail=ValueStagingCode.OWNER_REQUIRED)
         await self.console.prepare_session(
             tx, current, approver_pairs=[(current.scope, current.subject)]
         )
@@ -76,7 +168,7 @@ class ConsoleValues:
             tx=tx,
             hold=not isinstance(current, KeyBoundConsoleSession),
         ):
-            raise HTTPException(status_code=401, detail="console_session_required")
+            raise HTTPException(status_code=401, detail=ValueStagingCode.SESSION_REQUIRED)
         await self._session_open(tx, current)
 
     async def stage_onepassword_reference(
@@ -96,13 +188,13 @@ class ConsoleValues:
         if (
             type(credential_version) is not int
             or credential_version <= 0
-            or initial.backend != "onepassword"
+            or initial.backend != SecretBackend.ONEPASSWORD
             or initial.kind != reference.kind
         ):
-            raise HTTPException(status_code=400, detail="request_invalid")
+            raise HTTPException(status_code=400, detail=ValueStagingCode.INVALID_REQUEST)
         admitted = await self.console.session_installation(current, installation_id)
         if admitted.installation_id != installation_id:
-            raise HTTPException(status_code=403, detail="owner_required")
+            raise HTTPException(status_code=403, detail=ValueStagingCode.OWNER_REQUIRED)
         async with self.console.db.transaction() as tx:
             await self._authorize(tx, current, admitted)
         # The authorization transaction has ended before KMS or SDK I/O.
@@ -150,7 +242,7 @@ class ConsoleValues:
         # Authoritative F6 lookup/refresh is outside the write transaction.
         admitted = await self.console.session_installation(current, installation_id)
         if admitted.installation_id != installation_id:
-            raise HTTPException(status_code=403, detail="owner_required")
+            raise HTTPException(status_code=403, detail=ValueStagingCode.OWNER_REQUIRED)
         async with self.console.db.transaction() as tx:
             await self._authorize(tx, current, admitted)
             # There is no ordinary secret ancestry here: bkc_onepassword has
@@ -183,19 +275,22 @@ async def _value_staging_errors(
             console.sessions.clear_cookie(response)
             raise HTTPException(
                 status_code=HTTPStatus.UNAUTHORIZED,
-                detail="console_session_required",
+                detail=ValueStagingCode.SESSION_REQUIRED,
                 headers={"Set-Cookie": response.headers["set-cookie"]},
             ) from None
         raise
-    except ValueInvalid:
-        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail="request_invalid") from None
+    except ValueInvalid as refused:
+        # The shared codec owns kind validation and never includes entered bytes.
+        raise HTTPException(status_code=HTTPStatus.BAD_REQUEST, detail=str(refused)) from None
     except InstallationRefused as refused:
         raise HTTPException(status_code=refused.status, detail=refused.code) from None
     except LookupError:
-        raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail="owner_required") from None
+        raise HTTPException(
+            status_code=HTTPStatus.FORBIDDEN, detail=ValueStagingCode.OWNER_REQUIRED
+        ) from None
     except CustodyUnavailable:
         raise HTTPException(
-            status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail="custody_unavailable"
+            status_code=HTTPStatus.SERVICE_UNAVAILABLE, detail=ValueStagingCode.CUSTODY_UNAVAILABLE
         ) from None
 
 
@@ -215,7 +310,7 @@ def _onepassword_reference_router(services: ConsoleValues) -> APIRouter:
             reference = OnePasswordReference.from_config(initial.kind, body["reference"])
         except (SecretInvalid, CustodyUnavailable):
             raise HTTPException(
-                status_code=HTTPStatus.BAD_REQUEST, detail="request_invalid"
+                status_code=HTTPStatus.BAD_REQUEST, detail=ValueStagingCode.INVALID_REQUEST
             ) from None
         async with _value_staging_errors(services.console, current=current):
             staged = await services.stage_onepassword_reference(
@@ -242,7 +337,7 @@ def _backend_credential_router(services: ConsoleValues) -> APIRouter:
         current = await services.console.sessions.current(request)
         body = await _body(request, {"value"})
         async with _value_staging_errors(services.console, current=current):
-            value = encode_value("bearer", {"value": _text(body, "value")})
+            value = encode_value(SecretKind.BEARER, {"value": _text(body, "value")})
             context = await services.stage_backend_credential(
                 current,
                 installation_id=installation_id,
@@ -250,7 +345,7 @@ def _backend_credential_router(services: ConsoleValues) -> APIRouter:
             )
         return {
             "v": 1,
-            "backend": "onepassword",
+            "backend": SecretBackend.ONEPASSWORD,
             "credential_id": context.secret_id,
             "version": context.version,
         }
@@ -263,4 +358,44 @@ def console_values_router(services: ConsoleValues, *, prefix: str = "") -> APIRo
     router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
     router.include_router(_onepassword_reference_router(services))
     router.include_router(_backend_credential_router(services))
+    router.include_router(_native_value_router(services))
+    return router
+
+
+async def _require_native_json(request: Request) -> None:
+    async with native_value_refusals():
+        await _require_json(request)
+
+
+def _native_value_router(services: ConsoleValues) -> APIRouter:
+    router = APIRouter(route_class=ConsoleRoute)
+
+    @router.post(
+        "/installations/{installation_id}/native/versions",
+        status_code=HTTPStatus.CREATED,
+        dependencies=[Depends(_require_native_json)],
+    )
+    async def stage_value(installation_id: str, request: Request) -> dict[str, str | int]:
+        async with native_value_refusals():
+            current = await services.console.sessions.current(request)
+            body = await _body(request, {"secret", "value"})
+            try:
+                initial = SecretRecord.from_after(body["secret"])
+            except SecretInvalid:
+                raise HTTPException(
+                    HTTPStatus.BAD_REQUEST, ValueStagingCode.INVALID_REQUEST
+                ) from None
+            async with _value_staging_errors(services.console, current=current):
+                staged = await services.stage_native_value(
+                    current,
+                    installation_id=installation_id,
+                    initial=initial,
+                    value=body["value"],
+                )
+        return {
+            "secret_id": staged.context.secret_id,
+            "version": staged.context.version,
+            "created_at": staged.created_at.isoformat(),
+        }
+
     return router

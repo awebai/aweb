@@ -7,7 +7,9 @@ confirmation. The upstream, DNS, registry, SMTP, PG and TLS are real fixtures.
 
 import asyncio
 import json
+import secrets
 from enum import StrEnum
+from http import HTTPStatus
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -20,6 +22,7 @@ from playwright.async_api import BrowserContext, Page, expect
 from playwright.async_api import TimeoutError as BrowserTimeout
 
 from aweb_secrets.policy import Policy
+from aweb_secrets.secret import SecretBackend, SecretKind, SecretRecord, SecretSensitivity
 from tests.harness import NAME, running_upstream
 from tests.human_owner import install_virtual_credential
 from tests.test_console_bootstrap import delivered_url
@@ -125,18 +128,19 @@ async def enter_and_confirm_native_value(
     page: Page, *, db, origin: str, changes_path: str, upstream, smtp
 ) -> str:
     entry = await page.goto(origin + "/secrets/native/new")
-    assert entry.status == 200
+    assert entry.status == HTTPStatus.OK
     await page.get_by_label("Secret name", exact=True).fill("native-proof")
     await page.get_by_label("Bearer token", exact=True).fill(upstream.creds.bearer)
     mail_before = len(smtp.received)
     async with page.expect_response(origin + changes_path) as saved:
         await page.get_by_role("button", name="Save a native draft").click()
     response = await saved.value
-    assert response.status == 201
+    assert response.status == HTTPStatus.CREATED
     drafted = await response.json()
     assert set(drafted) == {"change_id", "approval_id", "state"}
     assert drafted["state"] == ConsoleDraftState.PENDING
     assert await db.fetch_value("SELECT count(*) FROM secrets") == 0
+    await page.get_by_role("link", name="Review this draft").click()
     await page.wait_for_url(origin + changes_path + "/" + drafted["change_id"] + "/review")
     if upstream.creds.bearer in await page.content():
         raise AssertionError("native value was reflected into the console page")
@@ -237,7 +241,7 @@ async def assert_agent_brokers_native_value(*, root, agent: Member, upstream) ->
         headers=agent.headers(aud=configured.public_origin, method="POST", path=path, body=raw)
         | {"Content-Type": "application/json"},
     )
-    assert result.status_code == 200 and result.json()["state"] == DispatchState.COMPLETED
+    assert result.status_code == HTTPStatus.OK and result.json()["state"] == DispatchState.COMPLETED
     assert upstream.paths == ["/bearer/echo"]
     if upstream.creds.bearer in result.text:
         raise AssertionError("broker response disclosed the native value")
@@ -271,3 +275,76 @@ async def test_production_owner_enters_native_value_and_agent_brokers_it(
             registry=registry,
         )
     await assert_agent_brokers_native_value(root=root, agent=agent, upstream=upstream)
+
+
+class InvalidNativeEntry(StrEnum):
+    VAULT_BACKEND = "vault_backend"
+    VALUE_SHAPE = "value_shape"
+    EMPTY_VALUE = "empty_value"
+    UNTRUSTED_TEAM = "untrusted_team"
+
+
+def native_entry_request(*, value: str) -> dict:
+    return {
+        "secret": SecretRecord.from_after(
+            {
+                "v": 1,
+                "secret_id": "sec_native_guard",
+                "ref": "native-guard",
+                "description": "Native ingress guard",
+                "kind": SecretKind.BEARER,
+                "kind_params": {},
+                "sensitivity": SecretSensitivity.STANDARD,
+                "approve_only": False,
+                "backend": SecretBackend.NATIVE,
+            }
+        ).after,
+        "value": {"value": value},
+    }
+
+
+def assert_value_not_returned(*, response, value: str) -> None:
+    if value in response.text:
+        raise AssertionError("native ingress response disclosed the entered value")
+
+
+async def test_native_entry_requires_a_human_owner_session_and_this_tabs_csrf(root):
+    service, client, configured, _, installed, *_ = root
+    path = f"/installations/{installed['installation_id']}/native/versions"
+    value = secrets.token_urlsafe(32)
+    body = native_entry_request(value=value)
+    anonymous = await client.post(configured.console_origin + path, json=body)
+    assert anonymous.status_code == HTTPStatus.UNAUTHORIZED
+    await enrolled_owner(root)
+    no_csrf = await client.post(configured.console_origin + path, json=body)
+    assert no_csrf.status_code == HTTPStatus.FORBIDDEN
+    agent_origin = await client.post(configured.public_origin + path, json=body)
+    assert agent_origin.status_code == HTTPStatus.NOT_FOUND
+    for response in (anonymous, no_csrf, agent_origin):
+        assert_value_not_returned(response=response, value=value)
+    assert await service.runtime.db().fetch_value("SELECT count(*) FROM sealed_versions") == 0
+
+
+@pytest.mark.parametrize("fault", list(InvalidNativeEntry))
+async def test_invalid_native_entry_never_allocates_or_reflects_the_value(root, fault):
+    service, client, configured, _, installed, *_ = root
+    holder = await enrolled_owner(root)
+    value = secrets.token_urlsafe(32)
+    body = native_entry_request(value=value)
+    if fault is InvalidNativeEntry.VAULT_BACKEND:
+        body["secret"] = {**body["secret"], "backend": SecretBackend.ONEPASSWORD}
+    elif fault is InvalidNativeEntry.VALUE_SHAPE:
+        body["value"] = {"password": value}
+    elif fault is InvalidNativeEntry.EMPTY_VALUE:
+        body["value"] = {"value": ""}
+    else:
+        body["team_id"] = "foreign:example.com"
+    path = f"/installations/{installed['installation_id']}/native/versions"
+    response = await client.post(
+        configured.console_origin + path,
+        json=body,
+        headers={"X-CSRF-Token": holder.csrf_token},
+    )
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert_value_not_returned(response=response, value=value)
+    assert await service.runtime.db().fetch_value("SELECT count(*) FROM sealed_versions") == 0
