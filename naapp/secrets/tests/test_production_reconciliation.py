@@ -105,12 +105,16 @@ async def settle(root, reconcile_ref):
 
 
 async def test_owner_can_settle_an_uncertain_production_broker_effect_and_unblock_the_pair(
-    root, upstream
+    root, upstream, *, onepassword_values
 ):
     service, _, _, member, *_ = root
     server, state = upstream
     first = await scoped_request(
-        root, f"https://{server.host}:{server.port}/effect", server.host, server.port
+        root,
+        url=f"https://{server.host}:{server.port}/effect",
+        host=server.host,
+        port=server.port,
+        onepassword_values=onepassword_values,
     )
     assert first.status_code == 200 and first.json()["state"] == "outcome_unknown"
     assert first.json()["reconcile_ref"] == first.json()["request_ref"]
@@ -130,9 +134,11 @@ async def test_owner_can_settle_an_uncertain_production_broker_effect_and_unbloc
     assert len(server.seen) == 2
 
 
-async def test_owner_can_settle_a_swept_production_run_and_request_a_fresh_approval(root):
+async def test_owner_can_settle_a_swept_production_run_and_request_a_fresh_approval(
+    root, *, onepassword_values
+):
     service, client, configured, *_ = root
-    pending = await admitted_run(root)
+    pending = await admitted_run(root, onepassword_values=onepassword_values)
     claimed = await client.post(
         configured.public_origin + "/runner/v1/claim",
         content=b"{}",

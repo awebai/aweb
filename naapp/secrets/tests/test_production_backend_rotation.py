@@ -153,7 +153,12 @@ async def test_changed_sdk_item_refuses_the_observing_attempt_and_only_a_fresh_r
     if execution is Execution.RUNNER:
         admitted = await member_request(root, path, {**body, "request_id": original_id})
         assert admitted.status_code == 202 and admitted.json()["state"] == "admitted"
-    item.current = sdk_item([field("credential", secrets.token_urlsafe(32))], version=8)
+    item.current = sdk_item(
+        [field("credential", secrets.token_urlsafe(32))],
+        id=item.current.id,
+        vault_id=item.current.vault_id,
+        version=8,
+    )
     if execution is Execution.BROKER:
         first = await member_request(root, path, {**body, "request_id": original_id})
     else:
