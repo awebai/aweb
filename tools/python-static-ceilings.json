@@ -1219,12 +1219,6 @@
     },
     {
       "tool": "ruff",
-      "file": "server/tests/test_cli_invite_registry_discovery.py",
-      "code": "F401",
-      "count": 1
-    },
-    {
-      "tool": "ruff",
       "file": "server/tests/test_cli_never_grants.py",
       "code": "B023",
       "count": 2

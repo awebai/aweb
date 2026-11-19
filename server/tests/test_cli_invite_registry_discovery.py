@@ -16,7 +16,8 @@ import pytest
 from identity_binding_support import register_global_identity
 from test_cli_human_reply import _pem
 from test_cli_never_grants import registry_listener
-from test_dashboard_privacy import TEAM, TEAM_NAME, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, TEAM_NAME
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_identity_binding_http import certificate, request
 
 
