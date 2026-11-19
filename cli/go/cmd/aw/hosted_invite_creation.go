@@ -250,9 +250,6 @@ func (state *hostedInviteCreation) prepareRequest(root string, material workspac
 		return nil, unregisteredInviteParentError()
 	}
 	state.IssuerCreationStarted = true
-	if state.Tree.Domain == "" {
-		return nil, nil
-	}
 	if !state.RequestReady {
 		installed, err := awconfig.LoadInstalledIDChain(root)
 		if err != nil {

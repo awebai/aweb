@@ -143,7 +143,11 @@ func runRecoverableJoinFrom(cmd *cobra.Command, wd, source, sourceHome, team str
 		}
 	}
 	// Membership may already have been persisted before connect failed.
-	if cert, err := loadTeamCertificateAt(wd, home.Root, team); err == nil && cert != nil {
+	cert, err := loadTeamCertificateAt(wd, home.Root, team)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("load init retry membership: %w", err)
+	}
+	if cert != nil {
 		bindKey := prior.DIDKey == ""
 		if bindKey {
 			key, err := awid.LoadSigningKey(filepath.Join(home.Root, "signing.key"))
