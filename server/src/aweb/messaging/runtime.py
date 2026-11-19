@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING
+
+import httpx
+from starlette.datastructures import State
+
+if TYPE_CHECKING:
+    from awid.registry import RegistryClient
+    from aweb.federation.activation import FederationAuthorityActivation
 
 from aweb.agent_wake import AgentWakePublisher, agent_wake_publisher
 from aweb.config import get_public_origin
@@ -22,10 +29,10 @@ class MessagingRuntime:
     same application services.
     """
 
-    registry_client: Any
-    federation_authority: Any
-    mail_transport: Any
-    chat_transport: Any
+    registry_client: RegistryClient | None
+    federation_authority: FederationAuthorityActivation | None
+    mail_transport: httpx.AsyncBaseTransport | None
+    chat_transport: httpx.AsyncBaseTransport | None
     public_origin: str
     public_origins: frozenset[str]
     on_mutation: MutationCallback | None
@@ -33,7 +40,7 @@ class MessagingRuntime:
     identity_binding_cache: OrderedDict
 
 
-def messaging_runtime(app_state) -> MessagingRuntime:
+def messaging_runtime(app_state: State) -> MessagingRuntime:
     """The messaging runtime of the application that owns ``app_state``."""
     federation_authority = getattr(app_state, "federation_authority", None)
     return MessagingRuntime(
@@ -46,8 +53,10 @@ def messaging_runtime(app_state) -> MessagingRuntime:
         chat_transport=delivery_transport(
             federation_authority,
             getattr(app_state, "federation_chat_transport", None),
-            getattr(app_state, "federation_message_transport", None),
-            getattr(app_state, "federation_mail_transport", None),
+            fallback_transports=(
+                getattr(app_state, "federation_message_transport", None),
+                getattr(app_state, "federation_mail_transport", None),
+            ),
         ),
         public_origin=application_public_origin(app_state),
         public_origins=frozenset(application_public_origins(app_state)),
@@ -57,7 +66,7 @@ def messaging_runtime(app_state) -> MessagingRuntime:
     )
 
 
-def application_public_origin(app_state) -> str:
+def application_public_origin(app_state: State) -> str:
     """The origin an application names as its own when it sends to another server."""
     configured = str(getattr(app_state, "public_origin", "") or "").strip()
     if configured:
