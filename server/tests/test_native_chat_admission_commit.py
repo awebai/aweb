@@ -13,7 +13,7 @@ from awid.signing import canonical_json_bytes, sign_message
 from aweb.event_types import MutationEventType
 from identity_binding_support import register_global_identity
 from test_dashboard_privacy import _request, privacy_app  # noqa: F401
-from test_native_mail_admission_commit import PolicyChange
+from test_native_mail_admission_commit import PolicyChange, connect_policy_members
 
 
 class ChatPath(Enum):
@@ -30,6 +30,7 @@ async def test_native_chat_admission_stays_locked_through_the_actual_message_com
     change,
 ):
     env = privacy_app
+    await connect_policy_members(env)
     bob = env.actors["bob"]
     stable = await register_global_identity(env, bob)
     await env.db.execute(
