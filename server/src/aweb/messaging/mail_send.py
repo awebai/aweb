@@ -119,7 +119,10 @@ from aweb.service_errors import (
     ForbiddenError,
     NotFoundError,
     ValidationError,
+    IdentityBindingCode,
+    IdentityBindingError,
 )
+from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 
 if TYPE_CHECKING:
     from aweb.messaging.mail_models import SendMessageRequest
@@ -876,17 +879,13 @@ async def _continuation_signature_recipient(
     ):
         signed_stable = signed_to
     if not stable.startswith("did:aw:") or signed_stable != stable:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.FORBIDDEN, detail="identity_binding_mismatch"
-        )
+        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
     address = str(participant.get("address") or "")
     signed_address = (
         signed_to if isinstance(signed_to, str) and "/" in signed_to else ""
     )
     if signed_address and signed_address != address:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.FORBIDDEN, detail="identity_binding_mismatch"
-        )
+        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
     if (
         not signed_key
         and isinstance(signed_to, str)
@@ -896,34 +895,31 @@ async def _continuation_signature_recipient(
     if not signed_key:
         # Released clients may sign only the stable DID on a stored route.
         # Discover its current key solely for validation, never for delivery.
+        if runtime.registry_client is None:
+            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
         try:
             resolved = await runtime.registry_client.resolve_key_fresh(stable)
             signed_key = resolved.current_did_key
         except RegistryError as exc:
             if exc.status_code != 404:
                 logging.getLogger(__name__).warning(
-                    "Stored mail signature binding dependency failed", exc_info=True
+                    "Stored mail signature binding dependency failed failure_type=%s",
+                    type(exc).__name__,
                 )
-            detail = (
-                "identity_binding_mismatch"
+            code = (
+                IdentityBindingCode.MISMATCH
                 if exc.status_code == 404
-                else "identity_binding_unavailable"
+                else IdentityBindingCode.UNAVAILABLE
             )
-            raise DeliveryRefusal(
-                status_code=403 if exc.status_code == 404 else 503, detail=detail
-            ) from exc
-        except Exception as exc:
+            raise IdentityBindingError(code) from exc
+        except AWID_DEPENDENCY_ERRORS as exc:
             logging.getLogger(__name__).warning(
-                "Stored mail signature binding dependency failed", exc_info=True
+                "Stored mail signature binding dependency failed failure_type=%s",
+                type(exc).__name__,
             )
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.SERVICE_UNAVAILABLE,
-                detail="identity_binding_unavailable",
-            ) from exc
+            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
     if not isinstance(signed_key, str) or not signed_key.startswith("did:key:"):
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.FORBIDDEN, detail="identity_binding_mismatch"
-        )
+        raise IdentityBindingError(IdentityBindingCode.MISMATCH)
     await observe_current_identity_binding(
         runtime.registry_client,
         runtime.identity_binding_cache,

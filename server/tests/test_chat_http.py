@@ -4,6 +4,7 @@ from team_facts_fixtures import legacy_registry
 
 from collections import OrderedDict
 from time import monotonic
+from aweb.error_responses import install_service_error_handlers
 from aweb.identity_binding import IdentityBinding
 
 import base64
@@ -226,6 +227,7 @@ def _signed_team_headers(
 
 def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     app = FastAPI()
+    install_service_error_handlers(app)
     app.include_router(chat_router)
     app.include_router(federation_router)
 

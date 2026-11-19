@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from aweb.messaging.refusals import DeliveryRefusal
 from aweb.service_errors import ServiceError
+from aweb.auth_error_transport import install_auth_error_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 def install_service_error_handlers(app: FastAPI) -> None:
     """Install the native service-to-HTTP boundary on the serving application."""
     app.add_exception_handler(ServiceError, service_error_handler)
+    install_auth_error_handlers(app)
 
 
 async def service_error_handler(request: Request, exc: ServiceError) -> JSONResponse:
