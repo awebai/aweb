@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import re
 import secrets
 from dataclasses import dataclass
@@ -15,12 +16,18 @@ from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
+from folio.cloudflare_stream import (
+    CloudflareStreamClient,
+    UnrecognizedStreamState,
+    stream_direct_upload_expires_at,
+)
 from folio.config import Settings
 from folio.event_emit import emit_doc_changed
 from folio.link_secrets import read_only_link_key, secret_digest
-from folio.models import LinkKind
+from folio.models import AssetKind, LinkKind
 from folio.presentation import builtin_preset, sanitize_theme_tokens
+
+logger = logging.getLogger(__name__)
 
 
 async def _team_usage(db: AsyncDatabaseManager, *, team_id: str) -> dict[str, int]:
@@ -596,7 +603,7 @@ async def upload_image_asset(
     )
     return {
         "asset_id": asset_id,
-        "kind": "image",
+        "kind": AssetKind.IMAGE,
         "url": f"{settings.public_origin.rstrip('/')}/assets/{asset_id}",
         "content_type": content_type,
     }
@@ -645,7 +652,7 @@ async def create_video_direct_upload(
     )
     return {
         "asset_id": asset_id,
-        "kind": "video",
+        "kind": AssetKind.VIDEO,
         "stream_uid": direct_upload.uid,
         "upload_url": direct_upload.upload_url,
         "upload_expires_at": direct_upload.expires_at,
@@ -673,22 +680,28 @@ async def get_asset_metadata(
     if row is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     data = dict(row)
-    if data.get("kind") == "video" and data.get("stream_uid"):
+    if data.get("kind") == AssetKind.VIDEO and data.get("stream_uid"):
         try:
             status = await CloudflareStreamClient(settings).get_video_status(
                 stream_uid=str(data["stream_uid"])
             )
+        except UnrecognizedStreamState as exc:
+            logger.error("Refused the Cloudflare Stream status of asset %s: %s", asset_id, exc)
+            raise HTTPException(
+                status_code=502,
+                detail="Cloudflare Stream reported a video state Folio does not recognize",
+            ) from exc
         except HTTPException as exc:
             if exc.status_code != 503:
                 raise
         else:
-            data["stream_status"] = status.status
+            data["stream_status"] = status
             await db.execute(
                 "UPDATE {{tables.assets}} SET stream_status = $1, updated_at = NOW() WHERE asset_id = $2",
-                status.status,
+                status,
                 asset_id,
             )
-    if data.get("kind") == "image":
+    if data.get("kind") == AssetKind.IMAGE:
         data["url"] = f"{settings.public_origin.rstrip('/')}/assets/{asset_id}"
     return data
 

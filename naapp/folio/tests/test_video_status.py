@@ -40,7 +40,7 @@ async def _video(db, *, status: StreamStatus) -> object:
 
 def _cloudflare_reports(monkeypatch, state: str) -> None:
     async def get_video_status(self, *, stream_uid: str):
-        return video_status_from_cloudflare(_cloudflare_result(state), stream_uid=stream_uid)
+        return video_status_from_cloudflare(_cloudflare_result(state))
 
     monkeypatch.setattr(
         cloudflare_stream.CloudflareStreamClient, "get_video_status", get_video_status

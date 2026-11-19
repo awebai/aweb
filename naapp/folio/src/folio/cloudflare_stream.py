@@ -10,6 +10,29 @@ import jwt
 from fastapi import HTTPException
 
 from folio.config import Settings
+from folio.models import StreamStatus
+
+# Cloudflare Stream's documented video states (result.status.state), from
+# https://developers.cloudflare.com/api/resources/stream/methods/get/ (read 2026-11-19).
+# "downloading" is Cloudflare fetching the source before it queues the encode.
+# "live-inprogress" belongs to live inputs, which Folio never creates.
+CLOUDFLARE_VIDEO_STATES: dict[str, StreamStatus] = {
+    "pendingupload": StreamStatus.PENDING_UPLOAD,
+    "downloading": StreamStatus.QUEUED,
+    "queued": StreamStatus.QUEUED,
+    "inprogress": StreamStatus.PROCESSING,
+    "live-inprogress": StreamStatus.PROCESSING,
+    "ready": StreamStatus.READY,
+    "error": StreamStatus.ERROR,
+}
+
+
+class UnrecognizedStreamState(Exception):
+    """Cloudflare reported a video state outside CLOUDFLARE_VIDEO_STATES, or none."""
+
+    def __init__(self, state: object) -> None:
+        self.state = state
+        super().__init__(f"Cloudflare Stream reported an unrecognized video state: {state!r:.80}")
 
 
 @dataclass(frozen=True)
@@ -17,15 +40,7 @@ class StreamDirectUpload:
     uid: str
     upload_url: str
     expires_at: datetime
-    status: str = "pending_upload"
-
-
-@dataclass(frozen=True)
-class StreamVideoStatus:
-    uid: str
-    status: str
-    ready_to_stream: bool
-    duration_seconds: float | None = None
+    status: StreamStatus = StreamStatus.PENDING_UPLOAD
 
 
 class CloudflareStreamClient:
@@ -71,7 +86,7 @@ class CloudflareStreamClient:
             raise HTTPException(status_code=503, detail="Cloudflare Stream direct upload response was incomplete")
         return StreamDirectUpload(uid=uid, upload_url=upload_url, expires_at=expires_at)
 
-    async def get_video_status(self, *, stream_uid: str) -> StreamVideoStatus:
+    async def get_video_status(self, *, stream_uid: str) -> StreamStatus:
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 response = await client.get(self._url(f"/{stream_uid}"), headers=self._headers())
@@ -83,31 +98,22 @@ class CloudflareStreamClient:
         result = data.get("result") if isinstance(data, dict) else None
         if not isinstance(result, dict):
             raise HTTPException(status_code=503, detail="Cloudflare Stream status response was invalid")
-        return video_status_from_cloudflare(result, stream_uid=stream_uid)
+        return video_status_from_cloudflare(result)
 
 
-def video_status_from_cloudflare(result: dict[str, Any], *, stream_uid: str) -> StreamVideoStatus:
-    """A video's status from the ``result`` of Cloudflare Stream's GET /stream/<uid>."""
-    ready = bool(result.get("readyToStream"))
+def video_status_from_cloudflare(result: dict[str, Any]) -> StreamStatus:
+    """A video's status from the ``result`` of Cloudflare Stream's GET /stream/<uid>.
+
+    Rule: docs/sot.md §1, Video. An unrecognized or missing state raises UnrecognizedStreamState, so it is never
+    stored. readyToStream means at least one quality level plays, which is all an
+    embed needs, so it makes the video ready before every quality is encoded.
+    """
     status_data = result.get("status")
-    state = "ready" if ready else "processing"
-    if isinstance(status_data, dict) and status_data.get("state"):
-        state = str(status_data["state"]).strip().lower()
-    if state == "pendingupload":
-        state = "pending_upload"
-    if state == "inprogress":
-        state = "processing"
-    duration = result.get("duration")
-    try:
-        duration_seconds = float(duration) if duration is not None else None
-    except (TypeError, ValueError):
-        duration_seconds = None
-    return StreamVideoStatus(
-        uid=str(result.get("uid") or stream_uid),
-        status="ready" if ready else state,
-        ready_to_stream=ready,
-        duration_seconds=duration_seconds,
-    )
+    state = status_data.get("state") if isinstance(status_data, dict) else None
+    status = CLOUDFLARE_VIDEO_STATES.get(state) if isinstance(state, str) else None
+    if status is None:
+        raise UnrecognizedStreamState(state)
+    return StreamStatus.READY if bool(result.get("readyToStream")) else status
 
 
 def _cloudflare_json(response: httpx.Response, *, context: str) -> dict[str, Any]:

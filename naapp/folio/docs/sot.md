@@ -60,6 +60,12 @@ earns its place here.
   the asset record and embed the player as a trusted first-party element
   behind the capability link. This is the one piece of real infrastructure
   `folio` takes on that atext refuses by design.
+  A video's `stream_status` is one of `pending_upload`, `queued`,
+  `processing`, `ready` and `error`. A member's asset read refreshes it from
+  Cloudflare, mapping each of Cloudflare's documented states to one of these
+  (`readyToStream` makes it `ready`). A state Cloudflare does not document, or
+  a missing one, is never stored: the read answers 502 and logs the state.
+  When Cloudflare is unreachable, the read returns the last stored status.
 - Media renders inside the present page (themed), behind the same public
   capability link.
 

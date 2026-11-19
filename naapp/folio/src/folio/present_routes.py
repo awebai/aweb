@@ -83,8 +83,8 @@ def mount_presentation_routes(
             if kind == AssetKind.IMAGE:
                 embeds[asset_id] = {"kind": AssetKind.IMAGE, "url": image_url(asset_id)}
             elif kind == AssetKind.VIDEO:
-                status = str(raw.get("stream_status") or StreamStatus.PENDING_UPLOAD)
-                embed = {"kind": AssetKind.VIDEO, "status": status}
+                status = StreamStatus(raw.get("stream_status") or StreamStatus.PENDING_UPLOAD)
+                embed: dict[str, str] = {"kind": AssetKind.VIDEO, "status": status}
                 stream_uid = str(raw.get("stream_uid") or "").strip()
                 if status == StreamStatus.READY and stream_uid:
                     try:

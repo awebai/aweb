@@ -133,7 +133,7 @@ class ImageAssetUploadRequest(BaseModel):
 
 class ImageAssetResponse(BaseModel):
     asset_id: UUID
-    kind: str = "image"
+    kind: AssetKind = AssetKind.IMAGE
     url: str
     content_type: str
 
@@ -148,21 +148,21 @@ class VideoDirectUploadRequest(BaseModel):
 
 class VideoDirectUploadResponse(BaseModel):
     asset_id: UUID
-    kind: str
+    kind: AssetKind
     stream_uid: str
     upload_url: str
     upload_expires_at: datetime
-    status: str
+    status: StreamStatus
     content_type: str
 
 
 class AssetMetadataResponse(BaseModel):
     asset_id: UUID
-    kind: str
+    kind: AssetKind
     content_type: str | None = None
     url: str | None = None
     stream_uid: str | None = None
-    stream_status: str | None = None
+    stream_status: StreamStatus | None = None
     upload_expires_at: datetime | None = None
     created_at: datetime
     updated_at: datetime | None = None

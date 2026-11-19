@@ -29,7 +29,7 @@ def _status(status: dict | None, *, ready_to_stream: bool = False) -> object:
     result: dict = {"uid": "stream-uid", "readyToStream": ready_to_stream}
     if status is not None:
         result["status"] = status
-    return video_status_from_cloudflare(result, stream_uid="stream-uid").status
+    return video_status_from_cloudflare(result)
 
 
 def test_stream_iframe_url_requires_signing_config() -> None:
