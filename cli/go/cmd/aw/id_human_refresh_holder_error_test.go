@@ -98,6 +98,10 @@ func TestHumanRefreshBindingCarriesHolderRecoveryAdvice(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), advice) || errorCodeOf(err) != code || exitCode(err) != 1 {
 		t.Fatalf("holder recovery advice/code lost: %v (code %q)", err, errorCodeOf(err))
 	}
+	envelope := errorEnvelope(err, err.Error())
+	if envelope.Error.Code != code || envelope.Error.Message != advice || envelope.Error.HTTPStatus != http.StatusConflict {
+		t.Fatalf("JSON refusal lost holder code, status or next step: %+v", envelope.Error)
+	}
 	for name, want := range snapshots {
 		got, err := os.ReadFile(filepath.Join(h.dir, name))
 		if err != nil || !bytes.Equal(got, want) {
@@ -106,5 +110,14 @@ func TestHumanRefreshBindingCarriesHolderRecoveryAdvice(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.dir, "approval-binding-refresh.json")); !os.IsNotExist(err) {
 		t.Fatalf("refused holder created a pending packet: %v", err)
+	}
+}
+
+func TestHumanBindingRefreshUnreadableHolderErrorKeepsActionableFallback(t *testing.T) {
+	for _, body := range []string{`not json`, `{"error":{"code":17,"message":"wrong type"}}`, `{"error":{"code":"refused","message":""}}`} {
+		err := humanBindingRefreshHolderError(&idRequestExecutionResult{Status: http.StatusConflict, Body: []byte(body)})
+		if !strings.Contains(err.Error(), "Check the person's current ID chain and active enrollment with the issuer.") || errorCodeOf(err) != "" {
+			t.Fatalf("unreadable holder answer replaced the fallback: %v", err)
+		}
 	}
 }
