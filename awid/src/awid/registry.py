@@ -304,7 +304,7 @@ class Address:
     did_aw: str
     current_did_key: str
     created_at: str
-    # Released lifetime inputs remain accepted: callers may construct or
+    # Released address inputs remain accepted: callers may construct or
     # read these fields from older AWID services. Current AWID responses omit
     # them and routing must not consult them.
     reachability: str = ""

@@ -6,7 +6,8 @@ import base64
 import json
 import re
 from datetime import datetime, timezone
-from typing import Literal
+from enum import Enum, auto
+from typing import Any, Literal
 
 import asyncpg
 from awid.contract import normalize_identity_scope
@@ -567,20 +568,20 @@ class CertificateRegisterRequest(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def normalize_legacy_lifetime(cls, data):
+    def normalize_lifetime_scope(cls, data):
         if not isinstance(data, dict):
             return data
         values = dict(data)
         lifetime = values.pop("lifetime", None)
         if lifetime is not None:
-            legacy_scope = normalize_identity_scope(str(lifetime))
+            lifetime_scope = normalize_identity_scope(str(lifetime))
             if (
                 values.get("identity_scope") is not None
                 and normalize_identity_scope(str(values["identity_scope"]))
-                != legacy_scope
+                != lifetime_scope
             ):
                 raise ValueError("lifetime does not match identity_scope")
-            values.setdefault("identity_scope", legacy_scope)
+            values.setdefault("identity_scope", lifetime_scope)
         return values
 
     @field_validator("member_did_key")
@@ -650,10 +651,10 @@ class CertificateRevokeResponse(BaseModel):
     certificate_id: str
 
 
-# The pre-pagination revocation route returned up to this many rows; legacy
-# clients read that page as the complete set, so the no-limit page size must
-# never shrink below it (aweb-abfo).
-_LEGACY_REVOCATION_PAGE_ROWS = 1000
+# Released clients without pagination read one page as the complete set.
+# Keep their no-limit page at least this large; clients with cursor support
+# must follow has_more until the entire set is read.
+_UNPAGINATED_REVOCATION_PAGE_ROWS = 1000
 
 
 class RevocationEntry(BaseModel):
@@ -663,11 +664,9 @@ class RevocationEntry(BaseModel):
 
 class RevocationListResponse(BaseModel):
     revocations: list[RevocationEntry]
-    # Absent has_more/next_cursor (old servers) is not "complete": clients that
-    # consume revocations as a completeness-bearing set must page until
-    # has_more is false. aweb-abfo: the route previously returned the oldest
-    # 1000 rows with no truncation signal, and verifiers read that as the
-    # complete revocation set.
+    # Revocation consumers must follow the cursor until has_more is false.
+    # Missing pagination fields cannot establish completeness for a server
+    # that truncates its response at a row limit.
     has_more: bool = False
     next_cursor: str | None = None
 
@@ -733,6 +732,77 @@ async def create_team(
     return _team_response(row)
 
 
+class _TeamListingAccess(Enum):
+    VISIBLE_TO_READER = auto()
+    ALL_TEAMS = auto()
+
+
+_TEAM_LIST_QUERY = """
+    SELECT t.team_uuid, t.domain, t.name, t.display_name,
+           t.team_did_key, t.visibility, t.created_at
+      FROM {{tables.teams}} t
+     WHERE t.domain = $1
+       AND t.deleted_at IS NULL
+       AND (
+           $2::boolean
+           OR t.visibility = 'public'
+           OR t.team_did_key = $3::text
+           OR EXISTS (
+               SELECT 1 FROM {{tables.team_certificates}} tc
+                WHERE tc.team_uuid = t.team_uuid
+                  AND tc.member_did_key = $3::text
+                  AND tc.revoked_at IS NULL
+           )
+       )
+       AND ($4::timestamptz IS NULL OR
+            (t.created_at, t.team_uuid) > ($4::timestamptz, $5::uuid))
+     ORDER BY t.created_at, t.team_uuid
+     LIMIT $6
+"""
+
+
+def _team_list_parameters(
+    *,
+    domain: str,
+    access: _TeamListingAccess,
+    viewer_did: str | None,
+    limit: int,
+    cursor: dict[str, Any] | None,
+) -> list[object]:
+    """Bind the visibility and keyset page from docs/awid-sot.md:670-672.
+
+    The route verifies the reader before binding its DID; only a verified
+    trusted-service credential selects ALL_TEAMS. Request values never form SQL.
+    """
+    cursor_ts = None
+    cursor_team_uuid = None
+    if cursor is not None:
+        cursor_created_at = cursor.get("created_at")
+        cursor_team_uuid = cursor.get("team_uuid")
+        if not isinstance(cursor_created_at, str) or not isinstance(
+            cursor_team_uuid, str
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid cursor. Restart the team listing without a cursor and retry.",
+            )
+        try:
+            cursor_ts = datetime.fromisoformat(cursor_created_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid cursor. Restart the team listing without a cursor and retry.",
+            ) from exc
+    return [
+        domain,
+        access is _TeamListingAccess.ALL_TEAMS,
+        viewer_did,
+        cursor_ts,
+        cursor_team_uuid,
+        limit + 1,
+    ]
+
+
 @router.get(
     "",
     response_model=TeamListResponse,
@@ -751,51 +821,20 @@ async def list_teams(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    where_clauses = ["t.domain = $1", "t.deleted_at IS NULL"]
-    params: list[object] = [domain]
-
-    # Visibility: private teams are enumerable only by the trusted service, or
-    # by a signed caller who controls the team or holds an unrevoked
-    # member certificate in it. Anonymous callers see public teams only.
-    if not _presents_trusted_service_token(request):
+    access = _TeamListingAccess.VISIBLE_TO_READER
+    viewer_did = None
+    if _presents_trusted_service_token(request):
+        access = _TeamListingAccess.ALL_TEAMS
+    else:
         viewer_did = await _signed_reader(request, domain=domain, name=None)
-        if viewer_did is not None:
-            params.append(viewer_did)
-            idx = len(params)
-            where_clauses.append(
-                f"(t.visibility = 'public' OR t.team_did_key = ${idx}"
-                " OR EXISTS ("
-                "SELECT 1 FROM {{tables.team_certificates}} tc"
-                f" WHERE tc.team_uuid = t.team_uuid AND tc.member_did_key = ${idx}"
-                " AND tc.revoked_at IS NULL))"
-            )
-        else:
-            where_clauses.append("t.visibility = 'public'")
-
-    if decoded_cursor is not None:
-        cursor_created_at = decoded_cursor.get("created_at")
-        cursor_team_uuid = decoded_cursor.get("team_uuid")
-        if not isinstance(cursor_created_at, str) or not isinstance(
-            cursor_team_uuid, str
-        ):
-            raise HTTPException(status_code=400, detail="Invalid cursor")
-        try:
-            cursor_ts = datetime.fromisoformat(cursor_created_at.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
-        params.extend([cursor_ts, cursor_team_uuid])
-        where_clauses.append(
-            f"(created_at, team_uuid) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
-        )
-
-    params.append(validated_limit + 1)
-    query = (
-        "SELECT t.team_uuid, t.domain, t.name, t.display_name, t.team_did_key, t.visibility, t.created_at"
-        " FROM {{tables.teams}} t"
-        " WHERE " + " AND ".join(where_clauses) + f" ORDER BY t.created_at, t.team_uuid"
-        f" LIMIT ${len(params)}"
+    parameters = _team_list_parameters(
+        domain=domain,
+        access=access,
+        viewer_did=viewer_did,
+        limit=validated_limit,
+        cursor=decoded_cursor,
     )
-    rows = await db.fetch_all(query, *params)
+    rows = await db.fetch_all(_TEAM_LIST_QUERY, *parameters)
     has_more = len(rows) > validated_limit
     page_rows = rows[:validated_limit]
     next_cursor = None
@@ -1772,8 +1811,8 @@ async def revoke_certificate(
 @router.get(
     "/{name}/revocations",
     response_model=RevocationListResponse,
-    # allow_trusted_service: since aweb-abfn/abfp, aweb backends poll this
-    # route per team per revocation-cache TTL (60s) as the input to membership
+    # Backends poll this route per team per revocation-cache TTL (60s)
+    # as the input to membership
     # enforcement, and a 429 here becomes a fail-closed 503 on every
     # authenticated request they serve for the team. A backend presenting the
     # configured service token bypasses the per-IP bucket, the same exemption
@@ -1819,12 +1858,12 @@ async def list_revocations(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if limit is None:
-        # Legacy clients (pre-pagination) send no limit and read the first
+        # Released clients without pagination send no limit and read the first
         # page as complete; their historical page was 1000 rows. Keep that as
         # this endpoint's no-limit page size so a mixed deployment never gets
         # a SHORTER complete-looking page than it did before pagination
         # existed. Explicit limits use the shared clamp.
-        validated_limit = _LEGACY_REVOCATION_PAGE_ROWS
+        validated_limit = _UNPAGINATED_REVOCATION_PAGE_ROWS
 
     where_clauses = ["team_uuid = $1", "revoked_at IS NOT NULL"]
     params: list[object] = [team_row["team_uuid"]]
