@@ -225,6 +225,8 @@ class Agent:
         receipt's message_id) from the peer, verified; the seat replies,
         which it can only do with its own key; the peer finds that reply
         from the seat, verified."""
+        if seat_did == peer_did:
+            raise Failed(f"the seat and the peer are the same identity ({seat_did}); the round trip proves nothing")
         subject = f"acwd25-restart-{secrets.token_hex(6)}"
         sent = json.loads(required(run(*self.peer, "mail", "send", "--to", self.seat, "--subject", subject,
                                        "--body", "restart check", timeout=300), "the peer's mail"))
@@ -337,6 +339,38 @@ def replace(agent: Agent, before: dict, dids: dict, original: dict) -> dict:
     return check(agent, before, seen, dids)
 
 
+CASES = (("restart", restart), ("replace", replace))
+
+
+def run_cases(agent, before: dict, dids: dict, original: dict, record, cases=CASES) -> dict:
+    """Each case in order, each judged on its own. The container inspected
+    before the cases is the one approved for removal, for the whole run: if
+    another container holds the name after a case, the run stops there,
+    recording the change, before anything is stopped or removed."""
+    results = {name: "NOT RUN" for name, _ in cases}
+    for index, (name, case) in enumerate(cases):
+        if index:
+            try:
+                now = agent.inspect()
+            except (Failed, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+                results[name] = f"FAILED: the container could not be inspected before {name}: {error}"
+                record(name, {"failed": results[name]})
+                break
+            if now["id"] != original["id"]:
+                results[name] = (f"FAILED: the container changed between the cases ({original['id'][:12]} became"
+                                 f" {now['id'][:12]}); nothing was stopped or removed")
+                record(name, {"failed": results[name], "approved": original["id"], "found": now["id"]})
+                break
+        try:
+            record(name, case(agent, before, dids, original))
+            results[name] = "PASS"
+        except (Failed, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
+            results[name] = f"FAILED: {error}"
+            record(name, {"failed": str(error)})
+            break
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--evidence", type=Path, required=True, help="a new directory for the evidence")
@@ -361,10 +395,11 @@ def main() -> int:
         print(name.upper() + ":", json.dumps(value, sort_keys=True))
 
     agent = Agent(args)
-    results: dict[str, str] = {}
     try:
         original = agent.healthy()
         dids = {"seat": agent.did(), "peer": agent.peer_did()}
+        if dids["seat"] == dids["peer"]:
+            raise Failed(f"the seat and the peer are the same identity ({dids['seat']})")
         probe = agent.write_probe()
         before = agent.snapshot()
         if before["foreign"]:
@@ -377,16 +412,7 @@ def main() -> int:
     except (Failed, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
         record("result", {"before": f"FAILED: {error}", "restart": "NOT RUN", "replace": "NOT RUN"})
         return 1
-    for name, case in (("restart", restart), ("replace", replace)):
-        try:
-            record(name, case(agent, before, dids, original))
-            results[name] = "PASS"
-            original = agent.inspect()
-        except (Failed, subprocess.TimeoutExpired, json.JSONDecodeError) as error:
-            results[name] = f"FAILED: {error}"
-            record(name, {"failed": str(error)})
-            break
-    results = {"before": "PASS", "restart": results.get("restart", "NOT RUN"), "replace": results.get("replace", "NOT RUN")}
+    results = {"before": "PASS", **run_cases(agent, before, dids, original, record)}
     record("result", results)
     return 0 if all(value == "PASS" for value in results.values()) else 1
 

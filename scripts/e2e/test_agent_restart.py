@@ -251,5 +251,93 @@ class ReplaceTests(unittest.TestCase):
             self.remove(daemon)
 
 
+class CaseOrderTests(unittest.TestCase):
+    """The id approved for removal is the one inspected before the cases;
+    a container that changes between them stops the run before any removal."""
+
+    def test_a_container_replaced_between_the_cases_is_never_removed(self):
+        destructive = []
+
+        class Seen:
+            def inspect(self):
+                return {"id": OTHER}
+
+        def restart_case(agent, before, dids, original):
+            return {"container": original}
+
+        def replace_case(agent, before, dids, original):
+            destructive.append(original["id"])
+            return {}
+
+        results = restart.run_cases(Seen(), {}, {}, {"id": ID}, lambda name, value: None,
+                                    (("restart", restart_case), ("replace", replace_case)))
+        self.assertEqual(destructive, [])
+        self.assertEqual(results["restart"], "PASS")
+        self.assertIn("changed between the cases", results["replace"])
+
+    def test_an_unchanged_container_goes_on_to_the_replacement_with_its_first_id(self):
+        approved = []
+
+        class Seen:
+            def inspect(self):
+                return {"id": ID}
+
+        results = restart.run_cases(Seen(), {}, {}, {"id": ID}, lambda name, value: None,
+                                    (("restart", lambda *args: {}),
+                                     ("replace", lambda agent, before, dids, original: approved.append(original["id"])
+                                      or {})))
+        self.assertEqual(approved, [ID])
+        self.assertEqual(results, {"restart": "PASS", "replace": "PASS"})
+
+
+SEAT_DID = "did:key:z6MkSeat"
+PEER_DID = "did:key:z6MkPeer"
+
+
+class MailTests(unittest.TestCase):
+    """The signed round trip, with the peer's aw and the seat's SSH answers
+    substituted in process: what is tested is how the driver judges them."""
+
+    def agent(self, reply_from: str = SEAT_DID, reply_status: str = "verified"):
+        agent = restart.Agent.__new__(restart.Agent)
+        agent.seat, agent.home = "acwd25-report-agent", "/state/seats/acwd25-report-agent/.aw"
+        agent.peer = ["aw", "--identity-home", "/peer", "--json"]
+        self.peer_calls = []
+
+        def peer_run(*args, timeout=120):
+            self.peer_calls.append(args)
+            if "send" in args:
+                return subprocess.CompletedProcess(args, 0, json.dumps({"message_id": "m1"}), "")
+            return subprocess.CompletedProcess(args, 0, json.dumps({"messages": [
+                {"message_id": "r1", "from_did": reply_from, "verification_status": reply_status}]}), "")
+
+        def ssh(command):
+            if "reply" in command:
+                return json.dumps({"message_id": "r1"})
+            return json.dumps({"messages": [{"message_id": "m1", "from_did": PEER_DID,
+                                             "verification_status": "verified"}]})
+
+        agent.ssh = ssh
+        self.original_run = restart.run
+        restart.run = peer_run
+        self.addCleanup(setattr, restart, "run", self.original_run)
+        return agent
+
+    def test_distinct_identities_complete_the_round_trip(self):
+        result = self.agent().mail(SEAT_DID, PEER_DID)
+        self.assertEqual((result["sent"], result["reply"]), ("m1", "r1"))
+
+    def test_one_identity_on_both_sides_is_refused_before_anything_is_sent(self):
+        agent = self.agent()
+        with self.assertRaisesRegex(restart.Failed, "the same identity"):
+            agent.mail(SEAT_DID, SEAT_DID)
+        self.assertEqual(self.peer_calls, [])
+
+    def test_a_reply_from_another_identity_or_unverified_is_refused(self):
+        for agent in (self.agent(reply_from="did:key:z6MkOther"), self.agent(reply_status="unverified")):
+            with self.assertRaisesRegex(restart.Failed, "the seat's reply"):
+                agent.mail(SEAT_DID, PEER_DID)
+
+
 if __name__ == "__main__":
     unittest.main()
