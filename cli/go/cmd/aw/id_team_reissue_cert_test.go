@@ -1,14 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -237,28 +233,14 @@ func TestTeamReissueCertRefusesAmbiguousNewestRevokedMemberFacts(t *testing.T) {
 		if response.Request.Method != http.MethodGet || !strings.HasSuffix(response.Request.URL.Path, "/teams/backend/certificates") {
 			return nil
 		}
-		if encoding := response.Header.Get("Content-Encoding"); encoding != "" {
-			return fmt.Errorf("the tied-history fault rewrites plain JSON; the registry answered %s", encoding)
-		}
-		var page map[string]any
-		if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
-			return err
-		}
-		_ = response.Body.Close()
-		certificates, _ := page["certificates"].([]any)
-		for _, item := range certificates {
-			if certificate, ok := item.(map[string]any); ok && certificate["alias"] == "alice" {
-				certificate["issued_at"] = "2026-08-01T00:00:00Z"
+		return rewriteJSONBody(response, func(page map[string]any) {
+			certificates, _ := page["certificates"].([]any)
+			for _, item := range certificates {
+				if certificate, ok := item.(map[string]any); ok && certificate["alias"] == "alice" {
+					certificate["issued_at"] = "2026-08-01T00:00:00Z"
+				}
 			}
-		}
-		body, err := json.Marshal(page)
-		if err != nil {
-			return err
-		}
-		response.Body = io.NopCloser(bytes.NewReader(body))
-		response.ContentLength = int64(len(body))
-		response.Header.Set("Content-Length", strconv.Itoa(len(body)))
-		return nil
+		})
 	}})
 	teamReissueCertDID = member.DIDKey
 

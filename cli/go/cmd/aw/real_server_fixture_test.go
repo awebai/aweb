@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -247,13 +249,20 @@ type globalMember struct {
 	Address string
 }
 
-func (world *realCommandWorld) registerGlobalMember(t *testing.T, name string) globalMember {
+// registerIdentity registers a fresh key's did:aw, with no address.
+func (world *realCommandWorld) registerIdentity(t *testing.T) globalMember {
 	t.Helper()
 	key := newKey(t)
 	member := globalMember{Key: key, DIDKey: didOf(key), DIDAW: awid.ComputeStableID(key.Public().(ed25519.PublicKey))}
 	if _, err := world.Registry.RegisterIdentity(world.Context, world.Stack.RegistryURL, member.DIDKey, member.DIDAW, key); err != nil {
 		t.Fatal(err)
 	}
+	return member
+}
+
+func (world *realCommandWorld) registerGlobalMember(t *testing.T, name string) globalMember {
+	t.Helper()
+	member := world.registerIdentity(t)
 	if _, err := world.Registry.RegisterAddressAt(world.Context, world.Stack.RegistryURL, world.Domain, name, member.DIDAW, member.DIDKey, world.NamespaceKey); err != nil {
 		t.Fatal(err)
 	}
@@ -345,9 +354,36 @@ func (world *realCommandWorld) frontRegistry(t *testing.T, fault registryFault) 
 	return server.URL
 }
 
-// registryAnswer is one registry answer as a command met it: the did:key that
-// signed the request ("" when unsigned) and the registry's status.
+// rewriteJSONBody replaces a plain JSON registry answer with edit's version of
+// it, for a fault front's Rewrite.
+func rewriteJSONBody(response *http.Response, edit func(body map[string]any)) error {
+	if encoding := response.Header.Get("Content-Encoding"); encoding != "" {
+		return fmt.Errorf("the fault front rewrites plain JSON; the registry answered %s", encoding)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		return err
+	}
+	if err := response.Body.Close(); err != nil {
+		return err
+	}
+	edit(body)
+	rewritten, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	response.Body = io.NopCloser(bytes.NewReader(rewritten))
+	response.ContentLength = int64(len(rewritten))
+	response.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+	return nil
+}
+
+// registryAnswer is one registry answer as a command met it: the request's
+// method and path, the did:key that signed it ("" when unsigned) and the
+// registry's status.
 type registryAnswer struct {
+	Method string
+	Path   string
 	Signer string
 	Status int
 }
@@ -377,7 +413,7 @@ func (world *realCommandWorld) recordRegistry(t *testing.T) (string, *registryRe
 		}
 		recording.mu.Lock()
 		defer recording.mu.Unlock()
-		recording.answers = append(recording.answers, registryAnswer{Signer: signer, Status: response.StatusCode})
+		recording.answers = append(recording.answers, registryAnswer{Method: response.Request.Method, Path: response.Request.URL.Path, Signer: signer, Status: response.StatusCode})
 		return nil
 	}})
 	return origin, recording
