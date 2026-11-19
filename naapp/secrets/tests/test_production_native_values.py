@@ -403,7 +403,10 @@ async def test_native_form_recovers_this_tabs_sign_in_and_discards_the_value(
             await expect(page.locator("#form-status")).to_have_attribute(
                 "data-state", ConsoleDraftState.UNCERTAIN
             )
-            await expect(page.locator("#form-status")).to_contain_text("approval email")
+            await expect(page.locator("#form-status")).to_have_text(
+                "The value was sealed, but the draft was not saved. Sign in, then reload this "
+                "page and enter the value again. Unused sealed copies stay inactive."
+            )
             await expect(
                 page.get_by_role("button", name="Save the value and draft")
             ).to_be_disabled()

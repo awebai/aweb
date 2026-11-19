@@ -90,7 +90,9 @@
         const recovery = "The value was sealed, but saving the draft was not confirmed. " +
           "Check your approval email for a link to review it. If none arrived, reload this page " +
           "and enter the value again. Unused sealed copies stay inactive.";
-        status.textContent = recovery;
+        status.textContent = error instanceof api.SessionRequired
+          ? "The value was sealed, but the draft was not saved. Sign in, then reload this page and enter the value again. Unused sealed copies stay inactive."
+          : recovery;
       } else if (error instanceof api.SessionRequired) {
         state = NativeEntryState.READY;
         status.textContent = "Sign in with your passkey in this tab, then enter the value again.";
