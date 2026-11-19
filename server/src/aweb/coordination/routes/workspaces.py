@@ -1235,12 +1235,13 @@ async def list_team_workspaces(
     aweb_db = db_infra.get_manager("aweb")
 
     live_workspace_ids: list[UUID] = []
+    activity_map: dict[str, WorkspaceActivity] = {}
     if include_presence:
         candidates = await aweb_db.fetch_all(
             "SELECT workspace_id FROM {{tables.workspaces}} WHERE team_id=$1 AND deleted_at IS NULL",
             team_id,
         )
-        activity = await workspace_activity_by_id(
+        activity_map = await workspace_activity_by_id(
             aweb_db,
             redis,
             workspace_ids=[str(row["workspace_id"]) for row in candidates],
@@ -1250,7 +1251,7 @@ async def list_team_workspaces(
         )
         now = datetime.now(timezone.utc)
         live_workspace_ids = [
-            UUID(key) for key, value in activity.items() if value.is_online(now=now)
+            UUID(key) for key, value in activity_map.items() if value.is_online(now=now)
         ]
 
     params: list = [team_id]
@@ -1336,19 +1337,6 @@ async def list_team_workspaces(
                 rows.append(extra_row)
 
     workspace_ids = [row["workspace_id"] for row in rows]
-    workspace_id_strings = [str(ws_id) for ws_id in workspace_ids]
-
-    activity_map: dict[str, WorkspaceActivity] = {}
-    if include_presence and workspace_id_strings:
-        activity_map = await workspace_activity_by_id(
-            aweb_db,
-            redis,
-            workspace_ids=workspace_id_strings,
-            registry_client=application_registry_client(request.app.state),
-            request=request,
-            failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
-        )
-
     claims_map: Dict[str, List[Claim]] = {}
     if include_claims and workspace_ids:
         claims_map = await _fetch_claims_map(aweb_db, workspace_ids)

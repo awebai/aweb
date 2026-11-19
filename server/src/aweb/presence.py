@@ -104,7 +104,6 @@ async def update_agent_presence(
     if not workspace_id:
         raise ValueError("workspace_id or agent_id is required")
 
-    key = _presence_key(workspace_id)
     now = datetime.now(timezone_mod.utc).isoformat()
 
     fields = {
@@ -133,6 +132,25 @@ async def update_agent_presence(
     if timezone is not None:
         fields["timezone"] = timezone
 
+    await _store_presence_fields(
+        redis,
+        workspace_id=workspace_id,
+        fields=fields,
+        ttl_seconds=ttl_seconds,
+    )
+
+    return now
+
+
+async def _store_presence_fields(
+    redis: Redis,
+    *,
+    workspace_id: str,
+    fields: dict[str, str],
+    ttl_seconds: int,
+) -> None:
+    """Commit one metadata generation and its current indices atomically."""
+    key = _presence_key(workspace_id)
     # Read the same generation whose optional coordinates we preserve. Only its
     # current repo/branch is renewed; cleanup coordinates also retain historical
     # indices so lifecycle can remove them without scanning Redis.
@@ -180,8 +198,6 @@ async def update_agent_presence(
                 continue
     else:
         raise RuntimeError("Concurrent workspace heartbeats did not converge")
-
-    return now
 
 
 async def get_agent_presence(
