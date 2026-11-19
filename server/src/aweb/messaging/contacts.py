@@ -420,13 +420,13 @@ async def resolve_handle_contact_agent(
               AND a.status = 'active'
               AND a.identity_scope = 'global'
               AND a.did_aw_verified_key = a.did_key
-              AND a.address LIKE $1
+              AND split_part(a.address, '/', 1) = $1
             GROUP BY a.agent_id, a.team_id, a.did_key, a.did_aw, a.address, a.alias,
                      a.identity_scope, a.status, a.created_at
             ORDER BY last_seen_at DESC NULLS LAST, a.created_at ASC
             LIMIT 1
             """,
-            f"{namespace}/%",
+            namespace,
         )
     if row is None:
         return None
