@@ -99,5 +99,6 @@ func persistStandaloneCreate(prepared *preparedIDCreate, opts idCreateOptions) e
 	if err := record.Write(raw); err != nil {
 		return fmt.Errorf("private key retained at %s; no registry write attempted; save creation recovery: %w", p.SigningKeyPath, err)
 	}
+	prepared.Retained = true
 	return nil
 }

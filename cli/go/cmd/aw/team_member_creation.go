@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -19,7 +20,7 @@ type teamMemberCreation struct {
 // createProvisionedTeamMember uses the selected creator and the shared mint and
 // membership-record owners. Normal admission completes before encryption-key
 // publication (docs/identity.md §Provisioned members and encryption discovery).
-func createProvisionedTeamMember(input teamMemberCreation) (*acceptedTeamInvite, error) {
+func createProvisionedTeamMember(input teamMemberCreation) (result *acceptedTeamInvite, resultErr error) {
 	if input.Scope != awid.IdentityScopeLocal && input.Scope != awid.IdentityScopeGlobal {
 		return nil, errors.New("team member creation scope is unknown")
 	}
@@ -75,9 +76,22 @@ func createProvisionedTeamMember(input teamMemberCreation) (*acceptedTeamInvite,
 				return nil, err
 			}
 		}
-		if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(homeDir); err == nil && identity != nil {
-			memberAddress = strings.TrimSpace(identity.Address)
+		// A prepared global identity can outlive a failed invite. Its key is
+		// retained independently of whether membership acceptance was submitted.
+		defer func() {
+			if resultErr != nil {
+				inspect := formatShellCommand([]string{"aw", "--identity-home", awconfig.WorktreeIdentityHome(homeDir), "id", "show"})
+				resultErr = retainIdentityForRecovery(fmt.Errorf("%w; global identity material is retained at %s. Inspect it with `%s` and finish membership using this same identity and creator; do not create a replacement", resultErr, homeDir, inspect))
+			}
+		}()
+		identity, _, err := awconfig.LoadWorktreeIdentityFromDir(homeDir)
+		if err != nil {
+			return nil, fmt.Errorf("read prepared global identity: %w", err)
 		}
+		if identity == nil {
+			return nil, errors.New("prepared global identity is missing")
+		}
+		memberAddress = strings.TrimSpace(identity.Address)
 	}
 
 	plan, err := planTeamInvite(teamInviteSource{

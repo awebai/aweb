@@ -125,6 +125,7 @@ type idCreatePlan struct {
 }
 
 type preparedIDCreate struct {
+	// Retained means the original key and plan are durably owned by this creation.
 	Retained      bool
 	Plan          *idCreatePlan
 	IdentityKey   ed25519.PrivateKey
@@ -186,7 +187,7 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, error) {
+func executeIDCreate(workingDir string, opts idCreateOptions) (output idCreateOutput, resultErr error) {
 	var parent *idCreateParent
 	if strings.TrimSpace(opts.HumanParent) != "" || opts.RootParent {
 		domain, err := normalizeIDCreateDomain(opts.Domain, opts.AllowReservedLocalDomain)
@@ -207,7 +208,8 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 			}
 			ctx, cancel := commandAPIContext(nil)
 			defer cancel()
-			return resumeIDCreateChain(ctx, opts, parent, domain, identityPath, signingKeyPath, domain+"/"+name)
+			output, err := resumeIDCreateChain(ctx, opts, parent, domain, identityPath, signingKeyPath, domain+"/"+name)
+			return output, retainIdentityForRecovery(err)
 		}
 	}
 	prepared, err := prepareIDCreatePlan(workingDir, opts)
@@ -215,6 +217,11 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		return idCreateOutput{}, err
 	}
 	plan := prepared.Plan
+	defer func() {
+		if resultErr != nil && prepared.Retained {
+			resultErr = retainIdentityForRecovery(resultErr)
+		}
+	}()
 
 	if err := printIDCreateDNSInstructions(plan, opts.PromptOut); err != nil {
 		return idCreateOutput{}, err
