@@ -63,6 +63,8 @@ COPY channel-core/tsconfig.json ./
 COPY channel-core/src ./src
 RUN npm run build
 COPY --from=coredns/coredns:1.11.3 /coredns /opt/user-paths/coredns
+# Public runtime code is consumed by the host UID, not the image builder UID.
+RUN chmod -R a+rX /opt/candidate-browser /opt/user-paths /journey/channel-core
 ARG USER_PATHS_SOURCE_TREE
 LABEL aweb.user-paths-ready="1" aweb.user-paths-source-tree="${USER_PATHS_SOURCE_TREE}"
 WORKDIR /
