@@ -3078,137 +3078,78 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_from_resolved
 
 @pytest.mark.asyncio
 async def test_create_chat_session_external_address_without_delivery_origin_fails_closed(
-    aweb_cloud_db,
+    shared_test_pool, monkeypatch
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo' /* team-1 */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END)
-        """,
-        alice_did_key,
-    )
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from test_dashboard_privacy import privacy_stack
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id="addr-2",
-            domain="otherco.com",
-            name="bob",
-            did_aw="did:aw:bob",
-            current_did_key=named_did_key("bob"),
-            reachability="public",
-            created_at=datetime.now(timezone.utc).isoformat(),
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        await register_messaging_team(env, team_id="backend:acme.com")
+        alice = await admit_messaging_actor(
+            env, alias="alice", team_id="backend:acme.com", address="acme.com/alice"
         )
-    )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-1",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        ]
-    )
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
 
-    payload = {"to_addresses": ["otherco.com/bob"], "message": "hello external bob"}
-    body = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+        from identity_binding_support import register_global_identity
+        from aweb.application_state import application_registry_client
 
-    assert resp.status_code == 424, resp.text
-    assert "no federated delivery origin" in resp.json()["detail"]
+        target_sk, _, target_key = _make_keypair()
+        target = SimpleNamespace(sk=target_sk, did=target_key)
+        await register_global_identity(env, target, "otherco.com/bob")
+        registry = application_registry_client(env.app.state)
+        resolved = await registry.resolve_address_fresh(*"otherco.com/bob".split("/", 1))
+        assert resolved.delivery is None or not resolved.delivery.origin
+        raw = json.dumps(
+            {"to_addresses": ["otherco.com/bob"], "message": "no remote route"}
+        ).encode()
+        response = await env.client.post(
+            "/v1/chat/sessions",
+            content=raw,
+            headers={
+                **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                "Content-Type": "application/json",
+            },
+        )
+        assert response.status_code == 424, response.text
+        assert "no federated delivery origin" in response.json()["detail"]
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 0
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 0
 
 
 @pytest.mark.asyncio
 async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_closed(
-    aweb_cloud_db,
+    shared_test_pool, monkeypatch
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo' /* team-1 */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END)
-        """,
-        alice_did_key,
-    )
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from test_dashboard_privacy import privacy_stack
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id="addr-c3po",
-            domain="jane.aweb.ai",
-            name="c3po",
-            did_aw="did:aw:c3po",
-            current_did_key=named_did_key("c3po"),
-            reachability="public",
-            created_at=datetime.now(timezone.utc).isoformat(),
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        await register_messaging_team(env, team_id="backend:acme.com")
+        alice = await admit_messaging_actor(
+            env, alias="alice", team_id="backend:acme.com", address="acme.com/alice"
         )
-    )
-    registry.list_did_addresses = AsyncMock(
-        return_value=[
-            Address(
-                address_id="addr-1",
-                domain="acme.com",
-                name="alice",
-                did_aw="did:aw:alice",
-                current_did_key=alice_did_key,
-                reachability="public",
-                created_at=datetime.now(timezone.utc).isoformat(),
-            )
-        ]
-    )
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
 
-    payload = {"to_aliases": ["@jane/c3po"], "message": "hello c3po"}
-    body = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+        from identity_binding_support import register_global_identity
+        from aweb.application_state import application_registry_client
 
-    assert resp.status_code == 424, resp.text
-    assert "no federated delivery origin" in resp.json()["detail"]
-    registry.resolve_address.assert_awaited_once_with("jane.aweb.ai", "c3po")
+        target_sk, _, target_key = _make_keypair()
+        target = SimpleNamespace(sk=target_sk, did=target_key)
+        await register_global_identity(env, target, "jane.aweb.ai/c3po")
+        registry = application_registry_client(env.app.state)
+        resolved = await registry.resolve_address_fresh(*"jane.aweb.ai/c3po".split("/", 1))
+        assert resolved.delivery is None or not resolved.delivery.origin
+        raw = json.dumps({"to_aliases": ["@jane/c3po"], "message": "no remote route"}).encode()
+        response = await env.client.post(
+            "/v1/chat/sessions",
+            content=raw,
+            headers={
+                **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                "Content-Type": "application/json",
+            },
+        )
+        assert response.status_code == 424, response.text
+        assert "no federated delivery origin" in response.json()["detail"]
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 0
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 0
 
 
 @pytest.mark.asyncio
@@ -3304,110 +3245,87 @@ async def test_create_chat_session_rejects_signed_existing_session_without_bindi
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_rejects_to_address_self_chat(aweb_cloud_db):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo' /* team-1 */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END)
-        """,
-        alice_did_key,
-    )
+async def test_create_chat_session_rejects_to_address_self_chat(shared_test_pool, monkeypatch):
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from test_dashboard_privacy import privacy_stack
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(
-        return_value=KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-    )
-    registry.resolve_address = AsyncMock(
-        return_value=Address(
-            address_id="addr-1",
-            domain="acme.com",
-            name="alice",
-            did_aw="did:aw:alice",
-            current_did_key=alice_did_key,
-            reachability="public",
-            created_at=datetime.now(timezone.utc).isoformat(),
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        await register_messaging_team(env, team_id="backend:acme.com")
+        alice = await admit_messaging_actor(
+            env, alias="alice", team_id="backend:acme.com", address="acme.com/alice"
         )
-    )
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
 
-    payload = {"to_addresses": ["acme.com/alice"], "message": "self"}
-    body = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
-
-    assert resp.status_code == 400, resp.text
-    assert "Self-chat is not supported" in resp.text
+        raw = json.dumps({"to_addresses": [alice.address], "message": "self"}).encode()
+        response = await env.client.post(
+            "/v1/chat/sessions",
+            content=raw,
+            headers={
+                **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                "Content-Type": "application/json",
+            },
+        )
+        assert response.status_code == 400, response.text
+        assert "Self-chat is not supported" in response.text
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 0
+        assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 0
 
 
 @pytest.mark.asyncio
 async def test_create_chat_session_to_external_did_first_contact_fails_closed(
-    aweb_cloud_db,
+    shared_test_pool, monkeypatch
 ):
-    alice_sk, _, alice_did_key = _make_keypair()
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MknPNGi33ZA1E96cTvr2J1CmyppaBCCL2a56qAnPfFVfQo' /* team-1 */)
-        """
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode, did_aw_verified_key)
-        VALUES ('backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN $1 END)
-        """,
-        alice_did_key,
-    )
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from test_dashboard_privacy import privacy_stack
 
-    async def _resolve_key(did_aw: str):
-        if did_aw == "did:aw:alice":
-            return KeyResolution(did_aw="did:aw:alice", current_did_key=alice_did_key)
-        raise AssertionError("bare did:aw first-contact must not resolve by key")
+    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+        await register_messaging_team(env, team_id="backend:acme.com")
+        alice = await admit_messaging_actor(
+            env, alias="alice", team_id="backend:acme.com", address="acme.com/alice"
+        )
 
-    registry = AsyncMock()
-    registry.resolve_key = AsyncMock(side_effect=_resolve_key)
-    registry.list_did_addresses = AsyncMock(return_value=[])
-    registry.list_team_certificates = AsyncMock(return_value=[])
-    app = _build_test_app(
-        aweb_cloud_db.aweb_db,
-        registry,
-        verified_bindings=(("did:aw:alice", alice_did_key, "acme.com/alice"),),
-    )
+        from aweb.application_state import application_registry_client
 
-    payload = {"to_dids": ["did:aw:bob"], "message": "raw did"}
-    body = json.dumps(payload).encode()
-    headers = {
-        **_signed_identity_headers(alice_sk, alice_did_key, "did:aw:alice", body),
-        "Content-Type": "application/json",
-    }
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
+        target_sk, _, target_key = _make_keypair()
+        registry = application_registry_client(env.app.state)
+        target = await registry.register_did(target_key, target_sk)
+        key_path = f"/v1/did/{target.did_aw}/key"
+        observed = []
+        stack = env.registry_app.middleware_stack or env.registry_app.build_middleware_stack()
 
-    assert resp.status_code == 422, resp.text
-    assert "Bare did:aw first-contact is unsupported" in resp.json()["detail"]
-    registry.resolve_key.assert_not_awaited()
-    registry.resolve_key_fresh.assert_not_awaited()
-    assert (
-        app.state.identity_binding_cache[("did:aw:alice", alice_did_key, "")][1].did_aw
-        == "did:aw:alice"
-    )
-    registry.resolve_address.assert_not_called()
+        async def record_registry(scope, receive, send):
+            if scope.get("type") == "http":
+                observed.append((scope["method"], scope["path"]))
+            await stack(scope, receive, send)
+
+        env.registry_app.middleware_stack = record_registry
+        try:
+            # Establish that the recorder sees a real read, then distinguish
+            # sender admission reads from forbidden target-by-key routing.
+            await registry.resolve_key_fresh(target.did_aw)
+            assert ("GET", key_path) in observed
+            observed.clear()
+            raw = json.dumps({"to_dids": [target.did_aw], "message": "raw did"}).encode()
+            response = await env.client.post(
+                "/v1/chat/sessions",
+                content=raw,
+                headers={
+                    **_signed_identity_headers(
+                        alice.signing_key, alice.did_key, alice.stable_id, raw
+                    ),
+                    "Content-Type": "application/json",
+                },
+            )
+            assert response.status_code == 422, response.text
+            assert "Bare did:aw first-contact is unsupported" in response.json()["detail"]
+            assert ("GET", key_path) not in observed
+            address_reads = {
+                path for method, path in observed if method == "GET" and "/addresses/" in path
+            }
+            assert address_reads <= {"/v1/namespaces/acme.com/addresses/alice"}
+            assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 0
+            assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 0
+        finally:
+            env.registry_app.middleware_stack = stack
 
 
 @pytest.mark.asyncio
