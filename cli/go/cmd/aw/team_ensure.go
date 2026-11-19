@@ -816,15 +816,15 @@ func installWorkspaceTeamEnrollment(workingDir, identityHome, issuer string, mat
 	canonicalTeamID := strings.TrimSpace(enroll.CanonicalTeamID)
 	output := &teamAcceptInviteOutput{Status: "accepted", TeamID: canonicalTeamID, Alias: firstNonEmptyString(enroll.Alias, material.Alias), CertPath: awconfig.TeamCertificateRelativePath(canonicalTeamID), AwebURL: strings.TrimRight(issuer, "/")}
 	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
-WorkingDir:   workingDir,
-Output:       output,
-Certificate:  cert,
-RegistryURL:  registryURL,
-AwebURL:      strings.TrimRight(issuer, "/"),
-IdentityHome: explicitEncryptionKeyIdentityHome(identityHome),
-Activation:   membershipMakeActive,
-Binding:      membershipLeaveWorkspaceBinding,
-}); err != nil {
+		WorkingDir:   workingDir,
+		Output:       output,
+		Certificate:  cert,
+		RegistryURL:  registryURL,
+		AwebURL:      strings.TrimRight(issuer, "/"),
+		IdentityHome: explicitEncryptionKeyIdentityHome(identityHome),
+		Activation:   membershipMakeActive,
+		Binding:      membershipLeaveWorkspaceBinding,
+	}); err != nil {
 		return err
 	}
 	return saveWorkspaceTeamBinding(identityHome, output, cert, strings.TrimRight(issuer, "/"))

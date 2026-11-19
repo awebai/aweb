@@ -67,13 +67,13 @@ func recordAcceptedTeamMembership(request acceptedTeamMembershipRequest) error {
 		return err
 	}
 	if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
-Location:    teamMembershipLocation{WorkingDir: request.WorkingDir, IdentityHome: identityHomeRoot},
-Output:      request.Output,
-Certificate: request.Certificate,
-RegistryURL: request.RegistryURL,
-AwebURL:     request.AwebURL,
-Activation:  request.Activation,
-}); err != nil {
+		Location:    teamMembershipLocation{WorkingDir: request.WorkingDir, IdentityHome: identityHomeRoot},
+		Output:      request.Output,
+		Certificate: request.Certificate,
+		RegistryURL: request.RegistryURL,
+		AwebURL:     request.AwebURL,
+		Activation:  request.Activation,
+	}); err != nil {
 		return err
 	}
 	if request.Binding == membershipWriteWorkspaceBinding {

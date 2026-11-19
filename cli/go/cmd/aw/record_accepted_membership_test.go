@@ -97,14 +97,14 @@ func TestRecordAcceptedTeamMembershipJoinLeavesNoWorkspaceBinding(t *testing.T) 
 	output, cert := writeSelfCustodyIdentityForTest(t, dir, teamID)
 
 	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
-WorkingDir:   dir,
-Output:       output,
-Certificate:  cert,
-RegistryURL:  "",
-AwebURL:      "https://app.aweb.ai",
-IdentityHome: currentEncryptionKeyIdentityHome(),
-Activation:   membershipMakeActive,
-}); err != nil {
+		WorkingDir:   dir,
+		Output:       output,
+		Certificate:  cert,
+		RegistryURL:  "",
+		AwebURL:      "https://app.aweb.ai",
+		IdentityHome: currentEncryptionKeyIdentityHome(),
+		Activation:   membershipMakeActive,
+	}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
 
@@ -162,15 +162,15 @@ func TestRecordAcceptedTeamMembershipProvisionWritesTargetEncryptionKeyNotOperat
 	operatorEncryptionStatePath := awconfig.WorktreeEncryptionStatePath(operatorDir)
 
 	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
-WorkingDir:   dir,
-Output:       output,
-Certificate:  cert,
-RegistryURL:  "",
-AwebURL:      awebURL,
-IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(dir)),
-Activation:   membershipMakeActive,
-Binding:      membershipWriteWorkspaceBinding,
-}); err != nil {
+		WorkingDir:   dir,
+		Output:       output,
+		Certificate:  cert,
+		RegistryURL:  "",
+		AwebURL:      awebURL,
+		IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(dir)),
+		Activation:   membershipMakeActive,
+		Binding:      membershipWriteWorkspaceBinding,
+	}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
 
@@ -229,28 +229,28 @@ func TestRecordAcceptedTeamMembershipPreservesJoinedAt(t *testing.T) {
 	const originalJoinedAt = "2026-01-01T00:00:00Z"
 	cert.IssuedAt = originalJoinedAt
 	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
-WorkingDir:   dir,
-Output:       output,
-Certificate:  cert,
-RegistryURL:  "",
-AwebURL:      "https://app.aweb.ai",
-IdentityHome: currentEncryptionKeyIdentityHome(),
-Activation:   membershipMakeActive,
-}); err != nil {
+		WorkingDir:   dir,
+		Output:       output,
+		Certificate:  cert,
+		RegistryURL:  "",
+		AwebURL:      "https://app.aweb.ai",
+		IdentityHome: currentEncryptionKeyIdentityHome(),
+		Activation:   membershipMakeActive,
+	}); err != nil {
 		t.Fatalf("record first membership: %v", err)
 	}
 
 	// Re-accept with a newer certificate (a later IssuedAt, e.g. a rotation).
 	cert.IssuedAt = "2026-06-01T00:00:00Z"
 	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
-WorkingDir:   dir,
-Output:       output,
-Certificate:  cert,
-RegistryURL:  "",
-AwebURL:      "https://app.aweb.ai",
-IdentityHome: currentEncryptionKeyIdentityHome(),
-Activation:   membershipMakeActive,
-}); err != nil {
+		WorkingDir:   dir,
+		Output:       output,
+		Certificate:  cert,
+		RegistryURL:  "",
+		AwebURL:      "https://app.aweb.ai",
+		IdentityHome: currentEncryptionKeyIdentityHome(),
+		Activation:   membershipMakeActive,
+	}); err != nil {
 		t.Fatalf("re-record membership: %v", err)
 	}
 
@@ -291,15 +291,15 @@ func TestRecordAcceptedTeamMembershipEnsuresEncryptionKeyForCreator(t *testing.T
 	t.Cleanup(server.Close)
 
 	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
-WorkingDir:   dir,
-Output:       output,
-Certificate:  cert,
-RegistryURL:  "",
-AwebURL:      server.URL,
-IdentityHome: currentEncryptionKeyIdentityHome(),
-Activation:   membershipMakeActive,
-Binding:      membershipWriteWorkspaceBinding,
-}); err != nil {
+		WorkingDir:   dir,
+		Output:       output,
+		Certificate:  cert,
+		RegistryURL:  "",
+		AwebURL:      server.URL,
+		IdentityHome: currentEncryptionKeyIdentityHome(),
+		Activation:   membershipMakeActive,
+		Binding:      membershipWriteWorkspaceBinding,
+	}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
 	requireEncryptionKeyRecordForTest(t, dir)

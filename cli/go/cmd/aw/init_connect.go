@@ -151,17 +151,17 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		// (role, workspace id) is written separately below because it is unique to
 		// the connect step.
 		if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
-Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome},
-Output: &teamAcceptInviteOutput{
+			Location: teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome},
+			Output: &teamAcceptInviteOutput{
 				TeamID:   resp.TeamID,
 				Alias:    resp.Alias,
 				CertPath: filepath.ToSlash(certPath),
 			},
-Certificate: cert,
-RegistryURL: "",
-AwebURL:     "",
-Activation:  membershipMakeActive,
-}); err != nil {
+			Certificate: cert,
+			RegistryURL: "",
+			AwebURL:     "",
+			Activation:  membershipMakeActive,
+		}); err != nil {
 			return err
 		}
 		workspaceState.AwebURL = awebURL
