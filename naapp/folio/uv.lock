@@ -150,7 +150,7 @@ wheels = [
 
 [[package]]
 name = "aweb-naapp"
-version = "0.5.2rc3"
+version = "0.5.2rc4"
 source = { editable = "../../naapp-lib" }
 
 [package.optional-dependencies]
