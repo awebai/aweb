@@ -74,7 +74,7 @@ def test_private_audit_reader_is_paged_and_needs_no_runtime_config(tmp_path):
 
 
 def request_for(holder, target, key):
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         start = int(time.time())
         certificate = holder._certificate(holder.store.descriptor(), target, key, start)
         return holder._request(
@@ -143,19 +143,19 @@ def test_retirement_exits_stuck_state_without_erasing_evidence_or_audit(
             issuer=PublicIssuer(holder.store.descriptor().did_key, int(time.time())),
             **owner(holder, target),
         )
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         previous = dict(
             db.execute("SELECT * FROM enrollments WHERE person=?", (target,)).fetchone()
         )
         consumed = db.execute("SELECT count(*) FROM consumed").fetchone()[0]
     audit = holder.store.audit()
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         revision = holder.store.person_revision(db, target)
     with pytest.raises(Refused, match="bootstrap_closed"):
         holder.bootstrap_pending(*person())
     result = holder.store.retire_person(target)
     assert result["state"] == "retired"
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         row = dict(
             db.execute("SELECT * FROM enrollments WHERE person=?", (target,)).fetchone()
         )
@@ -164,7 +164,7 @@ def test_retirement_exits_stuck_state_without_erasing_evidence_or_audit(
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == consumed
     assert holder.store.audit()[:-1] == audit
     assert holder.store.audit()[-1]["actor"] == "operator"
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         assert holder.store.person_revision(db, target) == revision + 1
     assert holder.store.retire_person(target) == result
     assert len(holder.store.audit()) == len(audit) + 1
@@ -182,7 +182,7 @@ def test_person_history_migrates_existing_enrollment_without_reset(tmp_path):
     target, key = person()
     saved = holder.bootstrap_pending(target, key)
     audit = holder.store.audit()
-    with holder.store._connection() as db, db:
+    with holder.store.connection() as db, db:
         db.execute("ALTER TABLE enrollments DROP COLUMN retired_at")
         db.execute("DROP TABLE person_revisions")
         db.execute(
@@ -197,11 +197,11 @@ def test_person_history_migrates_existing_enrollment_without_reset(tmp_path):
     reopened = KeyStore.open(holder.store.directory)
     assert holder.pending(target) == saved
     assert reopened.audit() == audit
-    with reopened._connection() as db:
+    with reopened.connection() as db:
         assert reopened.person_revision(db, target) == 7
         assert reopened.person_revision(db, person()[0]) == 0
     reopened.retire_person(target)
-    with reopened._connection() as db:
+    with reopened.connection() as db:
         assert reopened.person_revision(db, target) == 8
 
 

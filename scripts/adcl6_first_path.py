@@ -13,22 +13,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from contextlib import aclosing, asynccontextmanager
-from dataclasses import dataclass
 import hashlib
 import importlib.metadata
 import json
 import os
 import re
 import shutil
-from pathlib import Path
 import subprocess
 import tarfile
 import time
-import tomllib
+from contextlib import aclosing, asynccontextmanager
+from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
 from urllib.parse import quote
 
-APPROVAL = "7dac79afab8d6c341b14f7afa1625d2e42a050bb"
+import tomllib
+
+APPROVAL = "0bd8fe6a085d640559df5aa5c5d442abb48c6503"
 ORG = "org.adcl6.test"
 REGISTRY = "https://awid.adcl6.test"
 SITE = "https://approval.adcl6.test"
@@ -43,6 +45,7 @@ STEP_OWNERS = {
         "human register",
         "human enroll start/material/confirm/activate",
         "human add through generic 428 approval",
+        "human refresh-binding through own-person holder and service",
         "id proof with stored evidence",
         "plain outside aw verify",
     ],
@@ -157,6 +160,7 @@ def archive_running_tree(root: Path, archive: Path) -> str:
                 "cli/go",
                 "awid",
                 "key-holder",
+                "naapp-lib",
                 "deploy/team",
             ],
             cwd=root,
@@ -166,18 +170,24 @@ def archive_running_tree(root: Path, archive: Path) -> str:
     return source_sha
 
 
-def prepare(args) -> None:
-    runtime = args.runtime.resolve()
-    build = runtime / "build"
-    build.mkdir(mode=0o700)
-    extract(args.approval_archive, APPROVAL, build / "approval")
+@dataclass(frozen=True, kw_only=True)
+class PreparedProductSource:
+    commit: str
+    go_tree: str
+
+
+def stage_product_source(
+    *, root: Path, runtime: Path, build: Path, architecture: str
+) -> PreparedProductSource:
     # Build aw and holder from this clean checkout, including the landing merge.
     # Only compiled artifacts/wheels enter the application image.
-    root = Path(__file__).resolve().parents[1]
     archive = runtime / "source.tar"
     source_sha = archive_running_tree(root, archive)
     extract(
-        archive, source_sha, build / "holder", ("awid/", "key-holder/", "deploy/team/")
+        archive,
+        source_sha,
+        build / "holder",
+        ("awid/", "key-holder/", "naapp-lib/", "deploy/team/"),
     )
     go_tree = subprocess.check_output(
         ["git", "rev-parse", f"{source_sha}:cli/go"], cwd=root, text=True
@@ -187,7 +197,7 @@ def prepare(args) -> None:
     env = dict(
         os.environ,
         GOOS="linux",
-        GOARCH=args.architecture,
+        GOARCH=architecture,
         CGO_ENABLED="0",
         GOWORK="off",
     )
@@ -206,6 +216,19 @@ def prepare(args) -> None:
         check=True,
     )
     shutil.rmtree(product)
+    return PreparedProductSource(commit=source_sha, go_tree=go_tree)
+
+
+def prepare(args) -> None:
+    runtime = args.runtime.resolve()
+    build = runtime / "build"
+    build.mkdir(mode=0o700)
+    extract(args.approval_archive, APPROVAL, build / "approval")
+    root = Path(__file__).resolve().parents[1]
+    product_source = stage_product_source(
+        root=root, runtime=runtime, build=build, architecture=args.architecture
+    )
+    source_sha, go_tree = product_source.commit, product_source.go_tree
     (build / "journey.py").write_bytes(Path(__file__).read_bytes())
     (build / "Dockerfile").write_bytes(
         (root / "scripts/adcl6-first-path.Dockerfile").read_bytes()
@@ -683,6 +706,44 @@ class Person:
         )
 
 
+class BindingRefreshState(StrEnum):
+    ACTIVE = "active"
+
+
+async def refresh_enrolled_person(*, subject: Person, work: Path) -> None:
+    """Exercise aw's live-B carrier and preserve every historical artifact byte.
+
+    The component's registry test covers actual controller continuity. This
+    product-command neighbor exercises re-signing under unchanged valid custody
+    and then the journey approves its next act with that saved live binding.
+    """
+    from approval_service.seams import commitment
+
+    historical = {
+        name: (subject.record_dir / name).read_bytes()
+        for name in (
+            "approval-binding.json",
+            "approval-evidence.json",
+            "enrollment-session.json",
+        )
+    }
+    response = await subject.aw("id", "human", "refresh-binding", "--json")
+    assert response["state"] == BindingRefreshState.ACTIVE
+    assert response["person"] == subject.identity
+    live_path = subject.record_dir / "approval-live-binding.json"
+    binding = json.loads(live_path.read_bytes())
+    assert live_path.stat().st_mode & 0o777 == 0o600
+    assert response["binding_commitment"] == commitment("binding_commitment", binding)
+    assert binding["binding"]["person"] == subject.identity
+    assert binding["binding"]["identity_key"] == subject.key
+    original = json.loads(historical["approval-binding.json"])
+    assert binding["binding"]["credentials"] == original["binding"]["credentials"]
+    for name, before in historical.items():
+        assert (subject.record_dir / name).read_bytes() == before, name
+    assert not (subject.record_dir / "approval-binding-refresh.json").exists()
+    save(work / (subject.name + "-binding-refresh.json"), response)
+
+
 async def deployment_policy(section):
     """Operator edits the one deployment file; the product renders its policy."""
     path = Path("/work/deployment.yaml")
@@ -979,10 +1040,10 @@ async def browsers():
 async def driver():
     import dns.asyncresolver
     import httpx
-    from awid.registry import RegistryClient, DIDKeyNotFoundError
     from approval_service.canonical import parse
     from approval_service.encoding import decode
     from approval_service.seams import make_needs_human
+    from awid.registry import DIDKeyNotFoundError, RegistryClient
 
     work = Path("/work")
     runtime = work / "browser-home" / "keyring-runtime"
@@ -1287,6 +1348,10 @@ async def driver():
                     first.activation["evidence"]["evidence"]["kind"]
                     == "human_enrolled_later"
                 )
+            async with phase(
+                "aw refresh-binding preserves history before the next human approval"
+            ):
+                await refresh_enrolled_person(subject=first, work=work)
             async with phase(
                 "plain outsider aw verify reports later approval evidence without creation"
             ):

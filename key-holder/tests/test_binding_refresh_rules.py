@@ -24,8 +24,42 @@ def test_binding_refresh_does_not_replace_person_keys_or_retired_enrollment():
     for changed in [
         {**row, "active": 0},
         {**row, "retired_at": 1},
-        {**row, "identity_key": "another key"},
     ]:
         with pytest.raises(Refused) as refused:
             check_active_enrollment(changed, caller=caller, trust=trust)
         assert refused.value.code == RefreshFailure.ENROLLMENT_CHANGED
+
+
+def test_rotated_identity_key_has_enrollment_recovery_advice_not_wrong_caller():
+    from dataclasses import replace
+
+    from aweb_key_holder.binding_refresh import REFRESH_ADVICE
+
+    caller = Caller(
+        identity="did:aw:person", key="did:key:new", timestamp="1", body=b"{}"
+    )
+    trust = Trust(
+        person=caller.identity,
+        organisation="example.test",
+        identity_key=caller.key,
+        certificate="sha256:cert",
+        issuer="did:key:issuer",
+        issuer_public_key=b"",
+        observed_at=1,
+    )
+    row = {
+        "person": trust.person,
+        "identity_key": "did:key:old",
+        "active": 1,
+        "retired_at": None,
+    }
+    with pytest.raises(Refused) as refused:
+        check_active_enrollment(row, caller=caller, trust=trust)
+    assert refused.value.code == "binding_refresh_identity_key_changed"
+    assert "enrolment or recovery" in REFRESH_ADVICE[refused.value.code]
+    assert "operator" in REFRESH_ADVICE[refused.value.code]
+    with pytest.raises(Refused) as refused:
+        check_active_enrollment(
+            row, caller=replace(caller, identity="did:aw:other"), trust=trust
+        )
+    assert refused.value.code is RefreshFailure.PERSON_REQUIRED

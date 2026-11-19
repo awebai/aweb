@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 from jsonschema import ValidationError
 
 from .auth import authenticate
-from .binding_refresh import HolderBindingRefresher, REFRESH_ADVICE, RefreshFailure
+from .binding_refresh import REFRESH_ADVICE, HolderBindingRefresher, RefreshFailure
 from .keys import HUMAN_APPROVAL_MESSAGES, Refused
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,7 @@ def create_app(holder):
             status = 503
         elif code in {
             RefreshFailure.ENROLLMENT_CHANGED,
+            RefreshFailure.IDENTITY_KEY_CHANGED,
             "state_changed",
             "enrollment_changed",
             "person_already_exists",

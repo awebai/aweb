@@ -89,7 +89,7 @@ def test_bad_creation_proof_cannot_sign_evidence_or_consume_nonce(holder):
         holder.finish_creation(target, {}, issuer=None, **owner(holder, target))
     assert holder.pending(target) == result
     assert len(holder.store.audit()) == 3
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == 0
 
 
@@ -165,7 +165,7 @@ def test_creation_proof_evidence_and_nonce_commit_once_with_real_webauthn_crypto
         == value
     )
     assert holder.store.audit() == audit
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         assert db.execute("SELECT count(*) FROM consumed").fetchone()[0] == 1
     # Signed creation evidence alone does not establish public committed identity.
     with pytest.raises(Refused, match="approver_not_active"):
@@ -175,7 +175,7 @@ def test_creation_proof_evidence_and_nonce_commit_once_with_real_webauthn_crypto
 def test_nonce_write_failure_rolls_back_evidence_and_signature_audit(holder):
     target, receipt = creation(holder)
     before = holder.store.audit()
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         db.execute(
             "CREATE TRIGGER fail_consumption BEFORE INSERT ON consumed BEGIN SELECT RAISE(ABORT,'consume_failed'); END"
         )
@@ -183,7 +183,7 @@ def test_nonce_write_failure_rolls_back_evidence_and_signature_audit(holder):
     with pytest.raises(sqlite3.IntegrityError, match="consume_failed"):
         holder.finish_creation(target, receipt, issuer=issuer, **owner(holder, target))
     assert holder.store.audit() == before
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         assert (
             db.execute(
                 "SELECT evidence FROM enrollments WHERE person=?", (target,)
@@ -230,7 +230,7 @@ def test_live_pending_or_any_evidence_cannot_be_replaced(holder, has_evidence):
         )
         expire_pending(holder, target)
     before = holder.store.audit()
-    with holder.store._connection() as db, db:
+    with holder.store.connection() as db, db:
         db.execute("BEGIN IMMEDIATE")
         row = holder._row(db, target)
         original = parse(row["intent"].encode())["intent"]

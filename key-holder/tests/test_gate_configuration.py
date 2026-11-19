@@ -14,7 +14,7 @@ def test_legacy_holder_refuses_start_with_replacement_instruction(
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     # The actual persisted setting used by the previous version, not a mocked
     # policy source. Keep its upgrade behavior even after the column retires.
-    with store._connection() as db, db:
+    with store.connection() as db, db:
         names = {row[1] for row in db.execute("PRAGMA table_info(configuration)")}
         if "human_issuance" not in names:
             db.execute("ALTER TABLE configuration ADD COLUMN human_issuance TEXT")
@@ -38,7 +38,7 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     descriptor = store.descriptor()
-    with store._connection() as db, db:
+    with store.connection() as db, db:
         db.execute(
             "ALTER TABLE configuration ADD COLUMN human_issuance TEXT NOT NULL DEFAULT 'approved'"
         )
@@ -59,7 +59,7 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
     reopened = KeyStore.open(store.directory)
     assert reopened.descriptor() == descriptor
     assert reopened.audit()[0]["operation"] == "human_approval_change"
-    with reopened._connection() as db:
+    with reopened.connection() as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 5
         assert "human_issuance" not in {
             row[1] for row in db.execute("PRAGMA table_info(configuration)")
@@ -134,7 +134,7 @@ def test_actual_legacy_cli_names_the_replacement_section(tmp_path):
     import sys
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    with store._connection() as db, db:
+    with store.connection() as db, db:
         db.execute(
             "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
         )
@@ -168,7 +168,7 @@ def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tm
     import base64
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    with store._connection() as db, db:
+    with store.connection() as db, db:
         db.execute(
             "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
         )
@@ -331,7 +331,7 @@ def test_cli_policy_refusal_explains_the_operator_action(tmp_path, problem):
         "https://holder.example",
     ]
     if problem == "missing_source":
-        with store._connection() as db, db:
+        with store.connection() as db, db:
             db.execute(
                 "ALTER TABLE configuration ADD COLUMN human_issuance TEXT DEFAULT 'approved'"
             )

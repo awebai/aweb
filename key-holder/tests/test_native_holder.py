@@ -335,7 +335,7 @@ async def test_real_authority_first_bootstrap_then_second_requires_exact_approva
 
         # Physical SQLite order is not bootstrap authority. Keep the logical
         # first-person row unchanged while placing it after the second person.
-        with holder.store._connection() as db, db:
+        with holder.store.connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             saved = dict(holder._row(db, first))
             db.execute("DELETE FROM enrollments WHERE person=?", (first,))

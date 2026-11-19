@@ -10,6 +10,7 @@ import secrets
 import sqlite3
 import stat
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from importlib.resources import files
 from pathlib import Path
@@ -134,7 +135,7 @@ class KeyStore:
     @classmethod
     def open(cls, directory):
         store = cls(directory)
-        with store._connection() as db:
+        with store.connection() as db:
             store._refuse_legacy_configuration(db)
             if db.execute("PRAGMA user_version").fetchone()[0] != 5:
                 raise Refused("schema_unavailable")
@@ -143,7 +144,7 @@ class KeyStore:
         return store
 
     def migrate(self, *, policy=None):
-        with self._connection() as db:
+        with self.connection() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version == 1:
                 db.executescript(
@@ -225,16 +226,17 @@ class KeyStore:
         if before == section:
             return
         payload = prefix + canonical({"version": 1, "from": before, "to": section})
-        self._sign(
+        self.sign_authorized_payload(
             db,
-            self._descriptor(db),
+            self.descriptor_in_transaction(db),
             payload,
             operation="human_approval_change",
             actor="operator",
         )
 
     @contextmanager
-    def _connection(self):
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        """Open the private store without creating or migrating a database."""
         _private(self.directory, 0o700, directory=True)
         database = self.directory / "holder.sqlite"
         _private(database, 0o600)
@@ -247,7 +249,10 @@ class KeyStore:
         finally:
             db.close()
 
-    def _descriptor(self, db, *, team=None):
+    def descriptor_in_transaction(
+        self, db: sqlite3.Connection, *, team: str | None = None
+    ) -> ControllerDescriptor:
+        """Read current controller authority within the caller's transaction."""
         scope = "namespace" if team is None else "team"
         row = db.execute(
             "SELECT * FROM keys WHERE scope=? AND team=? ORDER BY generation DESC LIMIT 1",
@@ -268,8 +273,8 @@ class KeyStore:
         )
 
     def descriptor(self, *, team=None):
-        with self._connection() as db:
-            return self._descriptor(db, team=team)
+        with self.connection() as db:
+            return self.descriptor_in_transaction(db, team=team)
 
     def create_team_key(self, name):
         # The descriptor validates the actual registry team-name profile.
@@ -283,7 +288,7 @@ class KeyStore:
             0,
             team=name,
         )
-        with self._connection() as db, db:
+        with self.connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             if db.execute(
                 "SELECT 1 FROM keys WHERE scope='team' AND team=?", (name,)
@@ -323,20 +328,34 @@ class KeyStore:
             raise Refused("human_approval_required")
         if type(actor) is not str or not actor:
             raise Refused("caller_required")
-        with self._connection() as db, db:
+        with self.connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
-            expected = self._descriptor(db, team=context.controller.team)
+            expected = self.descriptor_in_transaction(db, team=context.controller.team)
             if context.controller != expected:
                 raise Refused("controller_mismatch")
             payload = context.signing_bytes()
-            signature = self._sign(
+            signature = self.sign_authorized_payload(
                 db, expected, payload, operation=request.operation, actor=actor
             )
         return expected.did_key, signature
 
-    def _sign(self, db, descriptor, payload, *, operation, actor, approval=None):
-        """Internal effect helper; the caller builds and authorizes the typed act."""
-        if descriptor != self._descriptor(db, team=descriptor.team):
+    def sign_authorized_payload(
+        self,
+        db: sqlite3.Connection,
+        descriptor: ControllerDescriptor,
+        payload: bytes,
+        *,
+        operation: str,
+        actor: str,
+        approval: str | None = None,
+    ) -> bytes:
+        """Sign and audit a caller-authorized act in its existing transaction.
+
+        README.md's signature-record rule requires the audit to commit before
+        a signature leaves the holder. This in-process primitive checks the
+        current owned controller; the operation's handler authorizes the act.
+        """
+        if descriptor != self.descriptor_in_transaction(db, team=descriptor.team):
             raise Refused("controller_mismatch")
         row = db.execute(
             "SELECT seed FROM keys WHERE reference=?", (descriptor.key_reference,)
@@ -390,7 +409,7 @@ class KeyStore:
 
     def retire_person(self, person):
         """Withdraw local approval eligibility; keep proofs, nonce and audit history."""
-        with self._connection() as db, db:
+        with self.connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT retired_at FROM enrollments WHERE person=?", (person,)
@@ -398,9 +417,9 @@ class KeyStore:
             if row is None:
                 raise Refused("enrollment_unknown")
             if row[0] is None:
-                self._sign(
+                self.sign_authorized_payload(
                     db,
-                    self._descriptor(db),
+                    self.descriptor_in_transaction(db),
                     b"aweb.key-holder.retire/1\n" + canonical({"person": person}),
                     operation="retire_person",
                     actor="operator",
@@ -415,7 +434,7 @@ class KeyStore:
     def audit(self, *, after=0, limit=1000):
         if after < 0 or not 1 <= limit <= 1000:
             raise Refused("audit_page_invalid")
-        with self._connection() as db:
+        with self.connection() as db:
             return [
                 dict(row)
                 for row in db.execute(
@@ -427,7 +446,7 @@ class KeyStore:
     def encrypted_backup(self, offline_public_key):
         """Operator command: only ciphertext may leave the holder's storage."""
         public_key = PublicKey(offline_public_key)
-        with self._connection() as db, db:
+        with self.connection() as db, db:
             # One snapshot includes the audit and all private key generations.
             db.execute("BEGIN IMMEDIATE")
             # Serialize the whole snapshot, including every nonce and enrollment.
