@@ -41,6 +41,7 @@ def test_named_disposition_cannot_be_combined_with_released_delete_option():
         operation="delete_local_workspace",
         actor=ACTOR,
         target_agent_id=AGENT,
+        workspace_scope="all_for_agent",
         mark_local_agent_deleted=True,
         agent_disposition=AgentDisposition.PREPARED_REMOVAL,
     )
@@ -53,6 +54,7 @@ def test_named_disposition_requires_an_agent_target():
     request = LifecycleCascadeRequest(
         operation="cleanup_agent_coordination_state",
         actor=ACTOR,
+        target_workspace_ids=(AGENT,),
         agent_disposition=AgentDisposition.DELETED,
     )
     assert [error.code for error in _validate_request(request)] == [
