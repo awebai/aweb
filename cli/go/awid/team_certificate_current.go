@@ -26,7 +26,10 @@ type CurrentTeamCertificateError struct {
 	cause error
 }
 
+// Error describes why current membership could not be established.
 func (e *CurrentTeamCertificateError) Error() string { return e.cause.Error() }
+
+// Unwrap retains the underlying registry or artifact failure.
 func (e *CurrentTeamCertificateError) Unwrap() error { return e.cause }
 
 func currentCertificateRefusal(code CurrentTeamCertificateCode, cause error) error {
@@ -53,39 +56,33 @@ type CurrentTeamCertificateCheck struct {
 func (c *RegistryClient) CheckCurrentTeamCertificate(ctx context.Context, check CurrentTeamCertificateCheck) error {
 	cert := check.Certificate
 	if cert == nil {
-		return currentCertificateRefusal(CurrentCertificateInvalid, fmt.Errorf("the team certificate is missing"))
+		return currentCertificateRefusal(CurrentCertificateInvalid, errors.New("the team certificate is missing; ask the team's owner for its current certificate"))
 	}
 	domain, name, err := ParseTeamID(cert.Team)
 	if err != nil {
-		return currentCertificateRefusal(CurrentCertificateInvalid, fmt.Errorf("the certificate's team %q: %w", cert.Team, err))
+		return currentCertificateRefusal(CurrentCertificateInvalid, fmt.Errorf("the certificate's team %q: %w; ask the team's owner for a corrected certificate", cert.Team, err))
+	}
+	if check.RegistryURL == "" {
+		check.RegistryURL, err = c.Resolver.DiscoverRegistry(ctx, domain)
+		if err != nil {
+			return currentCertificateRefusal(CurrentCertificateUnavailable, fmt.Errorf("membership is unknown: discover the registry for %s: %w; retry when the registry is available", domain, err))
+		}
 	}
 	status, err := c.GetTeamCertificateStatus(ctx, check.RegistryURL, domain, name, cert.CertificateID)
 	if err != nil {
 		var registryErr *RegistryError
 		if errors.As(err, &registryErr) && registryErr.StatusCode == http.StatusNotFound {
-			return currentCertificateRefusal(CurrentCertificateUnregistered, fmt.Errorf("the registry at %s holds no certificate %s of %s", check.RegistryURL, cert.CertificateID, cert.Team))
+			return currentCertificateRefusal(CurrentCertificateUnregistered, fmt.Errorf("the registry at %s holds no certificate %s of %s; ask the team's owner to register its current certificate", check.RegistryURL, cert.CertificateID, cert.Team))
 		}
-		return currentCertificateRefusal(CurrentCertificateUnavailable, fmt.Errorf("read certificate %s of %s at %s: %w", cert.CertificateID, cert.Team, check.RegistryURL, err))
+		return currentCertificateRefusal(CurrentCertificateUnavailable, fmt.Errorf("read certificate %s of %s at %s: %w; retry when the registry is available", cert.CertificateID, cert.Team, check.RegistryURL, err))
 	}
 	if status.TeamID != cert.Team {
-		return currentCertificateRefusal(CurrentCertificateUnregistered, fmt.Errorf("the registry holds certificate %s for %s, not %s", cert.CertificateID, status.TeamID, cert.Team))
+		return currentCertificateRefusal(CurrentCertificateUnregistered, fmt.Errorf("the registry holds certificate %s for %s, not %s; ask the team's owner for the correct certificate", cert.CertificateID, status.TeamID, cert.Team))
 	}
-	if cert.TeamDIDKey != status.TeamDIDKey {
-		return currentCertificateRefusal(CurrentCertificateKeyChanged, fmt.Errorf("the certificate is signed by %s, not %s's current key %s", cert.TeamDIDKey, cert.Team, status.TeamDIDKey))
+	if err := checkCertificateCurrentKey(cert, status.TeamDIDKey); err != nil {
+		return err
 	}
-	header, err := EncodeTeamCertificateHeader(cert)
-	if err != nil {
-		return currentCertificateRefusal(CurrentCertificateInvalid, fmt.Errorf("encode the certificate: %w", err))
-	}
-	if _, err := CheckTeamCertificate(header, TeamCertificateFacts{
-		SubjectDIDKey: cert.MemberDIDKey, TeamDIDKey: status.TeamDIDKey, Registered: RegistrationNotRequired(),
-	}); err != nil {
-		var refused *TeamCertificateError
-		if errors.As(err, &refused) && refused.Reason == "bad_signature" {
-			return currentCertificateRefusal(CurrentCertificateBadSignature, fmt.Errorf("the certificate's signature does not verify under %s", status.TeamDIDKey))
-		}
-		return currentCertificateRefusal(CurrentCertificateInvalid, fmt.Errorf("the certificate does not check: %w", err))
-	}
+
 	switch status.Status {
 	case string(registryCertificateActive):
 		return nil

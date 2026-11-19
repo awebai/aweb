@@ -157,6 +157,32 @@ func writeDoctorLocalFixture(t *testing.T, workingDir, awebURL string) {
 		SigningKey:    priv,
 		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
+	state := collectDoctorAwebStateAt(workingDir, "")
+	if state.cert == nil {
+		t.Fatalf("doctor fixture certificate: %v", state.certErr)
+	}
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/certificates/"+state.cert.CertificateID+"/status") {
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(awid.TeamCertificateStatus{TeamID: state.cert.Team, TeamDIDKey: state.cert.TeamDIDKey, Status: "active"}); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(registry.Close)
+	teams, err := awconfig.LoadTeamState(workingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	membership := teams.Membership(state.cert.Team)
+	if membership == nil {
+		t.Fatal("doctor fixture has no selected membership")
+	}
+	membership.RegistryURL = registry.URL
+	if err := awconfig.SaveTeamState(workingDir, teams); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(filepath.Join(workingDir, awconfig.DefaultWorktreeIdentityRelativePath())); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove local identity: %v", err)
 	}
@@ -1282,6 +1308,19 @@ func TestAwDoctorOfflineLocalChecksDoNotContactNetwork(t *testing.T) {
 
 	bin, tmp := buildDoctorBinary(t)
 	writeDoctorGlobalFixture(t, tmp, server.URL)
+	teamState, loadErr := awconfig.LoadTeamState(tmp)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	membership := teamState.ActiveMembership()
+	certificate, loadErr := awconfig.LoadTeamCertificateForTeam(tmp, membership.TeamID)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	membership.TeamKey = &awid.TeamKeyEvidence{DIDKey: certificate.TeamDIDKey, State: awid.TeamKeyUnconfirmed}
+	if err := awconfig.SaveTeamState(tmp, teamState); err != nil {
+		t.Fatal(err)
+	}
 
 	out, err := runDoctorCLI(t, bin, tmp, "doctor", "local", "--offline", "--json")
 	if err != nil {
@@ -1293,6 +1332,9 @@ func TestAwDoctorOfflineLocalChecksDoNotContactNetwork(t *testing.T) {
 	check := requireDoctorCheckStatus(t, decodeDoctorOutput(t, out), doctorCheckCertificateSignature, doctorStatusOK)
 	if !strings.Contains(check.Message, "does not show that the agent is a current member of the team") || !strings.Contains(check.Message, "aw doctor --online") {
 		t.Fatalf("offline signature result must distinguish current authority and name its next check: %s", check.Message)
+	}
+	if !strings.Contains(check.Message, "Team key is unconfirmed") || !strings.Contains(check.Message, "Registration and a successful registry read will confirm it") {
+		t.Fatalf("pending confirmation remedy missing: %s", check.Message)
 	}
 }
 

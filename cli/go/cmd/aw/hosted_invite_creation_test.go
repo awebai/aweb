@@ -145,7 +145,18 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 			var available atomic.Bool
 			available.Store(scenario != "outage resume")
 			var statusReads, writes atomic.Int32
+			teamPublic, teamKey, keyErr := awid.GenerateKeypair()
+			if keyErr != nil {
+				t.Fatal(keyErr)
+			}
+			var memberCertificate atomic.Pointer[awid.TeamCertificate]
 			statusServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/teams/backend/certificates/") && strings.HasSuffix(r.URL.Path, "/status") && memberCertificate.Load() != nil {
+					if err := json.NewEncoder(w).Encode(awid.TeamCertificateStatus{TeamID: memberCertificate.Load().Team, TeamDIDKey: awid.ComputeDIDKey(teamPublic), Status: "active"}); err != nil {
+						t.Error(err)
+					}
+					return
+				}
 				if r.URL.Path != "/v1/id-certificates/status" {
 					writes.Add(1)
 					http.Error(w, "no local publication", 500)
@@ -215,11 +226,12 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 					}
 					child := map[string]any{"certificate": certificate, "signature": base64.RawURLEncoding.EncodeToString(signature)}
 					bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["root-agent"].Signed, child}}
-					_, teamKey, _ := awid.GenerateKeypair()
+
 					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:example.com", MemberDIDKey: req.DID, Alias: "child", IdentityScope: "local"})
 					if err != nil {
 						t.Fatal(err)
 					}
+					memberCertificate.Store(cert)
 					encoded, err := awid.EncodeTeamCertificateHeader(cert)
 					if err != nil {
 						t.Fatal(err)
@@ -341,6 +353,11 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 			childRow["current_certificate_id"] = childCertID
 			childRow["certificates"] = []any{map[string]any{"signed": signed, "registered_at": "2026-10-30T00:00:01.000000Z", "superseded_at": nil, "issuer_key_seq": 1}}
 			status["missing"] = []any{subject.DIDAW}
+			teamPublic, teamKey, keyErr := awid.GenerateKeypair()
+			if keyErr != nil {
+				t.Fatal(keyErr)
+			}
+			var memberCertificate atomic.Pointer[awid.TeamCertificate]
 			var registered atomic.Bool
 			registered.Store(reuse)
 			var writes atomic.Int32
@@ -348,6 +365,12 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 			const spawnID = "11111111-1111-4111-8111-111111111111"
 			const childInvitation = "22222222-2222-4222-8222-222222222222"
 			registryServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/teams/backend/certificates/") && strings.HasSuffix(r.URL.Path, "/status") && memberCertificate.Load() != nil {
+					if err := json.NewEncoder(w).Encode(awid.TeamCertificateStatus{TeamID: memberCertificate.Load().Team, TeamDIDKey: awid.ComputeDIDKey(teamPublic), Status: "active"}); err != nil {
+						t.Error(err)
+					}
+					return
+				}
 				switch r.URL.Path {
 				case "/v1/id-certificates/status":
 					if registered.Load() {
@@ -421,8 +444,9 @@ func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
 						http.Error(w, "wrong membership request", 422)
 						return
 					}
-					_, teamKey, _ := awid.GenerateKeypair()
+
 					cert, _ := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:example.com", MemberDIDKey: req.DID, MemberDIDAW: req.StableID, Alias: "child", IdentityScope: "global"})
+					memberCertificate.Store(cert)
 					encoded, _ := awid.EncodeTeamCertificateHeader(cert)
 					var registration any = map[string]any{"expected_head": nil, "invitation_id": childInvitation}
 					if reuse {

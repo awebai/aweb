@@ -44,16 +44,17 @@ type teamInviteOutput struct {
 }
 
 type teamAcceptInviteOutput struct {
-	IDRegistration string              `json:"id_registration,omitempty"`
-	Responsibility *awid.IDChainResult `json:"responsibility,omitempty"`
-	HarnessSetup   *joinHarnessResult  `json:"harness_setup,omitempty"`
-	Status         string              `json:"status"`
-	TeamID         string              `json:"team_id"`
-	Alias          string              `json:"alias"`
-	CertPath       string              `json:"cert_path"`
-	Connected      *bool               `json:"connected,omitempty"`
-	AwebURL        string              `json:"aweb_url,omitempty"`
-	ConnectCommand string              `json:"connect_command,omitempty"`
+	TeamKey        *awid.TeamKeyEvidence `json:"team_key,omitempty"`
+	IDRegistration string                `json:"id_registration,omitempty"`
+	Responsibility *awid.IDChainResult   `json:"responsibility,omitempty"`
+	HarnessSetup   *joinHarnessResult    `json:"harness_setup,omitempty"`
+	Status         string                `json:"status"`
+	TeamID         string                `json:"team_id"`
+	Alias          string                `json:"alias"`
+	CertPath       string                `json:"cert_path"`
+	Connected      *bool                 `json:"connected,omitempty"`
+	AwebURL        string                `json:"aweb_url,omitempty"`
+	ConnectCommand string                `json:"connect_command,omitempty"`
 }
 
 type teamAddMemberOutput struct {
@@ -2487,11 +2488,15 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
 	}
-	if registry == nil && resp.IDChain != nil {
+	if registry == nil {
 		registry, err = newConfiguredRegistryClient(nil)
 		if err != nil {
 			return nil, err
 		}
+	}
+	keyObservation, err := registry.CheckTeamCertificateCurrentKey(ctx, awid.CurrentTeamCertificateCheck{Certificate: cert})
+	if err != nil {
+		return nil, fmt.Errorf("hosted membership is not current: %w; ask the team controller for a current certificate", err)
 	}
 	responsibility := membershipResult
 	if creation.MembershipChain != nil {
@@ -2548,6 +2553,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			IDRegistration: registration,
+			TeamKey:        &keyObservation.Evidence,
 			Responsibility: responsibility,
 			Status:         "accepted",
 			TeamID:         cert.Team,
@@ -2555,6 +2561,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			CertPath:       awconfig.TeamCertificateRelativePath(cert.Team),
 		},
 		Certificate: cert,
+		RegistryURL: keyObservation.RegistryURL,
 		AwebURL:     serverURL,
 		Domain:      strings.TrimSpace(resp.Namespace),
 		TeamName:    strings.TrimSpace(resp.TeamSlug),
@@ -4274,6 +4281,9 @@ func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInvi
 	if teamState == nil {
 		teamState = &awconfig.TeamState{}
 	}
+	// Hosted acquisition supplies explicit evidence. Locally minted and
+	// historical enrollment paths do not assert a new registry confirmation.
+	keyEvidence := output.TeamKey
 	joinedAt := strings.TrimSpace(cert.IssuedAt)
 	if existing := teamState.Membership(strings.TrimSpace(output.TeamID)); existing != nil {
 		if strings.TrimSpace(registryURL) == "" {
@@ -4282,6 +4292,9 @@ func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInvi
 		if strings.TrimSpace(awebURL) == "" {
 			awebURL = strings.TrimSpace(existing.AwebURL)
 		}
+		if output.TeamKey == nil && existing.TeamKey != nil && existing.TeamKey.DIDKey == cert.TeamDIDKey {
+			keyEvidence = existing.TeamKey
+		}
 		// JoinedAt is the original join time; a re-accept or certificate
 		// rotation must not overwrite it with the newer cert.IssuedAt.
 		if strings.TrimSpace(existing.JoinedAt) != "" {
@@ -4289,6 +4302,7 @@ func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInvi
 		}
 	}
 	teamState.AddMembership(awconfig.TeamMembership{
+		TeamKey:     keyEvidence,
 		TeamID:      strings.TrimSpace(output.TeamID),
 		Alias:       strings.TrimSpace(output.Alias),
 		CertPath:    filepath.ToSlash(strings.TrimSpace(output.CertPath)),
