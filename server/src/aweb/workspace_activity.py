@@ -35,6 +35,7 @@ class WorkspaceActivity:
     presence: Mapping[str, str] | None
 
     def is_newer_than(self, *, cutoff: datetime) -> bool:
+        """Whether any valid heartbeat observed activity strictly after the cutoff."""
         return self.last_seen_at is not None and self.last_seen_at > cutoff
 
 

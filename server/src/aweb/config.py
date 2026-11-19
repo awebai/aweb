@@ -416,14 +416,12 @@ def get_presence_ttl_seconds() -> int:
     presence_ttl_str = os.getenv("AWEB_PRESENCE_TTL_SECONDS", "1800")
     try:
         presence_ttl = int(presence_ttl_str)
-        if presence_ttl < 10:
-            raise ValueError("AWEB_PRESENCE_TTL_SECONDS must be at least 10")
-    except ValueError as e:
-        if "invalid literal" in str(e):
-            raise ValueError(
-                f"AWEB_PRESENCE_TTL_SECONDS must be a valid integer, got '{presence_ttl_str}'"
-            )
-        raise
+    except ValueError as exc:
+        raise ValueError(
+            f"AWEB_PRESENCE_TTL_SECONDS must be a valid integer, got '{presence_ttl_str}'"
+        ) from exc
+    if presence_ttl < 10:
+        raise ValueError("AWEB_PRESENCE_TTL_SECONDS must be at least 10")
     return presence_ttl
 
 
@@ -451,12 +449,10 @@ def get_settings() -> Settings:
     port_str = os.getenv("AWEB_PORT", "8000")
     try:
         port = int(port_str)
-        if not 1 <= port <= 65535:
-            raise ValueError(f"AWEB_PORT must be between 1 and 65535, got {port}")
-    except ValueError as e:
-        if "invalid literal" in str(e):
-            raise ValueError(f"AWEB_PORT must be a valid integer, got '{port_str}'")
-        raise
+    except ValueError as exc:
+        raise ValueError(f"AWEB_PORT must be a valid integer, got '{port_str}'") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError(f"AWEB_PORT must be between 1 and 65535, got {port}")
 
     presence_ttl = get_presence_ttl_seconds()
 

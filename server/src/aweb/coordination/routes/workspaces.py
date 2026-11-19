@@ -452,7 +452,7 @@ def _workspace_cleanup_cutoff(*, identity: TeamIdentity, workspace: dict) -> dat
 
     Implements docs/aweb-sot.md:1199–1205 and self retirement at :236–248.
     """
-    requesting_agent_id = str(getattr(identity, "agent_id", "") or "").strip()
+    requesting_agent_id = identity.agent_id.strip()
     if requesting_agent_id and str(workspace.get("agent_id")) == requesting_agent_id:
         return None
     return workspace_stale_cutoff(now=datetime.now(timezone.utc))
@@ -604,7 +604,7 @@ async def delete_workspace(
         LifecycleCascadeRequest(
             operation="delete_local_workspace",
             actor=LifecycleActor(
-                actor_id=getattr(identity, "agent_id", None),
+                actor_id=identity.agent_id,
                 actor_type="agent",
                 authority="team_identity",
             ),
