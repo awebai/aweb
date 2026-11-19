@@ -319,10 +319,10 @@ async def prepared_runtime_database(database_url: str):
     await admin.execute(f"CREATE ROLE {role} LOGIN PASSWORD '{password}'")
     try:
         await admin.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
-        await admin.execute("CREATE TABLE prepared_marker (id integer PRIMARY KEY)")
-        await admin.execute("INSERT INTO prepared_marker VALUES (1)")
+        await admin.execute("CREATE TABLE public.prepared_marker (id integer PRIMARY KEY)")
+        await admin.execute("INSERT INTO public.prepared_marker VALUES (1)")
         await admin.execute(f"GRANT USAGE ON SCHEMA public TO {role}")
-        await admin.execute(f"GRANT SELECT ON prepared_marker TO {role}")
+        await admin.execute(f"GRANT SELECT ON public.prepared_marker TO {role}")
         parsed = urlsplit(database_url)
         runtime_url = urlunsplit(
             parsed._replace(netloc=f"{role}:{password}@{parsed.hostname}:{parsed.port or 5432}")
@@ -341,7 +341,7 @@ async def test_prepared_runtime_connects_without_create_and_closes_its_owned_poo
     configured, admin, role = prepared_runtime_database
 
     async def check_prepared(db: AsyncDatabaseManager) -> None:
-        assert await db.fetch_value("SELECT id FROM prepared_marker") == 1
+        assert await db.fetch_value("SELECT id FROM {{tables.prepared_marker}}") == 1
         assert not await db.fetch_value(
             "SELECT has_schema_privilege(current_user, 'public', 'CREATE')"
         )
@@ -363,7 +363,7 @@ async def test_prepared_runtime_connects_without_create_and_closes_its_owned_poo
     finally:
         await database.disconnect()
     assert await admin.fetchval("SELECT count(*) FROM pg_stat_activity WHERE usename=$1", role) == 0
-    assert await admin.fetchval("SELECT to_regclass('schema_migrations')") is None
+    assert await admin.fetchval("SELECT to_regclass('public.schema_migrations')") is None
 
 
 async def test_failed_prepared_schema_check_closes_every_runtime_connection(
@@ -375,7 +375,7 @@ async def test_failed_prepared_schema_check_closes_every_runtime_connection(
         """The prepared content cannot be served under the configured identity."""
 
     async def refuse_prepared(db: AsyncDatabaseManager) -> None:
-        assert await db.fetch_value("SELECT id FROM prepared_marker") == 1
+        assert await db.fetch_value("SELECT id FROM {{tables.prepared_marker}}") == 1
         raise PreparedSchemaRefused("Restore the matching prepared database before starting.")
 
     database = NaappDatabase(
@@ -387,4 +387,4 @@ async def test_failed_prepared_schema_check_closes_every_runtime_connection(
     with pytest.raises(PreparedSchemaRefused):
         await database.connect()
     assert await admin.fetchval("SELECT count(*) FROM pg_stat_activity WHERE usename=$1", role) == 0
-    assert await admin.fetchval("SELECT to_regclass('schema_migrations')") is None
+    assert await admin.fetchval("SELECT to_regclass('public.schema_migrations')") is None
