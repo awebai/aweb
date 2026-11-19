@@ -131,10 +131,7 @@ async def customer_hosted_credential(coordination, member, directory) -> dict[st
         certificate_id=SERVICE_CERTIFICATE_ID, alias="logs-service",
     )
     await coordination.registry.add_certificate(service.certificate())
-    name, domain = member.team_id.split(":", 1)
-    await coordination.registry.db.execute(
-        "UPDATE {{tables.teams}} SET visibility = 'private' WHERE domain = $1 AND name = $2", domain, name,
-    )
+    await coordination.registry.set_team_visibility(member.team_id, member.team_key, "private")
     directory.mkdir(parents=True, exist_ok=True)
     key = directory / "signing.key"
     key.write_text(
@@ -167,6 +164,7 @@ async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, re
     ledger = await test_db_factory.create_db(suffix="logs_http_purge_ledger")
     server_db = coordination.server.db.get_manager("aweb")
     overrides = dict(getattr(request, "param", {}))
+    producer_key_purposes = overrides.pop("producer_key_purposes", ["hook-event"])
     awid_authority: dict = {"awid_service_token": SERVICE_TOKEN}
     if overrides.pop("customer_hosted", False):
         # A customer-hosted Logs: its team is private, and Logs holds an
@@ -188,7 +186,7 @@ async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, re
         "app": {"id": APP_ID, "origin": SECRETS_ORIGIN, "version": "1.0.0"},
         "tools": [],
         "app_keys": [{"kid": "hook-2026-10", "did_key": did_key(SECRETS_SEED),
-                      "purposes": ["hook-event"]}],
+                      "purposes": producer_key_purposes}],
         "hooks": {"registration_version": 1, "productions": [
             {"catalog": {"id": "aweb.hooks", "version": 1}, "hook": hook}
             for hook in ("post-secret-use-hook", "post-governance-hook")
@@ -362,11 +360,8 @@ async def test_an_app_must_match_the_registered_installation_generation_origin_a
     assert (response.status_code, _code(response)) == (403, "provenance_app_production")
 
 
+@pytest.mark.parametrize("world", [{"producer_key_purposes": ["hook-delivery"]}], indirect=True)
 async def test_an_app_production_without_a_hook_event_key_is_refused(world):
-    await world.server_db.execute(
-        "UPDATE {{tables.team_app_keys}} SET purposes=ARRAY['hook-delivery'] WHERE team_id=$1 AND app_id=$2",
-        world.member.team_id, APP_ID,
-    )
     response = await world.send(world.delivery("app"))
     assert (response.status_code, _code(response)) == (403, "provenance_app_production")
 

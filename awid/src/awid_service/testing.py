@@ -191,6 +191,11 @@ class Registry:
     async def rotate_did(self, did_aw: str, old: SigningKey, new: SigningKey) -> None:
         await self._client().rotate_key(did_aw, _did_key(new), bytes(old), bytes(new))
 
+    async def set_team_visibility(self, team_id: str, team_key: SigningKey, visibility: str) -> None:
+        """Sets the team's visibility through AWID's own route, signed by its team key."""
+        name, domain = team_id.split(":", 1)
+        await self._client().set_team_visibility(domain, name, visibility, bytes(team_key))
+
     async def publish_team_server(
         self, team_id: str, team_key: SigningKey, *, server_url: str, issued_at: datetime | None = None
     ) -> None:
