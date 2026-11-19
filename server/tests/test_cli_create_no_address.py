@@ -124,3 +124,40 @@ async def test_a_root_is_created_with_no_address_at_the_real_registry_and_only_o
             assert status != 0 and refused["error"]["code"] == "identity_exists", (
                 progress
             )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("output_fd", [1, 2])
+async def test_process_fixture_drains_large_output_during_shutdown(
+    tmp_path, monkeypatch, output_fd
+):
+    child = tmp_path / "noisy-child"
+    child.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, signal\n"
+        "def stop(signum, frame):\n"
+        f"    os.write({output_fd}, b'x' * (8 * 1024 * 1024))\n"
+        "    raise SystemExit(0)\n"
+        "signal.signal(signal.SIGTERM, stop)\n"
+        "os.write(1, b'ready\\n')\n"
+        "signal.pause()\n"
+    )
+    child.chmod(0o700)
+    monkeypatch.setenv("AW_TEST_CLI_BINARY", str(child))
+    processes = []
+
+    async def exercise_shutdown():
+        async with _running((tmp_path, os.environ.copy()), grace=0.1) as process:
+            processes.append(process)
+            assert await process.stdout.readline() == b"ready\n"
+
+    try:
+        try:
+            await asyncio.wait_for(exercise_shutdown(), 3)
+        except TimeoutError:
+            pytest.fail("process capture cleanup waited on 8 MiB of undrained output")
+    finally:
+        for process in processes:
+            if process.returncode is None:
+                process.kill()
+            await asyncio.wait_for(process.communicate(), 3)
