@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any
 from uuid import UUID
 
@@ -306,7 +307,7 @@ class Ingestor:
         except HookBindingRequired as exc:
             raise IngestRefused(503, "binding_authority_unavailable") from exc
         except HookResolutionUnavailable as exc:
-            raise _unresolved(exc, "binding_authority_unavailable") from exc
+            raise _unresolved(exc, Lookup.BINDING) from exc
         for binding in resolution.items:
             if (
                 binding.kind == "registration"
@@ -380,7 +381,7 @@ class Ingestor:
         except HookBindingRequired as exc:
             raise IngestRefused(403, "provenance_app_production") from exc
         except HookResolutionUnavailable as exc:
-            raise _unresolved(exc, "provenance_authority_unavailable") from exc
+            raise _unresolved(exc, Lookup.PROVENANCE) from exc
         for production in productions.items:
             if (
                 (
@@ -415,14 +416,22 @@ class Ingestor:
         raise IngestRefused(403, "provenance_app_production")
 
 
-def _unresolved(exc: HookResolutionUnavailable, transient_code: str) -> IngestRefused:
+class Lookup(StrEnum):
+    """A hook read the ingest makes of the team's server; each value is the
+    code a delivery is refused with, retryably, when that read fails."""
+
+    BINDING = "binding_authority_unavailable"
+    PROVENANCE = "provenance_authority_unavailable"
+
+
+def _unresolved(exc: HookResolutionUnavailable, lookup: Lookup) -> IngestRefused:
     """The refusal for a hook read the team's server did not answer: permanent
     when the egress rule refuses that server, which only the team's controller
     can fix (docs/design/app-team-server-api.md §1, trust chain step 4), and
-    otherwise ``transient_code``, which the sender retries."""
+    otherwise the lookup's own code, which the sender retries."""
     if isinstance(exc, HookTeamServerNotAllowed):
         return IngestRefused(403, "team_server_not_allowed")
-    return IngestRefused(503, transient_code)
+    return IngestRefused(503, lookup)
 
 
 def _binding_evidence(binding: HookBinding, event: Envelope) -> dict[str, Any]:
