@@ -666,23 +666,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
 	// operate on the existing workspace without running the full init flow.
 	if (initInjectDocs || initSetupHooks || initSetupChannel) && !initNeedsFullInitForAddonOnly() {
-		wd, err := os.Getwd()
-		if err != nil {
-			return err
-		}
-		repoRoot := resolveRepoRoot(wd)
-		if initInjectDocs {
-			printInjectDocsResult(InjectAgentDocs(repoRoot))
-		}
-		if initSetupChannel {
-			channelResult := SetupChannelMCP(repoRoot, initIsTTY())
-			printChannelMCPResult(channelResult)
-		}
-		if initSetupHooks {
-			hookResult := SetupClaudeHooks(repoRoot, initIsTTY())
-			printClaudeHooksResult(hookResult)
-		}
-		return nil
+		return runInitAddons()
 	}
 
 	creationDir, err := os.Getwd()
@@ -854,6 +838,26 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return usageError("this directory already has a workspace; use a fresh directory")
+}
+
+func runInitAddons() error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	repoRoot := resolveRepoRoot(wd)
+	if initInjectDocs {
+		printInjectDocsResult(InjectAgentDocs(repoRoot))
+	}
+	if initSetupChannel {
+		channelResult := SetupChannelMCP(repoRoot, initIsTTY())
+		printChannelMCPResult(channelResult)
+	}
+	if initSetupHooks {
+		hookResult := SetupClaudeHooks(repoRoot, initIsTTY())
+		printClaudeHooksResult(hookResult)
+	}
+	return nil
 }
 
 type initAPIKeySelection struct {
