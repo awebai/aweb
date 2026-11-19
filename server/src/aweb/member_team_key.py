@@ -15,7 +15,7 @@ import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum, StrEnum, auto
 from types import MappingProxyType
 from typing import Any
 from uuid import UUID
@@ -23,6 +23,13 @@ from uuid import UUID
 from awid.team_ids import parse_team_id
 
 from aweb.service_errors import AuthenticationError, NotFoundError
+
+
+class MemberReadLock(Enum):
+    """Row protection requested inside the caller's existing transaction."""
+
+    NONE = auto()
+    SHARE = auto()
 
 
 class MemberStatus(StrEnum):
@@ -236,14 +243,21 @@ async def current_member_projections(
     aliases: list[str] | None = None,
     dids: list[str] | None = None,
     namespace: str | None = None,
+    read_lock: MemberReadLock = MemberReadLock.NONE,
 ) -> list[MemberProjection]:
     """Select members by identity or membership without a newest-row winner.
 
     docs/identity.md:93-107 scopes a member name to a team. Verified global
     claims are selected through identity_binding, never raw metadata.
+    SHARE holds eligible rows through the caller's transaction, preserving
+    delivery policy through commit (identity-messaging-contract.md:314-320).
+    It creates no transaction and adds no lock to the ordinary default read.
     """
     from aweb.identity_binding import verified_key_sql
 
+    if not isinstance(read_lock, MemberReadLock):
+        raise TypeError("Member reads require a named MemberReadLock")
+    lock_sql = " FOR SHARE OF a" if read_lock is MemberReadLock.SHARE else ""
     if all(value is None for value in (agent_id, team_id, aliases, dids, namespace)):
         raise ValueError("Select a current member by identity, team, name or namespace")
     manager = db.get_manager("aweb") if hasattr(db, "get_manager") else db
@@ -262,7 +276,8 @@ async def current_member_projections(
               SELECT 1 FROM {{{{tables.teams}}}} t
               WHERE t.team_id=a.team_id AND t.namespace=$5))
         ORDER BY a.agent_id
-        """,
+        """
+        + lock_sql,
         agent_id,
         team_id,
         aliases,
@@ -322,12 +337,19 @@ async def read_participant_identity_projection(
     return recipient
 
 
-async def current_member_team_ids_for_identity(db, dids: list[str]) -> set[str]:
+async def current_member_team_ids_for_identity(
+    db, dids: list[str], *, read_lock: MemberReadLock = MemberReadLock.NONE
+) -> set[str]:
     """All current memberships of the exact verified identity, for R5 policy."""
     selected = [did.strip() for did in dids if did and did.strip()]
     if not selected:
         return set()
-    return {row["team_id"] for row in await current_member_projections(db, dids=selected)}
+    return {
+        row["team_id"]
+        for row in await current_member_projections(
+            db, dids=selected, read_lock=read_lock
+        )
+    }
 
 
 def grant_issuer_current(row) -> bool:
