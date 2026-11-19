@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,12 +29,14 @@ from redis.asyncio import Redis
 from awid.attestation_records import sign_record
 from awid.did import did_from_public_key
 from awid.external_authority import DNSLookup
+from awid.dns_verify import DomainAuthority, DnsVerificationError
 from awid.ratelimit import NoOpRateLimiter
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import record_signing_bytes
 
 from .db import AwidDatabaseInfra
+from .deps import get_domain_verifier
 from .main import mount_registry
 
 REGISTRY_URL = "https://registry.example"
@@ -99,12 +101,68 @@ class Registry:
     app: FastAPI
     db: AsyncDatabaseManager
     transport: ServiceTransport
+    registry_url: str = REGISTRY_URL
+    _namespace_keys: dict[str, SigningKey] = field(default_factory=dict, repr=False)
+    _registry_client: RegistryClient | None = field(default=None, init=False, repr=False)
 
-    async def add_team(self, team_id: str, team_did_key: str, *, visibility: str = "public") -> None:
+    async def ensure_namespace(
+        self,
+        *,
+        domain: str,
+        controller: SigningKey | None = None,
+    ) -> SigningKey:
+        """Register namespace authority through AWID; retain only fixture-owned custody.
+
+        docs/identity.md:95-100 separates namespace authority from the team key.
+        The fixture's DNS answer is outside the registry under test, as TXTAnswers is.
+        """
+        key = controller if controller is not None else self._namespace_keys.get(domain)
+        client = self._client()
+        known = await client.get_namespace(domain)
+        if known is not None:
+            if key is None or known.controller_did != _did_key(key):
+                raise ValueError(
+                    f"Namespace {domain} has a different controller. "
+                    "Pass its current signing key as controller=."
+                )
+            self._namespace_keys[domain] = key
+            return key
+        if key is None:
+            key = SigningKey.generate()
+        self._namespace_keys[domain] = key
+        if get_domain_verifier not in self.app.dependency_overrides:
+            self.app.dependency_overrides[get_domain_verifier] = lambda: self.namespace_authority
+        try:
+            await client.register_namespace(domain, _did_key(key), bytes(key))
+        except Exception:
+            del self._namespace_keys[domain]
+            raise
+        return key
+
+    async def namespace_authority(self, domain: str) -> DomainAuthority:
+        """The DNS authority published by this fixture's explicit namespace controller."""
+        key = self._namespace_keys.get(domain)
+        if key is None:
+            raise DnsVerificationError(
+                f"No fixture DNS authority exists for {domain}. "
+                "Register the namespace through ensure_namespace first."
+            )
+        return DomainAuthority(
+            controller_did=_did_key(key),
+            registry_url=self.registry_url,
+            dns_name=f"_awid.{domain}",
+        )
+
+    async def add_team(
+        self, team_id: str, team_did_key: str, *, visibility: str = "public"
+    ) -> None:
         name, domain = team_id.split(":", 1)
         await self.db.execute(
             "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ($1, $2, $3, $4)",
-            domain, name, team_did_key, visibility,
+            domain,
+            name,
+            team_did_key,
+            visibility,
         )
 
     async def rotate_team_key(self, team_id: str, team_did_key: str) -> None:
@@ -114,10 +172,14 @@ class Registry:
         name, domain = team_id.split(":", 1)
         await self.db.execute(
             "UPDATE {{tables.teams}} SET team_did_key = $3 WHERE domain = $1 AND name = $2",
-            domain, name, team_did_key,
+            domain,
+            name,
+            team_did_key,
         )
 
-    async def rotate_team_key_by_controller(self, team_id: str, team_did_key: str, controller: SigningKey) -> None:
+    async def rotate_team_key_by_controller(
+        self, team_id: str, team_did_key: str, controller: SigningKey
+    ) -> None:
         """Rotate through the real route, signed by ``controller`` as the
         namespace controller (registered for the domain if it has none), so
         AWID keeps the act a pinned server checks against DNS (dns_naming)."""
@@ -125,16 +187,27 @@ class Registry:
         await self.db.execute(
             "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
             "VALUES ($1, $2, 'verified') ON CONFLICT DO NOTHING",
-            domain, _did_key(controller),
+            domain,
+            _did_key(controller),
         )
         timestamp = datetime.now(UTC).isoformat()
-        claims = {"domain": domain, "operation": "rotate_team_key", "name": name, "new_team_did_key": team_did_key}
-        signature = sign_message(bytes(controller), canonical_json_bytes({**claims, "timestamp": timestamp}))
+        claims = {
+            "domain": domain,
+            "operation": "rotate_team_key",
+            "name": name,
+            "new_team_did_key": team_did_key,
+        }
+        signature = sign_message(
+            bytes(controller), canonical_json_bytes({**claims, "timestamp": timestamp})
+        )
         async with httpx.AsyncClient(transport=self.transport, base_url=REGISTRY_URL) as client:
             response = await client.post(
                 f"/v1/namespaces/{domain}/teams/{name}/rotate",
                 json={"new_team_did_key": team_did_key},
-                headers={"Authorization": f"DIDKey {_did_key(controller)} {signature}", "X-AWEB-Timestamp": timestamp},
+                headers={
+                    "Authorization": f"DIDKey {_did_key(controller)} {signature}",
+                    "X-AWEB-Timestamp": timestamp,
+                },
             )
         if response.status_code != 200:
             raise AssertionError(f"rotate_team_key refused: {response.status_code} {response.text}")
@@ -145,7 +218,11 @@ class Registry:
             "INSERT INTO {{tables.team_certificates}} "
             "(team_uuid, certificate_id, member_did_key, alias, issued_at) "
             "SELECT team_uuid, $3, $4, $5, now() FROM {{tables.teams}} WHERE domain = $1 AND name = $2",
-            domain, name, cert["certificate_id"], cert["member_did_key"], cert["alias"],
+            domain,
+            name,
+            cert["certificate_id"],
+            cert["member_did_key"],
+            cert["alias"],
         )
 
     async def revoke(self, certificate_id: str) -> None:
@@ -159,11 +236,20 @@ class Registry:
         and holds ``member``'s certificate."""
         name, domain = member.team_id.split(":", 1)
         issued_at = datetime.now(UTC).replace(microsecond=0)
-        common = {"v": 1, "team_id": member.team_id, "team_did_key": member.team_did_key,
-                  "custodian_id": custodian_id, "issued_at": issued_at.isoformat().replace("+00:00", "Z")}
+        common = {
+            "v": 1,
+            "team_id": member.team_id,
+            "team_did_key": member.team_did_key,
+            "custodian_id": custodian_id,
+            "issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+        }
         custodian = {**common, "type": "aweb.team-custodian", "issuer_did_keys": [_did_key(issuer)]}
-        custody = {**common, "type": "aweb.member-custody", "certificate_id": member.certificate_id,
-                   "member_did_key": member.did_key}
+        custody = {
+            **common,
+            "type": "aweb.member-custody",
+            "certificate_id": member.certificate_id,
+            "member_did_key": member.did_key,
+        }
         for table, key_column, record, extra in (
             ("team_custodians", "custodian_id", custodian, {}),
             ("member_custody", "certificate_id", custody, {"custodian_id": custodian_id}),
@@ -175,13 +261,28 @@ class Registry:
                 f"(team_uuid, {key_column}, record_json, signature, team_did_key, issued_at{columns}) "
                 f"SELECT team_uuid, $1, $2, $3, $4, $5::timestamptz{values} FROM {{{{tables.teams}}}} "
                 "WHERE domain = $6 AND name = $7",
-                record[key_column], canonical_json_bytes(record).decode(),
-                sign_record(bytes(member.team_key), record), member.team_did_key,
-                issued_at, domain, name, *extra.values(),
+                record[key_column],
+                canonical_json_bytes(record).decode(),
+                sign_record(bytes(member.team_key), record),
+                member.team_did_key,
+                issued_at,
+                domain,
+                name,
+                *extra.values(),
             )
 
     def _client(self) -> RegistryClient:
-        return RegistryClient(registry_url=REGISTRY_URL, transport=self.transport)
+        if self._registry_client is None:
+            self._registry_client = RegistryClient(
+                registry_url=self.registry_url, transport=self.transport
+            )
+        return self._registry_client
+
+    async def aclose(self) -> None:
+        """Release the client owned by this registry fixture."""
+        if self._registry_client is not None:
+            await self._registry_client.aclose()
+            self._registry_client = None
 
     async def register_did(self, key: SigningKey) -> str:
         """Registers ``key`` as a new did:aw through AWID's own route; returns the did:aw."""
@@ -192,7 +293,12 @@ class Registry:
         await self._client().rotate_key(did_aw, _did_key(new), bytes(old), bytes(new))
 
     async def publish_team_server(
-        self, team_id: str, team_key: SigningKey, *, server_url: str, issued_at: datetime | None = None
+        self,
+        team_id: str,
+        team_key: SigningKey,
+        *,
+        server_url: str,
+        issued_at: datetime | None = None,
     ) -> None:
         """Publishes the team's ``aweb.team-server/1`` record, signed by its
         team key, through AWID's own route."""
@@ -217,7 +323,10 @@ def signed_team_server_record(
         "server_url": server_url,
         "issued_at": issued_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
-    return {"record": record, "signature": sign_message(bytes(team_key), record_signing_bytes(record))}
+    return {
+        "record": record,
+        "signature": sign_message(bytes(team_key), record_signing_bytes(record)),
+    }
 
 
 @asynccontextmanager
@@ -230,6 +339,7 @@ async def running_registry(
         DatabaseConfig(connection_string=database_url, schema=None)
     )
     infra = AwidDatabaseInfra(schema="awid")
+    registry = None
     try:
         await infra.initialize(shared_pool=pool, run_migrations=True)
         app = FastAPI()
@@ -242,7 +352,14 @@ async def running_registry(
         # Its public origin, which covering controller signatures name. After
         # mount_registry, which reads AWID_PUBLIC_ORIGINS from the environment.
         app.state.awid_public_origins = (REGISTRY_URL,)
-        yield Registry(app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app))
+        registry = Registry(app=app, db=infra.get_manager("aweb"), transport=ServiceTransport(app))
+        yield registry
     finally:
-        await infra.close()
-        await pool.close()
+        try:
+            if registry is not None:
+                await registry.aclose()
+        finally:
+            try:
+                await infra.close()
+            finally:
+                await pool.close()
