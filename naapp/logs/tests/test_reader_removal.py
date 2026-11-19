@@ -52,12 +52,11 @@ def member(team_id: str = TEAM_ID) -> Principal:
 
 
 async def current(world: World) -> list[str]:
-    return [
-        reader.scope
-        for reader in await world.directory.current_readers(
-            installation_id=INSTALLATION_ID, team_id=TEAM_ID
+    async with world.db.transaction() as tx:
+        readers = await world.directory.current_readers_in(
+            tx, installation_id=INSTALLATION_ID, team_id=TEAM_ID
         )
-    ]
+    return sorted(reader.scope for reader in readers)
 
 
 async def test_a_member_removes_a_reader_on_logs_own_chain(world: World):
@@ -180,8 +179,14 @@ async def race(world: World, first, second) -> list[Any]:
     started = asyncio.create_task(first())
     await asyncio.wait_for(entered.wait(), 10)
     racing = asyncio.create_task(second())
-    # Let the second change run as far as it can while the first is open.
-    await asyncio.sleep(0.5)
+    # The second change runs until it waits on a lock the open first one
+    # holds, or until it ends.
+    async with asyncio.timeout(10):
+        while not racing.done() and not await world.db.fetch_value(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity"
+            " WHERE datname=current_database() AND wait_event_type='Lock')"
+        ):
+            await asyncio.sleep(0.01)
     release.set()
     return list(await asyncio.gather(started, racing, return_exceptions=True))
 
