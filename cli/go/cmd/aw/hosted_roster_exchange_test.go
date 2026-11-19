@@ -26,7 +26,44 @@ import (
 // The hosted boundary is HTTP; the child's proof, parent approval, import and
 // chain verification run the production exchange, with no substituted signer.
 func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
-	for _, scenario := range []string{"three children", "three children workspace key add", "three children workspace key extend", "workspace key wrong team", "three children discovered creator", "join-from stored key", "init workspace key", "cert-only worktree", "cert-only revoked parent", "revoked parent", "different preview parent", "join-from workspace", "join-from identity home", "join-from revoked parent", "further-team external home", "further-team cross-machine recipe", "further-team retry", "further-team api-base alias", "further-team cleanup warning", "further-team own chain", "further-team parent source", "further-team other human fresh", "further-team independent init", "further-team own chain retry", "further-team explicit condition echo", "further-team explicit condition missing echo", "global provision chained actor", "join-from retry preview", "join-from retry accept", "join-from retry connect", "join-from retry connect without saved key", "further-team parent source retry", "further-team add parent retry", "further-team parent signed retry", "further-team parent two children", "further-team parent host managed"} {
+	for _, scenario := range []string{
+		"three children",
+		"three children workspace key add",
+		"three children workspace key extend",
+		"workspace key wrong team",
+		"three children discovered creator",
+		"join-from stored key",
+		"init workspace key",
+		"cert-only worktree",
+		"cert-only revoked parent",
+		"revoked parent",
+		"different preview parent",
+		"join-from workspace",
+		"join-from identity home",
+		"join-from revoked parent",
+		"further-team external home",
+		"further-team cross-machine recipe",
+		"further-team retry",
+		"further-team api-base alias",
+		"further-team cleanup warning",
+		"further-team own chain",
+		"further-team parent source",
+		"further-team other human fresh",
+		"further-team independent init",
+		"further-team own chain retry",
+		"further-team explicit condition echo",
+		"further-team explicit condition missing echo",
+		"global provision chained actor",
+		"join-from retry preview",
+		"join-from retry accept",
+		"join-from retry connect",
+		"join-from retry connect without saved key",
+		"further-team parent source retry",
+		"further-team add parent retry",
+		"further-team parent signed retry",
+		"further-team parent two children",
+		"further-team parent host managed",
+	} {
 		t.Run(scenario, func(t *testing.T) {
 			resetTeamHumanCreateGlobals(t)
 			v := loadWhoVectors(t)

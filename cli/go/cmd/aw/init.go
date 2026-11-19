@@ -727,7 +727,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			printCreationAuthority(creation)
-			invite, err := createWorkspaceTeamInviteForTeamAt(creationDir, selectedHome.Root, creation.SourceTeam)
+			invite, err := createWorkspaceTeamInviteForTeamAt(creationDir, selectedHome.Root, creation.SourceTeam, initInviteIdentityScope())
 			if err != nil {
 				return err
 			}
