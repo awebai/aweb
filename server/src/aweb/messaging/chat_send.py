@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import asyncpg.exceptions
-from fastapi import HTTPException
+from aweb.messaging.refusals import (
+    registry_configuration_refusal,
+    registry_dependency_refusal,
+)
+from aweb.messaging.refusals import DeliveryRefusal, SignedRecipientMismatch
+from http import HTTPStatus
 from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.identity_address import require_address_evidence
 
@@ -22,8 +27,6 @@ from aweb.attachment_service import attachment_retry, refuse_remote_attachments
 from aweb.db import TransactionInfra
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
-    awid_dependency_http_exception,
-    awid_registry_not_configured_exception,
 )
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
@@ -90,7 +93,6 @@ from aweb.messaging.signatures import (
 )
 from aweb.messaging.verification import require_conversation_not_legacy_bound
 from aweb.service_errors import (
-    ConflictError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -124,18 +126,18 @@ def _require_remote_chat_signature(
     payload: CreateSessionRequest | SendMessageRequest, *, session_id: str | None
 ) -> None:
     if not payload.signature or not payload.signed_payload:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="Federated chat delivery requires a sender-signed payload",
         )
     if not payload.from_did or not payload.from_did.strip():
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="from_did is required for federated chat delivery",
         )
     if not payload.message_id or not payload.timestamp or not session_id:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="message_id, timestamp, and session_id are required for federated chat delivery",
         )
 
@@ -188,30 +190,33 @@ def validate_encrypted_chat_payload(
     if not _payload_is_encrypted(payload):
         return None
     if payload.content_mode != "encrypted_v2":
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="content_mode must be encrypted_v2 for encrypted chat",
         )
     if payload.message_version != 2:
-        raise HTTPException(
-            status_code=422, detail="message_version must be 2 for encrypted chat"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="message_version must be 2 for encrypted chat",
         )
     if not isinstance(payload.encrypted_envelope, dict):
-        raise HTTPException(
-            status_code=422, detail="encrypted_envelope is required for encrypted chat"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="encrypted_envelope is required for encrypted chat",
         )
     if _chat_payload_body(payload):
-        raise HTTPException(
-            status_code=422, detail="Encrypted chat payload body must be empty"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="Encrypted chat payload body must be empty",
         )
     if payload.signature or payload.signed_payload:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="Encrypted chat must not include legacy signature fields",
         )
     if payload.message_id is None or payload.timestamp is None:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="message_id and timestamp are required for encrypted chat",
         )
     envelope = payload.encrypted_envelope or {}
@@ -226,10 +231,13 @@ def validate_encrypted_chat_payload(
             recipients=_chat_envelope_recipients(recipient_rows),
         )
     except E2EEEnvelopeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     if str(envelope.get("signature") or "").strip() == "":
-        raise HTTPException(
-            status_code=422, detail="encrypted envelope signature is required"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="encrypted envelope signature is required",
         )
     return encrypted_message_storage_metadata(envelope)
 
@@ -262,26 +270,27 @@ async def resolve_stored_remote_chat_route(
                 "current_did_key": local_did,
                 "delivery_origin": delivery_origin,
             }
-        raise HTTPException(
-            status_code=424,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.FAILED_DEPENDENCY,
             detail="Remote chat recipient has no stored routable identity",
         )
     current_did = str(
         recipient.get("current_did_key") or recipient.get("did_key") or ""
     ).strip()
     if not current_did:
-        raise HTTPException(
-            status_code=424,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.FAILED_DEPENDENCY,
             detail="Remote chat recipient stored route is missing current did:key",
         )
     if not current_did.startswith("did:key:"):
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="Remote chat recipient stored route current did:key is invalid",
         )
     if not delivery_origin:
-        raise HTTPException(
-            status_code=424, detail="Remote chat recipient has no delivery origin"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.FAILED_DEPENDENCY,
+            detail="Remote chat recipient has no delivery origin",
         )
     return {
         "address": address or did_aw,
@@ -321,8 +330,9 @@ async def deliver_federated_chat(
         _require_remote_chat_signature(payload, session_id=session_id)
     sender_routing_did = (auth.did_aw or auth.did_key or "").strip()
     if not sender_routing_did:
-        raise HTTPException(
-            status_code=422, detail="Federated chat delivery requires a sender identity"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="Federated chat delivery requires a sender identity",
         )
     sender_current_did = (
         ((payload.encrypted_envelope or {}).get("from") or {}).get("did")
@@ -331,8 +341,9 @@ async def deliver_federated_chat(
     )
     sender_current_did = str(sender_current_did or "").strip()
     if sender_current_did not in set(auth_dids(auth)):
-        raise HTTPException(
-            status_code=422, detail="from_did must match the authenticated sender"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="from_did must match the authenticated sender",
         )
     federation_signature = _chat_federation_signature(payload)
 
@@ -376,26 +387,27 @@ async def deliver_federated_chat(
             },
         )
     except FederationEnvelopeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
 
     local = await local_recipient_for_own_route(db, route, runtime)
     if local is not None:
         if envelope.target_current_did_key != local.get("did_key"):
-            raise HTTPException(status_code=403, detail="identity_binding_mismatch")
-        await require_agent_chat(db, [local], registry_client=runtime.registry_client)
-        try:
-            await authorize_message_delivery(
-                db,
-                recipient_agent=local,
-                sender_did=sender_routing_did,
-                sender_address=sender_address,
-                sender_team_id=auth.team_id,
-                sender_verified_team_id=auth.verified_team_id,
-                sender_verified_dids=auth_dids(auth),
-                stored_route_continuation=True,
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.FORBIDDEN, detail="identity_binding_mismatch"
             )
-        except (ValidationError, NotFoundError, ForbiddenError) as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        await require_agent_chat(db, [local], registry_client=runtime.registry_client)
+        await authorize_message_delivery(
+            db,
+            recipient_agent=local,
+            sender_did=sender_routing_did,
+            sender_address=sender_address,
+            sender_team_id=auth.team_id,
+            sender_verified_team_id=auth.verified_team_id,
+            sender_verified_dids=auth_dids(auth),
+            stored_route_continuation=True,
+        )
         return {"conversation_id": session_id, "message_id": str(payload.message_id)}
 
     try:
@@ -408,7 +420,7 @@ async def deliver_federated_chat(
             own_origins=runtime.public_origins,
         )
     except FederatedMailDeliveryError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise DeliveryRefusal(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 def _target_did(row: dict[str, Any]) -> str:
@@ -418,23 +430,32 @@ def _target_did(row: dict[str, Any]) -> str:
 def _parse_timestamp(value: str, label: str = "timestamp") -> datetime:
     try:
         dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception:
-        raise HTTPException(status_code=422, detail=f"Invalid {label} format")
+    except (ValueError, TypeError):
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=f"Invalid {label} format",
+        )
     if dt.tzinfo is None:
-        raise HTTPException(status_code=422, detail=f"{label} must be timezone-aware")
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=f"{label} must be timezone-aware",
+        )
     return dt.astimezone(timezone.utc)
 
 
 def _parse_signed_timestamp(value: str) -> datetime:
     dt = _parse_timestamp(value, "timestamp")
     if dt.microsecond != 0:
-        raise HTTPException(
-            status_code=422, detail="timestamp must be second precision"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="timestamp must be second precision",
         )
     try:
         enforce_message_timestamp_skew(dt)
     except FederationEnvelopeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return dt
 
 
@@ -459,20 +480,27 @@ def _validate_signed_chat_payload(
     signer_did_key: str | None = None,
 ) -> None:
     if signed_payload is None:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload is required when signature is provided",
         )
     try:
         payload = json.loads(signed_payload)
-    except Exception:
-        raise HTTPException(status_code=422, detail="signed_payload must be valid JSON")
+    except (ValueError, TypeError):
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="signed_payload must be valid JSON",
+        )
     if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=422, detail="signed_payload must be a JSON object"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="signed_payload must be a JSON object",
         )
     if payload.get("type") != "chat":
-        raise HTTPException(status_code=422, detail="signed_payload type must be chat")
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="signed_payload type must be chat",
+        )
     allowed_from_values = {
         value
         for value in (
@@ -485,8 +513,8 @@ def _validate_signed_chat_payload(
     }
     signed_from = str(payload.get("from") or "").strip()
     if signed_from and signed_from not in allowed_from_values:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload from must match the authenticated sender",
         )
     recipient_rows = recipient_rows or []
@@ -518,17 +546,15 @@ def _validate_signed_chat_payload(
     if not signed_recipient_matches(
         payload, recipients=recipient_rows, allowed_to=allowed_to_values
     ):
-        raise HTTPException(
-            status_code=422,
-            detail="signed_payload recipient must match the chat target",
-        )
+        raise SignedRecipientMismatch(kind=MessageKind.CHAT)
     if payload.get("body") != body:
-        raise HTTPException(
-            status_code=422, detail="signed_payload body must match the chat message"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="signed_payload body must match the chat message",
         )
     if payload.get("from_did") != from_did:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload from_did must match the authenticated sender",
         )
     signed_from_stable_id = str(payload.get("from_stable_id") or "").strip()
@@ -536,57 +562,63 @@ def _validate_signed_chat_payload(
         signed_from_stable_id
         and signed_from_stable_id != str(from_stable_id or "").strip()
     ):
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload from_stable_id must match the authenticated sender",
         )
     if payload.get("message_id") != message_id:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload message_id must match the chat message",
         )
     if payload.get("timestamp") != timestamp:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload timestamp must match the chat message",
         )
     signed_conversation_id = str(payload.get("conversation_id") or "").strip()
     if conversation_id is not None:
         if not signed_conversation_id:
-            raise HTTPException(
-                status_code=422, detail="signed_payload conversation_id is required"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="signed_payload conversation_id is required",
             )
         if signed_conversation_id != conversation_id:
-            raise HTTPException(
-                status_code=422, detail="signed_payload conversation_id must match"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="signed_payload conversation_id must match",
             )
     elif signed_conversation_id:
-        raise HTTPException(
-            status_code=422, detail="signed_payload conversation_id must match"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="signed_payload conversation_id must match",
         )
     if payload.get("wait_seconds") != wait_seconds:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload wait_seconds must match the chat message",
         )
     if (payload.get("reply_to") or None) != ((reply_to or "").strip() or None):
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload reply_to must match the chat message",
         )
     if bool(payload.get("sender_leaving")) != sender_leaving:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload sender_leaving must match the chat message",
         )
     if bool(payload.get("hang_on")) != hang_on:
-        raise HTTPException(
-            status_code=422, detail="signed_payload hang_on must match the chat message"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="signed_payload hang_on must match the chat message",
         )
     try:
         validate_ed25519_message_signature(signature)
     except MessageSignatureShapeError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     require_verified_message_signature(
         signed_payload=signed_payload,
         signature=signature,
@@ -639,7 +671,7 @@ def _signed_payload_conversation_id(signed_payload: str | None) -> str:
         return ""
     try:
         payload = json.loads(signed_payload)
-    except Exception:
+    except (ValueError, TypeError):
         return ""
     if not isinstance(payload, dict):
         return ""
@@ -734,8 +766,8 @@ async def _chat_create_retry(
         target_dids
     )
     if not matches:
-        raise HTTPException(
-            status_code=409,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.CONFLICT,
             detail=(
                 "This message ID has already been used for a different chat request. "
                 "Retry the original request unchanged. Use a new message ID only if you intend to send a new message."
@@ -780,12 +812,12 @@ async def _resolve_remote_chat_route(
         }
         if all(route.values()):
             return route
-        raise HTTPException(
-            status_code=424,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.FAILED_DEPENDENCY,
             detail="Remote chat recipient has an incomplete authority route",
         )
     if registry_client is None:
-        raise awid_registry_not_configured_exception(
+        raise registry_configuration_refusal(
             operation="AWID remote chat route resolution"
         )
     try:
@@ -806,11 +838,11 @@ async def _resolve_remote_chat_route(
             else:
                 resolution = await registry_client.resolve_address(domain, name)
         else:
-            raise HTTPException(
-                status_code=424,
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.FAILED_DEPENDENCY,
                 detail="Remote chat recipient has no address route for refresh",
             )
-    except (HTTPException, FederationAuthorityError):
+    except (DeliveryRefusal, FederationAuthorityError):
         raise
     except AWID_DEPENDENCY_ERRORS as exc:
         logger.warning(
@@ -818,7 +850,7 @@ async def _resolve_remote_chat_route(
             address,
             exc_info=True,
         )
-        raise awid_dependency_http_exception(
+        raise registry_dependency_refusal(
             exc, operation="AWID remote chat route resolution"
         ) from exc
     except Exception as exc:
@@ -826,20 +858,22 @@ async def _resolve_remote_chat_route(
             "Unexpected AWID registry dependency error for remote chat route resolution: %s",
             address,
         )
-        raise awid_dependency_http_exception(
+        raise registry_dependency_refusal(
             exc, operation="AWID remote chat route resolution"
         ) from exc
     if resolution is None:
-        raise HTTPException(
-            status_code=404, detail=f"Recipient route not found: {address}"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.NOT_FOUND,
+            detail=f"Recipient route not found: {address}",
         )
     target_stable_id = str(getattr(resolution, "did_aw", "") or "").strip()
     target_current_did = str(getattr(resolution, "current_did_key", "") or "").strip()
     recipient_stable_id = str(recipient.get("did_aw") or "").strip()
     recipient_did = str(recipient.get("did") or "").strip()
     if target_stable_id not in {recipient_stable_id, recipient_did}:
-        raise HTTPException(
-            status_code=422, detail="Remote chat recipient identity changed"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="Remote chat recipient identity changed",
         )
     delivery = getattr(resolution, "delivery", None)
     resolved_origin = str(
@@ -849,8 +883,9 @@ async def _resolve_remote_chat_route(
     ).strip()
     delivery_origin = resolved_origin or _target_delivery_origin(recipient)
     if not delivery_origin:
-        raise HTTPException(
-            status_code=424, detail="Recipient address has no federated delivery origin"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.FAILED_DEPENDENCY,
+            detail="Recipient address has no federated delivery origin",
         )
     local = await local_recipient_for_own_route(
         db,
@@ -896,8 +931,8 @@ async def _resolve_remote_chat_route(
 
 
 def _raise_bare_did_chat_first_contact_unsupported() -> None:
-    raise HTTPException(
-        status_code=422,
+    raise DeliveryRefusal(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         detail="Bare did:aw first-contact is unsupported; use to_addresses=domain/name or continue an existing session",
     )
 
@@ -915,7 +950,7 @@ async def _update_chat_participant_route(
     aweb_db = db.get_manager("aweb")
     try:
         conversation_uuid = UUID(conversation_id)
-    except Exception:
+    except (ValueError, TypeError):
         return
     async with aweb_db.transaction() as tx:
         await tx.execute(
@@ -1044,8 +1079,9 @@ async def _resolve_named_recipients(
 
     if to_aliases:
         if auth.team_id is None:
-            raise HTTPException(
-                status_code=422, detail="to_aliases requires team context"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="to_aliases requires team context",
             )
         target_rows: list[dict[str, Any]] = []
         local_aliases: list[str] = []
@@ -1055,8 +1091,9 @@ async def _resolve_named_recipients(
                 continue
             target = resolve_alias_target(auth.team_id, alias, field="to_aliases")
             if not await team_exists(db, target.team_id):
-                raise HTTPException(
-                    status_code=404, detail=f"Unknown team: {target.team_id}"
+                raise DeliveryRefusal(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail=f"Unknown team: {target.team_id}",
                 )
             row = await messaging_participant_by_alias(
                 db,
@@ -1066,7 +1103,9 @@ async def _resolve_named_recipients(
                 registry_client=runtime.registry_client,
             )
             if row is None:
-                raise HTTPException(status_code=404, detail=f"Unknown aliases: {alias}")
+                raise DeliveryRefusal(
+                    status_code=HTTPStatus.NOT_FOUND, detail=f"Unknown aliases: {alias}"
+                )
             target_rows.append(row)
         if local_aliases:
             local_rows = await messaging_participants_by_aliases(
@@ -1081,8 +1120,9 @@ async def _resolve_named_recipients(
                 alias for alias in local_aliases if alias not in resolved_aliases
             ]
             if missing:
-                raise HTTPException(
-                    status_code=404, detail=f"Unknown aliases: {', '.join(missing)}"
+                raise DeliveryRefusal(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail=f"Unknown aliases: {', '.join(missing)}",
                 )
             target_rows.extend(local_rows)
         for row in target_rows:
@@ -1095,8 +1135,9 @@ async def _resolve_named_recipients(
         if row is None and did.startswith("did:aw:"):
             _raise_bare_did_chat_first_contact_unsupported()
         if row is None:
-            raise HTTPException(
-                status_code=404, detail=f"Recipient agent not found: {did}"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.NOT_FOUND,
+                detail=f"Recipient agent not found: {did}",
             )
         resolved[did] = identity_recipient(row)
 
@@ -1139,7 +1180,9 @@ async def _resolve_named_recipients(
                 and not row.get("did_aw")
             ):
                 raise FederationAuthorityError("local_recipient_route_missing") from exc
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+            raise DeliveryRefusal(
+                status_code=exc.status_code, detail=exc.detail
+            ) from exc
 
     return list(resolved.values())
 
@@ -1276,8 +1319,9 @@ async def resolve_chat_targets(
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
-        raise HTTPException(
-            status_code=401, detail="Authenticated identity is missing a routing DID"
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNAUTHORIZED,
+            detail="Authenticated identity is missing a routing DID",
         )
     if isinstance(selector, str):
         return await _resolve_session_target(
@@ -1310,16 +1354,13 @@ async def resolve_chat_targets(
     if not reuse_or_create:
         return ChatTarget(recipients=target_rows, source=source)
     if len(target_rows) != 1:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="A send that reuses the pair's session names one recipient",
         )
-    try:
-        shared_session_id = await find_session_between(
-            db, did_a=actor_did, did_b=_target_did(target_rows[0])
-        )
-    except ConflictError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    shared_session_id = await find_session_between(
+        db, did_a=actor_did, did_b=_target_did(target_rows[0])
+    )
     return ChatTarget(
         recipients=target_rows,
         source=source,
@@ -1341,32 +1382,35 @@ async def _resolve_session_target(
 
     try:
         session_uuid = UUID(session_id.strip())
-    except Exception:
-        raise HTTPException(status_code=422, detail="Invalid id format")
+    except (ValueError, TypeError):
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail="Invalid id format"
+        )
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one(
         "SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid
     )
     if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.NOT_FOUND, detail="Session not found"
+        )
 
     actor_did = await resolve_session_actor_did(
         db, session_id=session_uuid, actor_dids=actor_dids
     )
     if not actor_did:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.NOT_FOUND, detail="Session not found"
+        )
     recipient_rows = await _resolve_session_recipient_rows(
         db, session_id=session_uuid, actor_dids=actor_dids
     )
     # Succession is mail-only. Retired humans get a mail-directed refusal;
     # retired agents retain the existing chat behavior for live group members.
-    try:
-        for row in recipient_rows:
-            if not _target_delivery_origin(row):
-                await _require_live_mail_participant(db, row, {}, human_only=True)
-    except ValidationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    for row in recipient_rows:
+        if not _target_delivery_origin(row):
+            await _require_live_mail_participant(db, row, {}, human_only=True)
     for row in recipient_rows:
         local = await local_recipient_for_own_route(db, row, runtime)
         if local is not None:
@@ -1382,8 +1426,9 @@ async def _resolve_session_target(
             and not _target_delivery_origin(row)
             and not row.get("local_resolved")
         ):
-            raise HTTPException(
-                status_code=422, detail=LOCAL_DID_KEY_RECIPIENT_UNREACHABLE
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail=LOCAL_DID_KEY_RECIPIENT_UNREACHABLE,
             )
     for index, row in enumerate(recipient_rows):
         if not _target_delivery_origin(row):
@@ -1399,33 +1444,30 @@ async def _resolve_session_target(
             "current_did_key": route["current_did_key"],
             "delivery_origin": route["delivery_origin"],
         }
-    try:
-        await require_conversation_not_legacy_bound(
-            db,
-            conversation_id=str(session_uuid),
-            conversation_type="chat",
-        )
-        for row in recipient_rows:
-            if _target_delivery_origin(row):
-                continue
-            policy_rows = row.get("_policy_recipients") or []
-            if not policy_rows:
-                # No live local recipient: keep stored signature context, but
-                # there is no local delivery or policy to authorize.
-                continue
-            for policy_recipient in policy_rows:
-                await authorize_message_delivery(
-                    db,
-                    recipient_agent=policy_recipient,
-                    sender_did=actor_did,
-                    sender_address=sender_address,
-                    sender_team_id=auth.team_id,
-                    sender_verified_team_id=auth.verified_team_id,
-                    sender_verified_dids=auth_dids(auth),
-                    stored_route_continuation=True,
-                )
-    except (ValidationError, NotFoundError, ForbiddenError) as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    await require_conversation_not_legacy_bound(
+        db,
+        conversation_id=str(session_uuid),
+        conversation_type="chat",
+    )
+    for row in recipient_rows:
+        if _target_delivery_origin(row):
+            continue
+        policy_rows = row.get("_policy_recipients") or []
+        if not policy_rows:
+            # No live local recipient: keep stored signature context, but
+            # there is no local delivery or policy to authorize.
+            continue
+        for policy_recipient in policy_rows:
+            await authorize_message_delivery(
+                db,
+                recipient_agent=policy_recipient,
+                sender_did=actor_did,
+                sender_address=sender_address,
+                sender_team_id=auth.team_id,
+                sender_verified_team_id=auth.verified_team_id,
+                sender_verified_dids=auth_dids(auth),
+                stored_route_continuation=True,
+            )
     return ChatTarget(
         recipients=recipient_rows,
         source=source,
@@ -1496,7 +1538,9 @@ async def _send_to_named_recipients(
             or bool(payload.leaving) != bool(row.get("sender_leaving"))
             or (payload.reply_to or "") != str(row.get("reply_to") or "")
         ):
-            raise HTTPException(409, detail={"code": "attachment_conflict"})
+            raise DeliveryRefusal(
+                status_code=409, detail={"code": "attachment_conflict"}
+            )
         return SentChat(session_id=UUID(binding.conversation_id), message=dict(row))
 
     participant_rows = [
@@ -1550,14 +1594,11 @@ async def _send_to_named_recipients(
         )
         validation_conversation_id = str(requested_session_id)
     elif len(participant_rows) == 2:
-        try:
-            existing_session_id = await find_session_between(
-                db,
-                did_a=participant_rows[0]["did"],
-                did_b=participant_rows[1]["did"],
-            )
-        except ConflictError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        existing_session_id = await find_session_between(
+            db,
+            did_a=participant_rows[0]["did"],
+            did_b=participant_rows[1]["did"],
+        )
         if existing_session_id is not None:
             if (
                 signed_requested_session_id
@@ -1576,8 +1617,8 @@ async def _send_to_named_recipients(
                 requested_session_id is not None
                 and requested_session_id != existing_session_id
             ):
-                raise HTTPException(
-                    status_code=409,
+                raise DeliveryRefusal(
+                    status_code=HTTPStatus.CONFLICT,
                     detail="Existing active chat session found; continue that session instead",
                 )
             else:
@@ -1586,8 +1627,8 @@ async def _send_to_named_recipients(
                 if payload.signature is not None and _signed_payload_conversation_id(
                     payload.signed_payload
                 ) != str(existing_session_id):
-                    raise HTTPException(
-                        status_code=409,
+                    raise DeliveryRefusal(
+                        status_code=HTTPStatus.CONFLICT,
                         detail="Signed chat message must bind the existing session_id",
                     )
     external_targets = [
@@ -1597,18 +1638,19 @@ async def _send_to_named_recipients(
     ]
     if external_targets:
         if len(target_rows) != 1 or len(external_targets) != 1:
-            raise HTTPException(
-                status_code=422,
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 detail="Federated chat currently requires exactly one remote address recipient",
             )
         if not _target_delivery_origin(external_targets[0]):
-            raise HTTPException(
-                status_code=424,
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.FAILED_DEPENDENCY,
                 detail="Recipient address has no federated delivery origin",
             )
         if requested_session_id is None:
-            raise HTTPException(
-                status_code=422, detail="Federated chat delivery requires session_id"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="Federated chat delivery requires session_id",
             )
         encrypted_metadata = validate_encrypted_chat_payload(
             payload,
@@ -1623,8 +1665,8 @@ async def _send_to_named_recipients(
             )
             from_did = str(payload.from_did or "").strip()
             if from_did not in set(auth_dids(auth)):
-                raise HTTPException(
-                    status_code=422,
+                raise DeliveryRefusal(
+                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                     detail="from_did must match the authenticated sender",
                 )
             _validate_signed_chat_payload(
@@ -1676,12 +1718,14 @@ async def _send_to_named_recipients(
         ).strip()
         remote_message_id = str(remote.get("message_id") or "").strip()
         if remote_session_id != str(requested_session_id):
-            raise HTTPException(
-                status_code=502, detail="Federated chat response session_id mismatch"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.BAD_GATEWAY,
+                detail="Federated chat response session_id mismatch",
             )
         if remote_message_id != str(pre_message_id):
-            raise HTTPException(
-                status_code=502, detail="Federated chat response message_id mismatch"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.BAD_GATEWAY,
+                detail="Federated chat response message_id mismatch",
             )
 
         session_id = await ensure_session(
@@ -1714,7 +1758,9 @@ async def _send_to_named_recipients(
                 message_id=pre_message_id,
             )
         if msg_row is None:
-            raise HTTPException(status_code=404, detail=SENDER_NOT_IN_SESSION)
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
+            )
         await _record_successful_chat_contacts(
             db,
             owner_did=(auth.did_aw or actor_did).strip(),
@@ -1747,14 +1793,11 @@ async def _send_to_named_recipients(
         created_by=actor_alias,
         session_id=requested_session_id,
     )
-    try:
-        await require_conversation_not_legacy_bound(
-            db,
-            conversation_id=str(session_id),
-            conversation_type="chat",
-        )
-    except (ValidationError, NotFoundError, ForbiddenError) as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    await require_conversation_not_legacy_bound(
+        db,
+        conversation_id=str(session_id),
+        conversation_type="chat",
+    )
 
     aweb_db = db.get_manager("aweb")
     pre_message_id = uuid_mod.uuid4()
@@ -1775,18 +1818,19 @@ async def _send_to_named_recipients(
         pre_message_id = uuid_mod.UUID(str(payload.message_id))
     elif payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
-            raise HTTPException(
-                status_code=422,
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 detail="from_did is required when signature is provided",
             )
         from_did = payload.from_did.strip()
         if from_did not in set(auth_dids(auth)):
-            raise HTTPException(
-                status_code=422, detail="from_did must match the authenticated sender"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="from_did must match the authenticated sender",
             )
         if payload.message_id is None or payload.timestamp is None:
-            raise HTTPException(
-                status_code=422,
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 detail="message_id and timestamp are required when signature is provided",
             )
         _validate_signed_chat_payload(
@@ -1824,7 +1868,9 @@ async def _send_to_named_recipients(
             uuid_mod.UUID(payload.reply_to),
         )
         if reply_target is None:
-            raise HTTPException(status_code=404, detail="Replied-to message not found")
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.NOT_FOUND, detail="Replied-to message not found"
+            )
 
     try:
         with agent_wake_scope(runtime.agent_wake_publisher):
@@ -1849,12 +1895,14 @@ async def _send_to_named_recipients(
                 encrypted_metadata=encrypted_metadata,
                 message_id=pre_message_id,
             )
-    except Exception as exc:
-        if isinstance(exc, asyncpg.exceptions.UniqueViolationError):
-            raise HTTPException(status_code=409, detail="message_id already exists")
-        raise
+    except asyncpg.exceptions.UniqueViolationError as exc:
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.CONFLICT, detail="message_id already exists"
+        ) from exc
     if msg_row is None:
-        raise HTTPException(status_code=404, detail=SENDER_NOT_IN_SESSION)
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
+        )
 
     await _record_successful_chat_contacts(
         db,
@@ -1935,18 +1983,19 @@ async def _send_in_continued_session(
         pre_message_id = uuid_mod.UUID(str(payload.message_id))
     elif payload.signature is not None:
         if payload.from_did is None or not payload.from_did.strip():
-            raise HTTPException(
-                status_code=422,
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 detail="from_did is required when signature is provided",
             )
         from_did = payload.from_did.strip()
         if from_did not in set(auth_dids(auth)):
-            raise HTTPException(
-                status_code=422, detail="from_did must match the authenticated sender"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="from_did must match the authenticated sender",
             )
         if payload.message_id is None or payload.timestamp is None:
-            raise HTTPException(
-                status_code=422,
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 detail="message_id and timestamp are required when signature is provided",
             )
         _validate_signed_chat_payload(
@@ -1976,8 +2025,8 @@ async def _send_in_continued_session(
     remote_recipients = [row for row in recipient_rows if _target_delivery_origin(row)]
     if remote_recipients:
         if len(recipient_rows) != 1 or len(remote_recipients) != 1:
-            raise HTTPException(
-                status_code=422,
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 detail="Federated chat continuation requires exactly one remote recipient",
             )
         route = remote_recipients[0]
@@ -1992,7 +2041,7 @@ async def _send_in_continued_session(
                 route=route,
                 session_id=str(session_uuid),
             )
-        except HTTPException as exc:
+        except DeliveryRefusal as exc:
             if not _is_stale_delivery_origin_status(exc.status_code):
                 raise
             refreshed_route = await _resolve_remote_chat_route(
@@ -2027,12 +2076,14 @@ async def _send_in_continued_session(
         ).strip()
         remote_message_id = str(remote.get("message_id") or "").strip()
         if remote_session_id != str(session_uuid):
-            raise HTTPException(
-                status_code=502, detail="Federated chat response session_id mismatch"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.BAD_GATEWAY,
+                detail="Federated chat response session_id mismatch",
             )
         if remote_message_id != str(pre_message_id):
-            raise HTTPException(
-                status_code=502, detail="Federated chat response message_id mismatch"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.BAD_GATEWAY,
+                detail="Federated chat response message_id mismatch",
             )
 
     try:
@@ -2058,12 +2109,14 @@ async def _send_in_continued_session(
                 encrypted_metadata=encrypted_metadata,
                 message_id=pre_message_id,
             )
-    except Exception as exc:
-        if isinstance(exc, asyncpg.exceptions.UniqueViolationError):
-            raise HTTPException(status_code=409, detail="message_id already exists")
-        raise
+    except asyncpg.exceptions.UniqueViolationError as exc:
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.CONFLICT, detail="message_id already exists"
+        ) from exc
     if msg_row is None:
-        raise HTTPException(status_code=404, detail=SENDER_NOT_IN_SESSION)
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
+        )
     if remote_recipients:
         await _record_successful_chat_contacts(
             db,
@@ -2120,10 +2173,7 @@ async def _reuse_or_create_session(
             "chat-pair:" + "\n".join(sorted((did_a, did_b))),
         )
         locked_db = TransactionInfra(db, tx)
-        try:
-            current = await find_session_between(locked_db, did_a=did_a, did_b=did_b)
-        except ConflictError as exc:
-            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        current = await find_session_between(locked_db, did_a=did_a, did_b=did_b)
         if (
             current != shared_session_id
             or proposed_session_id is None

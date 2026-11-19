@@ -6,6 +6,7 @@ import json
 from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.sender_membership import sender_memberships
 from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.messaging.kinds import MessageKind
@@ -31,6 +32,7 @@ from aweb.messaging.verification import verified_signed_recipient_fields
 from aweb.service_errors import ServiceError, ValidationError
 
 
+@messaging_tool
 async def contacts_list(db_infra) -> str:
     """List all contacts for the authenticated identity."""
     auth = get_auth()
@@ -42,11 +44,13 @@ async def contacts_list(db_infra) -> str:
     return json.dumps({"contacts": contacts})
 
 
+@messaging_tool
 async def list_contacts_tool(db_infra) -> str:
     """Consumer-friendly alias for contacts_list."""
     return await contacts_list(db_infra)
 
 
+@messaging_tool
 async def contacts_add(
     db_infra,
     *,
@@ -84,6 +88,7 @@ async def contacts_add(
     return json.dumps(result)
 
 
+@messaging_tool
 async def add_contact_by_handle(db_infra, *, handle: str, label: str = "") -> str:
     """Add a pending contact by @namespace or @namespace/agent."""
     auth = get_auth()
@@ -106,6 +111,7 @@ async def add_contact_by_handle(db_infra, *, handle: str, label: str = "") -> st
     return json.dumps(result)
 
 
+@messaging_tool
 async def add_contact_by_email(db_infra, *, email: str, label: str = "") -> str:
     """Reserve a pending email contact request.
 
@@ -121,6 +127,7 @@ async def add_contact_by_email(db_infra, *, email: str, label: str = "") -> str:
     )
 
 
+@messaging_tool
 async def send_message_to_contact(
     db_infra,
     redis=None,
@@ -192,6 +199,7 @@ async def send_message_to_contact(
     )
 
 
+@messaging_tool
 async def read_messages_from_contact(
     db_infra,
     *,
@@ -206,9 +214,8 @@ async def read_messages_from_contact(
         limit_value = max(1, min(int(limit), 200))
         contact = await _get_owned_contact(db_infra, contact_id=contact_id)
         target = await _target_from_contact_reference(db_infra, contact=contact)
-    except Exception as exc:
-        detail = getattr(exc, "detail", None)
-        return json.dumps({"error": detail or str(exc)})
+    except (ServiceError, HTTPException, FederationAuthorityError) as exc:
+        return send_refusal(exc)
 
     if normalized_channel is MessageKind.MAIL:
         messages = await _read_mail_messages_from_target(
@@ -221,6 +228,7 @@ async def read_messages_from_contact(
     return json.dumps({"messages": messages})
 
 
+@messaging_tool
 async def contacts_remove(db_infra, *, contact_id: str) -> str:
     """Remove a contact for the authenticated identity."""
     auth = get_auth()
@@ -233,7 +241,7 @@ async def contacts_remove(db_infra, *, contact_id: str) -> str:
     # remove_contact already validated the UUID; normalize for the response.
     try:
         normalized_id = str(UUID(contact_id.strip()))
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         normalized_id = contact_id.strip()
     return json.dumps({"contact_id": normalized_id, "status": "removed"})
 
@@ -279,7 +287,7 @@ def _normalize_channel(channel: str) -> MessageKind:
 async def _get_owned_contact(db_infra, *, contact_id: str) -> dict:
     try:
         contact_uuid = UUID(contact_id.strip())
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         raise ValidationError("Invalid contact_id format")
     owner_dids = _owner_dids()
     if not owner_dids:

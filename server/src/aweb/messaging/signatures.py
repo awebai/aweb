@@ -7,7 +7,8 @@ import binascii
 import logging
 
 from awid.signing import verify_did_key_signature
-from fastapi import HTTPException
+from aweb.messaging.refusals import DeliveryRefusal
+from http import HTTPStatus
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,10 @@ def require_verified_message_signature(
         )
     except ValueError as exc:
         logger.warning("message_signature_invalid")
-        raise HTTPException(status_code=422, detail=INVALID_MESSAGE_SIGNATURE) from exc
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail=INVALID_MESSAGE_SIGNATURE,
+        ) from exc
 
 
 ED25519_SIGNATURE_BYTES = 64

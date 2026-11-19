@@ -22,6 +22,7 @@ from uuid import UUID, uuid4
 
 from awid.signing import canonical_json_bytes
 from fastapi import HTTPException
+from aweb.service_errors import ServiceError
 
 from aweb.attachment_service import prepare_attachment_send
 from aweb.db import TransactionInfra
@@ -560,7 +561,7 @@ class NativeMessagingService:
                 except AttachmentError as error:
                     raise ContractError("invalid", "attachment references") from error
             return payload
-        except HTTPException as error:
+        except (ServiceError, HTTPException) as error:
             raise ContractError("invalid", str(error.detail)) from error
         except (ValueError, TypeError, KeyError) as error:
             if isinstance(error, ContractError):

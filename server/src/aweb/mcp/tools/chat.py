@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.client_address import request_client_address
 from aweb.messaging.chat_policy import HumanChatRefused
@@ -366,6 +367,7 @@ async def _resolve_chat_target_for_tool(
     )
 
 
+@messaging_tool
 async def chat_send(
     db_infra,
     redis,
@@ -453,7 +455,7 @@ async def chat_send(
     else:
         try:
             UUID(session_id.strip())
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             return json.dumps({"error": "Invalid session_id format"})
 
     # A send that names its recipient goes to the session the two share, or
@@ -560,7 +562,7 @@ async def chat_send(
             sent = await send_chat(db_infra, sender, target, payload, runtime)
         except ChatSessionChanged:
             continue
-        except Exception as exc:
+        except (ServiceError, HTTPException, FederationAuthorityError) as exc:
             return _send_refusal(
                 exc, address=address_ref, hosted_envelope=encrypted is not None
             )
@@ -591,6 +593,7 @@ async def chat_send(
     return json.dumps(result)
 
 
+@messaging_tool
 async def chat_pending(
     db_infra,
     redis,
@@ -649,6 +652,7 @@ async def chat_pending(
     return json.dumps({"pending": pending})
 
 
+@messaging_tool
 async def chat_history(
     db_infra,
     *,
@@ -661,7 +665,7 @@ async def chat_history(
     actor_dids = _actor_dids()
     try:
         session_uuid = UUID(session_id.strip())
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return json.dumps({"error": "Invalid session_id format"})
 
     aweb_db = db_infra.get_manager("aweb")
@@ -731,6 +735,7 @@ async def chat_history(
     )
 
 
+@messaging_tool
 async def chat_read(
     db_infra,
     *,
@@ -743,7 +748,7 @@ async def chat_read(
 
     try:
         session_uuid = UUID(session_id.strip())
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return json.dumps({"error": "Invalid session_id format"})
 
     normalized_message_ids: list[str] | None = None
@@ -751,7 +756,7 @@ async def chat_read(
     if up_to_message_id is not None:
         try:
             normalized_watermark = str(UUID(up_to_message_id.strip()))
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             return json.dumps({"error": "Invalid message_id format"})
     if message_ids is not None:
         if not message_ids:
@@ -760,7 +765,7 @@ async def chat_read(
             normalized_message_ids = [
                 str(UUID(message_id.strip())) for message_id in message_ids
             ]
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             return json.dumps({"error": "Invalid message_id format"})
     elif normalized_watermark is None:
         return json.dumps({"error": "up_to_message_id or message_ids is required"})

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from fastapi import HTTPException
+from aweb.service_errors import ServiceError
 
 from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import ContactIdentityBindingRequired
@@ -86,7 +87,7 @@ def send_refusal(
         return json.dumps({"error": exc.reason})
     detail = getattr(exc, "detail", None)
     if (
-        isinstance(exc, HTTPException)
+        isinstance(exc, (ServiceError, HTTPException))
         and isinstance(detail, dict)
         and detail.get("code") == "address_evidence_unavailable"
     ):
@@ -103,7 +104,7 @@ def send_refusal(
     if isinstance(exc.__cause__, E2EERecipientKeyMismatch):
         return json.dumps({"error": RECIPIENT_KEY_CHANGED})
     if (
-        isinstance(exc, HTTPException)
+        isinstance(exc, (ServiceError, HTTPException))
         and isinstance(detail, str)
         and detail in _IDENTITY_BINDING_NEXT_ACTIONS
     ):

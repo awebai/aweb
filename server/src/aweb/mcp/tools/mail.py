@@ -1,6 +1,7 @@
 """MCP tools for async mail messaging."""
 
 from __future__ import annotations
+from aweb.mcp.tools.errors import messaging_tool
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.client_address import request_client_address
@@ -58,6 +59,7 @@ from aweb.messaging.mail_models import SendMessageRequest
 from aweb.service_errors import ServiceError
 
 
+@messaging_tool
 async def list_threads(
     db,
     *,
@@ -223,6 +225,7 @@ async def _resolve_mail_target_for_tool(
     )
 
 
+@messaging_tool
 async def send_mail(
     db_infra,
     *,
@@ -419,7 +422,7 @@ async def send_mail(
     )
     try:
         sent = await mail_send.send_mail(db_infra, sender, target, message, runtime)
-    except Exception as exc:
+    except (ServiceError, HTTPException, FederationAuthorityError) as exc:
         return send_refusal(
             exc, address=address_ref, hosted_envelope=encrypted is not None
         )
@@ -435,6 +438,7 @@ async def send_mail(
     )
 
 
+@messaging_tool
 async def check_inbox(
     db_infra,
     *,
@@ -452,7 +456,7 @@ async def check_inbox(
 
     try:
         limit_value = max(1, min(int(limit), 500))
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return json.dumps({"error": "limit must be an integer"})
 
     rows = await aweb_db.fetch_all(

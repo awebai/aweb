@@ -6,12 +6,15 @@ import logging
 from dataclasses import dataclass
 from collections.abc import Mapping
 
-from fastapi import HTTPException
+from aweb.messaging.refusals import (
+    registry_configuration_refusal,
+)
+from aweb.messaging.refusals import DeliveryRefusal
+from http import HTTPStatus
 from awid.federation_errors import FederationAuthorityError
 
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
-    awid_registry_not_configured_exception,
 )
 from aweb.messaging.address_auth import (
     identity_recipient,
@@ -53,8 +56,8 @@ async def _local_recipient_at_address(db, *, domain: str, name: str) -> dict | N
     try:
         return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
     except AmbiguousLocalAddressError as exc:
-        raise HTTPException(
-            status_code=409,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.CONFLICT,
             detail=f"{exc}. Use a team-qualified alias or ask the recipient to check their address.",
         ) from exc
 
@@ -128,8 +131,8 @@ async def _resolve_address_identity(
     """
     address = address.strip()
     if "/" not in address:
-        raise HTTPException(
-            status_code=422,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="Recipient address must be domain/name. Check the address and try again.",
         )
     domain, name = address.split("/", 1)
@@ -210,11 +213,11 @@ async def _resolve_address_identity(
         if await namespace_exists(db, domain):
             raise FederationAuthorityError("recipient_identity_not_found")
         if registry is None:
-            raise awid_registry_not_configured_exception(
+            raise registry_configuration_refusal(
                 operation="AWID messaging recipient address lookup"
             )
-        raise HTTPException(
-            status_code=404,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.NOT_FOUND,
             detail=f"Recipient address not found: {address}. Check the address and try again.",
         )
     if (
@@ -227,14 +230,14 @@ async def _resolve_address_identity(
             )
         )
     ):
-        raise HTTPException(
-            status_code=404,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.NOT_FOUND,
             detail=f"Recipient address not found: {address}. Check the address and try again.",
         )
     recipient = identity_recipient(local, address)
     if not (recipient.get("did_aw") or recipient.get("did_key")):
-        raise HTTPException(
-            status_code=404,
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.NOT_FOUND,
             detail="Recipient agent not found. Ask the recipient to reconnect and try again.",
         )
     return recipient

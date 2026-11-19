@@ -10,6 +10,7 @@ class ServiceError(Exception):
     """Base for service-layer errors with an HTTP-compatible status code."""
 
     status_code: int = 500
+    headers: dict[str, str] | None = None
 
     def __init__(self, detail: str | dict = "Internal service error") -> None:
         self.detail = detail

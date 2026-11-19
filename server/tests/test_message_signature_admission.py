@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
+from aweb.messaging.refusals import DeliveryRefusal
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
@@ -60,7 +60,7 @@ def test_actual_send_validator_checks_signature_authorship(kind, valid):
     if valid:
         validate(**args)
     else:
-        with pytest.raises(HTTPException) as rejected:
+        with pytest.raises(DeliveryRefusal) as rejected:
             validate(**args)
         assert rejected.value.status_code == 422
         assert (
