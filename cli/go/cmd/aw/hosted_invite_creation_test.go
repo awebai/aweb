@@ -136,12 +136,30 @@ func TestHostedInviteRequiresPinnedPreviewBeforeAccept(t *testing.T) {
 
 func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.T) {
 	v := loadWhoVectors(t)
-	seed, _ := hex.DecodeString(v.Keys["root_agent"].SeedHex)
-	issuerKey := ed25519.NewKeyFromSeed(seed)
-	issuer := v.Keys["root_agent"].DIDKey
-	for _, scenario := range []string{"valid", "outage resume", "preview retry", "native issued later", "wrong parent", "bogus signature"} {
+	for _, scenario := range []string{"valid", "outage resume", "preview retry", "native issued later", "wrong parent", "bogus signature", "released fresh key"} {
 		t.Run(scenario, func(t *testing.T) {
+			issuerName := "root_agent"
+			ancestry := []any{v.Certificates["root-agent"].Signed}
+			var required any
+			if scenario == "released fresh key" {
+				issuerName = "coordinator"
+				ancestry = []any{v.Certificates["alice"].Signed, v.Certificates["coordinator"].Signed}
+				required = v.Keys["alice"].DIDAW
+			}
+			seed, _ := hex.DecodeString(v.Keys[issuerName].SeedHex)
+			issuerKey := ed25519.NewKeyFromSeed(seed)
+			issuer := v.Keys[issuerName].DIDKey
 			dir := t.TempDir()
+			var releasedKey ed25519.PrivateKey
+			if scenario == "released fresh key" {
+				_, releasedKey, _ = awid.GenerateKeypair()
+				if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(dir), releasedKey); err != nil {
+					t.Fatal(err)
+				}
+				if err := writeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(dir)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			var available atomic.Bool
 			available.Store(scenario != "outage resume")
 			var statusReads, writes atomic.Int32
@@ -182,7 +200,7 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 					if scenario == "native issued later" {
 						mode = "self_custodial"
 					}
-					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:example.com", "identity_scope": "unknown", "server_url": origin, "status": "active", "id_tree": map[string]any{"v": 1, "issuer_id": issuer, "domain": "example.com", "child_kind": "agent", "mode": mode}})
+					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:example.com", "identity_scope": "unknown", "server_url": origin, "status": "active", "for_human": required, "id_tree": map[string]any{"v": 1, "issuer_id": issuer, "domain": "example.com", "child_kind": "agent", "mode": mode}})
 				case "/api/v1/spawn/accept-invite":
 					accepts++
 					body, _ := io.ReadAll(r.Body)
@@ -200,6 +218,9 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 						return
 					}
 					originalUUID, originalDID = req.IDTree.RequestID, req.DID
+					if releasedKey != nil && req.DID != awid.ComputeDIDKey(releasedKey.Public().(ed25519.PublicKey)) {
+						t.Error("replacement invite changed the retained fresh key")
+					}
 					auth := strings.Fields(r.Header.Get("Authorization"))
 					if len(auth) != 3 || !verifyCloudDIDPayload(t, mustExtractPublicKey(t, req.DID), r.Method, r.URL.Path, r.Header.Get("X-AWEB-Timestamp"), body, auth[2]) {
 						t.Error("id_tree is not in the child's signed body")
@@ -218,7 +239,7 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 						signature[0] ^= 1
 					}
 					child := map[string]any{"certificate": certificate, "signature": base64.RawURLEncoding.EncodeToString(signature)}
-					bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": []any{v.Certificates["root-agent"].Signed, child}}
+					bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": append(append([]any{}, ancestry...), child)}
 					_, teamKey, _ := awid.GenerateKeypair()
 					cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: "backend:example.com", MemberDIDKey: req.DID, Alias: "child", IdentityScope: "local"})
 					if err != nil {
@@ -309,12 +330,21 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 			if loadErr != nil {
 				t.Fatal(loadErr)
 			}
+			wantOutcome := "no_human"
+			if releasedKey != nil {
+				wantOutcome = "nearest_human"
+			}
 			if scenario == "wrong parent" || scenario == "bogus signature" {
 				if err == nil || installed != nil {
 					t.Fatalf("invalid response installed: %+v %v", installed, err)
 				}
-			} else if err != nil || installed == nil || accepted.Output.Responsibility.Outcome != "no_human" || accepted.Output.IDRegistration != "not_required" {
+			} else if err != nil || installed == nil || accepted.Output.Responsibility.Outcome != wantOutcome || accepted.Output.IDRegistration != "not_required" {
 				t.Fatalf("accepted=%+v installed=%+v err=%v", accepted, installed, err)
+			}
+			if releasedKey != nil {
+				if _, err := os.Stat(hostedAcceptPendingMarkerPath(dir)); !os.IsNotExist(err) {
+					t.Fatalf("successful replacement invite retained fresh-key marker: %v", err)
+				}
 			}
 			wantPreviews := 1
 			if scenario == "preview retry" {

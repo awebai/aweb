@@ -102,7 +102,12 @@ func TestHostedRefusalReleaseRequiresKnownCodeAndUncertainStateExplainsExit(t *t
 
 func TestPendingHostedCertificateFetchIsNarrow(t *testing.T) {
 	oldTeam, oldDomain, oldID := teamFetchCertTeam, teamFetchCertNamespace, teamFetchCertID
-	t.Cleanup(func() { teamFetchCertTeam, teamFetchCertNamespace, teamFetchCertID = oldTeam, oldDomain, oldID })
+	oldHuman := humanFlag
+	t.Cleanup(func() {
+		teamFetchCertTeam, teamFetchCertNamespace, teamFetchCertID = oldTeam, oldDomain, oldID
+		humanFlag = oldHuman
+	})
+	humanFlag = ""
 	home := awconfig.IdentityHome{Root: t.TempDir(), Source: awconfig.IdentityHomeFlag}
 	pub, key, _ := awid.GenerateKeypair()
 	awid.SaveSigningKey(filepath.Join(home.Root, "signing.key"), key)
@@ -116,6 +121,11 @@ func TestPendingHostedCertificateFetchIsNarrow(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("reconciliation command cannot use its pending home: %v", err)
 	}
+	humanFlag = installedChainHuman
+	if ok, err := pendingHostedExchangeTarget(teamFetchCertCmd, home); err != nil || ok {
+		t.Fatal("human selection borrowed the pending agent's identity")
+	}
+	humanFlag = ""
 	teamFetchCertTeam = "another"
 	ok, err = pendingHostedExchangeTarget(teamFetchCertCmd, home)
 	if err != nil || ok {
