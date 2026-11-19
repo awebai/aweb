@@ -58,14 +58,21 @@ async def server(aweb_cloud_db, monkeypatch):
         sk, _, did_key = _make_keypair()
         keys[alias] = (sk, did_key)
         agents[alias] = await _insert_agent(
-            db, team_id=TEAM, alias=alias, did_key=did_key,
-            did_aw=f"did:aw:{alias}", address=f"acme.com/{alias}",
+            db,
+            team_id=TEAM,
+            alias=alias,
+            did_key=did_key,
+            did_aw=f"did:aw:{alias}",
+            address=f"acme.com/{alias}",
         )
         await db.execute(
             """INSERT INTO {{tables.workspaces}}
                (workspace_id, team_id, agent_id, alias, workspace_type)
                VALUES ($1, $2, $3, $4, 'hosted_mcp')""",
-            uuid4(), TEAM, UUID(agents[alias]), alias,
+            uuid4(),
+            TEAM,
+            UUID(agents[alias]),
+            alias,
         )
     _, _, remote_did_key = _make_keypair()
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
@@ -79,7 +86,9 @@ async def server(aweb_cloud_db, monkeypatch):
         sk, did_key = keys["pilot"]
         payload = canonical_signed_payload(fields)
         return HostedMessageSigningResult(
-            from_did=did_key, signing_key_id=did_key, signed_payload=payload,
+            from_did=did_key,
+            signing_key_id=did_key,
+            signed_payload=payload,
             signature=sign_message(sk, payload.encode()),
         )
 
@@ -89,62 +98,89 @@ async def server(aweb_cloud_db, monkeypatch):
         body = json.loads(request.content)
         envelope = body["envelope"]
         verify_federation_envelope(envelope, body["signature"])
-        deliveries.append(SimpleNamespace(
-            url=str(request.url), body=body, id_chain=request.headers.get("X-AWID-ID-Chain"),
-        ))
-        return httpx.Response(200, json={
-            "message_id": envelope["message_id"],
-            "conversation_id": envelope["conversation_id"],
-            "session_id": envelope["conversation_id"],
-            "status": "delivered",
-            "delivered_at": envelope["timestamp"],
-        })
+        deliveries.append(
+            SimpleNamespace(
+                url=str(request.url),
+                body=body,
+                id_chain=request.headers.get("X-AWID-ID-Chain"),
+            )
+        )
+        return httpx.Response(
+            200,
+            json={
+                "message_id": envelope["message_id"],
+                "conversation_id": envelope["conversation_id"],
+                "session_id": envelope["conversation_id"],
+                "status": "delivered",
+                "delivered_at": envelope["timestamp"],
+            },
+        )
 
     async def resolve_key_fresh(did_aw):
         alias = did_aw.removeprefix("did:aw:")
         return KeyResolution(
-            did_aw=did_aw, current_did_key=keys[alias][1], id_tree=IDTreeEnrollment(False, None),
+            did_aw=did_aw,
+            current_did_key=keys[alias][1],
+            id_tree=IDTreeEnrollment(False, None),
         )
 
     async def resolve_address_fresh(domain, name):
         return Address(
-            address_id=f"addr-{name}", domain=domain, name=name, did_aw=f"did:aw:{name}",
-            current_did_key=keys[name][1], created_at=datetime.now(timezone.utc).isoformat(),
+            address_id=f"addr-{name}",
+            domain=domain,
+            name=name,
+            did_aw=f"did:aw:{name}",
+            current_did_key=keys[name][1],
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
 
     registry = AsyncMock()
     registry.resolve_key_fresh = AsyncMock(side_effect=resolve_key_fresh)
     registry.resolve_address_fresh = AsyncMock(side_effect=resolve_address_fresh)
-    registry.resolve_address = AsyncMock(return_value=Address(
-        address_id="addr-rita", domain="otherco.com", name="rita", did_aw=REMOTE_DID_AW,
-        current_did_key=remote_did_key, created_at=datetime.now(timezone.utc).isoformat(),
-        delivery=AddressDelivery(origin=REMOTE_ORIGIN),
-    ))
+    registry.resolve_address = AsyncMock(
+        return_value=Address(
+            address_id="addr-rita",
+            domain="otherco.com",
+            name="rita",
+            did_aw=REMOTE_DID_AW,
+            current_did_key=remote_did_key,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delivery=AddressDelivery(origin=REMOTE_ORIGIN),
+        )
+    )
 
     transport = httpx.MockTransport(remote_server)
     wakes = _RecordingWakePublisher()
     app = _build_test_app(db, registry)
     app.include_router(chat_router)
-    seed_verified_bindings(app, *((f"did:aw:{alias}", did, f"acme.com/{alias}")
-                                  for alias, (_, did) in keys.items()))
+    seed_verified_bindings(
+        app, *((f"did:aw:{alias}", did, f"acme.com/{alias}") for alias, (_, did) in keys.items())
+    )
     assert app.state.public_origin == OWN_ORIGIN
     app.state.federation_mail_transport = transport
     app.state.federation_chat_transport = transport
     app.state.agent_wake_publisher = wakes
     mcp = create_mcp_app(
-        db_infra=app.state.db, redis=_RecordingRedis(), registry_client=registry, hosted_signer=signer,
-        federation_mail_transport=transport, federation_chat_transport=transport,
+        db_infra=app.state.db,
+        redis=_RecordingRedis(),
+        registry_client=registry,
+        hosted_signer=signer,
+        federation_mail_transport=transport,
+        federation_chat_transport=transport,
     )
     app.mount("/mcp", mcp)
     await mcp.startup()
 
-    async def mail_thread(*, recipient_did, recipient_alias, recipient_address, recipient_key, origin):
+    async def mail_thread(
+        *, recipient_did, recipient_alias, recipient_address, recipient_key, origin
+    ):
         conversation_id = uuid4()
         await db.execute(
             """INSERT INTO {{tables.conversations}}
                (conversation_id, conversation_type, team_id, created_by_did)
                VALUES ($1, 'mail', $2, 'did:aw:pilot')""",
-            conversation_id, TEAM,
+            conversation_id,
+            TEAM,
         )
         await db.execute(
             """INSERT INTO {{tables.conversation_participants}}
@@ -153,28 +189,41 @@ async def server(aweb_cloud_db, monkeypatch):
                VALUES
                    ($1, 'did:aw:pilot', $2, 'pilot', 'acme.com/pilot', NULL, $3, 'local', 'initiator'),
                    ($1, $4, NULL, $5, $6, $7, $8, 'federation:' || $7, 'participant')""",
-            conversation_id, UUID(agents["pilot"]), keys["pilot"][1],
-            recipient_did, recipient_alias, recipient_address, origin, recipient_key,
+            conversation_id,
+            UUID(agents["pilot"]),
+            keys["pilot"][1],
+            recipient_did,
+            recipient_alias,
+            recipient_address,
+            origin,
+            recipient_key,
         )
         return str(conversation_id)
 
     async def remote_mail_thread():
         return await mail_thread(
-            recipient_did=REMOTE_DID_AW, recipient_alias="rita", recipient_address=REMOTE_ADDRESS,
-            recipient_key=remote_did_key, origin=REMOTE_ORIGIN,
+            recipient_did=REMOTE_DID_AW,
+            recipient_alias="rita",
+            recipient_address=REMOTE_ADDRESS,
+            recipient_key=remote_did_key,
+            origin=REMOTE_ORIGIN,
         )
 
     async def own_origin_mail_thread():
         return await mail_thread(
-            recipient_did="did:aw:bob", recipient_alias="bob", recipient_address="acme.com/bob",
-            recipient_key=keys["bob"][1], origin=OWN_ORIGIN,
+            recipient_did="did:aw:bob",
+            recipient_alias="bob",
+            recipient_address="acme.com/bob",
+            recipient_key=keys["bob"][1],
+            origin=OWN_ORIGIN,
         )
 
     async def remote_chat_session():
         session_id = uuid4()
         await db.execute(
             "INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by) VALUES ($1, $2, 'pilot')",
-            session_id, TEAM,
+            session_id,
+            TEAM,
         )
         await db.execute(
             """INSERT INTO {{tables.chat_participants}}
@@ -182,14 +231,20 @@ async def server(aweb_cloud_db, monkeypatch):
                VALUES
                    ($1, 'did:aw:pilot', $2, 'pilot', 'acme.com/pilot', NULL, $3),
                    ($1, $4, NULL, 'rita', $5, $6, $7)""",
-            session_id, UUID(agents["pilot"]), keys["pilot"][1],
-            REMOTE_DID_AW, REMOTE_ADDRESS, REMOTE_ORIGIN, remote_did_key,
+            session_id,
+            UUID(agents["pilot"]),
+            keys["pilot"][1],
+            REMOTE_DID_AW,
+            REMOTE_ADDRESS,
+            REMOTE_ORIGIN,
+            remote_did_key,
         )
         await db.execute(
             """INSERT INTO {{tables.conversations}}
                (conversation_id, conversation_type, team_id, created_by_did)
                VALUES ($1, 'chat', $2, 'did:aw:pilot')""",
-            session_id, TEAM,
+            session_id,
+            TEAM,
         )
         await db.execute(
             """INSERT INTO {{tables.conversation_participants}}
@@ -198,28 +253,46 @@ async def server(aweb_cloud_db, monkeypatch):
                VALUES
                    ($1, 'did:aw:pilot', $2, 'pilot', 'acme.com/pilot', NULL, $3, 'chat', 'initiator'),
                    ($1, $4, NULL, 'rita', $5, $6, $7, 'chat', 'participant')""",
-            session_id, UUID(agents["pilot"]), keys["pilot"][1],
-            REMOTE_DID_AW, REMOTE_ADDRESS, REMOTE_ORIGIN, remote_did_key,
+            session_id,
+            UUID(agents["pilot"]),
+            keys["pilot"][1],
+            REMOTE_DID_AW,
+            REMOTE_ADDRESS,
+            REMOTE_ORIGIN,
+            remote_did_key,
         )
         return str(session_id)
 
     try:
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=OWN_ORIGIN) as client:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url=OWN_ORIGIN
+        ) as client:
 
             async def mcp_call(tool, **arguments):
                 principal = str(uuid4())
                 headers = {
-                    "Accept": "application/json, text/event-stream", "X-Team-ID": TEAM,
-                    "X-User-ID": principal, "X-AWEB-Actor-ID": agents["pilot"],
+                    "Accept": "application/json, text/event-stream",
+                    "X-Team-ID": TEAM,
+                    "X-User-ID": principal,
+                    "X-AWEB-Actor-ID": agents["pilot"],
                     "X-AWEB-Auth": build_internal_auth_header_value(
-                        secret=INTERNAL_SECRET, team_id=TEAM,
-                        principal_type="u", principal_id=principal, actor_id=agents["pilot"],
+                        secret=INTERNAL_SECRET,
+                        team_id=TEAM,
+                        principal_type="u",
+                        principal_id=principal,
+                        actor_id=agents["pilot"],
                     ),
                 }
-                response = await client.post("/mcp/", headers=headers, json={
-                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                    "params": {"name": tool, "arguments": arguments},
-                })
+                response = await client.post(
+                    "/mcp/",
+                    headers=headers,
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "tools/call",
+                        "params": {"name": tool, "arguments": arguments},
+                    },
+                )
                 assert response.status_code == 200, response.text
                 result = response.json()
                 assert "error" not in result, result
@@ -232,16 +305,19 @@ async def server(aweb_cloud_db, monkeypatch):
                 sk, did_key = keys["pilot"]
                 fields = {**signed_fields, "message_id": str(uuid4())}
                 payload = canonical_signed_payload(fields)
-                data = json.dumps({
-                    **body_fields,
-                    "from_did": did_key,
-                    "message_id": fields["message_id"],
-                    "timestamp": fields["timestamp"],
-                    "signature": sign_message(sk, payload.encode()),
-                    "signed_payload": payload,
-                }).encode()
+                data = json.dumps(
+                    {
+                        **body_fields,
+                        "from_did": did_key,
+                        "message_id": fields["message_id"],
+                        "timestamp": fields["timestamp"],
+                        "signature": sign_message(sk, payload.encode()),
+                        "signed_payload": payload,
+                    }
+                ).encode()
                 response = await client.post(
-                    path, content=data,
+                    path,
+                    content=data,
                     headers={
                         "Content-Type": "application/json",
                         **_signed_identity_headers(sk, did_key, "", data),
@@ -251,9 +327,15 @@ async def server(aweb_cloud_db, monkeypatch):
                 return response.json()
 
             yield SimpleNamespace(
-                db=db, signed=signed, deliveries=deliveries, wakes=wakes,
-                mcp_call=mcp_call, rest_send=rest_send, remote_mail_thread=remote_mail_thread,
-                own_origin_mail_thread=own_origin_mail_thread, remote_chat_session=remote_chat_session,
+                db=db,
+                signed=signed,
+                deliveries=deliveries,
+                wakes=wakes,
+                mcp_call=mcp_call,
+                rest_send=rest_send,
+                remote_mail_thread=remote_mail_thread,
+                own_origin_mail_thread=own_origin_mail_thread,
+                remote_chat_session=remote_chat_session,
             )
     finally:
         await mcp.shutdown()
@@ -284,11 +366,16 @@ async def test_mcp_mail_on_an_own_origin_federation_route_wakes_the_recipient(se
     conversation_id = await server.own_origin_mail_thread()
 
     sent = await server.mcp_call(
-        "send_mail", conversation_id=conversation_id, subject="re", body="status", plaintext=True,
+        "send_mail",
+        conversation_id=conversation_id,
+        subject="re",
+        body="status",
+        plaintext=True,
     )
 
     stored = await server.db.fetch_one(
-        "SELECT to_did FROM {{tables.messages}} WHERE message_id = $1", UUID(sent["message_id"]),
+        "SELECT to_did FROM {{tables.messages}} WHERE message_id = $1",
+        UUID(sent["message_id"]),
     )
     assert stored["to_did"] == "did:aw:bob"
     assert server.deliveries == []
@@ -304,7 +391,11 @@ async def test_mcp_federated_mail_sends_the_envelope_the_route_sends(server):
     conversation_id = await server.remote_mail_thread()
 
     await server.mcp_call(
-        "send_mail", conversation_id=conversation_id, subject="re", body="status", plaintext=True,
+        "send_mail",
+        conversation_id=conversation_id,
+        subject="re",
+        body="status",
+        plaintext=True,
     )
     await server.rest_send(
         "/v1/messages",
@@ -323,7 +414,9 @@ async def test_mcp_federated_chat_sends_the_envelope_the_route_sends(server):
 
     await server.mcp_call("chat_send", session_id=session_id, message="status", plaintext=True)
     await server.rest_send(
-        f"/v1/chat/sessions/{session_id}/messages", {"body": "status"}, server.signed[-1],
+        f"/v1/chat/sessions/{session_id}/messages",
+        {"body": "status"},
+        server.signed[-1],
     )
 
     from_mcp, from_rest = server.deliveries
