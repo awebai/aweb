@@ -157,6 +157,7 @@ def invoke(
     env: dict[str, str] | None = None,
     stdout: int | None = subprocess.PIPE,
     timeout: int | None = 120,
+    termination_grace_seconds: int = 10,
 ) -> subprocess.CompletedProcess[str]:
     """Terminate this command's process group before its owner removes services."""
     with subprocess.Popen(
@@ -174,7 +175,7 @@ def invoke(
             if child.poll() is None:
                 os.killpg(child.pid, signal.SIGTERM)
                 try:
-                    child.communicate(timeout=10)
+                    child.communicate(timeout=termination_grace_seconds)
                 except subprocess.TimeoutExpired:
                     os.killpg(child.pid, signal.SIGKILL)
                     child.communicate()
