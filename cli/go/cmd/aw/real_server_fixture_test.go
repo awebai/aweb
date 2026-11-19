@@ -353,6 +353,44 @@ func (world *realCommandWorld) frontRegistry(t *testing.T, fault registryFault) 
 	return server.URL
 }
 
+// registryAnswer is one registry answer as a command met it: the did:key that
+// signed the request ("" when unsigned) and the registry's status.
+type registryAnswer struct {
+	Signer string
+	Status int
+}
+
+// registryRecording observes the real registry's answers to a command; it
+// answers nothing itself.
+type registryRecording struct {
+	mu      sync.Mutex
+	answers []registryAnswer
+}
+
+func (recording *registryRecording) Answers() []registryAnswer {
+	recording.mu.Lock()
+	defer recording.mu.Unlock()
+	return append([]registryAnswer(nil), recording.answers...)
+}
+
+// recordRegistry returns the origin of a front that records every answer the
+// world's registry gives through it.
+func (world *realCommandWorld) recordRegistry(t *testing.T) (string, *registryRecording) {
+	t.Helper()
+	recording := &registryRecording{}
+	origin := world.frontRegistry(t, registryFault{Rewrite: func(response *http.Response) error {
+		signer := ""
+		if parts := strings.Fields(response.Request.Header.Get("Authorization")); len(parts) == 3 && parts[0] == "DIDKey" {
+			signer = parts[1]
+		}
+		recording.mu.Lock()
+		defer recording.mu.Unlock()
+		recording.answers = append(recording.answers, registryAnswer{Signer: signer, Status: response.StatusCode})
+		return nil
+	}})
+	return origin, recording
+}
+
 func TestRealServerWorldsShareOneStackAndKeepTeamsApart(t *testing.T) {
 	first, second := newRealCommandWorld(t), newRealCommandWorld(t)
 	if first.Stack != second.Stack {

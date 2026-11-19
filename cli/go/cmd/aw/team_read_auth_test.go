@@ -1,15 +1,10 @@
 package main
 
 import (
-	"context"
 	"crypto/ed25519"
-	"encoding/base64"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -18,149 +13,63 @@ import (
 
 // The registry gates reads of a private team on a path-signature
 // (awid_service/routes/teams.py _require_team_read_access). These tests drive
-// the commands that read team state against a fake registry enforcing that gate
-// the way the service does, so what is exercised is the signature the CLI
+// the commands that read team state against the real registry, through a front
+// that records each answer, so what is exercised is the signature the CLI
 // actually puts on the wire and the message an operator gets when it cannot
 // produce one.
 
-// privateTeamRegistry is a fake registry for backend:acme.com behind the
-// visibility gate. It records every read attempt so a test can tell a read that
-// was admitted from one that was refused and retried under another key.
-type privateTeamRegistry struct {
-	t *testing.T
-
-	visibility string
-	teamDID    string
-	memberDIDs map[string]bool
-	alias      string
-
-	server *httptest.Server
-
-	// admitted holds the did:key of every read the gate let through, refused
-	// the did:key of every signed read it turned away ("" for an unsigned one).
-	admitted []string
-	refused  []string
-}
-
-func newPrivateTeamRegistry(t *testing.T, teamDID string, memberDIDs []string, alias string) *privateTeamRegistry {
+// readAuthWorld is a real private team with an active "retiree" member, read
+// through a recording front.
+func readAuthWorld(t *testing.T) (*realCommandWorld, string, *registryRecording) {
 	t.Helper()
-	fake := &privateTeamRegistry{
-		t:          t,
-		visibility: "private",
-		teamDID:    teamDID,
-		memberDIDs: map[string]bool{},
-		alias:      alias,
-	}
-	for _, did := range memberDIDs {
-		fake.memberDIDs[did] = true
-	}
-	fake.server = httptest.NewServer(http.HandlerFunc(fake.serve))
-	t.Cleanup(fake.server.Close)
-	return fake
+	world := newRealCommandWorld(t)
+	world.registerMemberCertificate(t, awid.TeamCertificateFields{MemberDIDKey: didOf(newKey(t)), Alias: "retiree", IdentityScope: awid.IdentityModeLocal})
+	origin, recording := world.recordRegistry(t)
+	return world, origin, recording
 }
 
-func (f *privateTeamRegistry) serve(w http.ResponseWriter, r *http.Request) {
-	did, signed := f.verifyPathSignature(r)
-	admit := f.visibility == "public" || (signed && (did == f.teamDID || f.memberDIDs[did]))
-	if !admit {
-		f.refused = append(f.refused, did)
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"detail": map[string]any{
-				"code": "team_private",
-				"message": "Team is private; reads require a same-team signed request " +
-					"or the trusted service token",
-			},
-		})
-		return
+// signersAndRefusals splits recorded answers into the signers the registry
+// admitted and those it turned away from the private team.
+func signersAndRefusals(answers []registryAnswer) (admitted, refused []string) {
+	for _, answer := range answers {
+		if answer.Status == http.StatusForbidden {
+			refused = append(refused, answer.Signer)
+		} else {
+			admitted = append(admitted, answer.Signer)
+		}
 	}
-	f.admitted = append(f.admitted, did)
-	switch r.URL.Path {
-	case "/v1/namespaces/acme.com/teams/backend":
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id": "backend:acme.com", "domain": "acme.com", "name": "backend",
-			"team_did_key": f.teamDID, "visibility": f.visibility,
-		})
-	case "/v1/namespaces/acme.com/teams/backend/certificates":
-		_ = json.NewEncoder(w).Encode(map[string]any{"certificates": []map[string]any{{
-			"certificate_id": "cert-" + f.alias, "team_id": "backend:acme.com",
-			"member_did_key": "did:key:z6MkMember", "member_address": "acme.com/" + f.alias,
-			"alias": f.alias, "identity_scope": "global", "issued_at": "2026-08-01T00:00:00Z",
-		}}})
-	case "/v1/namespaces/acme.com/teams/backend/members/" + f.alias:
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id": "backend:acme.com", "certificate_id": "cert-" + f.alias,
-			"member_did_key": "did:key:z6MkMember", "member_address": "acme.com/" + f.alias,
-			"alias": f.alias, "identity_scope": "global", "issued_at": "2026-08-01T00:00:00Z",
-		})
-	default:
-		f.t.Errorf("unexpected registry request %s %s", r.Method, r.URL.String())
-		w.WriteHeader(http.StatusNotFound)
-	}
-}
-
-// verifyPathSignature mirrors _verify_path_signature: a DIDKey Authorization
-// header, a timestamp inside the skew window, and an Ed25519 signature over
-// "timestamp\nMETHOD\npath".
-func (f *privateTeamRegistry) verifyPathSignature(r *http.Request) (string, bool) {
-	parts := strings.Fields(r.Header.Get("Authorization"))
-	if len(parts) != 3 || parts[0] != "DIDKey" {
-		return "", false
-	}
-	timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-	parsed, err := time.Parse(time.RFC3339, timestamp)
-	if err != nil {
-		return "", false
-	}
-	if delta := time.Since(parsed); delta > 5*time.Minute || delta < -5*time.Minute {
-		return "", false
-	}
-	pub, err := awid.ExtractPublicKey(parts[1])
-	if err != nil {
-		return "", false
-	}
-	sig, err := base64.RawStdEncoding.DecodeString(parts[2])
-	if err != nil {
-		return "", false
-	}
-	if !ed25519.Verify(pub, []byte(timestamp+"\n"+r.Method+"\n"+r.URL.Path), sig) {
-		return "", false
-	}
-	return parts[1], true
+	return admitted, refused
 }
 
 // seedTeamReadWorkspace makes a workspace directory holding an identity signing
-// key and points the status command at fake. It returns the working directory
-// and the workspace's did:key.
-func seedTeamReadWorkspace(t *testing.T, fake *privateTeamRegistry) (string, string) {
+// key and points the status command at registryURL. It returns the working
+// directory and the workspace's key.
+func seedTeamReadWorkspace(t *testing.T, registryURL string) (string, ed25519.PrivateKey) {
 	t.Helper()
 	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = fake.server.URL
+	teamRemoveRegistryURL = registryURL
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(awconfig.IdentityHomeEnv, "")
 
 	workingDir := t.TempDir()
-	pub, priv, err := awid.GenerateKeypair()
-	if err != nil {
+	key := newKey(t)
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), key); err != nil {
 		t.Fatal(err)
 	}
-	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(workingDir), priv); err != nil {
-		t.Fatal(err)
-	}
-	return workingDir, awid.ComputeDIDKey(pub)
+	return workingDir, key
 }
 
 // The read this task exists for: a workspace that is a member of a private team
 // still gets its own certificate state, because the read is signed with the
 // workspace's own key.
 func TestAgentStatusReadsAPrivateTeamWithTheWorkspaceMemberKey(t *testing.T) {
-	fake := newPrivateTeamRegistry(t, "did:key:z6MkNotUsed", nil, "retiree")
-	workingDir, workspaceDID := seedTeamReadWorkspace(t, fake)
-	fake.memberDIDs[workspaceDID] = true
+	world, origin, recording := readAuthWorld(t)
+	workingDir, workspaceKey := seedTeamReadWorkspace(t, origin)
+	world.registerMemberCertificate(t, awid.TeamCertificateFields{MemberDIDKey: didOf(workspaceKey), Alias: "operator", IdentityScope: awid.IdentityModeLocal})
 
-	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: "retiree"}
-	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false,
-		teamReadSigners(workingDir, "acme.com", "backend"))
+	out := teamAgentStatusOutput{TeamID: world.TeamID, Alias: "retiree"}
+	readAgentCertificateState(world.Context, &out, world.Domain, "backend", false,
+		teamReadSigners(workingDir, world.Domain, "backend"))
 
 	if out.Certificate != agentCertificateActive {
 		t.Fatalf("certificate=%q, want %q; unreadable=%v", out.Certificate, agentCertificateActive, out.Unreadable)
@@ -168,12 +77,13 @@ func TestAgentStatusReadsAPrivateTeamWithTheWorkspaceMemberKey(t *testing.T) {
 	if len(out.Unreadable) != 0 {
 		t.Fatalf("unreadable=%v, want none", out.Unreadable)
 	}
-	if len(fake.refused) != 0 {
-		t.Fatalf("the member key was refused %d time(s); it should have been admitted first", len(fake.refused))
+	admitted, refused := signersAndRefusals(recording.Answers())
+	if len(refused) != 0 {
+		t.Fatalf("the member key was refused %d time(s); it should have been admitted first", len(refused))
 	}
-	for _, did := range fake.admitted {
-		if did != workspaceDID {
-			t.Fatalf("a read was signed with %q, want the workspace key %q", did, workspaceDID)
+	for _, did := range admitted {
+		if did != didOf(workspaceKey) {
+			t.Fatalf("a read was signed with %q, want the workspace key %q", did, didOf(workspaceKey))
 		}
 	}
 }
@@ -182,58 +92,54 @@ func TestAgentStatusReadsAPrivateTeamWithTheWorkspaceMemberKey(t *testing.T) {
 // reads its team: the workspace key is tried first, refused, and the locally
 // held team controller key is tried next.
 func TestAgentStatusFallsBackToTheTeamControllerKeyOnAPrivateTeam(t *testing.T) {
-	_, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	teamDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
-	fake := newPrivateTeamRegistry(t, teamDID, nil, "retiree")
-	workingDir, workspaceDID := seedTeamReadWorkspace(t, fake)
-	if err := awconfig.SaveTeamKey("acme.com", "backend", teamKey); err != nil {
+	world, origin, recording := readAuthWorld(t)
+	workingDir, workspaceKey := seedTeamReadWorkspace(t, origin)
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
 		t.Fatal(err)
 	}
 
-	signers := teamReadSigners(workingDir, "acme.com", "backend")
+	signers := teamReadSigners(workingDir, world.Domain, "backend")
 	if len(signers) != 2 {
 		t.Fatalf("got %d candidate keys, want the workspace key and the controller key", len(signers))
 	}
-	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: "retiree"}
-	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false, signers)
+	out := teamAgentStatusOutput{TeamID: world.TeamID, Alias: "retiree"}
+	readAgentCertificateState(world.Context, &out, world.Domain, "backend", false, signers)
 
 	if out.Certificate != agentCertificateActive {
 		t.Fatalf("certificate=%q, want %q; unreadable=%v", out.Certificate, agentCertificateActive, out.Unreadable)
 	}
-	if len(fake.refused) != 1 || fake.refused[0] != workspaceDID {
-		t.Fatalf("refused=%v, want exactly the workspace key %q turned away once", fake.refused, workspaceDID)
+	admitted, refused := signersAndRefusals(recording.Answers())
+	if len(refused) != 1 || refused[0] != didOf(workspaceKey) {
+		t.Fatalf("refused=%v, want exactly the workspace key %q turned away once", refused, didOf(workspaceKey))
 	}
-	for _, did := range fake.admitted {
-		if did != teamDID {
-			t.Fatalf("a read was admitted for %q, want the controller key %q", did, teamDID)
+	for _, did := range admitted {
+		if did != didOf(world.TeamKey) {
+			t.Fatalf("a read was admitted for %q, want the controller key %q", did, didOf(world.TeamKey))
 		}
 	}
 	// The member read must reuse the key the team read was admitted with rather
 	// than walking the candidates again.
-	if len(fake.admitted) != 2 {
-		t.Fatalf("admitted=%v, want the team read and the member read", fake.admitted)
+	if len(admitted) != 2 {
+		t.Fatalf("admitted=%v, want the team read and the member read", admitted)
 	}
 }
 
 // With no usable key the refusal has to arrive as an instruction, not as an
 // HTTP status the operator has to interpret.
 func TestAgentStatusExplainsAPrivateTeamItCannotSignFor(t *testing.T) {
-	fake := newPrivateTeamRegistry(t, "did:key:z6MkController", nil, "retiree")
+	world, origin, recording := readAuthWorld(t)
 	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = fake.server.URL
+	teamRemoveRegistryURL = origin
 
-	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: "retiree"}
-	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false, nil)
+	out := teamAgentStatusOutput{TeamID: world.TeamID, Alias: "retiree"}
+	readAgentCertificateState(world.Context, &out, world.Domain, "backend", false, nil)
 
 	if out.Certificate != agentCertificateUnknown {
 		t.Fatalf("certificate=%q, want %q", out.Certificate, agentCertificateUnknown)
 	}
 	said := strings.Join(out.Unreadable, " ")
 	for _, want := range []string{
-		"backend:acme.com is private",
+		world.TeamID + " is private",
 		"workspace holding a certificate for this team",
 		"ask the team controller",
 	} {
@@ -246,28 +152,31 @@ func TestAgentStatusExplainsAPrivateTeamItCannotSignFor(t *testing.T) {
 			t.Fatalf("unreadable=%q leaks the raw HTTP failure %q", said, unwanted)
 		}
 	}
-	if len(fake.refused) != 1 || fake.refused[0] != "" {
-		t.Fatalf("refused=%v, want one unsigned attempt", fake.refused)
+	if _, refused := signersAndRefusals(recording.Answers()); len(refused) != 1 || refused[0] != "" {
+		t.Fatalf("refused=%v, want one unsigned attempt", refused)
 	}
 }
 
 // Public teams must be untouched: the same read stays anonymous and succeeds.
 func TestAgentStatusReadsAPublicTeamAnonymouslyAsBefore(t *testing.T) {
-	fake := newPrivateTeamRegistry(t, "did:key:z6MkController", nil, "retiree")
-	fake.visibility = "public"
+	world, origin, recording := readAuthWorld(t)
+	if _, err := world.Registry.SetTeamVisibility(world.Context, world.Stack.RegistryURL, world.Domain, "backend", "public", world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
 	resetTeamRemoveMemberGlobals(t)
-	teamRemoveRegistryURL = fake.server.URL
+	teamRemoveRegistryURL = origin
 
-	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: "retiree"}
-	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false, nil)
+	out := teamAgentStatusOutput{TeamID: world.TeamID, Alias: "retiree"}
+	readAgentCertificateState(world.Context, &out, world.Domain, "backend", false, nil)
 
 	if out.Certificate != agentCertificateActive {
 		t.Fatalf("certificate=%q, want %q; unreadable=%v", out.Certificate, agentCertificateActive, out.Unreadable)
 	}
-	if len(fake.refused) != 0 {
-		t.Fatalf("refused=%v on a public team", fake.refused)
+	admitted, refused := signersAndRefusals(recording.Answers())
+	if len(refused) != 0 {
+		t.Fatalf("refused=%v on a public team", refused)
 	}
-	for _, did := range fake.admitted {
+	for _, did := range admitted {
 		if did != "" {
 			t.Fatalf("a public-team read carried a signature from %q; anonymous behavior must be unchanged", did)
 		}
@@ -277,47 +186,44 @@ func TestAgentStatusReadsAPublicTeamAnonymouslyAsBefore(t *testing.T) {
 // The roster read is the other command an operator runs against a team they are
 // in, so it has to sign too.
 func TestTeamMembersListsAPrivateTeamWithTheWorkspaceMemberKey(t *testing.T) {
-	fake := newPrivateTeamRegistry(t, "did:key:z6MkNotUsed", nil, "alice")
+	world, origin, recording := readAuthWorld(t)
 	resetTeamMembersGlobals(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(awconfig.IdentityHomeEnv, "")
 	root := t.TempDir()
 	t.Chdir(root)
-	pub, priv, err := awid.GenerateKeypair()
-	if err != nil {
+	key := newKey(t)
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(root), key); err != nil {
 		t.Fatal(err)
 	}
-	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(root), priv); err != nil {
-		t.Fatal(err)
-	}
-	fake.memberDIDs[awid.ComputeDIDKey(pub)] = true
-	teamMembersTeamID = "backend:acme.com"
-	teamMembersRegistryURL = fake.server.URL
+	world.registerMemberCertificate(t, awid.TeamCertificateFields{MemberDIDKey: didOf(key), Alias: "alice", IdentityScope: awid.IdentityModeLocal})
+	teamMembersTeamID = world.TeamID
+	teamMembersRegistryURL = origin
 
 	if err := runTeamMembers(&cobra.Command{}, nil); err != nil {
 		t.Fatalf("runTeamMembers against a private team the workspace is a member of: %v", err)
 	}
-	if len(fake.refused) != 0 {
-		t.Fatalf("refused=%v; the workspace key should have been admitted", fake.refused)
+	if _, refused := signersAndRefusals(recording.Answers()); len(refused) != 0 {
+		t.Fatalf("refused=%v; the workspace key should have been admitted", refused)
 	}
 }
 
 // And when it cannot sign, it must say what to do rather than surface a 403.
 func TestTeamMembersExplainsAPrivateTeamItCannotSignFor(t *testing.T) {
-	fake := newPrivateTeamRegistry(t, "did:key:z6MkController", nil, "alice")
+	world, origin, _ := readAuthWorld(t)
 	resetTeamMembersGlobals(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(awconfig.IdentityHomeEnv, "")
 	t.Chdir(t.TempDir())
-	teamMembersTeamID = "backend:acme.com"
-	teamMembersRegistryURL = fake.server.URL
+	teamMembersTeamID = world.TeamID
+	teamMembersRegistryURL = origin
 
 	err := runTeamMembers(&cobra.Command{}, nil)
 	if err == nil {
 		t.Fatal("an unsigned roster read of a private team succeeded")
 	}
 	for _, want := range []string{
-		"backend:acme.com is private",
+		world.TeamID + " is private",
 		"workspace holding a certificate for this team",
 		"ask the team controller",
 	} {
