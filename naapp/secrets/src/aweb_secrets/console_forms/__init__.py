@@ -92,14 +92,13 @@ def _reference_form(installation_id: str, credential_version: int) -> str:
     )
 
 
-def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
+def _reference_review_forms_router(*, changes: ConsoleChanges) -> APIRouter:
     """Mount on the human app with the same ConsoleChanges and value routers.
 
     No values go into page templates, URLs, browser storage or returned results.
     The forms use only the shared POST and WebAuthn assertion helpers.
     """
     router = APIRouter(route_class=ConsoleRoute)
-    router.include_router(grant_forms_router(changes=changes))
 
     async def session(request: Request):
         return await changes.console.sessions.current(request)
@@ -221,4 +220,12 @@ def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
     async def script() -> Response:
         return Response((_ASSETS / "forms.js").read_text(), media_type="text/javascript")
 
+    return router
+
+
+def console_forms_router(*, changes: ConsoleChanges) -> APIRouter:
+    """Compose the console's entry and frozen-review pages."""
+    router = APIRouter(route_class=ConsoleRoute)
+    router.include_router(grant_forms_router(changes=changes))
+    router.include_router(_reference_review_forms_router(changes=changes))
     return router
