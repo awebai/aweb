@@ -2133,7 +2133,7 @@ class Passkeys:
                 subject,
             )
             proof = await tx.fetch_one(
-                "SELECT proof_id, contact_sha256 FROM {{tables.passkey_contact_proofs}} "
+                "SELECT proof_id, contact_sha256, expires_at FROM {{tables.passkey_contact_proofs}} "
                 "WHERE verifier_sha256 = $1 AND used_at IS NULL AND revoked_at IS NULL "
                 "AND expires_at > $2 FOR UPDATE",
                 verifier,
@@ -2173,6 +2173,10 @@ class Passkeys:
             )
             if fence is not None:
                 await fence.check(tx)
+            # After the last await: a lock wait in the fence may outlast the
+            # proof or the pending change, which is then not proven.
+            if self._clock() >= min(proof["expires_at"], approver["pending_contact_at"]):
+                raise ContactChangeRefused("contact_proof_unavailable")
         return approver["pending_contact_at"]
 
     async def _pending_contact(self, scope: str) -> dict[str, Any]:
