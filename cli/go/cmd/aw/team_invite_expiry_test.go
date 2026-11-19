@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,10 @@ func TestOATSExpiredAndUnknownNativeInvitesRefuseBeforeRecipientCreation(t *test
 		})
 		if err == nil || errorCodeOf(err) != "invite_unknown_or_expired" || err.Error() != "This invitation is unknown or expired; ask its issuer for a new invite." {
 			t.Fatalf("expiry/unknown refusal lost its one-sentence renewal action: %v", err)
+		}
+		var retention interface{ RetainsIdentity() bool }
+		if errors.As(err, &retention) && retention.RetainsIdentity() {
+			t.Fatal("an invite refused before recipient creation was classified as a retained issuance")
 		}
 		if _, err := os.Stat(home); !os.IsNotExist(err) {
 			t.Fatalf("refused invite created a recipient: %v", err)

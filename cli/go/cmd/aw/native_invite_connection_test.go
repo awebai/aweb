@@ -104,4 +104,8 @@ func TestOATSNativeInviteConnectionFailureRetainsTheExactAttempt(t *testing.T) {
 	if !errors.As(fmt.Errorf("provisioning acceptance: %w", acceptErr), &retention) || !retention.RetainsIdentity() {
 		t.Fatalf("retained native issuance did not protect its recipient through outer cleanup: %v", acceptErr)
 	}
+	var transport *net.OpError
+	if !errors.As(acceptErr, &transport) || errorCodeOf(acceptErr) != "invite_issuance_pending" {
+		t.Fatalf("retention wrapper changed the original transport cause or public code: %v", acceptErr)
+	}
 }

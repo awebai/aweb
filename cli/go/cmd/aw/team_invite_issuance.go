@@ -31,6 +31,10 @@ type nativeInviteRegistrationUnknownError struct{ cause error }
 func (e *nativeInviteRegistrationUnknownError) Error() string { return e.cause.Error() }
 func (e *nativeInviteRegistrationUnknownError) Unwrap() error { return e.cause }
 
+// A retained or uncertain issuance needs this recipient's existing credential
+// for reconciliation, even through outer setup failure (docs/cli-integration-contract.md:161-198).
+func (e *nativeInviteRegistrationUnknownError) RetainsIdentity() bool { return true }
+
 // An already-registered reply succeeds only after fetching the exact signed
 // effect, not merely a certificate for the same alias (docs/cli-integration-contract.md:161-198).
 func registerExactNativeInviteCertificate(ctx context.Context, request nativeInviteRegistrationRequest) error {
@@ -86,7 +90,11 @@ func nativeInviteRegistrationDefinitelyRefused(err error) bool {
 
 func nativeInviteIssuanceRefusal(invite *awconfig.TeamInvite, cause error) error {
 	check := formatShellCommand(nativeInviteCheckArgv(invite))
-	return withErrorCode("invite_issuance_pending", fmt.Errorf("invite %s issuance is incomplete or unknown: %w; retain the recipient key and invite record, then run `%s` to check its exact certificate before cancelling or resuming", invite.InviteID, cause, check))
+	if cause == nil {
+		cause = awconfig.ErrInviteIssuanceUnknown
+	}
+	retained := &nativeInviteRegistrationUnknownError{cause: cause}
+	return withErrorCode("invite_issuance_pending", fmt.Errorf("invite %s issuance is incomplete or unknown: %w; retain the recipient key and invite record, then run `%s` to check its exact certificate before cancelling or resuming", invite.InviteID, retained, check))
 }
 
 func nativeInviteRenewalRefusal(cause error) error {
