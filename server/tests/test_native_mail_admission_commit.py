@@ -8,8 +8,35 @@ import asyncpg
 import pytest
 
 from identity_binding_support import register_global_identity
-from test_dashboard_privacy import privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_messages_http import _signed_team_headers
 from test_delivery_contract_regressions import _send
+
+
+async def connect_policy_members(env):
+    """Establish the positive current-admission premise through the real endpoint."""
+    for alias in ("alice", "bob"):
+        actor = env.actors[alias]
+        content = b"{}"
+        connected = await env.client.post(
+            "/v1/connect",
+            content=content,
+            headers={
+                **_signed_team_headers(
+                    actor.sk, actor.did, TEAM, actor.certificate, content
+                ),
+                "Content-Type": "application/json",
+            },
+        )
+        assert connected.status_code == 200, connected.text
+        assert connected.json()["agent_id"] == str(actor.id)
+        assert (
+            await env.db.fetch_value(
+                "SELECT accepted_team_did_key FROM {{tables.agents}} WHERE agent_id=$1",
+                actor.id,
+            )
+            == env.team_did
+        )
 
 
 class MailPath(Enum):
@@ -31,6 +58,7 @@ async def test_native_mail_admission_stays_locked_through_the_actual_message_com
     change,
 ):
     env = privacy_app
+    await connect_policy_members(env)
     bob = env.actors["bob"]
     stable = await register_global_identity(env, bob)
     await env.db.execute(

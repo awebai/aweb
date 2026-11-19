@@ -87,11 +87,15 @@ async def test_inbound_policy_uses_all_current_active_memberships(
                     sender_team_id=teams[1],
                     sender_verified_dids=[sender_did, sender_key],
                 )
-    except (ForbiddenError, FederationAuthorityError) as exc:
+    except ForbiddenError as exc:
         allowed = False
         assert exc.detail.endswith(
             "Ask the recipient to add your exact address as a contact or check their inbound policy."
         )
+    except FederationAuthorityError as exc:
+        allowed = False
+        assert exc.reason == "recipient_policy_rejected"
+        assert exc.http_status == 403
     assert allowed == active_sender
 
 

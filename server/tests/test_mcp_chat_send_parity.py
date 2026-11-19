@@ -993,13 +993,14 @@ def test_the_fields_mcp_signs_for_a_message_in_a_session_satisfy_the_send_valida
 
 def test_a_signed_wait_the_message_does_not_carry_is_refused_by_the_send_validation():
     from aweb.messaging.chat_send import _validate_signed_chat_payload
+    from aweb.messaging.refusals import DeliveryRefusal
 
     sender_key, _, sender_did = _make_keypair()
     sender = replace(_sender(), did_key=sender_did)
     rows = [_row("bob", did="did:aw:bob")]
     fields = _signed(sender, rows, wait_seconds=120)
 
-    with pytest.raises(HTTPException) as refused:
+    with pytest.raises(DeliveryRefusal) as refused:
         _validate_signed_chat_payload(
             signature=sign_message(
                 sender_key, canonical_signed_payload(fields).encode()
