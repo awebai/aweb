@@ -101,6 +101,7 @@ async def test_startup_error_does_not_retain_or_log_the_apps_exception(capfd, ca
     @asynccontextmanager
     async def lifespan(app):
         raise RuntimeError(private)
+        # FastAPI enters this async context manager; entry must fail before yield.
         yield
 
     with pytest.raises(ServiceServerError) as refused:

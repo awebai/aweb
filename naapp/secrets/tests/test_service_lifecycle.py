@@ -80,6 +80,7 @@ async def test_failed_service_startup_disconnects_runtime_and_leaves_no_console_
     async def prepare(runtime):
         assert await runtime.db().fetch_value("SELECT 1") == 1
         raise RuntimeError("required_audit_branch_unavailable")
+        # asynccontextmanager requires a generator even when entry always fails.
         yield
 
     service = create_app(
