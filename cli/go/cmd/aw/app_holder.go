@@ -98,18 +98,6 @@ func (a *holderApp) installation(ctx context.Context, client *aweb.Client, teamI
 	return current.InstallationID, nil
 }
 
-// holderSessionOptions are the options of a session handoff for roleName on
-// the installed app appName, as the signing identity of this command
-// (--human, or the identity home). It opens the local browser and reports on
-// stderr.
-func holderSessionOptions(cmd *cobra.Command, appName, roleName string) (handoff.Options, error) {
-	app, err := installedHolderApp(appName)
-	if err != nil {
-		return handoff.Options{}, err
-	}
-	return app.holderOptions(cmd, roleName, "session")
-}
-
 // holderOptions are the handoff options for a holding of roleName. A human
 // signs for itself. An agent certified directly by a human signs a session
 // start for that human (handoff-wire 1a), sending its ID chain so the app
