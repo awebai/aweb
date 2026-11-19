@@ -124,8 +124,11 @@ prepare_fixture() {
     "$PROJECT-aweb" /fixture/e2e/stack_tls_prepare.py "$LIBRARY_E2E_LIBRARY_HOST" "$LIBRARY_E2E_AWEB_HOST" >/dev/null
   docker cp "$REPO_ROOT/scripts/e2e/." "$seed:/fixture/e2e"
   docker cp "$REPO_ROOT/naapp-lib/testing/src/." "$seed:/fixture/test-support"
-  docker start -a "$seed"
+  # The seed container is removed whether or not the preparation succeeds.
+  local status=0
+  docker start -a "$seed" || status=$?
   docker rm "$seed" >/dev/null
+  [[ "$status" -eq 0 ]] || return "$status"
   docker run --rm --user 0 --entrypoint /app/.venv/bin/python \
     -v "$PROJECT-fixture:/fixture" -v "$PROJECT-library-source:/app/naapp/library/src/library" \
     -e PYTHONPATH=/fixture/e2e "$PROJECT-library" \
