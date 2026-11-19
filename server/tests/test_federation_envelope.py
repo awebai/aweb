@@ -18,7 +18,10 @@ from did_key_fixtures import named_did_key
 
 def _timestamp(offset_seconds: int = 0) -> str:
     return (
-        (datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=offset_seconds))
+        (
+            datetime.now(timezone.utc).replace(microsecond=0)
+            + timedelta(seconds=offset_seconds)
+        )
         .isoformat()
         .replace("+00:00", "Z")
     )
@@ -377,7 +380,9 @@ def test_verify_federation_envelope_rejects_invalid_signature():
     envelope = _envelope(sender_did_key)
     signature = _sign(envelope, other_key)
 
-    with pytest.raises(FederationEnvelopeError, match="Invalid federation message signature"):
+    with pytest.raises(
+        FederationEnvelopeError, match="Invalid federation message signature"
+    ):
         verify_federation_envelope(envelope, signature)
 
 
@@ -386,9 +391,13 @@ def test_message_timestamp_skew_window_is_exactly_300_seconds():
 
     enforce_message_timestamp_skew(now - timedelta(seconds=300), now=now)
     enforce_message_timestamp_skew(now + timedelta(seconds=300), now=now)
-    with pytest.raises(FederationEnvelopeError, match="timestamp outside accepted skew"):
+    with pytest.raises(
+        FederationEnvelopeError, match="timestamp outside accepted skew"
+    ):
         enforce_message_timestamp_skew(now - timedelta(seconds=301), now=now)
-    with pytest.raises(FederationEnvelopeError, match="timestamp outside accepted skew"):
+    with pytest.raises(
+        FederationEnvelopeError, match="timestamp outside accepted skew"
+    ):
         enforce_message_timestamp_skew(now + timedelta(seconds=301), now=now)
 
 
@@ -398,5 +407,7 @@ def test_verify_federation_envelope_rejects_stale_timestamp():
     envelope = _envelope(sender_did_key) | {"timestamp": _timestamp(-600)}
     signature = _sign(envelope, signing_key)
 
-    with pytest.raises(FederationEnvelopeError, match="timestamp outside accepted skew"):
+    with pytest.raises(
+        FederationEnvelopeError, match="timestamp outside accepted skew"
+    ):
         verify_federation_envelope(envelope, signature)
