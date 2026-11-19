@@ -234,9 +234,8 @@ def validate_encrypted_chat_payload(
             detail="encrypted_envelope is required for encrypted chat",
         )
     if _chat_payload_body(payload):
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="Encrypted chat payload body must be empty",
+        raise encrypted_message_refusal(
+            detail="Encrypted chat payload body must be empty"
         )
     if payload.signature or payload.signed_payload:
         raise DeliveryRefusal(
@@ -1372,7 +1371,8 @@ class SentChat:
     send to named recipients stored its message: the stored ``did``, ``alias``
     and ``address`` of each in alias order, or, when ``federated``, the rows as
     the send to another server stored them. They are ``None`` for a send that
-    continues a session and for one that repeats a request.
+    continues a session and for a native request replay. A federated create
+    replay retains its response participants, as the original create does.
     """
 
     session_id: UUID
@@ -1766,8 +1766,21 @@ async def _send_to_named_recipients(
         actor_dids=actor_dids,
     )
     if existing_message is not None:
+        transport = (
+            MessageTransport.FEDERATED
+            if any(
+                row.get("external") or _target_delivery_origin(row)
+                for row in target_rows
+            )
+            else MessageTransport.LOCAL
+        )
         return SentChat(
-            session_id=existing_message["session_id"], message=dict(existing_message)
+            session_id=existing_message["session_id"],
+            message=dict(existing_message),
+            participants=participant_rows
+            if transport is MessageTransport.FEDERATED
+            else None,
+            federated=transport is MessageTransport.FEDERATED,
         )
     validation_conversation_id = (
         str(requested_session_id) if requested_session_id is not None else None
@@ -2008,7 +2021,10 @@ async def _send_to_remote_named_chat(
         if stored is None:
             raise
         return SentChat(
-            session_id=stored["session_id"], message=dict(stored), federated=True
+            session_id=stored["session_id"],
+            message=dict(stored),
+            participants=participant_rows,
+            federated=True,
         )
     if msg_row is None:
         raise DeliveryRefusal(
