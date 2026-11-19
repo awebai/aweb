@@ -565,7 +565,7 @@ func loadAPIKeyPartialInit(path string) (*apiKeyPartialInitState, error) {
 	if err := preflightAPIKeyPartialInit(path); err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Read()
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -598,7 +598,7 @@ func saveAPIKeyPartialInit(workingDir string, state *apiKeyPartialInitState, ide
 	if err := preflightAPIKeyPartialInit(path); err != nil {
 		return err
 	}
-	return awid.AtomicWriteFile(path, data)
+	return (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Write(data)
 }
 
 // Rejected material is evidence, not an implicit choice of identity. Even an

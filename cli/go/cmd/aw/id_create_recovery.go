@@ -37,7 +37,7 @@ func standaloneRegistryEnvironment(opts idCreateOptions) string {
 
 func loadStandaloneCreateRecovery(identityPath, keyPath, workspacePath, name, domain string, opts idCreateOptions) (*preparedIDCreate, error) {
 	path := standaloneCreateRecoveryPath(identityPath)
-	raw, err := readFileBounded(path, maxResponseBytes)
+	raw, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).ReadBounded(maxResponseBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -95,7 +95,8 @@ func persistStandaloneCreate(prepared *preparedIDCreate, opts idCreateOptions) e
 	if err != nil {
 		return err
 	}
-	if err := awid.AtomicWriteFile(standaloneCreateRecoveryPath(p.IdentityPath), raw); err != nil {
+	record := awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(p.IdentityPath)}, Name: "id-create.json"}
+	if err := record.Write(raw); err != nil {
 		return fmt.Errorf("private key retained at %s; no registry write attempted; save creation recovery: %w", p.SigningKeyPath, err)
 	}
 	return nil

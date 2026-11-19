@@ -133,7 +133,7 @@ func (state *hostedInviteCreation) save(path string) error {
 	if err != nil {
 		return err
 	}
-	return awid.AtomicWriteFile(path, raw)
+	return (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Write(raw)
 }
 
 // hostedInviteInstallationResponse retains the installation evidence but no

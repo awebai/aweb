@@ -35,6 +35,12 @@ func TestRecoveryFilePreservesBytesAndUsesPrivateAtomicStorage(t *testing.T) {
 	if err != nil || !bytes.Equal(loaded, original) {
 		t.Fatalf("record bytes changed: %v", err)
 	}
+	if bounded, err := record.ReadBounded(int64(len(original))); err != nil || !bytes.Equal(bounded, original) {
+		t.Fatalf("bounded record read: %v", err)
+	}
+	if _, err := record.ReadBounded(int64(len(original) - 1)); err == nil {
+		t.Fatal("oversized recovery was accepted")
+	}
 	if err := record.Write([]byte("replacement")); err != nil {
 		t.Fatal(err)
 	}
