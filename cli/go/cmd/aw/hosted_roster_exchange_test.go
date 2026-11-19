@@ -50,6 +50,8 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 		"further-team parent source",
 		"further-team other human fresh",
 		"further-team independent init",
+		"further-team independent init stdin",
+		"further-team independent init file",
 		"further-team own chain retry",
 		"further-team explicit condition echo",
 		"further-team explicit condition missing echo",
@@ -102,7 +104,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				childDir = t.TempDir()
 			}
 			recipientHome := filepath.Join(childDir, ".aw")
-			if furtherTeam && scenario != "further-team independent init" {
+			if furtherTeam && !strings.HasPrefix(scenario, "further-team independent init") {
 				recipientHome = t.TempDir()
 			}
 			t.Chdir(root)
@@ -221,7 +223,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 						http.Error(w, "bad request", 400)
 						return
 					}
-					independent := strings.HasPrefix(scenario, "further-team own chain") || strings.HasPrefix(scenario, "further-team parent") || scenario == "further-team add parent retry" || scenario == "further-team independent init"
+					independent := strings.HasPrefix(scenario, "further-team own chain") || strings.HasPrefix(scenario, "further-team parent") || scenario == "further-team add parent retry" || strings.HasPrefix(scenario, "further-team independent init")
 					if !independent && (req.IDTree == nil || req.IDTree.IDChain == nil || req.IDTree.Parent["id"] != parent || req.IDTree.Mode != "self_custodial") {
 						t.Error("hosted accept did not carry the parent-issued child chain")
 						http.Error(w, "missing chain", 422)
@@ -384,10 +386,13 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					}
 				}
 				activeIdentityHome = awconfig.IdentityHome{Root: recipientHome, Source: awconfig.IdentityHomeFlag}
-				if scenario == "further-team independent init" {
+				if strings.HasPrefix(scenario, "further-team independent init") {
 					oldInvite, oldParent, oldName := initInvite, initParent, initName
 					t.Cleanup(func() { initInvite, initParent, initName = oldInvite, oldParent, oldName })
 					initInvite, initParent, initName = token, root, "child"
+					if scenario != "further-team independent init" {
+						initInvite = ""
+					}
 					activeIdentityHome = awconfig.IdentityHome{}
 					t.Setenv("AWEB_URL", origin)
 				}
@@ -398,12 +403,21 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 					var result error
 					withTestWorkingDir(t, childDir, func() {
 						cmd := authTestCmd(&bytes.Buffer{})
-						cmd.Flags().Bool("token-stdin", true, "")
+						fromStdin := !strings.HasPrefix(scenario, "further-team independent init") || strings.HasSuffix(scenario, " stdin")
+						cmd.Flags().Bool("token-stdin", fromStdin, "")
+						tokenFile := ""
+						if scenario == "further-team independent init file" {
+							tokenFile = filepath.Join(childDir, "private-invite.token")
+							if err := os.WriteFile(tokenFile, []byte(token+"\n"), 0600); err != nil {
+								t.Fatal(err)
+							}
+						}
+						cmd.Flags().String("token-file", tokenFile, "")
 						if scenario == "further-team parent source" || (scenario == "further-team parent source retry" && acceptCalls == 1) || scenario == "further-team parent signed retry" || scenario == "further-team parent two children" || scenario == "further-team parent host managed" || (scenario == "further-team add parent retry" && acceptCalls > 1) {
 							cmd.Flags().String("parent", root, "")
 						}
 						cmd.SetIn(strings.NewReader(token + "\n"))
-						if scenario == "further-team independent init" {
+						if strings.HasPrefix(scenario, "further-team independent init") {
 							result = runInit(cmd, nil)
 						} else {
 							result = runTeamAcceptInvite(cmd, nil)
