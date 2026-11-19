@@ -99,7 +99,10 @@ func ParseIDCertificateRequest(raw []byte) (map[string]any, error) {
 	if !ok || !idCertificateIDValid(subject, true) {
 		return nil, invalid
 	}
-	id := r["id"].(string)
+	id, idOK := r["id"].(string)
+	if !idOK {
+		return nil, invalid
+	}
 	if strings.HasPrefix(id, "did:key:") && id != subject {
 		return nil, invalid
 	}
