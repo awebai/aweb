@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from enum import Enum, auto
 
 from fastapi import HTTPException
 from aweb.service_errors import (
@@ -63,18 +64,32 @@ _IDENTITY_BINDING_NEXT_ACTIONS = {
 }
 
 
+class SendRefusalMode(Enum):
+    """Whether refusal wording describes an envelope prepared by hosted custody."""
+
+    STANDARD = auto()
+    HOSTED_ENVELOPE = auto()
+
+
 def send_refusal(
-    exc: Exception, *, address: str = "", hosted_envelope: bool = False
+    exc: Exception,
+    *,
+    address: str = "",
+    mode: SendRefusalMode = SendRefusalMode.STANDARD,
 ) -> str:
     """A send the service refused, in the tools' error shape.
 
     The reader is a language model: a refusal it can act on is a sentence
     naming the next action, with the service's code beside it as ``reason``.
-    ``address`` is the full address the send named, ``hosted_envelope`` whether
-    hosted custody encrypted it. A full address that reaches no one is refused
-    in one set of words, which do not say whether a local identity holds that
-    name.
+    ``address`` is the full address the send named. ``mode`` says whether
+    hosted custody prepared the encrypted envelope. A full address that reaches
+    no one is refused in one set of words, which do not say whether a local
+    identity holds that name.
     """
+    if not isinstance(mode, SendRefusalMode):
+        raise TypeError(
+            "Pass a named SendRefusalMode value before formatting a send refusal."
+        )
     if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
         return json.dumps({"error": exc.message, "reason": exc.code})
     if isinstance(exc, RecipientAddressNotFound) and address:
@@ -96,7 +111,7 @@ def send_refusal(
         next_action = None
         if address and exc.reason == "sender_registry_unavailable":
             next_action = REGISTRY_CANNOT_CONFIRM_ADDRESS.format(address=address)
-        elif hosted_envelope:
+        elif mode is SendRefusalMode.HOSTED_ENVELOPE:
             next_action = _HOSTED_ENVELOPE_NEXT_ACTIONS.get(exc.reason)
         if next_action is not None:
             return json.dumps({"error": next_action, "reason": exc.reason})

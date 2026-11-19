@@ -15,6 +15,8 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+
+from aweb.mcp.tools.refusals import SendRefusalMode
 from aweb.messaging.refusals import RecipientAddressNotFound
 import pytest_asyncio
 from fastapi import HTTPException
@@ -1057,7 +1059,7 @@ NEXT_ACTIONS = [
     ),
     (
         lambda: _authority_refusal("recipient_custodial_no_e2ee"),
-        {"hosted_envelope": True},
+        {"mode": SendRefusalMode.HOSTED_ENVELOPE},
         {
             "error": "your encryption key isn't published yet; try again shortly, and if it persists contact support",
             "reason": "recipient_custodial_no_e2ee",
@@ -1065,7 +1067,7 @@ NEXT_ACTIONS = [
     ),
     (
         lambda: _authority_refusal("federation_envelope_invalid"),
-        {"hosted_envelope": True},
+        {"mode": SendRefusalMode.HOSTED_ENVELOPE},
         {
             "error": "your published encryption key can't be verified right now; try again shortly, "
             "and if it persists contact support",
@@ -1074,7 +1076,7 @@ NEXT_ACTIONS = [
     ),
     (
         lambda: _authority_refusal("recipient_encryption_assertion_invalid_or_stale"),
-        {"hosted_envelope": True},
+        {"mode": SendRefusalMode.HOSTED_ENVELOPE},
         {
             "error": "this recipient's published encryption key can't be verified right now; try again later, "
             "and if it persists contact support",
@@ -1156,7 +1158,9 @@ def test_a_person_named_as_a_chat_recipient_is_refused_with_the_mail_direction()
 
     refused = HumanChatRefused("juan")
     answer = json.loads(
-        _send_refusal(refused, address="acme.com/juan", hosted_envelope=True)
+        _send_refusal(
+            refused, address="acme.com/juan", mode=SendRefusalMode.HOSTED_ENVELOPE
+        )
     )
 
     assert (
@@ -1235,6 +1239,8 @@ def test_a_chat_envelope_for_a_key_this_server_does_not_record_is_refused_as_a_c
         422,
         "encrypted envelope recipient did mismatch",
     )
-    assert json.loads(_send_refusal(refused.value, hosted_envelope=True)) == {
+    assert json.loads(
+        _send_refusal(refused.value, mode=SendRefusalMode.HOSTED_ENVELOPE)
+    ) == {
         "error": "this recipient's key changed; resend the message",
     }
