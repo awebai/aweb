@@ -5,6 +5,12 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Optional
 
 import httpx
+from awid.dns_verify import DomainVerifier
+from awid.external_authority import SystemTXTOutcomeResolver
+from awid.federation_errors import FederationAuthorityError
+from awid.log import canonical_server_origin
+from awid.log_config import configure_logging
+from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -13,53 +19,47 @@ from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
-from awid.dns_verify import DomainVerifier
-from awid.external_authority import SystemTXTOutcomeResolver
-from awid.registry import CachedRegistryClient, RegistryClient, RegistryError
-from awid.federation_errors import FederationAuthorityError
-from .config import get_public_origin, get_settings
-from awid.log import canonical_server_origin
-from .connection_scope import ConnectionScopeMiddleware
-from .db import DatabaseInfra
-from .db import db_infra as default_db_infra
-from awid.log_config import configure_logging
-from .federation.errors import authority_error_body
 from .agent_wake import AgentWakeHub, AgentWakePublisher
-from .outbox_recovery import OutboxRecoveryStarter
-from .routing_utils import move_mount_before_spa_fallback
 from .auth_error_transport import install_auth_error_handlers
 from .certificate_error_transport import install_certificate_error_handlers
-from .service_errors import ServiceError
-from .messaging.chat_policy import HumanChatRefused
+from .config import get_public_origin, get_settings
+from .connection_scope import ConnectionScopeMiddleware
+from .coordination.routes.repos import router as repos_router
+from .coordination.routes.tasks import router as tasks_router
+from .coordination.routes.team_instructions import instructions_router
+from .coordination.routes.team_roles import roles_router
+from .coordination.routes.workspaces import router as workspaces_router
+from .db import DatabaseInfra
+from .db import db_infra as default_db_infra
+from .federation.errors import authority_error_body
 from .install_admins import install_admin_setup_message
 from .mcp.server import NormalizeMountedMCPPathMiddleware
+from .messaging.chat_policy import HumanChatRefused
+from .outbox_recovery import OutboxRecoveryStarter
 from .request_compression import RequestDecompressionFastAPI
 from .routes.agent_activity import router as agent_activity_router
 from .routes.agent_status import router as agent_status_router
 from .routes.agents import router as agents_router
 from .routes.app_hooks import router as app_hooks_router
 from .routes.apps import router as apps_router
-from .routes.hook_bindings import router as hook_bindings_router
-from .routes.connect import router as connect_router
-from .routes.dashboard import router as dashboard_router
 from .routes.chat import router as chat_router
 from .routes.claims import router as claims_router
+from .routes.connect import router as connect_router
 from .routes.contacts import router as contacts_router
 from .routes.conversations import router as conversations_router
+from .routes.dashboard import router as dashboard_router
 from .routes.events import router as events_router
 from .routes.federation import router as federation_router
+from .routes.hook_bindings import router as hook_bindings_router
 from .routes.identity_grants import router as identity_grants_router
 from .routes.messages import router as messages_router
-from .routes.room import router as room_router
 from .routes.reservations import router as reservations_router
-from .routes.session_leases import router as session_leases_router
+from .routes.room import router as room_router
 from .routes.service_registration import router as service_registration_router
+from .routes.session_leases import router as session_leases_router
 from .routes.status import router as status_router
-from .coordination.routes.team_instructions import instructions_router
-from .coordination.routes.team_roles import roles_router
-from .coordination.routes.repos import router as repos_router
-from .coordination.routes.tasks import router as tasks_router
-from .coordination.routes.workspaces import router as workspaces_router
+from .routing_utils import move_mount_before_spa_fallback
+from .service_errors import ServiceError
 
 logger = logging.getLogger(__name__)
 
