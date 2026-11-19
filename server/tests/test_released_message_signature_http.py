@@ -128,19 +128,6 @@ async def test_pinned_released_payload_bytes_verify_with_the_transport_subject(
             path, content=raw, headers={**headers, "Content-Type": "application/json"}
         )
 
-    accepted = await post(wire)
-    assert accepted.status_code == 200, accepted.text
-    stored = await env.db.fetch_one(
-        "SELECT from_did,body,signature,signed_payload FROM {{tables."
-        + table
-        + "}} WHERE message_id=$1",
-        UUID(wire["message_id"]),
-    )
-    assert stored["from_did"] == sender.did
-    assert stored["signed_payload"].encode("utf-8") == signed_payload.encode("utf-8")
-    assert stored["body"] == "released <tag> café \n line \u2028"
-    assert len(env.dispatched) == 1
-    before = dict(stored)
     # Equivalent parsed JSON is not the original signed byte string. A server
     # that reserializes before verifying would incorrectly accept this change.
     altered = await post({**wire, "signed_payload": signed_payload + " "})
@@ -160,14 +147,30 @@ async def test_pinned_released_payload_bytes_verify_with_the_transport_subject(
             "The message signature does not verify. Sign the message again with the authenticated sender's key and resend it."
         )
     assert (
-        await env.db.fetch_one(
-            "SELECT from_did,body,signature,signed_payload FROM {{tables."
-            + table
-            + "}} WHERE message_id=$1",
-            UUID(wire["message_id"]),
-        )
-        == before
+        await env.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 0
     )
+    assert env.dispatched == []
+    accepted = await post(wire)
+    assert accepted.status_code == 200, accepted.text
+    stored = await env.db.fetch_one(
+        "SELECT from_did,body,signature,signed_payload FROM {{tables."
+        + table
+        + "}} WHERE message_id=$1",
+        UUID(wire["message_id"]),
+    )
+    assert stored["from_did"] == sender.did
+    assert stored["signed_payload"].encode("utf-8") == signed_payload.encode("utf-8")
+    assert stored["body"] == "released <tag> café \n line \u2028"
+    assert len(env.dispatched) == 1
+    repeated = await post(wire)
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["message_id"] == accepted.json()["message_id"]
+    assert await env.db.fetch_one(
+        "SELECT from_did,body,signature,signed_payload FROM {{tables."
+        + table
+        + "}} WHERE message_id=$1",
+        UUID(wire["message_id"]),
+    ) == dict(stored)
     assert (
         await env.db.fetch_value("SELECT count(*) FROM {{tables." + table + "}}") == 1
     )
