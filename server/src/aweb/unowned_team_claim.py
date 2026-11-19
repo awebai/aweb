@@ -38,7 +38,10 @@ class UnownedTeamClaimTarget:
 
     def __post_init__(self) -> None:
         require_canonical_team_control_scope(self.team_id)
-        if any(not isinstance(value, str) or not value for value in (self.email, self.username)):
+        if any(
+            not isinstance(value, str) or not value
+            for value in (self.email, self.username)
+        ):
             raise TeamControlRequestInvalid(TeamControlRequestReason.TARGET_MISMATCH)
 
 
@@ -68,7 +71,9 @@ def _require_target(
     team_id = request.awid_team_id.strip()
     require_canonical_team_control_scope(team_id)
     if (team_id, request.email, request.username) != (
-        target.team_id, target.email, target.username
+        target.team_id,
+        target.email,
+        target.username,
     ):
         raise TeamControlRequestInvalid(TeamControlRequestReason.TARGET_MISMATCH)
 
@@ -89,17 +94,22 @@ async def verify_unowned_team_claim(
     """
     try:
         artifact = (
-            claim if isinstance(claim, SignedUnownedTeamClaim)
+            claim
+            if isinstance(claim, SignedUnownedTeamClaim)
             else read_unowned_team_claim(claim)
         )
     except TeamControlRequestError as exc:
-        raise TeamControlRequestInvalid(TeamControlRequestReason.ARTIFACT_INVALID) from exc
+        raise TeamControlRequestInvalid(
+            TeamControlRequestReason.ARTIFACT_INVALID
+        ) from exc
     _require_target(artifact, target)
     require_fresh_team_control_request(timestamp=artifact.request.timestamp)
     try:
         artifact.verify_integrity()
     except TeamControlSignatureError as exc:
-        raise TeamControlRequestInvalid(TeamControlRequestReason.SIGNATURE_INVALID) from exc
+        raise TeamControlRequestInvalid(
+            TeamControlRequestReason.SIGNATURE_INVALID
+        ) from exc
     key = await read_fresh_team_controller(context=context, team_id=target.team_id)
     if artifact.signer_did_key != key:
         raise TeamControlRequestInvalid(TeamControlRequestReason.CONTROLLER_MISMATCH)
