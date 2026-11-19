@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 
 from chat_coverage_support import migrate_chat_conversation_coverage
-from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, _request, privacy_app as privacy_app
 
 
 @pytest.mark.asyncio

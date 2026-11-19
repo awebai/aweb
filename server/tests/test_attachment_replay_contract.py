@@ -6,7 +6,7 @@ from copy import deepcopy
 import pytest
 
 from test_attachments_http import managed_fixture
-from test_dashboard_privacy import _request, privacy_app  # noqa: F401
+from test_dashboard_privacy import _request, privacy_app as privacy_app
 
 
 @pytest.mark.asyncio
