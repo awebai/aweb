@@ -626,7 +626,7 @@ func uniqueHandleParticipantMatch(participants []string, _ []string, _ []string,
 		return false
 	}
 	for _, participant := range participants {
-		if strings.TrimSpace(participant) == handle {
+		if strings.EqualFold(strings.TrimSpace(participant), handle) {
 			return true
 		}
 	}
