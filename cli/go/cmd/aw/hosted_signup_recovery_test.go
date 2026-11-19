@@ -177,10 +177,13 @@ func TestHostedSignupRecoveryRetainsSignerAndCredential(t *testing.T) {
 			if !foundRecovery || bytes.Contains(diagnosed, []byte(credential)) {
 				t.Fatalf("doctor lost or exposed recovery: %s", diagnosed)
 			}
-			command := exec.CommandContext(ctx, binary, "init", "--json", "--do-not-touch-agents-md", "--url", server.URL)
+			command := exec.CommandContext(ctx, binary, "init", "--json", "--do-not-touch-agents-md", "--url", server.URL, "--write-context=false")
 			command.Dir, command.Env = directory, idCreateCommandEnv(directory)
 			if raw, err := command.CombinedOutput(); err != nil {
 				t.Fatalf("command resume: %v %s", err, raw)
+			}
+			if _, err := os.Stat(filepath.Join(directory, ".aw", "context")); !os.IsNotExist(err) {
+				t.Fatalf("init ignored --write-context=false: %v", err)
 			}
 			if usernameReads != readsBefore {
 				t.Fatal("resume rechecked a now-allocated username")
