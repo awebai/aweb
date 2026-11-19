@@ -33,7 +33,10 @@ def _runtime(tmp_path, *, origin: str, registry_url: str, database_url: str) -> 
     keys = (("grants", [APP_GRANT_READ]),)
     files = {kid: _key_file(tmp_path, kid, bytes(SigningKey.generate()).hex()) for kid, _ in keys}
     manifest = tmp_path / "manifest.json"
-    manifest.write_bytes(canonical_bytes(_v2_template(*keys)))
+    template = _v2_template(*keys)
+    # An installed app names its release; the server pins it with the manifest.
+    template["app"]["version"] = "1.0.0"
+    manifest.write_bytes(canonical_bytes(template))
     migrations = tmp_path / "migrations"
     migrations.mkdir()
     # Only settings a deployment sets: no transport or resolver is handed in.
