@@ -333,6 +333,11 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		return fmt.Errorf("%s: %s. Remove them and keep only the canonical workspace binding keys.", workspaceUnsupportedFieldsErrorPrefix, strings.Join(unsupported, ", "))
 	}
 
+	*w = raw.normalizedWorkspace()
+	return w.validate()
+}
+
+func (raw worktreeWorkspaceYAML) normalizedWorkspace() WorktreeWorkspace {
 	memberships := make([]WorktreeMembership, 0, len(raw.Memberships))
 	for _, membership := range raw.Memberships {
 		memberships = append(memberships, WorktreeMembership{
@@ -345,7 +350,7 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		})
 	}
 
-	*w = WorktreeWorkspace{
+	workspace := WorktreeWorkspace{
 		AwebURL:         raw.AwebURL,
 		APIKey:          raw.APIKey,
 		Memberships:     memberships,
@@ -358,8 +363,8 @@ func (w *WorktreeWorkspace) UnmarshalYAML(value *yaml.Node) error {
 		WorkspacePath:   raw.WorkspacePath,
 		UpdatedAt:       raw.UpdatedAt,
 	}
-	w.normalize()
-	return w.validate()
+	workspace.normalize()
+	return workspace
 }
 
 func (w WorktreeWorkspace) MarshalYAML() (any, error) {

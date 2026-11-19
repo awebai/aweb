@@ -205,6 +205,11 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
+	*s = raw.normalizedTeamState()
+	return s.validate()
+}
+
+func (raw teamStateYAML) normalizedTeamState() TeamState {
 	memberships := make([]TeamMembership, 0, len(raw.Memberships))
 	for _, membership := range raw.Memberships {
 		memberships = append(memberships, TeamMembership{
@@ -216,12 +221,12 @@ func (s *TeamState) UnmarshalYAML(value *yaml.Node) error {
 			AwebURL:     membership.AwebURL,
 		})
 	}
-	*s = TeamState{
+	state := TeamState{
 		ActiveTeam:  raw.ActiveTeam,
 		Memberships: memberships,
 	}
-	s.normalize()
-	return s.validate()
+	state.normalize()
+	return state
 }
 
 func (s TeamState) MarshalYAML() (any, error) {
