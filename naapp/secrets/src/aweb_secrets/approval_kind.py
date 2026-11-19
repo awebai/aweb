@@ -6,7 +6,7 @@ Custody separately checks change sets and requires exactly one global kind.
 
 from __future__ import annotations
 
-from typing import Literal
+from enum import StrEnum
 
 from aweb_naapp.runtime.approvals import Approval
 from pgdbm.core import TransactionManager
@@ -14,18 +14,23 @@ from pgdbm.core import TransactionManager
 from aweb_secrets.use_approvals import POLICY_VERSION, use_policy_ref
 from aweb_secrets.use_audit import UseAuditUnavailable
 
-ApprovalKind = Literal["use", "run", "reconciliation_control"]
+
+class ApprovalKind(StrEnum):
+    USE = "use"
+    RUN = "run"
+    RECONCILIATION_CONTROL = "reconciliation_control"
 
 
 async def approval_kind(
     tx: TransactionManager,
     approval: Approval,
     *,
-    enable_runs: bool = False,
-    enable_reconciliation: bool = False,
+    enabled_kinds: frozenset[ApprovalKind] = frozenset({ApprovalKind.USE}),
 ) -> ApprovalKind | None:
-    if type(enable_runs) is not bool or type(enable_reconciliation) is not bool:
-        raise ValueError("approval routing requires explicit migration configuration")
+    if not isinstance(enabled_kinds, frozenset) or any(
+        not isinstance(kind, ApprovalKind) for kind in enabled_kinds
+    ):
+        raise ValueError("approval routing requires named, migrated association kinds")
     matches: list[ApprovalKind] = []
     row = await tx.fetch_one(
         "SELECT a.request_ref,a.request_sha256,c.tool,i.installation_id,i.team_id,i.grant_id,i.policy_digest"
@@ -45,23 +50,23 @@ async def approval_kind(
             row["installation_id"], row["team_id"], row["grant_id"], row["policy_digest"]
         )
         _same(approval, row, ref, POLICY_VERSION)
-        matches.append("use")
-    if enable_runs:
+        matches.append(ApprovalKind.USE)
+    if ApprovalKind.RUN in enabled_kinds:
         row = await tx.fetch_one(
             "SELECT request_ref,request_sha256,policy_ref FROM {{tables.run_approval_audits}} WHERE approval_id=$1",
             approval.approval_id,
         )
         if row is not None:
             _same(approval, row, row["policy_ref"], POLICY_VERSION)
-            matches.append("run")
-    if enable_reconciliation:
+            matches.append(ApprovalKind.RUN)
+    if ApprovalKind.RECONCILIATION_CONTROL in enabled_kinds:
         row = await tx.fetch_one(
             "SELECT request_ref,request_sha256,policy_ref,policy_version FROM {{tables.reconciliation_controls}} WHERE approval_id=$1",
             approval.approval_id,
         )
         if row is not None:
             _same(approval, row, row["policy_ref"], row["policy_version"])
-            matches.append("reconciliation_control")
+            matches.append(ApprovalKind.RECONCILIATION_CONTROL)
     if len(matches) > 1:
         raise UseAuditUnavailable()
     return matches[0] if matches else None

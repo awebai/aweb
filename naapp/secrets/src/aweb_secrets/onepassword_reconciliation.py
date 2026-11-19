@@ -7,10 +7,11 @@ owner confirmations, whose unlocked token-dependent discovery relies on every
 active-version writer claiming that revision. Final dispatch checks remain
 DB-only. No value is returned or transplanted into the observing attempt.
 
-Composition must retain the original attempt's secret_version_changed refusal,
-perform postcommit cache cleanup only, and activate this path only alongside
-the reviewed receiving catalog support. Delivery stays with the shared outbox.
+The observing attempt retains secret_version_changed. Cache cleanup follows
+the committed activation; delivery stays with the shared outbox.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -21,8 +22,24 @@ from pgdbm import AsyncDatabaseManager
 from aweb_secrets import records
 from aweb_secrets.containment import Containment
 from aweb_secrets.custody import Custody, CustodyUnavailable
+from aweb_secrets.custody.onepassword import SecretVersionChanged
 from aweb_secrets.custody.opening import BackendObservation, active_binding
 from aweb_secrets.revisions import bump_config_revision
+
+
+async def require_current_backend_version(
+    observation: BackendObservation | None,
+    *,
+    admitted: AdmittedInstallation,
+    reconciler: BackendReconciler | None,
+) -> None:
+    """Decision 92 (secrets.md:2898): activate only for a later fresh admission."""
+    if observation is None or observation.item_version == observation.binding.item_version:
+        return
+    if reconciler is None:
+        raise CustodyUnavailable("backend reconciliation unavailable")
+    await reconciler.reconcile(observation, admitted=admitted)
+    raise SecretVersionChanged(observation.item_version)
 
 
 @dataclass(frozen=True)
@@ -114,4 +131,8 @@ class BackendReconciler:
             )
             # Sample F6's live clock after every potentially blocking phase.
             await self._fence.check(tx, admitted)
-        return BackendReconciliation(True, tuple(sorted({old.secret_id, *affected})))
+        result = BackendReconciliation(True, tuple(sorted({old.secret_id, *affected})))
+        await self._containment.evict(
+            admitted.installation_id, admitted.team_id, result.affected_secret_ids
+        )
+        return result

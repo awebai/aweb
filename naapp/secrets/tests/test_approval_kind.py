@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from aweb_secrets.approval_kind import approval_kind
+from aweb_secrets.approval_kind import ApprovalKind, approval_kind
 from aweb_secrets.reconciliation_control_audit import apply_reconciliation_migrations
 from aweb_secrets.reconciliation_policy import reconciliation_policy_ref
 from aweb_secrets.use_audit import UseAuditUnavailable
@@ -54,9 +54,7 @@ async def test_link_routes_only_from_its_exact_persisted_association_without_ter
     db = uses.world.db
     before = await db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
     async with db.transaction() as tx:
-        flags = dict(
-            enable_runs=kind != "use", enable_reconciliation=kind == "reconciliation_control"
-        )
+        flags = {"enabled_kinds": frozenset({ApprovalKind.USE, ApprovalKind(kind)})}
         assert await approval_kind(tx, actual.approval, **flags) == kind
         for changed in (
             replace(actual.approval, request_ref=str(uuid4())),
@@ -106,4 +104,8 @@ async def test_multiple_persisted_app_kinds_refuse_even_when_all_identity_fields
             actual.approval.approval_id,
         )
         with pytest.raises(UseAuditUnavailable):
-            await approval_kind(tx, actual.approval, enable_reconciliation=True)
+            await approval_kind(
+                tx,
+                actual.approval,
+                enabled_kinds=frozenset({ApprovalKind.USE, ApprovalKind.RECONCILIATION_CONTROL}),
+            )

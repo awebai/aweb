@@ -66,3 +66,25 @@ def test_uncertain_outcome_names_its_original_association_for_reconciliation_rea
     reply = results.outcome_unknown(request_id=REQUEST_ID, request_ref=INTENT)
     assert reply["reconcile_ref"] == INTENT
     assert not {"next", "send", "may_send", "dispatch_id", "link_token"} & reply.keys()
+
+
+@pytest.mark.parametrize(
+    "code,step",
+    [
+        (
+            results.RecoveryRefusal.RECONCILIATION_PENDING,
+            {"action": results.RecoveryAction.OWNER_RECONCILE, "path": "/activity"},
+        ),
+        (
+            results.RecoveryRefusal.SECRET_VERSION_CHANGED,
+            {"action": results.RecoveryAction.START_NEW_REQUEST},
+        ),
+    ],
+)
+def test_recovery_refusals_name_the_supported_next_action(code, step):
+    response = results.refused(code, request_id=REQUEST_ID)
+    assert response["code"] == code
+    assert response["request_id"] == REQUEST_ID
+    assert response["next_step"] == step
+    assert isinstance(response["message"], str) and response["message"]
+    assert not {"send", "may_send", "dispatch_id", "link_token"} & response.keys()

@@ -63,7 +63,7 @@ from aweb_secrets.app import (
     create_app,
 )
 from aweb_secrets.approval_email import ApprovalEmailDelivery
-from aweb_secrets.approval_kind import approval_kind
+from aweb_secrets.approval_kind import ApprovalKind, approval_kind
 from aweb_secrets.audit_sink import SecretsAudit
 from aweb_secrets.broker_outcomes import prepare_legacy_broker_outcomes
 from aweb_secrets.broker_service import BrokerRequests
@@ -85,6 +85,7 @@ from aweb_secrets.console_bootstrap import console_bootstrap_router
 from aweb_secrets.console_changes import ConsoleChanges, console_changes_router
 from aweb_secrets.console_forms import console_forms_router
 from aweb_secrets.console_jobs import console_jobs_router
+from aweb_secrets.console_reconciliation import ConsoleReconciliation, console_reconciliation_router
 from aweb_secrets.console_ui import console_ui_router
 from aweb_secrets.console_use_approvals import (
     ConsoleUseApprovals,
@@ -114,9 +115,22 @@ from aweb_secrets.human_holding_identity import owner_holding_identity
 from aweb_secrets.installation_lookup import InstallationLookup
 from aweb_secrets.jobs import apply_job_migrations
 from aweb_secrets.metadata_routes import MetadataServices, metadata_router
+from aweb_secrets.onepassword_reconciliation import BackendReconciler
 from aweb_secrets.owners import OWNER_ROLE, OwnerDirectory, apply_owner_migrations, is_owner_scope
 from aweb_secrets.passkey_context import PasskeyContexts
 from aweb_secrets.passkey_email import PasskeyEmailDelivery
+from aweb_secrets.reconciliation_control_audit import (
+    ReconciliationAudit,
+    apply_reconciliation_migrations,
+)
+from aweb_secrets.reconciliation_policy import ReconciliationApprovers, ReconciliationPolicies
+from aweb_secrets.reconciliation_providers import (
+    ReconciliationApproverRouter,
+    ReconciliationAuditRouter,
+    ReconciliationPolicyRouter,
+)
+from aweb_secrets.reconciliation_reads import ReconciliationReads
+from aweb_secrets.reconciliation_service import ReconciliationControls
 from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.retirement import retire_team
 from aweb_secrets.revisions import bump_config_revision
@@ -187,6 +201,7 @@ class _Services:
     runs: RunDispatch
     status: UseStatus
     custody: Custody
+    reconciliation: ConsoleReconciliation
 
     @property
     def console(self) -> OwnerConsole:
@@ -254,6 +269,8 @@ class _ApprovalServices:
     approvals: Approvals
     use_audit: UseApprovalAudit
     use_view: Callable[[str], Awaitable[RegistrationView | None]]
+    reconciliation_reads: ReconciliationReads
+    reconciliation_audit: ReconciliationAudit
 
 
 async def _migrate_stores(*, db: AsyncDatabaseManager, store: PgApprovalStore) -> None:
@@ -272,6 +289,7 @@ async def _migrate_stores(*, db: AsyncDatabaseManager, store: PgApprovalStore) -
         apply_use_approval_migrations,
         apply_use_context_migrations,
         apply_run_dispatch_migrations,
+        apply_reconciliation_migrations,
     ):
         await migrate(db)
 
@@ -320,7 +338,11 @@ async def _compose_approvals(
         max_backlog_age=timedelta(seconds=settings.hook_events_stalled_after_seconds),
         enable_runs=True,
     )
-    audit = SecretsAudit(credentials=credentials, use=use_audit)
+    reads = ReconciliationReads(enable_runs=True)
+    control_audit = ReconciliationAudit(reads=reads, approval=approval, passkeys=shared_passkeys)
+    audit = ReconciliationAuditRouter(
+        standard=SecretsAudit(credentials=credentials, use=use_audit), controls=control_audit
+    )
     passkeys = Passkeys(
         db,
         rp=RelyingParty(origin=settings.console_origin, name="Secrets"),
@@ -338,8 +360,14 @@ async def _compose_approvals(
     owners = OwnerDirectory(passkeys, db)
     approvals = Approvals(
         store=store,
-        policies=_Policies(ChangeSetPolicies(db, owners), UsePolicies(db)),
-        approvers=_Approvers(owners, UseApprovers(db, passkeys, owners)),
+        policies=ReconciliationPolicyRouter(
+            standard=_Policies(ChangeSetPolicies(db, owners), UsePolicies(db)),
+            controls=ReconciliationPolicies(db, owners=owners),
+        ),
+        approvers=ReconciliationApproverRouter(
+            standard=_Approvers(owners, UseApprovers(db, passkeys, owners)),
+            controls=ReconciliationApprovers(owners=owners),
+        ),
         delivery=ApprovalEmailDelivery(
             mailer=mailer, approval_url=settings.console_origin + "/approvals"
         ),
@@ -354,6 +382,8 @@ async def _compose_approvals(
         approvals=approvals,
         use_audit=use_audit,
         use_view=use_view,
+        reconciliation_reads=reads,
+        reconciliation_audit=control_audit,
     )
 
 
@@ -494,10 +524,10 @@ async def _compose(
         registrations=registrations,
         after_commit=containment.evict,
         handoffs=handoffs,
-        # Run stores and both typed pages are composed above/below. The
-        # reconciliation stores and page are deliberately not composed here.
-        approval_kind=partial(approval_kind, enable_runs=True, enable_reconciliation=False),
+        # All three association stores and their typed pages share this root.
+        approval_kind=partial(approval_kind, enabled_kinds=frozenset(ApprovalKind)),
     )
+    reconciler = BackendReconciler(db=db, custody=custody, containment=containment, fence=fence)
     opener = UseSecretOpener(
         db,
         native=SecretOpener(provider, db),
@@ -506,6 +536,7 @@ async def _compose(
     common: dict[str, Any] = dict(
         fence=fence,
         opener=opener,
+        reconciler=reconciler,
         committer=committer,
         response_key=response_key,
         producer=runtime.hook_producer,
@@ -546,6 +577,20 @@ async def _compose(
         claim_wait=timedelta(seconds=settings.runner_claim_wait_seconds),
     )
     containment.deregister_runner = runs.deregister_runner
+    reconciliation = ConsoleReconciliation(
+        console=console,
+        reads=approval_services.reconciliation_reads,
+        controls=ReconciliationControls(
+            reads=approval_services.reconciliation_reads,
+            audit=approval_services.reconciliation_audit,
+            approvals=approvals,
+            passkeys=passkeys,
+            use_audit=use_audit,
+            broker=broker,
+            runs=runs,
+        ),
+        approvals=approvals,
+    )
     return _Services(
         owner=OwnerApplicationServices(console=console, verifier=owner_delivery.verifier),
         owner_delivery=owner_delivery.router,
@@ -567,6 +612,7 @@ async def _compose(
         runs=runs,
         status=UseStatus(db, fence=fence, approvals=approvals, runs=runs.status),
         custody=custody,
+        reconciliation=reconciliation,
     )
 
 
@@ -749,6 +795,7 @@ def create_service(
             human(lambda s: console_use_approvals_router(services=s.use_pages)),
             human(lambda s: console_run_approvals_router(services=s.use_pages)),
             human(lambda s: console_activity_router(services=s.activity)),
+            human(lambda s: console_reconciliation_router(services=s.reconciliation)),
             human(lambda s: console_access_router(services=ConsoleAccess(console=s.console))),
             human(lambda s: console_audit_delivery_router(services=s.audit_delivery)),
             human(lambda s: containment_console_router(s.containment, console=s.console)),

@@ -7,7 +7,7 @@ import pytest
 from aweb_naapp.console import CONSOLE_HEADERS
 from aweb_naapp.runtime.approvals import ApprovalState
 
-from aweb_secrets.approval_kind import approval_kind
+from aweb_secrets.approval_kind import ApprovalKind, approval_kind
 from aweb_secrets.console_changes import ConsoleChanges
 from aweb_secrets.owners import approver_scope
 from aweb_secrets.reconciliation_control_audit import apply_reconciliation_migrations
@@ -45,8 +45,9 @@ async def test_destination_uses_frozen_approval_without_a_personal_link(uses, ki
         approval_id = actual.approval.approval_id
     lookup = partial(
         approval_kind,
-        enable_runs=kind in ("run", "reconciliation_control"),
-        enable_reconciliation=kind == "reconciliation_control",
+        enabled_kinds=frozenset({ApprovalKind.USE})
+        if kind == "change_set"
+        else frozenset({ApprovalKind.USE, ApprovalKind(kind)}),
     )
     await application(w, kind_lookup=lookup)
     services = ConsoleChanges(
@@ -97,8 +98,7 @@ async def test_dispatch_returns_only_the_exact_app_kind_without_terms_or_effects
     token = personal_token(w, actual.approval.approval_id)
     lookup = partial(
         approval_kind,
-        enable_runs=kind != "use",
-        enable_reconciliation=kind == "reconciliation_control",
+        enabled_kinds=frozenset({ApprovalKind.USE, ApprovalKind(kind)}),
     )
     async with clients(w, forms=True, kind_lookup=lookup) as (human, agent):
         before = await w.db.fetch_value("SELECT count(*) FROM {{tables.outbox_events}}")
@@ -216,7 +216,10 @@ async def test_corrupt_app_association_is_a_fixed_service_refusal(uses, corrupti
         actual.approval.expires_at,
         actual.approval.approval_id,
     )
-    lookup = partial(approval_kind, enable_reconciliation=True)
+    lookup = partial(
+        approval_kind,
+        enabled_kinds=frozenset({ApprovalKind.USE, ApprovalKind.RECONCILIATION_CONTROL}),
+    )
     async with clients(w, kind_lookup=lookup) as (human, _):
         response = await human.post(ENTRY, json={"token": token})
         assert response.status_code == 503
@@ -254,7 +257,13 @@ async def test_change_set_and_app_association_cannot_choose_a_fallback(uses):
         actual.approval.expires_at,
         source.approval.approval_id,
     )
-    async with clients(w, kind_lookup=partial(approval_kind, enable_reconciliation=True)) as (
+    async with clients(
+        w,
+        kind_lookup=partial(
+            approval_kind,
+            enabled_kinds=frozenset({ApprovalKind.USE, ApprovalKind.RECONCILIATION_CONTROL}),
+        ),
+    ) as (
         human,
         _,
     ):

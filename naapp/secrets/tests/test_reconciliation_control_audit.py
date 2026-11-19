@@ -13,13 +13,17 @@ from aweb_secrets.owners import owner_scope
 from aweb_secrets.reconciliation_control_audit import (
     ReconciliationAudit,
     apply_reconciliation_migrations,
-    is_reconciliation_control,
 )
 from aweb_secrets.reconciliation_policy import (
     ReconciliationApprovers,
     ReconciliationPolicies,
     reconciliation_policy_ref,
     reconciliation_request,
+)
+from aweb_secrets.reconciliation_providers import (
+    ReconciliationApproverRouter,
+    ReconciliationAuditRouter,
+    ReconciliationPolicyRouter,
 )
 from aweb_secrets.reconciliation_reads import ReconciliationReads
 from aweb_secrets.use_audit import UseAuditUnavailable
@@ -66,33 +70,13 @@ async def control_world(uses, *, approval: RunApproval = RunApproval.NONE):
         uses.approvals._audit,
     )
 
-    class Policies:
-        async def current(self, ref, *, tx=None):
-            if ref.startswith("secrets.reconcile|"):
-                return await policies.current(ref, tx=tx)
-            return await prior_policies.current(ref, tx=tx)
-
-    class Approvers:
-        async def candidates(self, policy, request, *, tx=None):
-            if policy.policy_ref.startswith("secrets.reconcile|"):
-                return await approvers.candidates(policy, request, tx=tx)
-            return await prior_approvers.candidates(policy, request, tx=tx)
-
-        async def is_current(self, scope, subject, *, tx=None):
-            return await prior_approvers.is_current(scope, subject, tx=tx)
-
-    class Audit:
-        async def emit(self, event, tx):
-            if is_reconciliation_control(event):
-                await audit.emit(event, tx)
-            else:
-                await prior_audit.emit(event, tx)
-
-    uses.approvals._policies, uses.approvals._approvers, uses.approvals._audit = (
-        Policies(),
-        Approvers(),
-        Audit(),
+    uses.approvals._policies = ReconciliationPolicyRouter(
+        standard=prior_policies, controls=policies
     )
+    uses.approvals._approvers = ReconciliationApproverRouter(
+        standard=prior_approvers, controls=approvers
+    )
+    uses.approvals._audit = ReconciliationAuditRouter(standard=prior_audit, controls=audit)
     async with db.transaction() as tx:
         view = await reads.get(tx, scope=scope, reconcile_ref=admitted.body["request_ref"])
     assert view is not None and view.state is State.OUTCOME_UNKNOWN

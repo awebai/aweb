@@ -2005,12 +2005,13 @@ original call did; it leaves the original for manual settlement. The one-repeat
 budget is never replenished. This automatic path applies to broker operations,
 not runner jobs or open requests without explicit operation terms.
 
-**Owner settlement.** **In flight (aweb-acgh.18.14):** the settlement service
+**Owner settlement.** The production composition mounts the settlement service
 and console page (`aweb_secrets.reconciliation_service`,
-`aweb_secrets.console_reconciliation`) are on main; the production composition
-does not mount them, so an `outcome_unknown` stays unsettled. Everything else,
-including a template declaring a
-`reconcile` lookup, uses the console manual path in the first release. There is
+`aweb_secrets.console_reconciliation`) with the same B2/B3 stores, owner
+holding checks and installation fence as dispatch. Activity links uncertain
+broker calls and runner assignments to this console path. Everything else,
+including a template declaring a `reconcile` lookup, uses the console manual
+path in the first release. There is
 no generic lookup dispatch: its input mapping and result interpretation are
 out of scope. An owner settles the original association with a **fresh passkey
 APPROVE assertion bound to `reconcile_ref` and the chosen outcome**:

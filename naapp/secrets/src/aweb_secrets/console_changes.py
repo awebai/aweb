@@ -20,7 +20,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 from aweb_naapp.console import (
     ConsoleRoute,
@@ -46,6 +46,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pgdbm import TransactionManager
 
+from aweb_secrets.approval_kind import ApprovalKind
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_sets import (
     AUDITED_CREATE_KINDS,
@@ -61,11 +62,9 @@ from aweb_secrets.owners import owner_binding, owner_scope
 from aweb_secrets.revisions import config_revision
 from aweb_secrets.use_audit import UseAuditUnavailable
 
-AppApprovalKind = Literal["use", "run", "reconciliation_control"]
-
 
 class ApprovalKindLookup(Protocol):
-    async def __call__(self, tx: TransactionManager, approval: Approval) -> AppApprovalKind | None:
+    async def __call__(self, tx: TransactionManager, approval: Approval) -> ApprovalKind | None:
         """Read the exact immutable app association, returning no protected terms."""
         ...
 
@@ -337,7 +336,8 @@ class ConsoleChanges:
         if int(change_set) + int(kind is not None) != 1:
             raise HTTPException(409, "approval_refused")
         selected = "change_set" if change_set else kind
-        assert selected is not None
+        if selected is None:
+            raise HTTPException(409, "approval_refused")
         return {"kind": selected, "path": _APPROVAL_PATHS[selected]}
 
     async def locate(self, current: ConsoleSession, token: str) -> dict[str, Any]:

@@ -68,10 +68,13 @@ from aweb_secrets.broker_fence import BrokerFence, PreparedBrokerCall
 from aweb_secrets.broker_input import BrokerInput
 from aweb_secrets.broker_outcomes import NOT_SENT_MESSAGE, durable_broker_receipt
 from aweb_secrets.custody import CustodyUnavailable, SealContext, ValueInvalid, decode_value
-from aweb_secrets.custody.onepassword import SecretValueInvalid
+from aweb_secrets.custody.onepassword import SecretValueInvalid, SecretVersionChanged
 from aweb_secrets.custody.opening import BackendObservation, UseSecretOpener
 from aweb_secrets.member_types import MemberSubmission, ToolReply, broker_result_reply
-from aweb_secrets.onepassword_reconciliation import BackendReconciler
+from aweb_secrets.onepassword_reconciliation import (
+    BackendReconciler,
+    require_current_backend_version,
+)
 from aweb_secrets.response_audit import ResponseKey
 from aweb_secrets.response_capacity import (
     DEFAULT_RESPONSE_BUDGET_BYTES,
@@ -717,19 +720,12 @@ class BrokerRequests:
 
     async def _observe_backend(self, use: _PreparedUse) -> BackendObservation | None:
         observation = await self._opener.observe(_context(use.call))
-        if observation is not None and observation.item_version != observation.binding.item_version:
-            if self._reconciler is None:
-                raise CustodyUnavailable("backend reconciliation unavailable")
-            changed = await self._reconciler.reconcile(
-                observation, admitted=use.admission.installation
+        try:
+            await require_current_backend_version(
+                observation, admitted=use.admission.installation, reconciler=self._reconciler
             )
-            for secret_id in changed.affected_secret_ids:
-                await self._tokens.evict_secret(
-                    installation_id=use.admission.installation.installation_id,
-                    team_id=use.admission.installation.team_id,
-                    secret_id=secret_id,
-                )
-            raise AdmissionRefused("secret_version_changed")
+        except SecretVersionChanged:
+            raise AdmissionRefused(SecretVersionChanged.code) from None
         return observation
 
     async def _dispatch_reserved(

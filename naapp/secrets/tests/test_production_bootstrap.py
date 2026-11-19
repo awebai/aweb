@@ -645,8 +645,8 @@ async def test_production_email_dispatch_uses_migrated_and_mounted_providers(
     pending = await approval_request(root, kind=kind, onepassword_values=onepassword_values)
     token = pending.token
     db = service.runtime.db()
-    # Reconciliation is deliberately uncomposed: routing must not query its tables.
-    assert await db.fetch_value("SELECT to_regclass('reconciliation_controls')") is None
+    # Typed use/run links coexist with the production settlement association.
+    assert await db.fetch_value("SELECT to_regclass('reconciliation_controls')") is not None
     before = await db.fetch_all("SELECT payload,signature FROM outbox_events ORDER BY position")
     for _ in range(2):
         dispatched = await client.post(

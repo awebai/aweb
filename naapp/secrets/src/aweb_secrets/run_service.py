@@ -59,10 +59,15 @@ from aweb_secrets.custody import (
     ValueInvalid,
     decode_value,
 )
+from aweb_secrets.custody.onepassword import SecretVersionChanged
 from aweb_secrets.custody.opening import BackendObservation, UseSecretOpener
 from aweb_secrets.custody.run_pins import PreparedRunPin, RunPins, observation_pin
 from aweb_secrets.grant import is_secrets_role
 from aweb_secrets.member_types import MemberSubmission, ToolReply
+from aweb_secrets.onepassword_reconciliation import (
+    BackendReconciler,
+    require_current_backend_version,
+)
 from aweb_secrets.policy import IDENTIFIER
 from aweb_secrets.redaction import KnownValues
 from aweb_secrets.response_audit import ResponseKey
@@ -249,6 +254,7 @@ class RunDispatch:
         claim_wait: timedelta,
         derived_max_ttl_s: int,
         internal_destinations: InternalDestinations,
+        reconciler: BackendReconciler | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         if (
@@ -262,6 +268,7 @@ class RunDispatch:
             raise ValueError("run composition requires valid keys and bounded lifetimes")
         self._db, self._fence, self._opener = db, fence, opener
         self._pins = pins
+        self._reconciler = reconciler
         self._committer, self._response_key, self._service_key = (
             committer,
             response_key,
@@ -788,6 +795,20 @@ class RunDispatch:
                 view = await self._registration_view(grant.team_id)
                 try:
                     opened = await self._open(original)
+                except SecretVersionChanged:
+                    return await self._preparation_failed(
+                        submission, grant, original, SecretVersionChanged.code
+                    )
+                except (
+                    InstallationRefused,
+                    ContainmentRefused,
+                    HookRefused,
+                    ApprovalRefused,
+                    UseAuditUnavailable,
+                ):
+                    # Observation has no dispatch authority. If its independent
+                    # transaction refuses, leave the original assignment unsent.
+                    raise RunnerRefused("runner_unavailable") from None
                 except (CustodyUnavailable, ValueInvalid, TimeoutError):
                     return await self._preparation_failed(
                         submission, grant, original, "custody_unavailable"
@@ -839,6 +860,9 @@ class RunDispatch:
         async with asyncio.timeout(self._assignment_ttl.total_seconds()):
             for slot, context in zip(original.plan.slots, contexts, strict=True):
                 observation = await self._opener.observe(context)
+                await require_current_backend_version(
+                    observation, admitted=original.installation, reconciler=self._reconciler
+                )
                 value = await self._opener.open(context)
                 fields = decode_value(slot.body["source"]["record"]["kind"], value.reveal())
                 required = {

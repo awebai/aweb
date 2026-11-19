@@ -7,9 +7,20 @@ allocate IDs nor poll, admit or dispatch. Callers supply already-projected resul
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any
 
 from aweb_secrets.use_approval import UNRENDERABLE_MESSAGE, UseApprovalRefusalCode
+
+
+class RecoveryRefusal(StrEnum):
+    RECONCILIATION_PENDING = "reconciliation_pending"
+    SECRET_VERSION_CHANGED = "secret_version_changed"
+
+
+class RecoveryAction(StrEnum):
+    OWNER_RECONCILE = "owner_reconcile"
+    START_NEW_REQUEST = "start_new_request"
 
 
 def _envelope(state: str, request_id: str | None) -> dict[str, Any]:
@@ -44,6 +55,16 @@ def refused(code: str, *, request_id: str | None, use_ref: str | None = None) ->
     result = {**_envelope("refused", request_id), "code": code}
     if code == UseApprovalRefusalCode.UNRENDERABLE:
         result["message"] = UNRENDERABLE_MESSAGE
+    if code == RecoveryRefusal.RECONCILIATION_PENDING:
+        result["message"] = (
+            "Have an owner review and settle the uncertain outcome in Activity before requesting this operation again."
+        )
+        result["next_step"] = {"action": RecoveryAction.OWNER_RECONCILE, "path": "/activity"}
+    elif code == RecoveryRefusal.SECRET_VERSION_CHANGED:
+        result["message"] = (
+            "The secret changed. Start a new request and obtain any required approval for its current version."
+        )
+        result["next_step"] = {"action": RecoveryAction.START_NEW_REQUEST}
     if use_ref is not None:
         result["use_ref"] = use_ref
     return result
