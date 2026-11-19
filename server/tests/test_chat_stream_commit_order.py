@@ -10,7 +10,7 @@ deterministically:
   in line for the session row while a writer that holds the row stamps later
   and commits first (_WritersInLine).
 - A writer whose clock is behind stamps a time the stream has already passed.
-  The clock the send path reads (aweb.messaging.chat.datetime) is set back for
+  The clock the send path reads (aweb.messaging.chat_storage.datetime) is set back for
   one request, as it would be on a server process with a slow clock.
 """
 
@@ -25,6 +25,7 @@ from uuid import UUID
 import pytest
 
 import aweb.messaging.chat as chat_service
+import aweb.messaging.chat_storage as chat_storage
 from aweb.db import TransactionInfra
 from aweb.events import publish_chat_session_signal
 from aweb.federation.delivery import deliver_federated_phase_b
@@ -106,9 +107,9 @@ class _WritersInLine:
             async with asyncio.timeout(DELIVERY_BOUND_SECONDS):
                 await self._second_is_in_line()
             with self.monkeypatch.context() as observed:
-                observed.setattr(
-                    chat_service, "datetime", _clock_announcing_its_first_read(stamped)
-                )
+                clock = _clock_announcing_its_first_read(stamped)
+                observed.setattr(chat_service, "datetime", clock)
+                observed.setattr(chat_storage, "datetime", clock)
                 self.stamped_first = asyncio.create_task(self._stamped_first())
                 async with asyncio.timeout(DELIVERY_BOUND_SECONDS):
                     await asyncio.wait(
@@ -258,6 +259,7 @@ async def test_message_stamped_by_a_slow_clock_is_delivered(privacy_app, monkeyp
         assert delivered["message_id"] == on_time
         with monkeypatch.context() as slow_process:
             slow_process.setattr(chat_service, "datetime", _SlowClock)
+            slow_process.setattr(chat_storage, "datetime", _SlowClock)
             behind = await _post_message(
                 env, "alice", session_id, "stamped by a slow clock"
             )
@@ -324,6 +326,7 @@ async def test_read_receipt_stamped_by_a_slow_clock_is_delivered(
         assert delivered["reader_alias"] == "carol"
         with monkeypatch.context() as slow_process:
             slow_process.setattr(chat_service, "datetime", _SlowClock)
+            slow_process.setattr(chat_storage, "datetime", _SlowClock)
             await _post_read(env, "alice", session_id, from_bob)
         late_stamp = await _expect_frame(
             frames, "the read receipt stamped by a slow clock"
@@ -554,6 +557,7 @@ async def test_mcp_wait_returns_a_reply_stamped_before_the_callers_message(
         assert not call.done(), call.result()
         with monkeypatch.context() as slow_process:
             slow_process.setattr(chat_service, "datetime", _SlowClock)
+            slow_process.setattr(chat_storage, "datetime", _SlowClock)
             reply = await _post_message(
                 env, "bob", session_id, "stamped by a slow clock"
             )
@@ -572,6 +576,7 @@ async def test_read_up_to_leaves_unread_a_message_committed_after_the_named_one(
     named = await _post_message(env, "alice", session_id, "named")
     with monkeypatch.context() as slow_process:
         slow_process.setattr(chat_service, "datetime", _SlowClock)
+        slow_process.setattr(chat_storage, "datetime", _SlowClock)
         committed_later = await _post_message(
             env, "carol", session_id, "stamped earlier, committed later"
         )

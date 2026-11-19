@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
-from aweb.messaging.kinds import ContentMode
+from aweb.messaging.kinds import ContentMode, MessagePriority
+from aweb.messaging.chat_storage import store_chat
+from aweb.messaging.mail_storage import (
+    store_mail,
+    MailStorageInput,
+    MailSender,
+    MailRecipient,
+    MailAttestation,
+    PlaintextMailContent,
+    EncryptedMailContent,
+)
 
 from aweb.db import TransactionInfra
 from aweb.federation.errors import FederationPolicyRefused
@@ -612,151 +622,97 @@ async def _upsert_conversation_participants(
 
 
 async def _store_mail(
-    tx, envelope: FederationEnvelope, signature: str, recipient: dict, id_chain=None
+    db,
+    *,
+    envelope: FederationEnvelope,
+    signature: str,
+    recipient: dict,
+    id_chain: dict | None,
 ):
-    metadata = (
-        encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
-        if envelope.content_mode == ContentMode.ENCRYPTED
-        else {}
-    )
-    row = await tx.fetch_one(
-        """
-        INSERT INTO {{tables.messages}} (
-            message_id, from_did, to_did, from_alias, from_address, to_alias,
-            subject, body, priority, team_id, from_agent_id, to_agent_id,
-            signature, signed_payload, created_at, conversation_id,
-            message_version, content_mode, encrypted_envelope,
-            encrypted_ciphertext, encrypted_key_wraps, encrypted_ciphertext_hash,
-            encrypted_ciphertext_size, encrypted_key_wraps_hash,
-            encrypted_inner_header_hash, encrypted_suite,
-            encrypted_signing_key_id, signed_envelope_hash, id_chain
-        ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11,
-            $12, $13, clock_timestamp(), $14, $15, $16, $17::jsonb,
-            $18, $19::jsonb, $20, $21, $22, $23, $24, $25, $26, $27::jsonb
-        ) RETURNING message_id, created_at
-        """,
-        UUID(envelope.message_id),
-        envelope.sender_did_aw,
-        envelope.target_did_aw,
-        (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1],
-        envelope.sender_address,
-        recipient.get("alias") or envelope.target_address.split("/", 1)[-1],
-        "" if metadata else (envelope.subject or ""),
-        "" if metadata else envelope.body,
-        envelope.priority or "normal",
-        recipient.get("team_id"),
-        recipient.get("agent_id"),
-        None if metadata else signature,
-        None if metadata else envelope.signed_payload,
-        UUID(str(envelope.conversation_id)),
-        2 if metadata else 1,
-        ContentMode.ENCRYPTED if metadata else ContentMode.PLAINTEXT,
-        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":"))
-        if metadata
-        else None,
-        metadata.get("encrypted_ciphertext"),
-        json.dumps(
-            metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")
+    """Project an admitted inbound envelope through the canonical mail writer."""
+    encrypted = envelope.content_mode == ContentMode.ENCRYPTED
+    content = (
+        EncryptedMailContent(
+            envelope=envelope.encrypted_envelope or {},
+            metadata=encrypted_message_storage_metadata(
+                envelope.encrypted_envelope or {}
+            ),
         )
-        if metadata.get("encrypted_key_wraps") is not None
-        else None,
-        metadata.get("encrypted_ciphertext_hash"),
-        metadata.get("encrypted_ciphertext_size"),
-        metadata.get("encrypted_key_wraps_hash"),
-        metadata.get("encrypted_inner_header_hash"),
-        metadata.get("encrypted_suite"),
-        metadata.get("encrypted_signing_key_id"),
-        metadata.get("signed_envelope_hash"),
-        json.dumps(id_chain) if id_chain is not None else None,
+        if encrypted
+        else PlaintextMailContent(subject=envelope.subject or "", body=envelope.body)
     )
-    await tx.execute(
+    stored = await store_mail(
+        db,
+        message=MailStorageInput(
+            local_team_id=recipient.get("team_id"),
+            sender=MailSender(
+                did=envelope.sender_did_aw,
+                alias=(envelope.sender_address or envelope.sender_did_aw).split("/", 1)[
+                    -1
+                ],
+                address=envelope.sender_address,
+            ),
+            recipient=MailRecipient(
+                did=envelope.target_did_aw,
+                alias=recipient.get("alias")
+                or envelope.target_address.split("/", 1)[-1],
+                agent_id=recipient.get("agent_id"),
+            ),
+            content=content,
+            attestation=MailAttestation(
+                signature=None if encrypted else signature,
+                signed_payload=None if encrypted else envelope.signed_payload,
+                id_chain=id_chain,
+            ),
+            priority=envelope.priority or MessagePriority.NORMAL,
+            message_id=UUID(envelope.message_id),
+            conversation_id=envelope.conversation_id,
+        ),
+    )
+    await db.get_manager("aweb").execute(
         "UPDATE {{tables.conversations}} SET updated_at = clock_timestamp() WHERE conversation_id = $1",
         UUID(str(envelope.conversation_id)),
     )
-    return row
+    return {"message_id": stored.message_id, "created_at": stored.created_at}
 
 
-async def _store_chat(tx, envelope: FederationEnvelope, signature: str, id_chain=None):
+async def _store_chat(
+    db,
+    *,
+    envelope: FederationEnvelope,
+    signature: str,
+    id_chain: dict | None,
+):
+    """Use the same chat insert/receipt owner as native sends after ingress admission."""
+    encrypted = envelope.content_mode == ContentMode.ENCRYPTED
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
-        if envelope.content_mode == ContentMode.ENCRYPTED
-        else {}
+        if encrypted
+        else None
     )
-    participant = await tx.fetch_one(
-        """
-        SELECT alias, agent_id FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = $2
-        """,
-        UUID(str(envelope.conversation_id)),
-        envelope.sender_did_aw,
+    stored = await store_chat(
+        db,
+        session_id=UUID(str(envelope.conversation_id)),
+        sender_did=envelope.sender_did_aw,
+        sender_address=envelope.sender_address,
+        body="" if encrypted else envelope.body,
+        leaving=envelope.sender_leaving,
+        hang_on=envelope.hang_on,
+        reply_to=UUID(envelope.reply_to) if envelope.reply_to else None,
+        signature=None if encrypted else signature,
+        signed_payload=None if encrypted else envelope.signed_payload,
+        content_mode=ContentMode.ENCRYPTED if encrypted else ContentMode.PLAINTEXT,
+        message_version=2 if encrypted else 1,
+        encrypted_envelope=envelope.encrypted_envelope if encrypted else None,
+        encrypted_metadata=metadata,
+        message_id=UUID(envelope.message_id),
+        id_chain=id_chain,
+        # Phase B wakes only its resolved/locked recipient below the writer.
+        wake_dids=(),
     )
-    row = await tx.fetch_one(
-        """
-        INSERT INTO {{tables.chat_messages}} (
-            message_id, session_id, from_agent_id, from_did, from_alias,
-            from_address, body, sender_leaving, hang_on, reply_to,
-            signature, signed_payload, content_mode, message_version,
-            encrypted_envelope, encrypted_ciphertext, encrypted_key_wraps,
-            encrypted_ciphertext_hash, encrypted_ciphertext_size,
-            encrypted_key_wraps_hash, encrypted_inner_header_hash,
-            encrypted_suite, encrypted_signing_key_id, signed_envelope_hash,
-            created_at, id_chain
-        ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-            $11, $12, $13, $14, $15::jsonb, $16, $17::jsonb,
-            $18, $19, $20, $21, $22, $23, $24, clock_timestamp(), $25::jsonb
-        ) RETURNING message_id, created_at
-        """,
-        UUID(envelope.message_id),
-        UUID(str(envelope.conversation_id)),
-        participant.get("agent_id"),
-        envelope.sender_did_aw,
-        participant["alias"],
-        envelope.sender_address,
-        "" if metadata else envelope.body,
-        envelope.sender_leaving,
-        envelope.hang_on,
-        UUID(envelope.reply_to) if envelope.reply_to else None,
-        None if metadata else signature,
-        None if metadata else envelope.signed_payload,
-        ContentMode.ENCRYPTED if metadata else ContentMode.PLAINTEXT,
-        2 if metadata else 1,
-        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":"))
-        if metadata
-        else None,
-        metadata.get("encrypted_ciphertext"),
-        json.dumps(
-            metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")
-        )
-        if metadata.get("encrypted_key_wraps") is not None
-        else None,
-        metadata.get("encrypted_ciphertext_hash"),
-        metadata.get("encrypted_ciphertext_size"),
-        metadata.get("encrypted_key_wraps_hash"),
-        metadata.get("encrypted_inner_header_hash"),
-        metadata.get("encrypted_suite"),
-        metadata.get("encrypted_signing_key_id"),
-        metadata.get("signed_envelope_hash"),
-        json.dumps(id_chain) if id_chain is not None else None,
-    )
-    await tx.execute(
-        """
-        INSERT INTO {{tables.chat_read_receipts}} (
-            session_id, did, agent_id, last_read_message_id, last_read_at
-        ) VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (session_id, did) DO UPDATE SET
-            agent_id = EXCLUDED.agent_id,
-            last_read_message_id = EXCLUDED.last_read_message_id,
-            last_read_at = EXCLUDED.last_read_at
-        """,
-        UUID(str(envelope.conversation_id)),
-        envelope.sender_did_aw,
-        participant.get("agent_id"),
-        row["message_id"],
-        row["created_at"],
-    )
-    return row
+    if stored is None:
+        raise FederationAuthorityError("federation_conversation_invalid")
+    return stored
 
 
 async def replay_federation_mutation_outbox(app, manager, *, limit: int = 100) -> int:
@@ -933,7 +889,13 @@ async def _deliver_federated_phase_b(
                 recipient,
                 preserve_existing_route=stored_route_continuation,
             )
-            message = await _store_mail(tx, envelope, signature, recipient, id_chain)
+            message = await _store_mail(
+                TransactionInfra(db, tx),
+                envelope=envelope,
+                signature=signature,
+                recipient=recipient,
+                id_chain=id_chain,
+            )
         else:
             await _ensure_chat_session(
                 tx,
@@ -941,7 +903,12 @@ async def _deliver_federated_phase_b(
                 recipient,
                 preserve_existing_route=stored_route_continuation,
             )
-            message = await _store_chat(tx, envelope, signature, id_chain)
+            message = await _store_chat(
+                TransactionInfra(db, tx),
+                envelope=envelope,
+                signature=signature,
+                id_chain=id_chain,
+            )
         # Wake the recipient row this delivery resolved and locked, never the
         # envelope's target or the stored to_did.
         record_did_wakes(

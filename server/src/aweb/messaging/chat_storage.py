@@ -48,8 +48,14 @@ async def store_chat(
     encrypted_envelope: dict[str, Any] | None = None,
     encrypted_metadata: dict[str, Any] | None = None,
     message_id: UUID | None = None,
+    wake_dids: tuple[str | None, ...] | None = None,
 ) -> dict[str, Any] | None:
-    """Store a participant's admitted chat message and receipt, then update its session state."""
+    """Store an admitted chat message and sender receipt in one statement.
+
+    Native sends wake stored peers by default. An ingress owner that holds
+    separately validated recipient identity supplies its explicit wake set;
+    an empty set leaves publication to that transaction owner.
+    """
     aweb_db = db.get_manager("aweb")
     participant = await aweb_db.fetch_one(
         """
@@ -147,6 +153,8 @@ async def store_chat(
     }
 
     # Departed participants are woken too: leaving does not end their pending state.
-    record_did_wakes(inserted["wake_dids"] or (), "chat")
+    if wake_dids is None:
+        wake_dids = tuple(inserted["wake_dids"] or ())
+    record_did_wakes(wake_dids, "chat")
 
     return dict(msg_row)
