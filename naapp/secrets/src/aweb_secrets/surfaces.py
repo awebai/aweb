@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import shlex
 from collections.abc import Mapping
+from enum import StrEnum
 from html import escape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -313,6 +314,7 @@ def mount_public_surfaces(
     runtime: NaappRuntime,
     health_checks: Mapping[str, HealthCheck],
     console_origin: str,
+    health_labels: Mapping[str, StrEnum] | None = None,
 ) -> None:
     """Mount on the public API app, replacing its manifest/health mounts.
 
@@ -341,4 +343,5 @@ def mount_public_surfaces(
         llms_txt=llms_txt(public_origin=origin, console_origin=console_origin, manifest=manifest),
         og_card_png=(_PACKAGE / "og-card.png").read_bytes(),
         health_checks=health_checks,
+        health_labels=health_labels,
     )

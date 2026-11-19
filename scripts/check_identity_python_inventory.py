@@ -26,6 +26,7 @@ SHARED_SITES = {
     ("awid/src/awid/id_certificates.py", "verify_ed25519"),
     ("awid/src/awid/did.py", "strict_ed25519_point"),
     ("awid/src/awid/did.py", "generate_keypair"),
+    ("awid/src/awid/did.py", "did_key_from_signing_key"),
 }
 
 

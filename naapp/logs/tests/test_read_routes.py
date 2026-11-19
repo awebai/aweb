@@ -176,13 +176,14 @@ async def test_a_reader_filters_pages_and_tails(world: World):
         followed = await human.get("/v1/tail", params={"after": Cursor(1, 1).encode()})
         assert [e["event_type"] for e in followed.json()["events"]] == ["credential.enrolled"]
         assert followed.json()["next_cursor"] == head["next_cursor"]
-        for bad in (
+        bad_queries: tuple[list[tuple[str, str | int | float | bool | None]], ...] = (
             [("limit", "-1")],
             [("cursor", "nonsense")],
             [("after", "x")],
             [("hook", "a"), ("hook", "b")],
             [("after", head["next_cursor"])],
-        ):
+        )
+        for bad in bad_queries:
             response = await human.get("/v1/events", params=bad)
             assert (response.status_code, response.json()) == (400, {"detail": "invalid_filter"})
 
@@ -199,3 +200,15 @@ async def test_a_reader_verifies_its_chain_without_content(world: World):
     assert report["conflicts"] == []
     assert "role.designated" not in response.text
     assert "payload" not in response.text
+
+
+async def test_verify_refuses_an_epoch_outside_the_chain_s_range(world: World):
+    scope, _ = await enrolled_reader(world)
+    async with origins(world) as (human, _):
+        await login(world, human, scope)
+        for epoch in ("0", "-1", str(2**31), str(2**63)):
+            response = await human.get("/v1/verify", params={"chain_epoch": epoch})
+            assert (response.status_code, response.json()) == (
+                400,
+                {"detail": "invalid_filter"},
+            ), epoch

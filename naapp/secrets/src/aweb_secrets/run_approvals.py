@@ -450,7 +450,7 @@ async def admit_run_approvals(
         policy = policies[row["ordinal"]]
         if policy is None:
             refusal = refusal or "grant_revoked"
-        approval = await approvals.get(row["approval_id"])
+        approval = await approvals.get(row["approval_id"], tx=tx)
         assert approval is not None
         eligible = scopes[row["ordinal"]]
         if (approval.decided_by is not None and approval.decided_by.scope not in eligible) or (

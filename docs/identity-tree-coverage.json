@@ -15,7 +15,7 @@
         "awid/src/awid_service/routes/did.py"
       ],
       "status": "legacy",
-      "reason": "Keep DID syntax and key proof; separate ID-tree enrollment from bare DID creation. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "Bare DID genesis validates the new key proof (awid/src/awid_service/routes/did.py:302), independently of ID-certificate enrollment. The real constructor journey proves a registered, unenrolled did:aw remains unknown/unregistered_identity (scripts/cross-registry-human-journey.py:269,283). This is an intentional bare-ID path, not chain issuance or a required ancestry refusal; enrollment must occur through a separate parent constructor."
     },
     {
       "id": "CLI.KEYS.AGENT",
@@ -24,7 +24,7 @@
         "cli/go/awid/keys.go"
       ],
       "status": "legacy",
-      "reason": "Agent file custody stays; human keys must not be placed here. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "GenerateKeypair and SaveSigningKey only generate/store agent key material (cli/go/awid/keys.go:20,52); they cannot establish parent authority. Real parent constructors using those keys are covered by CLI.CREATE.PARENT and CLI.INVITE.LOCAL. The helper itself has no ancestry constructor or chain-or-refusal journey; human keychain custody remains separate."
     },
     {
       "id": "CLI.KEYS.HUMAN",
@@ -48,7 +48,7 @@
         "cli/go/cmd/aw/id_team.go"
       ],
       "status": "legacy",
-      "reason": "Human-less local coordination remains valid; evidenced parent signs, otherwise unknown. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "The first local-team bootstrap creates a local member with the team controller and persists its signing key/team certificate, without an ID-parent issuance step (cli/go/cmd/aw/init_local.go:164,193,211). Its real quickstart retry journey tests connection recovery (scripts/e2e-oss-user-journey.sh:2927), not a parent chain. Missing: an attributed local-init constructor and real chain-or-required-refusal journey; a human-less local team may still coordinate as unknown."
     },
     {
       "id": "CLI.INIT.BYOD",
@@ -58,7 +58,7 @@
         "cli/go/cmd/aw/onboarding_wizard.go"
       ],
       "status": "legacy",
-      "reason": "Actual root/human/agent parent; key proof and exact domain, no account-label inference. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "The BYOD wizard prepares a bare identity, optionally registers its global DID/address, then bootstraps membership (cli/go/cmd/aw/onboarding_wizard.go:422,457,479). It does not select an ID parent or install a chain. CLI.CREATE.PARENT proves the explicit id-create flags, not this wizard entry point. Missing: wizard parent issuance/installation and its own real chain-or-required-refusal journey."
     },
     {
       "id": "CLI.INIT.HOSTED",
@@ -67,7 +67,7 @@
         "cli/go/cmd/aw/onboarding_wizard.go"
       ],
       "status": "legacy",
-      "reason": "Host-supplied exact chain verified before installation; no guessed human on signup. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "The signup wizard generates a key, optionally registers its DID, calls cli-signup and persists a team certificate (cli/go/cmd/aw/onboarding_wizard.go:137,671,705). This separate signup path does not consume the hosted ID-tree creation response used by id create --org/API-key init. Missing: signup-chain consumption and a real wizard journey proving the selected parent or required refusal; account labels cannot supply it."
     },
     {
       "id": "CLI.BOOTSTRAP.CONNECT",
@@ -76,7 +76,7 @@
         "cli/go/cmd/aw/connect.go"
       ],
       "status": "legacy",
-      "reason": "Bootstrap redemption creates a fresh local key and may register its stable ID, but does not yet install an ID-parent chain. A bootstrap token is not ancestry evidence."
+      "reason": "Bootstrap redemption generates a key, optionally registers its DID, validates the returned member certificate and connects (cli/go/cmd/aw/connect.go:77,111,122,132). It does not install an ID-parent chain. Missing: a redemption response/consumer binding ancestry to that exact child and a real token-redemption chain-or-required-refusal journey. The token itself is not ancestry evidence."
     },
     {
       "id": "CLI.INIT.APIKEY",
@@ -86,7 +86,7 @@
         "cli/go/cmd/aw/init_apikey.go"
       ],
       "status": "legacy",
-      "reason": "API key with and without evidenced parent is chain-or-unknown/refuse, never guessed attribution. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "The landed consumer independently reads the selected team, retains the creation response and verifies/registers/installs the returned chain (cli/go/cmd/aw/init_apikey.go:169,276,289). Shared recovery tests use fixture status/registration HTTP handlers and a static TXT resolver (cli/go/cmd/aw/hosted_creation_install_test.go:151,185,219). Missing on OSS main: a coherent published CLI/Cloud/AWID journey of API-key local/global creation under the hosted root, no_human verification, and unchanged registry-failure resume. API-key identity must never imply a human parent."
     },
     {
       "id": "CLI.CREATE.DOMAIN",
@@ -95,7 +95,7 @@
         "cli/go/cmd/aw/id_create.go"
       ],
       "status": "legacy",
-      "reason": "Keep key/DID/address while explicitly enrolling; addresses do not prove parentage. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "Without parent flags, id create registers the bare DID/address and writes the key; ID-chain installation runs only when a parent was explicitly selected (cli/go/cmd/aw/id_create.go:177,238,303). The real-DNS journey now asserts this path has no chain and reports unknown/unregistered_identity (scripts/cross-registry-human-journey.py:269,279). Unenrolled creation is covered; it is not an ancestry conversion. Explicit enrolled creation is CLI.CREATE.PARENT."
     },
     {
       "id": "CLI.CREATE.PARENT",
@@ -129,7 +129,7 @@
         "cli/go/cmd/aw/id_create_hosted.go"
       ],
       "status": "legacy",
-      "reason": "Human-session issuance and owner-principal issuance keep their distinct authority. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "The person-authorized --org consumer selects the account human independently, retains the full creation response, and fresh-verifies/installs its chain (cli/go/cmd/aw/id_create_hosted.go:168,266,282,300). Missing on OSS main: a coherent published-cohort real human-session Cloud creation journey proving the selected human, required refusal without fallback, original-key/certificate registry resume and outsider verification. The shared fixture recovery test at cli/go/cmd/aw/hosted_creation_install_test.go:151 is not that journey."
     },
     {
       "id": "CLI.CREATE.OWNER",
@@ -138,7 +138,7 @@
         "cli/go/cmd/aw/id_create_owner.go"
       ],
       "status": "legacy",
-      "reason": "Retain unattended signing owner-agent parent; owner role or owner-team membership alone is not a target parent. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "The native owner consumer selects its actual issuer, issues/registers the child before Cloud admission, and requires the response to accept that same chain (cli/go/cmd/aw/id_create_hosted.go:163,210,227,294; cli/go/cmd/aw/id_create_owner.go:32). Missing on OSS main: a coherent published-cohort real owner-authorized --org journey proving nearest_human/no_human as appropriate, unchanged recovery, and independent identity versus refused membership. Fixture owner checks (cli/go/cmd/aw/hosted_creation_install_test.go:254) do not qualify the Cloud constructor."
     },
     {
       "id": "CLI.INVITE.LOCAL",
@@ -158,7 +158,7 @@
         "cli/go/awid/spawn_invites.go"
       ],
       "status": "legacy",
-      "reason": "Preserve issuing ID/purpose; exact child and pending recipient-bound human signing, never token-only human attribution. This creation path has no landed per-path chain-or-refusal journey proof yet."
+      "reason": "The landed consumer requires an issue-time preview and pins issuer/domain/kind/mode before accept, retains the response and installs only its verified chain (cli/go/cmd/aw/hosted_invite_creation.go:70; cli/go/cmd/aw/id_team.go:2198,2303,2328). Its recovery tests use vector-backed status/accept servers and static TXT (cli/go/cmd/aw/hosted_invite_creation_test.go:115,126,145). Missing on OSS main: the published-cohort real Cloud issue/preview/accept journey for native and host-managed agents, local/global children, per-child registration UUID and unchanged no-second-accept resume; unavailable preview must refuse."
     },
     {
       "id": "CLI.TEAM.REPLACE_KEY",
@@ -167,7 +167,7 @@
         "cli/go/cmd/aw/team_replace_key.go"
       ],
       "status": "legacy",
-      "reason": "Replacement did:key under local team-controller authority; no ID-parent chain until lost-key replacement lands, so ancestry is unknown, never inherited from the old key."
+      "reason": "This team-controller operation generates a replacement local did:key, not an ID-parent certificate (cli/go/cmd/aw/team_replace_key.go:329). The real stack explicitly checks the replacement remains unknown/legacy_no_chain (cli/go/e2e/team_create_flow_e2e_test.go:232,292). The root-admits-replacement-human J10 case (scripts/cross-registry-human-journey.py:453) is a different constructor. Missing here: explicit new-parent issuance and a real chain-or-required-refusal replacement journey; never inherit the old key ancestry."
     },
     {
       "id": "SERVER.CONNECT",
@@ -176,7 +176,7 @@
         "server/src/aweb/routes/connect.py"
       ],
       "status": "legacy",
-      "reason": "Connection may create an identity or reuse a projection; it does not yet project a verified host-supplied ID chain. Reconnect must not mint a new origin."
+      "reason": "Connect now independently verifies the member binding and ID chain before projecting team/agent/workspace state (server/src/aweb/team_auth_deps.py:285; server/src/aweb/routes/connect.py:483,491). The real-DNS journey proves human/root chains survive a successful connection (scripts/e2e-cross-registry-messaging.sh:480,488,495), but those aw who assertions read the client chain; they do not distinguish a connect endpoint that skips its ancestry gate. Missing: a real connect-specific journey proving invalid/revoked enrolled ancestry refuses before projection effects, alongside the valid neighbor. This is a proof gap, not an absent shared verifier or permission to mint/re-parent on reconnect."
     },
     {
       "id": "OATS.SPAWN",

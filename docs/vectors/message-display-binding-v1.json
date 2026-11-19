@@ -1,0 +1,75 @@
+{
+  "description": "What a signed payload must claim before a reader reports a plaintext mail or chat message as verified. A reader compares the displayed fields with the signed claims of the same name. A required claim that the payload does not carry is a mismatch; any other displayed field the payload does not carry is not a claim.",
+  "required_claims": {
+    "mail": ["type", "body", "from_did", "subject"],
+    "chat": ["type", "body", "from_did"]
+  },
+  "signer_shapes": [
+    {
+      "name": "client_mail_minimal",
+      "kind": "mail",
+      "signer": "cli/go/awid/signing.go CanonicalJSON and channel-core/src/identity/signing.ts canonicalJSON, optional fields empty",
+      "claims": ["body", "from", "from_did", "subject", "timestamp", "to", "to_did", "type"]
+    },
+    {
+      "name": "client_mail_full",
+      "kind": "mail",
+      "signer": "cli/go/awid/signing.go CanonicalJSON and channel-core/src/identity/signing.ts canonicalJSON, optional fields set",
+      "claims": ["body", "conversation_id", "from", "from_did", "from_stable_id", "message_id", "subject", "timestamp", "to", "to_did", "to_stable_id", "type"]
+    },
+    {
+      "name": "client_chat_minimal",
+      "kind": "chat",
+      "signer": "cli/go/awid/signing.go CanonicalJSON and channel-core/src/identity/signing.ts canonicalJSON, optional fields empty",
+      "claims": ["body", "from", "from_did", "subject", "timestamp", "to", "to_did", "type"]
+    },
+    {
+      "name": "client_chat_full",
+      "kind": "chat",
+      "signer": "cli/go/awid/signing.go CanonicalJSON and channel-core/src/identity/signing.ts canonicalJSON, optional fields set",
+      "claims": ["body", "conversation_id", "from", "from_did", "from_stable_id", "message_id", "subject", "timestamp", "to", "to_did", "to_stable_id", "type"]
+    },
+    {
+      "name": "hosted_mail",
+      "kind": "mail",
+      "signer": "server/src/aweb/mcp/tools/mail.py _signed_mail_fields, signed by the hosted custodial signer",
+      "claims": ["body", "conversation_id", "from", "from_did", "message_id", "subject", "timestamp", "to", "to_did", "type"]
+    },
+    {
+      "name": "hosted_chat",
+      "kind": "chat",
+      "signer": "server/src/aweb/mcp/tools/chat.py signed fields, signed by the hosted custodial signer",
+      "claims": ["body", "conversation_id", "from", "from_did", "message_id", "subject", "timestamp", "to", "to_did", "type"]
+    },
+    {
+      "name": "human_channel_mail",
+      "kind": "mail",
+      "signer": "server/src/aweb/human_channels/mcp.py signed fields",
+      "claims": ["body", "conversation_id", "from_did", "message_id", "subject", "timestamp", "to", "to_did", "type"]
+    },
+    {
+      "name": "human_channel_chat",
+      "kind": "chat",
+      "signer": "server/src/aweb/human_channels/mcp.py signed fields",
+      "claims": ["body", "conversation_id", "from_did", "message_id", "subject", "timestamp", "to", "to_did", "type"]
+    },
+    {
+      "name": "gateway_mail_without_recipient_key",
+      "kind": "mail",
+      "signer": "a hosted gateway that signs mail to an address without resolving the recipient's key",
+      "claims": ["body", "conversation_id", "from", "from_did", "from_stable_id", "message_id", "priority", "subject", "timestamp", "to", "type"]
+    },
+    {
+      "name": "person_mail_without_recipient_key",
+      "kind": "mail",
+      "signer": "a hosted person's mail to a recipient whose key is not resolved",
+      "claims": ["body", "conversation_id", "from", "from_did", "from_stable_id", "message_id", "subject", "timestamp", "to", "type"]
+    },
+    {
+      "name": "person_mail_through_a_channel",
+      "kind": "mail",
+      "signer": "a hosted person's mail that arrived through an external channel",
+      "claims": ["body", "conversation_id", "from", "from_did", "from_stable_id", "message_id", "subject", "timestamp", "to", "to_did", "to_stable_id", "type", "via"]
+    }
+  ]
+}

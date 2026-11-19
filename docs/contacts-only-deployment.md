@@ -41,9 +41,9 @@ recipients at consumption; already-consumed identity recovery is unchanged.
 
 Clients must verify that a requested mode was applied. A successful response
 from an older server may contain a downgraded value. The B2 CLI compatibility
-change and the OATS steward's explicit post-create assertion are required parts
-of the combined acceptance; neither a 200 response nor an unpublished local
-source override establishes release qualification.
+change and an explicit post-create readback are required parts of client
+acceptance; neither a 200 response nor an unpublished local source override
+establishes release qualification.
 
 New active identity contacts must carry the exact DID/controller binding from
 the shared authority resolver. REST contact creation (also used by the CLI),

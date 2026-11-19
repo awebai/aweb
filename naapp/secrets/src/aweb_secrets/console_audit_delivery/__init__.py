@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 import asyncpg
-from aweb_naapp.console import ConsoleRoute, ConsoleSession
+from aweb_naapp.console import ConsoleRoute, ConsoleSession, KeyBoundConsoleSession
 from aweb_naapp.hooks.producer import (
     HOOKS_CHANNEL,
     Backlog,
@@ -92,7 +92,8 @@ class ConsoleAuditDelivery:
         views = {hook: await self.registrations.view(admitted.team_id, hook) for hook in HOOKS}
         try:
             async with self.console.db.transaction() as tx:
-                await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                if not isinstance(current, KeyBoundConsoleSession):
+                    await tx.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                 await hold_owner(self.console, tx, current, admitted, installation_id)
                 hooks = tuple(
                     [await self._health(tx, admitted.team_id, hook, views[hook]) for hook in HOOKS]
@@ -101,6 +102,7 @@ class ConsoleAuditDelivery:
                     tx, channel=HOOKS_CHANNEL, team_id=admitted.team_id, newest=self.newest
                 )
                 await self.console.fence.check(tx, admitted)
+                await self.console.check_key_bound(tx, current)
                 # No awaited work follows the final live F6 and S4 deadline samples.
                 if current.expires_at <= datetime.now(UTC):
                     raise HTTPException(401, "console_session_required")

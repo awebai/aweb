@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal
 
@@ -113,6 +113,9 @@ class IdentityKindObservation:
     did_key: str
     did_aw: str
     result: Mapping[str, Any]
+    # Original producer age, for consumers carrying evidence across authority
+    # waits. This in-process metadata changes neither classification nor equality.
+    evidence_age_seconds: float | None = field(default=None, compare=False)
 
     @property
     def is_human(self) -> bool:
@@ -143,6 +146,7 @@ async def observe_identity_kind(
     team/address inference is performed here.
     """
     subject = {"id": binding.did_aw or binding.did_key, "did_key": binding.did_key}
+    evidence_age_seconds = None
     try:
         enrollment = binding.id_tree
         if binding.did_aw and enrollment is None:
@@ -171,11 +175,13 @@ async def observe_identity_kind(
                         )
                     except Exception:
                         logger.warning("ID-tree cached evidence failed", exc_info=True)
+            if evidence is not None:
+                evidence_age_seconds = evidence.age_seconds
             result = verify_id_chain(
                 bundle, subject=subject, evidence=evidence, domain=domain
             )
     except IDCertificateError as exc:
         result = unverified_kind(exc.code)
     return IdentityKindObservation(
-        binding.did_key, binding.did_aw, MappingProxyType(result)
+        binding.did_key, binding.did_aw, MappingProxyType(result), evidence_age_seconds
     )

@@ -1,0 +1,206 @@
+{
+  "name": "human-role-holding-v1",
+  "status": "proposed (aweb-acwd.4.10); frozen once reviewed",
+  "scheme": {
+    "authority": "docs/design/human-role-holders.md, 'The holding's identity'",
+    "domain": "aweb.human-role-holding/1 followed by one newline",
+    "canonical": "strict canonical JSON (canonical-json-v1) of the nine string fields",
+    "identity": "'aweb.human-role-holding/1:' followed by the lowercase hex SHA-256 of domain || canonical",
+    "b3_scope": "role + '.' + the first 40 lowercase hex characters of SHA-256(installation_id + LF + team_id + LF + principal)",
+    "cases": "each case's identity is what an implementation returns for its fields; refused cases have no identity"
+  },
+  "cases": [
+    {
+      "name": "holding",
+      "note": "a held logs.reader holding",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "3",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      },
+      "canonical": "{\"app_id\":\"logs\",\"b3_scope\":\"logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d\",\"generation\":\"3\",\"held_since\":\"2026-11-07T12:01:00.123456Z\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"principal\":\"did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd\",\"role\":\"logs.reader\",\"subject\":\"8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55\",\"team_id\":\"demo:example.com\"}",
+      "identity": "aweb.human-role-holding/1:bd92d79efb248ff685c03af197e31d28093a58a943d59f062e2a3335bf147dc8"
+    },
+    {
+      "name": "replaced_credential",
+      "note": "a replace: same holding and held_since, new approver subject",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "3",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "c9bf9e57-1685-4c89-bafb-ff5af830be8a",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      },
+      "canonical": "{\"app_id\":\"logs\",\"b3_scope\":\"logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d\",\"generation\":\"3\",\"held_since\":\"2026-11-07T12:01:00.123456Z\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"principal\":\"did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd\",\"role\":\"logs.reader\",\"subject\":\"c9bf9e57-1685-4c89-bafb-ff5af830be8a\",\"team_id\":\"demo:example.com\"}",
+      "identity": "aweb.human-role-holding/1:8e49a8d76715a1a1d76b5784b7d6398a4399cec2b0e570a210bcbcee61864503"
+    },
+    {
+      "name": "redesignated",
+      "note": "a revoke then designate: same key, new held_since",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "3",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-08T09:30:15.000001Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      },
+      "canonical": "{\"app_id\":\"logs\",\"b3_scope\":\"logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d\",\"generation\":\"3\",\"held_since\":\"2026-11-08T09:30:15.000001Z\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"principal\":\"did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd\",\"role\":\"logs.reader\",\"subject\":\"8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55\",\"team_id\":\"demo:example.com\"}",
+      "identity": "aweb.human-role-holding/1:cfe01f7e94234d353b042028cbf31e83d98530b703ac1d79b59cdabb77f76f0d"
+    },
+    {
+      "name": "new_generation",
+      "note": "the installation's generation advanced",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "4",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      },
+      "canonical": "{\"app_id\":\"logs\",\"b3_scope\":\"logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d\",\"generation\":\"4\",\"held_since\":\"2026-11-07T12:01:00.123456Z\",\"installation_id\":\"1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b\",\"principal\":\"did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd\",\"role\":\"logs.reader\",\"subject\":\"8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55\",\"team_id\":\"demo:example.com\"}",
+      "identity": "aweb.human-role-holding/1:a2fd848926f3ed8f7198d39c735b6378ad4ad1345c150666fda16744e20130cb"
+    },
+    {
+      "name": "secrets_owner",
+      "note": "the secrets.owner role",
+      "fields": {
+        "app_id": "secrets",
+        "team_id": "demo:example.com",
+        "installation_id": "2c5f39cb-3fb2-4e4c-b4f6-f02ac6b8744c",
+        "generation": "3",
+        "role": "secrets.owner",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "secrets.owner.9d4a374c1e62242b537a55a80408f2a4b4c70f37"
+      },
+      "canonical": "{\"app_id\":\"secrets\",\"b3_scope\":\"secrets.owner.9d4a374c1e62242b537a55a80408f2a4b4c70f37\",\"generation\":\"3\",\"held_since\":\"2026-11-07T12:01:00.123456Z\",\"installation_id\":\"2c5f39cb-3fb2-4e4c-b4f6-f02ac6b8744c\",\"principal\":\"did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd\",\"role\":\"secrets.owner\",\"subject\":\"8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55\",\"team_id\":\"demo:example.com\"}",
+      "identity": "aweb.human-role-holding/1:405ed0ebd1b82cf2415d753b493a06b421a6ca154e14e466faafae82ea31173f"
+    }
+  ],
+  "refused": [
+    {
+      "name": "subject_absent",
+      "note": "no credential can log in (a replace's cooling-off): there is no identity",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "3",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": null,
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      }
+    },
+    {
+      "name": "scope_not_derived",
+      "note": "b3_scope is not holding_scope(installation_id, team_id, role, principal)",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "3",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.0000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "generation_zero",
+      "note": "generation is the integer generation, at least 1, as ASCII [1-9][0-9]*",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "0",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      }
+    },
+    {
+      "name": "held_since_offset",
+      "note": "held_since is UTC with microseconds and Z",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "3",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456+00:00",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      }
+    },
+    {
+      "name": "principal_not_did_aw",
+      "note": "principal is a did:aw",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "3",
+        "role": "logs.reader",
+        "principal": "did:key:z6MknVbixt4vJMcKzaXUWURZN8ZZ1tC1kxRFysKRFXYjQpDp",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      }
+    },
+    {
+      "name": "generation_leading_zero",
+      "note": "generation is rendered with no leading zero: '03' is not the spelling of 3",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "03",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      }
+    },
+    {
+      "name": "generation_signed",
+      "note": "generation is rendered with no sign: '+3' is not the spelling of 3",
+      "fields": {
+        "app_id": "logs",
+        "team_id": "demo:example.com",
+        "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+        "generation": "+3",
+        "role": "logs.reader",
+        "principal": "did:aw:2Zf4Lq8m3VYb9nKc5RjTs7Hd",
+        "subject": "8f14e45f-ceea-467a-9f3b-6d2b7c1e0a55",
+        "held_since": "2026-11-07T12:01:00.123456Z",
+        "b3_scope": "logs.reader.9ffb12fb48dd17ae09f3d2796023b01a9452698d"
+      }
+    }
+  ]
+}

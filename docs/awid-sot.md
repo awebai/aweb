@@ -256,6 +256,11 @@ with previous- and new-key proofs. This is new work; the released PUT remains
 key-loss recovery. Its epoch and pre-upgrade first-registration rules are fixed
 in that contract.
 
+PUT recovery requires proof of the new controller key plus DNS evidence for
+that key or valid parent-controller authorization. `AWID_SKIP_DNS_VERIFY=1`
+can bootstrap a first namespace registration; it never substitutes for either
+recovery proof when replacing an existing controller.
+
 AWID keeps each domain's root-key history in `id_namespace_epochs`. Every
 epoch was proven by exact `_awid.<domain>` DNS on an explicit act. The first
 registration, re-registration after deletion, and an exact-DNS PUT to a key

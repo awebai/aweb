@@ -1,9 +1,9 @@
 """Runs inside the packaged image against the lab's real DNS, TLS and AWID.
 
-The lab copies this file to /lab/probe.py, beside the shared packaged_probe.
+The lab copies this file to /lab/probe.py, beside the minimal shared probe package.
 """
 
-from packaged_probe import run
+from aweb_naapp_testing.packaged_probe import run
 
 from aweb_secrets.deployment import DeploymentSettings, create_deployment
 

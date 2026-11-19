@@ -152,7 +152,10 @@ var wakeRegisterCmd = &cobra.Command{
 		"the instance present; pending errors are tolerated until the 30-minute expiry.\n\n" +
 		"Exit 0 means the registration was written durably: over the daemon's socket\n" +
 		"when it is up, and straight to the state directory when it is not, so a hook\n" +
-		"never fails because the broker is restarting. A non-zero exit means refused —\n" +
+		"never fails because the broker is restarting. It does not mean a broker is\n" +
+		"running: when none answered, register says so on stderr, and the instance is\n" +
+		"not woken until one starts. aw wake status reports whether a broker runs\n" +
+		"(daemon_running with --json). A non-zero exit means refused —\n" +
 		"a missing --delivery session, a relative path, or an unreadable identity home.\n\n" +
 		"--identity-home here names the instance's own identity home, and shadows the\n" +
 		"root flag of the same name for this command. Give the principal's home before\n" +
@@ -193,13 +196,20 @@ var wakeRegisterCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		brokerDown := false
 		_, err = wakeCallOrFallback(store, wake.ControlRequest{Op: wake.OpRegister, Registration: &reg}, func() error {
+			brokerDown = true
 			return wake.RegisterInStore(store, reg)
 		})
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "registered %s (identity home %s)\n", reg.Home, reg.IdentityHome)
+		if brokerDown {
+			fmt.Fprintf(cmd.ErrOrStderr(),
+				"aw wake: no wake broker is running for %s; %s is registered and will not be woken until one starts (aw wake run).\n",
+				store.Dir(), reg.Home)
+		}
 		return nil
 	},
 }

@@ -25,6 +25,9 @@ class SecretsSettings(NaappSettings):
     # The human console origin: passkey sessions only, never team-auth. The
     # WebAuthn relying party is this exact host.
     console_origin: str = Field(default="http://127.0.0.1:8771")
+    # Configure only a header overwritten by the deployment's trusted proxy.
+    # Unset keeps the login limiter keyed on the TCP peer.
+    client_address_header: str | None = None
     app_id: str = Field(default="secrets")
 
     # Applied both when recording a child and at every later authority fence.

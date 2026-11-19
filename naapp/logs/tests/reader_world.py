@@ -272,7 +272,9 @@ async def designated_reader(world: World, contact: str = CONTACT) -> tuple[str, 
     await world.designations.designate(
         signing=signing, signature=signature, scope=scope, contact=contact
     )
-    return scope, await holder(world, scope)
+    current = await holder(world, scope)
+    assert current is not None
+    return scope, current
 
 
 async def enrolled_reader(world: World, contact: str = CONTACT) -> tuple[str, str]:
@@ -288,7 +290,9 @@ async def enrolled_reader(world: World, contact: str = CONTACT) -> tuple[str, st
             fence=enrolment,
         )
     world.devices[scope] = device
-    return scope, await holder(world, scope)
+    current = await holder(world, scope)
+    assert current is not None
+    return scope, current
 
 
 async def holder(world: World, scope: str) -> str | None:

@@ -29,28 +29,31 @@ messages and tasks as itself. It is reusable across teams and same-domain orgs
 without new keys, a new ID certificate or re-parenting. For a human leaf, the
 responsible-human result is that human itself, not its inviter.
 
-Human keys are held by the CLI user's OS keychain or a custodial server.
-Custodial use of a human key requires one of exactly three bases:
+The approved [human-assurance architecture](human-assurance-contract.md)
+places human, namespace-controller and team-controller keys in a protected
+server signer outside worker access, under either hosted or customer custody.
+Human issuance and human team admission each need their own live, exact-act,
+single-use approval. Login alone, a worker/service token and a terminal
+passphrase do not satisfy that boundary. First enrollment uses the explicit
+protected bootstrap; recovery cannot reuse bootstrap as an approval bypass.
 
-1. A checked logged-in human session.
-2. A reviewed, checked channel authority bound to the account, as in
-   [linked-channel ingress](agent-channel-endpoints.md#4-who-may-enter-decision-c).
-3. A one-time, operator-approved release enrollment of an account the server
-   already custodially represents, limited to key generation, initial DID
-   registration and root human certificate registration. This authority ends
-   with those enrollment operations; it does not cover encryption-key
-   assertions or team-connect proofs.
+Ordinary human read/connect/handoff authentication is a restricted signer
+operation. Reviewed [linked-channel ingress](agent-channel-endpoints.md#4-who-may-enter-decision-c)
+can authorize its exact MAIL operation only, never governance. Customer
+namespace/controller keys remain with the customer's protected server; Cloud
+does not acquire them. Agent spawning under a valid endorsed agent parent
+remains unattended and grants no resource permission.
 
-A worker or service token alone establishes none of these bases.
-
-Human keys never live in an agent home, `.aw`, agent-readable file or
-environment variable. There is no extra login for an owned agent's spawn.
-Hosted namespaces may use hosted root authority. In v1 a
-customer's custom-domain controller key stays with that customer's controller;
-Cloud does not take custody of it. The customer signs the first human from the
-CLI; a custodial deployment can hold subsequent human keys.
+The v1 certificate format is unchanged and does not attest to this ceremony.
+The shared signer/adapters require their own release and migration acceptance;
+existing installations are not upgraded by this contract text alone.
 
 ### Interactive human participation from the CLI
+
+The keychain/passphrase flow below describes the legacy CLI implementation.
+It is migration inventory, not the supported custody boundary of the approved
+architecture. The protected read/connect/handoff path replaces local human
+signing under [the human-assurance contract](human-assurance-contract.md#4-ordinary-human-authentication-without-worker-custody).
 
 After `aw id human init` and controller-authorized team membership, select the
 human explicitly with `--human <did:aw> --human-domain <identity-domain>`.
@@ -561,6 +564,12 @@ of an old root key. No pre-upgrade namespace history is guessed. A local
 
 ### Human key lifecycle and two machines
 
+The encrypted keychain export/import method below describes legacy custody.
+New protected deployments keep these keys server-side; importing existing
+material is an explicitly approved operator migration outside worker access,
+not a worker-accessible export or multi-machine signer feature. The continuity,
+replacement and revocation rules in this section still apply.
+
 Routine rotation retains the did:aw through the existing old-key-signed
 continuity log. Registered children retain their historic issuer-key witness;
 unregistered children request re-sign on contact. Rotation is NOT a compromise
@@ -642,9 +651,10 @@ claim that a local member revocation is a global ID revocation.
 Org/team membership removal is a separate act: it ends that org's owner/role
 authority immediately under the host's transaction and never revokes a human
 ID shared with other orgs. Domain-ID offboarding uses the portable signer:
-hosted operators sign with their namespace root for an authorized owner/admin
-after the session check; a BYOT customer's controller signs from the CLI, not
-from a dashboard-held custom-domain root. If the inviter has left, the root
+hosted and BYOT operators use their own protected namespace signer for the
+current authorized human's live exact-act approval under the
+[human-assurance contract](human-assurance-contract.md). A session or admin
+label alone does not authorize that signature. If the inviter has left, the root
 signs. Retained branches must complete re-parenting before revoke; a partial
 failure is reported and must not be advertised as completed preservation.
 ID revocation is subject to the 60-second status bound, not instant worldwide

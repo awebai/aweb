@@ -32,7 +32,8 @@ export function signedClaimsEqual(signedPayload: string, displayed: DisplayedFie
 
 /**
  * Whether the displayed fields agree with the signed claims of a message that
- * may predate some of them. A field the sender did not sign is not a claim; a
+ * may predate some of them. A displayed field that is a required message claim
+ * must be signed; any other field the sender did not sign is not a claim. A
  * signed field must be a string and match. A displayed did:aw may stand for
  * the signed did:key of the same side when the sender also signed that did:aw.
  */
@@ -62,9 +63,18 @@ export function signedMailDisplayMatches(
   return everyClaimMatches(signed, displayed);
 }
 
+// The claims that make a signed payload a message. The same key signs other
+// documents, such as request envelopes; a payload without these says nothing
+// about the text a reader is shown. Every message signer signs them; subject
+// is displayed, and so required, for mail only.
+const REQUIRED_MESSAGE_CLAIMS: ReadonlySet<string> = new Set(["type", "body", "from_did", "subject"]);
+
 function everyClaimMatches(signed: Record<string, unknown>, displayed: DisplayedFields): boolean {
   for (const [name, value] of Object.entries(displayed)) {
-    if (!(name in signed)) continue;
+    if (!(name in signed)) {
+      if (REQUIRED_MESSAGE_CLAIMS.has(name)) return false;
+      continue;
+    }
     const shown = value ?? "";
     const claim = signed[name];
     if (typeof claim !== "string") return false;

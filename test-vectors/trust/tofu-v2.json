@@ -1,5 +1,5 @@
 {
-  "schema": "aweb.trust.tofu.v1",
+  "schema": "aweb.trust.tofu.v2",
   "description": "Shared TOFU pin-continuity conformance vectors for Go CLI and channel TypeScript verifiers.",
   "vectors": [
     {
@@ -11,9 +11,16 @@
       "from_stable_id": "",
       "rotation_announcement": null,
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
-      "pin_store_before": {"pins": {}, "addresses": {}},
+      "registry_names_key": true,
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
       "expected_status": "verified",
       "expected_pin_store_after": {
         "pins": {
@@ -23,7 +30,8 @@
             "did_key": "",
             "first_seen": "$ANY_TIMESTAMP",
             "last_seen": "$ANY_TIMESTAMP",
-            "server": ""
+            "server": "",
+            "confirmed_by": "registry"
           }
         },
         "addresses": {
@@ -40,8 +48,12 @@
       "from_stable_id": "",
       "rotation_announcement": null,
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
@@ -81,8 +93,12 @@
       "from_stable_id": "",
       "rotation_announcement": null,
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
@@ -114,8 +130,12 @@
         "old_seed_byte": 22
       },
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
@@ -169,6 +189,7 @@
         "controller_did": "did:key:z6Mkk4Li7FrksouqV6ehQnbKh8R5kEkkqtmpQtohPvE3fnKU"
       },
       "registry_confirmed_current_key": false,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
@@ -214,8 +235,12 @@
         "old_seed_byte": 22
       },
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
@@ -248,8 +273,12 @@
         "corrupt_signature": true
       },
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {
@@ -275,8 +304,12 @@
       "from_stable_id": "did:aw:alice",
       "rotation_announcement": null,
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": true,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:aw:alice": {
@@ -318,8 +351,12 @@
       "from_stable_id": "",
       "rotation_announcement": null,
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "ephemeral", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "ephemeral",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:key:z6MktojHN9D8obak7C9wjpTzCRrdE5zC6cxt5ANUFnQskgbs": {
@@ -334,7 +371,10 @@
         }
       },
       "expected_status": "verified",
-      "expected_pin_store_after": {"pins": {}, "addresses": {}}
+      "expected_pin_store_after": {
+        "pins": {},
+        "addresses": {}
+      }
     },
     {
       "name": "custodial-sender-promotes-status-and-writes-pin",
@@ -345,9 +385,16 @@
       "from_stable_id": "",
       "rotation_announcement": null,
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "custodial"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "custodial"
+      },
       "registry_confirmed_current_key": false,
-      "pin_store_before": {"pins": {}, "addresses": {}},
+      "registry_names_key": true,
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
       "expected_status": "verified_custodial",
       "expected_pin_store_after": {
         "pins": {
@@ -357,7 +404,8 @@
             "did_key": "",
             "first_seen": "$ANY_TIMESTAMP",
             "last_seen": "$ANY_TIMESTAMP",
-            "server": ""
+            "server": "",
+            "confirmed_by": "registry"
           }
         },
         "addresses": {
@@ -374,9 +422,16 @@
       "from_stable_id": "",
       "rotation_announcement": null,
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
-      "pin_store_before": {"pins": {}, "addresses": {}},
+      "registry_names_key": false,
+      "pin_store_before": {
+        "pins": {},
+        "addresses": {}
+      },
       "expected_status": "failed",
       "expected_pin_store_after": null
     },
@@ -395,8 +450,12 @@
         "old_seed_byte": 22
       },
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:aw:alice": {
@@ -444,8 +503,12 @@
         "old_seed_byte": 22
       },
       "replacement_announcement": null,
-      "agent_meta": {"lifetime": "persistent", "custody": "self"},
+      "agent_meta": {
+        "lifetime": "persistent",
+        "custody": "self"
+      },
       "registry_confirmed_current_key": false,
+      "registry_names_key": false,
       "pin_store_before": {
         "pins": {
           "did:key:z6Mkjut1mue4XRWDrNkvEuxc2MLuB9cN8LpXa5LfK87W5JKb": {

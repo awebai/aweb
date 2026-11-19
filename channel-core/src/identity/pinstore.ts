@@ -55,6 +55,7 @@ const PIN_FIELDS = new Set([
   "handle",
   "stable_id",
   "did_key",
+  "confirmed_by",
   "log_seq",
   "log_entry_hash",
   "first_seen",
@@ -71,6 +72,12 @@ export interface Pin {
   handle: string;
   stable_id?: string;
   did_key?: string;
+  /**
+   * What confirmed that the pinned address belongs to this identity when the
+   * pin was written: "registry", or absent for a pin written before pins
+   * recorded it.
+   */
+  confirmed_by?: string;
   /**
    * The anti-rollback checkpoint: the highest DID-log sequence verified for this
    * identity and that entry's hash. Persisted with the pin so a restart cannot
@@ -258,6 +265,18 @@ export class PinStore {
     return changed;
   }
 
+  /** Pin a sender whose address the registry confirmed belongs to it. */
+  recordConfirmedIdentity(
+    pinKey: string,
+    address: string,
+    stableID?: string,
+    didKey?: string,
+  ): boolean {
+    this.recordVerifiedIdentity(pinKey, address, stableID, didKey);
+    this.mutablePins.get(pinKey)!.confirmed_by = "registry";
+    return true;
+  }
+
   replaceVerifiedIdentity(
     previousPinKey: string,
     pinKey: string,
@@ -383,6 +402,7 @@ export class PinStore {
       pinObj.handle = pin.handle;
       if (pin.stable_id !== undefined) pinObj.stable_id = pin.stable_id;
       if (pin.did_key !== undefined) pinObj.did_key = pin.did_key;
+      if (pin.confirmed_by !== undefined) pinObj.confirmed_by = pin.confirmed_by;
       if (pin.log_seq !== undefined) pinObj.log_seq = pin.log_seq;
       if (pin.log_entry_hash !== undefined) pinObj.log_entry_hash = pin.log_entry_hash;
       pinObj.first_seen = pin.first_seen;
@@ -579,6 +599,8 @@ function validatePin(key: string, value: unknown): Pin {
   if (stableId !== undefined) pin.stable_id = stableId;
   const didKey = optionalString("did_key");
   if (didKey !== undefined) pin.did_key = didKey;
+  const confirmedBy = optionalString("confirmed_by");
+  if (confirmedBy !== undefined) pin.confirmed_by = confirmedBy;
   const logSeq = raw["log_seq"];
   if (logSeq !== undefined && logSeq !== null) {
     if (typeof logSeq !== "number" || !Number.isInteger(logSeq) || logSeq < 1) {

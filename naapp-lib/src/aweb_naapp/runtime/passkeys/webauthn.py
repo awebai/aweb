@@ -12,8 +12,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from webauthn import verify_authentication_response, verify_registration_response
+from webauthn import (
+    generate_registration_options,
+    verify_authentication_response,
+    verify_registration_response,
+)
+from webauthn.helpers import options_to_json_dict
 from webauthn.helpers.exceptions import WebAuthnException
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria,
+    ResidentKeyRequirement,
+    UserVerificationRequirement,
+)
 
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
 
@@ -32,6 +42,26 @@ class RegisteredPasskey:
 @dataclass(frozen=True)
 class VerifiedAssertion:
     new_sign_count: int
+
+
+def registration_options(
+    *, rp: RelyingParty, subject: str, display_name: str, challenge: bytes, timeout: int
+) -> dict[str, Any]:
+    """B3 registration options; the caller owns the single-use challenge."""
+    options = generate_registration_options(
+        rp_id=rp.rp_id,
+        rp_name=rp.name,
+        user_id=subject.encode("utf-8"),
+        user_name=display_name,
+        user_display_name=display_name,
+        challenge=challenge,
+        timeout=timeout,
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+    )
+    return options_to_json_dict(options)
 
 
 def verify_registration(

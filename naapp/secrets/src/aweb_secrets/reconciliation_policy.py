@@ -14,6 +14,7 @@ from uuid import UUID
 
 from aweb_naapp.runtime.approvals import ActionPolicy, Approver, Assurance
 from pgdbm import AsyncDatabaseManager
+from pgdbm.core import TransactionManager
 
 from aweb_secrets.owners import OwnerDirectory, owner_scope
 from aweb_secrets.reconciliation_types import ReconciliationOriginal, ReconciliationOutcome
@@ -84,19 +85,21 @@ class ReconciliationPolicies:
     def __init__(self, db: AsyncDatabaseManager, *, owners: OwnerDirectory) -> None:
         self._db, self._owners = db, owners
 
-    async def current(self, policy_ref: str) -> ActionPolicy | None:
+    async def current(
+        self, policy_ref: str, *, tx: TransactionManager | None = None
+    ) -> ActionPolicy | None:
         parts = policy_ref.split("|")
         if len(parts) != 7 or parts[0] != POLICY_PREFIX:
             return None
         _, app_id, installation_id, team_id, generation, scope, subject = parts
         if not app_id or not generation.isdecimal() or int(generation) < 1:
             return None
-        owner = await self._owners.owner_of(self._db, scope)
+        owner = await self._owners.owner_of(tx or self._db, scope)
         if (
             owner is None
             or owner.team_id != team_id
             or owner_scope(installation_id, team_id, owner.principal_did) != scope
-            or not await self._owners.is_current(scope, subject)
+            or not await self._owners.is_current(scope, subject, tx=tx)
         ):
             return None
         return ActionPolicy(
@@ -113,7 +116,13 @@ class ReconciliationApprovers:
     def __init__(self, *, owners: OwnerDirectory) -> None:
         self._owners = owners
 
-    async def candidates(self, policy: ActionPolicy, request: Mapping[str, Any]) -> list[Approver]:
+    async def candidates(
+        self,
+        policy: ActionPolicy,
+        request: Mapping[str, Any],
+        *,
+        tx: TransactionManager | None = None,
+    ) -> list[Approver]:
         try:
             if (
                 reconciliation_policy_ref(request) != policy.policy_ref
@@ -126,7 +135,7 @@ class ReconciliationApprovers:
             return []
         return [
             candidate
-            for candidate in await self._owners.candidates(policy, request)
+            for candidate in await self._owners.candidates(policy, request, tx=tx)
             if (candidate.scope, candidate.subject)
             == (request["owner"]["scope"], request["owner"]["subject"])
         ]

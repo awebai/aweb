@@ -41,6 +41,17 @@ identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
 
+### `human-assurance-v1.json` — frozen policy contract
+
+The [human-assurance contract](../human-assurance-contract.md) defines the
+shared protected-signing operation catalog and its positive/refusal policy
+scenarios for hosted and independent implementations. The fixture separates
+live exact-act approvals from bounded unattended operations, with typed
+custody, requester and receipt boundaries. These are implementation acceptance
+inputs, not cryptographic known answers or evidence that runtime paths have
+passed. Implementations must exercise the applicable cases against their
+shared signer and adapters; static catalog validation is not runtime acceptance.
+
 ### `id-certificates-v1.json` — contract candidate
 
 The [identity certificates contract](../id-certificates.md) freezes
@@ -306,6 +317,18 @@ response. One case is an Agent Card with its `card_digest`.
 Canonical UTF-8 message payloads and expected Ed25519 signatures, including
 variants with and without stable-ID fields. Signatures use raw standard base64
 without padding.
+
+### `message-display-binding-v1.json`
+
+The claims a signed payload must carry before a reader reports a plaintext mail
+or chat message as verified (`type`, `body` and `from_did`, plus `subject` for
+mail), and the claim set of every payload shape a message signer produces. A
+reader compares each displayed field with the signed claim of the same name; a
+required claim the payload lacks is a mismatch, so a document signed by the
+same key for another purpose, such as a request envelope from
+`team-auth-envelope-v2.json`, is never reported as a verified message. Each
+client checks that every signer shape matches its display and that each shape
+is refused once any required claim is removed.
 
 ### `identity-log-v1.json`
 
@@ -744,6 +767,21 @@ changed skeleton) and expects the earlier. The
 Python implementation in `naapp/logs` regenerates it byte for byte, and the Go
 verifier in `cli/go/logschain` passes it.
 
+
+### `logs-export-v1.json`
+
+A team's exported log, `aweb.logs-export/1` (aweb-acgh.16.23; contract in
+[`logs-chain.md`](../logs-chain.md), "Exporting a team's log"). Each case is a
+bundle as its JSON Lines, the keys and independently held witnesses the
+verifier is given, and the report a bundle verifier must return: a whole log
+of two epochs, a purged event, events after the last checkpoint reported as
+unanchored, a truncated tail and a dropped final epoch each alone and against a
+witness of what was dropped, witnesses that hold and one signed by another
+key, an epoch naming an earlier checkpoint, a skipped epoch and a bundle
+starting after the first epoch reported unlinked, a misplaced receipt, an
+event out of position order, a repeated event, altered content, key evidence
+that is not the producer, and a checkpoint by a key not accepted. Malformed
+cases give a bundle the verifier refuses and the number of its first bad line.
 ### `owner-act-v1.json`
 
 The `aweb.owner-act/1` artifact, signed by a team's current controller key
@@ -787,6 +825,17 @@ regenerates the file byte for byte. Its test verifies each signed case with
 the Python owner-act verifier. No implementation consumes the manifest,
 prepare and client families until the version 3 interpreters and the generic
 routes exist.
+
+### `human-role-holding-v1.json`
+
+The public identity a console session binds a human-role holding to,
+`aweb.human-role-holding/1` (aweb-acwd.4.10; contract in
+[`human-role-holders.md`](../design/human-role-holders.md#reading-a-holding)).
+Specified, not shipped. Each case gives the nine fields, their strict
+canonical JSON and the identity; the refused cases have no identity. The
+`b3_scope` of every case is the one derived from its installation, team, role
+and principal. No implementation consumes it until the shared
+`HumanRoleHandoffAuthority` exists.
 
 ## Experimental and compatibility A2A fixtures
 
@@ -891,6 +940,7 @@ reference duplication are mutation-tested failures.
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
+| `message-display-binding-v1.json` | Go AWID `request_envelope_as_message_test.go`; TypeScript channel-core `request_envelope_as_message.test.ts` |
 | `message-signing-v1.json` | Python AWID and aweb conformance tests, including the pre-activation federation harness; Go shared `conformance_test.go` |
 | `mutation-hook-call-sites-v1.json` | Build guard `scripts/check-extension-docs.py` |
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
@@ -898,7 +948,7 @@ reference duplication are mutation-tested failures.
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` and production-server `test_runner_server_protocol.py` |
 | `secrets-runner-http-v1.json` | secrets `test_runner_protocol_vectors.py` |
-| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts` |
+| `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy; TypeScript channel-core `request_auth_v2.test.ts`; Go AWID `request_envelope_as_message_test.go` and TypeScript channel-core `request_envelope_as_message.test.ts`, which present each signed request as a message |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-authority-state-v1.json` | Python AWID `test_federation_authority_vectors.py`; Python aweb `test_federation_authority_core.py`, `test_federation_authority_schema.py`, and pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go`; generated `federation-error-reference.md` response-shape cross-check through `generate_federation_error_reference.py` (reason/status/retryability source is `awid/src/awid/federation_errors.py`); federation SOT/support coverage in `check-extension-docs.py` |

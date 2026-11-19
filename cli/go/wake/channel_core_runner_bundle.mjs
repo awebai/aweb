@@ -3922,9 +3922,13 @@ function signedMailDisplayMatches(signedPayload, displayed, reader) {
   }
   return everyClaimMatches(signed, displayed);
 }
+var REQUIRED_MESSAGE_CLAIMS = /* @__PURE__ */ new Set(["type", "body", "from_did", "subject"]);
 function everyClaimMatches(signed, displayed) {
   for (const [name, value] of Object.entries(displayed)) {
-    if (!(name in signed)) continue;
+    if (!(name in signed)) {
+      if (REQUIRED_MESSAGE_CLAIMS.has(name)) return false;
+      continue;
+    }
     const shown = value ?? "";
     const claim = signed[name];
     if (typeof claim !== "string") return false;
@@ -9000,6 +9004,7 @@ var PIN_FIELDS = /* @__PURE__ */ new Set([
   "handle",
   "stable_id",
   "did_key",
+  "confirmed_by",
   "log_seq",
   "log_entry_hash",
   "first_seen",
@@ -9152,6 +9157,12 @@ var PinStore = class _PinStore {
     }
     return changed;
   }
+  /** Pin a sender whose address the registry confirmed belongs to it. */
+  recordConfirmedIdentity(pinKey, address, stableID, didKey) {
+    this.recordVerifiedIdentity(pinKey, address, stableID, didKey);
+    this.mutablePins.get(pinKey).confirmed_by = "registry";
+    return true;
+  }
   replaceVerifiedIdentity(previousPinKey, pinKey, address, stableID, didKey) {
     const removed = previousPinKey ? this.deletePin(previousPinKey) : false;
     const recorded = this.recordVerifiedIdentity(pinKey, address, stableID, didKey);
@@ -9271,6 +9282,7 @@ var PinStore = class _PinStore {
       pinObj.handle = pin.handle;
       if (pin.stable_id !== void 0) pinObj.stable_id = pin.stable_id;
       if (pin.did_key !== void 0) pinObj.did_key = pin.did_key;
+      if (pin.confirmed_by !== void 0) pinObj.confirmed_by = pin.confirmed_by;
       if (pin.log_seq !== void 0) pinObj.log_seq = pin.log_seq;
       if (pin.log_entry_hash !== void 0) pinObj.log_entry_hash = pin.log_entry_hash;
       pinObj.first_seen = pin.first_seen;
@@ -9432,6 +9444,8 @@ function validatePin(key, value) {
   if (stableId !== void 0) pin.stable_id = stableId;
   const didKey = optionalString("did_key");
   if (didKey !== void 0) pin.did_key = didKey;
+  const confirmedBy = optionalString("confirmed_by");
+  if (confirmedBy !== void 0) pin.confirmed_by = confirmedBy;
   const logSeq = raw["log_seq"];
   if (logSeq !== void 0 && logSeq !== null) {
     if (typeof logSeq !== "number" || !Number.isInteger(logSeq) || logSeq < 1) {
@@ -9683,7 +9697,12 @@ var SenderTrustManager = class {
     if (!acceptedSignature || recipientBindingMismatch || !fromDID) return { status: status2, stored: false };
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     const meta = resolved?.meta || this.unavailableAgentMeta();
-    if (!meta.resolved) return this.unresolvedMetadataResult(meta);
+    if (!meta.resolved) {
+      if (meta.resolutionError === "unavailable" && this.pinnedToKey(store, trustAddress, fromDID, fromStableID)) {
+        return { status: status2, stored: false };
+      }
+      return this.unresolvedMetadataResult(meta);
+    }
     if (this.teamRosterAliasReference(rawAddress.trim()) !== void 0 && fromDID) {
       if (meta.identityScope === "local") {
         return this.verifyResolvedLocalSender(store, rawAddress.trim(), trustAddress, fromDID, meta, status2);
@@ -9817,6 +9836,13 @@ var SenderTrustManager = class {
       resolutionError: "unavailable"
     };
   }
+  /** Whether the address is pinned to this sender and, for a stable identity, to this key. */
+  pinnedToKey(store, trustAddress, fromDID, fromStableID) {
+    const pinKey = store.addresses.get(trustAddress);
+    if (pinKey === void 0) return false;
+    if (pinKey === fromDID) return true;
+    return !!fromStableID && pinKey === fromStableID && store.pins.get(pinKey)?.did_key === fromDID;
+  }
   unresolvedMetadataResult(meta) {
     return {
       status: meta.resolutionError === "not_found" ? "identity_mismatch" : "verification_stale",
@@ -9917,12 +9943,22 @@ var SenderTrustManager = class {
         }
       }
     }
+    const namedByAuthority = !!meta.did && meta.did === fromDID && (!fromStableID || meta.stableID === fromStableID);
     const pinResult = store.checkPin(trustAddress, pinKey, meta.identityScope);
     switch (pinResult) {
       case "new":
-        store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
+        if (!registryConfirmedCurrentKey && !namedByAuthority) {
+          return {
+            status: !meta.did && fromStableID ? "verification_stale" : "identity_mismatch",
+            stored: false
+          };
+        }
+        store.recordConfirmedIdentity(pinKey, trustAddress, fromStableID, fromDID);
         return { status: status2, stored: true };
       case "ok": {
+        if (!fromStableID && meta.did && meta.did !== fromDID) {
+          return { status: "identity_mismatch", stored: false };
+        }
         if (fromStableID) {
           const pin = store.pins.get(pinKey);
           if (pin?.did_key && pin.did_key !== fromDID) {
@@ -10048,6 +10084,7 @@ var SenderTrustManager = class {
       const identity = await this.resolveIdentity(rawAddress, forceRefresh);
       const meta = {
         did: identity.did,
+        stableID: identity.stableID,
         identityScope: identity.identityScope,
         custody: identity.custody || "self",
         controllerDid: identity.controllerDid,

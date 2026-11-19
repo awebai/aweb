@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from aweb_naapp.egress import InternalDestinations
 from pgdbm.core import TransactionManager
 
+from aweb_secrets import run_pin_store
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord, GrantTemplate
 from aweb_secrets.operation import OperationTemplate
@@ -122,6 +123,14 @@ async def set_active_version(
     )
     if updated is None:
         raise RecordMissing("no such secret in this installation")
+
+    await run_pin_store.discard_secret(
+        tx,
+        installation_id=installation_id,
+        team_id=team_id,
+        secret_id=secret_id,
+        keep_version=version,
+    )
 
 
 async def create_policy(tx: TransactionManager, installation_id: str, policy: Policy) -> None:

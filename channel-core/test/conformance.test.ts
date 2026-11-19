@@ -83,6 +83,7 @@ interface TOFUVector {
   replacement_announcement: ReplacementAnnouncementVector | null;
   agent_meta: AgentMetaVector;
   registry_confirmed_current_key: boolean;
+  registry_names_key: boolean;
   pin_store_before: PinStoreVector;
   expected_status: VerificationStatus;
   expected_pin_store_after: PinStoreVector | null;
@@ -122,6 +123,7 @@ interface PinVector {
   address: string;
   stable_id?: string;
   did_key?: string;
+  confirmed_by?: string;
   first_seen: string;
   last_seen: string;
   server?: string;
@@ -149,7 +151,7 @@ function loadRegistryVectors(): RegistryVectorFile {
 
 function loadTOFUVectors(): TOFUVectorFile {
   return JSON.parse(
-    readFileSync(join(testDir, "..", "..", "test-vectors", "trust", "tofu-v1.json"), "utf-8"),
+    readFileSync(join(testDir, "..", "..", "test-vectors", "trust", "tofu-v2.json"), "utf-8"),
   ) as TOFUVectorFile;
 }
 
@@ -235,7 +237,7 @@ describe("trust conformance vectors", () => {
 
   test("TOFU pin continuity matches the shared contract", async () => {
     const vectorFile = loadTOFUVectors();
-    expect(vectorFile.schema).toBe("aweb.trust.tofu.v1");
+    expect(vectorFile.schema).toBe("aweb.trust.tofu.v2");
 
     for (const vector of vectorFile.vectors) {
       const store = pinStoreFromVector(vector.pin_store_before);
@@ -255,7 +257,7 @@ describe("trust conformance vectors", () => {
           fromStableID: string | undefined,
           rotationAnnouncement: RotationAnnouncement | undefined,
           replacementAnnouncement: ReplacementAnnouncement | undefined,
-          meta: { identityScope: "global" | "local"; custody: string; controllerDid?: string; resolved: boolean },
+          meta: { did?: string; identityScope: "global" | "local"; custody: string; controllerDid?: string; resolved: boolean },
           registryConfirmedCurrentKey: boolean,
         ): { status: VerificationStatus | undefined; stored: boolean };
       };
@@ -274,6 +276,7 @@ describe("trust conformance vectors", () => {
           custody: vector.agent_meta.custody,
           controllerDid: vector.agent_meta.controller_did,
           resolved: true,
+          did: vector.registry_names_key ? vector.from_did : undefined,
         },
         vector.registry_confirmed_current_key,
       );
@@ -323,6 +326,7 @@ function pinStoreFromVector(vector: PinStoreVector): PinStore {
     const stored = store.pins.get(key)!;
     stored.stable_id = pin.stable_id || undefined;
     stored.did_key = pin.did_key || undefined;
+    stored.confirmed_by = pin.confirmed_by || undefined;
     stored.first_seen = pin.first_seen;
     stored.last_seen = pin.last_seen;
   }
@@ -389,6 +393,7 @@ function assertPinStoreMatchesVector(
     assertPinField(vectorName, key, "address", gotPin!.address, expectedPin.address, beforePin?.address || "");
     assertPinField(vectorName, key, "stable_id", gotPin!.stable_id || "", expectedPin.stable_id || "", beforePin?.stable_id || "");
     assertPinField(vectorName, key, "did_key", gotPin!.did_key || "", expectedPin.did_key || "", beforePin?.did_key || "");
+    assertPinField(vectorName, key, "confirmed_by", gotPin!.confirmed_by || "", expectedPin.confirmed_by || "", beforePin?.confirmed_by || "");
     assertPinField(vectorName, key, "first_seen", gotPin!.first_seen, expectedPin.first_seen, beforePin?.first_seen || "");
     assertPinField(vectorName, key, "last_seen", gotPin!.last_seen, expectedPin.last_seen, beforePin?.last_seen || "");
     assertPinField(vectorName, key, "server", gotPin!.server || "", expectedPin.server || "", beforePin?.server || "");

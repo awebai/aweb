@@ -460,10 +460,27 @@ valid evidence; this protocol therefore makes no global freshness SLA.
 ### TOFU pins and durable continuity
 
 For global identities, current Go and TypeScript clients keep an address-to-pin
-index. A first verified contact is pinned by `did:aw` when a valid stable id is
-available, otherwise by the observed `did:key`. A stable-identity pin also keeps
-the last verified current key and the highest verified DID-log sequence/hash so
-rollback detection survives process restarts.
+index. A first contact is pinned only after the registry confirms the
+address-to-key binding (by `did:aw` when a valid stable id is present, otherwise
+by `did:key`). Until then it is `verification_stale` (could not check) or
+`identity_mismatch` (the registry disagrees, or has no such address). A client
+built with no registry to ask reports `unverified`: nothing was checked, and a
+retry would not help. A pin written this way records `confirmed_by: registry`;
+pins written before this rule carry no such field. A stable-identity pin also
+keeps the last verified current key and the highest verified DID-log
+sequence/hash so rollback detection survives process restarts.
+
+A sender already pinned stays verified by its pin while the registry cannot be
+reached. A later registry answer that names another key for a pinned address is
+an `identity_mismatch`, and the pin is kept.
+
+For a sender shown only by a display alias, with no address, `verified` means
+the message was signed by the key shown; there is no identity claim behind the
+alias, so this rule has nothing to confirm. A local team sender is still
+checked against the reader's own team roster.
+
+The cases are shared by both clients in
+[`test-vectors/trust/first-contact-v1.json`](https://github.com/awebai/aweb/blob/main/test-vectors/trust/first-contact-v1.json).
 
 Local single-team identities skip persistent global TOFU pinning. Their current
 key is refreshed against the live team roster; a changed key that cannot be
@@ -585,10 +602,16 @@ the stream. The wire protocol does not require a particular cache implementation
 
 ## Plaintext signed display binding
 
-For plaintext mail and chat reads, the Go CLI checks the returned `body`,
-`message_id`, `conversation_id`, `from_did`, `to_did`, and message `type`
-(and mail `subject`) against each field present in `signed_payload`, before
-applying signed metadata. Missing legacy fields are not compared; explicit
+For plaintext mail and chat reads, the Go CLI and the channel client check the
+returned `body`, `message_id`, `conversation_id`, `from_did`, `to_did`, and
+message `type` (and mail `subject`) against `signed_payload`, before applying
+signed metadata. The payload must carry `type`, `body` and `from_did` (and
+`subject` for mail): these are the claims that make it a message, every
+message signer signs them, and a payload without one of them fails. The same
+key signs other documents, such as request envelopes, and without this rule
+such a document could be presented as the signed payload of a message with any
+text. The other fields are compared when the payload carries them; a missing
+`message_id`, `conversation_id` or recipient field is not compared. Explicit
 empty strings are compared exactly, and null or non-string values fail.
 A missing signed conversation ID retains the existing `verified_legacy`
 classification when the response has a conversation ID.
@@ -619,7 +642,8 @@ not the unsigned recipient projection; nonempty signed recipient claims and
 all content, ID, signature, and trust checks remain enforced.
 On a mismatch the CLI reports `failed` and preserves the original response
 fields, rather than hiding the discrepancy by replacing them with signed
-values. It does not claim that absent legacy fields were signed.
+values. It does not claim that absent message id, conversation id or
+recipient fields were signed.
 
 For encrypted-v2 mail and chat, decryption and envelope authentication happen
 first. The outer `message_id` and `conversation_id` must then exactly match

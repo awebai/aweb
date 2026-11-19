@@ -118,7 +118,7 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 				w.WriteHeader(400)
 				return
 			}
-			if body["org"] != "chosen" || body["team_id"] != selector || body["name"] != "steward" || body["inbound_mode"] != mode || body["did"] != originalDID {
+			if body["org"] != "chosen" || body["team_id"] != selector || body["name"] != "worker" || body["inbound_mode"] != mode || body["did"] != originalDID {
 				t.Error("creation lost explicit authority/key binding")
 			}
 			if _, ok := body["role"]; ok {
@@ -130,7 +130,7 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 				w.WriteHeader(400)
 				return
 			}
-			payload := map[string]any{"operation": "cli_global_identity_create.v1", "aud": server.URL, "method": "POST", "path": "/api/v1/cli/identities", "org": "chosen", "team_id": selector, "name": "steward", "did": originalDID, "inbound_mode": mode, "timestamp": proof["timestamp"]}
+			payload := map[string]any{"operation": "cli_global_identity_create.v1", "aud": server.URL, "method": "POST", "path": "/api/v1/cli/identities", "org": "chosen", "team_id": selector, "name": "worker", "did": originalDID, "inbound_mode": mode, "timestamp": proof["timestamp"]}
 			canonical, _ := awid.CanonicalJSONValue(payload)
 			pub, _ := awid.ExtractPublicKey(originalDID)
 			sig, _ := base64.RawStdEncoding.DecodeString(proof["signature"].(string))
@@ -153,7 +153,7 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 				return
 			}
 			stable := awid.ComputeStableID(pub)
-			cert, err := awid.SignTeamCertificate(controller, awid.TeamCertificateFields{Team: canonicalTeam, MemberDIDKey: originalDID, MemberDIDAW: stable, MemberAddress: "chosen.example/steward", Alias: "steward", IdentityScope: "global"})
+			cert, err := awid.SignTeamCertificate(controller, awid.TeamCertificateFields{Team: canonicalTeam, MemberDIDKey: originalDID, MemberDIDAW: stable, MemberAddress: "chosen.example/worker", Alias: "worker", IdentityScope: "global"})
 			if err != nil {
 				t.Error(err)
 				w.WriteHeader(500)
@@ -164,7 +164,7 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 			if createCalls == 2 {
 				responseDID = awid.ComputeDIDKey(controller.Public().(ed25519.PublicKey))
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": serviceTeam, "canonical_team_id": canonicalTeam, "identity_id": "identity-1", "agent_id": "agent-1", "name": "steward", "did": responseDID, "stable_id": stable, "identity_scope": "global", "custody": "self", "namespace": "chosen.example", "address": "chosen.example/steward", "inbound_mode": mode, "team_cert": encoded, "created": false})
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": serviceTeam, "canonical_team_id": canonicalTeam, "identity_id": "identity-1", "agent_id": "agent-1", "name": "worker", "did": responseDID, "stable_id": stable, "identity_scope": "global", "custody": "self", "namespace": "chosen.example", "address": "chosen.example/worker", "inbound_mode": mode, "team_cert": encoded, "created": false})
 		case strings.HasSuffix(r.URL.Path, "/encryption-key") && strings.HasPrefix(r.URL.Path, "/v1/did/"):
 			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
 		case r.URL.Path == "/api/v1/agents/me/inbound-mode":
@@ -177,9 +177,9 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 					actual = "team_and_contacts"
 				}
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "team_id": serviceTeam, "alias": "steward", "identity_scope": "global", "inbound_mode": actual, "configurable": true})
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "agent-1", "team_id": serviceTeam, "alias": "worker", "identity_scope": "global", "inbound_mode": actual, "configurable": true})
 		case r.URL.Path == "/api/v1/agents/me/encryption-key":
-			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", canonicalTeam, "steward")
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-1", canonicalTeam, "worker")
 		default:
 			t.Errorf("unexpected endpoint %s", r.URL.Path)
 			w.WriteHeader(404)
@@ -212,7 +212,7 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 		}
 	}
 	run := func(org string) ([]byte, []byte, error) {
-		args := []string{"--identity-home", principal, "id", "create", "--org", org, "--team-id", selector, "--name", "steward", "--inbound-mode", strings.ReplaceAll(mode, "_", "-"), "--registry", server.URL, "--json"}
+		args := []string{"--identity-home", principal, "id", "create", "--org", org, "--team-id", selector, "--name", "worker", "--inbound-mode", strings.ReplaceAll(mode, "_", "-"), "--registry", server.URL, "--json"}
 		if ownerMode {
 			args = append(args, "--owner-identity-home", ownerRoot)
 		}
@@ -297,7 +297,7 @@ func testHostedIdentityCreateWithSelector(t *testing.T, mode string, ownerMode b
 	if err := json.Unmarshal(out, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result["address"] != "chosen.example/steward" || result["did_key"] != originalDID || result["team_id"] != canonicalTeam || result["service_team_id"] != serviceTeam || result["status"] != "reused" || result["inbound_mode"] != mode {
+	if result["address"] != "chosen.example/worker" || result["did_key"] != originalDID || result["team_id"] != canonicalTeam || result["service_team_id"] != serviceTeam || result["status"] != "reused" || result["inbound_mode"] != mode {
 		t.Error("creation output lost identity/team binding")
 	}
 	if _, err := os.Stat(filepath.Join(principal, "signing.key")); err != nil {
@@ -355,14 +355,14 @@ func TestHostedIdentityRejectsMismatchedServerBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	material := workspaceTeamIdentityMaterial{PublicKey: pub, SigningKey: key, DIDKey: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub), IdentityScope: "global", Alias: "steward"}
-	association := hostedIdentityContext{TeamID: "786a02e4-6a72-44f1-a722-bef232c49a97", Name: "steward", InboundMode: "contacts_only"}
-	cert, err := awid.SignTeamCertificate(controller, awid.TeamCertificateFields{Team: "machine:chosen.example", MemberDIDKey: material.DIDKey, MemberDIDAW: material.StableID, MemberAddress: "chosen.example/steward", Alias: "steward", IdentityScope: "global"})
+	material := workspaceTeamIdentityMaterial{PublicKey: pub, SigningKey: key, DIDKey: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub), IdentityScope: "global", Alias: "worker"}
+	association := hostedIdentityContext{TeamID: "786a02e4-6a72-44f1-a722-bef232c49a97", Name: "worker", InboundMode: "contacts_only"}
+	cert, err := awid.SignTeamCertificate(controller, awid.TeamCertificateFields{Team: "machine:chosen.example", MemberDIDKey: material.DIDKey, MemberDIDAW: material.StableID, MemberAddress: "chosen.example/worker", Alias: "worker", IdentityScope: "global"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	encoded, _ := awid.EncodeTeamCertificateHeader(cert)
-	original := hostedIdentityResponse{TeamID: association.TeamID, CanonicalTeamID: cert.Team, IdentityID: "identity-1", AgentID: "agent-1", Name: "steward", DID: material.DIDKey, StableID: material.StableID, IdentityScope: "global", Custody: "self", Namespace: "chosen.example", Address: cert.MemberAddress, InboundMode: "contacts_only", TeamCert: encoded}
+	original := hostedIdentityResponse{TeamID: association.TeamID, CanonicalTeamID: cert.Team, IdentityID: "identity-1", AgentID: "agent-1", Name: "worker", DID: material.DIDKey, StableID: material.StableID, IdentityScope: "global", Custody: "self", Namespace: "chosen.example", Address: cert.MemberAddress, InboundMode: "contacts_only", TeamCert: encoded}
 	if _, err := validateHostedIdentityResponse(original, association, material); err != nil {
 		t.Fatalf("valid neighboring response refused: %v", err)
 	}
@@ -376,7 +376,7 @@ func TestHostedIdentityRejectsMismatchedServerBinding(t *testing.T) {
 	if _, err := validateHostedIdentityResponse(invalidUUID, canonicalAssociation, material); err == nil {
 		t.Error("canonical selector accepted a non-UUID service response")
 	}
-	otherCert, err := awid.SignTeamCertificate(controller, awid.TeamCertificateFields{Team: "other:chosen.example", MemberDIDKey: material.DIDKey, MemberDIDAW: material.StableID, MemberAddress: original.Address, Alias: "steward", IdentityScope: "global"})
+	otherCert, err := awid.SignTeamCertificate(controller, awid.TeamCertificateFields{Team: "other:chosen.example", MemberDIDKey: material.DIDKey, MemberDIDAW: material.StableID, MemberAddress: original.Address, Alias: "worker", IdentityScope: "global"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestHostedIdentityRecoveryPreservesOriginalAssociation(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "hosted-identity-create.json")
-	association := hostedIdentityContext{Issuer: "https://host.example", AccountID: "account-1", Org: "chosen", TeamID: "team", Name: "steward", InboundMode: "contacts_only", RegistryURL: "https://registry.example"}
+	association := hostedIdentityContext{Issuer: "https://host.example", AccountID: "account-1", Org: "chosen", TeamID: "team", Name: "worker", InboundMode: "contacts_only", RegistryURL: "https://registry.example"}
 	first, err := prepareHostedIdentity(root, path, association)
 	if err != nil {
 		t.Fatal(err)

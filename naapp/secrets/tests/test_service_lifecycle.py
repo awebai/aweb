@@ -32,6 +32,7 @@ async def test_services_start_before_router_factories_and_cleanup_between_lifesp
         router = APIRouter()
 
         @router.get("/")
+        @router.get("/lifecycle-only")
         async def home():
             return {"connected": await active[0].fetch_value("SELECT 1") == 1}
 
@@ -52,13 +53,19 @@ async def test_services_start_before_router_factories_and_cleanup_between_lifesp
                 transport=httpx.ASGITransport(service), base_url=CONSOLE
             ) as client:
                 assert (await client.get("/")).json() == {"connected": True}
-                assert (await client.get(API + "/")).status_code == 404
+                assert (await client.get("/lifecycle-only")).json() == {"connected": True}
+                # The API root serves public docs, never this console handler.
+                landing = await client.get(API + "/")
+                assert landing.status_code == 200
+                assert landing.headers["content-type"].startswith("text/html")
+                assert (await client.get(API + "/lifecycle-only")).status_code == 404
         assert active == []
         assert service.runtime.connected_db() is None
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(service), base_url=CONSOLE
         ) as client:
             assert (await client.get("/")).status_code == 404
+            assert (await client.get("/lifecycle-only")).status_code == 404
     assert len(closed) == 2
 
 

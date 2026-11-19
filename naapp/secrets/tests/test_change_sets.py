@@ -182,8 +182,15 @@ class World:
 
 
 @pytest.fixture
-async def world(test_db_factory, tmp_path: Path) -> AsyncIterator[World]:
+async def world(test_db_factory, tmp_path: Path, request) -> AsyncIterator[World]:
     db = await test_db_factory.create_db(suffix="secrets_change_sets")
+    if options := getattr(request, "param", {}):
+        # Keep the factory-owned manager and its cleanup registration. The
+        # upstream factory already passes min/max when constructing config.
+        await db.disconnect()
+        assert db.config is not None
+        db.config = db.config.model_copy(update=options)
+        await db.connect()
     registry_db = await test_db_factory.create_db(suffix="secrets_change_sets_awid")
     await db.execute(
         "CREATE TABLE {{tables.audit_outbox}} (id SERIAL PRIMARY KEY, kind TEXT, details TEXT)"

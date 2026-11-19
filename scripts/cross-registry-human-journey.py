@@ -425,6 +425,95 @@ def revoked_case(name, agent):
     return dict(public_case(home, record, kind="agent", human=""), Reason="revoked")
 
 
+def deployment_root_attribution(human):
+    """One deliberate human endorsement, then local spawning without a prompt.
+
+    Ancestry is signed by each parent. Membership uses the separate team
+    controller available on this disposable same-user deployment; this is
+    not membership inheritance or protected per-instance custody.
+    """
+    domain = "alpha.example.com"
+    root_name = "deployment-root"
+    root = agent_under(human, root_name)
+    links = [dict(id=human, kind="human"), dict(id=root["did_aw"], kind="agent")]
+    assert_who(root_name, human, links)
+    root_home = ROOT / root_name / ".aw"
+    root_record = yaml.safe_load((root_home / "identity.yaml").read_text())
+    assert root_record["stable_id"] == root["did_aw"]
+    assert root_record["registry_status"] == "registered", root_record
+    team = ["--team", "deployment", "--namespace", domain]
+
+    def unattended(args, cwd=root_name):
+        result, prompts = command(args, cwd=cwd)
+        assert prompts == 0, result
+        return result
+
+    created = unattended(["id", "team", "create", "--name", "deployment", "--namespace", domain,
+                          "--registry", "http://awid-a:8010", "--json"])
+    invite = unattended(["id", "team", "invite", *team, "--member-global", "--json"])
+    unattended(["id", "team", "accept-invite", invite["token"], "--name", root_name,
+                "--global", "--json"])
+    unattended(["init", "--url", "http://aweb-a:8000", "--name", root_name,
+                "--do-not-touch-agents-md", "--json"])
+    identities = [(root_name, root["did_aw"], root_record["did"])]
+    preserved = {}
+    parent_name = root_name
+    for name in ("deployment-child", "deployment-grandchild"):
+        (ROOT / name).mkdir()
+        unattended(["init", "--join-from", str(ROOT / parent_name),
+                    "--join-team", created["team_id"], "--name", name,
+                    "--do-not-touch-agents-md", "--json"], cwd=name)
+        home = ROOT / name / ".aw"
+        record = yaml.safe_load((home / "identity.yaml").read_text())
+        did = record["did"]
+        assert did.startswith("did:key:") and not record.get("stable_id"), record
+        links = [*links, dict(id=did, kind="agent")]
+        assert_who(name, human, links)
+        bundle = json.loads((home / "id-chain.json").read_text())
+        leaf = bundle["certificates"][-1]["certificate"]
+        assert leaf["parent"] == dict(kind="identity", id=identities[-1][1]), leaf
+        assert leaf["issuer_key"] == identities[-1][2], leaf
+        identities.append((name, did, did))
+        preserved[name] = {p.name: p.read_bytes() for p in
+                           (home / "identity.yaml", home / "signing.key", home / "id-chain.json")}
+        parent_name = name
+
+    before = unattended(["id", "team", "members", *team, "--json"])
+    members = {row["alias"]: row for row in before["members"]}
+    assert set(members) == {name for name, _, _ in identities}, before
+    for name, _, key in identities:
+        assert members[name]["member_did_key"] == key and not members[name].get("revoked_at")
+        unattended(["mail", "inbox", "--json"], cwd=name)
+    print("PASS: one registered root endorsement; local child and grandchild inherit human attribution without prompts", flush=True)
+
+    revoked, prompts = command(["id", "revoke", root["did_aw"], "--human", human,
+                                "--domain", domain, "--json"])
+    assert prompts == 1 and revoked["id"] == root["did_aw"], revoked
+    cases = []
+    for name, did, key in identities:
+        assert_revoked(name, did)
+        # These are actual team-authenticated server reads, not only local
+        # certificate files. Revoking ancestry must not revoke membership.
+        unattended(["mail", "inbox", "--json"], cwd=name)
+        home = ROOT / name / ".aw"
+        for filename, data in preserved.get(name, {}).items():
+            assert (home / filename).read_bytes() == data
+        record = dict(stable_id=did, did_key=key, domain=domain)
+        cases.append(dict(public_case(home, record, kind="agent"), Reason="revoked"))
+    after = unattended(["id", "team", "members", *team, "--json"])
+    assert {row["alias"]: row for row in after["members"]} == members, after
+
+    # Neighbor: explicit team-controller removal changes membership alone.
+    removed = unattended(["id", "team", "remove-member", *team, "--cert-id",
+                          members["deployment-grandchild"]["certificate_id"], "--json"])
+    assert removed["certificate_id"] == members["deployment-grandchild"]["certificate_id"], removed
+    remaining = unattended(["id", "team", "members", *team, "--json"])
+    assert {row["alias"]: row for row in remaining["members"]} == {
+        name: row for name, row in members.items() if name != "deployment-grandchild"}, remaining
+    print("PASS: root revocation invalidates both descendant chains; team membership survives until separately removed", flush=True)
+    return cases
+
+
 def revocations(human):
     """aw id revoke by the identity itself, its human and the namespace root (§3)."""
     domain = "alpha.example.com"
@@ -562,9 +651,10 @@ def main():
     unenrolled_creations("fresh")
     revoked_inviter(human["id"])
     second_human_case = human_issues_human(human["id"])
+    deployment_cases = deployment_root_attribution(human["id"])
     revoked_cases = revocations(human["id"])
     cases = [public_case(human_home, human_record, kind="human", human=human["id"]), local_case, second_human_case,
-             *revoked_cases]
+             *deployment_cases, *revoked_cases]
     for name, parent in [("alice", human["id"]), ("fresh", human["id"]), ("bob", "")]:
         home = ROOT / name / ".aw"
         record = yaml.safe_load((home / "identity.yaml").read_text())

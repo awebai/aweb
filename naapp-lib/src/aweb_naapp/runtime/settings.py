@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Self
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aweb_naapp.outbox import MAX_CALL_TIMEOUT_SECONDS
@@ -19,6 +19,17 @@ from aweb_naapp.runtime.team_auth import (
     MAX_TIMESTAMP_SKEW_SECONDS,
     DidAwProfile,
 )
+
+
+class AWIDMemberCredentialFiles(BaseModel):
+    """An ordinary member certificate of one team and its signing key, in the
+    files ``aw`` writes: the signing key as its ``ED25519 PRIVATE KEY`` PEM
+    block, and the team certificate as JSON."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    signing_key_file: Path
+    certificate_file: Path
 
 
 class NaappSettings(BaseSettings):
@@ -32,6 +43,10 @@ class NaappSettings(BaseSettings):
     app_id: str
     awid_registry_url: str = Field(default="https://api.awid.ai")
     awid_service_token: str | None = Field(default=None, repr=False)
+    # A customer-hosted app's own member certificate per team, with which it
+    # path-signs that team's gated AWID reads; the service token, when set,
+    # takes precedence (a hosted deployment).
+    awid_member_credentials: dict[str, AWIDMemberCredentialFiles] = Field(default_factory=dict)
     # The verifier's own limits: a deployment cannot configure past them.
     auth_cache_ttl_seconds: int = Field(
         default=MAX_TEAM_FACTS_TTL_SECONDS, ge=1, le=MAX_TEAM_FACTS_TTL_SECONDS

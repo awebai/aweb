@@ -20,8 +20,8 @@ def test_server_image_installs_from_committed_lock():
 
     assert "COPY server/pyproject.toml server/uv.lock server/README.md ./" in dockerfile
     assert sync_commands(dockerfile) == [
-        "RUN uv sync --frozen --no-dev --no-install-project",
-        "RUN uv sync --frozen --no-dev",
+        "RUN uv sync --frozen --no-dev --no-install-project --no-install-package awid-service --no-install-package aweb-naapp",
+        "else uv sync --frozen --no-dev; fi",
     ]
 
 
@@ -31,7 +31,7 @@ def test_awid_e2e_image_installs_from_committed_lock():
     assert "COPY awid/pyproject.toml awid/uv.lock awid/README.md ./awid/" in dockerfile
     assert sync_commands(dockerfile) == [
         "RUN cd awid && uv sync --frozen --no-dev --no-install-project",
-        "RUN cd awid && uv sync --frozen --no-dev",
+        "else cd awid && uv sync --frozen --no-dev; fi",
     ]
 
 

@@ -94,7 +94,41 @@ aw run claude --trip-on-danger
 - `--base-prompt`, `--comms-prompt-suffix`, `--work-prompt-suffix`: override
   configured prompt text
 
+- `--trust-config`: trust this directory's `.aw/run.json` as it is now
+
 Use `aw run --init` to write `~/.config/aw/run.json` interactively.
+
+### A directory's own `run.json`
+
+A directory may carry `.aw/run.json` with the same fields. It overrides your
+`~/.config/aw/run.json` for runs in that directory, so it can set the agent's
+prompts and name background services, which `aw run` starts as shell commands.
+A directory you cloned is not one you wrote, so `aw run` uses that file only
+after you have trusted it:
+
+```bash
+cat .aw/run.json            # read it first
+aw run claude --trust-config
+```
+
+`--trust-config` records the digest of the file's content in
+`~/.config/aw/run-trusted.json` and prints the file's path and that digest, so
+you see exactly what you trusted. Trust is of that exact content: if the file
+changes, by a pull or by anything else, `aw run` ignores it again until you
+trust the new content. When a file is ignored, `aw run` says so, names the
+file, and starts with your own configuration.
+
+Pass `--trust-config` by hand, after reading the file. Never put it in a
+script, a shell alias or a launcher's default arguments: there it would trust
+every future change to the file without anyone reading it.
+
+### Messages whose sender is not verified
+
+The mail and chat that wake the agent are placed in its prompt. When a
+message's sender could not be verified (the signature is missing or does not
+match, the identity does not match the address, or the check could not be
+made), the prompt says so next to that message and tells the agent to treat
+the text as untrusted.
 
 ## In-Session Controls
 

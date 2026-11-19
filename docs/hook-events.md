@@ -278,7 +278,7 @@ direction, and a consumer refuses an event whose `direction` differs:
 
 | Widening | Narrowing |
 | --- | --- |
-| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled`, `logs.retention.lengthened`, `logs.legal_hold.set` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled`, `logs.retention.shortened`, `logs.erased`, `logs.legal_hold.released` |
+| `role.designated`, `credential.enrolled`, `credential.recovered`, `grant.created`, `grant.changed`, `resource.created`, `resource.changed`, `resource.version_added`, `resource.enabled`, `policy.changed`, `runner.registered`, `installation.enabled`, `logs.retention.lengthened`, `logs.legal_hold.set`, `session.handoff_completed` | `role.revoked`, `credential.revoked`, `grant.revoked`, `resource.disabled`, `resource.replaced`, `resource.version_observed`, `runner.deregistered`, `installation.disabled`, `hook_delivery.cancelled`, `logs.retention.shortened`, `logs.erased`, `logs.legal_hold.released` |
 
 `grant.changed` is widening whatever the change, so a change that only narrows
 a grant is still gated. A producer that must contain without waiting uses
@@ -341,6 +341,26 @@ Keeping content readable longer widens exposure, so lengthening and setting a
 hold are widening; shortening, erasing and releasing a hold are narrowing.
 These acts and fields were added to v1 in place under decision 93's
 pre-deployment exception (aweb-acgh.16.23); no logs installation is deployed.
+
+**The fallback session handoff.** An app that completes a `session` handoff
+through the typed-code fallback
+([Human confirmation started from `aw`](design/human-confirmation-from-aw.md#the-handoff))
+emits `session.handoff_completed`. It carries `role` (the holder scope's
+role), `subject_ref` (the app-local subject that logged in) and
+`session_ref`, an opaque reference to the issued session that is neither its
+session id nor its CSRF token. The producer derives it so that it cannot be
+turned back into the session id: a random reference stored with the session,
+or a keyed hash, never a plain hash of the id. `subject_ref` is the B3
+app-local subject, as for the `credential.*` acts, never a DID. Its `authority` is `passkey_session`, and
+`approval_evidence_sha256` commits to the login proof the handoff page
+retained (`binding_kind` `login`, purpose `login`). It carries none of the
+other acts' fields, and no other act carries `session_ref`. A handoff through
+the loopback emits nothing. The act is widening: the session it opens can
+confirm in `aw`, so the producer enqueues the event in the transaction that
+releases the result, and a handoff whose event cannot be admitted releases
+nothing. This act and `session_ref` were added to v1 in place under decision
+93's pre-deployment exception
+([its conditions](hook-terminal-delivery.md#deliberate-catalog-re-freeze-and-implementation-evidence)).
 
 `authority` is how the act was authorized:
 
@@ -517,6 +537,8 @@ with the credential-counter CAS and evidence insertion:
 - for an approval, the exact `StoredRequest.canonical` covered-request bytes
   used by B2, including the existing policy wrapper. These are a restricted
   sidecar, transitively bound by the signed challenge's request hash;
+- for a credential change, the exact credential sidecar below, bound the same
+  way by the credential digests in the signed challenge;
 - the commitment and its immutable association to the evidence record and
   authorization. A session or approval refers to that association, not a
   caller's later headers, live policy, new key or recomputed request.
@@ -539,19 +561,20 @@ labels and request headers are not retained by this proof contract.
 | `scope` | The verified login or approval-candidate scope, not a browser body or the affected payload's `role`/`subject_ref`. |
 | `origin`, `rp_id` | The expected app WebAuthn origin and RP ID used in verification. |
 | `require_up`, `require_uv` | Both JSON `true`; user presence and verification are required. |
-| `binding_kind` | `approval`, `login`, `contact_change` or `contact_cancel`, selecting the existing challenge construction below. |
+| `binding_kind` | `approval`, `login`, `contact_change`, `contact_cancel` or `credential_change`, selecting the challenge construction below. |
 
 **Metadata `M`.** Required fields are `evidence_ref`, `subject`, `purpose`,
 `verified_at`, `challenge_issued_at`, `challenge_expires_at`,
 `sign_count_before` and `sign_count_after`. Subject is the app-local
 authorizing principal. Purpose is B3's verified `approve`, `reject`, `view`,
-`login` or `contact_change`. Counters are integers from 0 through 2^32-1,
+`login`, `contact_change` or `credential_change`. Counters are integers from 0 through 2^32-1,
 never booleans; the after value must equal the counter in authenticator data.
 `sign_count_before` is the counter supplied to the verifier, not an independent
 proof of prior database history. Optional `approval_id`, `request_sha256`, `policy_ref`, `policy_version` and
 `task_answer_ref` are present exactly when non-null in the verified approval
 record; otherwise they are omitted. `policy_version` is a positive safe-range
-integer. Login/contact records have no approval fields. An approval requires
+integer. Login, contact and credential-change records have no approval
+fields. An approval requires
 its approval ID, request hash and policy ref/version; its task answer may be
 absent. Record, candidate/session subject, purpose, scope and approval bindings
 must agree before the helper produces a commitment.
@@ -581,6 +604,21 @@ retained challenge lifetime. No extra fields enter either object.
   then canonical JSON of `nonce`, `subject`, and respectively
   `contact_sha256` or `pending_contact_sha256`. Both have purpose
   `contact_change` and retain their verified scope.
+- `credential_change`: `aweb.passkey-credential-change/1` plus LF, then
+  canonical JSON of exactly `credential_sha256`, `nonce`, `operation`, `scope`
+  and `subject` for `operation` `add`, and those plus
+  `retire_credential_sha256` for `operation` `replace`. For an add the retire
+  field is absent, never null. `credential_sha256` is the new credential's
+  digest as an owner act names a credential
+  ([the credential](owner-act-delivery.md#the-credential)), over its verified
+  registration's id and public key and the holding's RP ID;
+  `retire_credential_sha256` is the selected credential's digest by the same
+  construction over its stored id and public key. `scope` and `subject` are the
+  verified B3 scope and approver subject, equal to `C`'s `scope` and `M`'s
+  `subject`. The nonce and both digests are 64 lowercase hex characters.
+  Purpose is `credential_change`. The
+  assertion is made by a current credential of that holding, never by the new
+  one.
 
 The expected challenge is SHA-256 of these **exact preimage bytes**. It must
 match both retained expected-challenge bytes and the decoded challenge in the
@@ -594,9 +632,20 @@ and metadata, and compare the wrapper's policy pin. For secrets, also compare
 Q's team/installation/generation to `C` using the frozen secrets request
 contract. This neither changes B2 hashing nor serializes a live `ActionPolicy`.
 B2's rules allow null in its existing covered bytes; `C`/`M`'s no-null rule
-does not rewrite them. The sidecar itself may contain agent-entered credentials:
-it stays restricted and is **not appended directly** to the public-hash input.
-Its existing B2 hash in the verified challenge binds it transitively.
+does not rewrite them. The approval sidecar itself may contain agent-entered
+credentials: it stays restricted and is **not appended directly** to the
+public-hash input. Its existing B2 hash in the verified challenge binds it
+transitively.
+
+The credential sidecar is exactly `aweb.passkey-credential-change-request/1`
+plus LF and canonical `{"credential": K}`, with `"retire_credential": K'`
+added for a replace, where each is
+`{"credential_id", "public_key", "rp_id"}` in the credential encoding, each
+`rp_id` equal to `C`'s `rp_id`. A missing or extra field, a mismatched digest
+or a noncanonical encoding refuses. It holds only public credential data. It
+is restricted like the approval sidecar and is not framed into the
+commitment: recomputing `credential_sha256` and `retire_credential_sha256`
+from it and comparing them with the challenge preimage binds it.
 
 **Commitment bytes.** Let `frame(B) = u64be(len(B)) || B`, using byte lengths.
 The fixed order is:
@@ -658,7 +707,9 @@ context, a reviewer performs these checks without accepting B3's verdict:
    A key or context supplied only by the evidence record is not its own anchor.
 2. Check the closed record, canonical encodings and bindings. For an approval,
    recompute the exact B2 sidecar hash and policy pin; check Q against the
-   intended frozen operation and installation. Recompute the exact challenge
+   intended frozen operation and installation. For a credential change,
+   recompute both credential digests from the credential sidecar and compare
+   them with the preimage. Recompute the exact challenge
    preimage hash; match it to the retained challenge and raw client data.
 3. Apply [WebAuthn assertion verification](https://www.w3.org/TR/2026/REC-webauthn-3-20260825/#sctn-verifying-assertion):
    check client-data type, challenge and expected origin; RP ID hash, UP/UV and

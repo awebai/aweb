@@ -234,6 +234,27 @@ async def test_rate_limit_allows_ten_per_window_then_refuses(privacy_app):
 
 
 @pytest.mark.asyncio
+async def test_retry_after_allows_the_refused_event_after_the_advertised_wait(privacy_app):
+    env = privacy_app
+    for seq in range(1, 11):
+        response = await _publish(env, "alice", _event(env, "alice", seq=seq))
+        assert response.status_code == 202, response.text
+
+    # Provision a partially elapsed real Redis window without a slow-runner
+    # dependency. The actor has used its ten events and has 2.4 seconds left.
+    await env.redis.pexpire(f"agent-activity-rate:{env.actors['alice'].id}", 2400)
+    event = _event(env, "alice", seq=11)
+    refused = await _publish(env, "alice", event)
+    assert refused.status_code == 429, refused.text
+
+    await asyncio.sleep(int(refused.headers["Retry-After"]))
+    retried = await _publish(env, "alice", event)
+
+    assert retried.status_code == 202, retried.text
+    assert (await _latest(env, "alice"))["event"]["seq"] == 11
+
+
+@pytest.mark.asyncio
 async def test_without_redis_publishing_is_unavailable_and_not_an_error(privacy_app, caplog):
     env = privacy_app
     redis, env.app.state.redis = env.app.state.redis, None

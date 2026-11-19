@@ -16,7 +16,7 @@ func TestDIDKeyRequestHeadersForAudienceBindEveryRequestComponent(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := []byte(`{"name":"steward","inbound_mode":"contacts_only"}`)
+	body := []byte(`{"name":"worker","inbound_mode":"contacts_only"}`)
 	headers, err := DIDKeyRequestHeadersForAudience("POST", "/api/v1/cli/identities", "https://cloud.example", body, key)
 	if err != nil {
 		t.Fatal(err)

@@ -674,7 +674,7 @@ func mailServer(t *testing.T, body string) *httptest.Server {
 		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
-			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, "mail", map[string]any{
 				"message_id": r.URL.Query().Get("message_id"), "conversation_id": "conv", "from_agent_id": "agent-bob", "from_alias": "bob", "subject": "hello", "body": body, "priority": "normal", "created_at": "2026-01-01T00:00:00Z",
 			})}})
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):

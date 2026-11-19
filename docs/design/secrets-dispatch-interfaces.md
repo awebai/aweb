@@ -160,8 +160,9 @@ For broker results, `result` contains `status` (upstream HTTP status), filtered
 `base64`, absent when withheld), `truncated`, `upstream_bytes`, and
 `redaction_count`. A definite upstream 4xx/5xx is still a completed dispatch.
 Runner results contain the pinned output projection plus exit/local/server
-metadata from `RunnerOutput`; loss of original redaction context withholds
-output with `code: "release_context_unavailable"` and preserves safe metadata.
+metadata from `RunnerOutput`; an unavailable original redaction context
+(runner protocol §4.3) withholds output with
+`code: "release_context_unavailable"` and preserves safe metadata.
 The `result_withheld` envelope carries `request_ref` and `code`; the service
 attaches the safe `result` metadata.
 
@@ -371,7 +372,7 @@ dispatching and required outbox rows commit together before returning bytes.
 | Claim replay | Current registration/key and original scope/generation/containment checks, fresh nonce, exact unexpired stored bytes. No reopen/reseal/new expiry. |
 | `started` | Record started once, with nonce; no second S3 dispatch transition or release. |
 | `result_body_limit` | Header-only signature/binding/time and scoped pinned-bound read; close the read transaction, return only a byte limit. No nonce or effect. |
-| `result` | Sanitize with original transient context; S3 CAS dispatching to completed, or retain sanitized late evidence after unknown/reconciliation. Nonce/report hash/evidence/outbox atomic. |
+| `result` | Sanitize with the runner protocol §4.3 context reopened under the assignment pin; S3 CAS dispatching to completed, or retain sanitized late evidence after unknown/reconciliation. Nonce/report hash/evidence/outbox atomic. |
 
 Only one unresolved released assignment per runner. Unknown blocks claim with
 `409 runner_reconciliation_required`; an expired executable assignment still
@@ -379,8 +380,9 @@ dispatching yields `409 runner_dispatch_state_conflict`. Idle alone yields
 `204`. Identical raw result retries with fresh nonces have no duplicate effect;
 different raw report bytes conflict after the first accepted report. Result
 does not require started first. The original job timeout plus margin governs
-sweeping, not assignment expiry. Original redaction values stay transient;
-restart/context loss withholds output, never reopens custody. Exact HTTP
+sweeping, not assignment expiry. Redaction reopens each slot under its
+assignment pin and checks it against its keyed digest (runner protocol §4.3);
+any failure withholds output, and nothing reopens at the current version. Exact HTTP
 errors, replay/late-report rules and proof obligations remain the runner
 protocol's, without a second lifecycle in an adapter.
 

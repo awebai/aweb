@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -435,3 +436,113 @@ async def test_duplicate_keeps_each_admitted_binding_context_but_the_original_re
     _, events = await load_epoch(db, TEAM_ID, 1)
     stored, = events
     assert [a["registration"]["binding_id"] for a in stored.key_evidence["admissions"]] == ["first", "second"]
+
+
+async def _report(db: AsyncDatabaseManager) -> dict:
+    return await verify_epoch(db, TEAM_ID, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS)
+
+
+async def _drop_last_event(db: AsyncDatabaseManager, *, move_head: bool) -> None:
+    """What a writer of logs' tables without its key can do: delete the last
+    event and, to hide it, move the head back to the event before."""
+    last = await db.fetch_one(
+        "SELECT team_seq, prev_event_hash FROM {{tables.chain_events}}"
+        " WHERE team_id = $1 ORDER BY team_seq DESC LIMIT 1",
+        TEAM_ID,
+    )
+    assert last is not None
+    for table in ("read_events", "chain_events"):
+        await db.execute(
+            f"DELETE FROM {{{{tables.{table}}}}} WHERE team_id = $1 AND team_seq = $2",
+            TEAM_ID,
+            last["team_seq"],
+        )
+    if move_head:
+        await db.execute(
+            "UPDATE {{tables.chain_heads}} SET team_seq = $2, event_hash = $3 WHERE team_id = $1",
+            TEAM_ID,
+            last["team_seq"] - 1,
+            last["prev_event_hash"],
+        )
+
+
+async def test_verify_sees_a_tail_dropped_after_logs_checkpointed_it(db):
+    for seq in (1, 2, 3):
+        await _append(db, seq=seq, at=START + timedelta(seconds=seq))
+    await checkpoint_moved_heads(db, SIGNER, issued_at=START + timedelta(minutes=5))
+    intact = await _report(db)
+    assert intact["intact"] is True
+    assert intact["stored"] == {"contradicted": [], "head_matches": True}
+
+    await _drop_last_event(db, move_head=True)
+    report = await _report(db)
+    assert report["intact"] is False
+    assert [
+        (c["artefact"], c["team_seq"], c["reason"]) for c in report["stored"]["contradicted"]
+    ] == [("checkpoint", 3, "not_in_chain")]
+
+
+async def test_verify_sees_a_tail_dropped_without_moving_the_head(db):
+    for seq in (1, 2):
+        await _append(db, seq=seq, at=START + timedelta(seconds=seq))
+    await _drop_last_event(db, move_head=False)
+    report = await _report(db)
+    assert report["intact"] is False
+    assert report["stored"]["head_matches"] is False
+
+
+async def test_verify_sees_a_middle_event_rewritten_with_its_hashes_recomputed(db):
+    for seq in (1, 2, 3):
+        await _append(db, seq=seq, at=START + timedelta(seconds=seq))
+    _, events = await load_epoch(db, TEAM_ID, 1)
+    second = replace(events[1].link, received_at=format_time(START + timedelta(seconds=32)))
+    third = replace(events[2].link, prev_event_hash=second.event_hash())
+    for link in (second, third):
+        await db.execute(
+            "UPDATE {{tables.chain_events}} SET received_at = $3, prev_event_hash = $4, event_hash = $5"
+            " WHERE team_id = $1 AND team_seq = $2",
+            TEAM_ID,
+            link.team_seq,
+            link.received_at,
+            link.prev_event_hash,
+            link.event_hash(),
+        )
+    await db.execute(
+        "UPDATE {{tables.chain_heads}} SET event_hash = $2 WHERE team_id = $1",
+        TEAM_ID,
+        third.event_hash(),
+    )
+    # The rewrite is consistent: the chain alone links and hashes.
+    assert (await _verify(db)).intact
+    report = await _report(db)
+    assert report["intact"] is False
+    assert {(c["artefact"], c["team_seq"]) for c in report["stored"]["contradicted"]} == {
+        ("receipt", 2),
+        ("receipt", 3),
+    }
+
+
+async def test_a_tail_dropped_with_its_checkpoints_is_seen_only_through_a_witness_held_outside_logs(
+    db,
+):
+    for seq in (1, 2, 3):
+        await _append(db, seq=seq, at=START + timedelta(seconds=seq))
+    await checkpoint_moved_heads(db, SIGNER, issued_at=START + timedelta(minutes=5))
+    kept = await db.fetch_one(
+        "SELECT signing_bytes, signature FROM {{tables.chain_checkpoints}} WHERE team_id = $1",
+        TEAM_ID,
+    )
+    assert kept is not None
+    witness = (bytes(kept["signing_bytes"]), kept["signature"])
+
+    # The writer removes the tail together with the checkpoint that covers it.
+    await _drop_last_event(db, move_head=True)
+    await db.execute("DELETE FROM {{tables.chain_checkpoints}} WHERE team_id = $1", TEAM_ID)
+    assert (await _report(db))["intact"] is True
+    report = await verify_epoch(
+        db, TEAM_ID, 1, receipt_keys=LOGS_KEYS, checkpoint_keys=LOGS_KEYS, checkpoints=[witness]
+    )
+    assert report["intact"] is False
+    assert [(c["artefact"], c["reason"]) for c in report["contradicted"]] == [
+        ("checkpoint", "not_in_chain")
+    ]

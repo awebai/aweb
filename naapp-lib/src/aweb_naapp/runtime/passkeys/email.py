@@ -54,6 +54,8 @@ class PasskeyEmailDelivery:
         )
 
     async def deliver_enrolment_link(self, approver: Approver, link_token: str) -> DeliveryStatus:
+        if approver.contact is None:
+            raise ValueError("an enrolment link goes to a registered contact")
         return await self._link(
             contact=approver.contact,
             path="enrolment",

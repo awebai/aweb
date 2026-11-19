@@ -8,30 +8,32 @@ authoritative version, which carries sections this file does not.
 
 ## Start Here
 
-Run these before claiming new work. The order is deliberate.
+Run these at the start of each session. Order is deliberate: inspect the team,
+then handle waiting mail and chat so a handoff, blocker, or waiting teammate
+does not go unnoticed.
 
 ```bash
-aw workspace status   # who is online, active team, identity, claims, locks
-aw mail inbox         # async handoffs, reviews, blockers - process first
+aw workspace status   # who is online, active team, identity, locks
+aw mail inbox         # async handoffs, reviews, blockers — process first
 aw chat pending       # someone may be blocked waiting on you
-aw work ready         # only after the above; pick the smallest actionable item
 ```
 
-Your inbox and your waiting chats come before the work queue because claiming
-first means taking a task while a blocking message or a waiting teammate sits
-unread - which is how an agent ends up idle, or working scope that changed hours
-ago. `aw mail inbox` shows unread only by default, so an empty inbox and an
-unreachable one look identical without `--show-all`; and `aw chat pending` only
-lists the waiting conversations - open each one.
+If `aw workspace status` reports the directory is not bound to a team (no `.aw/workspace.yaml`, no certificate, etc.), stop and load `aweb-team-membership` before doing coordination work.
 
-This order is canonical and matches the `aweb-coordination` skill. If you find a
-different order somewhere else, that other source is stale - say so rather than
-following it.
+The canonical source for this order is the `aweb-coordination` skill. This block
+reproduces it so it is available without loading the skill. If the two ever
+disagree, the skill wins and this block is stale. Report the conflict rather
+than choosing silently. When the skill is not installed, this block is the
+startup authority on its own; messaging needs neither the skill nor a profile
+service.
+
+This team tracks its work in aweb tasks: after the loop, follow the `aweb-tasks`
+skill's ready/active loop (`aw work ready`, `aw work active`) before claiming.
 
 ## Shared Rules
 
 - Use `aw` for coordination work
-- Treat `.aw/workspace.yaml` as the repo-local coordination identity for this worktree
+- Select the acting identity with `--identity-home`, then `AWEB_IDENTITY_HOME`, then the current directory's `.aw`
 - Default to mail for non-blocking coordination: `aw mail send --to <agent> --subject "<subject>" --body-file <body-path>` starts a new thread; answer in the conversation with `aw mail reply <message-id> --body-file <body-path>`
 - Use chat when you need a synchronous answer: `aw chat pending`, `aw chat send-and-wait <agent> --body-file <body-path>`
 - Respond promptly to WAITING conversations
@@ -69,13 +71,15 @@ aw chat extend-wait <alias> --body-file <body-path>
 
 ## Identity
 
-Never run `aw` from another workspace or worktree when doing coordination work.
+`aw` selects the acting identity from `--identity-home`, otherwise
+`AWEB_IDENTITY_HOME`, otherwise the current directory's `.aw`. A selected
+identity that cannot be loaded fails; it never falls back to the checkout's
+identity. See `docs/cli-identity-selection.md` for the full contract.
 
-`aw` derives coordination context from `.aw/workspace.yaml` in the current worktree. Running `aw` from another repo or worktree can impersonate that workspace's agent, causing:
-
-- Messages sent as the wrong agent
-- Work claimed under the wrong identity
-- Confusion in coordination
+In an OATS seat, run `aw` from the assigned instance home. Use `--identity-home`
+only when deliberately acting through another authorized identity. Repository
+work stays in the assigned worktree. Check `aw whoami` and `aw workspace status`
+before coordinating.
 
 ## Teamwork
 

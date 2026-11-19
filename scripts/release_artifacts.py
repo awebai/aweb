@@ -198,8 +198,15 @@ def main() -> int:
         parser.error('CANDIDATE_ARTIFACT_DIR or --directory is required')
     try:
         if args.action == 'python':
-            if subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'], cwd=args.root):
-                raise VersionRefusal('source checkout is dirty')
+            status = subprocess.check_output(
+                ['git', 'status', '--porcelain=v1', '-uall'], cwd=args.root,
+                text=True, errors='replace').splitlines()
+            if status:
+                # Preserve porcelain status and actionable paths without flooding logs.
+                shown = [line if len(line) <= 240 else line[:240] + '...' for line in status[:50]]
+                if len(status) > 50:
+                    shown.append(f'... {len(status) - 50} more status entries omitted')
+                raise VersionRefusal('source checkout is dirty:\n' + '\n'.join(shown))
             prepare_python(args.root, args.directory.resolve())
         elif args.action == 'npm':
             prepare_npm(args.root, args.directory.resolve(), args.prefix)

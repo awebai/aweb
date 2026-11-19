@@ -103,7 +103,7 @@ async def real_registry(test_db_factory, monkeypatch, request):
         transport=httpx.ASGITransport(app=registry),
         event_hooks={"request": [record], "response": [inject_fault]}, **kw,
     ))
-    cache = auth.AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=600)
+    cache = auth.AWIDTeamCache(registry_url="https://registry.example", ttl_seconds=60)
     app = FastAPI()
 
     @app.get("/protected")

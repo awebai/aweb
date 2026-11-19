@@ -28,9 +28,20 @@ func serveWakeSender(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func signedWakeMessage(t *testing.T, message map[string]any) map[string]any {
+// signedWakeMessage signs the message as mail or chat from the wake sender.
+func signedWakeMessage(t *testing.T, kind string, message map[string]any) map[string]any {
 	t.Helper()
-	payload := map[string]any{"from": "bob", "from_did": awid.ComputeDIDKey(wakeSenderKey.Public().(ed25519.PublicKey))}
+	return signedMessageFrom(t, wakeSenderKey, kind, message)
+}
+
+// signedMessageFrom signs the message as mail or chat with the sender's key. A
+// message signer always signs type, subject and body.
+func signedMessageFrom(t *testing.T, key ed25519.PrivateKey, kind string, message map[string]any) map[string]any {
+	t.Helper()
+	payload := map[string]any{
+		"type": kind, "subject": "", "body": "",
+		"from": "bob", "from_did": awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)),
+	}
 	for _, field := range []string{"message_id", "conversation_id", "subject", "body"} {
 		if value, ok := message[field]; ok {
 			payload[field] = value
@@ -42,7 +53,7 @@ func signedWakeMessage(t *testing.T, message map[string]any) map[string]any {
 		t.Fatal(err)
 	}
 	message["from_did"] = payload["from_did"]
-	message["signature"] = base64.RawStdEncoding.EncodeToString(ed25519.Sign(wakeSenderKey, []byte(canonical)))
+	message["signature"] = base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(canonical)))
 	message["signed_payload"] = canonical
 	return message
 }
@@ -62,7 +73,7 @@ func TestBundledHoldsInvalidSenderUntilVerified(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 			return
 		}
-		message := signedWakeMessage(t, map[string]any{"message_id": "held-mail", "from_alias": "bob", "body": "verified later", "created_at": "2026-01-01T00:00:00Z"})
+		message := signedWakeMessage(t, "mail", map[string]any{"message_id": "held-mail", "from_alias": "bob", "body": "verified later", "created_at": "2026-01-01T00:00:00Z"})
 		if !valid.Load() {
 			message["signature"] = base64.RawStdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
 		}

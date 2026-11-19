@@ -216,8 +216,12 @@ aw id create \
 before moving on.
 
 If you are running an internal deployment that cannot perform public DNS
-verification, set `AWID_SKIP_DNS_VERIFY=1` on the `awid` server. That is the
-supported bypass for internal networks without DNS validation.
+verification, set `AWID_SKIP_DNS_VERIFY=1` on the `awid` server to bootstrap
+the first namespace registration. This bypass never authorizes replacement of
+an existing namespace controller. `PUT /v1/namespaces/{domain}` still requires
+DNS evidence proving the new key or valid parent-controller authorization,
+even when this variable is set. The continuity-preserving rotation operation
+retains its previous- and new-key proofs and DNS requirements.
 
 ### Publish the Address Route Delivery Origin
 
@@ -368,7 +372,8 @@ For `awid`:
 
 - `AWID_DATABASE_URL`
 - `AWID_REDIS_URL`
-- optional `AWID_SKIP_DNS_VERIFY=1` for internal non-DNS deployments
+- optional `AWID_SKIP_DNS_VERIFY=1` for first-registration namespace bootstrap
+  on internal networks; controller replacement still requires recovery proof
 
 ### App Task Request Authority Reads
 

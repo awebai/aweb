@@ -140,7 +140,7 @@ jobs:
       # root, so the e2e exercises the awid of the commit under test.
       - name: Run real-stack e2e
         working-directory: naapp/folio
-        run: make e2e
+        run: make e2e PREPARE_RELEASE_WHEELS="$GITHUB_WORKSPACE/scripts/prepare-release-wheels.sh"
 
       # Builds Folio's repository-root Dockerfile and this commit's aw client;
       # proves metadata-only doc.changed delivery through aweb and channel-core.

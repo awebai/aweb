@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from aweb_secrets.console import OwnerConsole, _body, _require_json, _text
+from aweb_secrets.console_approval_authority import ConsoleApprovalAuthority
 from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_ui import _page, console_page
 from aweb_secrets.run_approvals import run_approval_view
@@ -145,17 +146,20 @@ class ConsoleUseApprovals:
                 if decision is Decision.APPROVE
                 else nullcontext()
             )
-            # No LOGIN credential lock spans B3 verification (its separate tx
-            # updates that credential). B2 decides/audits in this caller tx.
-            async with self.console.db.transaction() as tx:
-                await self.console.fence.check(tx, admitted)
-                with prepared:
-                    approved = await self.approvals.decide(
-                        approval_id, decision, Assurance.PASSKEY, proof, link_token=token, tx=tx
-                    )
-                await self.console.fence.check(tx, admitted)
-                if current.expires_at <= datetime.now(UTC):
-                    raise HTTPException(401, "console_session_required")
+            authority = ConsoleApprovalAuthority(
+                console=self.console, current=current, scope=admitted, require_owner=False
+            )
+            # The shared service verifies first and opens the effect transaction
+            # afterward. The retained audit context performs no remote work.
+            with prepared:
+                approved = await self.approvals.decide(
+                    approval_id,
+                    decision,
+                    Assurance.PASSKEY,
+                    proof,
+                    link_token=token,
+                    fence=authority.for_decision(),
+                )
         except asyncpg.LockNotAvailableError:
             # The effect transaction has rolled back. Contention is a bounded
             # refusal, never a reason to replay the mutation or expose SQL.

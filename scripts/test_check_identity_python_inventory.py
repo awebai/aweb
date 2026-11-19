@@ -30,6 +30,15 @@ class PrimitiveGuardTests(unittest.TestCase):
         errors = self.check("awid/src/awid/id_certificates.py", "from nacl.signing import VerifyKey\ndef bypass(k,p,s): VerifyKey(k).verify(p,s)\n")
         self.assertTrue(errors)
 
+    def test_seed_did_key_derivation_is_one_shared_site(self):
+        derivation = "from nacl.signing import SigningKey\nfrom awid.did import did_from_public_key\n"
+        shared = derivation + "def did_key_from_signing_key(seed): return did_from_public_key(bytes(SigningKey(seed).verify_key))\n"
+        self.assertEqual([], self.check("awid/src/awid/did.py", shared))
+        self.assertEqual([], self.check("pkg/consumer.py", "from awid.did import did_key_from_signing_key\ndef did(seed): return did_key_from_signing_key(seed)\n"))
+        raw = derivation + "def did(seed): return did_from_public_key(bytes(SigningKey(seed).verify_key))\n"
+        errors = self.check("pkg/consumer.py", raw)
+        self.assertTrue(any("shared verifier" in e for e in errors), errors)
+
     def test_legacy_reason_allows_repeated_uses_without_count_catalog(self):
         source = "from nacl.signing import SigningKey\ndef sign(k,p): return SigningKey(k).sign(p)\n"
         legacy = [{"file": "pkg/legacy.py", "reason": "Existing released message signature family."}]

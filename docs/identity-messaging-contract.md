@@ -205,6 +205,17 @@ equal it. Unknown local first contact and route injection fail closed. Target
 registry or PostgreSQL/lease publication dependency failure uses
 `federation_authority_coordination_unavailable` (503, retryable).
 
+Federation's first-contact source budget uses the socket peer by default and
+ignores forwarded client-address headers. A deployment behind a trusted proxy
+can set `AWEB_CLIENT_ADDRESS_HEADER` to the header carrying the client address.
+The shared `aweb_naapp.client_identity.ClientIdentity` resolver uses its final
+comma-separated entry; an absent or blank final entry falls back to the peer.
+The proxy must strip or overwrite client-supplied values, and direct untrusted
+access to the server must be blocked. The final entry represents the client
+when exactly one trusted proxy appends to the header. With a proxy chain,
+configure a dedicated header the trusted edge overwrites with the client
+address, rather than a header every hop appends to.
+
 ## Continuations
 
 Conversation IDs are UX/thread/idempotency metadata. They are not routing or

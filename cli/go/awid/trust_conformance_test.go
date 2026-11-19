@@ -107,6 +107,7 @@ type tofuVector struct {
 	ReplacementAnnouncement     *replacementAnnouncementVector `json:"replacement_announcement"`
 	AgentMeta                   tofuAgentMeta                  `json:"agent_meta"`
 	RegistryConfirmedCurrentKey bool                           `json:"registry_confirmed_current_key"`
+	RegistryNamesKey            bool                           `json:"registry_names_key"`
 	PinStoreBefore              pinStoreVector                 `json:"pin_store_before"`
 	ExpectedStatus              string                         `json:"expected_status"`
 	ExpectedPinStoreAfter       *pinStoreVector                `json:"expected_pin_store_after"`
@@ -143,12 +144,13 @@ type pinStoreVector struct {
 }
 
 type pinVector struct {
-	Address   string `json:"address"`
-	StableID  string `json:"stable_id"`
-	DIDKey    string `json:"did_key"`
-	FirstSeen string `json:"first_seen"`
-	LastSeen  string `json:"last_seen"`
-	Server    string `json:"server"`
+	Address     string `json:"address"`
+	StableID    string `json:"stable_id"`
+	DIDKey      string `json:"did_key"`
+	ConfirmedBy string `json:"confirmed_by"`
+	FirstSeen   string `json:"first_seen"`
+	LastSeen    string `json:"last_seen"`
+	Server      string `json:"server"`
 }
 
 type conformanceTOFUResolver struct {
@@ -231,7 +233,7 @@ func TestRegistryConformanceVectors(t *testing.T) {
 }
 
 func TestTOFUConformanceVectors(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "test-vectors", "trust", "tofu-v1.json")
+	path := filepath.Join("..", "..", "..", "test-vectors", "trust", "tofu-v2.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -241,7 +243,7 @@ func TestTOFUConformanceVectors(t *testing.T) {
 	if err := json.Unmarshal(raw, &vectors); err != nil {
 		t.Fatal(err)
 	}
-	if vectors.Schema != "aweb.trust.tofu.v1" {
+	if vectors.Schema != "aweb.trust.tofu.v2" {
 		t.Fatalf("schema=%q", vectors.Schema)
 	}
 
@@ -257,6 +259,10 @@ func TestTOFUConformanceVectors(t *testing.T) {
 				IdentityScope: IdentityScopeFromLegacyLifetime(vector.AgentMeta.Lifetime),
 				Custody:       vector.AgentMeta.Custody,
 				Resolved:      true,
+				Authoritative: true,
+			}
+			if vector.RegistryNamesKey {
+				meta.DID = vector.FromDID
 			}
 
 			got := client.checkTOFUPinWithMeta(
@@ -321,12 +327,13 @@ func pinStoreFromVector(vector pinStoreVector) *PinStore {
 	store := NewPinStore()
 	for key, pin := range vector.Pins {
 		store.Pins[key] = &Pin{
-			Address:   pin.Address,
-			StableID:  pin.StableID,
-			DIDKey:    pin.DIDKey,
-			FirstSeen: pin.FirstSeen,
-			LastSeen:  pin.LastSeen,
-			Server:    pin.Server,
+			Address:     pin.Address,
+			StableID:    pin.StableID,
+			DIDKey:      pin.DIDKey,
+			ConfirmedBy: pin.ConfirmedBy,
+			FirstSeen:   pin.FirstSeen,
+			LastSeen:    pin.LastSeen,
+			Server:      pin.Server,
 		}
 	}
 	for address, key := range vector.Addresses {
@@ -422,6 +429,7 @@ func assertPinStoreMatchesVector(t *testing.T, got *PinStore, expected pinStoreV
 		assertPinField(t, key, "address", gotPin.Address, expectedPin.Address, beforePin.Address)
 		assertPinField(t, key, "stable_id", gotPin.StableID, expectedPin.StableID, beforePin.StableID)
 		assertPinField(t, key, "did_key", gotPin.DIDKey, expectedPin.DIDKey, beforePin.DIDKey)
+		assertPinField(t, key, "confirmed_by", gotPin.ConfirmedBy, expectedPin.ConfirmedBy, beforePin.ConfirmedBy)
 		assertPinField(t, key, "first_seen", gotPin.FirstSeen, expectedPin.FirstSeen, beforePin.FirstSeen)
 		assertPinField(t, key, "last_seen", gotPin.LastSeen, expectedPin.LastSeen, beforePin.LastSeen)
 		assertPinField(t, key, "server", gotPin.Server, expectedPin.Server, beforePin.Server)

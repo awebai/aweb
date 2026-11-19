@@ -3206,7 +3206,10 @@ the instance present; pending errors are tolerated until the 30-minute expiry.
 
 Exit 0 means the registration was written durably: over the daemon's socket
 when it is up, and straight to the state directory when it is not, so a hook
-never fails because the broker is restarting. A non-zero exit means refused —
+never fails because the broker is restarting. It does not mean a broker is
+running: when none answered, register says so on stderr, and the instance is
+not woken until one starts. aw wake status reports whether a broker runs
+(daemon_running with --json). A non-zero exit means refused —
 a missing --delivery session, a relative path, or an unreadable identity home.
 
 --identity-home here names the instance's own identity home, and shadows the
@@ -3705,6 +3708,7 @@ Flags:
 - `--provider-pty Run the provider subprocess inside a pseudo-terminal instead of plain pipes when interactive controls are available`
 - `--team string Override the selected team_id for this command`
 - `--trip-on-danger Remove provider bypass flags and use native provider safety checks`
+- `--trust-config Trust this directory's .aw/run.json as it is now, so its prompts and services are used; a file that changes afterwards is ignored until trusted again`
 - `--wait int Idle seconds per wake-stream wait cycle (default 20)`
 - `--work-prompt-suffix string Override the configured work cycle prompt suffix for this run`
 

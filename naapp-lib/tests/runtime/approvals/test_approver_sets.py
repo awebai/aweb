@@ -525,7 +525,7 @@ async def test_mint_keeps_only_candidates_in_the_policys_scopes(world: World):
     world.policies.set(policy(policy_ref="deploy", approver_scopes=("ops.alice",)))
     world.directory.designate(person("ops.alice"))
     world.directory.designate(person("owners.mallory"))
-    world.directory.candidates = lambda policy, request: _all_designated(world)  # type: ignore[method-assign]
+    world.directory.candidates = lambda policy, request, **kwargs: _all_designated(world)  # type: ignore[method-assign]
     approval = await mint(world)
     assert [c.scope for c in approval.candidates] == ["ops.alice"]
 

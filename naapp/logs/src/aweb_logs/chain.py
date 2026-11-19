@@ -29,6 +29,7 @@ from aweb_naapp.hooks.strictjson import (
     Refused,
     canonical,
     decode_signature,
+    encode_base64url,
     encode_signature,
     parse_canonical_object,
 )
@@ -228,6 +229,12 @@ class Checkpoint:
 
     def signing_bytes(self) -> bytes:
         return self.PREFIX + canonical(self.fields())
+
+
+def artefact_json(signing_bytes: bytes, signature: str) -> dict[str, str]:
+    """A receipt's or checkpoint's wire object, the same in an export's lines,
+    a witness file and the ingest ack."""
+    return {"signing_bytes": encode_base64url(signing_bytes), "signature": signature}
 
 
 def sign_receipt(key: SigningKey, receipt: Receipt) -> tuple[bytes, str]:

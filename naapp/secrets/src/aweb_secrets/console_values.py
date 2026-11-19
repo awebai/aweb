@@ -10,7 +10,7 @@ draft/approve/confirm flow owns activation of both candidates.
 
 from datetime import UTC, datetime
 
-from aweb_naapp.console import ConsoleRoute, ConsoleSession
+from aweb_naapp.console import ConsoleRoute, ConsoleSession, KeyBoundConsoleSession
 from aweb_naapp.roles import hold_role
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -38,6 +38,9 @@ class ConsoleValues:
         self._custody = custody
 
     async def _session_open(self, tx: TransactionManager, current: ConsoleSession) -> None:
+        if isinstance(current, KeyBoundConsoleSession):
+            await self.console.check_key_bound(tx, current)
+            return
         # A vault read can outlast a logout, without retiring its LOGIN proof.
         # Read only: no session lock is added after parent/custody locks.
         if current.expires_at <= datetime.now(UTC) or not await tx.fetch_value(
@@ -60,11 +63,18 @@ class ConsoleValues:
             or not await hold_role(tx, owner, OWNER_ROLE)
         ):
             raise HTTPException(status_code=403, detail="owner_required")
-        await self._session_open(tx, current)
+        await self.console.prepare_session(
+            tx, current, approver_pairs=[(current.scope, current.subject)]
+        )
         if not await self.console.passkeys.login_evidence_is_current(
-            current.scope, current.subject, current.evidence_ref, tx=tx
+            current.scope,
+            current.subject,
+            current.evidence_ref,
+            tx=tx,
+            hold=not isinstance(current, KeyBoundConsoleSession),
         ):
             raise HTTPException(status_code=401, detail="console_session_required")
+        await self._session_open(tx, current)
 
     async def stage_onepassword_reference(
         self,

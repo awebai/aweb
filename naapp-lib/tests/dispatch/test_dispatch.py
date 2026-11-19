@@ -7,13 +7,17 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
+from pathlib import Path
 from uuid import UUID
 
+import asyncpg
 import pytest
-from pgdbm import AsyncDatabaseManager
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
 
 from aweb_naapp.dispatch import (
+    MIGRATIONS_MODULE,
+    MIGRATIONS_PATH,
     RECONCILED_STATES,
     Dispatch,
     Dispatches,
@@ -101,6 +105,99 @@ class CallFence:
 
 
 NO_FENCE = CallFence()
+
+
+async def test_attempt_observations_remain_immutable_across_not_sent_retry(db, machine):
+    dispatch_id = await _dispatching(db, machine)
+    async with db.transaction() as tx:
+        await machine.not_sent(tx, dispatch_id, {"attempt": "first"}, expected_attempt=1)
+        second = await machine.begin_dispatch(tx, dispatch_id, fence=NO_FENCE)
+        assert second.attempts == 2
+        assert second.result is None
+        # An old send's delayed report is evidence for that send, never the
+        # winner of the retry that happens to be current when it arrives.
+        assert not await machine.complete(
+            tx, dispatch_id, {"attempt": "delayed-first"}, expected_attempt=1
+        )
+        assert (await machine.get(tx, dispatch_id)).state is State.DISPATCHING
+        await machine.complete(tx, dispatch_id, {"attempt": "second"}, expected_attempt=2)
+    rows = await db.fetch_all(
+        "SELECT attempt,kind,result FROM {{tables.dispatch_observations}}"
+        " WHERE dispatch_id=$1 ORDER BY observation_id",
+        dispatch_id,
+    )
+    assert [(r["attempt"], r["kind"]) for r in rows] == [
+        (1, "outcome"),
+        (1, "late"),
+        (2, "outcome"),
+    ]
+    assert (await _state(db, machine, dispatch_id)).result == {"attempt": "second"}
+    for mutation in (
+        "UPDATE {{tables.dispatch_observations}} SET result='{}'::jsonb",
+        "DELETE FROM {{tables.dispatch_observations}}",
+        "UPDATE {{tables.dispatches}} SET result='{}'::jsonb",
+        "UPDATE {{tables.dispatches}} SET late_results='[]'::jsonb",
+    ):
+        with pytest.raises(asyncpg.PostgresError):
+            async with db.transaction() as tx:
+                await tx.execute(mutation)
+
+
+async def test_unknown_late_observation_and_settlement_keep_the_original(db, machine):
+    dispatch_id = await _dispatching(db, machine)
+    async with db.transaction() as tx:
+        await machine.outcome_unknown(tx, dispatch_id, {"transport": "unknown"}, expected_attempt=1)
+        assert not await machine.complete(tx, dispatch_id, {"status": 201}, expected_attempt=1)
+        assert (await machine.get(tx, dispatch_id)).result == {"transport": "unknown"}
+        await machine.reconcile(tx, dispatch_id, State.RECONCILED_FAILED, {"decision": "failed"})
+        assert not await machine.complete(tx, dispatch_id, {"status": 202}, expected_attempt=1)
+        assert (await machine.get(tx, dispatch_id)).result == {"decision": "failed"}
+    rows = await db.fetch_all(
+        "SELECT kind,state,result FROM {{tables.dispatch_observations}}"
+        " WHERE dispatch_id=$1 ORDER BY observation_id",
+        dispatch_id,
+    )
+    assert [(r["kind"], r["state"]) for r in rows] == [
+        ("outcome", "outcome_unknown"),
+        ("late", "completed"),
+        ("settlement", "reconciled_failed"),
+        ("late", "completed"),
+    ]
+
+
+async def test_upgrade_keeps_a_legacy_unknown_snapshot_without_inventing_an_attempt(
+    test_db_factory,
+    tmp_path: Path,
+    machine,
+):
+    database = await test_db_factory.create_db(suffix="dispatch_legacy_unknown")
+    historical = tmp_path / "historical"
+    historical.mkdir()
+    for migration in sorted(MIGRATIONS_PATH.glob("*.sql"))[:2]:
+        (historical / migration.name).write_bytes(migration.read_bytes())
+    await AsyncMigrationManager(
+        database,
+        migrations_path=str(historical),
+        module_name=MIGRATIONS_MODULE,
+    ).apply_pending_migrations()
+    identity = uuid.uuid4()
+    await database.execute(
+        "INSERT INTO {{tables.dispatches}}(dispatch_id,subject,action,state,attempts)"
+        " VALUES ($1,'legacy','effect','outcome_unknown',1)",
+        identity,
+    )
+    await apply_dispatch_migrations(database)
+    async with database.transaction() as tx:
+        await machine.reconcile(tx, identity, State.RECONCILED_FAILED, {"decision": "failed"})
+    rows = await database.fetch_all(
+        "SELECT attempt,kind,state,provenance FROM {{tables.dispatch_observations}}"
+        " WHERE dispatch_id=$1 ORDER BY observation_id",
+        identity,
+    )
+    assert [(r["attempt"], r["kind"], r["state"], r["provenance"]) for r in rows] == [
+        (None, "snapshot", "outcome_unknown", "legacy_snapshot"),
+        (1, "settlement", "reconciled_failed", "live"),
+    ]
 
 
 async def _admitted(

@@ -41,8 +41,9 @@ class JobRunRequests(Protocol):
 def broker_result_reply(result: BrokeredResult, *, request_id: str, request_ref: str) -> ToolReply:
     """Project sanitized entity bytes losslessly, including an empty response.
 
-    This envelope is also the persisted S3 result. An upstream error status is
-    still a definite completed effect. Withholding retains only safe metadata;
+    This envelope is transient and goes only to the initiating request. The
+    durable broker receipt excludes its body and headers. An upstream error
+    status is still a definite completed effect. Withholding retains only safe metadata;
     it is never encoded as an empty successful body.
     """
     projected: dict[str, Any] = {

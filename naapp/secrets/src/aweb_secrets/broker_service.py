@@ -66,6 +66,7 @@ from aweb_secrets.broker_audit import (
 )
 from aweb_secrets.broker_fence import BrokerFence, PreparedBrokerCall
 from aweb_secrets.broker_input import BrokerInput
+from aweb_secrets.broker_outcomes import durable_broker_receipt
 from aweb_secrets.custody import CustodyUnavailable, SealContext, ValueInvalid, decode_value
 from aweb_secrets.custody.opening import BackendObservation, UseSecretOpener
 from aweb_secrets.member_types import MemberSubmission, ToolReply, broker_result_reply
@@ -863,7 +864,13 @@ class BrokerRequests:
         async with self._db.transaction() as tx:
             approval = await self._lock_outcome(tx, use.dispatch_id)
             committed = await self._settle_locked(
-                tx, use.dispatch_id, state, reply, audit, approval
+                tx,
+                use.dispatch_id,
+                state,
+                reply,
+                audit,
+                approval,
+                expected_attempt=current.attempts,
             )
             if not committed:
                 return await self._receipt(tx, use.admission, use.dispatch_id)
@@ -900,6 +907,8 @@ class BrokerRequests:
         reply: ToolReply,
         audit: Mapping[str, Any] | None,
         approval: Approval | None,
+        *,
+        expected_attempt: int | None = None,
     ) -> bool:
         machine = self._machine(None, completed=audit)
         record = {
@@ -921,15 +930,27 @@ class BrokerRequests:
                         else str(audit["upstream_status_code"]),
                         tx=attempt,
                     )
-                    committed = await record(attempt, dispatch_id, dict(reply.body))
+                    committed = await record(
+                        attempt,
+                        dispatch_id,
+                        durable_broker_receipt(reply, audit),
+                        expected_attempt=expected_attempt,
+                    )
                     if not committed:
                         raise _OutcomeMoved()
                     return True
             except _OutcomeMoved:
                 # Roll back tentative B2 state and late evidence; retain the
                 # original S3 winner and record this evidence exactly once.
-                return await record(tx, dispatch_id, dict(reply.body))
-        return await record(tx, dispatch_id, dict(reply.body))
+                return await record(
+                    tx,
+                    dispatch_id,
+                    durable_broker_receipt(reply, audit),
+                    expected_attempt=expected_attempt,
+                )
+        return await record(
+            tx, dispatch_id, durable_broker_receipt(reply, audit), expected_attempt=expected_attempt
+        )
 
     async def reconcile(
         self,

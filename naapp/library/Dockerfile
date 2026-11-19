@@ -51,8 +51,9 @@ RUN if [ "$CANDIDATE_WHEEL_MODE" = 1 ]; then \
       && python /candidate-artifacts/install.py --source-tree "$CANDIDATE_SOURCE_TREE" --directory /candidate-artifacts --python /app/.venv/bin/python awid-service aweb-naapp; \
     else uv sync --frozen --no-dev; fi
 
-RUN useradd --create-home --shell /usr/sbin/nologin library
-USER library
+RUN groupadd --gid 10001 library \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin library
+USER 10001:10001
 
 EXPOSE 8765
 COPY scripts/release-wheel-entrypoint.sh /usr/local/bin/release-wheel-entrypoint.sh

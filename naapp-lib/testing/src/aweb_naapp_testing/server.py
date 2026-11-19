@@ -11,7 +11,10 @@ Load it as a pytest plugin next to pgdbm's fixtures::
     pytest_plugins = ("pgdbm.fixtures.conftest", "aweb_naapp_testing.server")
 
 The ``coordination`` fixture sets the server's environment with
-``monkeypatch``, as the server reads its configuration from there.
+``monkeypatch``, as the server reads its configuration from there. AWID and
+the server share one DNS: the server's `_awid` lookups answer what AWID's own
+domain verifier answers, so a namespace a test registers (``registered_human``)
+is visible to both, and nothing reaches real DNS.
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ from dataclasses import dataclass
 
 import pytest_asyncio
 from aweb.testing import Server, running_server
+from awid.dns_verify import DnsVerificationError, DomainAuthority
+from awid_service.deps import get_domain_verifier
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, Registry, running_registry
 from redis.asyncio import Redis
 
@@ -86,6 +91,19 @@ class Coordination:
         )
 
 
+def awid_dns(registry: Registry):
+    """The `_awid` lookup ``registry`` itself uses: its test override, or no
+    record at all (tests never reach real DNS)."""
+
+    async def verify(domain: str) -> DomainAuthority:
+        override = registry.app.dependency_overrides.get(get_domain_verifier)
+        if override is None:
+            raise DnsVerificationError(f"No TXT records found for _awid.{domain}")
+        return await override()(domain)
+
+    return verify
+
+
 @pytest_asyncio.fixture
 async def coordination(test_db_factory, monkeypatch) -> AsyncIterator[Coordination]:
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/aweb")
@@ -98,6 +116,9 @@ async def coordination(test_db_factory, monkeypatch) -> AsyncIterator[Coordinati
     ) as redis:
         async with running_registry(awid_db.config.get_dsn(), redis=redis) as registry:
             async with running_server(
-                server_db.config.get_dsn(), redis, awid_transport=registry.transport
+                server_db.config.get_dsn(),
+                redis,
+                awid_transport=registry.transport,
+                domain_verifier=awid_dns(registry),
             ) as server:
                 yield Coordination(registry=registry, server=server)

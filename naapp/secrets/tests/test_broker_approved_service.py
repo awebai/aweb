@@ -35,7 +35,7 @@ from aweb_secrets.use_context import UseCommitter, apply_use_context_migrations
 from aweb_secrets.use_dispatch_authority import UseDispatchAuthority
 from tests.harness import running_upstream
 from tests.test_broker_audit import envelopes
-from tests.test_broker_service import REQUEST
+from tests.test_broker_service import REQUEST, completed_receipt
 from tests.test_change_sets import ALICE
 from tests.test_use_approvals import REQUESTER, SECRET, TEAM, designate, install
 from tests.test_use_approvals import uses as uses
@@ -260,7 +260,8 @@ async def test_actual_broker_pending_decision_resubmission_and_stored_replay(
                 result.body.get("state"),
                 result.body.get("code"),
             )
-            assert await service.submit(secret=SECRET["ref"], submission=submission) == result
+            receipt = await completed_receipt(uses.world.db, result)
+            assert await service.submit(secret=SECRET["ref"], submission=submission) == receipt
             assert upstream.paths == ["/bearer/echo"]
             actions = [
                 e["payload"]["action"]

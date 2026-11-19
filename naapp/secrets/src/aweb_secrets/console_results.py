@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from aweb_naapp.console import ConsoleSession
-from pgdbm import AsyncDatabaseManager
+from pgdbm import AsyncDatabaseManager, TransactionManager
 
 from aweb_secrets.change import ChangeRefused
 from aweb_secrets.change_sets import Confirmation
@@ -24,7 +24,7 @@ def confirmation_receipt(confirmation: Confirmation) -> dict[str, Any]:
 
 
 async def owner_confirmation_result(
-    db: AsyncDatabaseManager,
+    db: AsyncDatabaseManager | TransactionManager,
     directory: OwnerDirectory,
     confirmation: Confirmation,
     current: ConsoleSession,

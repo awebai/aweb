@@ -58,8 +58,13 @@ func TestSignedDisplayBinding(t *testing.T) {
 						want = Failed
 					case "absent":
 						delete(signed, field)
-						if field == "conversation_id" {
+						switch field {
+						case "conversation_id":
 							want = VerifiedLegacy
+						case "body", "from_did", "subject":
+							// A payload without these does not say what
+							// the reader is shown.
+							want = Failed
 						}
 					case "empty_match":
 						signed[field] = ""

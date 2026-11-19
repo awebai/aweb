@@ -65,6 +65,7 @@ interface LocalAgentsResponse {
 
 interface AgentMeta {
   did?: string;
+  stableID?: string;
   identityScope: IdentityScope;
   custody: string;
   controllerDid?: string;
@@ -412,7 +413,14 @@ export class SenderTrustManager {
 
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     const meta = resolved?.meta || this.unavailableAgentMeta();
-    if (!meta.resolved) return this.unresolvedMetadataResult(meta);
+    if (!meta.resolved) {
+      // A sender pinned earlier stays verified by its pin while the authority
+      // for its address cannot be asked. Nothing is confirmed or written.
+      if (meta.resolutionError === "unavailable" && this.pinnedToKey(store, trustAddress, fromDID, fromStableID)) {
+        return { status, stored: false };
+      }
+      return this.unresolvedMetadataResult(meta);
+    }
 
     if (this.teamRosterAliasReference(rawAddress.trim()) !== undefined && fromDID) {
       if (meta.identityScope === "local") {
@@ -576,6 +584,19 @@ export class SenderTrustManager {
       resolved: false,
       resolutionError: "unavailable",
     };
+  }
+
+  /** Whether the address is pinned to this sender and, for a stable identity, to this key. */
+  private pinnedToKey(
+    store: PinStore,
+    trustAddress: string,
+    fromDID: string,
+    fromStableID: string | undefined,
+  ): boolean {
+    const pinKey = store.addresses.get(trustAddress);
+    if (pinKey === undefined) return false;
+    if (pinKey === fromDID) return true;
+    return !!fromStableID && pinKey === fromStableID && store.pins.get(pinKey)?.did_key === fromDID;
   }
 
   private unresolvedMetadataResult(meta: AgentMeta): TrustResult {
@@ -750,12 +771,32 @@ export class SenderTrustManager {
       }
     }
 
+    // The address belongs to this sender when the registry confirmed the
+    // stable identity's current key, or the authority for the address named
+    // the signing key and the stable identity the sender claims.
+    const namedByAuthority = !!meta.did && meta.did === fromDID
+      && (!fromStableID || meta.stableID === fromStableID);
     const pinResult = store.checkPin(trustAddress, pinKey, meta.identityScope);
     switch (pinResult) {
       case "new":
-        store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
+        // A pin is written only for a sender the registry confirmed.
+        if (!registryConfirmedCurrentKey && !namedByAuthority) {
+          // The authority knows the address; with no current key reported for
+          // a stable identity the signing key could not be checked, and
+          // otherwise the address is not this sender's.
+          return {
+            status: !meta.did && fromStableID ? "verification_stale" : "identity_mismatch",
+            stored: false,
+          };
+        }
+        store.recordConfirmedIdentity(pinKey, trustAddress, fromStableID, fromDID);
         return { status, stored: true };
       case "ok": {
+        // A pin does not outlast the authority's own answer: the address now
+        // belongs to another key.
+        if (!fromStableID && meta.did && meta.did !== fromDID) {
+          return { status: "identity_mismatch", stored: false };
+        }
         if (fromStableID) {
           const pin = store.pins.get(pinKey);
           if (pin?.did_key && pin.did_key !== fromDID) {
@@ -959,6 +1000,7 @@ export class SenderTrustManager {
       const identity = await this.resolveIdentity(rawAddress, forceRefresh);
       const meta: AgentMeta = {
         did: identity.did,
+        stableID: identity.stableID,
         identityScope: identity.identityScope,
         custody: identity.custody || "self",
         controllerDid: identity.controllerDid,

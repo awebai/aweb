@@ -67,7 +67,7 @@ func TestBundledGrantMailReadOnlyUsesManualAckAndDeliveryStore(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
 			fetches++
 			fetchAuth = r.Header.Get("Authorization")
-			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, "mail", map[string]any{
 				"message_id": "mail-1", "conversation_id": "conv-1", "from_agent_id": "agent-bob", "from_alias": "bob", "subject": "hello", "body": "grant mail", "priority": "normal", "created_at": "2026-01-01T00:00:00Z",
 			})}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages/mail-1/ack":
@@ -295,7 +295,7 @@ func TestBundledGrantChatReadMarksReadWithGrantAuth(t *testing.T) {
 		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions/sess-1/messages":
-			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, "chat", map[string]any{
 				"message_id": "chat-1", "conversation_id": "conv-1", "from_agent": "bob", "body": "grant chat", "timestamp": "2026-01-01T00:00:00Z", "sender_leaving": false,
 			})}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions/sess-1/read":
@@ -474,7 +474,7 @@ func TestBundledSecondaryIdentityFullMessage(t *testing.T) {
 						_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 						return
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, map[string]any{
+					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{signedWakeMessage(t, kind, map[string]any{
 						"message_id": messageID, "from_alias": "bob", "from_agent": "bob", "body": "secondary private\u001b\u0007 message", "subject": "secondary mail", "priority": "normal", "created_at": "2026-01-01T00:00:00Z", "timestamp": "2026-01-01T00:00:00Z",
 					})}})
 				}))

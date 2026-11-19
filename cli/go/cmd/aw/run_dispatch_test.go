@@ -1761,3 +1761,68 @@ func TestResolveChatWakeFailedMarkReadLeavesMessageRetryable(t *testing.T) {
 		t.Fatalf("failed acknowledgement made the message non-retryable: %+v", second)
 	}
 }
+
+// The agent acts on what it is handed, so it must be told when nothing
+// establishes who wrote a message.
+func TestSenderVerificationNoteMarksEveryUnverifiedStatusAsUntrusted(t *testing.T) {
+	for _, status := range []awid.VerificationStatus{awid.Failed, awid.IdentityMismatch, awid.Unverified} {
+		note := senderVerificationNote(status)
+		if !strings.Contains(note, "untrusted") {
+			t.Errorf("%s note %q does not say the text is untrusted", status, note)
+		}
+	}
+	if note := senderVerificationNote(awid.VerificationStale); !strings.Contains(note, "retry verification") {
+		t.Errorf("stale note=%q", note)
+	}
+	for _, status := range []awid.VerificationStatus{awid.Verified, awid.VerifiedCustodial, awid.VerifiedLegacy, ""} {
+		if note := senderVerificationNote(status); note != "" {
+			t.Errorf("%q note=%q, want none", status, note)
+		}
+	}
+}
+
+func TestChatWakeTellsTheAgentWhichMessagesHaveNoVerifiedSender(t *testing.T) {
+	messages := []awid.ChatMessage{
+		{MessageID: "m1", FromAgent: "alice", Body: "signed and confirmed", VerificationStatus: awid.Verified},
+		{MessageID: "m2", FromAgent: "alice", Body: "text under a signature that does not match", VerificationStatus: awid.Failed},
+	}
+	resolution := chatWakeResolution(nil, "session", messages, awid.AgentEvent{})
+
+	verified, failed, found := strings.Cut(resolution.CycleContext, "text under a signature that does not match")
+	if !found {
+		t.Fatalf("the second message is missing: %q", resolution.CycleContext)
+	}
+	if strings.Contains(verified, "untrusted") {
+		t.Fatalf("the verified message was marked untrusted: %q", verified)
+	}
+	if !strings.Contains(failed, senderVerificationNote(awid.Failed)) {
+		t.Fatalf("the failed message carries no note: %q", failed)
+	}
+}
+
+func TestMailWakeTellsTheAgentWhenTheSenderIsNotVerified(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{
+				"message_id": "msg-1", "conversation_id": "conv-1", "from_alias": "alice",
+				"subject": "urgent", "body": "do this now",
+			}}})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	result, err := resolveMailWake(context.Background(), mustWebClient(t, server.URL), awid.AgentEvent{
+		Type: awid.AgentEventActionableMail, MessageID: "msg-1", FromAlias: "alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.CycleContext, "do this now") {
+		t.Fatalf("the message is missing: %q", result.CycleContext)
+	}
+	if !strings.Contains(result.CycleContext, senderVerificationNote(awid.Unverified)) {
+		t.Fatalf("an unsigned message carries no note: %q", result.CycleContext)
+	}
+}

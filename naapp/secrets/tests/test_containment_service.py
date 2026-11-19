@@ -546,6 +546,7 @@ async def test_uninstall_then_reinstall_does_not_restore_former_owner_role(uses)
     import time
     from types import SimpleNamespace
 
+    from aweb_naapp.console import apply_console_migrations
     from aweb_naapp.roles import has_role
     from aweb_naapp.runtime.authorization import Grant
 
@@ -584,6 +585,8 @@ async def test_uninstall_then_reinstall_does_not_restore_former_owner_role(uses)
                 granted_scopes=frozenset({"secrets:admin"}),
             )
 
+    # Production retirement purges console sessions even without a prior login.
+    await apply_console_migrations(uses.world.db)
     authority = InstallationAuthority()
     fence = installation_fence(uses.world.db, app_id="secrets", grants=authority)
     assert await has_role(uses.world.db, ALICE, OWNER_ROLE)

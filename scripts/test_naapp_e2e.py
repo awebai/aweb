@@ -45,6 +45,30 @@ class NaappE2ETest(unittest.TestCase):
                 self.assertEqual(allocation["NAAPP_E2E_AWID_PORT"], str(41000 + index * 2))
                 self.assertEqual(allocation["NAAPP_E2E_POSTGRES_PORT"], str(41001 + index * 2))
 
+    def test_gate_supplies_the_release_helper_with_and_without_allocations(self):
+        for allocated in (False, True):
+            with self.subTest(allocated=allocated), tempfile.TemporaryDirectory() as temporary:
+                package = Path(temporary)
+                (package / "Makefile").write_text(
+                    'e2e:\n\t@test -f "$$PREPARE_RELEASE_WHEELS"\n'
+                    '\t@printf "%s" "$$PREPARE_RELEASE_WHEELS" > helper.txt\n'
+                )
+                env = {k: v for k, v in os.environ.items()
+                       if not k.startswith("NAAPP_E2E_") and k != "PREPARE_RELEASE_WHEELS"}
+                if allocated:
+                    env["NAAPP_E2E_ALLOCATIONS"] = f"{package} helper-check 41000 41001"
+                result = subprocess.run(
+                    ["make", "e2e-naapp", f"NAAPP_E2E_PACKAGES={package}"],
+                    cwd=ROOT, env=env, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual((package / "helper.txt").read_text(),
+                                 str(ROOT / "scripts/prepare-release-wheels.sh"))
+
+    def test_folio_ci_supplies_the_release_helper(self):
+        workflow = (ROOT / ".github/workflows/folio-ci.yml").read_text()
+        self.assertIn('make e2e PREPARE_RELEASE_WHEELS="$GITHUB_WORKSPACE/scripts/prepare-release-wheels.sh"', workflow)
+
     def test_missing_allocation_fails_before_starting_a_package(self):
         result = subprocess.run(
             ["make", "e2e-naapp", "NAAPP_E2E_PACKAGES=missing-package"], cwd=ROOT,

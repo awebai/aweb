@@ -108,14 +108,17 @@ class MappedApprovers:
         self.passkeys = passkeys
         self.principals: dict[str, str] = {}
 
-    async def candidates(self, policy, request) -> list[Approver]:
+    async def candidates(self, policy, request, *, tx=None) -> list[Approver]:
         return [
-            replace(approver, principal_did=self.principals.get(approver.subject))
-            for approver in await self.passkeys.candidates(policy, request)
+            replace(
+                approver,
+                principal_did=self.principals.get(approver.subject, approver.principal_did),
+            )
+            for approver in await self.passkeys.candidates(policy, request, tx=tx)
         ]
 
-    async def is_current(self, scope: str, subject: str) -> bool:
-        return await self.passkeys.is_current(scope, subject)
+    async def is_current(self, scope: str, subject: str, *, tx=None) -> bool:
+        return await self.passkeys.is_current(scope, subject, tx=tx)
 
 
 @dataclass
@@ -136,6 +139,11 @@ class PasskeyWorld:
 
 @pytest_asyncio.fixture
 async def pw(test_db_factory, registry) -> PasskeyWorld:
+    return await passkey_world(test_db_factory, registry)
+
+
+async def passkey_world(test_db_factory, registry, **passkeys_options) -> PasskeyWorld:
+    """The composed passkey world; `passkeys_options` are further `Passkeys` options."""
     db = await test_db_factory.create_db(suffix="passkeys", schema="app")
     audit = AuditOutbox(db)
     await audit.create()
@@ -152,6 +160,7 @@ async def pw(test_db_factory, registry) -> PasskeyWorld:
             raise ProofContextUnavailable()
         return PasskeyInstallationContext("fixture", "team", "installation", generation)
 
+    passkeys_options.setdefault("owner_scopes", is_owner_scope)
     passkeys = Passkeys(
         db,
         rp=RelyingParty(origin=ORIGIN, name="Example app"),
@@ -161,8 +170,8 @@ async def pw(test_db_factory, registry) -> PasskeyWorld:
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
         clock=clock,
-        owner_scopes=is_owner_scope,
         proof_context=resolve_context,
+        **passkeys_options,
     )
     await passkeys.migrate()
     approvers = MappedApprovers(passkeys)
@@ -252,6 +261,26 @@ async def decide(pw, approval, proof, decision=Decision.APPROVE) -> Approval:
         proof,
         link_token=pw.contacts.by_approval[approval.approval_id],
     )
+
+
+# Presentation reads
+
+
+async def test_open_link_reads_its_uncommitted_link_and_revealed_request_in_tx(pw):
+    approver, _ = await enrol(pw)
+    pw.policies.set(policy(link_reveals_request=True))
+    request = {"operation": "read-own-uncommitted-presentation"}
+    async with pw.passkeys.db.transaction() as tx:
+        pending = await pw.approvals.mint(
+            request=request, policy_ref="send-charge", requested_by="agent-1", tx=tx
+        )
+        [delivery] = pending.deliveries
+        linked = await pw.approvals.open_link(delivery.link_token, tx=tx)
+        assert linked.request == request
+        assert linked.approval.approval_id == pending.approval.approval_id
+        assert [c.subject for c in linked.approval.candidates] == [approver.subject]
+    # Opening consumes nothing; the standalone path still returns the same link.
+    assert await pw.approvals.open_link(delivery.link_token) == linked
 
 
 # The relying party
