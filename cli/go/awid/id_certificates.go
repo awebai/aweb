@@ -36,6 +36,7 @@ var (
 // IDCertificateError carries a stable refusal code, independent of prose.
 type IDCertificateError struct{ Code string }
 
+// Error returns the stable refusal code without including the rejected artifact.
 func (e *IDCertificateError) Error() string     { return e.Code }
 func idCertificateRefusal(code IDRefusal) error { return &IDCertificateError{Code: string(code)} }
 
@@ -100,6 +101,9 @@ func IDCertificateSigningBytes(c map[string]any) ([]byte, error) {
 	}
 	return append([]byte(IDCertificatePrefix), raw...), nil
 }
+
+// IDCertificateID hashes the domain-separated signing bytes. A digest is not
+// evidence of a valid signature, current registration or authorized ancestry.
 func IDCertificateID(c map[string]any) (string, error) {
 	raw, err := IDCertificateSigningBytes(c)
 	if err != nil {
@@ -428,6 +432,10 @@ func idCertificateJSON(d *json.Decoder) (any, error) {
 		return token, nil
 	}
 }
+
+// DecodeIDChainHeader checks the encoded size, canonical JSON and bundle shape.
+// Call VerifyIDChain with independently selected current evidence before using
+// the decoded ancestry as authority.
 func DecodeIDChainHeader(value string) (map[string]any, error) {
 	if len(value) > IDChainHeaderMaxBytes {
 		return nil, idCertificateRefusal(IDRefusalBundleTooLarge)

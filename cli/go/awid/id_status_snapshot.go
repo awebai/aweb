@@ -149,7 +149,10 @@ func idStatusRequired(s map[string]any) bool {
 // snapshot rule for typed-verdict diagnostics. It contains no response payload.
 type idStatusReadError struct{ rule string }
 
+// Error returns the public evidence-unavailable refusal without snapshot data.
 func (err *idStatusReadError) Error() string { return string(IDRefusalEvidenceUnavailable) }
+
+// Unwrap preserves the public IDCertificateError for typed refusal accessors.
 func (err *idStatusReadError) Unwrap() error {
 	return idCertificateRefusal(IDRefusalEvidenceUnavailable)
 }
