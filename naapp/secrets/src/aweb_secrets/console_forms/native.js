@@ -93,7 +93,7 @@
         const recovery = "The value was sealed, but saving the draft was not confirmed. " +
           "Check your approval email for a link to review it. If none arrived, reload this page " +
           "and enter the value again. Unused sealed copies stay inactive.";
-        status.textContent = detail ? detail + " " + recovery : recovery;
+        status.textContent = recovery;
       } else {
         state = NativeEntryState.READY;
         status.textContent = detail || "The value could not be saved. Check your connection and try entering it again.";
