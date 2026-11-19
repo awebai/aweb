@@ -111,9 +111,11 @@ async def harness(privacy_app, monkeypatch):
 
     controls = SimpleNamespace(calls=[], fail_at=None, revoke_at=None, revoked=False)
     sdk = env.app.state.awid_registry_client
-    read_revocations = sdk.get_team_revocations_for_certificates
+    read_revocations = type(sdk).get_team_revocations_for_certificates
 
-    async def observed_revocations(domain, name, certificate_ids, *, fresh=False):
+    async def observed_revocations(client, domain, name, certificate_ids, *, fresh=False):
+        if client is not sdk:
+            return await read_revocations(client, domain, name, certificate_ids, fresh=fresh)
         controls.calls.append(clock.seconds)
         if controls.fail_at is not None and clock.seconds >= controls.fail_at:
             raise httpx.ConnectError("registry unavailable")
@@ -129,7 +131,7 @@ async def harness(privacy_app, monkeypatch):
                 certificate_id=certificate["certificate_id"],
             )
             controls.revoked = True
-        return await read_revocations(domain, name, certificate_ids, fresh=fresh)
+        return await read_revocations(client, domain, name, certificate_ids, fresh=fresh)
 
     class DB:
         grant_reads = 0
@@ -249,7 +251,7 @@ async def harness(privacy_app, monkeypatch):
         scoped.setattr(chat, "time", SimpleNamespace(monotonic=lambda: clock.seconds))
         for module in (chat, events):
             scoped.setattr(module, "asyncio", StreamLoop())
-        scoped.setattr(sdk, "get_team_revocations_for_certificates", observed_revocations)
+        scoped.setattr(type(sdk), "get_team_revocations_for_certificates", observed_revocations)
         yield SimpleNamespace(clock=clock, registry=controls, db=db, redis=redis, open=open_stream)
 
 
