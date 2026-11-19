@@ -84,8 +84,10 @@ memberships of both verified identities through the native member owner. A
 caller-selected team, retired row or superseded team key adds no membership.
 Address residence and human classification remain independent of membership.
 Exact active identity-contact matching has one owner and retains contact locks
-through an existing delivery transaction. Policy refusals carry a next action;
-federation retains the stable reason separately from that human detail.
+through an existing delivery transaction. Send refusals end with a concrete
+recovery sentence. A named `recipient_policy_rejected` refusal retains that code
+as `reason` in both HTTP and MCP, beside its actionable human detail. Federation
+retains its stable reason separately from that human detail.
 
 Native sends keep their current policy decision through the message commit.
 Mail rechecks admission inside its new-thread or continuation transaction.
