@@ -115,16 +115,23 @@ func TestCLIErrorLineEscapesServerText(t *testing.T) {
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 	saved := os.Stdout
-	r, w, err := os.Pipe()
+	file, err := os.CreateTemp(t.TempDir(), "stdout")
 	if err != nil {
 		t.Fatal(err)
 	}
-	os.Stdout = w
-	defer func() { os.Stdout = saved }()
+	os.Stdout = file
+	defer func() {
+		os.Stdout = saved
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 	fn()
-	w.Close()
 	os.Stdout = saved
-	out, err := io.ReadAll(r)
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	out, err := io.ReadAll(file)
 	if err != nil {
 		t.Fatal(err)
 	}
