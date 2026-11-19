@@ -19,7 +19,7 @@ from awid.e2ee_keys import build_encryption_key_assertion
 from awid.registry import Address, AddressDelivery, Namespace
 from awid.signing import sign_message
 from aweb.e2ee_messages import encrypt_e2ee_chat, generate_x25519_keypair
-from aweb.internal_auth import build_internal_auth_header_value
+from aweb.internal_auth import application_proxy_verification, build_internal_auth_header_value
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.mcp import auth as mcp_auth
 from aweb.mcp.auth import AuthContext
@@ -34,6 +34,11 @@ from aweb.mcp.tools import mail as mail_tools
 from did_key_fixtures import named_did_key, named_signing_key
 from test_messages_http import _encrypted_mail_envelope
 from team_facts_fixtures import legacy_registry
+import test_mcp_mutation_hook_parity as proxy_fixtures
+from test_mcp_mutation_hook_parity import TEAM as PROXY_TEAM
+
+
+proxy_server = proxy_fixtures.server
 
 
 class DBInfra:
@@ -345,72 +350,35 @@ async def test_mcp_auth_retains_the_shared_identity_member_context(aweb_cloud_db
 
 
 @pytest.mark.asyncio
-async def test_mcp_auth_accepts_trusted_proxy_headers(aweb_cloud_db, monkeypatch):
-    team_id = "ops:acme.com"
-    agent_id = uuid4()
-    workspace_id = uuid4()
-    secret = "proxy-secret"
-
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
-        VALUES ($1, 'acme.com', 'ops', 'did:key:z6MkkopcdRMf2qPVBdcugyhrVQorfEfz2uUigTwZDvZ15poA' /* z6MkTeam */)
-        """,
-        team_id,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, status, did_aw_verified_key)
-        VALUES ($1, $2, 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */, 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'active', CASE WHEN NULLIF('did:aw:alice', '') IS NOT NULL THEN 'did:key:z6MkggGwZHMkBygNAy7tZGtCZxrkWBHQ5fpEm6fSAxfkuvqE' /* z6MkAlice */ END)
-        """,
-        agent_id,
-        team_id,
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, workspace_type)
-        VALUES ($1, $2, $3, 'alice', 'hosted_mcp')
-        """,
-        workspace_id,
-        team_id,
-        agent_id,
-    )
-
-    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
-    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", secret)
-
+async def test_mcp_auth_accepts_trusted_proxy_headers(proxy_server):
+    env = proxy_server
+    config = application_proxy_verification(env.app.state)
+    agent_id = env.agents["pilot"]
     user_id = str(uuid4())
+    headers = {
+        "X-Team-ID": PROXY_TEAM, "X-User-ID": user_id, "X-AWEB-Actor-ID": agent_id,
+        "X-AWEB-Auth": build_internal_auth_header_value(
+            secret=config.shared_secret, team_id=PROXY_TEAM,
+            principal_type="u", principal_id=user_id, actor_id=agent_id,
+        ),
+    }
     middleware = mcp_auth.MCPAuthMiddleware(
-        app=lambda *_args, **_kwargs: None, db_infra=DBInfra(aweb_cloud_db.aweb_db)
+        app=lambda *_args, **_kwargs: None, db_infra=env.app.state.db,
+        proxy_verification=config,
     )
-    ctx = await middleware._resolve_auth(
-        _request_with_headers(
-            {
-                "X-Team-ID": team_id,
-                "X-User-ID": user_id,
-                "X-AWEB-Actor-ID": str(agent_id),
-                "X-AWEB-Auth": build_internal_auth_header_value(
-                    secret=secret,
-                    team_id=team_id,
-                    principal_type="u",
-                    principal_id=user_id,
-                    actor_id=str(agent_id),
-                ),
-            },
-            verified_bindings=[("did:aw:alice", named_did_key("z6MkAlice"), "acme.com/alice")],
-        )
-    )
-
+    request = Request({
+        "type": "http", "method": "POST", "path": "/mcp/", "app": env.app,
+        "headers": [(key.lower().encode(), value.encode()) for key, value in headers.items()],
+    })
+    ctx = await middleware._resolve_auth(request)
     assert ctx is not None
-    assert ctx.team_id == team_id
-    assert ctx.agent_id == str(agent_id)
-    assert ctx.workspace_id == str(workspace_id)
-    assert ctx.alias == "alice"
-    assert ctx.did_key == named_did_key("z6MkAlice")
-    assert ctx.did_aw == "did:aw:alice"
-    assert ctx.address == "acme.com/alice"
+    assert ctx.team_id == PROXY_TEAM
+    assert ctx.agent_id == agent_id
+    assert ctx.workspace_id == str(env.workspaces["pilot"])
+    assert ctx.alias == "pilot"
+    assert ctx.did_key == env.keys["pilot"][1]
+    assert ctx.did_aw == env.dids["pilot"]
+    assert ctx.address == "local/pilot"
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ import pytest
 from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig
 from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.embedding import EmbeddedResources, OutboxRecoveryOwnership, native_resources
-from aweb.service_errors import ServiceError
+from aweb.service_errors import INTERNAL_SERVICE_ERROR_MESSAGE, ServiceError
 from awid.registry import CachedRegistryClient, RegistryClient
 from fastapi import FastAPI
 from redis.asyncio import Redis
@@ -131,4 +131,4 @@ async def test_unknown_service_error_503_keeps_the_existing_generic_mask():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/unknown-service-error-test")
     assert response.status_code == 500
-    assert response.json() == {"detail": "Internal server error"}
+    assert response.json() == {"detail": "Internal server error", "message": INTERNAL_SERVICE_ERROR_MESSAGE}

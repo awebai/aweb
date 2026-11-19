@@ -132,11 +132,13 @@ async def server(real_stack, shared_test_pool):
             keys[alias] = (sk, did)
             mapping = await registry.register_did(did, sk)
             dids[alias] = mapping.did_aw
+            await registry.register_address("local", alias, mapping.did_aw, namespace_key, current_did_key=did)
             certificate, encoded = issue_team_certificate(
                 team_id=TEAM,
                 team_signing_key=team_key,
                 member_did_key=did,
                 member_did_aw=mapping.did_aw,
+                member_address=f"local/{alias}",
                 alias=alias,
                 identity_scope="global",
             )
@@ -147,7 +149,7 @@ async def server(real_stack, shared_test_pool):
                 certificate_id=certificate["certificate_id"],
                 member_did_key=did,
                 member_did_aw=mapping.did_aw,
-                member_address=None,
+                member_address=f"local/{alias}",
                 alias=alias,
                 identity_scope="global",
                 certificate=encoded,
@@ -161,7 +163,7 @@ async def server(real_stack, shared_test_pool):
                 encoded_certificate=encoded,
                 member_did_key=did,
             )
-            binding = await observe_identity_binding(registry, did_key=did, did_aw=mapping.did_aw)
+            binding = await observe_identity_binding(registry, did_key=did, did_aw=mapping.did_aw, address=f"local/{alias}")
             connected = await connect_agent(
                 db=db,
                 generation=generation,
@@ -319,6 +321,7 @@ async def server(real_stack, shared_test_pool):
                     agents=agents,
                     workspaces=workspaces,
                     dids=dids,
+                    keys=keys,
                     mutations=mutations,
                     redis=redis,
                     published=published,

@@ -290,6 +290,11 @@ async def test_import_global_claims_still_require_actual_independent_binding(rea
             team_controller_signing_key=controller,
             certificate_id="live-certificate",
         )
+        _, encoded = issue_team_certificate(
+            team_id="import:local", team_signing_key=controller, member_did_key=member_key,
+            member_did_aw=identity.did_aw, alias="live", identity_scope="global",
+            certificate_id="global-certificate",
+        )
         await sdk.register_team_certificate(
             "local",
             "import",
@@ -300,6 +305,7 @@ async def test_import_global_claims_still_require_actual_independent_binding(rea
             member_address=None,
             alias="live",
             identity_scope="global",
+            certificate=encoded,
         )
         request = import_request()
         batch = await verify_controller_import(

@@ -9,6 +9,7 @@ from awid.did import did_key_from_signing_key
 from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import RegistryClient
 from awid.team_control_requests import TeamImportRequest
+from awid.team_certificate import issue_team_certificate
 
 from aweb.controller_import import (
     VerifiedControllerImportMember,
@@ -40,12 +41,17 @@ async def registered_import_team(stack):
         visibility="public",
         namespace_controller_signing_key=namespace,
     )
-    # Metadata-only registration is a released API. No member secret or signed
-    # certificate artifact is supplied to the import factory.
+    # Enroll through the current signed-artifact API. The import caller and
+    # factory still receive only the roster, with no member key or artifact.
     for certificate_id, alias in (
         ("live-certificate", "live"),
         ("revoked-certificate", "revoked"),
     ):
+        _, encoded = issue_team_certificate(
+            team_id="import:local", team_signing_key=controller,
+            member_did_key=did_key_from_signing_key(member if alias == "live" else bytes([84]) * 32),
+            alias=alias, identity_scope="local", certificate_id=certificate_id,
+        )
         await sdk.register_team_certificate(
             "local",
             "import",
@@ -58,6 +64,7 @@ async def registered_import_team(stack):
             member_address=None,
             alias=alias,
             identity_scope="local",
+            certificate=encoded,
         )
     await sdk.revoke_team_certificate(
         "local",
