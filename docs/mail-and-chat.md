@@ -541,6 +541,14 @@ Delivery admission and signature validation still apply before replay, so a
 retry whose request fields disagree with its signed payload is refused as any
 send would be.
 
+Exact signed plaintext retries of stored outbound mail/chat projections and
+established federation receipts retain their original answer after the ordinary
+attestation window. Signature/binding and current authority checks still run;
+changed or missing proofs require a fresh attestation. No encrypted age window
+is extended. An age refusal tells the sender to sign with current UTC time and
+retry; changing a signature is never needed merely to acknowledge an exact
+accepted plaintext message.
+
 Cross-registry failures return `reason`, `retryable`, and `correlation_id` in
 addition to matching `detail`. Retry unchanged input only when `retryable` is
 true; only rate limiting emits `Retry-After: 1`. See the generated

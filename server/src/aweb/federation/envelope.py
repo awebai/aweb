@@ -108,7 +108,7 @@ class FederationEnvelope(BaseModel):
             return None
         try:
             return str(UUID(value.strip()))
-        except Exception as exc:
+        except ValueError as exc:
             raise ValueError("must be a UUID") from exc
 
     @field_validator("timestamp")
@@ -148,12 +148,62 @@ def verify_federation_envelope(
         if isinstance(envelope, FederationEnvelope)
         else FederationEnvelope.model_validate(envelope)
     )
+    require_fresh_federation_envelope(model, now=now, max_skew_seconds=max_skew_seconds)
+    return _verify_sender_envelope(model, signature, expected=expected, now=now)
+
+
+def require_fresh_federation_envelope(
+    envelope: FederationEnvelope,
+    *,
+    now: datetime | None = None,
+    max_skew_seconds: int = FEDERATION_TIMESTAMP_SKEW_SECONDS,
+) -> None:
+    """Require freshness for a send that has no exact established plaintext proof.
+
+    docs/identity-messaging-contract.md:334-365 exempts a repeat of an accepted
+    plaintext artifact, never a new attestation (Antares69b3a50a).
+    """
     enforce_message_timestamp_skew(
-        _parse_timestamp(model.timestamp),
+        _parse_timestamp(envelope.timestamp),
         now=now,
         max_skew_seconds=max_skew_seconds,
         label="Federation envelope timestamp",
     )
+
+
+def verify_federation_envelope_integrity(
+    envelope: FederationEnvelope | Mapping[str, Any],
+    signature: str,
+    *,
+    expected: Mapping[str, Any | None] | None = None,
+    now: datetime | None = None,
+) -> FederationEnvelope:
+    """Verify binding/signature before comparing an exact plaintext replay proof.
+
+    This is not evidence of plaintext freshness or membership. Its serving
+    consumers require freshness unless their persisted projection/receipt is
+    an exact match. Encrypted messages always retain the ordinary age window.
+    docs/identity-messaging-contract.md:334-365; Antares69b3a50a.
+    """
+    model = (
+        envelope
+        if isinstance(envelope, FederationEnvelope)
+        else FederationEnvelope.model_validate(envelope)
+    )
+    _parse_timestamp(model.timestamp)
+    if _is_encrypted_v2(model):
+        return verify_federation_envelope(model, signature, expected=expected, now=now)
+    return _verify_sender_envelope(model, signature, expected=expected, now=now)
+
+
+def _verify_sender_envelope(
+    model: FederationEnvelope,
+    signature: str,
+    *,
+    expected: Mapping[str, Any | None] | None,
+    now: datetime | None,
+) -> FederationEnvelope:
+    """Bind the transport fields to the preserved sender's signed artifact."""
     _enforce_expected_fields(model, expected or {})
     if _is_encrypted_v2(model):
         signed_sender_address = _enforce_encrypted_payload_binding(
@@ -173,7 +223,7 @@ def verify_federation_envelope(
             payload=model.signed_payload.encode("utf-8"),
             signature_b64=signature,
         )
-    except Exception as exc:
+    except ValueError as exc:
         raise FederationEnvelopeError("Invalid federation message signature") from exc
     return model.model_copy(update={"sender_address": signed_sender_address})
 
@@ -189,7 +239,7 @@ def _is_encrypted_v2(model: FederationEnvelope) -> bool:
 def _parse_timestamp(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except Exception as exc:
+    except ValueError as exc:
         raise ValueError("Invalid timestamp") from exc
     if parsed.tzinfo is None:
         raise ValueError("timestamp must be timezone-aware")
@@ -226,7 +276,7 @@ def _enforce_expected_fields(
 def _signed_payload_json(model: FederationEnvelope) -> dict[str, Any]:
     try:
         payload = json.loads(model.signed_payload)
-    except Exception as exc:
+    except (json.JSONDecodeError, TypeError) as exc:
         raise FederationEnvelopeError(
             "Federation signed_payload must be valid JSON"
         ) from exc

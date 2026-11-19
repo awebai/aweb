@@ -25,7 +25,8 @@ from aweb.federation.envelope import (
     FederatedDeliveryRequest,
     FederationEnvelope,
     FederationEnvelopeError,
-    verify_federation_envelope,
+    verify_federation_envelope_integrity,
+    require_fresh_federation_envelope,
 )
 from aweb.federation.errors import authority_error_body
 from aweb.messaging.messages import resolve_agent_by_did
@@ -285,9 +286,14 @@ def _stable_error_response(
 async def _verified_delivery_replay(
     request: Request, *, payload: FederatedDeliveryRequest, db
 ) -> tuple[FederationEnvelope, str, dict | None]:
-    """Verify the signed envelope and find its exact established delivery receipt."""
+    """Verify integrity and require age only without an exact plaintext receipt.
+
+    docs/identity-messaging-contract.md:334-365; Antares69b3a50a. Current
+    authority is still checked by the caller and rechecked under Phase-B locks.
+    Encrypted integrity verification retains its ordinary ingestion window.
+    """
     try:
-        envelope = verify_federation_envelope(
+        envelope = verify_federation_envelope_integrity(
             payload.envelope,
             payload.signature,
         )
@@ -302,11 +308,25 @@ async def _verified_delivery_replay(
         raise FederationAuthorityError("target_route_mismatch")
 
     ingress_envelope_hash = federation_envelope_hash(envelope, payload.signature)
-    established_replay = await _established_replay_receipt(
-        db,
-        envelope=envelope,
-        envelope_hash=ingress_envelope_hash,
-    )
+    replay_conflict = None
+    try:
+        established_replay = await _established_replay_receipt(
+            db, envelope=envelope, envelope_hash=ingress_envelope_hash
+        )
+    except FederationAuthorityError as exc:
+        if exc.reason != "federation_message_replay_conflict":
+            raise
+        # A changed artifact is a new attestation, even when its ID collides.
+        # A fresh collision keeps the existing replay-conflict refusal.
+        replay_conflict = exc
+        established_replay = None
+    if established_replay is None:
+        try:
+            require_fresh_federation_envelope(envelope)
+        except FederationEnvelopeError as exc:
+            raise _stable_envelope_error(exc) from exc
+    if replay_conflict is not None:
+        raise replay_conflict
     return envelope, ingress_envelope_hash, established_replay
 
 

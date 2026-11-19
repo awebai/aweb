@@ -37,3 +37,18 @@ def test_mail_age_refusal_has_an_additive_code_and_signing_action():
 def test_fresh_mail_attestation_still_passes():
     timestamp = datetime.now(timezone.utc).replace(microsecond=0)
     assert _parse_signed_timestamp(timestamp.isoformat()) == timestamp
+
+
+@pytest.mark.parametrize("offset", [-301, 301])
+def test_chat_age_refusal_ends_with_the_same_signing_action(offset):
+    from aweb.messaging.chat_send import _parse_signed_timestamp as parse_chat_timestamp
+
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(
+        seconds=offset
+    )
+    with pytest.raises(DeliveryRefusal) as caught:
+        parse_chat_timestamp(timestamp.isoformat())
+    assert caught.value.status_code == 422
+    assert caught.value.detail == (
+        "timestamp outside accepted skew. Sign the message again with the current UTC time and retry."
+    )
