@@ -1,118 +1,171 @@
-"""Real Chromium passkeys review frozen uses through the shipped UI."""
+"""The production console reviews and decides real member approval requests."""
 
-import asyncio
+import json
+from enum import StrEnum
+from functools import partial
 
 import pytest
-import uvicorn
-from aweb_naapp.idempotency import apply_idempotency_migrations
-from aweb_naapp.ratelimit import apply_ratelimit_migrations
-from aweb_naapp.runtime.approvals import Approvals, ApprovalState, PgApprovalStore
-from aweb_naapp.runtime.passkeys import RelyingParty
+from aweb_naapp.dispatch import State as DispatchState
+from aweb_naapp.runtime.approvals import ApprovalState
+from aweb_naapp_testing.webauthn import from_b64url, without_user_verification
+from playwright.async_api import BrowserContext, Page, Route, expect
 from playwright.async_api import Error as BrowserError
-from playwright.async_api import expect
 
-from aweb_secrets.use_approvals import UseApprovers, UsePolicies
-from tests.console_network import passkey_origin as passkey_origin
-from tests.console_use_world import mint
-from tests.test_change_sets import ALICE, Installations
-from tests.test_change_sets import world as _world
-from tests.test_console_forms import enrolled_page
-from tests.test_console_ui_browser import browser as _browser
-from tests.test_console_use_approvals import application
-from tests.test_use_approvals import Clock, Uses, install
+from tests.human_owner import install_virtual_credential
+from tests.production_approvals import requester_receipt, stored_approval
+from tests.test_production_approval_headers_browser import (
+    browser as browser,
+)
+from tests.test_production_approval_headers_browser import (
+    production_console as production_console,
+)
+from tests.test_production_approval_headers_browser import (
+    production_settings as production_settings,
+)
+from tests.test_production_bootstrap import ApprovalAction, ProductionRequest, approval_request
+from tests.test_production_bootstrap import root as root
 
-world = _world
-browser = _browser
+REASON = '</pre><img src=x onerror="alert(1)">'
 
 
-@pytest.fixture
-async def service(world, console_tls, console_listener):
-    await apply_idempotency_migrations(world.db)
-    await apply_ratelimit_migrations(world.db)
-    clock = Clock()
-    approvals = Approvals(
-        store=PgApprovalStore(world.db),
-        policies=UsePolicies(world.db),
-        approvers=UseApprovers(world.db, world.passkeys, world.directory),
-        delivery=world.inbox,
-        authenticators=[world.passkeys.authenticator()],
-        audit=world.approvals._audit,
-        clock=clock,
+class DecisionInput(StrEnum):
+    VERIFIED = "verified"
+    SIGNED_WITHOUT_UV = "signed-without-uv"
+
+
+async def remove_decision_uv(route: Route, *, pending: ProductionRequest) -> None:
+    """Send the enrolled key's real assertion without UV to the actual verifier."""
+    body = route.request.post_data_json
+    if route.request.method != "POST" or not isinstance(body, dict):
+        raise ValueError("expected the console's decision POST")
+    assertion = body.get("assertion")
+    if not isinstance(assertion, dict) or not isinstance(assertion.get("rawId"), str):
+        raise ValueError("decision POST has no credential assertion")
+    credential = pending.device.credentials.get(from_b64url(assertion["rawId"]))
+    if credential is None:
+        raise ValueError("decision assertion did not use the enrolled fixture credential")
+    changed = without_user_verification(assertion, credential.key)
+    await route.continue_(post_data=json.dumps({**body, "assertion": changed}))
+
+
+async def open_production_review(
+    context: BrowserContext, *, pending: ProductionRequest, origin: str
+) -> tuple[Page, dict]:
+    """Authenticate the enrolled holder, then perform the separate production VIEW."""
+    page = await context.new_page()
+    cdp = await context.new_cdp_session(page)
+    await cdp.send("WebAuthn.enable")
+    authenticator = await cdp.send(
+        "WebAuthn.addVirtualAuthenticator",
+        {
+            "options": {
+                "protocol": "ctap2",
+                "transport": "internal",
+                "hasResidentKey": True,
+                "hasUserVerification": True,
+                "isUserVerified": True,
+                "automaticPresenceSimulation": True,
+            }
+        },
     )
-    context = Uses(world, approvals, clock, Installations().grant)
-    sock = console_listener.socket
-    port, origin = console_listener.port, console_listener.origin
-    world.passkeys.rp = RelyingParty(origin=origin, name="Secrets")
-    # The same real branch is injected before serving. Mint uses it below.
-    app = await application(context, origin=origin, agent_origin=f"https://127.0.0.1:{port}")
-    server = uvicorn.Server(
-        uvicorn.Config(
-            app,
-            log_level="warning",
-            lifespan="off",
-            ssl_certfile=str(console_tls.cert_file),
-            ssl_keyfile=str(console_tls.key_file),
-        )
-    )
-    task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
-        async with asyncio.timeout(10):
-            while not server.started:
-                if task.done():
-                    await task
-                await asyncio.sleep(0.01)
-        yield context, origin
-    finally:
-        server.should_exit = True
-        await asyncio.wait_for(task, 10)
-        sock.close()
+        await install_virtual_credential(cdp, authenticator["authenticatorId"], pending.device)
+        await page.goto(origin + "/use-approvals#token=" + pending.token)
+        await page.get_by_role("button", name="Sign in with your passkey", exact=True).click()
+    except BrowserError:
+        raise AssertionError("production approval sign-in did not complete") from None
+    async with page.expect_response(origin + "/use-approvals/view-options") as viewed:
+        await page.get_by_role("button", name="Review with your passkey", exact=True).click()
+    response = await viewed.value
+    assert response.status == 200
+    view_options = await response.json()
+    return page, view_options
 
 
-@pytest.mark.parametrize("width,user_verified", [(375, True), (1440, True), (375, False)])
+async def assert_private_escaped_review(page: Page, *, pending: ProductionRequest) -> None:
+    """The real review escapes the requester's text and does not persist its locator."""
+    await expect(page.locator("#request-review")).to_be_visible()
+    if pending.credential in await page.locator("body").inner_text():
+        raise AssertionError("the approval page disclosed the stored credential")
+    assert await page.locator("#request-reason").text_content() == REASON
+    assert await page.locator("#request-review img").count() == 0
+    assert not await page.evaluate(
+        "token => JSON.stringify({...sessionStorage,...localStorage}).includes(token)",
+        pending.token,
+    )
+    assert not await page.evaluate("location.hash")
+    assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+
+
+@pytest.mark.parametrize(
+    "width,decision_input",
+    [
+        (375, DecisionInput.VERIFIED),
+        (1440, DecisionInput.VERIFIED),
+        (375, DecisionInput.SIGNED_WITHOUT_UV),
+    ],
+)
 async def test_browser_frozen_review_fresh_decision_and_no_dispatch(
-    world, browser, service, tmp_path, width, user_verified
+    root,
+    browser,
+    production_console,
+    tmp_path,
+    width,
+    decision_input: DecisionInput,
+    *,
+    onepassword_values,
 ):
-    uses, origin = service
+    pending = await approval_request(
+        root, kind=ApprovalAction.USE, onepassword_values=onepassword_values, reason=REASON
+    )
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
-        page, cdp, authenticator = await enrolled_page(world, context, origin)
-        await install(uses, approvers=["owner:" + ALICE.principal_did])
-        pending = await mint(uses, reason='</pre><img src=x onerror="alert(1)">')
-        approval_id = pending.pending.approval.approval_id
-        token = next(t for a, t in world.inbox.links["alice@acme.com"] if a == approval_id)
-        # Include signed-out login in the real page; no token goes into diagnostics.
-        await context.clear_cookies()
-        try:
-            await page.goto(origin + "/use-approvals#token=" + token)
-            await page.get_by_role("button", name="Sign in with your passkey", exact=True).click()
-        except BrowserError:
-            # Browser navigation diagnostics can include the personal fragment.
-            raise AssertionError("approval page sign-in did not complete") from None
-        await expect(page.get_by_role("button", name="Review with your passkey")).to_be_enabled()
-        await page.get_by_role("button", name="Review with your passkey").click()
-        await expect(page.locator("#request-review")).to_be_visible()
+        page, view_options = await open_production_review(
+            context, pending=pending, origin=production_console
+        )
+        await assert_private_escaped_review(page, pending=pending)
+        await page.screenshot(
+            path=tmp_path / f"use-review-{width}-{decision_input.value}.png", full_page=True
+        )
+        approval = await stored_approval(root, pending=pending)
+        assert approval.state is ApprovalState.PENDING
+        assert approval.consumed_operation_id is None
+        decision_url = production_console + "/use-approvals/decide"
+        if decision_input is DecisionInput.SIGNED_WITHOUT_UV:
+            await page.route(decision_url, partial(remove_decision_uv, pending=pending))
+        async with (
+            page.expect_response(
+                production_console + "/use-approvals/decision-options"
+            ) as prepared,
+            page.expect_response(decision_url) as decided,
+        ):
+            await page.get_by_role("button", name="Approve with your passkey", exact=True).click()
+        options_response = await prepared.value
+        assert options_response.status == 200
+        decision_options = await options_response.json()
         assert (
-            await page.locator("#request-reason").text_content()
-            == '</pre><img src=x onerror="alert(1)">'
+            view_options["userVerification"] == decision_options["userVerification"] == "required"
         )
-        assert await page.locator("#request-review img").count() == 0
-        assert not await page.evaluate(
-            "token => JSON.stringify({...sessionStorage,...localStorage}).includes(token)", token
-        )
-        assert not await page.evaluate("location.hash")
-        await page.screenshot(path=tmp_path / f"use-review-{width}.png", full_page=True)
-        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
-        await cdp.send(
-            "WebAuthn.setUserVerified",
-            {"authenticatorId": authenticator, "isUserVerified": user_verified},
-        )
-        await page.get_by_role("button", name="Approve with your passkey", exact=True).click()
-        if user_verified:
+        assert view_options["challenge"] != decision_options["challenge"]
+        response = await decided.value
+        expected_state = ApprovalState.PENDING
+        if decision_input is DecisionInput.VERIFIED:
+            assert response.status == 200
             await expect(page.locator("#use-approval")).to_have_attribute("data-state", "approved")
-            assert (await uses.approvals.get(approval_id)).state is ApprovalState.APPROVED
+            expected_state = ApprovalState.APPROVED
         else:
+            assert response.status == 409
+            assert await response.json() == {"detail": "approval_refused"}
             await expect(page.locator("#approval-status")).to_contain_text("could not be confirmed")
-            assert (await uses.approvals.get(approval_id)).state is ApprovalState.PENDING
-        assert (await uses.approvals.get(approval_id)).consumed_operation_id is None
+        approval = await stored_approval(root, pending=pending)
+        assert approval.state is expected_state
+        assert approval.consumed_operation_id is None
         await page.reload()
-        assert (await uses.approvals.get(approval_id)).consumed_operation_id is None
+        approval = await stored_approval(root, pending=pending)
+        assert approval.state is expected_state
+        assert approval.consumed_operation_id is None
+        receipt = await requester_receipt(root, pending=pending)
+        assert receipt["state"] == (
+            ApprovalState.APPROVED.value
+            if expected_state is ApprovalState.APPROVED
+            else DispatchState.AWAITING_APPROVAL.value
+        )
