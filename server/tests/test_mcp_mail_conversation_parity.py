@@ -749,7 +749,7 @@ async def test_mcp_mail_reaches_another_team_of_the_senders_organization_by_alia
 async def test_mcp_refusals_of_an_unknown_recipient_read_as_the_routes_do(mail_server):
     server = mail_server
     assert await server.mcp_mail(to="nobody", plaintext=True) == {
-        "error": "Recipient agent not found. Check the recipient or ask them to reconnect, then retry."
+        "error": "Recipient name does not identify a current member of the team. Check the name; if the agent exists, ask it to reconnect with a current team certificate."
     }
     assert await server.mcp_mail(to="did:aw:nobody", plaintext=True) == {
         "error": "Bare did:aw first-contact is unsupported; use to_address=domain/name "

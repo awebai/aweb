@@ -47,6 +47,10 @@ func fetchCertificate() fetchResult {
 	if err := client.SetFallbackRegistryURL(input.RegistryURL); err != nil {
 		return fetchResult{Error: fmt.Sprintf("select registry: %v", err)}
 	}
+	// The probe's input is the operator-selected disposable registry origin.
+	if err := client.TrustRegistryOrigin(input.RegistryURL); err != nil {
+		return fetchResult{Error: fmt.Sprintf("trust selected registry: %v", err)}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	certificate, err := client.FetchTeamCertificate(
