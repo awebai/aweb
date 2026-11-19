@@ -41,12 +41,19 @@ async def test_mail_tick_uses_recipient_index_on_large_unread_history(
     aweb_cloud_db, has_succession
 ):
     db = aweb_cloud_db.aweb_db
-    await db.execute("""
-        INSERT INTO {{tables.messages}} (from_did, to_did, body, read_at)
-        SELECT 'did:aw:peer', 'did:aw:other-' || n,
-               'historical mail', CASE WHEN n % 10 = 0 THEN NULL ELSE NOW() END
-        FROM generate_series(1, 100000) n
-    """)
+    # Keep all acceptance/retention triggers active while bounded fixture writes
+    # stay within the serving database's per-command deadline.
+    for first in range(1, 100001, 1000):
+        await db.execute(
+            """
+            INSERT INTO {{tables.messages}} (from_did, to_did, body, read_at)
+            SELECT 'did:aw:peer', 'did:aw:other-' || n,
+                   'historical mail', CASE WHEN n % 10 = 0 THEN NULL ELSE NOW() END
+            FROM generate_series($1::integer, $2::integer) n
+            """,
+            first,
+            first + 999,
+        )
     expected = set()
     if has_succession:
         c1, c2 = uuid4(), uuid4()
