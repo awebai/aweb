@@ -21,8 +21,9 @@ def team_control_error_response(error: TeamControlError) -> JSONResponse:
 
 
 async def _team_control_handler(
-    request: Request, error: TeamControlError
+    request: Request, error: Exception
 ) -> JSONResponse:
+    assert isinstance(error, TeamControlError)
     return team_control_error_response(error)
 
 

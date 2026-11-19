@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import logging
 from typing import TYPE_CHECKING
 
 from awid.registry import RegistryClient
@@ -20,6 +21,9 @@ from aweb.presence_transitions import PresenceReconciliationResult, reconcile_pr
 
 if TYPE_CHECKING:
     from aweb.embedding import DatabaseInfrastructure
+
+
+logger = logging.getLogger(__name__)
 
 
 class NativeMaintenanceStage(StrEnum):
@@ -82,6 +86,7 @@ async def run_native_maintenance(
         )
         completed.add(NativeMaintenanceStage.OUTBOX_RECOVERY)
     except Exception as exc:
+        logger.exception("Native maintenance outbox recovery failed")
         failures.append(
             NativeMaintenanceFailure(
                 stage=NativeMaintenanceStage.OUTBOX_RECOVERY, error=exc
@@ -95,6 +100,7 @@ async def run_native_maintenance(
         )
         completed.add(NativeMaintenanceStage.PRESENCE_RECONCILIATION)
     except Exception as exc:
+        logger.exception("Native maintenance presence reconciliation failed")
         failures.append(
             NativeMaintenanceFailure(
                 stage=NativeMaintenanceStage.PRESENCE_RECONCILIATION, error=exc

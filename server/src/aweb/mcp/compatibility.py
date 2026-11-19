@@ -44,4 +44,4 @@ def observe_compatibility_tool_call(*, tool_name: str) -> None:
     try:
         MCP_COMPATIBILITY_TOOL_CALLS.labels(tool=tool_name).inc()
     except Exception:
-        logger.warning("MCP compatibility usage measurement failed", exc_info=True)
+        logger.exception("MCP compatibility usage measurement failed")

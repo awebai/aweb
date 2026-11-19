@@ -133,15 +133,9 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/agent_wake.py",
-      "code": "assignment",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/api.py",
       "code": "misc",
-      "count": 2
+      "count": 1
     },
     {
       "tool": "mypy",
@@ -169,12 +163,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/coordination/routes/app_tasks.py",
-      "code": "var-annotated",
-      "count": 2
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/coordination/routes/repos.py",
       "code": "index",
       "count": 5
@@ -183,12 +171,6 @@
       "tool": "mypy",
       "file": "server/src/aweb/coordination/routes/tasks.py",
       "code": "arg-type",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/coordination/routes/tasks.py",
-      "code": "var-annotated",
       "count": 1
     },
     {
@@ -295,12 +277,6 @@
     },
     {
       "tool": "mypy",
-      "file": "server/src/aweb/identity_binding.py",
-      "code": "assignment",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
       "file": "server/src/aweb/installations.py",
       "code": "assignment",
       "count": 1
@@ -322,24 +298,6 @@
       "file": "server/src/aweb/lifecycle.py",
       "code": "arg-type",
       "count": 1
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/mcp/auth.py",
-      "code": "arg-type",
-      "count": 2
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/mcp/auth.py",
-      "code": "assignment",
-      "count": 1
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/mcp/auth.py",
-      "code": "attr-defined",
-      "count": 5
     },
     {
       "tool": "mypy",
@@ -549,18 +507,6 @@
       "tool": "mypy",
       "file": "server/src/aweb/routes/connect.py",
       "code": "arg-type",
-      "count": 3
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/routes/connect.py",
-      "code": "index",
-      "count": 2
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/routes/connect.py",
-      "code": "return-value",
       "count": 1
     },
     {

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
 
 from fastapi import Request
 from pgdbm import AsyncDatabaseManager
@@ -10,6 +10,17 @@ from .config import get_settings
 from .connection_scope import DatabaseManager
 from .migrations import apply_native_migrations
 from awid.db_config import build_database_config
+
+class DatabaseInfrastructure(Protocol):
+    """Initialized native managers borrowed from a serving application."""
+
+    @property
+    def is_initialized(self) -> bool:
+        ...
+
+    def get_manager(self, name: str = "aweb") -> Any:
+        ...
+
 
 class DatabaseInfra:
     """

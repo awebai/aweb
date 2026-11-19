@@ -12,13 +12,13 @@ from .service_errors import ConflictError
 from .task_refs import format_task_ref, task_ref_suffix
 
 if TYPE_CHECKING:
-    from .db import DatabaseInfra
+    from .db import DatabaseInfrastructure
 
 logger = logging.getLogger(__name__)
 
 
 async def fetch_workspace_aliases(
-    db_infra: "DatabaseInfra", team_id: str, workspace_ids: list[str]
+    db_infra: "DatabaseInfrastructure", team_id: str, workspace_ids: list[str]
 ) -> dict[str, str]:
     """Return {workspace_id: alias} for a list of workspace IDs.
 
@@ -41,7 +41,7 @@ def _now() -> datetime:
 
 
 async def list_active_claims(
-    db_infra: "DatabaseInfra",
+    db_infra: "DatabaseInfrastructure",
     *,
     team_id: str,
     workspace_id: str | None = None,
@@ -90,7 +90,7 @@ def claim_focus_task_ref(task_ref: str, apex_task_ref: Optional[str]) -> str:
 
 
 async def resolve_task_claim_apex(
-    db_infra: DatabaseInfra,
+    db_infra: DatabaseInfrastructure,
     team_id: str,
     task_ref: str,
     max_depth: int = 20,
@@ -302,7 +302,7 @@ async def acquire_task_claim_on(
 
 
 async def release_task_claims(
-    db_infra: DatabaseInfra,
+    db_infra: DatabaseInfrastructure,
     *,
     team_id: str,
     task_ref: str,

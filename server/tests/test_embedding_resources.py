@@ -20,7 +20,7 @@ from aweb.mcp.server import ManagedMCPApp
 from aweb.mcp.mutations import mutation_callback_from_scope
 from aweb.messaging.runtime import messaging_runtime
 from aweb.db import DatabaseInfra
-from test_awid_transport import awid, db_infra  # noqa: F401
+from test_awid_transport import awid as awid, db_infra as db_infra  # noqa: F401
 
 
 def _extended_mcp(resources):
