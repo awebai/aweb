@@ -24,6 +24,7 @@ from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.certificate_evidence import EvidenceMode
 from aweb.service_errors import ServiceError
 from aweb.team_key_pins import pinned_team_key
+from aweb.team_key_reader import read_team_key
 
 
 class CertificateVerificationReason(StrEnum):
@@ -84,6 +85,8 @@ class VerifiedCertificateGeneration:
 
 
 def _certificate_team_scope(team_id: str) -> tuple[str, str]:
+    if not isinstance(team_id, str):
+        raise TeamCertificateError("invalid_field", "team_id")
     try:
         domain, name = parse_team_id(team_id)
     except (TypeError, ValueError) as exc:
@@ -93,13 +96,14 @@ def _certificate_team_scope(team_id: str) -> tuple[str, str]:
     return domain, name
 
 
-async def _admit_controller_key(
+async def _admit_refreshed_controller(
     *, context: CertificateAuthorityContext, team_id: str, served_key: str | None
 ) -> str:
-    """Apply the same admitted-key/rotation-act rule as request verification.
+    """Admit the SDK's refreshed key through the same pin owner, without rereads.
 
-    docs/drafts/team-key-pinning.md and aweb.team_key_pins own that rule and its
-    existing staged enforcement. A certificate's asserted key is never input.
+    The signature-failure refresh has already acquired this evidence. The
+    existing pin owner (docs/drafts/team-key-pinning.md) applies unchanged;
+    a certificate's asserted key is never input.
     """
     if not served_key:
         raise TeamControllerUnavailable()
@@ -121,19 +125,22 @@ async def read_certificate_controller(
     preserves the SDK's existing admitted-evidence policy; FRESH never consumes
     cached or outage-grace data. No registration list is read here.
     """
-    domain, name = _certificate_team_scope(team_id)
-    if not isinstance(evidence, EvidenceMode):
-        raise TypeError("Certificate evidence requires a named EvidenceMode")
+    # This validates the certificate factory's exact scope before any I/O;
+    # selection, cached/fresh acquisition and pin admission belong to R2.
+    _certificate_team_scope(team_id)
     try:
-        if evidence is EvidenceMode.FRESH:
-            key = await context.registry_client.get_team_public_key_fresh(domain, name)
-        else:
-            key = await context.registry_client.get_team_public_key(domain, name)
-        return await _admit_controller_key(
-            context=context, team_id=team_id, served_key=key
+        key = await read_team_key(
+            db=context.db,
+            registry_client=context.registry_client,
+            txt_resolver=context.txt_resolver,
+            team_id=team_id,
+            evidence=evidence,
         )
     except AWID_DEPENDENCY_ERRORS as exc:
         raise TeamControllerUnavailable() from exc
+    if not key:
+        raise TeamControllerUnavailable()
+    return key
 
 
 async def _refresh_rejected_controller(
@@ -149,7 +156,7 @@ async def _refresh_rejected_controller(
         else:
             # An uncached client's first key read was already live.
             return rejected_key
-        return await _admit_controller_key(
+        return await _admit_refreshed_controller(
             context=context, team_id=team_id, served_key=key
         )
     except AWID_DEPENDENCY_ERRORS as exc:
