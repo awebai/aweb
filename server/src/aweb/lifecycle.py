@@ -1442,6 +1442,13 @@ async def _complete_lifecycle_effects(
     Implements docs/aweb-sot.md:1254–1265. SQL success and Redis delivery are
     separate outcomes; pending effects retain the same durable operation id.
     """
+    if effects.effect_count == 0:
+        return replace(
+            base,
+            post_commit_status="completed",
+            chat_waiting_cleared_count=0,
+            presence_cleared_count=0,
+        )
     operation_id = effects.operation_id
     event_intents = base.event_intents
     chat_participants = effects.chat_participants
@@ -1461,7 +1468,7 @@ async def _complete_lifecycle_effects(
         chat_waiting_cleared_count = 0 if not chat_participants else None
         presence_status: PresenceCleanupStatus = "pending" if presence_ids else "not_run"
         presence_cleared_count = 0 if not presence_ids else None
-        post_commit_status: PostCommitStatus = "pending" if effects else "completed"
+        post_commit_status: PostCommitStatus = "pending"
     else:
         replay_result = await replay_lifecycle_side_effects(
             db,
