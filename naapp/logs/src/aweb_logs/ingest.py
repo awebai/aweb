@@ -303,10 +303,10 @@ class Ingestor:
     ) -> OwnHookBinding:
         try:
             resolution = await self.resolver.own_bindings(event.team_id, binding_id=binding_id)
-        except HookTeamServerNotAllowed as exc:
-            raise IngestRefused(403, "team_server_not_allowed") from exc
-        except (HookBindingRequired, HookResolutionUnavailable) as exc:
+        except HookBindingRequired as exc:
             raise IngestRefused(503, "binding_authority_unavailable") from exc
+        except HookResolutionUnavailable as exc:
+            raise _unresolved(exc, "binding_authority_unavailable") from exc
         for binding in resolution.items:
             if (
                 binding.kind == "registration"
@@ -379,10 +379,8 @@ class Ingestor:
             )
         except HookBindingRequired as exc:
             raise IngestRefused(403, "provenance_app_production") from exc
-        except HookTeamServerNotAllowed as exc:
-            raise IngestRefused(403, "team_server_not_allowed") from exc
         except HookResolutionUnavailable as exc:
-            raise IngestRefused(503, "provenance_authority_unavailable") from exc
+            raise _unresolved(exc, "provenance_authority_unavailable") from exc
         for production in productions.items:
             if (
                 (
@@ -415,6 +413,16 @@ class Ingestor:
                             "production": _binding_evidence(production, event),
                         }
         raise IngestRefused(403, "provenance_app_production")
+
+
+def _unresolved(exc: HookResolutionUnavailable, transient_code: str) -> IngestRefused:
+    """The refusal for a hook read the team's server did not answer: permanent
+    when the egress rule refuses that server, which only the team's controller
+    can fix (docs/design/app-team-server-api.md §1, trust chain step 4), and
+    otherwise ``transient_code``, which the sender retries."""
+    if isinstance(exc, HookTeamServerNotAllowed):
+        return IngestRefused(403, "team_server_not_allowed")
+    return IngestRefused(503, transient_code)
 
 
 def _binding_evidence(binding: HookBinding, event: Envelope) -> dict[str, Any]:
