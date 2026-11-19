@@ -62,28 +62,41 @@ class CloudflareStreamClient:
         _account_id, token = self._require_api_config()
         return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    async def create_direct_upload(self, *, max_duration_seconds: int, expires_at: datetime) -> StreamDirectUpload:
+    async def create_direct_upload(
+        self, *, max_duration_seconds: int, expires_at: datetime
+    ) -> StreamDirectUpload:
         payload = {
             "maxDurationSeconds": max_duration_seconds,
-            "expiry": expires_at.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "expiry": expires_at.astimezone(UTC)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "requireSignedURLs": True,
             "allowedOrigins": [self.settings.public_origin.rstrip("/")],
         }
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                response = await client.post(self._url("/direct_upload"), headers=self._headers(), json=payload)
+                response = await client.post(
+                    self._url("/direct_upload"), headers=self._headers(), json=payload
+                )
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=503, detail="Cloudflare Stream direct upload unavailable") from exc
+            raise HTTPException(
+                status_code=503, detail="Cloudflare Stream direct upload unavailable"
+            ) from exc
         data = _cloudflare_json(response, context="Cloudflare Stream direct upload")
         result = data.get("result") if isinstance(data, dict) else None
         if not isinstance(result, dict):
-            raise HTTPException(status_code=503, detail="Cloudflare Stream direct upload response was invalid")
+            raise HTTPException(
+                status_code=503, detail="Cloudflare Stream direct upload response was invalid"
+            )
         uid = str(result.get("uid") or "").strip()
         upload_url = str(result.get("uploadURL") or "").strip()
         if not uid or not upload_url:
-            raise HTTPException(status_code=503, detail="Cloudflare Stream direct upload response was incomplete")
+            raise HTTPException(
+                status_code=503, detail="Cloudflare Stream direct upload response was incomplete"
+            )
         return StreamDirectUpload(uid=uid, upload_url=upload_url, expires_at=expires_at)
 
     async def get_video_status(self, *, stream_uid: str) -> StreamStatus:
@@ -93,11 +106,15 @@ class CloudflareStreamClient:
         except HTTPException:
             raise
         except Exception as exc:
-            raise HTTPException(status_code=503, detail="Cloudflare Stream status unavailable") from exc
+            raise HTTPException(
+                status_code=503, detail="Cloudflare Stream status unavailable"
+            ) from exc
         data = _cloudflare_json(response, context="Cloudflare Stream status")
         result = data.get("result") if isinstance(data, dict) else None
         if not isinstance(result, dict):
-            raise HTTPException(status_code=503, detail="Cloudflare Stream status response was invalid")
+            raise HTTPException(
+                status_code=503, detail="Cloudflare Stream status response was invalid"
+            )
         return video_status_from_cloudflare(result)
 
 
@@ -118,7 +135,9 @@ def video_status_from_cloudflare(result: dict[str, Any]) -> StreamStatus:
 
 def _cloudflare_json(response: httpx.Response, *, context: str) -> dict[str, Any]:
     if response.status_code >= 400:
-        raise HTTPException(status_code=503, detail=f"{context} failed with HTTP {response.status_code}")
+        raise HTTPException(
+            status_code=503, detail=f"{context} failed with HTTP {response.status_code}"
+        )
     try:
         data = response.json()
     except ValueError as exc:
@@ -129,14 +148,18 @@ def _cloudflare_json(response: httpx.Response, *, context: str) -> dict[str, Any
 
 
 def stream_direct_upload_expires_at(settings: Settings) -> datetime:
-    return datetime.now(UTC) + timedelta(seconds=settings.cloudflare_stream_direct_upload_ttl_seconds)
+    return datetime.now(UTC) + timedelta(
+        seconds=settings.cloudflare_stream_direct_upload_ttl_seconds
+    )
 
 
 def sign_stream_playback_token(*, settings: Settings, stream_uid: str) -> str:
     key_id = (settings.cloudflare_stream_signing_key_id or "").strip()
     private_key = (settings.cloudflare_stream_signing_key_pem or "").strip()
     if not key_id or not private_key:
-        raise HTTPException(status_code=503, detail="Cloudflare Stream signing key is not configured")
+        raise HTTPException(
+            status_code=503, detail="Cloudflare Stream signing key is not configured"
+        )
     now = int(time.time())
     payload = {
         "sub": stream_uid,
@@ -149,7 +172,14 @@ def sign_stream_playback_token(*, settings: Settings, stream_uid: str) -> str:
 
 def stream_iframe_url(*, settings: Settings, stream_uid: str) -> str:
     token = sign_stream_playback_token(settings=settings, stream_uid=stream_uid)
-    host = settings.cloudflare_stream_playback_host.strip().removeprefix("https://").removeprefix("http://").rstrip("/")
+    host = (
+        settings.cloudflare_stream_playback_host.strip()
+        .removeprefix("https://")
+        .removeprefix("http://")
+        .rstrip("/")
+    )
     if not host:
-        raise HTTPException(status_code=503, detail="Cloudflare Stream playback host is not configured")
+        raise HTTPException(
+            status_code=503, detail="Cloudflare Stream playback host is not configured"
+        )
     return f"https://{host}/{token}/iframe"
