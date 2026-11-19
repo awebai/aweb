@@ -33,10 +33,12 @@ through the CLI as an operator runs it, each judged on its own:
    (143), the target named incomplete and left, the private ciphertext copy
    removed, and no process left in its group.
 
-Every CLI call runs in its own process group under a budget that holds its
-age deadlines (60 s each, two per restore) with a reserve; past the budget the
-group is sent SIGTERM, then SIGKILL, and reaped. SIGTERM to this check does
-the same to the call in flight before it exits. A disposable key on the same
+Every CLI call runs in its own process group under one absolute deadline set
+at its launch, observation included, that holds its age deadlines (60 s each,
+two per restore) with a reserve; past it the group is sent SIGTERM, then
+SIGKILL, and reaped, which has its own 30 s reserve. Any exit of this check
+other than its verdict (SIGTERM, an interrupt, an error) ends the call in
+flight the same way first and reports whether its group is gone. A disposable key on the same
 host proves function only, not key custody. Prints one JSON line per case
 and exits 0 only when all eight pass.
 """
@@ -122,18 +124,23 @@ def group_gone(pgid: int) -> bool:
 
 
 class Call:
-    """One CLI call in its own process group, owned until its group is gone."""
+    """One CLI call in its own process group, under one absolute deadline set
+    at launch, owned until its group is gone. Ending it (TERM, then KILL,
+    then reaping) has its own reserve beyond that deadline."""
 
     current: "Call | None" = None
 
-    def __init__(self, *args: str):
-        self.process = subprocess.Popen([sys.executable, "-I", str(TOOL), *args], stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE, text=True, start_new_session=True)
+    def __init__(self, command: list[str], budget: float = CALL_BUDGET):
+        self.deadline = time.monotonic() + budget
+        self.process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                        start_new_session=True)
         Call.current = self
 
-    def end(self) -> None:
-        """SIGTERM to the group, then SIGKILL, then reap: no process of the
-        call outlives this."""
+    def remaining(self) -> float:
+        return max(0.0, self.deadline - time.monotonic())
+
+    def end(self) -> bool:
+        """TERM to the group, then KILL, then reap; whether the group is gone."""
         for sent, grace in ((signal.SIGTERM, 10), (signal.SIGKILL, 10)):
             if group_gone(self.process.pid):
                 break
@@ -145,31 +152,51 @@ class Call:
                 self.process.wait(timeout=grace)
             except subprocess.TimeoutExpired:
                 pass
-        self.process.wait()
-
-    def result(self, budget: float = CALL_BUDGET) -> subprocess.CompletedProcess:
         try:
-            stdout, stderr = self.process.communicate(timeout=budget)
-            timed_out = False
+            self.process.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            self.end()
+            pass
+        return group_gone(self.process.pid)
+
+    def result(self) -> subprocess.CompletedProcess:
+        """Waits for the call within what is left of its deadline; past it,
+        ends the group."""
+        try:
+            stdout, stderr = self.process.communicate(timeout=self.remaining())
+            note = ""
+        except subprocess.TimeoutExpired:
+            gone = self.end()
             stdout, stderr = self.process.communicate()
-            timed_out = True
+            note = f"\n[check] the call passed its deadline; its group was ended; group gone: {gone}"
         Call.current = None
-        if timed_out:
-            stderr += f"\n[check] the call passed its {budget:.0f}s budget; its group was ended"
-        return subprocess.CompletedProcess(self.process.args, self.process.returncode, stdout, stderr)
+        return subprocess.CompletedProcess(self.process.args, self.process.returncode, stdout, stderr + note)
+
+
+def tool(*args: str) -> list[str]:
+    return [sys.executable, "-I", str(TOOL), *args]
 
 
 def cli(*args: str) -> subprocess.CompletedProcess:
-    return Call(*args).result()
+    return Call(tool(*args)).result()
 
 
-def wait_for(condition, call: Call, within: float) -> bool:
-    """Polls condition every 5 ms until it holds or the call has exited."""
-    deadline = time.monotonic() + within
-    while time.monotonic() < deadline:
-        if condition():
+def holds(condition) -> bool:
+    """An observation of the filesystem; one that fails is "not yet"."""
+    try:
+        return bool(condition())
+    except OSError:
+        return False
+
+
+def partial_has_bytes(partial: Path):
+    return lambda: partial.stat().st_size > 0
+
+
+def wait_for(condition, call: Call) -> bool:
+    """Polls condition every 5 ms until it holds, the call exits, or the
+    call's own deadline passes."""
+    while call.remaining() > 0:
+        if holds(condition):
             return True
         if call.process.poll() is not None:
             return False
@@ -179,15 +206,26 @@ def wait_for(condition, call: Call, within: float) -> bool:
 
 def terminated_in_progress(call: Call, started) -> dict:
     """Stops the call's group once started() holds, then sends the CLI
-    SIGTERM and continues the group; returns what was seen."""
-    caught = wait_for(started, call, CALL_BUDGET)
-    seen: dict = {"caught_in_progress": caught}
-    if caught:
-        os.killpg(call.process.pid, signal.SIGSTOP)
-        seen["alive_when_stopped"] = call.process.poll() is None and started()
-        call.process.send_signal(signal.SIGTERM)
-        os.killpg(call.process.pid, signal.SIGCONT)
-    answer = call.result()
+    SIGTERM and continues the group; returns what was seen. A call that
+    finished first, a failed observation or a failed signal fails the case
+    with the call ended; an interrupt of the check ends the call and goes on."""
+    seen: dict = {"caught_in_progress": False}
+    try:
+        if wait_for(started, call):
+            os.killpg(call.process.pid, signal.SIGSTOP)
+            seen["caught_in_progress"] = True
+            seen["alive_when_stopped"] = call.process.poll() is None and holds(started)
+            call.process.send_signal(signal.SIGTERM)
+            os.killpg(call.process.pid, signal.SIGCONT)
+        answer = call.result()
+    except Exception as error:
+        seen.update(error=f"{type(error).__name__}: {error}", group_gone=call.end())
+        call.process.communicate()
+        Call.current = None
+        return seen
+    except BaseException:
+        call.end()
+        raise
     seen.update(rc=answer.returncode, stderr=answer.stderr.strip()[-400:], group_gone=group_gone(call.process.pid))
     return seen
 
@@ -208,14 +246,14 @@ def main() -> int:
     signal.signal(signal.SIGTERM, terminate)
     try:
         return check(args)
-    except Terminated:
-        if Call.current is not None:
-            Call.current.end()
-            gone = group_gone(Call.current.process.pid)
-        else:
-            gone = True
-        print(json.dumps({"result": "INCOMPLETE", "reason": "the check was terminated",
-                          "call_in_flight_ended": gone}, sort_keys=True))
+    except BaseException as stopped:
+        # Every exit that is not the check's own verdict ends the call in
+        # flight first, and says whether its group is gone.
+        gone = Call.current.end() if Call.current is not None else True
+        reason = "the check was terminated" if isinstance(stopped, Terminated) else (
+            f"the check stopped on {type(stopped).__name__}: {stopped}")
+        print(json.dumps({"result": "INCOMPLETE", "reason": reason, "call_in_flight_group_gone": gone},
+                         sort_keys=True))
         return 3
 
 
@@ -311,24 +349,25 @@ def check(args: argparse.Namespace) -> int:
 
         stopped = work / "backup-terminated"
         partial = stopped / "state.tar.age.partial"
-        call = Call("capture", "--state", str(large), *container, *pinned, *recipients, *deadline,
-                    "--out", str(stopped))
-        seen = terminated_in_progress(call, lambda: partial.exists() and partial.stat().st_size > 0)
+        call = Call(tool("capture", "--state", str(large), *container, *pinned, *recipients, *deadline,
+                         "--out", str(stopped)))
+        seen = terminated_in_progress(call, partial_has_bytes(partial))
         left = sorted(path.name for path in stopped.iterdir()) if stopped.exists() else []
-        case("capture-terminated", seen["caught_in_progress"] and seen.get("alive_when_stopped") and seen["rc"] == 143
-             and "terminated" in seen["stderr"] and left == [] and seen["group_gone"], {**seen, "left": left})
+        case("capture-terminated", seen["caught_in_progress"] and bool(seen.get("alive_when_stopped"))
+             and seen.get("rc") == 143 and "terminated" in seen.get("stderr", "") and left == []
+             and seen["group_gone"], {**seen, "left": left})
 
         large_backup = work / "backup-large"
         answer = cli("capture", "--state", str(large), *container, *pinned, *recipients, *deadline,
                      "--out", str(large_backup))
         target = work / "restored-terminated"
         if answer.returncode == 0:
-            call = Call("restore", "--backup", str(large_backup), *container, *pinned, *deadline, "--identity",
-                        str(keys / "identity"), "--target", str(target))
+            call = Call(tool("restore", "--backup", str(large_backup), *container, *pinned, *deadline, "--identity",
+                             str(keys / "identity"), "--target", str(target)))
             seen = terminated_in_progress(call, lambda: os.path.lexists(target))
             private = sorted(path.name for path in work.iterdir() if path.name.startswith(".agent-state-restore-"))
-            case("restore-terminated", seen["caught_in_progress"] and seen.get("alive_when_stopped")
-                 and seen["rc"] == 143 and "incomplete" in seen["stderr"] and os.path.lexists(target)
+            case("restore-terminated", seen["caught_in_progress"] and bool(seen.get("alive_when_stopped"))
+                 and seen.get("rc") == 143 and "incomplete" in seen.get("stderr", "") and os.path.lexists(target)
                  and private == [] and seen["group_gone"], {**seen, "target_left": os.path.lexists(target),
                                                             "private_copies_left": private})
         else:

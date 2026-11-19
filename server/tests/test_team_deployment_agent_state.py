@@ -337,25 +337,31 @@ def test_an_interrupt_while_the_last_read_drains_the_child_kills_and_reaps_it(tm
     import threading
     import time
 
-    written = tmp_path / "written"
-    command = emits(tmp_path, "drain", TWO, f"open({str(written)!r}, 'w').close()\ntime.sleep(120)")
+    command = emits(tmp_path, "drain", TWO, "time.sleep(120)")
     children = []
+    draining = threading.Event()
+
+    class Observed(agent_state.Decrypted):
+        """The real Decrypted, with the test seeing when its final drain begins."""
+
+        def close(self) -> None:
+            draining.set()
+            super().close()
 
     def read():
-        children.append(agent_state.Decrypted(command, 60))
+        children.append(Observed(command, 60))
         return children[-1]
 
     # A process started in the background may inherit SIGINT ignored: this
     # test installs Python's own handler, so the interrupt is raised here.
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
-        # The interrupt comes once the child has written its whole archive:
-        # the read of it has begun, and the drain is what is left.
+        # The interrupt comes once close() has begun its drain, which then
+        # waits on the sleeping child. (The drain may already be blocked or
+        # just about to read; either way the interrupt lands in close().)
         def interrupt():
-            deadline = time.monotonic() + 30
-            while not written.exists() and time.monotonic() < deadline:
-                time.sleep(0.01)
-            time.sleep(0.2)
+            if draining.wait(30):
+                time.sleep(0.2)
             os.kill(os.getpid(), signal.SIGINT)
 
         threading.Thread(target=interrupt, daemon=True).start()
@@ -363,6 +369,7 @@ def test_an_interrupt_while_the_last_read_drains_the_child_kills_and_reaps_it(tm
             agent_state.read_whole(read, lambda tar: list(tar))
     finally:
         signal.signal(signal.SIGINT, previous)
+    assert draining.is_set(), "the interrupt did not come during the final drain"
     assert children[0].process.returncode is not None
 
 
@@ -413,7 +420,7 @@ def test_a_terminated_cli_ends_its_age_child_and_leaves_no_partial(tmp_path):
          "agent_state.DOCKER_ENV['PATH'] = sys.argv[2]; sys.exit(agent_state.main(sys.argv[3:]))",
          str(TEAM), str(bin_dir), "capture", "--state", str(root), "--container", "agent", "--age", str(fake_age),
          "--age-sha256", pin, "--recipients", str(recipients), "--out", str(out), "--deadline", "600"],
-        stderr=subprocess.PIPE, text=True, start_new_session=True)
+        stderr=open(tmp_path / "cli.err", "w"), start_new_session=True)
     try:
         # The age stand-in marks that it has started writing; the signal comes after.
         deadline = time.monotonic() + 30
@@ -421,13 +428,24 @@ def test_a_terminated_cli_ends_its_age_child_and_leaves_no_partial(tmp_path):
             assert time.monotonic() < deadline and cli.poll() is None, "the capture never started its age"
             time.sleep(0.05)
         cli.send_signal(signal.SIGTERM)
-        _, stderr = cli.communicate(timeout=30)
+        # stderr is a file, not a pipe: a child the CLI left behind cannot
+        # hold this wait open, so the ownership assertion below decides.
+        cli.wait(timeout=30)
+        stderr = (tmp_path / "cli.err").read_text()
+        # Observed before any cleanup of the test's own: what the CLI left.
+        left = sorted(path.name for path in out.iterdir())
+        try:
+            os.killpg(cli.pid, 0)
+            group_gone = False
+        except ProcessLookupError:
+            group_gone = True
     finally:
+        # Only a failed test reaches here with work left; it is ended so as
+        # not to outlive the test.
         try:
             os.killpg(cli.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
     assert cli.returncode == 143 and "terminated" in stderr
-    assert sorted(path.name for path in out.iterdir()) == []
-    with pytest.raises(ProcessLookupError):
-        os.killpg(cli.pid, 0)
+    assert left == []
+    assert group_gone, "the CLI left a process in its group (its age child)"
