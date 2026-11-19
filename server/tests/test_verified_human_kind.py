@@ -12,7 +12,7 @@ import pytest
 from awid.dns_verify import DomainAuthority
 from awid_service.deps import get_domain_verifier
 from aweb.api import _build_awid_registry_client
-from test_dashboard_privacy import privacy_app, TEAM  # noqa: F401
+from test_dashboard_privacy import privacy_app as privacy_app, TEAM
 from test_cli_never_grants import registry_listener
 from test_id_chain_request_auth import (
     ALICE,
@@ -275,7 +275,7 @@ async def test_legacy_label_needs_exact_key_marker_on_every_current_surface(
     from aweb.mcp.auth import AuthContext
     from aweb.mcp.tools import _common
     from aweb.mcp.tools.agents import list_agents
-    from aweb.messaging.messages import get_agent_by_alias, get_agent_by_id
+    from aweb.messaging.messages import get_agent_by_id
     from aweb.messaging.mail_routing import (
         _require_live_mail_participant,
         ParticipantRetiredError,
@@ -320,9 +320,6 @@ async def test_legacy_label_needs_exact_key_marker_on_every_current_surface(
     )
     mcp = json.loads(await list_agents(env.infra, env.redis))
     assert "bob" not in {r["alias"] for r in mcp["agents"]}
-    assert (
-        await get_agent_by_alias(env.infra, team_id=TEAM, alias="bob") is None
-    ) == human
     looked_up = await get_agent_by_id(env.infra, agent_id=str(bob.id))
     assert looked_up["agent_type"] == ("human" if human else "unknown")
     for path, payload, expected in [

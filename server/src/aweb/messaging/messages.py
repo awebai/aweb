@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from aweb.messaging.recipient_lookup import (
     get_agent_by_id as get_agent_by_id,
-    get_agent_by_alias as get_agent_by_alias,
     resolve_agent_by_did as resolve_agent_by_did,
 )
 

@@ -4,8 +4,6 @@ from aweb.messaging.kinds import ContentMode
 
 from aweb.messaging.recipient_lookup import (
     get_agent_by_id as get_agent_by_id,
-    get_agent_by_alias as get_agent_by_alias,
-    get_agents_by_aliases as get_agents_by_aliases,
     resolve_agent_by_did as resolve_agent_by_did,
 )
 

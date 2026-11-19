@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from aweb.human_kind import human_predicate_sql
 from aweb.identity_binding import verified_key_sql
 from aweb.member_team_key import MemberProjection, member_projection_columns_sql
 from aweb.messaging.recipient import Recipient
@@ -44,34 +43,6 @@ async def get_agent_by_id(
         if row
         else None
     )
-
-
-async def get_agent_by_alias(db, *, team_id: str, alias: str) -> Recipient | None:
-    """Read an agent alias within the explicit team, excluding verified humans."""
-    rows = await get_agents_by_aliases(db, team_id=team_id, aliases=[alias])
-    return rows[0] if rows else None
-
-
-async def get_agents_by_aliases(
-    db, *, team_id: str, aliases: list[str]
-) -> list[Recipient]:
-    """Read team-scoped agent aliases through the same native projection owner."""
-    if not aliases:
-        return []
-    rows = await db.get_manager("aweb").fetch_all(
-        "SELECT "
-        + member_projection_columns_sql("a")
-        + f"""
-        FROM {{{{tables.agents}}}} a
-        WHERE a.team_id=$1 AND a.alias=ANY($2::text[]) AND a.deleted_at IS NULL
-          AND NOT {human_predicate_sql("a")}
-        """,
-        team_id,
-        aliases,
-    )
-    return [
-        Recipient.from_member_projection(MemberProjection.from_row(row)) for row in rows
-    ]
 
 
 async def resolve_agent_by_did(db, did: str) -> Recipient | None:
