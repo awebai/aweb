@@ -341,7 +341,7 @@ async def test_conflicting_verified_stored_addresses_refuse_during_outage_before
         async with stalled_address_read(env):
             auth = await get_messaging_auth(identity_request(env, actor), db=env.db)
             assert auth.address is None
-            assert auth.address_resolution.state == "unknown"
+            assert auth.address_resolution.state == "context_required"
             assert not auth.address_resolution.stored_binding_verified
             assert isinstance(auth.address_resolution.cause, RegistryError)
             response = await send(
@@ -354,8 +354,9 @@ async def test_conflicting_verified_stored_addresses_refuse_during_outage_before
                     "body": "must not choose either address",
                 },
             )
-            assert response.status_code == 503, response.text
-            assert response.json()["detail"]["code"] == "address_evidence_unavailable"
+            assert response.status_code == 409, response.text
+            assert response.json()["detail"]["code"] == "sender_context_required"
+            assert "X-AWID-Team-Certificate" in response.json()["detail"]["message"]
             assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
             assert await env.db.fetch_value("SELECT COUNT(*) FROM {{tables.conversations}}") == 0
             assert len(env.dispatched) == dispatched
