@@ -549,6 +549,13 @@
           "default": "public",
           "x-env": "SECRETS_DB_SCHEMA"
         },
+        "backupMaxAgeSeconds": {
+          "description": "Operator-enforced upper bound for all decryptable content backups, WAL and snapshots. Required for first-install erasure initialization; no implicit retention policy.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "x-env": "SECRETS_BACKUP_MAX_AGE_SECONDS"
+        },
         "emailSmtpHost": {
           "type": "string",
           "pattern": "^[A-Za-z0-9.-]+$",

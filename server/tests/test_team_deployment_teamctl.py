@@ -236,6 +236,7 @@ def start_with_agents(tmp_path: Path, team: dict, services: list[str], registry:
         "logs --follow": "attached\n",
         "probe-ingress.mjs": "OATS_EGRESS_INGRESS_PASS",
         "ps -q egress": "egress-container-id\n",
+        "volume ls": "teamrun_postgres_data\n",
     }
     if egress_log is not None:
         answers["--timestamps --follow"] = egress_log

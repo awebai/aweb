@@ -769,6 +769,7 @@ class Custody:
             version=context.version,
             backend_credential=context.secret_id == BACKEND_CREDENTIAL_ID,
         )
+        # erasure/schema.sql records the identifier-only tombstone in this tx.
         await tx.execute(
             "DELETE FROM {{tables.sealed_versions}}"
             " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3 AND version = $4",

@@ -12,6 +12,8 @@
 # render   checks deployment.yaml and writes what Compose reads: RUN_DIR/.env and,
 #          with a front, RUN_DIR/front/Caddyfile. Nothing starts.
 # start    renders deployment.yaml to RUN_DIR/.env, starts deploy/team/compose.yaml
+#          On a newly created bundled PostgreSQL volume, initializes Secrets'
+#          erasure authority through its one-shot operator job before services.
 #          and waits until every service is healthy, then checks from inside
 #          aweb and each app that its internal origins resolve inside
 #          network.servicesCidr, and that every service answers its own
@@ -30,6 +32,8 @@
 #          that certificate.
 # reload-tls  checks the front's certificate and key as start does, reloads
 #          the front and confirms each host now serves that certificate.
+# init-erasure  explicitly runs the same first-install job with Secrets stopped;
+#          matching state is idempotent and unbound existing content refuses.
 # stop     stops every service of the bundle. Containers, networks, volumes,
 #          the secrets directory and the agents' state all stay.
 # destroy  removes the bundle's own containers and its named volumes, and
@@ -58,7 +62,7 @@ SELF="$TEAM_DIR/teamctl"
 
 usage() {
   {
-    echo "usage: TEAM_DEPLOYMENT_PROJECT=<name> TEAM_DEPLOYMENT_RUN_DIR=<dir> $0 render|start|connect|stop|reload-tls <deployment.yaml>"
+    echo "usage: TEAM_DEPLOYMENT_PROJECT=<name> TEAM_DEPLOYMENT_RUN_DIR=<dir> $0 render|start|connect|stop|reload-tls|init-erasure <deployment.yaml>"
     echo "       $0 destroy <deployment.yaml> --confirm <project>"
     echo "       $0 backup <deployment.yaml> <new directory>"
     echo "       $0 restore --lab-rehearsal <deployment.yaml> <backup directory>"
@@ -76,7 +80,7 @@ action="$1"
 shift
 lab_rehearsal=0 confirm="" target=""
 case "$action" in
-  render | start | connect | stop | reload-tls) [[ $# -eq 1 ]] || usage ;;
+  render | start | connect | stop | reload-tls | init-erasure) [[ $# -eq 1 ]] || usage ;;
   destroy)
     [[ $# -eq 1 || ($# -eq 3 && "$2" == --confirm) ]] || usage
     confirm="${3:-}"
@@ -732,6 +736,26 @@ model() {
   fi
 }
 
+erasure_initialise() {
+  [[ -n "$(env_value SECRETS_IMAGE)" ]] || refuse "the deployment has no Secrets service"
+  [[ "$(env_value POSTGRES_BUNDLED)" == true ]] ||
+    refuse "with external PostgreSQL run python -m aweb_secrets.erasure init-erasure using your operator DSN file"
+  [[ -n "$(env_value SECRETS_BACKUP_MAX_AGE_SECONDS)" ]] ||
+    refuse "first install requires secrets.backupMaxAgeSeconds: declare and enforce the maximum decryptable backup lifetime"
+  local running
+  running="$(dc ps --status running --services secrets)" ||
+    refuse "could not check whether Secrets is stopped; erasure initialization was not run"
+  [[ -z "$running" ]] || refuse "stop Secrets before running the offline erasure initializer"
+  dc up -d --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}" postgres
+  dc run --rm --no-deps secrets-erasure-init </dev/null ||
+    refuse "erasure initialization refused; Secrets was not started; see deploy/team/OPERATIONS.md"
+}
+
+init-erasure() {
+  render
+  erasure_initialise
+}
+
 start() {
   render
   if [[ -n "$(env_value FRONT_IMAGE)" ]]; then
@@ -748,13 +772,23 @@ start() {
     echo "teamctl: a service is given AWID_SERVICE_TOKEN" >&2
     exit 1
   fi
+  if [[ -n "$(env_value SECRETS_IMAGE)" && "$(env_value POSTGRES_BUNDLED)" == true ]]; then
+    local volumes
+    volumes="$(docker volume ls --format '{{.Name}}' --filter "name=^${project}_postgres_data$")" ||
+      refuse "could not list the PostgreSQL volumes; nothing was started"
+    if ! grep -Fxq "${project}_postgres_data" <<<"$volumes"; then
+      # Absence was observed before Compose created the volume, not inferred
+      # from a missing ledger inside an existing or restored volume.
+      erasure_initialise
+    fi
+  fi
   # The agent and its egress start last, after their policy is derived.
   # A failed listing would leave the list empty and start every service.
   if [[ "$with_agents" -eq 1 ]]; then
     local listed service
     listed="$(dc config --services)" || refuse "could not list the deployment's services; nothing was started"
     while read -r service; do
-      [[ -z "$service" || "$service" == egress || "$service" == agent ]] || services+=("$service")
+      [[ -z "$service" || "$service" == egress || "$service" == agent || "$service" == secrets-erasure-init ]] || services+=("$service")
     done <<<"$listed"
   fi
   if ! dc up -d --wait --wait-timeout "${TEAM_DEPLOYMENT_WAIT_SECONDS:-300}" ${services[@]+"${services[@]}"}; then
@@ -1005,12 +1039,15 @@ backup() {
   [[ -z "$(dc ps --status running --services postgres)" ]] || was_running=1
   dc up -d --wait postgres
   # A failed query is not an empty list: no manifest may call the backup whole.
-  local databases database
+  local databases database exclusions
   databases="$(psql_postgres "select datname from pg_database where not datistemplate and datname <> 'postgres' order by 1")" ||
     refuse "could not list the databases; the backup in $target is incomplete and has no manifest"
   while read -r database; do
     [[ -n "$database" ]] || continue
-    dc exec -T postgres pg_dump -U postgres -Fc -d "$database" </dev/null >"$target/databases/$database.dump"
+    exclusions=()
+    # The live authority is never restorable content (acyp/18.20).
+    [[ "$database" != secrets ]] || exclusions+=(--exclude-schema=secrets_erasure)
+    dc exec -T postgres pg_dump -U postgres -Fc -d "$database" ${exclusions[@]+"${exclusions[@]}"} </dev/null >"$target/databases/$database.dump"
   done <<<"$databases"
   psql_postgres "show server_version" >"$target/databases/server-version"
   [[ "$was_running" -eq 1 ]] || dc stop postgres
@@ -1054,7 +1091,9 @@ manifest = {
     "source": {"revision": revision, "clean": clean},
     "images": {key: value for key, value in sorted(env.items()) if key.endswith("_IMAGE")},
     "postgres": {"serverVersion": (target / "databases" / "server-version").read_text().strip()},
-    "databases": [{"name": dump.stem, "sha256": digest(dump)} for dump in sorted((target / "databases").glob("*.dump"))],
+    "databases": [{"name": dump.stem, "sha256": digest(dump),
+                   "excludedSchemas": ["secrets_erasure"] if dump.stem == "secrets" else []}
+                  for dump in sorted((target / "databases").glob("*.dump"))],
     "archives": [{"key": archive.stem, "path": paths[archive.stem][1], "sha256": digest(archive)}
                  for archive in sorted((target / "archives").glob("*.tar"))],
     "files": [{"key": file.name, "path": paths[file.name][1], "sha256": digest(file),
@@ -1094,6 +1133,8 @@ paths = {key: (kind, path) for kind, key, path in (line.split(" ", 2) for line i
 manifest = json.loads((target / "manifest.json").read_text())
 if manifest.get("format") != 1:
     sys.exit("teamctl: the manifest's format is not 1")
+if any(database.get("name") == "secrets" for database in manifest.get("databases", [])):
+    sys.exit("teamctl: Secrets restore is deferred (acyp/18.20); its live erasure ledger must never be replaced by a backup")
 
 
 def part(relative, sha256):

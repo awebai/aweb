@@ -1,0 +1,295 @@
+"""Erasure is atomic with plain SQL writers and cannot be bypassed by the service role."""
+
+import json
+import secrets
+from datetime import UTC, datetime, timedelta
+from urllib.parse import quote, urlsplit
+from uuid import uuid4
+
+import asyncpg
+import pytest
+from aweb_secrets.schema import service_schema_fingerprint
+from pgdbm import AsyncDatabaseManager
+
+from aweb_secrets.custody import Custody, LocalKeyFileProvider, encode_value
+from aweb_secrets.custody.run_pins import RunPins
+from aweb_secrets.erasure import (
+    ErasureFailure,
+    ErasureUnavailable,
+    check_erasure_store,
+    initialize_erasure_store,
+    map_erasure_failure,
+    operator_receipts,
+)
+from aweb_secrets.run_pin_store import retain
+
+
+@pytest.fixture
+async def erasedb(test_db_factory, tmp_path):
+    db = await test_db_factory.create_db(suffix="secrets_erasure")
+    role = "erasure_test_" + uuid4().hex
+    password = secrets.token_urlsafe(32)
+    async with db.transaction() as tx:
+        await tx.execute("SELECT set_config('aweb_test.role_password',$1,true)", password)
+        # A real runtime login, not an administrator session using SET ROLE.
+        # The generated credential stays in this private database world.
+        await tx.execute(
+            "DO $$ BEGIN EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L',"
+            f" '{role}',current_setting('aweb_test.role_password')); END $$"
+        )
+    try:
+        await initialize_erasure_store(db, application_role=role, max_backup_age=timedelta(days=7))
+        key = tmp_path / "custody-key"
+        key.write_text(secrets.token_hex(32))
+        key.chmod(0o600)
+        original = urlsplit(db.config.get_dsn())
+        runtime_dsn = original._replace(
+            netloc=f"{quote(role, safe='')}:{quote(password, safe='')}@{original.netloc.rsplit('@', 1)[-1]}"
+        ).geturl()
+        config = db.config.model_copy(
+            update={
+                "connection_string": runtime_dsn,
+                "min_connections": 1,
+                "max_connections": 2,
+                "server_settings": None,
+            }
+        )
+        pool = await AsyncDatabaseManager.create_shared_pool(config)
+        service = AsyncDatabaseManager(pool=pool, schema=db.schema)
+        try:
+            yield db, service, role, Custody(LocalKeyFileProvider(key), service)
+        finally:
+            await pool.close()
+    finally:
+        await db.execute(f'DROP OWNED BY "{role}"')
+        await db.execute(f'DROP ROLE "{role}"')
+
+
+async def staged(custody, db):
+    async with db.transaction() as tx:
+        return await custody.stage_backend_credential(
+            tx,
+            installation_id="erasure-installation",
+            team_id="erasure:test",
+            value=encode_value("bearer", {"value": secrets.token_urlsafe(32)}),
+        )
+
+
+async def test_uninitialised_store_has_actionable_failure(test_db_factory):
+    db = await test_db_factory.create_db(suffix="erasure_uninitialised")
+    with pytest.raises(ErasureUnavailable) as refusal:
+        await check_erasure_store(db, expected_schema_digest=service_schema_fingerprint())
+    assert refusal.value.reason is ErasureFailure.UNINITIALISED
+    assert "init-erasure" in str(refusal.value)
+
+
+async def test_initialisation_is_idempotent_and_preserves_binding(erasedb):
+    operator, service, role, _ = erasedb
+    before = await operator.fetch_value("SELECT identity FROM secrets_erasure.store")
+    await initialize_erasure_store(
+        operator, application_role=role, max_backup_age=timedelta(days=7)
+    )
+    assert await operator.fetch_value("SELECT identity FROM secrets_erasure.store") == before
+    await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "ALTER TABLE {{tables.sealed_versions}} DISABLE TRIGGER ALL",
+        "DROP TRIGGER secrets_record_erasure ON {{tables.sealed_versions}}",
+        "INSERT INTO secrets_erasure.erasures DEFAULT VALUES",
+        "DELETE FROM secrets_erasure.erasures",
+        "TRUNCATE secrets_erasure.erasures",
+        "ALTER FUNCTION secrets_erasure.record_erasure() RENAME TO bypass_erasure",
+        "DROP SCHEMA secrets_erasure CASCADE",
+        "DROP SCHEMA {{schema}} CASCADE",
+        "TRUNCATE {{tables.sealed_versions}} CASCADE",
+        "SET session_replication_role=replica",
+    ],
+)
+async def test_runtime_role_cannot_remove_the_invariant(erasedb, statement):
+    _, db, _, _ = erasedb
+    with pytest.raises(asyncpg.InsufficientPrivilegeError):
+        async with db.transaction() as tx:
+            await tx.execute(statement)
+    await check_erasure_store(db, expected_schema_digest=service_schema_fingerprint())
+
+
+async def test_lost_ledger_cannot_be_reinitialised_over_content(erasedb):
+    operator, db, role, custody = erasedb
+    await staged(custody, db)
+    await operator.execute("DROP SCHEMA secrets_erasure CASCADE")
+    with pytest.raises(ErasureUnavailable) as refusal:
+        await initialize_erasure_store(
+            operator, application_role=role, max_backup_age=timedelta(days=7)
+        )
+    assert refusal.value.reason is ErasureFailure.RESTORE_WITHOUT_LEDGER
+    with pytest.raises(ErasureUnavailable) as refusal:
+        await check_erasure_store(db, expected_schema_digest=service_schema_fingerprint())
+    assert refusal.value.reason is ErasureFailure.RESTORE_WITHOUT_LEDGER
+    assert "Do not initialise" in str(refusal.value)
+
+
+@pytest.mark.parametrize("carrier", ["sealed", "reference_clear", "reference_delete", "pin"])
+async def test_every_plain_destructive_statement_is_atomic_with_its_tombstone(
+    erasedb, tmp_path, carrier
+):
+    _, db, _, custody = erasedb
+    context = await staged(custody, db)
+    if carrier.startswith("reference"):
+        await db.execute(
+            "INSERT INTO {{tables.onepassword_versions}}"
+            " (installation_id,team_id,secret_id,version,credential_version,version_ref,binding,item_updated_at)"
+            " VALUES($1,$2,$3,$4,1,$5,$6,clock_timestamp())",
+            context.installation_id,
+            context.team_id,
+            context.secret_id,
+            context.version,
+            "sv_" + uuid4().hex,
+            json.dumps({"synthetic": "reference"}),
+        )
+        table = "onepassword_versions"
+        statement = (
+            "UPDATE {{tables.onepassword_versions}} SET binding=NULL,destroyed_at=clock_timestamp()"
+            if carrier == "reference_clear"
+            else "DELETE FROM {{tables.onepassword_versions}}"
+        )
+        live = "binding IS NOT NULL"
+    elif carrier == "pin":
+        value = await custody.backend_credential_preview.open(context)
+        pin = await RunPins(LocalKeyFileProvider(tmp_path / "custody-key")).prepare(
+            context, uuid4(), value, observation=None, grant_id="grt_synthetic0001"
+        )
+        async with db.transaction() as tx:
+            await retain(tx, [pin], deadline=datetime.now(UTC) + timedelta(hours=1))
+        table, statement, live = (
+            "run_redaction_pins",
+            "DELETE FROM {{tables.run_redaction_pins}}",
+            "true",
+        )
+    else:
+        table, statement, live = "sealed_versions", "DELETE FROM {{tables.sealed_versions}}", "true"
+
+    saved = await db.fetch_one(f"SELECT * FROM {{{{tables.{table}}}}}")
+
+    # Transaction rollback is the acceptance proof, not an application callback.
+    class Abandon(Exception):
+        pass
+
+    with pytest.raises(Abandon):
+        async with db.transaction() as tx:
+            await tx.execute(statement)
+            [receipt] = await operator_receipts(tx)
+            assert receipt.context == context
+            raise Abandon
+    assert await operator_receipts(db) == ()
+    assert await db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}} WHERE {live}") == 1
+    await db.execute(statement)
+    [receipt] = await operator_receipts(db)
+    assert receipt.context == context
+    assert receipt.recoverable_until - receipt.destroyed_at == timedelta(days=7)
+    assert await db.fetch_value(f"SELECT count(*) FROM {{{{tables.{table}}}}} WHERE {live}") == 0
+    if carrier == "pin":
+        assert receipt.dispatch_id == str(pin.dispatch_id)
+    assert receipt.recoverable_until.isoformat() in receipt.explanation
+    await db.execute(statement)
+    assert await operator_receipts(db) == (receipt,)
+    await check_erasure_store(db, expected_schema_digest=service_schema_fingerprint())
+    columns = ",".join(saved.keys())
+    placeholders = ",".join(f"${i}" for i in range(1, len(saved) + 1))
+    with pytest.raises(asyncpg.PostgresError) as resurrection:
+        async with db.transaction() as tx:
+            await tx.execute(
+                f"INSERT INTO {{{{tables.{table}}}}} ({columns}) VALUES({placeholders})",
+                *saved.values(),
+            )
+    assert map_erasure_failure(resurrection.value).reason is ErasureFailure.INCOMPLETE
+
+
+async def test_changing_schema_cannot_initialise_over_existing_unbound_content(erasedb):
+    operator, db, role, custody = erasedb
+    await staged(custody, db)
+    await operator.execute("DROP SCHEMA secrets_erasure CASCADE")
+    await operator.execute("DROP TABLE {{tables.erasure_store_identity}}")
+    other = AsyncDatabaseManager(
+        operator.config.model_copy(update={"schema_name": "other_content"})
+    )
+    await other.connect()
+    try:
+        with pytest.raises(ErasureUnavailable) as refusal:
+            await initialize_erasure_store(
+                other, application_role=role, max_backup_age=timedelta(days=7)
+            )
+        assert refusal.value.reason is ErasureFailure.RESTORE_WITHOUT_LEDGER
+        assert not await operator.fetch_value(
+            "SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname='secrets_erasure')"
+        )
+    finally:
+        await other.disconnect()
+
+
+async def test_allocation_floor_rolls_back_and_refuses_context_reuse(erasedb):
+    operator, db, _, custody = erasedb
+    context = await staged(custody, db)
+    assert await db.fetch_value("SELECT last_version FROM secrets_erasure.allocations") == 1
+    async with db.transaction() as tx:
+        await tx.execute("SAVEPOINT allocation")
+        await tx.execute("UPDATE {{tables.custody_secrets}} SET last_version=last_version+1")
+        assert await tx.fetch_value("SELECT last_version FROM secrets_erasure.allocations") == 2
+        await tx.execute("ROLLBACK TO SAVEPOINT allocation")
+        assert await tx.fetch_value("SELECT last_version FROM secrets_erasure.allocations") == 1
+    # Simulate content rollback by an operator while retaining the newer floor.
+    await operator.execute(
+        "ALTER TABLE {{tables.custody_secrets}} DISABLE TRIGGER secrets_record_allocation"
+    )
+    await operator.execute("UPDATE {{tables.custody_secrets}} SET last_version=0")
+    await operator.execute(
+        "ALTER TABLE {{tables.custody_secrets}} ENABLE TRIGGER secrets_record_allocation"
+    )
+    with pytest.raises(ErasureUnavailable) as refusal:
+        await check_erasure_store(db, expected_schema_digest=service_schema_fingerprint())
+    assert refusal.value.reason is ErasureFailure.ALLOCATION_REGRESSED
+    with pytest.raises(asyncpg.PostgresError) as trigger_error:
+        async with db.transaction() as tx:
+            await tx.execute("UPDATE {{tables.custody_secrets}} SET last_version=1")
+    assert map_erasure_failure(trigger_error.value).reason is ErasureFailure.ALLOCATION_REGRESSED
+    assert (
+        await operator.fetch_value("SELECT last_version FROM secrets_erasure.allocations")
+        == context.version
+    )
+
+
+async def test_trigger_failure_rolls_back_deletion_and_has_named_mapping(erasedb):
+    operator, db, _, custody = erasedb
+    await staged(custody, db)
+    await operator.execute("ALTER TABLE secrets_erasure.erasures RENAME TO unavailable_erasures")
+    with pytest.raises(asyncpg.PostgresError) as failure:
+        async with db.transaction() as tx:
+            await tx.execute("DELETE FROM {{tables.sealed_versions}}")
+    assert map_erasure_failure(failure.value).reason is ErasureFailure.UNAVAILABLE
+    assert await operator.fetch_value("SELECT count(*) FROM {{tables.sealed_versions}}") == 1
+
+
+@pytest.mark.parametrize("fault", ["identity", "schema", "floor", "trigger", "readability"])
+async def test_startup_refuses_tampered_or_unreadable_authority(erasedb, fault):
+    operator, db, role, custody = erasedb
+    await staged(custody, db)
+    statements = {
+        "identity": "UPDATE secrets_erasure.store SET identity=gen_random_uuid()",
+        "schema": "UPDATE secrets_erasure.store SET schema_digest='different-schema'",
+        "floor": "DELETE FROM secrets_erasure.allocations",
+        "trigger": "ALTER TABLE {{tables.sealed_versions}} DISABLE TRIGGER secrets_record_erasure",
+        "readability": f'REVOKE SELECT ON secrets_erasure.store FROM "{role}"',
+    }
+    expected = {
+        "identity": ErasureFailure.IDENTITY_MISMATCH,
+        "schema": ErasureFailure.SCHEMA_MISMATCH,
+        "floor": ErasureFailure.ALLOCATION_REGRESSED,
+        "trigger": ErasureFailure.ROLE_UNSAFE,
+        "readability": ErasureFailure.UNAVAILABLE,
+    }
+    await operator.execute(statements[fault])
+    with pytest.raises(ErasureUnavailable) as refusal:
+        await check_erasure_store(db, expected_schema_digest=service_schema_fingerprint())
+    assert refusal.value.reason is expected[fault]

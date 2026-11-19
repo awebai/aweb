@@ -44,7 +44,8 @@ def test_an_optional_component_is_its_own_file_and_the_core_file_needs_none_of_i
     core = set(re.findall(r"\$\{([A-Z_]+)", (TEAM / "compose.yaml").read_text(encoding="utf-8"))) - {"SECRETS_DIR"}
     assert set(COMPOSE["services"]) == {"redis", "postgres", "aweb"}
     for name, text in COMPONENT_FILES.items():
-        assert list(yaml.safe_load(text)["services"]) == [name]
+        expected = ["secrets-erasure-init", "secrets"] if name == "secrets" else [name]
+        assert list(yaml.safe_load(text)["services"]) == expected
         assert not {variable for variable in core if variable.startswith(f"{name.upper()}_")}, name
         assert "profiles" not in yaml.safe_load(text)["services"][name]
 
@@ -219,7 +220,28 @@ def test_an_app_reads_every_setting_its_section_of_the_schema_renders():
     for name, service in APPS.items():
         rendered = settings_of(SCHEMA["properties"][name])
         wrapper = {f"{name.upper()}_{suffix}" for suffix in ("IMAGE", "SECRETS", "BIND_ADDRESS", "PORT")}
+        if name == "secrets":
+            operator = yaml.safe_load(COMPONENT_FILES[name])["services"]["secrets-erasure-init"]
+            assert operator["profiles"] == ["erasure-init"]
+            assert operator["command"][-2:] == [
+                "--max-backup-age-seconds", "${SECRETS_BACKUP_MAX_AGE_SECONDS:-0}",
+            ]
+            wrapper.add("SECRETS_BACKUP_MAX_AGE_SECONDS")
         assert rendered - wrapper <= set(environment(service)), name
+
+
+def test_secrets_operator_credential_is_confined_to_the_one_shot_job():
+    operator = yaml.safe_load(COMPONENT_FILES["secrets"])["services"]["secrets-erasure-init"]
+    assert operator["user"] == "0:0"
+    assert operator["read_only"] is True
+    assert operator["networks"] == ["services"]
+    assert operator["volumes"] == [
+        "${SECRETS_DIR:?SECRETS_DIR is required, compose.secretsDir}/${POSTGRES_SECRETS:-postgres}/password:/run/operator/password:ro",
+    ]
+    assert operator["entrypoint"] == ["python", "-m", "aweb_secrets.erasure"]
+    assert operator["command"][:3] == ["init-erasure", "--bundled-password-file", "/run/operator/password"]
+    assert not any("operator" in volume or "POSTGRES_SECRETS" in volume
+                   for volume in SERVICES["secrets"].get("volumes", []))
 
 
 def test_an_app_is_an_ordinary_member_with_a_read_only_root():
