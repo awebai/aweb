@@ -77,7 +77,8 @@ async def test_own_person_refreshes_only_the_held_active_binding(native_holder):
             identity=other_id,
             chain=other_chain,
         )
-        assert other.status_code in (401, 403), other.text
+        assert other.status_code == 403, other.text
+        assert other.json()["error"]["code"] == "binding_refresh_person_required"
         assert holder.active_person(own["identity"]) == original
         audit = holder.store.audit()
         assert audit[-1]["actor"] == own["key"]
@@ -117,4 +118,53 @@ async def test_current_rotated_person_key_gets_enrollment_recovery_advice(
         in error["message"]
     )
     assert holder.active_person(own["identity"]) == original
+    assert holder.store.audit() == audit_before
+
+
+@pytest.mark.asyncio
+async def test_changed_approval_site_has_configuration_advice_not_lost_key_advice(
+    native_holder, tmp_path
+):
+    from approval_service.gate import render_policy
+
+    from aweb_key_holder.enrollment import Holder
+
+    holder, registry = native_holder.holder, native_holder.registry
+    own, _, confirmation, _ = await first_person(native_holder, activate=True)
+    policy = tmp_path / "moved-service.json"
+    policy.write_bytes(
+        render_policy(
+            holder.store.descriptor().domain,
+            {
+                "service": "https://moved.example",
+                "require": {"organisation.human.add": "passkey"},
+            },
+        )
+    )
+    moved = Holder(
+        holder.store,
+        registry=registry,
+        origin=holder.origin,
+        approval_origin="https://moved.example",
+        rp_id="moved.example",
+        grading=holder.grading,
+        human_approval_config=policy,
+    )
+    audit_before = holder.store.audit()
+    packet = {
+        "previous_binding_commitment": commitment(
+            "binding_commitment", confirmation["binding"]
+        )
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(moved)), base_url=moved.origin
+    ) as client:
+        response = await call(
+            client, f"/v1/enrollments/{own['identity']}/refresh-binding", packet, **own
+        )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"] == {
+        "code": "binding_refresh_site_changed",
+        "message": "Restore the holder's original approval-service origin and RP-ID before retrying. Moving this enrollment to another site is not implemented; ask the operator about a new ID and enrollment if a move is required.",
+    }
     assert holder.store.audit() == audit_before
