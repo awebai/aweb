@@ -2255,7 +2255,7 @@ func TestGuidedOnboardingReconnectRunsPostInitSetupOnce(t *testing.T) {
 	}
 }
 
-func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
+func TestRunGuidedSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 	oldInjectDocs := guidedOnboardingInjectDocs
 	oldSetupHooks := guidedOnboardingSetupHooks
 	oldSetupChannel := guidedOnboardingSetupChannel
@@ -2282,7 +2282,7 @@ func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 		return &claudeHooksResult{}
 	}
 
-	err := runGuidedPostInitSetup(guidedOnboardingRequest{
+	_, err := runGuidedSetup(guidedOnboardingRequest{
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "n\ny\n"},
 		PromptOut:          &bytes.Buffer{},
@@ -2290,7 +2290,7 @@ func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
-		t.Fatalf("runGuidedPostInitSetup: %v", err)
+		t.Fatalf("runGuidedSetup: %v", err)
 	}
 	if docsRepo != tmp {
 		t.Fatalf("docs_repo=%q", docsRepo)
@@ -2306,7 +2306,7 @@ func TestRunGuidedPostInitSetupKeepsDocsChannelHooksPrompts(t *testing.T) {
 	}
 }
 
-func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
+func TestRunGuidedSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 	oldInjectDocs := guidedOnboardingInjectDocs
 	oldSetupHooks := guidedOnboardingSetupHooks
 	oldSetupChannel := guidedOnboardingSetupChannel
@@ -2341,7 +2341,7 @@ func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := runGuidedPostInitSetup(guidedOnboardingRequest{
+	_, err := runGuidedSetup(guidedOnboardingRequest{
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "\n\n"},
 		PromptOut:          &out,
@@ -2349,7 +2349,7 @@ func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
-		t.Fatalf("runGuidedPostInitSetup: %v", err)
+		t.Fatalf("runGuidedSetup: %v", err)
 	}
 	if docsCalls != 1 {
 		t.Fatalf("docs calls=%d", docsCalls)
@@ -2366,7 +2366,7 @@ func TestRunGuidedPostInitSetupDefaultsDocsAndChannelToYes(t *testing.T) {
 	}
 }
 
-func TestRunGuidedPostInitSetupCanSkipAgentDocsMutation(t *testing.T) {
+func TestRunGuidedSetupCanSkipAgentDocsMutation(t *testing.T) {
 	oldInjectDocs := guidedOnboardingInjectDocs
 	oldSetupHooks := guidedOnboardingSetupHooks
 	oldSetupChannel := guidedOnboardingSetupChannel
@@ -2391,7 +2391,7 @@ func TestRunGuidedPostInitSetupCanSkipAgentDocsMutation(t *testing.T) {
 		return &claudeHooksResult{}
 	}
 
-	err := runGuidedPostInitSetup(guidedOnboardingRequest{
+	_, err := runGuidedSetup(guidedOnboardingRequest{
 		WorkingDir:         tmp,
 		PromptIn:           &singleByteReader{data: "\n"},
 		PromptOut:          &bytes.Buffer{},
@@ -2400,7 +2400,7 @@ func TestRunGuidedPostInitSetupCanSkipAgentDocsMutation(t *testing.T) {
 		AskPostCreateSetup: true,
 	})
 	if err != nil {
-		t.Fatalf("runGuidedPostInitSetup: %v", err)
+		t.Fatalf("runGuidedSetup: %v", err)
 	}
 	if docsCalls != 0 {
 		t.Fatalf("docs calls=%d", docsCalls)

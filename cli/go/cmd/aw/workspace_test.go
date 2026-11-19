@@ -2799,7 +2799,7 @@ updated_at: "2026-04-09T00:00:00Z"
 		saveWorktreeWorkspaceTo = origSave
 	}()
 
-	_, err = migrateLegacyWorkspaceToMultiTeam(tmp, workspacePath)
+	_, err = migrateLegacyWorkspaceToMultiTeamAt(tmp, workspacePath, awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(tmp), Source: awconfig.IdentityHomeDefault})
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected workspace save failure, got %v", err)
 	}

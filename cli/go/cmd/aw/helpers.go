@@ -910,11 +910,6 @@ func redirectLocationDisplay(raw string, base *url.URL) string {
 	return display
 }
 
-func probeAwebBaseURL(ctx context.Context, baseURL string) (bool, error) {
-	ok, _, err := probeAwebBaseURLOutcome(ctx, baseURL)
-	return ok, err
-}
-
 const awebBaseURLProbeTimeout = 2 * time.Second
 
 // probeAwebBaseURLOutcome reports whether baseURL serves the aweb API. When it
@@ -963,10 +958,6 @@ func probeAwebBaseURLOutcome(ctx context.Context, baseURL string) (ok bool, outc
 		return false, fmt.Sprintf("web app (HTTP %d HTML)", resp.StatusCode), nil
 	}
 	return true, "", nil
-}
-
-func resolveWorkingBaseURL(raw string) (string, error) {
-	return resolveWorkingBaseURLContext(context.Background(), raw)
 }
 
 func resolveWorkingBaseURLContext(ctx context.Context, raw string) (string, error) {

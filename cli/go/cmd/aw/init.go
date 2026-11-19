@@ -1156,24 +1156,6 @@ func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
 	fmt.Fprintln(commandStdout, "Workspace ready.")
 }
 
-func printChannelLaunchInstructions(out io.Writer) {
-	fmt.Fprintln(out, "To use the channel directly inside Claude Code (real-time coordination),")
-	fmt.Fprintln(out, "install the plugin once:")
-	fmt.Fprintln(out, "  claude plugin marketplace add awebai/claude-plugins")
-	fmt.Fprintln(out, "  claude plugin install aweb-channel@awebai-marketplace")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Then start Claude Code with this exact line:")
-	fmt.Fprintln(out, "  claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
-	fmt.Fprintln(out)
-	for _, line := range channelLaunchWhyLines {
-		fmt.Fprintln(out, line)
-	}
-	fmt.Fprintln(out)
-	for _, line := range channelPiPathLines {
-		fmt.Fprintln(out, line)
-	}
-}
-
 // channelLaunchWhyLines distinguishes channel loading from permission mode.
 var channelLaunchWhyLines = []string{
 	"Channel delivery works in any permission mode, including auto and plan.",
@@ -1406,12 +1388,6 @@ func initDefaultSetup(result *initResult, workingDir string) func() (initSetupDo
 	}
 }
 
-// initNextSteps is the next steps for the path init took when docs and
-// channel setup did, or did not, happen.
-func initNextSteps(result *initResult, workingDir string, didInjectDocs, didSetupChannel bool) []initNextStep {
-	return initNextStepsAfter(result, workingDir, initSetupDone{DocsInjected: didInjectDocs, ChannelSetUp: didSetupChannel})
-}
-
 // initNextStepsAfter is the one list of next steps for the path init took,
 // after what its setup actually did. Text and --json both print it.
 func initNextStepsAfter(result *initResult, workingDir string, done initSetupDone) []initNextStep {
@@ -1479,12 +1455,6 @@ func formatInitNextSteps(steps []initNextStep, withChannelGuidance bool) string 
 		sb.WriteString(line + "\n")
 	}
 	return sb.String()
-}
-
-// initNextStepLines renders the next steps for text output, with the channel
-// guidance.
-func initNextStepLines(steps []initNextStep) []string {
-	return initStepLines(steps, true)
 }
 
 func initStepLines(steps []initNextStep, withChannelGuidance bool) []string {

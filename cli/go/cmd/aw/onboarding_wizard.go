@@ -276,11 +276,6 @@ func guidedSetup(req guidedOnboardingRequest) func() (initSetupDone, error) {
 	}
 }
 
-func runGuidedPostInitSetup(req guidedOnboardingRequest) error {
-	_, err := runGuidedSetup(req)
-	return err
-}
-
 // runGuidedSetup runs the wizard's setup after connecting and returns what it
 // actually did.
 func runGuidedSetup(req guidedOnboardingRequest) (initSetupDone, error) {

@@ -752,10 +752,6 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (workspaceMigrateMultiTeamOutput, error) {
-	return migrateLegacyWorkspaceToMultiTeamAt(workingDir, workspacePath, awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir), Source: awconfig.IdentityHomeDefault})
-}
-
 func migrateLegacyWorkspaceToMultiTeamAt(workingDir, workspacePath string, home awconfig.IdentityHome) (workspaceMigrateMultiTeamOutput, error) {
 	legacy, err := awconfig.LoadLegacySingleTeamWorkspaceFrom(workspacePath)
 	if err != nil {

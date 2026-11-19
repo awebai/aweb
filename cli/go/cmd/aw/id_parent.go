@@ -644,13 +644,6 @@ func formatIDParentImport(v any) string {
 	return fmt.Sprintf("Installed the certificate of %s.\n", out.ID)
 }
 
-// installImportedChain installs chain, imported from response to requestID, in
-// home as one credential update, so a custody service serving home rebuilds
-// from it. Registration at AWID is not part of the update.
-func installImportedChain(home, requestID string, response []byte, chain map[string]any) error {
-	return installParentChain(home, "parent-import", requestID, response, chain, nil)
-}
-
 func installParentChain(home, command, requestID string, response []byte, chain map[string]any, check func() error) error {
 	sum := sha256.Sum256(response)
 	op := awconfig.CredentialOperation{Command: command, Intent: awconfig.CredentialIntent(map[string]any{
