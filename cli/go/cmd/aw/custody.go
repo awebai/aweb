@@ -956,10 +956,11 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if !ok {
 		return nil, fmt.Errorf("grant_scope_denied")
 	}
-	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.PlainMessageSignResponse{})
+	key, cached, err := s.reserveCustodyReplay(custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest}, &awid.PlainMessageSignResponse{})
 	if err != nil {
 		return nil, err
 	}
+	defer s.releaseFailedCustodyReplay(key)
 	if res, _ := cached.(*awid.PlainMessageSignResponse); res != nil {
 		return res, nil
 	}
@@ -1283,10 +1284,11 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 			return nil, fmt.Errorf("grant_scope_denied")
 		}
 	}
-	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.E2EEEnvelopeCreateResponse{})
+	key, cached, err := s.reserveCustodyReplay(custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest}, &awid.E2EEEnvelopeCreateResponse{})
 	if err != nil {
 		return nil, err
 	}
+	defer s.releaseFailedCustodyReplay(key)
 	if out, _ := cached.(*awid.E2EEEnvelopeCreateResponse); out != nil {
 		return out, nil
 	}
@@ -1619,10 +1621,11 @@ func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUn
 	if _, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, kind+".read"); err != nil {
 		return nil, err
 	}
-	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.E2EEUnwrapResponse{})
+	key, cached, err := s.reserveCustodyReplay(custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest}, &awid.E2EEUnwrapResponse{})
 	if err != nil {
 		return nil, err
 	}
+	defer s.releaseFailedCustodyReplay(key)
 	if out, _ := cached.(*awid.E2EEUnwrapResponse); out != nil {
 		return out, nil
 	}

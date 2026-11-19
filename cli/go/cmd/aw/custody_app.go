@@ -94,10 +94,11 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 	if current.InstallationID != app.InstallationID {
 		return nil, installationApprovalError("app_installation_changed", app.App.Origin, s.residentHome, snap.TeamID)
 	}
-	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.AppRequestSignResponse{})
+	key, cached, err := s.reserveCustodyReplay(custodyReplayRequest{grantID: req.GrantID, sessionDIDKey: req.SessionDIDKey, nonce: req.Nonce, digest: req.RequestDigest}, &awid.AppRequestSignResponse{})
 	if err != nil {
 		return nil, err
 	}
+	defer s.releaseFailedCustodyReplay(key)
 	if out, _ := cached.(*awid.AppRequestSignResponse); out != nil {
 		return out, nil
 	}
