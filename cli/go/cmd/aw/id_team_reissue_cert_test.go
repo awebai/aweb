@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -235,6 +236,9 @@ func TestTeamReissueCertRefusesAmbiguousNewestRevokedMemberFacts(t *testing.T) {
 	teamReissueCertRegistryURL = world.frontRegistry(t, registryFault{Rewrite: func(response *http.Response) error {
 		if response.Request.Method != http.MethodGet || !strings.HasSuffix(response.Request.URL.Path, "/teams/backend/certificates") {
 			return nil
+		}
+		if encoding := response.Header.Get("Content-Encoding"); encoding != "" {
+			return fmt.Errorf("the tied-history fault rewrites plain JSON; the registry answered %s", encoding)
 		}
 		var page map[string]any
 		if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
