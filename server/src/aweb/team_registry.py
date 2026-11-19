@@ -44,7 +44,9 @@ def native_database_manager(db_or_manager):
 
 def request_auth_audiences(request: Request) -> list[str]:
     """The configured public origin required by team-auth-envelope-v2.md:21-28."""
-    configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
+    configured = str(
+        getattr(native_application_state(request.app.state), "public_origin", "") or ""
+    ).strip()
     if configured:
         return [configured]
     raise HTTPException(

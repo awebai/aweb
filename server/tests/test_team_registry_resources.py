@@ -94,3 +94,41 @@ async def test_request_registration_uses_the_resource_client_over_the_outer_slot
         request = Request({"type": "http", "app": app})
         assert await request_registered_certificates(request, "team:example.test") == set()
     assert reads == ["serving.example"]
+
+
+@pytest.mark.asyncio
+async def test_request_pin_refresh_uses_the_same_borrowed_native_resources(monkeypatch):
+    """Unit pin-adapter wiring; the recorder is not controller authority proof."""
+    import aweb.team_key_pins as owner
+    from aweb.team_registry import request_auth_audiences
+    from awid.registry import RegistryClient
+    from fastapi import FastAPI
+    from starlette.requests import Request
+
+    received = []
+
+    async def record_pin(**arguments):
+        received.append(arguments)
+        return arguments["served_key"]
+
+    monkeypatch.setattr(owner, "pinned_team_key", record_pin)
+    outer, native = FastAPI(), FastAPI()
+    db, resolver = object(), SystemTXTOutcomeResolver()
+    native.state.public_origin = "https://native.example"
+    native.state.awid_txt_resolver = resolver
+    outer.state.public_origin = "https://unused-outer.example"
+    async with aclosing(RegistryClient(registry_url="https://serving.example")) as client:
+        outer.state.native_resources = SimpleNamespace(api_app=native, registry_client=client)
+        request = Request({"type": "http", "app": outer})
+        assert request_auth_audiences(request) == ["https://native.example"]
+        assert (
+            await owner.pinned_team_key_for_request(
+                request, "team:example.test", "served-controller", db=db
+            )
+            == "served-controller"
+        )
+        assert received[0]["registry_client"] is client
+        assert received[0]["txt_resolver"] is resolver
+        assert received[0]["db"] is db
+        assert received[0]["pin_memo"] is native.state.team_key_pin_memo
+        assert not hasattr(outer.state, "team_key_pin_memo")

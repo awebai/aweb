@@ -4,13 +4,13 @@ from enum import StrEnum
 
 
 class IdentityScope(StrEnum):
-    """Team-local keys and registry-addressed identities (identity.md:93-102)."""
+    """Team-local keys and registry-addressed identities (identity.md:65-74)."""
 
     LOCAL = "local"
     GLOBAL = "global"
 
 
-LEGACY_IDENTITY_SCOPE_ALIASES = {
+_CERTIFICATE_SCOPE_ALIASES = {
     "persistent": IdentityScope.GLOBAL,
     "ephemeral": IdentityScope.LOCAL,
 }
@@ -27,7 +27,7 @@ def normalize_identity_scope(
     if value is not None and not isinstance(value, str):
         raise ValueError("identity_scope must be 'global' or 'local'")
     scope = (value or default).strip().lower() or default
-    scope = LEGACY_IDENTITY_SCOPE_ALIASES.get(scope, scope)
+    scope = _CERTIFICATE_SCOPE_ALIASES.get(scope, scope)
     try:
         return IdentityScope(scope)
     except ValueError as exc:

@@ -38,7 +38,7 @@ class IdentityProjectionField(StrEnum):
 def verified_key_sql(agent: str = "") -> str:
     """The SQL form of verified_projection's current-key guard.
 
-    docs/identity.md:569-578 makes global claims conditional on this marker.
+    docs/identity.md:598-607 makes global claims conditional on this marker.
     ``agent`` is a source-code SQL alias, never a value from a request.
     """
     if agent and not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", agent):
@@ -60,7 +60,7 @@ def verified_identity_field_sql(field: IdentityProjectionField, *, agent: str = 
 def verified_principal_did_sql(*, agent: str = "") -> str:
     """Project a member principal without adopting a raw stable-DID claim.
 
-    docs/identity.md:569-585 requires registry-verified marker evidence for
+    docs/identity.md:598-609 requires registry-verified marker evidence for
     stable identity. A local principal remains its literal signing did:key.
     """
     stable = verified_identity_field_sql(IdentityProjectionField.STABLE_DID, agent=agent)

@@ -31,6 +31,7 @@ from awid.team_key_acts import (
 )
 from fastapi import HTTPException, Request
 
+from aweb.application_state import application_registry_client, native_application_state
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
@@ -151,7 +152,7 @@ async def pinned_team_key_for_request(
     key is the 401 ``team_key_unverified`` and a failed act read is the
     registry dependency error. A request under a served key this app answered
     within the memo window (awid TeamKeyMemo) reads nothing."""
-    state = request.app.state
+    state = native_application_state(request.app.state)
     memo = getattr(state, "team_key_pin_memo", None)
     if memo is None:
         memo = TeamKeyMemo()
@@ -159,7 +160,7 @@ async def pinned_team_key_for_request(
     try:
         key = await pinned_team_key(
             db=db if db is not None else state.db.get_manager("aweb"),
-            registry_client=state.awid_registry_client,
+            registry_client=application_registry_client(request.app.state),
             txt_resolver=txt_resolver_for(state),
             team_id=team_id,
             served_key=served_key,

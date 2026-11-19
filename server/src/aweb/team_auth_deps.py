@@ -38,7 +38,9 @@ from aweb.identity_binding import (
 )
 from aweb.identity_scope import normalize_identity_scope
 from aweb.member_team_key import (
+    CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
     MemberProjection,
+    member_row_active,
     read_member_projection,
 )
 from aweb.request_body import request_body_sha256
@@ -89,7 +91,7 @@ async def resolve_team_identity(
         TeamIdentity with resolved agent_id.
 
     Raises:
-        ValueError: If the agent is not found (not connected).
+        ValueError: If the native member is absent, deleted or inactive.
     """
     team_id = cert_info["team_id"]
     did_key = cert_info["did_key"]
@@ -102,8 +104,8 @@ async def resolve_team_identity(
         try:
             row = MemberProjection.from_row(row)
         except ValueError:
-            # Compatibility for older host snapshots: query the native owner
-            # rather than treating missing authority columns as NULL facts.
+            # A partial row cannot answer native eligibility. Read the missing
+            # authority facts through their owner, without inventing NULL values.
             logger.warning(
                 "Invalid host member snapshot; reading the canonical native projection",
                 exc_info=True,
@@ -118,8 +120,12 @@ async def resolve_team_identity(
 
     if not row or row["deleted_at"] is not None:
         raise ValueError(
-            f"Agent not connected: no agent with did_key {did_key[:20]}... in team {team_id}"
+            f"Agent not connected: no agent with did_key {did_key[:20]}... in team {team_id}. "
+            + CURRENT_MEMBERSHIP_REQUIRED_DETAIL
         )
+
+    if not member_row_active(row):
+        raise ValueError(CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
 
     binding = cert_info.get("identity_binding")
     if not isinstance(binding, IdentityBinding):
@@ -132,8 +138,8 @@ async def resolve_team_identity(
                 address=cert_info.get("member_address") or "",
             )
     if request is not None and not binding.did_aw and (row.get("did_aw") or row.get("address")):
-        # An older local certificate cannot inherit a stored global identity
-        # without proving that row's binding as well.
+        # A claimless certificate cannot inherit stored global identity
+        # metadata without independently proving that row's exact binding.
         binding = await verify_identity_binding(
             request,
             did_key=did_key,
@@ -142,10 +148,14 @@ async def resolve_team_identity(
         )
     await refresh_projection_binding(db, agent_id=row["agent_id"], did_key=did_key, binding=binding)
 
-    # identity.md:569-585: identity-only membership checks the certificate and
-    # team key actually admitted by this verified certificate request.
+    # identity.md:804-808: later grants must retain the exact certificate that
+    # this verified request makes current for its subject.
     presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
-    verified_team_did_key = (cert_info.get("verified_team_did_key") or "").strip()
+    # The request verifier supplies its checked key. Direct parser consumers
+    # retain an already admitted key instead of clearing that evidence.
+    verified_team_did_key = (
+        cert_info.get("verified_team_did_key") or row.get("accepted_team_did_key") or ""
+    ).strip()
     if presented_certificate_id and (
         presented_certificate_id != (row.get("certificate_id") or "").strip()
         or verified_team_did_key != (row.get("accepted_team_did_key") or "").strip()
@@ -440,7 +450,7 @@ async def resolve_team_identity_with_grant_scope(
 ) -> TeamIdentity:
     """Resolve native certificate/grant authority under a declared grant scope.
 
-    docs/identity.md:716-729: delegation cannot widen the operation's scope.
+    docs/identity.md:770-781: delegation cannot widen the operation's scope.
     Embedding hosts apply their own account fences to this same native result.
     """
     if (request.headers.get("Authorization") or "").lstrip().startswith("AWEB-Grant "):

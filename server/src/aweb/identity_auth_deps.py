@@ -218,7 +218,10 @@ async def lookup_identity_agent_context(
             return None
         raise HTTPException(
             status_code=409,
-            detail="Authenticated DID matches multiple active local agents",
+            detail=(
+                "Authenticated DID matches multiple active local agents. "
+                "Select the intended team with a current team certificate."
+            ),
         )
     if not rows:
         return None

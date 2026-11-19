@@ -96,7 +96,7 @@ class MemberProjection(Mapping[str, Any]):
     Raw claims remain available for policy classification. Consumers obtain
     attributed identity through ``verified_identity``; eligibility remains the
     member owner's decision. Missing columns are not replaced with NULL.
-    docs/identity.md:569-585 separates verified projection from policy claims.
+    docs/identity.md:598-609 separates verified projection from policy claims.
     """
 
     _row: Mapping[str, Any]
@@ -224,18 +224,22 @@ def member_key_current(row) -> bool:
     return bool(accepted) and accepted == str(row.get("current_team_did_key") or "").strip()
 
 
+def member_row_active(row: Mapping[str, Any] | None) -> bool:
+    """Read native status/deletion only, never identity or current-key authority.
+
+    migrations/aweb/001_initial.sql:42-45 defines native row state separately
+    from any certificate proof.
+    """
+    return bool(row and row.get("status") == MemberStatus.ACTIVE and row.get("deleted_at") is None)
+
+
 def current_member(row: Mapping[str, Any] | None) -> bool:
     """An active live member admitted under the team's current key.
 
     Migration 052:1-4 and docs/design/team-room-v1.md:16-21 require current
     membership; the identity's independent residence is not this question.
     """
-    return bool(
-        row
-        and row.get("status") == MemberStatus.ACTIVE
-        and row.get("deleted_at") is None
-        and member_key_current(row)
-    )
+    return member_row_active(row) and member_key_current(row)
 
 
 def current_member_sql(agent: str) -> str:
@@ -258,7 +262,7 @@ async def current_member_projections(
 ) -> list[MemberProjection]:
     """Select members by identity or membership without a newest-row winner.
 
-    docs/identity.md:93-107 scopes a member name to a team. Verified global
+    docs/identity.md:93-102 scopes a member name to a team. Verified global
     claims are selected through identity_binding, never raw metadata.
     SHARE holds eligible rows through the caller's transaction, preserving
     delivery policy through commit (identity-messaging-contract.md:314-320).
@@ -367,7 +371,7 @@ def grant_issuer_current(row) -> bool:
     certificate: the subject is a member under the current key and that
     member's certificate is the one the grant was issued from. A credential
     issued from a superseded certificate does not return: reaccepting the
-    member does not renew an earlier delegation (docs/identity.md:766-769).
+    member does not renew an earlier delegation (docs/identity.md:804-808).
     """
     if not member_key_current(row):
         return False
@@ -379,7 +383,7 @@ def grant_issuer_current(row) -> bool:
 def grant_issuer_current_sql(*, agent: str, grant: str) -> str:
     """The SQL form of grant_issuer_current for joined presence readers.
 
-    docs/identity.md:775-779 retains exact issuing-certificate equality after
+    docs/identity.md:804-808 retains exact issuing-certificate equality after
     reacceptance. Legacy issuer-ID-less grants keep their existing lifetime.
     Both aliases are source-code identifiers, never request values.
     """

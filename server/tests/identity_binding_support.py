@@ -26,28 +26,42 @@ def seed_verified_bindings(app, *bindings):
 
 
 async def register_global_identity(env, actor, address=""):
-    """Provision real DID/address evidence in the disposable AWID service."""
+    """Write DID and address evidence through the real signed registry routes.
+
+    The only supplied authority is external DNS for the disposable namespace.
+    Namespace/address authorization, writes and binding reads stay production.
+    """
+    from awid.dns_verify import DomainAuthority
+    from awid_service.deps import get_domain_verifier
+
     registry = env.app.state.awid_registry_client
     identity = await registry.register_did(actor.did, actor.sk)
-    if address:
-        domain, name = address.split("/", 1)
-        # DNS and address rows are fixture provisioning, as in the binding
-        # admission tests; signature and binding reads use the real service.
+    if not address:
+        return identity.did_aw
+    domain, name = address.split("/", 1)
+    assert domain == "example.test", "The privacy fixture owns only example.test"
+
+    async def namespace_authority(requested_domain: str) -> DomainAuthority:
+        assert requested_domain == domain
+        return DomainAuthority(env.team_did, registry.registry_url, "_awid." + domain)
+
+    overrides = env.registry_app.dependency_overrides
+    previous = overrides.get(get_domain_verifier)
+    overrides[get_domain_verifier] = lambda: namespace_authority
+    try:
         namespace = await env.registry_db.fetch_one(
-            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain=$1",
-            domain,
+            "SELECT namespace_id FROM {{tables.dns_namespaces}} WHERE domain=$1", domain
         )
         if namespace is None:
-            namespace = await env.registry_db.fetch_one(
-                "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-                "VALUES ($1, $2, 'verified') RETURNING namespace_id",
-                domain,
-                env.team_did,
-            )
-        await env.registry_db.execute(
-            "INSERT INTO {{tables.public_addresses}} (namespace_id, name, did_aw) VALUES ($1,$2,$3)",
-            namespace["namespace_id"],
-            name,
-            identity.did_aw,
+            await registry.register_namespace(domain, env.team_did, env.team_sk)
+        registered = await registry.register_address(
+            domain, name, identity.did_aw, env.team_sk, current_did_key=actor.did
         )
+        assert registered.did_aw == identity.did_aw
+        assert f"{registered.domain}/{registered.name}" == address
+    finally:
+        if previous is None:
+            del overrides[get_domain_verifier]
+        else:
+            overrides[get_domain_verifier] = previous
     return identity.did_aw
