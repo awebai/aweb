@@ -169,7 +169,10 @@ async def _resolve_address_identity(
                 domain, name, did_key=auth.did_key
             )
         except AWID_DEPENDENCY_ERRORS as exc:
-            logger.warning("Messaging home address lookup unavailable", exc_info=True)
+            logger.warning(
+                "Messaging home address lookup unavailable failure_type=%s",
+                type(exc).__name__,
+            )
             raise FederationAuthorityError("sender_registry_unavailable") from exc
     elif authority is not None:
         try:

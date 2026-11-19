@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from awid.federation_errors import FederationAuthorityError
 from awid.registry import Address, RegistryError
-from fastapi import HTTPException
 from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
 from aweb.identity_binding import observe_current_identity_binding
@@ -17,6 +16,7 @@ from aweb.federation.origins import is_own_origin
 from aweb.messaging.alias_targets import namespace_exists
 from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.recipient import Recipient
+from aweb.service_errors import IdentityBindingCode, IdentityBindingError
 
 if TYPE_CHECKING:
     from aweb.federation.activation import ResolvedContactIdentity
@@ -104,7 +104,7 @@ def refuse_same_origin_nonresident(delivery_origin: str, *, origins: set[str]) -
 
 async def local_recipient_for_own_route(
     db, route: Mapping[str, Any], runtime: MessagingRuntime
-) -> dict | None:
+) -> Recipient | None:
     """Classify a stored/refreshed route before forwarding or persisting it.
 
     The stored route supplies identity, never current-key evidence. Residence
@@ -133,19 +133,21 @@ async def local_recipient_for_own_route(
         # As with a stable-only signed continuation, discover the current key
         # through the existing binding authority, outside database transactions.
         # This validation context never repairs a participant or agent marker.
+        if runtime.registry_client is None:
+            raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE)
         try:
             resolution = await runtime.registry_client.resolve_key_fresh(did)
-        except Exception as exc:
+        except AWID_DEPENDENCY_ERRORS as exc:
             mismatch = isinstance(exc, RegistryError) and exc.status_code == 404
             if not mismatch:
                 logging.getLogger(__name__).warning(
-                    "Own-route recipient binding unavailable", exc_info=True
+                    "Own-route recipient binding unavailable failure_type=%s",
+                    type(exc).__name__,
                 )
-            raise HTTPException(
-                status_code=403 if mismatch else 503,
-                detail="identity_binding_mismatch"
+            raise IdentityBindingError(
+                IdentityBindingCode.MISMATCH
                 if mismatch
-                else "identity_binding_unavailable",
+                else IdentityBindingCode.UNAVAILABLE
             ) from exc
         address = str(route.get("address") or "")
         binding = await observe_current_identity_binding(
@@ -202,7 +204,8 @@ async def namespace_uses_home_registry(db, registry_client, domain: str) -> bool
         namespace = await registry_client.get_namespace_fresh(domain)
     except AWID_DEPENDENCY_ERRORS as exc:
         logging.getLogger(__name__).warning(
-            "Messaging home namespace lookup unavailable for %s", domain, exc_info=True
+            "Messaging home namespace lookup unavailable failure_type=%s",
+            type(exc).__name__,
         )
         raise FederationAuthorityError("sender_registry_unavailable") from exc
     return bool(

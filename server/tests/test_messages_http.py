@@ -4,6 +4,7 @@ from team_facts_fixtures import legacy_registry
 
 from collections import OrderedDict
 from time import monotonic
+from aweb.error_responses import install_service_error_handlers
 from aweb.identity_binding import IdentityBinding
 
 import asyncio
@@ -311,6 +312,7 @@ def test_encrypted_mail_rejects_non_base64_message_signature_shape():
 
 def _build_test_app(aweb_db, registry, *, verified_bindings=()):
     app = FastAPI()
+    install_service_error_handlers(app)
     app.include_router(federation_router)
     app.include_router(messages_router)
 
@@ -1058,7 +1060,7 @@ async def test_send_message_to_address_reuses_alias_thread(aweb_cloud_db):
         did_aw="did:aw:alice",
         address="acme.com/alice",
     )
-    bob_agent_id = await _insert_agent(
+    await _insert_agent(
         aweb_cloud_db.aweb_db,
         team_id="backend:acme.com",
         alias="bob",
@@ -1772,7 +1774,7 @@ async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db
         did_aw="did:aw:alice",
         address="acme.com/alice",
     )
-    bob_agent_id = await _insert_agent(
+    await _insert_agent(
         aweb_cloud_db.aweb_db,
         team_id="ops:otherco.com",
         alias="bob",
@@ -2699,7 +2701,7 @@ async def test_send_message_to_hosted_handle_alias_uses_canonical_address(
         did_aw="did:aw:alice",
         address="acme.com/alice",
     )
-    c3po_agent_id = await _insert_agent(
+    await _insert_agent(
         aweb_cloud_db.aweb_db,
         team_id="default:jane.aweb.ai",
         alias="c3po",

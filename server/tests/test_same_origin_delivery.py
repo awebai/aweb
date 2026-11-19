@@ -58,7 +58,7 @@ def same_origin_registry_socket():
 
 
 @pytest_asyncio.fixture
-async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):
+async def same_origin(privacy_app, monkeypatch, same_origin_registry_socket):  # noqa: F811
     env = privacy_app
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "disposable-acst-proxy-secret")
@@ -1579,7 +1579,7 @@ async def test_own_route_current_binding_unavailable_refuses(
     from dataclasses import replace
 
     from awid.registry import RegistryClient
-    from fastapi import HTTPException
+    from aweb.service_errors import IdentityBindingCode, IdentityBindingError
     from aweb.messaging.address_auth import local_recipient_for_own_route
     from aweb.messaging.runtime import messaging_runtime
 
@@ -1610,12 +1610,16 @@ async def test_own_route_current_binding_unavailable_refuses(
         )
         runtime = replace(messaging_runtime(env.app.state), registry_client=client)
         try:
-            with pytest.raises(HTTPException) as refused:
+            with pytest.raises(IdentityBindingError) as refused:
                 await local_recipient_for_own_route(env.infra, route, runtime)
         finally:
             await client.aclose()
     assert refused.value.status_code == 503
     assert refused.value.detail == "identity_binding_unavailable"
+    assert refused.value.code is IdentityBindingCode.UNAVAILABLE
+    assert refused.value.message.endswith(
+        "Retry when the identity registry is available."
+    )
     assert not same_origin.ingress
     assert len(foreign_receiver.ingress) == 1
     assert await same_origin.effects() == before
