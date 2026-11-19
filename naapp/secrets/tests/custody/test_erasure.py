@@ -2,6 +2,7 @@
 
 import secrets
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
@@ -25,6 +26,13 @@ from aweb_secrets.schema import service_schema_fingerprint
 from aweb_secrets.secret import SecretRecord
 from tests.custody.conftest import initial_record
 from tests.custody.test_onepassword import field, reference, sdk_item
+
+
+class PrivilegeSource(StrEnum):
+    PUBLIC = "public"
+    INHERITED = "inherited"
+    TABLE_GRANT_OPTION = "table_grant_option"
+    COLUMN_GRANT_OPTION = "column_grant_option"
 
 
 @pytest.fixture
@@ -139,26 +147,26 @@ async def test_startup_refuses_grants_added_after_valid_initialisation(erasedb, 
     assert refusal.value.reason is ErasureFailure.ROLE_UNSAFE
 
 
-@pytest.mark.parametrize(
-    "source", ["public", "inherited", "table_grant_option", "column_grant_option"]
-)
-async def test_startup_checks_effective_and_delegatable_privileges(erasedb, source):
+@pytest.mark.parametrize("source", list(PrivilegeSource))
+async def test_startup_checks_effective_and_delegatable_privileges(
+    erasedb, source: PrivilegeSource
+):
     operator, service, role, _ = erasedb
     parent = "erasure_grantee_" + uuid4().hex
     await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
-    if source == "inherited":
+    if source is PrivilegeSource.INHERITED:
         await operator.execute(f'CREATE ROLE "{parent}" NOLOGIN')
         await operator.execute(f'GRANT "{parent}" TO "{role}"')
     try:
-        if source in ("public", "inherited"):
-            grantee = "PUBLIC" if source == "public" else f'"{parent}"'
+        if source in (PrivilegeSource.PUBLIC, PrivilegeSource.INHERITED):
+            grantee = "PUBLIC" if source is PrivilegeSource.PUBLIC else f'"{parent}"'
             grant = "TRUNCATE ON {{tables.sealed_versions}}"
             option = ""
         else:
             grantee = f'"{role}"'
             grant = (
                 "SELECT ON {{tables.sealed_versions}}"
-                if source == "table_grant_option"
+                if source is PrivilegeSource.TABLE_GRANT_OPTION
                 else "SELECT(secret_id) ON {{tables.sealed_versions}}"
             )
             option = " WITH GRANT OPTION"
@@ -171,7 +179,7 @@ async def test_startup_checks_effective_and_delegatable_privileges(erasedb, sour
         await operator.execute(f"REVOKE {revoke}{grant} FROM {grantee}")
         await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
     finally:
-        if source == "inherited":
+        if source is PrivilegeSource.INHERITED:
             await operator.execute(f'DROP OWNED BY "{parent}"')
             await operator.execute(f'DROP ROLE "{parent}"')
 

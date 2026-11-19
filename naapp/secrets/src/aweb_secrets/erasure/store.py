@@ -23,7 +23,7 @@ PROTECTED_TABLES = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class RuntimeTableGrants:
     schema: str
     table: str
@@ -36,20 +36,34 @@ class RuntimeTableGrants:
 
 
 def runtime_table_grants(content_schema: str) -> tuple[RuntimeTableGrants, ...]:
-    """One policy for offline grants and read-only startup verification."""
+    """Accepted erasure rule 390577b1: one policy for offline grants and startup checks."""
     return (
-        RuntimeTableGrants(content_schema, "custody_secrets", ("SELECT", "INSERT", "UPDATE")),
-        RuntimeTableGrants(content_schema, "sealed_versions", ("SELECT", "INSERT", "DELETE")),
-        RuntimeTableGrants(content_schema, "run_redaction_pins", ("SELECT", "INSERT", "DELETE")),
         RuntimeTableGrants(
-            content_schema,
-            "onepassword_versions",
-            ("SELECT", "INSERT", "DELETE"),
-            ("binding", "destroyed_at"),
+            schema=content_schema,
+            table="custody_secrets",
+            privileges=("SELECT", "INSERT", "UPDATE"),
         ),
-        RuntimeTableGrants(content_schema, "erasure_store_identity", ("SELECT",)),
+        RuntimeTableGrants(
+            schema=content_schema,
+            table="sealed_versions",
+            privileges=("SELECT", "INSERT", "DELETE"),
+        ),
+        RuntimeTableGrants(
+            schema=content_schema,
+            table="run_redaction_pins",
+            privileges=("SELECT", "INSERT", "DELETE"),
+        ),
+        RuntimeTableGrants(
+            schema=content_schema,
+            table="onepassword_versions",
+            privileges=("SELECT", "INSERT", "DELETE"),
+            update_columns=("binding", "destroyed_at"),
+        ),
+        RuntimeTableGrants(
+            schema=content_schema, table="erasure_store_identity", privileges=("SELECT",)
+        ),
         *(
-            RuntimeTableGrants(LEDGER_SCHEMA, table, ("SELECT",))
+            RuntimeTableGrants(schema=LEDGER_SCHEMA, table=table, privileges=("SELECT",))
             for table in ("store", "allocations", "erasures")
         ),
     )
