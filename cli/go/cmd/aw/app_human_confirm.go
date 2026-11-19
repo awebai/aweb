@@ -36,12 +36,20 @@ type confirmOutcome struct {
 	Response *handoff.Response
 }
 
+type confirmReplyState uint8
+
+const (
+	confirmReplyLost confirmReplyState = iota
+	confirmSessionRefused
+)
+
 // runConfirm completes a confirm action as human-confirmation-from-aw.md
 // ("Completion of a confirm") defines it. It sends the confirm at most once,
 // renews the session at most once, and never renews on a refused renewal or
 // a lost holding.
 func runConfirm(ctx context.Context, s confirmSteps) (confirmOutcome, error) {
 	sent, renewed := false, false
+	replyState := confirmReplyLost
 	renew := func() error {
 		if renewed {
 			return withErrorCode("console_session_required", errors.New("the app refused the renewed session too"))
@@ -72,7 +80,7 @@ func runConfirm(ctx context.Context, s confirmSteps) (confirmOutcome, error) {
 		}
 		done, stopped, ready := holds(state, s.Completion.Done), stopping(state, s.Completion.Stop), holds(state, s.Completion.Ready)
 		if sent {
-			return confirmOutcome{}, reconcileConfirmState(state, s.Completion)
+			return confirmOutcome{}, reconcileConfirmState(state, s.Completion, replyState)
 		}
 		switch {
 		case done:
@@ -90,6 +98,7 @@ func runConfirm(ctx context.Context, s confirmSteps) (confirmOutcome, error) {
 		}
 		switch refusal := sessionRefusal(reply); refusal {
 		case "console_session_required":
+			replyState = confirmSessionRefused
 			if err := renew(); err != nil {
 				return confirmOutcome{}, err
 			}
@@ -107,8 +116,18 @@ func runConfirm(ctx context.Context, s confirmSteps) (confirmOutcome, error) {
 // reconcileConfirmState reports the state after the one allowed confirm.
 // docs/design/human-confirmation-from-aw.md:519-525 requires read-only
 // reconciliation after a session renewal; this function never resends.
-func reconcileConfirmState(state map[string]any, completion appmanifest.Completion) error {
+func reconcileConfirmState(state map[string]any, completion appmanifest.Completion, reply confirmReplyState) error {
 	done, stopped := holds(state, completion.Done), stopping(state, completion.Stop)
+	if reply == confirmSessionRefused {
+		switch {
+		case done:
+			return withErrorCode("confirm_result_lost", errors.New("the confirm session was refused; the change now reads applied, but this invocation has no confirmation result and cannot recover one-time output. Inspect the change in the app"))
+		case stopped != "":
+			return withErrorCode("confirm_stopped", fmt.Errorf("the confirm session was refused; the change now reads %s. Inspect the change in the app", stopped))
+		default:
+			return withErrorCode("confirm_not_applied", fmt.Errorf("the confirm session was refused; the change was not applied when read (%s), and aw does not send the confirm again. Inspect the change in the app before starting a new confirmation", describeState(state, completion)))
+		}
+	}
 	switch {
 	case done:
 		return withErrorCode("confirm_result_lost", errors.New("the change was applied, but its reply was lost; a one-time output in it is not recovered"))

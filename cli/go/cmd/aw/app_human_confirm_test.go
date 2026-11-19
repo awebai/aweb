@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -173,5 +174,26 @@ func TestTheAppsOwnRefusalPassesThrough(t *testing.T) {
 	_, err := runConfirm(context.Background(), s.steps())
 	if errorCodeOf(err) != "change_not_approved" || s.confirmCalls != 1 {
 		t.Fatalf("err %v confirms %d", err, s.confirmCalls)
+	}
+}
+
+func TestRefusedConfirmReconciliationDoesNotClaimALostReply(t *testing.T) {
+	for _, state := range []map[string]any{
+		{"state": "applied", "can_confirm": false},
+		{"state": "approved", "can_confirm": true},
+		{"state": "cancelled", "can_confirm": false},
+	} {
+		err := reconcileConfirmState(state, secretsCompletion(), confirmSessionRefused)
+		if err == nil || strings.Contains(err.Error(), "reply was lost") || !strings.Contains(err.Error(), "confirm session was refused") || !strings.Contains(err.Error(), "Inspect the change in the app") {
+			t.Fatalf("received refusal misreported: %v", err)
+		}
+	}
+}
+
+func TestReceivedConfirmRefusalStillNeverSendsTwice(t *testing.T) {
+	s := &confirmScript{reads: []answer{ready, ready}, confirms: []answer{sessionGone, confirmed}}
+	_, err := runConfirm(t.Context(), s.steps())
+	if errorCodeOf(err) != "confirm_not_applied" || s.confirmCalls != 1 || s.renewCalls != 1 || !strings.Contains(err.Error(), "confirm session was refused") {
+		t.Fatalf("err %v confirms %d renewals %d", err, s.confirmCalls, s.renewCalls)
 	}
 }
