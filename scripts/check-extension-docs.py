@@ -823,8 +823,8 @@ def _room_dynamic_event_is_rejected(root: Path) -> bool:
     source = root / relative
     original = source.read_text(encoding="utf-8")
     mutated = original.replace(
-        "MutationEventType.ROOM_MESSAGE_SENT,", "dynamic_event_name,", 1
-    )
+        "MutationEventType.ROOM_MESSAGE_SENT.value,", "dynamic_event_name,", 1
+    ).replace("MutationEventType.ROOM_MESSAGE_SENT,", "dynamic_event_name,", 1)
     if mutated == original:
         return False
     try:
