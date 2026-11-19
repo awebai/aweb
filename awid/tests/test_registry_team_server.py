@@ -75,6 +75,7 @@ async def test_publish_read_and_idempotent_retry(database_url, visibility):
     did = did_from_public_key(bytes(key.verify_key))
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, did, visibility=visibility)
+        action_start = len(registry.transport.calls)
         client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
         try:
             assert await client.get_team_server_record(DOMAIN, NAME) is None
@@ -95,7 +96,8 @@ async def test_publish_read_and_idempotent_retry(database_url, visibility):
             )
             assert verified.server_url == SERVER_URL
             assert all(
-                "Authorization" not in request.headers for request in registry.transport.calls
+                "Authorization" not in request.headers
+                for request in registry.transport.calls[action_start:]
             )
         finally:
             await client.aclose()
@@ -185,6 +187,7 @@ async def test_methods_follow_domain_resolver_without_leaking_home_service_token
     )
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, did_from_public_key(bytes(key.verify_key)))
+        action_start = len(registry.transport.calls)
         client = RegistryClient(
             registry_url=REGISTRY_URL,
             transport=registry.transport,
@@ -197,15 +200,15 @@ async def test_methods_follow_domain_resolver_without_leaking_home_service_token
             assert resolved_domains == [DOMAIN, DOMAIN]
             assert [
                 (request.method, request.url.host, request.url.path)
-                for request in registry.transport.calls
+                for request in registry.transport.calls[action_start:]
             ] == [
                 (method, "foreign.registry.example", f"/v1/namespaces/{DOMAIN}/teams/{NAME}/server")
                 for method in ("PUT", "GET")
             ]
-            assert json.loads(registry.transport.calls[0].content) == body
+            assert json.loads(registry.transport.calls[action_start].content) == body
             assert all(
                 "X-AWID-Service-Token" not in request.headers
-                for request in registry.transport.calls
+                for request in registry.transport.calls[action_start:]
             )
         finally:
             await client.aclose()
