@@ -9,6 +9,8 @@ from aweb.member_team_key import MemberProjection
 from aweb.messaging.address_auth import identity_recipient
 from aweb.messaging.recipient import Recipient, RecipientResidence
 from aweb.messaging.recipient_bindings import signed_recipient_matches
+from aweb.messaging.recipient_lookup import _agent_uuid
+from aweb.service_errors import ValidationError
 
 
 def native_member(**changes):
@@ -115,3 +117,11 @@ def test_explicit_residence_is_independent_of_missing_actor_and_route():
     assert identity.agent_id is None and remote.agent_id is None
     assert identity.delivery_origin is None and remote.delivery_origin is None
     assert not identity["external"] and remote["external"]
+
+
+def test_invalid_agent_selector_ends_with_roster_recovery_action():
+    with pytest.raises(ValidationError) as refusal:
+        _agent_uuid("not-an-agent-uuid")
+    assert refusal.value.detail == (
+        "Invalid agent_id format. Choose an agent_id from the team roster and retry."
+    )
