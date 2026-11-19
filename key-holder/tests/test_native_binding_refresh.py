@@ -81,3 +81,39 @@ async def test_own_person_refreshes_only_the_held_active_binding(native_holder):
         audit = holder.store.audit()
         assert audit[-1]["actor"] == own["key"]
         assert audit[-1]["operation"] == "binding_refresh"
+
+
+@pytest.mark.asyncio
+async def test_current_rotated_person_key_gets_enrollment_recovery_advice(
+    native_holder,
+):
+    from awid.did import did_from_public_key, generate_keypair
+
+    holder, registry = native_holder.holder, native_holder.registry
+    own, _, confirmation, _ = await first_person(native_holder, activate=True)
+    original = holder.active_person(own["identity"])
+    audit_before = holder.store.audit()
+    seed, public = generate_keypair()
+    key = did_from_public_key(public)
+    mapping = await registry.rotate_key(own["identity"], key, own["seed"], seed)
+    assert mapping.current_did_key == key
+    path = f"/v1/enrollments/{own['identity']}/refresh-binding"
+    packet = {
+        "previous_binding_commitment": commitment(
+            "binding_commitment", confirmation["binding"]
+        )
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(holder)), base_url=holder.origin
+    ) as client:
+        response = await call(client, path, packet, **{**own, "seed": seed, "key": key})
+    assert response.status_code == 409, response.text
+    error = response.json()["error"]
+    assert error["code"] == "binding_refresh_identity_key_changed"
+    assert "enrolment or recovery" in error["message"]
+    assert (
+        "operator must revoke the old ID, issue a new ID and enrol again"
+        in error["message"]
+    )
+    assert holder.active_person(own["identity"]) == original
+    assert holder.store.audit() == audit_before
