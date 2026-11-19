@@ -27,7 +27,7 @@ async def authenticated(registry, member, *, stable, register=True):
                 member.member_key
             )
         await registry.add_team(TEAM, member.team_did_key)
-    await registry.add_certificate(member.certificate())
+    await registry.add_certificate(member.certificate(), team_key=member.team_key)
     body = b'{"alias":"untrusted-body-name"}'
     headers = member.headers(aud="https://api.localhost", method="POST", path="/v1/use", body=body)
 

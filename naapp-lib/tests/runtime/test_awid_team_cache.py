@@ -263,7 +263,7 @@ async def test_history_new_member_refreshes_before_the_cached_team_expires(regis
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
         old_facts = cache._cache[TEAM_ID]
-        await registry.add_certificate(newcomer.certificate())
+        await registry.add_certificate(newcomer.certificate(), team_key=newcomer.team_key)
         history_clock[0] += seconds_to_ns(1)
         responses = await asyncio.gather(
             *(client.get("/v1/items", headers=get_items(newcomer)) for _ in range(8))
@@ -318,7 +318,7 @@ async def test_history_unknown_refresh_limit_is_per_team(registry, team, history
     cache = history_cache(registry)
     other = Member(team_id="other:example.com", certificate_id="other-target", alias="other")
     await registry.add_team(other.team_id, other.team_did_key)
-    await registry.add_certificate(other.certificate())
+    await registry.add_certificate(other.certificate(), team_key=other.team_key)
     await cache.get(TEAM_ID, team.certificate_id)
     await cache.get(other.team_id, other.certificate_id)
     await cache.get(TEAM_ID, "unknown")

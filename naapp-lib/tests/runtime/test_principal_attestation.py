@@ -13,8 +13,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from nacl.signing import SigningKey
+from aweb_naapp_testing import Member
 from awid.attestation_records import sign_record
-from awid.signing import canonical_json_bytes
 from awid_service.testing import REGISTRY_URL
 
 from aweb_naapp.runtime.attestation import (
@@ -101,11 +102,14 @@ async def test_a_forged_attestation_never_reads_the_registry():
     certificate = case["certificate"]
     with pytest.raises(AttestationRefused) as refused:
         await verify_principal_attestation(
-            header=case["header"], signed_payload=_bytes(case["request"]["signed_payload_b64url"]),
-            team_id=certificate["team_id"], certificate_id=certificate["certificate_id"],
+            header=case["header"],
+            signed_payload=_bytes(case["request"]["signed_payload_b64url"]),
+            team_id=certificate["team_id"],
+            certificate_id=certificate["certificate_id"],
             member_did_key=certificate["member_did_key"],
             current_team_did_key=case["registry"]["current_team_did_key"],
-            records=Unreachable(), now=_at(case["now"]),
+            records=Unreachable(),
+            now=_at(case["now"]),
         )
     assert refused.value.code == "attestation_invalid"
 
@@ -118,37 +122,40 @@ VALID = next(c for c in VECTORS["verification_cases"] if c["name"] == "valid")
 async def _publish_vector_state(registry):
     await registry.add_team(TEAM_ID, KEYS["team"]["did_key"], visibility="private")
     certificate = VALID["certificate"]
-    await registry.add_certificate({
-        "team_id": TEAM_ID, "certificate_id": certificate["certificate_id"],
-        "member_did_key": certificate["member_did_key"], "alias": "alice",
-    })
-    for table, key_column, signed in (
-        ("team_custodians", "custodian_id", VALID["registry"]["team_custodian"]),
-        ("member_custody", "certificate_id", VALID["registry"]["member_custody"]),
-    ):
-        record = signed["record"]
-        extra = ", custodian_id" if table == "member_custody" else ""
-        extra_value = ", $7" if table == "member_custody" else ""
-        await registry.db.execute(
-            f"INSERT INTO {{{{tables.{table}}}}} (team_uuid, {key_column}, record_json, signature, team_did_key, issued_at{extra}) "
-            f"SELECT team_uuid, $1, $2, $3, $4, $5::timestamptz{extra_value} FROM {{{{tables.teams}}}} WHERE name = $6",
-            record[key_column], canonical_json_bytes(record).decode(), signed["signature"],
-            record["team_did_key"], _at(record["issued_at"]), "backend",
-            *([record["custodian_id"]] if table == "member_custody" else []),
+    team_key = SigningKey(bytes.fromhex(KEYS["team"]["seed_hex"]))
+    member = Member(
+        team_id=TEAM_ID,
+        team_key=team_key,
+        member_key=SigningKey(bytes.fromhex(KEYS["member"]["seed_hex"])),
+        certificate_id=certificate["certificate_id"],
+        alias="alice",
+    )
+    await registry.add_certificate(member.certificate(), team_key=team_key)
+    for signed in (VALID["registry"]["team_custodian"], VALID["registry"]["member_custody"]):
+        await registry.publish_signed_record(
+            record=signed["record"],
+            signature=signed["signature"],
+            team_key=team_key,
         )
 
 
 def _records(registry, ttl_seconds=60):
-    return AWIDAttestationRecords(registry_url=REGISTRY_URL, ttl_seconds=ttl_seconds, transport=registry.transport)
+    return AWIDAttestationRecords(
+        registry_url=REGISTRY_URL, ttl_seconds=ttl_seconds, transport=registry.transport
+    )
 
 
 async def _verify_valid(records, now=None):
     certificate = VALID["certificate"]
     return await verify_principal_attestation(
-        header=VALID["header"], signed_payload=_bytes(VALID["request"]["signed_payload_b64url"]),
-        team_id=certificate["team_id"], certificate_id=certificate["certificate_id"],
-        member_did_key=certificate["member_did_key"], current_team_did_key=KEYS["team"]["did_key"],
-        records=records, now=now or _at(VALID["now"]),
+        header=VALID["header"],
+        signed_payload=_bytes(VALID["request"]["signed_payload_b64url"]),
+        team_id=certificate["team_id"],
+        certificate_id=certificate["certificate_id"],
+        member_did_key=certificate["member_did_key"],
+        current_team_did_key=KEYS["team"]["did_key"],
+        records=records,
+        now=now or _at(VALID["now"]),
     )
 
 
@@ -190,23 +197,33 @@ async def test_an_absent_custody_record_on_real_awid_is_unregistered(registry):
 def _person(single_person: bool, team_key: str, *, issued_at="2026-10-20T12:00:00Z"):
     certificate = VALID["certificate"]
     return {
-        "v": 1, "type": "aweb.member-person", "team_id": TEAM_ID, "team_did_key": KEYS[team_key]["did_key"],
-        "certificate_id": certificate["certificate_id"], "member_did_key": certificate["member_did_key"],
-        "single_person": single_person, "issued_at": issued_at,
+        "v": 1,
+        "type": "aweb.member-person",
+        "team_id": TEAM_ID,
+        "team_did_key": KEYS[team_key]["did_key"],
+        "certificate_id": certificate["certificate_id"],
+        "member_did_key": certificate["member_did_key"],
+        "single_person": single_person,
+        "issued_at": issued_at,
     }
 
 
 async def _read_person(signed, current="team"):
     certificate = VALID["certificate"]
     return await read_member_person(
-        team_id=TEAM_ID, certificate_id=certificate["certificate_id"],
-        member_did_key=certificate["member_did_key"], current_team_did_key=KEYS[current]["did_key"],
+        team_id=TEAM_ID,
+        certificate_id=certificate["certificate_id"],
+        member_did_key=certificate["member_did_key"],
+        current_team_did_key=KEYS[current]["did_key"],
         records=DeclaredRecords({"member_person": signed}),
     )
 
 
 def _signed(record, key):
-    return {"record": record, "signature": sign_record(bytes.fromhex(KEYS[key]["seed_hex"]), record)}
+    return {
+        "record": record,
+        "signature": sign_record(bytes.fromhex(KEYS[key]["seed_hex"]), record),
+    }
 
 
 async def test_member_person_is_true_only_when_present_valid_and_declared():
@@ -235,13 +252,17 @@ async def test_now_in_another_time_zone_means_the_same_instant():
     los_angeles = ZoneInfo("America/Los_Angeles")
     certificate = VALID["certificate"]
     kwargs = dict(
-        header=VALID["header"], signed_payload=_bytes(VALID["request"]["signed_payload_b64url"]),
-        team_id=certificate["team_id"], certificate_id=certificate["certificate_id"],
+        header=VALID["header"],
+        signed_payload=_bytes(VALID["request"]["signed_payload_b64url"]),
+        team_id=certificate["team_id"],
+        certificate_id=certificate["certificate_id"],
         member_did_key=certificate["member_did_key"],
         current_team_did_key=VALID["registry"]["current_team_did_key"],
         records=DeclaredRecords(VALID["registry"]),
     )
-    verified = await verify_principal_attestation(now=_at(VALID["now"]).astimezone(los_angeles), **kwargs)
+    verified = await verify_principal_attestation(
+        now=_at(VALID["now"]).astimezone(los_angeles), **kwargs
+    )
     assert verified.channel == "mcp_l2"
     later = (_at(VALID["now"]) + timedelta(hours=1)).astimezone(los_angeles)
     with pytest.raises(AttestationRefused) as expired:
