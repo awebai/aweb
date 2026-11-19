@@ -1,6 +1,8 @@
 """Portable Git/process controls; Docker commands are recorded, never executed."""
 
 import json
+import io
+from contextlib import redirect_stdout
 import os
 import shutil
 import signal
@@ -27,7 +29,11 @@ from pathlib import Path
 args = sys.argv[1:]
 with open(os.environ['CALLS'], 'a') as stream:
  stream.write(json.dumps(args) + '\\n')
-if args[:2] == ['image', 'ls']:
+if args[0] == 'info':
+ assert os.environ.get('DOCKER_HOST') == 'unix:///admitted-local.sock'
+ assert 'DOCKER_CONTEXT' not in os.environ
+ print('/fixture/docker-data')
+elif args[:2] == ['image', 'ls']:
  if not os.environ.get('MISSING_IMAGE'): print('image-id')
 elif args[:2] == ['image', 'inspect']:
  print(json.dumps([{'Id':'sha256:prepared', 'Config':{'Labels':{
@@ -55,6 +61,20 @@ elif args[0] not in ('create', 'rm'):
             TREE="b" * 40,
             SHA="a" * 40,
         )
+        self.env.pop("DOCKER_CONTEXT", None)
+        self.env.update(
+            DOCKER_HOST="unix:///admitted-local.sock",
+            DISK_USED=str(self.root / "disk-used"),
+            AWEB_GATE_MIN_FREE_GB="50",
+            AWEB_GATE_RESERVE_GB="30",
+        )
+        for name, body in {
+            "uname": "#!/bin/sh\necho Linux\n",
+            "df": '#!/bin/sh\necho \'Filesystem 1024-blocks Used Available Capacity Mounted\'\nif [ -f "$DISK_USED" ]; then free=1048576; else free=104857600; fi\necho "fixture 200000000 0 $free 0% /fixture"\n',
+        }.items():
+            path = self.bin / name
+            path.write_text(body)
+            path.chmod(0o755)
         self.source = local.Source(commit="a" * 40, tree="b" * 40)
 
     def test_wrong_source_runtime_refuses_without_build_or_project(self):
@@ -230,6 +250,54 @@ CHILD
                     observed["USER_PATHS_LATEST_METADATA"],
                 )
 
+    def test_later_disk_refusal_stops_before_next_stack(self):
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        (scripts / "e2e-user-paths.sh").write_text("""#!/bin/sh
+mkdir -p "$USER_PATHS_EVIDENCE"
+echo executed > "$USER_PATHS_EVIDENCE/ran"
+touch "$DISK_USED"
+""")
+        metadata = {}
+        for version in local.RELEASES:
+            path = self.root / (version + ".json")
+            path.write_text("{}")
+            metadata[version] = path
+        # Real admission owner + real shell floor calculation; only Docker/df are receivers.
+        local.check_docker(environ=self.env)
+        output = io.StringIO()
+        with (
+            redirect_stdout(output),
+            self.assertRaisesRegex(local.Refused, "1.0 GiB free"),
+        ):
+            local.run_lanes(
+                root=self.root,
+                evidence=self.root / "evidence",
+                source=self.source,
+                image="fixture",
+                candidate=self.root / "candidate",
+                metadata=metadata,
+                environ=self.env,
+            )
+        first = self.root / "evidence/head-1.36.58"
+        second = self.root / "evidence/head-1.36.40"
+        self.assertTrue((first / "stack/ran").is_file())
+        self.assertEqual(json.loads((first / "exit.json").read_text()), {"exit": 0})
+        self.assertFalse((second / "stack").exists())
+        self.assertFalse(
+            (second / "exit.json").exists(),
+            "no invented stack exit for a refused admission",
+        )
+        diagnostic = (second / "preflight.log").read_text()
+        self.assertIn("need 80 GiB", diagnostic)
+        self.assertIn("docker system prune", diagnostic)
+        self.assertIn("fstrim", diagnostic)
+        self.assertIn("head-1.36.58: PASS", output.getvalue())
+        self.assertIn("head-1.36.40: NOT_RUN (preflight failed)", output.getvalue())
+        self.assertIn("forward-reverse: NOT_RUN", output.getvalue())
+        calls = [json.loads(line) for line in self.calls.read_text().splitlines()]
+        self.assertEqual(sum(call[0] == "info" for call in calls), 3)
+
     def test_real_entry_checks_disk_before_any_preparation(self):
         scripts = self.root / "scripts"
         scripts.mkdir()
@@ -285,7 +353,7 @@ finally:
  (p/'cleanup').touch()
 """)
         driver = self.root / "driver.py"
-        driver.write_text("""import signal, sys
+        driver.write_text("""import signal, sys, json
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
 import test_user_paths_local as local
@@ -294,12 +362,18 @@ for version in local.RELEASES:
  p=root/(version+'.json'); p.write_text('{}'); metadata[version]=p
 for sig in (signal.SIGTERM, signal.SIGINT): signal.signal(sig, local.interrupted)
 try:
- local.run_lanes(root=root, evidence=root/'evidence', source=local.Source(commit='a'*40,tree='b'*40), image='fixture', candidate=root/'candidate',metadata=metadata,environ={})
+ local.run_lanes(root=root, evidence=root/'evidence', source=local.Source(commit='a'*40,tree='b'*40), image='fixture', candidate=root/'candidate',metadata=metadata,environ=json.loads(sys.argv[3]))
 except local.Interrupted as error:
  sys.exit(128+error.number)
 """)
         with subprocess.Popen(
-            [sys.executable, str(driver), str(local.ROOT / "scripts"), str(self.root)],
+            [
+                sys.executable,
+                str(driver),
+                str(local.ROOT / "scripts"),
+                str(self.root),
+                json.dumps(self.env),
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

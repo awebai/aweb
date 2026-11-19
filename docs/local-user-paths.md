@@ -8,8 +8,10 @@ make test-user-paths-local
 
 The target resolves the current Docker context (or explicit `DOCKER_CONTEXT` /
 `DOCKER_HOST`) and pins its local Unix endpoint for every operation. It runs the
-existing candidate disk guard before preparing images or starting projects. A
-remote Docker endpoint refuses. A disk refusal names the prune and fstrim
+existing candidate disk guard before preparation and again immediately before
+**each** lane, using that same pinned endpoint. A refusal retains `preflight.log`,
+prints the current and remaining lanes as NOT_RUN, and starts no further stack.
+A remote Docker endpoint refuses. A disk refusal names the prune and fstrim
 recovery steps; the target never prunes automatically.
 
 Preparation uses the committed source archive and the existing

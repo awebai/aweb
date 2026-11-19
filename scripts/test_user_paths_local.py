@@ -239,6 +239,8 @@ def run_lanes(
                 USER_PATHS_CANDIDATE_SHA=source.commit,
             )
         try:
+            # Builds and earlier lanes can consume the initial disk reserve.
+            env = check_docker(environ=env)
             with (directory / "lane.log").open("w") as log:
                 result = invoke(
                     ["bash", str(root / "scripts/e2e-user-paths.sh")],
@@ -248,6 +250,17 @@ def run_lanes(
                     timeout=None,
                     termination_grace_seconds=120,
                 )
+        except Refused as error:
+            (directory / "preflight.log").write_text(str(error) + "\n")
+            print(
+                f"{lane.value}: NOT_RUN (preflight failed) evidence={directory}",
+                flush=True,
+            )
+            for pending in list(Lane)[len(rows) + 1 :]:
+                print(
+                    f"{pending.value}: NOT_RUN (earlier preflight failed)", flush=True
+                )
+            raise
         except Interrupted as error:
             code = 128 + error.number
             (directory / "exit.json").write_text(json.dumps({"exit": code}) + "\n")
