@@ -103,7 +103,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
 
             async def observe_mutation(event_type, context):
                 dispatched.append((event_type, dict(context)))
-                await handler(event_type, context)
+                return await handler(event_type, context)
 
             app.state.on_mutation = observe_mutation
             manager = db.get_manager("aweb")
