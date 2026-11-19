@@ -302,13 +302,15 @@ Finally retry your original invite command with the SAME token, name, scope and 
 			if _, err := awid.EncodeIDChainHeader(bundle); err != nil {
 				return nil, err
 			}
-			certificates := bundle["certificates"].([]any)
-			leaf := certificates[len(certificates)-1].(map[string]any)["certificate"].(map[string]any)
+			leaf, err := installed.Leaf()
+			if err != nil {
+				return nil, err
+			}
 			subject := material.DIDKey
 			if material.IdentityScope == awid.IdentityModeGlobal {
 				subject = material.StableID
 			}
-			if leaf["id"] != subject || leaf["kind"] != "agent" || leaf["domain"] != state.Tree.Domain || !reflect.DeepEqual(leaf["parent"], state.Tree.Parent) {
+			if leaf.ID() != subject || leaf.Kind() != awid.IDCertificateKindAgent || leaf.Domain() != state.Tree.Domain || !reflect.DeepEqual(leaf.Parent().Fields(), state.Tree.Parent) {
 				return nil, errors.New("installed child chain contradicts the pinned invite issuer; membership cannot reparent an identity")
 			}
 			state.Tree.NativeChainHeader, err = awid.EncodeIDChainHeader(bundle)

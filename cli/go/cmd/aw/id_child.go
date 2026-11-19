@@ -375,18 +375,18 @@ func executeIDChildReceive(ctx context.Context, opts idChildOptions, raw []byte)
 		return idChildRequestOutput{}, err
 	}
 	defer lock.Close()
-	signed, err := awid.ParseIDCertificateRequest(raw)
+	signed, err := awid.DecodeIDCertificateRequest(raw)
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	req := signed["request"].(map[string]any)
+	req := signed
 	// A request ID names one request across both stores: each library
 	// receive checks its own store, and this checks the other.
-	existing, _, err := lookupReceivedRequest(issuer, req["request_id"].(string))
+	existing, _, err := lookupReceivedRequest(issuer, req.RequestID())
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	if req["operation"] == "resign" {
+	if req.Operation() == awid.IDCertificateRequestResign {
 		if err := issuerResigns(issuer); err != nil {
 			return idChildRequestOutput{}, err
 		}
@@ -457,18 +457,18 @@ func (r receivedRequest) record() *awid.IDRequestRecord {
 
 func (r receivedRequest) output() (idChildRequestOutput, error) {
 	record := r.record()
-	signed, err := awid.ParseIDCertificateRequest([]byte(record.Request))
+	signed, err := awid.DecodeIDCertificateRequest([]byte(record.Request))
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
-	req := signed["request"].(map[string]any)
-	fingerprint, err := awid.IDKeyFingerprint(req["subject_key"].(string))
+	req := signed
+	fingerprint, err := awid.IDKeyFingerprint(req.SubjectKey())
 	if err != nil {
 		return idChildRequestOutput{}, err
 	}
 	out := idChildRequestOutput{
-		RequestID: record.RequestID, Operation: req["operation"].(string), State: record.State,
-		ID: req["id"].(string), Domain: req["domain"].(string), Parent: req["parent"].(map[string]any), Kind: req["kind"].(string),
+		RequestID: record.RequestID, Operation: string(req.Operation()), State: record.State,
+		ID: req.ID(), Domain: req.Domain(), Parent: req.Parent().Fields(), Kind: string(req.Kind()),
 		Fingerprint: fingerprint, CertificateID: record.NewCertificateID,
 	}
 	if r.resign != nil {
@@ -657,15 +657,15 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 	}
 	var evidence *awid.IDChainEvidence
 	if pending {
-		signed, err := awid.ParseIDCertificateRequest([]byte(found.record().Request))
+		signed, err := awid.DecodeIDCertificateRequest([]byte(found.record().Request))
 		if err != nil {
 			return nil, err
 		}
-		r := signed["request"].(map[string]any)
-		if out.Operation == "resign" && r["domain"] != issuer.domain {
-			return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", r["domain"], issuer.domain)
+		r := signed
+		if out.Operation == "resign" && r.Domain() != issuer.domain {
+			return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", r.Domain(), issuer.domain)
 		}
-		if evidence, err = issuer.evidence(ctx, r["id"].(string), r["subject_key"].(string)); err != nil {
+		if evidence, err = issuer.evidence(ctx, r.ID(), r.SubjectKey()); err != nil {
 			return nil, err
 		}
 	}
@@ -677,7 +677,11 @@ func executeIDChildApprove(ctx context.Context, opts idChildOptions, requestID s
 	}
 	defer lock.Close()
 	if found.resign != nil {
-		return awid.ApproveIDResignRequest(issuer.issuance, requestID, issuer.parent["id"].(string), issuer.parentChain, evidence, issuer.domain, issuer.signer("issue the certificate of "+out.ID), opts.Now())
+		parentID, ok := issuer.parent["id"].(string)
+		if !ok || parentID == "" {
+			return nil, errors.New("selected issuer has no valid parent ID")
+		}
+		return awid.ApproveIDResignRequest(issuer.issuance, requestID, parentID, issuer.parentChain, evidence, issuer.domain, issuer.signer("issue the certificate of "+out.ID), opts.Now())
 	}
 	return awid.ApproveIDChildRequest(issuer.invitations, issuer.issuance, requestID, approval, issuer.parentChain, evidence, issuer.signer("issue the certificate of "+out.ID), opts.Now())
 }

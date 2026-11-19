@@ -429,11 +429,11 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	response, err := awid.ParseIDCertificateResponse(raw)
+	response, err := awid.DecodeIDCertificateResponse(raw)
 	if err != nil {
 		return idParentImportOutput{}, err
 	}
-	requestID := response["request_id"].(string)
+	requestID := response.RequestID()
 	r, err := selectRequester(opts)
 	if err != nil {
 		return idParentImportOutput{}, err
@@ -448,11 +448,11 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 		return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 	}
 	if outgoing.ReplacesCertificateID != "" {
-		signed, err := awid.ParseIDCertificateRequest([]byte(outgoing.Request))
+		signed, err := awid.DecodeIDCertificateRequest([]byte(outgoing.Request))
 		if err != nil {
 			return idParentImportOutput{}, err
 		}
-		domain := signed["request"].(map[string]any)["domain"].(string)
+		domain := signed.Domain()
 		if opts.Domain != "" && opts.Domain != domain {
 			return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 		}
@@ -471,12 +471,12 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 	registry := newAWIDRegistryClient(opts.HTTPClient, opts.TXTResolver)
 	registry.DefaultRegistryURL = registryURL
 
-	chain := response["chain"].(map[string]any)
+	chain := response.Chain().Bundle()
 	if outgoing.Response != "" && outgoing.Response != string(raw) {
 		return idParentImportOutput{}, &awid.IDCertificateError{Code: "request_binding_mismatch"}
 	}
 	if outgoing.State == awconfig.IDRequestOutstanding {
-		signed, err := awid.ParseIDCertificateRequest([]byte(outgoing.Request))
+		signed, err := awid.DecodeIDCertificateRequest([]byte(outgoing.Request))
 		if err != nil {
 			return idParentImportOutput{}, err
 		}
@@ -485,7 +485,7 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 		if err := validateParentReplacement(r, outgoing, signed, chain); err != nil {
 			return idParentImportOutput{}, err
 		}
-		imported, err := awid.ImportIDCertificateResponse(signed, raw, evidence, r.domain)
+		imported, err := awid.ImportIDCertificateResponse(signed.Signed(), raw, evidence, r.domain)
 		if err != nil {
 			return idParentImportOutput{}, err
 		}
@@ -545,9 +545,8 @@ func executeIDParentImport(ctx context.Context, opts idParentOptions, raw []byte
 // Check again at import: another outstanding request must not move an agent
 // from one person to another. An identical installed response permits recovery
 // from an interrupted credential update before the request state was saved.
-func validateParentReplacement(r *requester, outgoing *awconfig.IDOutgoingRequest, signed, chain map[string]any) error {
-	request := signed["request"].(map[string]any)
-	if request["operation"] == "resign" {
+func validateParentReplacement(r *requester, outgoing *awconfig.IDOutgoingRequest, request awid.IDCertificateRequestView, chain map[string]any) error {
+	if request.Operation() == awid.IDCertificateRequestResign {
 		return nil
 	}
 	installed, err := awconfig.LoadInstalledIDChain(r.dir)
@@ -600,7 +599,7 @@ func validateParentReplacement(r *requester, outgoing *awconfig.IDOutgoingReques
 // A registered adoption keeps its working chain until AWID accepts the atomic
 // head replacement. Retain the exact signed response and expected head before
 // the write; a lost answer retries those same bytes, never another signature.
-func importRegisteredAdoption(ctx context.Context, opts idParentOptions, r *requester, outgoing *awconfig.IDOutgoingRequest, raw []byte, signed, chain map[string]any, registry *awid.RegistryClient, registryURL string) (idParentImportOutput, error) {
+func importRegisteredAdoption(ctx context.Context, opts idParentOptions, r *requester, outgoing *awconfig.IDOutgoingRequest, raw []byte, signed awid.IDCertificateRequestView, chain map[string]any, registry *awid.RegistryClient, registryURL string) (idParentImportOutput, error) {
 	out := idParentImportOutput{RequestID: outgoing.RequestID, ID: r.id, Registration: "pending", InstallationPending: true}
 	if outgoing.Response != "" && outgoing.Response != string(raw) {
 		return out, &awid.IDCertificateError{Code: "request_binding_mismatch"}
