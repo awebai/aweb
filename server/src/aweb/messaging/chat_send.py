@@ -393,7 +393,6 @@ async def deliver_federated_chat(
                 "target_address": route["address"],
                 "target_did_aw": route["did_aw"],
                 "target_current_did_key": route["current_did_key"],
-                "target_delivery_origin": envelope.target_delivery_origin,
                 "message_id": payload.message_id,
                 "conversation_id": session_id,
             },
