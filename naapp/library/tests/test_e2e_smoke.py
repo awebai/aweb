@@ -642,3 +642,34 @@ def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
     time.sleep(2.2)
     revoked = _aw_request(team, "GET", f"{library.origin}/v1/proposals")
     _assert_aw_status(revoked, 401, context="revoked certificate")
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_library_fixture_captures_large_startup_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stream: str,
+) -> None:
+    """Real uvicorn can start even when either log stream exceeds a pipe buffer."""
+    phase = tmp_path / "output-phase"
+    startup = tmp_path / "sitecustomize.py"
+    startup.write_text(
+        "import sys\nfrom pathlib import Path\n"
+        f"phase = Path({str(phase)!r})\n"
+        "phase.write_text('writing')\n"
+        f"sys.{stream}.buffer.write(b'x' * (8 * 1024 * 1024))\n"
+        f"sys.{stream}.flush()\n"
+        "phase.write_text('complete')\n"
+    )
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join(filter(None, (str(tmp_path), os.environ.get("PYTHONPATH")))),
+    )
+    try:
+        with _running_library(awid_service_token=AWID_SERVICE_TOKEN) as running:
+            assert phase.read_text() == "complete"
+            _wait_http_ok(f"{running.origin}/health")
+    except RuntimeError as exc:
+        if phase.exists() and phase.read_text() == "writing":
+            pytest.fail(f"library fixture blocked capturing 8 MiB on {stream}: {exc}")
+        raise

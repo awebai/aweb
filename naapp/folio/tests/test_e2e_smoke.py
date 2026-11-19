@@ -1425,3 +1425,34 @@ def test_real_aw_usage_is_measured_not_capped(
         "team_id": team.team_id,
         "usage": {"documents": 4, "max_versions_per_doc": 51},
     }
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_folio_fixture_captures_large_startup_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stream: str,
+) -> None:
+    """Real uvicorn can start even when either log stream exceeds a pipe buffer."""
+    phase = tmp_path / "output-phase"
+    startup = tmp_path / "sitecustomize.py"
+    startup.write_text(
+        "import sys\nfrom pathlib import Path\n"
+        f"phase = Path({str(phase)!r})\n"
+        "phase.write_text('writing')\n"
+        f"sys.{stream}.buffer.write(b'x' * (8 * 1024 * 1024))\n"
+        f"sys.{stream}.flush()\n"
+        "phase.write_text('complete')\n"
+    )
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join(filter(None, (str(tmp_path), os.environ.get("PYTHONPATH")))),
+    )
+    try:
+        with _running_folio(awid_service_token=AWID_SERVICE_TOKEN) as running:
+            assert phase.read_text() == "complete"
+            _wait_http_ok(f"{running.origin}/health")
+    except RuntimeError as exc:
+        if phase.exists() and phase.read_text() == "writing":
+            pytest.fail(f"folio fixture blocked capturing 8 MiB on {stream}: {exc}")
+        raise
