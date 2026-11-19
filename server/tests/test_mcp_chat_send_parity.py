@@ -233,6 +233,7 @@ async def chat_server(shared_test_pool, monkeypatch):
 
             yield SimpleNamespace(
                 db=db,
+                client=client,
                 agents=agents,
                 keys=keys,
                 custody=custody,
