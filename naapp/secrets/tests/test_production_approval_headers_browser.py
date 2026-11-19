@@ -11,7 +11,7 @@ from playwright.async_api import expect
 
 from tests.human_owner import install_virtual_credential
 from tests.test_console_ui_browser import browser as browser
-from tests.test_production_approval_headers import header_request
+from tests.test_production_approval_headers import RequestKind, header_request
 from tests.test_production_bootstrap import root as root
 
 
@@ -48,11 +48,15 @@ async def production_console(root, console_listener, console_tls):
 
 
 @pytest.mark.parametrize("width", [375, 1440])
-@pytest.mark.parametrize("named", [False, True], ids=["open", "named-operation"])
+@pytest.mark.parametrize(
+    "request_kind",
+    [RequestKind.OPEN, RequestKind.NAMED_OPERATION],
+    ids=lambda request_kind: request_kind.value,
+)
 async def test_production_page_shows_submitted_header_values_before_approval(
-    root, production_console, browser, tmp_path, named, width
+    root, production_console, browser, tmp_path, request_kind: RequestKind, width
 ):
-    pending = await header_request(root, named)
+    pending = await header_request(root, request_kind=request_kind)
     service, *_ = root
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
         page = await context.new_page()
@@ -102,7 +106,6 @@ async def test_production_page_shows_submitted_header_values_before_approval(
             == DispatchState.AWAITING_APPROVAL.value
         )
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-        mode = "named" if named else "open"
         await page.screenshot(
-            path=tmp_path / f"approval-headers-{mode}-{width}.png", full_page=True
+            path=tmp_path / f"approval-headers-{request_kind.value}-{width}.png", full_page=True
         )
