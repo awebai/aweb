@@ -355,6 +355,7 @@ async def test_a_team_never_seen_is_pinned_to_the_first_key():
         == team
     )
     pin = await pins.pin(TEAM_ID)
+    assert pin is not None
     assert pin.team_did_key == team
     assert pin.act_at is None
     assert pin.admitted_at is not None
@@ -424,6 +425,7 @@ async def test_a_process_still_served_the_old_key_uses_the_rotated_pin(enforce):
         == new
     )
     moved = await pins.pin(TEAM_ID)
+    assert moved is not None
 
     assert (
         await pinned_team_key(
@@ -454,7 +456,9 @@ async def test_two_rotations_never_move_the_pin_to_the_middle_key(enforce):
         )
         == first
     )
-    assert (await pins.pin(TEAM_ID)).team_did_key == first
+    recorded_pin = await pins.pin(TEAM_ID)
+    assert recorded_pin is not None
+    assert recorded_pin.team_did_key == first
 
     assert (
         await pinned_team_key(
@@ -462,14 +466,18 @@ async def test_two_rotations_never_move_the_pin_to_the_middle_key(enforce):
         )
         == last
     )
-    assert (await pins.pin(TEAM_ID)).team_did_key == last
+    recorded_pin = await pins.pin(TEAM_ID)
+    assert recorded_pin is not None
+    assert recorded_pin.team_did_key == last
     assert (
         await pinned_team_key(
             TEAM_ID, middle, pins=pins, fetch_act=_fetch(latest), resolver=resolver, enforce=enforce
         )
         == last
     )
-    assert (await pins.pin(TEAM_ID)).team_did_key == last
+    recorded_pin = await pins.pin(TEAM_ID)
+    assert recorded_pin is not None
+    assert recorded_pin.team_did_key == last
 
 
 @pytest.mark.asyncio
@@ -511,6 +519,7 @@ async def test_a_valid_act_moves_the_pin():
     )
     assert key == served
     moved = await pins.pin(TEAM_ID)
+    assert moved is not None
     assert moved.team_did_key == served
     assert (
         moved.act_at
@@ -544,7 +553,9 @@ async def test_a_pin_that_moved_elsewhere_meanwhile_is_not_overwritten():
             enforce=True,
         )
     assert refused.value.reason == "pin_moved"
-    assert (await pins.pin(TEAM_ID)).team_did_key == elsewhere
+    recorded_pin = await pins.pin(TEAM_ID)
+    assert recorded_pin is not None
+    assert recorded_pin.team_did_key == elsewhere
 
 
 @pytest.mark.asyncio

@@ -71,7 +71,9 @@ async def test_first_sight_pin_refuses_a_genuine_act_older_than_admission():
             enforce=True,
         )
     assert refused.value.reason == "not_newer"
-    assert (await pins.pin("team:example.test")).team_did_key == current_key
+    recorded_pin = await pins.pin("team:example.test")
+    assert recorded_pin is not None
+    assert recorded_pin.team_did_key == current_key
 
 
 @pytest.mark.asyncio
@@ -134,5 +136,6 @@ async def test_staged_admission_floor_records_would_refuse_without_breaking_the_
     )
     assert "reason=not_newer enforced=false" in caplog.text
     admitted = await pins.pin("team:example.test")
+    assert admitted is not None
     assert admitted.act_at is None
     assert admitted.admitted_at == first.admitted_at
