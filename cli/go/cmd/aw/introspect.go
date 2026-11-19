@@ -81,8 +81,7 @@ var introspectCmd = &cobra.Command{
 				out.InboundModeError = err.Error()
 			}
 		}
-		printOutput(out, formatIntrospect)
-		return nil
+		return printOutput(out, formatIntrospect)
 	},
 }
 

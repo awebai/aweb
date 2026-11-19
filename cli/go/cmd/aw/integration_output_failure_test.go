@@ -12,8 +12,11 @@ func TestIntegrationValidationReturnsClosedOutputAndItsOriginalRefusal(t *testin
 		Name string
 		Code string
 	}{{Name: "one:example.test"}, {Name: "invalid", Code: "invalid_team_id"}} {
-		for _, asJSON := range []bool{false, true} {
-			t.Run(input.Name+map[bool]string{false: "/text", true: "/json"}[asJSON], func(t *testing.T) {
+		for _, format := range []struct {
+			Name string
+			JSON bool
+		}{{Name: "text"}, {Name: "json", JSON: true}} {
+			t.Run(input.Name+"/"+format.Name, func(t *testing.T) {
 				file, err := os.Create(filepath.Join(t.TempDir(), "output"))
 				if err != nil {
 					t.Fatal(err)
@@ -22,7 +25,7 @@ func TestIntegrationValidationReturnsClosedOutputAndItsOriginalRefusal(t *testin
 					t.Fatal(err)
 				}
 				previousStdout, previousJSON, previousWritten := os.Stdout, jsonFlag, commandStdout.written
-				os.Stdout, jsonFlag = file, asJSON
+				os.Stdout, jsonFlag = file, format.JSON
 				t.Cleanup(func() {
 					os.Stdout, jsonFlag, commandStdout.written = previousStdout, previousJSON, previousWritten
 				})

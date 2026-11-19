@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -272,11 +273,11 @@ func runDoctorCommand(cmd *cobra.Command, opts doctorRunOptions) error {
 	}
 	opts.IdentityHome = externalIdentityHomeRoot(home)
 	out := buildDoctorOutput(opts)
-	printOutput(out, formatDoctorOutput)
+	outputErr := printOutput(out, formatDoctorOutput)
 	if cmd == checkCmd && opts.Mode == doctorModeOnline && out.Status == doctorStatusFail {
-		return withErrorCode("check_failed", fmt.Errorf("Checks failed; follow the next_step for each failed check and rerun aw check --online."))
+		return errors.Join(withErrorCode("check_failed", fmt.Errorf("Checks failed; follow the next_step for each failed check and rerun aw check --online.")), outputErr)
 	}
-	return nil
+	return outputErr
 }
 
 func runDoctorSupportBundle(cmd *cobra.Command, opts doctorRunOptions) error {

@@ -479,7 +479,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		Out:               outDir,
 		CustodySocketPath: state.Custody.SocketPath,
 	}
-	printOutput(out, func(any) string {
+	return printOutput(out, func(any) string {
 		text := fmt.Sprintf("Minted grant %s for %s (team %s), expires %s.\nGrant home: %s\n",
 			out.GrantID, firstNonEmpty(out.Address, out.Alias), out.TeamID, out.ExpiresAt, out.Out)
 		if out.CustodySocketPath != "" {
@@ -490,7 +490,6 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		}
 		return text
 	})
-	return nil
 }
 
 func runGrantList(cmd *cobra.Command, _ []string) error {
@@ -507,8 +506,7 @@ func runGrantList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(resp, formatIdentityGrants)
-	return nil
+	return printOutput(resp, formatIdentityGrants)
 }
 
 func runGrantRevoke(cmd *cobra.Command, args []string) error {
@@ -531,10 +529,9 @@ func runGrantRevoke(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
-	printOutput(map[string]string{"status": "revoked", "grant_id": grantID}, func(any) string {
+	return printOutput(map[string]string{"status": "revoked", "grant_id": grantID}, func(any) string {
 		return fmt.Sprintf("Revoked identity grant %s.\n", grantID)
 	})
-	return nil
 }
 
 func runGrantShow(cmd *cobra.Command, args []string) error {
@@ -557,8 +554,7 @@ func runGrantShow(cmd *cobra.Command, args []string) error {
 	}
 	for i := range resp.Grants {
 		if strings.TrimSpace(resp.Grants[i].GrantID) == grantID {
-			printOutput(&resp.Grants[i], formatIdentityGrant)
-			return nil
+			return printOutput(&resp.Grants[i], formatIdentityGrant)
 		}
 	}
 	return grantNotFoundInTeam(grantLookup{grantID: grantID, teamID: selection.TeamID}, nil)

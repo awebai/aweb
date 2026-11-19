@@ -84,8 +84,7 @@ func runIdentityStatus(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("inspect identity home %s: %w; repair that home's recorded state before retrying initialization", home.Root, err)
 	}
-	printOutput(out, formatJSONOutput)
-	return nil
+	return printJSON(out)
 }
 
 // inspectIdentityInitialization implements the reconciliation requirement in

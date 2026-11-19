@@ -78,8 +78,7 @@ func runTeamCheckInvite(cmd *cobra.Command, args []string) (resultErr error) {
 			}
 			out.NextStep = formatShellCommand([]string{"aw", "id", "team", "revoke-invite", "--invite-id", id})
 		}
-		printOutput(out, formatJSONOutput)
-		return nil
+		return printJSON(out)
 	}
 	out.Code = "invite_issuance_pending"
 	out.CertificateID, out.RegistryURL, out.IdentityHome = issuance.PreparedEffect.CertificateID, issuance.Context.RegistryURL, issuance.Context.IdentityHome
@@ -94,8 +93,8 @@ func runTeamCheckInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	if err != nil {
 		// Print the retained selection even on an inconclusive online check.
 		out.Code = "outcome_unknown"
-		printOutput(out, formatJSONOutput)
-		return withErrorCode("outcome_unknown", fmt.Errorf("online certificate check was inconclusive: %w; retain the original recipient and record, then run `%s` to resume its exact effect", err, out.NextStep))
+		outputErr := printJSON(out)
+		return errors.Join(withErrorCode("outcome_unknown", fmt.Errorf("online certificate check was inconclusive: %w; retain the original recipient and record, then run `%s` to resume its exact effect", err, out.NextStep)), outputErr)
 	}
 	if status.TeamID != issuance.PreparedEffect.Team || status.TeamDIDKey != issuance.PreparedEffect.TeamDIDKey {
 		return nativeInviteIssuanceRefusal(invite, errors.New("registry status differs from the retained team or controller"))
@@ -112,8 +111,7 @@ func runTeamCheckInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	if issuance.State == awconfig.RecoveryConfirmed {
 		out.State = awconfig.TeamInviteConsumed
 	}
-	printOutput(out, formatJSONOutput)
-	return nil
+	return printJSON(out)
 }
 
 // Recovery requires the recorded recipient's own key and exact home; knowing
@@ -170,8 +168,7 @@ func runTeamResumeInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	if err := writeExternalLocalIdentityStateIfNeeded(home.Root, accepted.Certificate); err != nil {
 		return err
 	}
-	printOutput(*accepted.Output, formatTeamAcceptInvite)
-	return nil
+	return printOutput(*accepted.Output, formatTeamAcceptInvite)
 }
 
 func init() {

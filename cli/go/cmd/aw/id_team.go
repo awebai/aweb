@@ -742,14 +742,13 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(teamCreateOutput{
+	return printOutput(teamCreateOutput{
 		Status:      "created",
 		TeamID:      registration.TeamID,
 		TeamDIDKey:  registration.TeamDIDKey,
 		TeamKeyPath: registration.TeamKeyPath,
 		RegistryURL: strings.TrimSpace(registry.DefaultRegistryURL),
 	}, formatTeamCreate)
-	return nil
 }
 
 func runTeamInvite(cmd *cobra.Command, args []string) error {
@@ -812,8 +811,7 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, style teamInvite
 		if err != nil {
 			return err
 		}
-		printOutput(preview, formatJSONOutput)
-		return nil
+		return printJSON(preview)
 	}
 	created, err := mintPlannedTeamInvite(request)
 	if err != nil {
@@ -823,7 +821,7 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, style teamInvite
 	if !jsonFlag {
 		fmt.Fprintln(cmd.ErrOrStderr(), teamInviteTokenWarning(created.ExpiresAt))
 	}
-	printOutput(teamInviteOutput{
+	return printOutput(teamInviteOutput{
 		ForHuman:      created.ForHuman,
 		Status:        "created",
 		InviteID:      created.InviteID,
@@ -831,7 +829,6 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, style teamInvite
 		ExpiresAt:     created.ExpiresAt,
 		PorcelainJoin: style == inviteOutputJoin,
 	}, formatTeamInvite)
-	return nil
 }
 
 // teamInviteTokenWarning goes to stderr with the human output, so the
@@ -1214,8 +1211,8 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 				Harness: teamHumanJoinHarness, Status: "not_started",
 				RetryCommand: joinHarnessRetryCommand(home, teamHumanJoinHarness),
 			}
-			printOutput(*accepted.Output, formatTeamAcceptInvite)
-			return fmt.Errorf("%w\nAfter connecting, run `%s` here without reusing the invite", cause, accepted.Output.HarnessSetup.RetryCommand)
+			outputErr := printOutput(*accepted.Output, formatTeamAcceptInvite)
+			return errors.Join(fmt.Errorf("%w\nAfter connecting, run `%s` here without reusing the invite", cause, accepted.Output.HarnessSetup.RetryCommand), outputErr)
 		}
 		return cause
 	}
@@ -1237,8 +1234,7 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 				accepted.Output.AwebURL = normalized
 				accepted.Output.ConnectCommand = workspaceConnectCommandForIdentityHome(normalized, externalIdentityHomeRoot(home))
 			}
-			printOutput(*accepted.Output, formatTeamAcceptInvite)
-			return nil
+			return printOutput(*accepted.Output, formatTeamAcceptInvite)
 		}
 		if connectURL == "" {
 			return connectionFailure(usageError("team membership was installed, but this legacy invite does not identify its aweb service; run `%s` after choosing the service", workspaceConnectCommandForIdentityHome("<url>", externalIdentityHomeRoot(home))))
@@ -1267,14 +1263,13 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 	if connectWorkspace && teamHumanJoinHarness != "" {
 		setup, setupErr := setupJoinHarness(workingDir, home, teamHumanJoinHarness)
 		accepted.Output.HarnessSetup = setup
-		printOutput(*accepted.Output, formatTeamAcceptInvite)
+		outputErr := printOutput(*accepted.Output, formatTeamAcceptInvite)
 		if setupErr != nil {
-			return fmt.Errorf("team membership and workspace connection completed, but harness setup failed: %w\nRun `%s` here to retry setup without reusing the invite", setupErr, setup.RetryCommand)
+			return errors.Join(fmt.Errorf("team membership and workspace connection completed, but harness setup failed: %w\nRun `%s` here to retry setup without reusing the invite", setupErr, setup.RetryCommand), outputErr)
 		}
-		return nil
+		return outputErr
 	}
-	printOutput(*accepted.Output, formatTeamAcceptInvite)
-	return nil
+	return printOutput(*accepted.Output, formatTeamAcceptInvite)
 }
 
 func resolveTeamAcceptInviteScope(cmd *cobra.Command) (string, error) {
@@ -1440,13 +1435,12 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(teamAddOutput{
+	return printOutput(teamAddOutput{
 		Status:   "added",
 		TeamID:   accepted.Output.TeamID,
 		Alias:    accepted.Output.Alias,
 		CertPath: accepted.Output.CertPath,
 	}, formatTeamAdd)
-	return nil
 }
 
 func runTeamSwitch(cmd *cobra.Command, args []string) error {
@@ -1467,21 +1461,19 @@ func runTeamSwitch(cmd *cobra.Command, args []string) error {
 		return usageError("team %q is not present in local team memberships; available: %s", teamID, strings.Join(teamState.AvailableTeamIDs(), ", "))
 	}
 	if strings.EqualFold(strings.TrimSpace(teamState.ActiveTeam), teamID) {
-		printOutput(teamSwitchOutput{
+		return printOutput(teamSwitchOutput{
 			Status:     "already_active",
 			ActiveTeam: strings.TrimSpace(teamState.ActiveTeam),
 		}, formatTeamSwitch)
-		return nil
 	}
 	teamState.ActiveTeam = teamID
 	if err := saveCurrentTeamState(workingDir, externalIdentityHomeRoot(home), teamState); err != nil {
 		return err
 	}
-	printOutput(teamSwitchOutput{
+	return printOutput(teamSwitchOutput{
 		Status:     "switched",
 		ActiveTeam: teamState.ActiveTeam,
 	}, formatTeamSwitch)
-	return nil
 }
 
 func runTeamList(cmd *cobra.Command, args []string) error {
@@ -1535,11 +1527,10 @@ func runTeamList(cmd *cobra.Command, args []string) error {
 		}
 		items = append(items, item)
 	}
-	printOutput(teamListOutput{
+	return printOutput(teamListOutput{
 		ActiveTeam:  strings.TrimSpace(teamState.ActiveTeam),
 		Memberships: items,
 	}, formatTeamList)
-	return nil
 }
 
 func runTeamMembers(cmd *cobra.Command, args []string) error {
@@ -1595,8 +1586,7 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 			RevokedAt:     strings.TrimSpace(cert.RevokedAt),
 		})
 	}
-	printTeamMembers(teamMembersOutput{TeamID: teamID, Members: items})
-	return nil
+	return printTeamMembers(teamMembersOutput{TeamID: teamID, Members: items})
 }
 
 func runGrantTeamMembers(cmd *cobra.Command, workingDir string, home awconfig.IdentityHome) error {
@@ -1658,18 +1648,17 @@ func runGrantTeamMembers(cmd *cobra.Command, workingDir string, home awconfig.Id
 			IdentityScope: awid.NormalizeIdentityScope(agent.IdentityScope),
 		})
 	}
-	printTeamMembers(teamMembersOutput{TeamID: selection.TeamID, Members: items, Source: "service-roster", Limitations: grantRosterLimitations})
-	return nil
+	return printTeamMembers(teamMembersOutput{TeamID: selection.TeamID, Members: items, Source: "service-roster", Limitations: grantRosterLimitations})
 }
 
-func printTeamMembers(out teamMembersOutput) {
+func printTeamMembers(out teamMembersOutput) error {
 	items := out.Members
 	sort.SliceStable(items, func(i, j int) bool {
 		left := strings.ToLower(firstNonEmpty(items[i].Alias, items[i].MemberAddress, items[i].MemberDIDAW, items[i].MemberDIDKey, items[i].CertificateID))
 		right := strings.ToLower(firstNonEmpty(items[j].Alias, items[j].MemberAddress, items[j].MemberDIDAW, items[j].MemberDIDKey, items[j].CertificateID))
 		return left < right
 	})
-	printOutput(out, formatTeamMembers)
+	return printOutput(out, formatTeamMembers)
 }
 
 func resolveTeamMembersTarget(workingDir string) (domain, team, teamID, registryURL string, err error) {
@@ -1795,12 +1784,11 @@ func runTeamLeave(cmd *cobra.Command, args []string) error {
 	if err := os.Remove(certPath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	printOutput(teamLeaveOutput{
+	return printOutput(teamLeaveOutput{
 		Status:     "left",
 		TeamID:     teamID,
 		ActiveTeam: strings.TrimSpace(teamState.ActiveTeam),
 	}, formatTeamLeave)
-	return nil
 }
 
 // createHostedTeamInvite creates a single-use hosted invite and returns the
@@ -2637,7 +2625,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 	}
 
 	fetchCommand := teamFetchCertificateCommand(domain, team, cert.CertificateID, "")
-	printOutput(teamAddMemberOutput{
+	return printOutput(teamAddMemberOutput{
 		Status:        "added",
 		Member:        firstNonEmpty(memberAddress, memberDID),
 		TeamID:        teamID,
@@ -2645,7 +2633,6 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		CertificateID: cert.CertificateID,
 		FetchCommand:  fetchCommand,
 	}, formatTeamAddMember)
-	return nil
 }
 
 func runTeamFetchCert(cmd *cobra.Command, args []string) error {
@@ -2743,14 +2730,13 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	printOutput(teamFetchCertOutput{
+	return printOutput(teamFetchCertOutput{
 		Status:        status,
 		TeamID:        teamID,
 		Alias:         strings.TrimSpace(cert.Alias),
 		CertificateID: strings.TrimSpace(cert.CertificateID),
 		CertPath:      awconfig.TeamCertificateRelativePath(teamID),
 	}, formatTeamFetchCert)
-	return nil
 }
 
 func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
@@ -2832,13 +2818,12 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	printOutput(teamRemoveMemberOutput{
+	return printOutput(teamRemoveMemberOutput{
 		Status:        result.Result,
 		TeamID:        teamID,
 		MemberAddress: firstNonEmpty(result.MemberAddress, member),
 		CertificateID: certificateID,
 	}, formatTeamRemoveMember)
-	return nil
 }
 
 // verifyNamedMember refuses when the member an alias resolved to is not the one
@@ -2986,7 +2971,7 @@ func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) erro
 	if err != nil {
 		return err
 	}
-	printOutput(teamRemoveMemberOutput{
+	return printOutput(teamRemoveMemberOutput{
 		Status:        result.Result,
 		TeamID:        teamID,
 		MemberAddress: firstNonEmpty(result.MemberAddress, memberAddress),
@@ -2994,7 +2979,6 @@ func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) erro
 		AgentID:       result.AgentID,
 		WorkspaceID:   result.WorkspaceID,
 	}, formatTeamRemoveMember)
-	return nil
 }
 
 // revokeHostedTeamCertificate revokes through the cloud-mediated controller.
@@ -3186,8 +3170,7 @@ func runTeamImportRequest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(output, formatTeamImportRequest)
-	return nil
+	return printOutput(output, formatTeamImportRequest)
 }
 
 func runTeamRegister(cmd *cobra.Command, args []string) error {
@@ -3226,8 +3209,7 @@ func runTeamRegister(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatTeamRegister)
-	return nil
+	return printOutput(out, formatTeamRegister)
 }
 
 func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
@@ -3272,8 +3254,7 @@ func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	printOutput(out, formatTeamCleanupCloud)
-	return nil
+	return printOutput(out, formatTeamCleanupCloud)
 }
 
 type teamRegistrationEndpoint struct {
@@ -3724,7 +3705,7 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load certificate: %w", err)
 	}
 
-	printOutput(certShowOutput{
+	return printOutput(certShowOutput{
 		TeamID:        cert.Team,
 		Alias:         cert.Alias,
 		MemberDIDKey:  cert.MemberDIDKey,
@@ -3735,7 +3716,6 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 		IssuedAt:      cert.IssuedAt,
 		CertificateID: cert.CertificateID,
 	}, formatCertShow)
-	return nil
 }
 
 func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, string, error) {

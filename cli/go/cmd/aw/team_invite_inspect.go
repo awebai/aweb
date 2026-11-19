@@ -201,7 +201,7 @@ func readHostedInvitePreview(ctx context.Context, token string, envelope hostedJ
 	// Do not use identity clients or generic HTTP tracing: headers, URLs and
 	// malformed bodies can all reflect secrets. This fixed trace is sufficient
 	// to show the sole request and its status without logging token-derived data.
-	trace := traceFlag || os.Getenv("AW_TRACE") == "1"
+	trace := traceFlag || awid.TraceEnabled()
 	if trace {
 		fmt.Fprintln(os.Stderr, "AW TRACE invite preview: POST /api/v1/spawn/invite-preview (credentials and response omitted)")
 	}

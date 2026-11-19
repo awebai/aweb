@@ -300,11 +300,10 @@ var wakeDeregisterCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			printOutput(receipt, func(v any) string {
+			return printOutput(receipt, func(v any) string {
 				r := v.(*wake.ManagedStopReceipt)
 				return fmt.Sprintf("managed worker joined: home=%s generation=%d completed_at=%s; accepted input completion NOT certified", r.Receiver.Registration.Home, r.Receiver.Generation, r.CompletedAt.Format(time.RFC3339Nano))
 			})
-			return nil
 		}
 		if wakeDeregisterExpected != "" {
 			return usageError("--expect-registration requires --require-managed-stop")
