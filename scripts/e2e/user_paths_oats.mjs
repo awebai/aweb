@@ -72,6 +72,8 @@ try {
   evidence.kernel_integrity = JSON.parse(readFileSync(join(STAGED, "package-lock.json"), "utf8")).packages["node_modules/@awebai/oats"].integrity;
   evidence.node = process.version;
   evidence.aw = command({ argv: [join(bin, "aw"), "version"] });
+  assert.match(evidence.aw, new RegExp(`commit: ${values["source-commit"]} `), "candidate aw identifies the requested source SHA");
+  assert.equal(JSON.parse(readFileSync(join(PROVIDER, "oats.json"), "utf8")).version, PIN.version);
   const ref = pathToFileURL(source).href;
   mkdirSync(join(source, "souls/probe"), { recursive: true });
   cpSync(PROVIDER, join(source, "capabilities/oats-aweb"), { recursive: true });

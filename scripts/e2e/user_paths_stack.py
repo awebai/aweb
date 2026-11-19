@@ -548,7 +548,8 @@ def main():
                     "--team",
                     f"members:{probe_lane}-g1.test",
                     "--source-commit",
-                    run("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
+                    os.environ.get("USER_PATHS_CANDIDATE_SHA")
+                    or run("git", "rev-parse", "HEAD", capture=True).stdout.strip(),
                     "--output",
                     "/work/released-kernel-wake.json",
                 )

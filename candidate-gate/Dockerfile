@@ -55,7 +55,12 @@ RUN uv run --frozen --no-sync --project naapp-lib \
 # no image builds, dependency installs or registry pulls.
 RUN uv sync --frozen --no-dev --project server
 COPY cli/go /opt/user-paths/go
-RUN cd /opt/user-paths/go && CGO_ENABLED=0 go build -trimpath -o /opt/user-paths/aw ./cmd/aw
+ARG USER_PATHS_SOURCE_SHA
+ARG USER_PATHS_CLI_VERSION
+RUN test -n "$USER_PATHS_SOURCE_SHA" && test -n "$USER_PATHS_CLI_VERSION" \
+    && cd /opt/user-paths/go && CGO_ENABLED=0 go build -trimpath \
+       -ldflags "-X main.version=${USER_PATHS_CLI_VERSION} -X main.commit=${USER_PATHS_SOURCE_SHA} -X main.commitRepo=github.com/awebai/aweb" \
+       -o /opt/user-paths/aw ./cmd/aw
 COPY channel-core/package.json channel-core/package-lock.json /journey/channel-core/
 WORKDIR /journey/channel-core
 RUN npm ci
