@@ -21,7 +21,6 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/pathpreflight"
-	"gopkg.in/yaml.v3"
 )
 
 const initAPIKeyEnvVar = "AWEB_API_KEY"
@@ -358,76 +357,6 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	return out, nil
 }
 
-// snapshotAwTree records the set of paths currently present under .aw so a
-// later failure can remove exactly what the current run created. A nil map
-// means .aw itself did not exist.
-func snapshotAwTree(workingDir string, identityHomes ...string) (map[string]bool, error) {
-	awDir := identityHomeForOperation(workingDir, identityHomes...)
-	if _, err := os.Stat(awDir); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	existing := map[string]bool{}
-	err := filepath.WalkDir(awDir, func(path string, _ os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		existing[path] = true
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return existing, nil
-}
-
-// rollbackAwTree removes every path under .aw that is not in the snapshot,
-// preserving everything that existed before (including resumable
-// partial-init state). If .aw did not exist at snapshot time and nothing of
-// it remains, the directory itself is removed.
-func rollbackAwTree(workingDir string, snapshot map[string]bool, identityHomes ...string) {
-	awDir := identityHomeForOperation(workingDir, identityHomes...)
-	if _, err := os.Stat(awDir); err != nil {
-		return
-	}
-	var created []string
-	_ = filepath.WalkDir(awDir, func(path string, _ os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if snapshot == nil || !snapshot[path] {
-			created = append(created, path)
-		}
-		return nil
-	})
-	// Remove deepest paths first so directories empty out before removal.
-	for i := len(created) - 1; i >= 0; i-- {
-		if err := os.Remove(created[i]); err != nil && !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Warning: rollback could not remove %s: %v\n", created[i], err)
-		}
-	}
-	if snapshot == nil {
-		pruneEmptyAwDir(workingDir, identityHomes...)
-	}
-}
-
-func identityHomeForOperation(workingDir string, identityHomes ...string) string {
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		return filepath.Clean(identityHomes[0])
-	}
-	return filepath.Join(filepath.Clean(workingDir), ".aw")
-}
-
-// pruneEmptyAwDir removes .aw when it exists and is empty.
-func pruneEmptyAwDir(workingDir string, identityHomes ...string) {
-	awDir := identityHomeForOperation(workingDir, identityHomes...)
-	if entries, err := os.ReadDir(awDir); err == nil && len(entries) == 0 {
-		_ = os.Remove(awDir)
-	}
-}
-
 // retainedAPIKeyCreationTeam reads the original team selection from the same
 // private journal as the child key and invitation. Released 1.36.58 writes both
 // team fields, so resumption does not need another teams/current read.
@@ -547,117 +476,6 @@ func generateAPIKeyBootstrapIdentity() (apiKeyBootstrapIdentityMaterial, error) 
 		DIDKey:     awid.ComputeDIDKey(pub),
 		StableID:   awid.ComputeStableID(pub),
 	}, nil
-}
-
-func apiKeyPartialInitPath(workingDir string, identityHomes ...string) string {
-	root := filepath.Join(filepath.Clean(workingDir), ".aw")
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		root = filepath.Clean(identityHomes[0])
-	}
-	return filepath.Join(root, "partial-init.yaml")
-}
-
-func preflightAPIKeyPartialInit(path string) error {
-	return pathpreflight.PreflightFile(path, "API-key recovery state", pathpreflight.AllowTempAmbientSymlinkPrefix())
-}
-
-func loadAPIKeyPartialInit(path string) (*apiKeyPartialInitState, error) {
-	if err := preflightAPIKeyPartialInit(path); err != nil {
-		return nil, err
-	}
-	data, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Read()
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var state apiKeyPartialInitState
-	if err := yaml.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("read partial API-key init state %s: %w", path, err)
-	}
-	if state.Version != apiKeyPartialInitVersion {
-		return nil, usageError(
-			"partial API-key init state at %s has unsupported version %d; retry with a matching aw version or remove the file explicitly",
-			path,
-			state.Version,
-		)
-	}
-	return &state, nil
-}
-
-func saveAPIKeyPartialInit(workingDir string, state *apiKeyPartialInitState, identityHomes ...string) error {
-	if state == nil {
-		return fmt.Errorf("nil partial API-key init state")
-	}
-	data, err := yaml.Marshal(state)
-	if err != nil {
-		return err
-	}
-	path := apiKeyPartialInitPath(workingDir, identityHomes...)
-	if err := preflightAPIKeyPartialInit(path); err != nil {
-		return err
-	}
-	return (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).Write(data)
-}
-
-// Rejected material is evidence, not an implicit choice of identity. Even an
-// otherwise resumable partial cannot bypass this reconciliation requirement.
-func refuseRejectedAPIKeyPartialInit(path string) error {
-	if err := preflightAPIKeyPartialInit(path); err != nil {
-		return err
-	}
-	entries, err := os.ReadDir(filepath.Dir(path))
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), filepath.Base(path)+".") && strings.HasSuffix(entry.Name(), ".rejected") {
-			return usageError("partial_init_reconciliation_required: rejected signing material at %s; use a different directory for a new identity or obtain operator reconciliation; rejected material is never restored automatically", filepath.Join(filepath.Dir(path), entry.Name()))
-		}
-	}
-	return nil
-}
-
-func quarantineAPIKeyPartialInit(workingDir string, identityHomes ...string) (string, error) {
-	path := apiKeyPartialInitPath(workingDir, identityHomes...)
-	if err := preflightAPIKeyPartialInit(path); err != nil {
-		return "", err
-	}
-	// Reserve a unique private destination so repeated timestamps cannot replace
-	// an earlier key. Rename only over the empty file created by this call.
-	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+"."+time.Now().UTC().Format("20060102T150405.000000000Z")+".*.rejected")
-	if err != nil {
-		return "", err
-	}
-	destination := file.Name()
-	if err := file.Close(); err != nil {
-		_ = os.Remove(destination)
-		return "", err
-	}
-	if err := os.Chmod(path, 0600); err != nil {
-		_ = os.Remove(destination)
-		return "", err
-	}
-	if err := os.Rename(path, destination); err != nil {
-		_ = os.Remove(destination) // Only our empty reservation; original is intact.
-		return "", err
-	}
-	return destination, nil
-}
-
-func removeAPIKeyPartialInit(workingDir string, identityHomes ...string) error {
-	path := apiKeyPartialInitPath(workingDir, identityHomes...)
-	if err := preflightAPIKeyPartialInit(path); err != nil {
-		return err
-	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
 }
 
 func newAPIKeyPartialInitState(
