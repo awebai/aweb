@@ -146,7 +146,9 @@ async def update_agent_presence(
             set_indices.append(_branch_workspaces_index_key(repo_id, current_branch))
 
     reverse_coordinates = {f"set:{index_key}": "1" for index_key in set_indices}
-    reverse_coordinates.update({f"alias:{index_key}": workspace_id for index_key in alias_indices})
+    reverse_coordinates.update(
+        {f"alias:{index_key}": workspace_id for index_key in alias_indices}
+    )
     pipe = redis.pipeline(transaction=True)
     pipe.hset(key, mapping=fields)
     pipe.expire(key, ttl_seconds)
@@ -276,7 +278,8 @@ async def _filter_valid_workspace_ids(
 
     # Normalize to strings
     workspace_ids = [
-        ws_id.decode("utf-8") if isinstance(ws_id, bytes) else ws_id for ws_id in members
+        ws_id.decode("utf-8") if isinstance(ws_id, bytes) else ws_id
+        for ws_id in members
     ]
 
     # Batch EXISTS checks with pipeline (N round-trips → 1)
@@ -397,12 +400,14 @@ async def clear_workspace_presence(
     deleted_count = 0
     for ws_id in workspace_ids:
         await recover_pre_coordinate_indices(ws_id)
-        deleted_count += int(await redis.eval(
-            cleanup_script,
-            2,
-            _presence_key(ws_id),
-            _presence_coordinates_key(ws_id),
-            ws_id,
-            _all_workspaces_index_key(),
-        ))
+        deleted_count += int(
+            await redis.eval(
+                cleanup_script,
+                2,
+                _presence_key(ws_id),
+                _presence_coordinates_key(ws_id),
+                ws_id,
+                _all_workspaces_index_key(),
+            )
+        )
     return deleted_count
