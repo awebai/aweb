@@ -235,3 +235,44 @@ async def test_workspace_patch_updates_the_callers_own_workspace(privacy_app):
     )
     assert row["hostname"] == "caller-host"
     assert row["focus_task_ref"] == "retained-task"
+
+
+@pytest.mark.asyncio
+async def test_authenticated_patch_requires_a_body_without_changing_the_workspace(
+    privacy_app,
+):
+    env = privacy_app
+    workspace = env.actors["alice"].workspace
+    before = await env.db.fetch_one(
+        "SELECT * FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+    )
+    presence = await env.redis.hgetall(f"presence:{workspace}")
+    missing = await request_as(
+        env, alias="alice", method="PATCH", path=f"/v1/workspaces/{workspace}"
+    )
+    assert missing.status_code == 422, missing.text
+    assert missing.json()["detail"] == {
+        "code": "workspace_update_body_required",
+        "message": "Send a JSON object containing the workspace fields to update, then retry this PATCH.",
+    }
+    after = await env.db.fetch_one(
+        "SELECT * FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+    )
+    assert dict(after) == dict(before)
+    assert await env.redis.hgetall(f"presence:{workspace}") == presence
+    valid = await request_as(
+        env,
+        alias="alice",
+        method="PATCH",
+        path=f"/v1/workspaces/{workspace}",
+        payload={"hostname": "valid-host"},
+    )
+    assert valid.status_code == 200, valid.text
+    assert valid.json()["updated"] is True
+    assert (
+        await env.db.fetch_value(
+            "SELECT hostname FROM {{tables.workspaces}} WHERE workspace_id=$1",
+            workspace,
+        )
+        == "valid-host"
+    )
