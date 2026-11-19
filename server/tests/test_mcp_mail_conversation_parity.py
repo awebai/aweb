@@ -1,6 +1,5 @@
 """Mail threading parity through the real MCP/HTTP apps and PostgreSQL."""
 
-from identity_binding_support import seed_verified_bindings
 
 from team_facts_fixtures import LegacyTeamFacts
 
@@ -10,7 +9,6 @@ from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import asyncpg
-import httpx
 import pytest
 
 from aweb.mcp.tools.refusals import SendRefusalMode
@@ -27,7 +25,6 @@ from aweb.messaging.mail_send import _validate_signed_mail_payload
 from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from test_messages_http import (
-    _build_test_app,
     _encrypted_mail_envelope,
     _insert_agent,
     _insert_agent_encryption_assertion,
@@ -80,104 +77,89 @@ class _AddressRegistry(LegacyTeamFacts):
 
 
 @pytest_asyncio.fixture
-async def mail_server(aweb_cloud_db, monkeypatch):
-    db = aweb_cloud_db.aweb_db
-    team = "ops:acme.com"
-    await _insert_team(db, team)
-    pilot_key, _, pilot_did = _make_keypair()
-    human_key, _, human_did = _make_keypair()
-    pilot = await _insert_agent(
-        db,
-        team_id=team,
-        alias="pilot",
-        did_key=pilot_did,
-        did_aw="did:aw:pilot",
-        address="acme.com/pilot",
-    )
-    human = await _insert_agent(
-        db,
-        team_id=team,
-        alias="human",
-        did_key=human_did,
-        did_aw="did:aw:human",
-        address=None,
-    )
-    await db.execute(
-        "UPDATE {{tables.agents}} SET agent_type='human', human_verified_key=did_key WHERE agent_id=$1",
-        UUID(human),
-    )
-    await db.execute(
-        """INSERT INTO {{tables.workspaces}}
-           (workspace_id, team_id, agent_id, alias, workspace_type)
-           VALUES ($1, $2, $3, 'pilot', 'hosted_mcp')""",
-        uuid4(),
-        team,
-        UUID(pilot),
-    )
+async def mail_server(shared_test_pool, monkeypatch):
+    from awid.identity_observation import IdentityKind
+    from aweb.application_state import application_registry_client
+    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from test_dashboard_privacy import privacy_stack
+
     monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
     monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "mail-parity-test-secret")
-    custody = SimpleNamespace(payloads=[], wrong_conversation=False)
-
-    async def signer(**kwargs):
-        payload = dict(kwargs["payload"])
-        custody.payloads.append(payload)
-        if custody.wrong_conversation:
-            payload["conversation_id"] = str(uuid4())
-        signed = canonical_signed_payload(payload)
-        return HostedMessageSigningResult(
-            from_did=pilot_did,
-            signing_key_id=pilot_did,
-            signed_payload=signed,
-            signature=sign_message(pilot_key, signed.encode()),
+    async with privacy_stack(shared_test_pool, monkeypatch) as stack:
+        team = "ops:acme.com"
+        await register_messaging_team(stack, team_id=team)
+        pilot_actor = await admit_messaging_actor(
+            stack,
+            alias="pilot",
+            team_id=team,
+            address="acme.com/pilot",
+            kind=IdentityKind.AGENT,
         )
-
-    async def encryptor(**kwargs):
-        payload, recipient = kwargs["payload"], kwargs["recipient"]
-        custody.payloads.append(dict(payload))
-        # The server routes opaque ciphertext. This fixture supplies a genuinely
-        # signed v2 envelope; hosted acceptance owns content encryption/decryption.
-        envelope = _encrypted_mail_envelope(
-            sender_sk=pilot_key,
-            sender_did=pilot_did,
-            sender_stable_id="did:aw:pilot",
-            recipient_did=recipient["did_key"],
-            recipient_stable_id=recipient["did_aw"],
-            sender_address=payload["from"],
-            recipient_address=recipient.get("address") or "",
-            message_id=payload["message_id"],
-            conversation_id=payload["conversation_id"],
+        human_actor = await admit_messaging_actor(
+            stack,
+            alias="human",
+            team_id=team,
+            address="acme.com/human",
+            kind=IdentityKind.HUMAN,
         )
-        return {
-            "content_mode": "encrypted_v2",
-            "message_version": 2,
-            "encrypted_envelope": envelope,
-        }
+        pilot_key, pilot_did, pilot = (
+            pilot_actor.signing_key,
+            pilot_actor.did_key,
+            pilot_actor.agent_id,
+        )
+        human_key, human_did, human = (
+            human_actor.signing_key,
+            human_actor.did_key,
+            human_actor.agent_id,
+        )
+        custody = SimpleNamespace(payloads=[], wrong_conversation=False)
 
-    registry = _AddressRegistry()
-    app = _build_test_app(db, registry)
-    seed_verified_bindings(
-        app,
-        ("did:aw:pilot", pilot_did, "acme.com/pilot"),
-        ("did:aw:human", human_did, ""),
-    )
-    from aweb.routes.messaging import router as messaging_router
+        async def signer(**kwargs):
+            payload = dict(kwargs["payload"])
+            custody.payloads.append(payload)
+            if custody.wrong_conversation:
+                payload["conversation_id"] = str(uuid4())
+            signed = canonical_signed_payload(payload)
+            return HostedMessageSigningResult(
+                from_did=pilot_did,
+                signing_key_id=pilot_did,
+                signed_payload=signed,
+                signature=sign_message(pilot_key, signed.encode()),
+            )
 
-    app.include_router(messaging_router)
-    from aweb.routes.conversations import router as conversations_router
+        async def encryptor(**kwargs):
+            payload, recipient = kwargs["payload"], kwargs["recipient"]
+            custody.payloads.append(dict(payload))
+            envelope = _encrypted_mail_envelope(
+                sender_sk=pilot_key,
+                sender_did=pilot_did,
+                sender_stable_id=pilot_actor.stable_id,
+                recipient_did=recipient["did_key"],
+                recipient_stable_id=recipient["did_aw"],
+                sender_address=payload["from"],
+                recipient_address=recipient.get("address") or "",
+                message_id=payload["message_id"],
+                conversation_id=payload["conversation_id"],
+            )
+            return {
+                "content_mode": "encrypted_v2",
+                "message_version": 2,
+                "encrypted_envelope": envelope,
+            }
 
-    app.include_router(conversations_router)
-    mcp = create_mcp_app(
-        db_infra=app.state.db,
-        registry_client=registry,
-        hosted_signer=signer,
-        hosted_encryptor=encryptor,
-    )
-    app.mount("/mcp", mcp)
-    await mcp.startup()
-    try:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
-        ) as client:
+        registry = application_registry_client(stack.app.state)
+        app, client, db = stack.app, stack.client, stack.db
+        mcp = create_mcp_app(
+            db_infra=stack.infra,
+            redis=stack.redis,
+            registry_client=registry,
+            hosted_signer=signer,
+            hosted_encryptor=encryptor,
+            public_origin=app.state.public_origin,
+        )
+        app.mount("/mcp", mcp)
+        await mcp.startup()
+        try:
 
             async def human_mail(body="hello", **target):
                 data = json.dumps({"body": body, **(target or {"to_alias": "pilot"})}).encode()
@@ -186,7 +168,10 @@ async def mail_server(aweb_cloud_db, monkeypatch):
                     content=data,
                     headers={
                         "Content-Type": "application/json",
-                        **_signed_identity_headers(human_key, human_did, "", data),
+                        "X-Team-ID": team,
+                        **_signed_identity_headers(
+                            human_key, human_did, human_actor.stable_id, data
+                        ),
                     },
                 )
                 assert response.status_code == 200, response.text
@@ -233,15 +218,21 @@ async def mail_server(aweb_cloud_db, monkeypatch):
                 custody=custody,
                 human=human,
                 human_did=human_did,
+                human_stable=human_actor.stable_id,
                 pilot=pilot,
                 client=client,
                 pilot_key=pilot_key,
                 pilot_did=pilot_did,
+                pilot_stable=pilot_actor.stable_id,
                 human_key=human_key,
                 registry=registry,
+                fixture=stack,
+                namespace_controller_did=(
+                    await stack.registry.namespace_authority("acme.com")
+                ).controller_did,
             )
-    finally:
-        await mcp.shutdown()
+        finally:
+            await mcp.shutdown()
 
 
 @pytest.mark.asyncio
@@ -255,7 +246,7 @@ async def test_mcp_recipient_send_starts_new_conversation(mail_server, target, p
     assert ordinary["conversation_id"] != original["conversation_id"]
     recipient = {
         "alias": "human",
-        "stable_did": "did:aw:human",
+        "stable_did": server.human_stable,
         "current_did": server.human_did,
         "address": "acme.com/human",
     }[target]
@@ -271,7 +262,7 @@ async def test_mcp_recipient_send_starts_new_conversation(mail_server, target, p
         UUID(sent["message_id"]),
     )
     assert str(row["conversation_id"]) == sent["conversation_id"]
-    assert row["to_did"] == "did:aw:human"
+    assert row["to_did"] == server.human_stable
     if plaintext:
         assert json.loads(row["signed_payload"])["conversation_id"] == sent["conversation_id"]
     else:
@@ -295,7 +286,7 @@ async def test_mcp_recipient_send_creates_when_no_active_conversation(mail_serve
             UUID(old),
             old_status,
         )
-    sent = await server.mcp_mail(to="did:aw:human", plaintext=True)
+    sent = await server.mcp_mail(to=server.human_stable, plaintext=True)
     assert "error" not in sent, sent
     assert sent["conversation_id"] != old
     assert server.custody.payloads[-1]["conversation_id"] == sent["conversation_id"]
@@ -310,7 +301,7 @@ async def test_mcp_new_conversation_does_not_bypass_recipient_policy(mail_server
         "UPDATE {{tables.agents}} SET team_id='ops:otherco.com', inbound_mode='team_and_contacts' WHERE agent_id=$1",
         UUID(server.human),
     )
-    result = await server.mcp_mail(to="did:aw:human", plaintext=True)
+    result = await server.mcp_mail(to=server.human_stable, plaintext=True)
     assert "error" in result, result
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 1
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))[
@@ -324,7 +315,7 @@ async def test_mcp_custody_cannot_sign_a_different_conversation(mail_server):
     server = mail_server
     await server.human_mail()
     server.custody.wrong_conversation = True
-    result = await server.mcp_mail(to="did:aw:human", plaintext=True)
+    result = await server.mcp_mail(to=server.human_stable, plaintext=True)
     assert "error" in result, result
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 1
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))[
@@ -345,7 +336,7 @@ async def test_mcp_lookup_does_not_reuse_another_senders_conversation(mail_serve
         address="acme.com/other",
     )
     old = (await server.human_mail(to_alias="other"))["conversation_id"]
-    sent = await server.mcp_mail(to="did:aw:human", plaintext=True)
+    sent = await server.mcp_mail(to=server.human_stable, plaintext=True)
     assert "error" not in sent, sent
     assert sent["conversation_id"] != old
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))[
@@ -384,14 +375,14 @@ async def test_http_selected_team_human_alias_and_discovery(mail_server):
         headers=_signed_identity_headers(server.pilot_key, server.pilot_did, "", b""),
     )
     assert found.status_code == 200, found.text
-    assert found.json()["did_aw"] == "did:aw:human"
+    assert found.json()["did_aw"] == server.human_stable
     assert found.json()["team_id"] == "ops:acme.com"
     assert found.json()["encryption_key"] is None  # Plaintext required no assertion.
     stored = await server.db.fetch_one(
         "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1",
         UUID(sent.json()["message_id"]),
     )
-    assert stored["to_did"] == "did:aw:human"
+    assert stored["to_did"] == server.human_stable
 
 
 @pytest.mark.asyncio
@@ -450,14 +441,14 @@ async def test_mcp_lists_threads_from_the_participant_http_index_without_ack(
     before = await server.db.fetch_all(
         "SELECT message_id,read_at FROM {{tables.messages}} ORDER BY message_id"
     )
-    listed = await server.mcp_call("list_threads", participant_did="did:aw:human")
+    listed = await server.mcp_call("list_threads", participant_did=server.human_stable)
     assert len(listed["conversations"]) == 1, listed
     item = listed["conversations"][0]
     assert item["conversation_id"] == first["conversation_id"]
     assert item["first_message_id"] == first["message_id"]
     assert item["title"] == ("First title" if plaintext else "")
     assert item["subject"] == "New subject"
-    assert set(item["participant_dids"]) == {"did:aw:pilot", "did:aw:human"}
+    assert set(item["participant_dids"]) == {server.pilot_stable, server.human_stable}
     response = await server.client.get(
         "/v1/conversations?conversation_type=mail&participant_did=did:aw:human",
         headers=_signed_identity_headers(server.pilot_key, server.pilot_did, "", b""),
@@ -482,7 +473,7 @@ async def test_mcp_address_mail_keeps_the_selected_membership(mail_server):
         team_id="partner:partner.test",
         alias="human",
         did_key=server.human_did,
-        did_aw="did:aw:human",
+        did_aw=server.human_stable,
         address="partner.test/human",
     )
     await server.db.execute(
@@ -605,7 +596,7 @@ async def test_an_address_send_records_the_senders_contact_through_both_adapters
             "binding_controller_did": server.registry.controller_did,
             "status": "active",
         }
-        for owner in ("did:aw:human", "did:aw:pilot")
+        for owner in (server.human_stable, server.pilot_stable)
     ]
 
 
@@ -637,7 +628,7 @@ async def test_mcp_encrypted_mail_to_a_hosted_recipient_needs_the_senders_hosted
         agent_id=server.human,
         signing_key=server.human_key,
         did_key=server.human_did,
-        did_aw="did:aw:human",
+        did_aw=server.human_stable,
         public_key=b"r" * 32,
     )
     if sender_key_published:
@@ -646,7 +637,7 @@ async def test_mcp_encrypted_mail_to_a_hosted_recipient_needs_the_senders_hosted
             agent_id=server.pilot,
             signing_key=server.pilot_key,
             did_key=server.pilot_did,
-            did_aw="did:aw:pilot",
+            did_aw=server.pilot_stable,
             public_key=b"s" * 32,
         )
 
