@@ -201,8 +201,12 @@ class GoBuildCache(unittest.TestCase):
         }
 
     def test_prepares_make_selected_cache_then_verifies_it_offline(self):
-        prepared = preparation.go_build_cache(self.root, "prepare", self.env)
-        verified = preparation.go_build_cache(self.root, "verify", self.env)
+        prepared = preparation.go_build_cache(
+            root=self.root, mode=preparation.PreparationMode.PREPARE, env=self.env
+        )
+        verified = preparation.go_build_cache(
+            root=self.root, mode=preparation.PreparationMode.VERIFY, env=self.env
+        )
         self.assertEqual(prepared, verified)
         self.assertEqual(prepared["cache"], str(self.module / "build-owner-cache"))
         self.assertEqual(prepared["files"], 1)
@@ -214,17 +218,72 @@ class GoBuildCache(unittest.TestCase):
         other.mkdir()
         (other / "module.zip").write_bytes(b"wrong cache")
         with self.assertRaisesRegex(
-            preparation.SetupFailure, "PACKAGE_GO_OFFLINE_CACHE_MISSING"
+            preparation.SetupFailure,
+            "PACKAGE_GO_OFFLINE_CACHE_MISSING.*Prepare the selected frozen source.*offline phase\\.",
         ):
-            preparation.go_build_cache(self.root, "verify", self.env)
+            preparation.go_build_cache(
+                root=self.root, mode=preparation.PreparationMode.VERIFY, env=self.env
+            )
 
     def test_download_cannot_change_go_manifests(self):
         with self.assertRaisesRegex(
-            preparation.SetupFailure, "PACKAGE_GO_LOCK_CHANGED"
+            preparation.SetupFailure,
+            "PACKAGE_GO_LOCK_CHANGED.*Restore the committed go.mod and go.sum.*again\\.",
         ):
             preparation.go_build_cache(
-                self.root, "prepare", {**self.env, "MUTATE_GO_LOCK": "1"}
+                root=self.root,
+                mode=preparation.PreparationMode.PREPARE,
+                env={**self.env, "MUTATE_GO_LOCK": "1"},
             )
+
+    def test_make_selection_and_preparation_refusals_offer_recovery(self):
+        cases = (
+            (
+                "package-go-cache",
+                2,
+                "",
+                "PACKAGE_GO_CACHE_SELECTION_FAILED",
+                "Correct the selected source's Make GOENV cache path",
+            ),
+            (
+                "package-go-cache",
+                0,
+                "relative/cache",
+                "PACKAGE_GO_CACHE_PATH_INVALID",
+                "Correct Make GOENV to select an absolute module cache",
+            ),
+            (
+                "package-go-download",
+                2,
+                "",
+                "PACKAGE_GO_PREPARATION_FAILED",
+                "Prepare the selected frozen source's Make-owned Go cache",
+            ),
+        )
+        native = subprocess.run
+        for target, code, output, failure, action in cases:
+            with self.subTest(target=target, code=code, output=output):
+
+                def invoke(args, **kwargs):
+                    if args[-1] == target:
+                        return subprocess.CompletedProcess(args, code, output, "")
+                    return native(args, **kwargs)
+
+                with (
+                    patch.object(preparation.subprocess, "run", side_effect=invoke),
+                    self.assertRaises(preparation.SetupFailure) as caught,
+                ):
+                    preparation.go_build_cache(
+                        root=self.root,
+                        mode=preparation.PreparationMode.PREPARE,
+                        env=self.env,
+                    )
+                self.assertIn(failure, str(caught.exception))
+                self.assertIn(action, str(caught.exception))
+                self.assertTrue(
+                    str(caught.exception).endswith("again.")
+                    or str(caught.exception).endswith("offline phase.")
+                )
 
     def test_package_receipt_retains_the_go_cache_hash(self):
         project = self.root / "server"

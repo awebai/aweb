@@ -7,11 +7,17 @@ import json
 import os
 import subprocess
 import tempfile
+from enum import StrEnum
 from pathlib import Path
 
 
 class SetupFailure(RuntimeError):
     """A selected environment was not prepared; no product test has run."""
+
+
+class PreparationMode(StrEnum):
+    PREPARE = "prepare"
+    VERIFY = "verify"
 
 
 def selected_projects(root, names):
@@ -40,16 +46,17 @@ def selected_projects(root, names):
     return projects
 
 
-def run(args, *, root, env, failure, capture=False):
+def run(args, *, root, env, failure, capture=False, recovery=None):
     result = subprocess.run(
         args, cwd=root, env=env, text=True, capture_output=capture, check=False
     )
     if result.returncode:
-        raise SetupFailure(f"{failure}: exit {result.returncode}")
+        detail = f"{failure}: exit {result.returncode}"
+        raise SetupFailure(f"{detail}. {recovery}" if recovery else detail)
     return result.stdout if capture else None
 
 
-def go_build_cache(root, mode, env):
+def go_build_cache(*, root: Path, mode: PreparationMode, env: dict[str, str]):
     module = root / "cli/go"
     if not (module / "go.mod").is_file():
         return None
@@ -57,8 +64,10 @@ def go_build_cache(root, mode, env):
     before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in manifests}
     go_env = dict(
         env,
-        GOPROXY="https://proxy.golang.org,direct" if mode == "prepare" else "off",
-        GOSUMDB="sum.golang.org" if mode == "prepare" else "off",
+        GOPROXY="https://proxy.golang.org,direct"
+        if mode is PreparationMode.PREPARE
+        else "off",
+        GOSUMDB="sum.golang.org" if mode is PreparationMode.PREPARE else "off",
         GOFLAGS="-mod=readonly",
     )
     # Use the committed build owner's GOENV, rather than warming Go's default
@@ -86,22 +95,28 @@ def go_build_cache(root, mode, env):
             root=root,
             env=go_env,
             failure="PACKAGE_GO_CACHE_SELECTION_FAILED",
+            recovery="Correct the selected source's Make GOENV cache path, then prepare that frozen source again.",
             capture=True,
         ).strip()
         cache = Path(selected)
         if not selected or not cache.is_absolute() or cache == Path("/"):
-            raise SetupFailure("PACKAGE_GO_CACHE_PATH_INVALID")
+            raise SetupFailure(
+                "PACKAGE_GO_CACHE_PATH_INVALID: Correct Make GOENV to select an absolute module cache other than /, then prepare the frozen source again."
+            )
         run(
             [*make, "package-go-download"],
             root=root,
             env=go_env,
             failure="PACKAGE_GO_PREPARATION_FAILED"
-            if mode == "prepare"
+            if mode is PreparationMode.PREPARE
             else "PACKAGE_GO_OFFLINE_CACHE_MISSING",
+            recovery="Prepare the selected frozen source's Make-owned Go cache with network access before running the offline phase.",
         )
     after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in manifests}
     if before != after:
-        raise SetupFailure("PACKAGE_GO_LOCK_CHANGED")
+        raise SetupFailure(
+            "PACKAGE_GO_LOCK_CHANGED: Restore the committed go.mod and go.sum, then prepare the frozen source again."
+        )
     digest = hashlib.sha256()
     count = 0
     for path in sorted(cache.rglob("*")):
@@ -153,7 +168,7 @@ def provision(root, sha, names, mode, receipt):
     )
     for key in ("UV_NO_SYNC", "UV_PROJECT_ENVIRONMENT", "PYTHONPATH", "PYTHONHOME"):
         env.pop(key, None)
-    go_cache = go_build_cache(root, mode, env)
+    go_cache = go_build_cache(root=root, mode=PreparationMode(mode), env=env)
     rows = []
     installed = set()
     for project, _ in projects:
