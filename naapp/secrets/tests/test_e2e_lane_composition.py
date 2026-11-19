@@ -214,7 +214,9 @@ calls = json.loads(path.read_text()) if path.exists() else []
 has_input = bool(sys.stdin.read()) if "psql" in sys.argv and "-At" not in sys.argv else False
 calls.append({"args": sys.argv[1:], "sql_stdin": has_input})
 path.write_text(json.dumps(calls))
-sys.exit(77 if len(calls) == int(os.environ["BOOTSTRAP_FAIL_STEP"]) else 0)
+if len(calls) == int(os.environ["BOOTSTRAP_FAIL_STEP"]):
+    print("ERROR: 42501", file=sys.stderr)
+    sys.exit(77)
 """
     )
     recorder.chmod(0o755)
@@ -237,6 +239,20 @@ sys.exit(77 if len(calls) == int(os.environ["BOOTSTRAP_FAIL_STEP"]) else 0)
         owner_lane.prepare_secrets_database(lane)
         owner_lane.secrets_query(lane)("SELECT 1")
     entries = json.loads(journal.read_text())
+    evidence = [
+        json.loads(path.read_text()) for path in (tmp_path / "bootstrap-evidence").glob("*.json")
+    ]
+    expected_operations = ["provision_database"]
+    if outcome is not BootstrapOutcome.PROVISIONING_REFUSAL:
+        expected_operations.append("initialize_erasure")
+    assert sorted(record["operation"] for record in evidence) == sorted(expected_operations)
+    failures = [record for record in evidence if record["exit_code"]]
+    if outcome is BootstrapOutcome.SUCCESS:
+        assert failures == []
+    else:
+        assert len(failures) == 1
+        assert failures[0]["exit_code"] == 77
+        assert failures[0]["error_code"] == "postgres_42501"
     calls = [entry["args"] for entry in entries]
     expected = {
         BootstrapOutcome.SUCCESS: 3,

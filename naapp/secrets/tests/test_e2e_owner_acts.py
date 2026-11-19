@@ -55,6 +55,13 @@ from team_journey_support import Holder as SharedHolder
 from team_journey_support import await_awid_txt as shared_await_awid_txt
 from team_journey_support import docker as _docker
 
+from e2e.lane_evidence import (
+    BootstrapOperation,
+    create_runtime_directory,
+    record_bootstrap,
+    retain_bootstrap_evidence,
+)
+
 pytestmark = pytest.mark.e2e
 
 APP_DIR = Path(__file__).resolve().parents[1]
@@ -355,8 +362,7 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
     if os.environ.get("SECRETS_E2E") != "1":
         pytest.skip("make e2e only")
     project = os.environ.get("NAAPP_E2E_PROJECT", "secrets-owner-acts-e2e")
-    runtime = tmp_path_factory.mktemp("owner-acts")
-    runtime.chmod(0o755)
+    runtime = create_runtime_directory(tmp_path_factory, environment=os.environ)
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=REPO, text=True, capture_output=True, check=True
     ).stdout.strip()
@@ -392,12 +398,17 @@ def lane(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Lane]:
         _docker("tag", f"{project}-browser", f"{project}-browser")
         yield lane
     finally:
-        # Every service's own record of the run, kept beside the runtime.
-        logs = lane.compose("logs", "--no-color", "--timestamps")
-        (runtime / "compose.log").write_text(logs.stdout + logs.stderr)
-        lane.compose("--profile", "browser", "down", "-v", "--remove-orphans")
-        for name in ("controller", "holder"):
-            _docker("rm", "-f", f"{project}-{name}")
+        try:
+            # Private service logs stay beside the runtime, never a key-tree export.
+            logs = lane.compose("logs", "--no-color", "--timestamps")
+            (runtime / "compose.log").write_text(logs.stdout + logs.stderr)
+        finally:
+            try:
+                retain_bootstrap_evidence(runtime, environment=lane.env)
+            finally:
+                lane.compose("--profile", "browser", "down", "-v", "--remove-orphans")
+                for name in ("controller", "holder"):
+                    _docker("rm", "-f", f"{project}-{name}")
 
 
 def grant_install_owner(lane: Lane, did_key: str) -> None:
@@ -562,7 +573,7 @@ def write_secrets_database_files(lane: Lane) -> str:
     # Only generated URL-safe bytes enter the psql variable. No password in
     # argv/env, echoed SQL or failing-statement server logs.
     return (
-        "\\set VERBOSITY terse\n"
+        "\\set VERBOSITY sqlstate\n"
         "SET log_min_error_statement = panic;\n"
         f"\\set password '{password}'\n"
         f"CREATE ROLE {SECRETS_RUNTIME_ROLE} LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB "
@@ -586,10 +597,13 @@ def prepare_secrets_database(lane: Lane) -> None:
         "secrets",
         "-v",
         "ON_ERROR_STOP=1",
+        "-v",
+        "VERBOSITY=sqlstate",
         input=script,
     )
     # CREATE ROLE/DATABASE deliberately refuse retained state. A provisioning
     # failure must never fall through to initializing that existing content.
+    record_bootstrap(lane.runtime, operation=BootstrapOperation.PROVISION, result=provisioned)
     if provisioned.returncode:
         raise AssertionError("Fresh Secrets database/runtime role provisioning refused")
     initialized = lane.compose(
@@ -616,6 +630,7 @@ def prepare_secrets_database(lane: Lane) -> None:
         "--max-backup-age-seconds",
         str(E2E_BACKUP_MAX_AGE_SECONDS),
     )
+    record_bootstrap(lane.runtime, operation=BootstrapOperation.INITIALIZE, result=initialized)
     if initialized.returncode:
         raise AssertionError("Offline Secrets erasure initialization refused")
 
