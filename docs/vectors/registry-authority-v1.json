@@ -1,0 +1,550 @@
+{
+  "version": 1,
+  "contract": "docs/identity-messaging-contract.md:208-222",
+  "note": "Origin selection and 404 evidence classification do not grant network admission. This corpus is pending independent review.",
+  "cases": [
+    {
+      "id": "administrative-configured-no-discovery",
+      "input": {
+        "environment": "production",
+        "operation": "administrative",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://home.registry.example",
+        "provenance": "configured",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "administrative-default-no-discovery",
+      "input": {
+        "environment": "production",
+        "operation": "administrative",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "",
+        "discovery": {
+          "state": "not_requested"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://api.awid.ai",
+        "provenance": "default",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "administrative-exact-team",
+      "input": {
+        "environment": "production",
+        "operation": "administrative",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        },
+        "team": {
+          "team_id": "source:foreign.example",
+          "origin": "https://team.registry.example/api/"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://team.registry.example",
+        "provenance": "team",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "explicit-origin-wins-over-team-and-dns",
+      "input": {
+        "environment": "production",
+        "operation": "administrative",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "refused"
+        },
+        "explicit_origin": "https://operator.registry.example",
+        "team": {
+          "team_id": "source:foreign.example",
+          "origin": "https://team.registry.example"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://operator.registry.example",
+        "provenance": "explicit",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "team-wrong-domain-refused",
+      "input": {
+        "environment": "production",
+        "operation": "administrative",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        },
+        "team": {
+          "team_id": "source:other.example",
+          "origin": "https://team.registry.example"
+        }
+      },
+      "error_code": "registry_team_mismatch",
+      "error_message": "The selected team's registry does not match the requested domain. Select the exact source team and retry."
+    },
+    {
+      "id": "own-domain-pin-no-discovery",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "HOME.example.",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "refused"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://home.registry.example",
+        "provenance": "configured",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "foreign-needs-discovery",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        }
+      },
+      "expected": {
+        "action": "discover",
+        "origin": "",
+        "provenance": "",
+        "authority_established": false,
+        "not_found": "unknown"
+      }
+    },
+    {
+      "id": "foreign-record-wins",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "https://FOREIGN.registry.example:443/api/"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://foreign.registry.example",
+        "provenance": "discovery",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "foreign-fallback-absent",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "absent"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://home.registry.example",
+        "provenance": "fallback",
+        "authority_established": false,
+        "not_found": "unknown"
+      }
+    },
+    {
+      "id": "foreign-fallback-timeout",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "timeout"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://home.registry.example",
+        "provenance": "fallback",
+        "authority_established": false,
+        "not_found": "unknown"
+      }
+    },
+    {
+      "id": "foreign-fallback-temporary_failure",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "temporary_failure"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://home.registry.example",
+        "provenance": "fallback",
+        "authority_established": false,
+        "not_found": "unknown"
+      }
+    },
+    {
+      "id": "foreign-fallback-unreachable",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "unreachable"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://home.registry.example",
+        "provenance": "fallback",
+        "authority_established": false,
+        "not_found": "unknown"
+      }
+    },
+    {
+      "id": "foreign-fallback-connection_refused",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "connection_refused"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://home.registry.example",
+        "provenance": "fallback",
+        "authority_established": false,
+        "not_found": "unknown"
+      }
+    },
+    {
+      "id": "foreign-no-configured-fallback",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "",
+        "discovery": {
+          "state": "absent"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://api.awid.ai",
+        "provenance": "fallback",
+        "authority_established": false,
+        "not_found": "unknown"
+      }
+    },
+    {
+      "id": "dns-refused",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "refused"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-malformed",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "malformed"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-ambiguous",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "ambiguous"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-origin-ipv4-literal",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "https://192.0.2.1"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-origin-ipv6-literal",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "https://[2001:db8::1]"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-origin-mapped-ipv6-literal",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "https://[::ffff:192.0.2.1]"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-origin-loopback",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "https://localhost"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-origin-http-production",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "http://registry.example"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-origin-prefix",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "https://registry.example/prefix"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-origin-userinfo",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "https://fixture:fixture@registry.example"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "dns-origin-query",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "https://registry.example?fixture=yes"
+        }
+      },
+      "error_code": "registry_discovery_invalid",
+      "error_message": "The registry's DNS evidence for foreign.example is invalid or refused. Ask the domain operator to check _awid.foreign.example and retry."
+    },
+    {
+      "id": "development-http-host",
+      "input": {
+        "environment": "development",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "found",
+          "origin": "http://registry.example/api"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "http://registry.example",
+        "provenance": "discovery",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "stored-private-team-routing-grants-no-network-trust",
+      "input": {
+        "environment": "production",
+        "operation": "administrative",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        },
+        "team": {
+          "team_id": "source:foreign.example",
+          "origin": "http://127.0.0.1:18010/api"
+        }
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "http://127.0.0.1:18010",
+        "provenance": "team",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "explicit-ipv6-routing-grants-no-extra-network-trust",
+      "input": {
+        "environment": "production",
+        "operation": "outbound_read",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        },
+        "explicit_origin": "https://[2001:db8::1]/api/"
+      },
+      "expected": {
+        "action": "selected",
+        "origin": "https://[2001:db8::1]",
+        "provenance": "explicit",
+        "authority_established": true,
+        "not_found": "absence"
+      }
+    },
+    {
+      "id": "unknown-operation",
+      "input": {
+        "environment": "production",
+        "operation": "other",
+        "domain": "foreign.example",
+        "identity_domain": "home.example",
+        "configured_origin": "https://home.registry.example",
+        "discovery": {
+          "state": "not_requested"
+        }
+      },
+      "error_code": "registry_operation_invalid",
+      "error_message": "The registry operation is invalid. Choose an administrative operation or an outbound address read."
+    }
+  ]
+}
