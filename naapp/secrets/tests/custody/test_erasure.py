@@ -108,6 +108,21 @@ async def test_initialisation_is_idempotent_and_preserves_binding(erasedb):
     await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
 
 
+async def test_pin_lock_grant_requires_the_immutable_update_trigger(erasedb):
+    operator, service, _, _ = erasedb
+    await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
+    await operator.execute(
+        "ALTER TABLE {{tables.run_redaction_pins}} DISABLE TRIGGER run_redaction_pins_immutable"
+    )
+    with pytest.raises(ErasureUnavailable) as refusal:
+        await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
+    assert refusal.value.reason is ErasureFailure.ROLE_UNSAFE
+    await operator.execute(
+        "ALTER TABLE {{tables.run_redaction_pins}} ENABLE TRIGGER run_redaction_pins_immutable"
+    )
+    await check_erasure_store(service, expected_schema_digest=service_schema_fingerprint())
+
+
 @pytest.mark.parametrize(
     "grant",
     [

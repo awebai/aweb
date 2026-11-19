@@ -52,6 +52,9 @@ def runtime_table_grants(content_schema: str) -> tuple[RuntimeTableGrants, ...]:
             schema=content_schema,
             table="run_redaction_pins",
             privileges=("SELECT", "INSERT", "DELETE"),
+            # FOR UPDATE needs one UPDATE column; the BEFORE UPDATE trigger
+            # in migrations/007_run_redaction_pins.sql refuses every mutation.
+            update_columns=("dispatch_id",),
         ),
         RuntimeTableGrants(
             schema=content_schema,
@@ -243,6 +246,20 @@ async def verify_role_and_triggers(
             OWNER_ROLE,
         ):
             raise ErasureUnavailable(ErasureFailure.ROLE_UNSAFE)
+
+    # The pin's one-column UPDATE grant is safe only with its immutable guard.
+    # 19 = ROW | BEFORE | UPDATE, as installed by 007_run_redaction_pins.sql.
+    if not await db.fetch_value(
+        "SELECT EXISTS(SELECT 1 FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid"
+        " WHERE t.tgrelid=to_regclass($1) AND t.tgname='run_redaction_pins_immutable'"
+        " AND t.tgenabled IN ('O','A') AND t.tgtype=19"
+        " AND t.tgfoid=to_regprocedure($2)"
+        " AND NOT pg_has_role($3::name,p.proowner,'MEMBER'))",
+        f'"{content_schema}".run_redaction_pins',
+        f'"{content_schema}".secrets_refuse_change()',
+        application_role,
+    ):
+        raise ErasureUnavailable(ErasureFailure.ROLE_UNSAFE)
 
 
 async def check_erasure_store(db: AsyncDatabaseManager, *, expected_schema_digest: str) -> None:
