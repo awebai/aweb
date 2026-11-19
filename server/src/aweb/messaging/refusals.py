@@ -16,6 +16,7 @@ class DeliveryRefusalCode(StrEnum):
 
     RECIPIENT_POLICY_REJECTED = "recipient_policy_rejected"
     CONTACT_IDENTITY_BINDING_REQUIRED = "contact_identity_binding_required"
+    CONVERSATION_EXISTS = "conversation_exists"
 
 
 CONTACT_REBIND_ACTION = "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending."
@@ -61,6 +62,22 @@ class SignedRecipientMismatch(DeliveryRefusal):
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             code=DeliveryRefusalCode.SIGNED_RECIPIENT_MISMATCH,
             detail=f"signed_payload recipient must match the {target}. Check the recipient and sign the message again.",
+        )
+
+
+class MailConversationExists(DeliveryRefusal):
+    """Retain the frozen collision detail and add a separate recovery action."""
+
+    recovery_action = (
+        "Continue the existing conversation or choose a new conversation_id and retry."
+    )
+
+    def __init__(self) -> None:
+        # docs/aweb-sot.md:1008 fixes this detail as a released wire value.
+        super().__init__(
+            status_code=HTTPStatus.CONFLICT,
+            detail="conversation_exists",
+            code=DeliveryRefusalCode.CONVERSATION_EXISTS,
         )
 
 

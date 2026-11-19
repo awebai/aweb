@@ -1,6 +1,5 @@
 """Recipient sends start fresh; only an explicit ID selects a continuation."""
 
-import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -9,7 +8,6 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from awid.signing import canonical_json_bytes, sign_message
-import aweb.messaging.mail_send as mail_send
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from test_messages_http import (
     _build_test_app,
@@ -22,7 +20,7 @@ from test_messages_http import (
 @pytest.mark.asyncio
 @pytest.mark.parametrize("target", ["alias", "did", "stable_id", "address"])
 @pytest.mark.parametrize("new_flag", [False, True])
-async def test_new_mail_conversation(aweb_cloud_db, target, new_flag, monkeypatch):
+async def test_new_mail_conversation(aweb_cloud_db, target, new_flag):
     db = aweb_cloud_db.aweb_db
     alice_sk, _, alice_key = _make_keypair()
     _, _, bob_key = _make_keypair()
@@ -177,45 +175,3 @@ async def test_new_mail_conversation(aweb_cloud_db, target, new_flag, monkeypatc
         assert (await db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))[
             "n"
         ] == 4
-
-        if target == "alias":
-            # Force both requests past the absence precheck before either INSERT.
-            original_create = mail_send.create_conversation
-            ready = asyncio.Event()
-            arrivals = 0
-
-            async def concurrent_create(*args, **kwargs):
-                nonlocal arrivals
-                arrivals += 1
-                if arrivals == 2:
-                    ready.set()
-                await asyncio.wait_for(ready.wait(), timeout=5)
-                return await original_create(*args, **kwargs)
-
-            monkeypatch.setattr(mail_send, "create_conversation", concurrent_create)
-            racing_id = str(uuid4())
-            responses = await asyncio.gather(
-                *[
-                    client.post(
-                        "/v1/messages",
-                        json={
-                            **recipient,
-                            "new_conversation": True,
-                            "conversation_id": racing_id,
-                            "body": "race",
-                        },
-                    )
-                    for _ in range(2)
-                ]
-            )
-            assert sorted(response.status_code for response in responses) == [200, 409]
-            loser = next(
-                response for response in responses if response.status_code == 409
-            )
-            assert loser.json()["detail"] == "conversation_exists"
-            assert (
-                await db.fetch_one(
-                    "SELECT count(*) AS n FROM {{tables.messages}} WHERE conversation_id=$1",
-                    UUID(racing_id),
-                )
-            )["n"] == 1

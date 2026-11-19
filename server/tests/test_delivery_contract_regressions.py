@@ -2,6 +2,7 @@
 """Delivery boundaries through the real apps, keys, registry and databases."""
 
 import json
+import asyncio
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -180,6 +181,59 @@ async def test_mail_missing_native_recipient_explains_reconnection_and_keeps_liv
     )
     live = await _send(env, {"to_did": env.actors["bob"].did, "body": "Live neighbour"})
     assert live.status_code == 200, live.text
+
+
+@pytest.mark.asyncio
+async def test_real_concurrent_mail_collision_keeps_one_message_and_actionable_wire_code(
+    privacy_app,
+):
+    env = privacy_app
+    conversation_id = str(uuid4())
+    payload = {
+        "to_did": env.actors["bob"].did,
+        "conversation_id": conversation_id,
+        "body": "Concurrent creation",
+    }
+    tasks = []
+    # Both reads finish before either INSERT: PostgreSQL provides the barrier.
+    async with env.db.transaction() as blocker:
+        await blocker.execute("LOCK TABLE {{tables.conversations}} IN SHARE MODE")
+        tasks = [asyncio.create_task(_send(env, payload)) for _ in range(2)]
+        try:
+            async with asyncio.timeout(5):
+                while True:
+                    waiting = await env.db.fetch_value(
+                        "SELECT count(*) FROM pg_locks WHERE relation='aweb.conversations'::regclass "
+                        "AND mode='RowExclusiveLock' AND NOT granted"
+                    )
+                    if waiting >= 2:
+                        break
+                    if any(task.done() for task in tasks):
+                        raise AssertionError(
+                            "Mail request ended before the concurrent INSERT barrier"
+                        )
+                    await asyncio.sleep(0.01)
+        except BaseException:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+    responses = await asyncio.gather(*tasks)
+    assert sorted(response.status_code for response in responses) == [200, 409], [
+        r.text for r in responses
+    ]
+    loser = next(response for response in responses if response.status_code == 409)
+    assert loser.json() == {
+        "detail": "conversation_exists",
+        "recovery_action": "Continue the existing conversation or choose a new conversation_id and retry.",
+    }
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.messages}} WHERE conversation_id=$1",
+            UUID(conversation_id),
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio

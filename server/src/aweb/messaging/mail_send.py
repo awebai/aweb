@@ -24,6 +24,7 @@ from aweb.messaging.refusals import (
     DeliveryRefusal,
     SignedRecipientMismatch,
     recipient_selector_mismatch,
+    MailConversationExists,
 )
 from http import HTTPStatus
 from pgdbm.errors import QueryError
@@ -209,11 +210,11 @@ def _validate_signed_mail_payload(
         )
     try:
         payload = json.loads(signed_payload)
-    except Exception:
+    except (json.JSONDecodeError, TypeError) as exc:
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
             detail="signed_payload must be valid JSON",
-        )
+        ) from exc
     if not isinstance(payload, dict):
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
@@ -747,8 +748,8 @@ async def deliver_remote_mail_and_project_locally(
 
 def _lost_send_race(exc: BaseException) -> bool:
     """A concurrent send claimed this message_id or conversation_id and committed first."""
-    if isinstance(exc, DeliveryRefusal):
-        return exc.status_code == 409 and exc.detail == "conversation_exists"
+    if isinstance(exc, MailConversationExists):
+        return True
     cause = exc.__cause__ if isinstance(exc, QueryError) else exc
     return isinstance(cause, asyncpg.exceptions.UniqueViolationError)
 
@@ -833,9 +834,7 @@ async def _create_mail_conversation(db, **kwargs):
         # transactional: losing that race must refuse rather than reuse or 500.
         cause = exc.__cause__ if isinstance(exc, QueryError) else exc
         if isinstance(cause, asyncpg.exceptions.UniqueViolationError):
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.CONFLICT, detail="conversation_exists"
-            ) from exc
+            raise MailConversationExists() from exc
         raise
 
 
@@ -1117,7 +1116,11 @@ async def send_mail_conversation_continuation(
                     id_availability=replay_lookup.availability,
                 ),
             )
-    except Exception as exc:
+    except (
+        MailConversationExists,
+        QueryError,
+        asyncpg.exceptions.UniqueViolationError,
+    ) as exc:
         if not _lost_send_race(exc):
             raise
         replay_lookup = await _stored_exact_send(
@@ -1821,7 +1824,11 @@ async def _send_mail_to_resolved_target(
                             id_availability=replay_lookup.availability,
                         ),
                     )
-        except Exception as exc:
+        except (
+            MailConversationExists,
+            QueryError,
+            asyncpg.exceptions.UniqueViolationError,
+        ) as exc:
             # An identical send that ran concurrently committed first; its
             # rollback here leaves nothing of this attempt behind.
             if not _lost_send_race(exc):

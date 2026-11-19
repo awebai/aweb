@@ -1621,7 +1621,9 @@ async def _send_to_named_recipients(
                         system_close=True,
                     )
                 except NotFoundError:
-                    pass
+                    logger.debug(
+                        "chat_session_already_closed session_id=%s", existing_session_id
+                    )
             elif (
                 requested_session_id is not None
                 and requested_session_id != existing_session_id

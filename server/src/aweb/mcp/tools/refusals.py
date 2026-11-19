@@ -8,7 +8,10 @@ from fastapi import HTTPException
 from aweb.service_errors import ServiceError
 
 from awid.federation_errors import FederationAuthorityError
-from aweb.messaging.refusals import ContactIdentityBindingRequired
+from aweb.messaging.refusals import (
+    ContactIdentityBindingRequired,
+    MailConversationExists,
+)
 from aweb.e2ee_messages import E2EERecipientKeyMismatch
 from aweb.federation.errors import RecipientNotResidentError
 from aweb.messaging.address_auth import unreachable_address_refusal
@@ -65,6 +68,8 @@ def send_refusal(
     in one set of words, which do not say whether a local identity holds that
     name.
     """
+    if isinstance(exc, MailConversationExists):
+        return json.dumps({"error": exc.recovery_action, "reason": exc.code.value})
     if isinstance(exc, ContactIdentityBindingRequired):
         return json.dumps({"error": exc.detail, "reason": exc.code.value})
     if isinstance(exc, RecipientNotResidentError):

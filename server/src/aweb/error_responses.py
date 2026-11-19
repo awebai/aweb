@@ -24,6 +24,9 @@ async def service_error_handler(request: Request, exc: ServiceError) -> JSONResp
         logger.warning(
             "Delivery dependency refused status=%s", exc.status_code, exc_info=exc
         )
+    content = {"detail": exc.detail}
+    if exc.recovery_action is not None:
+        content["recovery_action"] = exc.recovery_action
     return JSONResponse(
-        status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers
+        status_code=exc.status_code, content=content, headers=exc.headers
     )

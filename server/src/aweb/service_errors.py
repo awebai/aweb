@@ -11,6 +11,7 @@ class ServiceError(Exception):
 
     status_code: int = 500
     headers: dict[str, str] | None = None
+    recovery_action: str | None = None
 
     def __init__(self, detail: str | dict = "Internal service error") -> None:
         self.detail = detail
