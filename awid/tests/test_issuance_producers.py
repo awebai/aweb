@@ -45,7 +45,7 @@ def test_request_producer_signs_exact_external_target_body_and_configured_origin
         team_id="team:example.com",
         audience="HTTPS://APP.EXAMPLE.COM/",
         method="post",
-        path="/api/v1/items/a%2Fb?draft=1",
+        path="/mount/v1/items/a%2Fb?draft=1",
         body=body,
         timestamp=timestamp,
     )
@@ -54,8 +54,8 @@ def test_request_producer_signs_exact_external_target_body_and_configured_origin
             "type": "http",
             "method": "POST",
             "path": "/v1/items/a/b",
-            "raw_path": b"/api/v1/items/a%2Fb",
-            "root_path": "/api",
+            "raw_path": b"/mount/v1/items/a%2Fb",
+            "root_path": "/mount",
             "query_string": b"draft=1",
             "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
         }
@@ -68,7 +68,7 @@ def test_request_producer_signs_exact_external_target_body_and_configured_origin
         allowed_audiences=["https://app.example.com"],
     )
     assert envelope.version == 2
-    assert envelope.payload["path"] == "/api/v1/items/a%2Fb?draft=1"
+    assert envelope.payload["path"] == "/mount/v1/items/a%2Fb?draft=1"
     assert (
         verify_signature(
             did_key_from_signing_key(SEED),

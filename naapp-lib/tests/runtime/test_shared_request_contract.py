@@ -66,9 +66,9 @@ def test_team_request_and_controller_request_are_distinct(purpose):
 @pytest.mark.parametrize(
     "root,wire,expected",
     [
-        ("/api", b"/api/v1/items", "/api/v1/items?q=%2F"),
-        ("/api", b"/api2/items", "/api/api2/items?q=%2F"),
-        ("/api", b"/v1/items", "/api/v1/items?q=%2F"),
+        ("/mount", b"/mount/v1/items", "/mount/v1/items?q=%2F"),
+        ("/mount", b"/mount2/items", "/mount/mount2/items?q=%2F"),
+        ("/mount", b"/v1/items", "/mount/v1/items?q=%2F"),
         ("/caf\u00e9", b"/caf%C3%A9/v1/items", "/caf%C3%A9/v1/items?q=%2F"),
     ],
 )
