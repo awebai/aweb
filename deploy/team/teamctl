@@ -1063,11 +1063,14 @@ restore() {
   # from this deployment.yaml, not from the backup: the plan is printed only
   # once all of it holds, and nothing is written before.
   local plan
-  plan="$(python_in_server - "$target" "$run_dir/host-paths" <<'PY'
-import hashlib, json, os, re, sys
+  plan="$(python_in_server - "$target" "$run_dir/host-paths" "$TEAM_DIR" <<'PY'
+import hashlib, importlib.util, json, os, re, sys, tarfile
 from pathlib import Path
 
-target, host_paths = Path(sys.argv[1]), Path(sys.argv[2])
+target, host_paths, team_dir = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+spec = importlib.util.spec_from_file_location("state_archive", team_dir / "state_archive.py")
+state_archive = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(state_archive)
 paths = {key: (kind, path) for kind, key, path in (line.split(" ", 2) for line in host_paths.read_text().splitlines())}
 manifest = json.loads((target / "manifest.json").read_text())
 if manifest.get("format") != 1:
@@ -1105,6 +1108,14 @@ for kind, entries in (("archive", manifest["archives"]), ("file", manifest["file
         if named is None or named[0] != kind or named[1] != entry["path"]:
             sys.exit(f"teamctl: the backup's {entry['key']} is not where this deployment.yaml puts it")
         part(f"{kind}s/{entry['key']}" + (".tar" if kind == "archive" else ""), entry["sha256"])
+        if kind == "archive":
+            # Every archive's member graph is checked here, before the first
+            # target is written, as unpack checks it again before its own.
+            try:
+                with tarfile.open(target / "archives" / f"{entry['key']}.tar") as tar:
+                    state_archive.check(tar.getmembers())
+            except (state_archive.Refused, tarfile.TarError) as refused:
+                sys.exit(f"teamctl: the backup's {entry['key']}: {refused}")
         free(entry["path"])
         mode = entry.get("mode", "-")
         if kind == "file" and not re.fullmatch(r"0o[0-7]{1,4}", mode):

@@ -181,10 +181,12 @@ own server, with its own durability.
 of **disposable lab data** to rehearse the mechanics, never a team's. It checks
 every part against the manifest's digests and takes every target path from the
 `deployment.yaml` given, not from the backup. It refuses before writing
-anything if a target exists, a parent is reached through a symbolic link, an
+anything if a target exists, a parent is reached through a symbolic link, any
 archive holds anything but regular files, directories and links, a member
-under a link, or a link that resolves outside it, or any of the
-bundle's containers or volumes exists. It restores the files and archives,
+under anything but a directory, or a link that resolves outside it (every
+archive is checked before the first is written), or any of the bundle's
+containers or volumes exists. It runs as root, and a restore whose owners or
+modes cannot be set fails and names its target incomplete. It restores the files and archives,
 starts PostgreSQL alone (whose first start creates the roles and databases from
 the restored secrets) and restores each dump, then leaves the bundle stopped.
 Restored files keep their modes and belong to the operator. It restores

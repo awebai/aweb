@@ -4,6 +4,7 @@ when the project is named, backup refuses while a writer runs, and restore
 fails closed."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -455,3 +456,85 @@ def test_a_capture_that_dies_during_the_probes_holds_the_agent(tmp_path, monkeyp
     assert "egress capture: the follower is no longer streaming" in result.stderr, result.stderr
     assert "agents held: egress's log is not being captured" in result.stderr
     assert not agent_started(calls(tmp_path))
+
+
+def lab_backup(tmp_path: Path, archives: dict[str, list[tuple[str, bytes, str]]]) -> tuple[str, Path, dict]:
+    """A deployment with the secrets directory and the agents' state in
+    tmp_path, none of their targets present, and a backup of it whose
+    archives hold the given members; returns the deployment, the backup and
+    every target path the restore would write."""
+    import hashlib
+    import io
+    import tarfile
+
+    import yaml
+
+    path = Path(agents_deployment(tmp_path, {"id": "devteam:example.com",
+                                             "registryUrl": "https://registry.example.com"}))
+    config = yaml.safe_load(path.read_text())
+    targets = tmp_path / "targets"
+    targets.mkdir()
+    config["compose"]["secretsDir"] = str(targets / "secrets")
+    config["agents"]["compose"]["stateDir"] = str(targets / "state")
+    config["agents"]["compose"]["authorizedKeysFile"] = str(targets / "authorized_keys")
+    path.write_text(yaml.safe_dump(config))
+    backup = tmp_path / "backup"
+    for part in ("archives", "files", "databases"):
+        (backup / part).mkdir(parents=True)
+    kinds = {"compose.secretsDir", "agents.compose.stateDir", "agents.compose.workDir"}
+    kept = {"agents.mirrorsDir", "agents.compose.oatsSource"}
+    manifest = {"format": 1, "databases": [], "archives": [], "files": []}
+    written = {}
+
+    def walk(value, key=""):
+        if isinstance(value, dict):
+            for name, child in value.items():
+                yield from walk(child, f"{key}.{name}" if key else name)
+        elif isinstance(value, str) and (key in kinds or key in kept or key.endswith("File")):
+            yield key, value
+
+    for key, value in walk(config):
+        if key in kept:
+            continue
+        written[key] = value
+        if key in kinds:
+            out = io.BytesIO()
+            with tarfile.open(fileobj=out, mode="w") as tar:
+                for name, kind, data in archives.get(key, [(".", tarfile.DIRTYPE, b"")]):
+                    info = tarfile.TarInfo(name)
+                    info.type = kind
+                    info.mode = 0o700
+                    info.size = len(data) if kind == tarfile.REGTYPE else 0
+                    tar.addfile(info, io.BytesIO(data) if kind == tarfile.REGTYPE else None)
+            (backup / "archives" / f"{key}.tar").write_bytes(out.getvalue())
+            manifest["archives"].append({"key": key, "path": value,
+                                         "sha256": hashlib.sha256(out.getvalue()).hexdigest()})
+        else:
+            (backup / "files" / key).write_bytes(b"public")
+            manifest["files"].append({"key": key, "path": value, "mode": "0o644",
+                                      "sha256": hashlib.sha256(b"public").hexdigest()})
+    (backup / "manifest.json").write_text(json.dumps(manifest))
+    return str(path), backup, written
+
+
+def test_a_lab_restore_checks_every_archive_before_it_writes_the_first(tmp_path):
+    import tarfile
+
+    path, backup, written = lab_backup(tmp_path, {
+        "compose.secretsDir": [(".", tarfile.DIRTYPE, b""), ("./aweb", tarfile.DIRTYPE, b"")],
+        # The second archive's graph is invalid: a member under a regular file.
+        "agents.compose.stateDir": [(".", tarfile.DIRTYPE, b""), ("./file", tarfile.REGTYPE, b"x"),
+                                    ("./file/child", tarfile.REGTYPE, b"")],
+    })
+    result = run(tmp_path, "restore", "--lab-rehearsal", path, str(backup), command=TEAMCTL, docker_ok=True)
+    assert result.returncode != 0 and "agents.compose.stateDir" in result.stderr, result.stderr
+    assert "under ./file, which is not a directory" in result.stderr
+    assert calls(tmp_path) == []
+    assert not [target for target in written.values() if os.path.lexists(target)]
+
+
+def test_a_lab_restore_of_valid_archives_goes_on_to_write(tmp_path):
+    # The positive control: the same plan with valid graphs reaches the writes.
+    path, backup, written = lab_backup(tmp_path, {})
+    result = run(tmp_path, "restore", "--lab-rehearsal", path, str(backup), command=TEAMCTL, docker_ok=True)
+    assert [call for call in calls(tmp_path) if "state_archive.py unpack" in call], result.stderr
