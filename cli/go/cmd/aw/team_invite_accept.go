@@ -303,7 +303,15 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 	resp := responseRequest.Response
 	registryURL := responseRequest.RegistryURL
 	localLink := responseRequest.LocalLink
-	cert, serverURL, err := validateHostedTeamInviteAcceptResponse(resp, didKey, alias, stableID, memberAddress, scope, opts.NoAddress)
+	cert, serverURL, err := validateHostedTeamInviteAcceptResponse(hostedInviteResponseExpectation{
+		Response:  resp,
+		DIDKey:    didKey,
+		Alias:     alias,
+		StableID:  stableID,
+		Address:   memberAddress,
+		Scope:     scope,
+		NoAddress: opts.NoAddress,
+	})
 	if err != nil {
 		return nil, err
 	}

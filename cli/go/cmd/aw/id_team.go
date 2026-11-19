@@ -2334,7 +2334,20 @@ func hostedAcceptPendingMarkerPath(workingDir string, identityHomes ...string) s
 	return filepath.Join(root, "pending-hosted-accept")
 }
 
-func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse, didKey, requestedAlias, expectedStableID, expectedAddress, expectedScope string, expectedNoAddress bool) (*awid.TeamCertificate, string, error) {
+type hostedInviteResponseExpectation struct {
+	Response  *awid.SpawnAcceptInviteResponse
+	DIDKey    string
+	Alias     string
+	StableID  string
+	Address   string
+	Scope     string
+	NoAddress bool
+}
+
+func validateHostedTeamInviteAcceptResponse(expected hostedInviteResponseExpectation) (*awid.TeamCertificate, string, error) {
+	resp, didKey, requestedAlias := expected.Response, expected.DIDKey, expected.Alias
+	expectedStableID, expectedAddress := expected.StableID, expected.Address
+	expectedScope, expectedNoAddress := expected.Scope, expected.NoAddress
 	if resp == nil {
 		return nil, "", fmt.Errorf("missing hosted team invite response")
 	}
@@ -4091,7 +4104,11 @@ func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentR
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return teamMemberEnrollmentPlan{}, err
 		}
-		memberDIDKey, err := resolveOrGenerateMemberDIDKeyAt(opts.WorkingDir, opts.IdentityHome, opts.AllowLocalMint)
+		mint := requireExistingMemberKey
+		if opts.AllowLocalMint {
+			mint = allowLocalMemberKeyMint
+		}
+		memberDIDKey, err := resolveOrGenerateMemberDIDKeyAt(memberKeySelection{Location: teamMembershipLocation{WorkingDir: opts.WorkingDir, IdentityHome: opts.IdentityHome}, Mint: mint})
 		if err != nil {
 			return teamMemberEnrollmentPlan{}, err
 		}
@@ -4265,8 +4282,23 @@ func validateMemberAddressForCertificate(
 	return nil
 }
 
-func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, localMember bool) (string, error) {
-	// Try to load existing identity.
+type memberKeyMintPolicy uint8
+
+const (
+	requireExistingMemberKey memberKeyMintPolicy = iota
+	allowLocalMemberKeyMint
+)
+
+type memberKeySelection struct {
+	Location teamMembershipLocation
+	Mint     memberKeyMintPolicy
+}
+
+// resolveOrGenerateMemberDIDKeyAt preserves the selected home's custody. Only
+// absence permits local creation; corrupt or unreadable state is a refusal
+// (docs/cli-identity-selection.md:9-14,26-29).
+func resolveOrGenerateMemberDIDKeyAt(request memberKeySelection) (string, error) {
+	workingDir, identityHome := request.Location.WorkingDir, request.Location.IdentityHome
 	identityPath := awconfig.WorktreeIdentityPath(workingDir)
 	if strings.TrimSpace(identityHome) != "" {
 		path, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")
@@ -4279,8 +4311,9 @@ func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, localMembe
 	if err == nil && strings.TrimSpace(identity.DID) != "" {
 		return strings.TrimSpace(identity.DID), nil
 	}
-
-	// Try to load existing signing key.
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read selected member identity: %w; repair its identity.yaml and retry", err)
+	}
 	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
 	if strings.TrimSpace(identityHome) != "" {
 		path, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "signing.key")
@@ -4291,15 +4324,19 @@ func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, localMembe
 	}
 	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err == nil {
-		return awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)), nil
+		public, err := teamInviteSigningPublicKey(signingKey)
+		if err != nil {
+			return "", err
+		}
+		return awid.ComputeDIDKey(public), nil
 	}
-
-	if !localMember {
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read selected member signing key: %w; restore its original signing.key and retry", err)
+	}
+	if request.Mint != allowLocalMemberKeyMint {
 		return "", usageError("no identity found; run `aw id create` first, or use --local invite")
 	}
-
-	// Generate local keypair
-	pub, priv, err := awid.GenerateKeypair()
+	public, private, err := awid.GenerateKeypair()
 	if err != nil {
 		return "", err
 	}
@@ -4308,10 +4345,10 @@ func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, localMembe
 			return "", err
 		}
 	}
-	if err := awid.SaveSigningKeyExclusive(signingKeyPath, priv); err != nil {
+	if err := awid.SaveSigningKeyExclusive(signingKeyPath, private); err != nil {
 		return "", err
 	}
-	return awid.ComputeDIDKey(pub), nil
+	return awid.ComputeDIDKey(public), nil
 }
 
 // resolveIdentityFieldsForCert reads stable identity fields from .aw/identity.yaml.
