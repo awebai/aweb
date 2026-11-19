@@ -102,7 +102,7 @@ async def verify_identity_binding(
     except RegistryClientUnavailable as exc:
         raise IdentityBindingError(IdentityBindingCode.UNAVAILABLE) from exc
     cache = identity_binding_cache(request.app.state)
-    key = (did_aw, did_key, address)
+    key: tuple[str, ...] = (did_aw, did_key, address)
     if registry_client is not None:
         key += (getattr(registry_client, "registry_url", "federation"),)
     observations = getattr(request.state, "identity_binding_observations", None)
