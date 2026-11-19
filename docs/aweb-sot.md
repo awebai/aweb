@@ -1167,7 +1167,14 @@ events. Answering a task (`POST /v1/tasks/{ref}/answer`) and cancelling an app
 request close the task and release its claims the same way. Closing a parent
 closes its open descendants without changing their claims, and deleting a task
 releases its claims through the `task.deleted` hook cascade rather than in the
-deleting transaction.
+deleting transaction. If deletion commits but the hook leaves claims held or
+cleanup cannot be verified, the response is `503 task_deleted_cleanup_pending`
+and says that deletion committed. Retrying the same team-scoped DELETE, by ID
+or task reference, retries the cleanup on the same deleted row. A notification
+failure after claims were released is reported separately as
+`task_deleted_notification_failed`; it does not mean the claims remain held.
+An embedding host holding events for an outer transaction retains the explicit
+`DEFERRED` outcome until that transaction commits.
 
 Task claims have no time-based expiry or implicit lease in v1.
 `GET /v1/tasks/active` includes `owner_last_seen_at` for claim-backed tasks.
@@ -1208,7 +1215,15 @@ workspace whose activity is within the presence TTL (30 minutes by default,
 configured by `AWEB_PRESENCE_TTL_SECONDS`). Activity is the newest workspace
 `last_seen_at`, Redis heartbeat timestamp, or currently valid grant-liveness
 timestamp. The lifecycle planner, cascade and agent list use the same activity
-owner. First connect and MCP heartbeats record `last_seen_at`; grant heartbeats
+owner, as do HTTP/MCP workspace status, online lists, dashboard snapshots and
+agent-health observations. Omitted heartbeat metadata is preserved; narrow
+heartbeats renew only the current metadata's Redis indices. Dashboard streams
+are read-only: the shared native/HOST maintenance operation reconciles presence
+without viewers, atomically recording a transition and publishing its canonical
+team event once. Unknown authority or a failed publication retains the previous
+projection and makes maintenance report failure. Malformed pub/sub frames are
+ignored by the reader and cannot create a presence transition.
+First connect and MCP heartbeats record `last_seen_at`; grant heartbeats
 keep their separate liveness records and do not overwrite shared metadata.
 Expired, revoked or stale grants do not keep a workspace live. Self cleanup
 remains immediate. The caller must present a team certificate for the same

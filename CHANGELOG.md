@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Coordination reads share root, Redis and currently valid grant activity under
+  the configured presence window. Dashboard presence events no longer depend
+  on viewers, and narrow heartbeats preserve workspace metadata.
+- A committed task deletion reports incomplete claim cleanup with a retryable
+  error; repeating the DELETE retries cleanup on that same task. Claim
+  conflicts are checked even when the acting member has no workspace.
+- Wake file mutations require proof that the daemon lock is free. A failed
+  exchange with a live control socket no longer falls back to changing files.
+- Custody checks private permissions for configured and default socket paths,
+  requires the pinned signing key in a credential capture, and allows an exact
+  retry after a failed signing attempt without weakening successful replay checks.
+
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep

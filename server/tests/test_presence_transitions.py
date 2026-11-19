@@ -6,11 +6,24 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import pytest_asyncio
 
 from aweb.events import team_events_channel_name
 from aweb.presence_transitions import PresenceReconciliationError, reconcile_presence
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def owned_transition_snapshot(privacy_app):
+    # The module's team has stable authority across disposable DB fixtures;
+    # this projection belongs to this test and must not cross those fixtures.
+    key = "presence-transitions:" + hashlib.sha256(TEAM.encode()).hexdigest()
+    await privacy_app.redis.delete(key)
+    try:
+        yield
+    finally:
+        await privacy_app.redis.delete(key)
 
 
 async def _event(pubsub):
