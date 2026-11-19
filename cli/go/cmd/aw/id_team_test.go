@@ -804,77 +804,45 @@ func TestBuildTeamImportRequestOutputSignsCanonicalACPayload(t *testing.T) {
 }
 
 func TestExecuteTeamRegisterSignsAndPostsServicePayload(t *testing.T) {
-	teamKey := ed25519.NewKeyFromSeed([]byte{
-		31, 30, 29, 28, 27, 26, 25, 24,
-		23, 22, 21, 20, 19, 18, 17, 16,
-		15, 14, 13, 12, 11, 10, 9, 8,
-		7, 6, 5, 4, 3, 2, 1, 0,
-	})
-	var registerBody map[string]any
-	srv := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"onboarding_url":        "http://" + r.Host,
-				"aweb_url":              "http://" + r.Host + "/api",
-				"registry_url":          "http://registry.example.test",
-				"team_registration_url": "http://" + r.Host + "/api/v1/teams/service-register",
-				"features":              []string{"teams"},
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/service-register":
-			if err := json.NewDecoder(r.Body).Decode(&registerBody); err != nil {
-				t.Fatalf("decode register body: %v", err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"dry_run":      false,
-				"status":       "created",
-				"awid_team_id": "circle:juanreyero.com",
-				"team_did_key": awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)),
-				"next_steps": []map[string]any{{
-					"label":    "Initialize",
-					"command":  "aw service init --service http://" + r.Host + " --team circle:juanreyero.com",
-					"required": true,
-				}},
-			})
-		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-
-	target, err := resolveTeamRegistrationEndpoint(srv.URL)
+	world := newRealCommandWorld(t)
+	target, err := resolveTeamRegistrationEndpoint(world.Stack.ServerURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := executeTeamRegisterWithTarget(
-		context.Background(),
-		teamKey,
-		"circle:juanreyero.com",
-		target,
-		false,
-		"2026-05-25T12:00:00Z",
-	)
+	timestamp := time.Now().UTC().Format(time.RFC3339)
+	out, err := executeTeamRegisterWithTarget(world.Context, world.TeamKey, world.TeamID, target, false, timestamp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCanonical := `{"awid_team_id":"circle:juanreyero.com","dry_run":false,"operation":"team_service_register","service_url":"` + srv.URL + `","timestamp":"2026-05-25T12:00:00Z"}`
+	wantCanonical := fmt.Sprintf(`{"awid_team_id":%q,"dry_run":false,"operation":"team_service_register","service_url":%q,"timestamp":%q}`, world.TeamID, world.Stack.ServerURL, timestamp)
 	if out.CanonicalPayload != wantCanonical {
 		t.Fatalf("canonical payload mismatch:\n got: %s\nwant: %s", out.CanonicalPayload, wantCanonical)
 	}
-	if out.ControllerDID != awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey)) {
-		t.Fatalf("controller did mismatch")
+	controller := didOf(world.TeamKey)
+	if out.ControllerDID != controller || out.TeamDIDKey != controller || out.AWIDTeamID != world.TeamID || out.Status != "synced" || out.DryRun || out.ServiceURL != world.Stack.ServerURL {
+		t.Fatalf("real service did not confirm the selected controller and team: %+v", out)
 	}
-	if got := registerBody["service_url"]; got != srv.URL {
-		t.Fatalf("posted service_url=%v want %s", got, srv.URL)
-	}
-	sig, err := base64.RawStdEncoding.DecodeString(registerBody["controller_signature"].(string))
+	signature, err := base64.RawStdEncoding.DecodeString(out.ControllerSignature)
 	if err != nil {
 		t.Fatalf("decode signature: %v", err)
 	}
-	if !ed25519.Verify(teamKey.Public().(ed25519.PublicKey), []byte(out.CanonicalPayload), sig) {
-		t.Fatal("posted controller signature does not verify")
+	if !ed25519.Verify(world.TeamKey.Public().(ed25519.PublicKey), []byte(out.CanonicalPayload), signature) {
+		t.Fatal("controller signature does not verify")
 	}
-	if len(out.NextSteps) != 1 || !strings.Contains(out.NextSteps[0].Command, "aw service init") {
-		t.Fatalf("next steps not preserved: %+v", out.NextSteps)
+	connectCommand := fmt.Sprintf("aw service init --service %s --team %s", world.Stack.ServerURL, world.TeamID)
+	if len(out.NextSteps) == 0 || out.NextSteps[0].Command != connectCommand || !out.NextSteps[0].Required {
+		t.Fatalf("real service connection guidance not preserved: %+v", out.NextSteps)
+	}
+
+	// Server acceptance is evidence only if the same real service refuses a
+	// signature from a different controller for this registered team.
+	_, err = executeTeamRegisterWithTarget(world.Context, newKey(t), world.TeamID, target, false, timestamp)
+	if err == nil {
+		t.Fatal("real service accepted a different controller's registration signature")
+	}
+	envelope := errorEnvelope(err, err.Error())
+	if envelope.Error.Code != "invalid_controller_signature" || envelope.Error.HTTPStatus != http.StatusUnprocessableEntity {
+		t.Fatalf("wrong-controller refusal lost its actual code/status: %+v", envelope.Error)
 	}
 }
 
