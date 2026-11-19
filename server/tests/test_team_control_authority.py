@@ -131,8 +131,18 @@ async def assert_unavailable_response(app):
 
 
 @pytest.mark.asyncio
-async def test_native_controller_outage_keeps_retryable503_and_action():
+async def test_native_controller_outage_keeps_retryable503_and_action(caplog):
     await assert_unavailable_response(create_app())
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "aweb.team_control_error_transport"
+    ]
+    assert len(records) == 1
+    assert records[0].exc_info is not None
+    error = records[0].exc_info[1]
+    assert isinstance(error, TeamControlAuthorityUnavailable)
+    assert error.__cause__ is not None
 
 
 @pytest.mark.asyncio

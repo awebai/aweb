@@ -1,13 +1,22 @@
 """One expected-error mapping for native and hosted controller operations."""
 
+import logging
+
 from fastapi import FastAPI, Request
 from starlette.responses import JSONResponse
 
 from aweb.team_control_authority import TeamControlError
 
+logger = logging.getLogger(__name__)
+
 
 def team_control_error_response(error: TeamControlError) -> JSONResponse:
     """Preserve the owner's status/code/action; middleware may call this too."""
+    if error.status_code >= 500:
+        logger.warning(
+            "Team-control evidence unavailable",
+            exc_info=(type(error), error, error.__traceback__),
+        )
     return JSONResponse(status_code=error.status_code, content={"detail": error.detail})
 
 
