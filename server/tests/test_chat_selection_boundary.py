@@ -26,7 +26,7 @@ class LookupBoundary:
 async def resolve_selection(selection):
     return await resolve_chat_targets(
         LookupBoundary(),
-        MessagingAuth(did_key=named_did_key("sender")),
+        MessagingAuth(did_key=named_did_key("sender"), did_aw=None, address=None),
         CreateSessionRequest(to_dids=[named_did_key("recipient")], message="hello"),
         messaging_runtime(State()),
         "unit",
