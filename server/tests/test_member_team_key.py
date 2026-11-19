@@ -20,7 +20,8 @@ from aweb.identity_auth_deps import current_membership
 from aweb.messaging.delivery_policy import has_current_shared_team
 from aweb.messaging.participants import messaging_participants_by_aliases
 from aweb.messaging.sender_membership import sender_memberships
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_identity_grants import _grant_headers, _session_keypair
 from test_messages_http import (
     _encode_certificate,

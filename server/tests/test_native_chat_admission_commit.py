@@ -12,7 +12,7 @@ import pytest
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.event_types import MutationEventType
 from identity_binding_support import register_global_identity
-from test_dashboard_privacy import _request, privacy_app  # noqa: F401
+from test_dashboard_privacy import _request, privacy_app as privacy_app
 from test_native_mail_admission_commit import PolicyChange, connect_policy_members
 
 

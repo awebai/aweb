@@ -349,7 +349,10 @@ async def send_mail(
                     else ""
                 )
         else:
-            recipient = target.recipient
+            selected_recipient = target.recipient
+            if selected_recipient is None:
+                raise ValueError("A named mail target requires a resolved recipient")
+            recipient = selected_recipient
             signed_conversation_id = str(uuid_mod.uuid4())
             sent_to = target.to_alias or recipient_ref
             signed_from = (

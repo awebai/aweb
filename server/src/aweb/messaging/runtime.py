@@ -68,7 +68,7 @@ def messaging_runtime(app_state: State) -> MessagingRuntime:
     )
 
 
-def application_public_origin(app_state: State) -> str:
+def application_public_origin(app_state: State | None) -> str:
     """The origin an application names as its own when it sends to another server."""
     app_state = native_application_state(app_state)
     configured = str(getattr(app_state, "public_origin", "") or "").strip()

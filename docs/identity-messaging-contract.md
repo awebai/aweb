@@ -84,8 +84,10 @@ memberships of both verified identities through the native member owner. A
 caller-selected team, retired row or superseded team key adds no membership.
 Address residence and human classification remain independent of membership.
 Exact active identity-contact matching has one owner and retains contact locks
-through an existing delivery transaction. Policy refusals carry a next action;
-federation retains the stable reason separately from that human detail.
+through an existing delivery transaction. Send refusals end with a concrete
+recovery sentence. A named `recipient_policy_rejected` refusal retains that code
+as `reason` in both HTTP and MCP, beside its actionable human detail. Federation
+retains its stable reason separately from that human detail.
 
 Native sends keep their current policy decision through the message commit.
 Mail rechecks admission inside its new-thread or continuation transaction.
@@ -260,9 +262,11 @@ equal it. Unknown local first contact and route injection fail closed. Target
 registry or PostgreSQL/lease publication dependency failure uses
 `federation_authority_coordination_unavailable` (503, retryable).
 
-Inbound and outbound federation first-contact source budgets share
-`aweb.client_address.request_client_address` across HTTP and mounted MCP.
-The source budget uses the socket peer by default and
+Inbound and outbound federation first-contact HTTP source budgets share
+`aweb.client_address.request_client_address`. Mounted MCP sends and contact
+lookups use `mcp:<authenticated sender DID>` instead, so users behind one proxy
+retain independent budgets even without a trusted client-address header.
+The HTTP source budget uses the socket peer by default and
 ignores forwarded client-address headers. A deployment behind a trusted proxy
 can set `AWEB_CLIENT_ADDRESS_HEADER` to the header carrying the client address.
 The shared `aweb_naapp.client_identity.ClientIdentity` resolver uses its final

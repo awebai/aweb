@@ -369,11 +369,14 @@ def _attachment_retry_conflict() -> HTTPException:
     """Preserve the attachment conflict code with a usable retry action."""
     error = AttachmentError("attachment_conflict")
     response = error.http()
-    response.detail = {
-        "code": error.code,
-        "message": "This message ID already has a different attachment request. Retry the original request unchanged, or choose a new message ID for a new message.",
-    }
-    return response
+    return HTTPException(
+        status_code=response.status_code,
+        detail={
+            "code": error.code,
+            "message": "This message ID already has a different attachment request. Retry the original request unchanged, or choose a new message ID for a new message.",
+        },
+        headers=response.headers,
+    )
 
 
 async def attachment_retry(db, payload, kind: MessageKind | str):

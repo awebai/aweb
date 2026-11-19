@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
 from awid.team_ids import build_team_id, parse_team_id
@@ -24,7 +25,9 @@ class AmbiguousLocalAddressError(Exception):
     pass
 
 
-def resolve_alias_target(auth_team_id: str | None, raw_alias: str, *, field: str) -> AliasTarget:
+def resolve_alias_target(
+    auth_team_id: str | None, raw_alias: str, *, field: str
+) -> AliasTarget:
     """Resolve plain aliases and same-org team~alias targets to a team-scoped alias."""
     if auth_team_id is None or not str(auth_team_id).strip():
         raise HTTPException(status_code=422, detail=f"{field} requires team context")
@@ -48,15 +51,21 @@ def resolve_alias_target(auth_team_id: str | None, raw_alias: str, *, field: str
     try:
         sender_domain, _ = parse_team_id(str(auth_team_id).strip())
     except Exception as exc:
-        raise HTTPException(status_code=422, detail="authenticated team_id is invalid") from exc
-    return AliasTarget(team_id=build_team_id(sender_domain, team_name), alias=alias_part)
+        raise HTTPException(
+            status_code=422, detail="authenticated team_id is invalid"
+        ) from exc
+    return AliasTarget(
+        team_id=build_team_id(sender_domain, team_name), alias=alias_part
+    )
 
 
 def validate_alias_selector(raw_alias: str, *, field: str) -> str:
     alias = str(raw_alias or "").strip()
     if "~" not in alias:
         if len(alias) > MAX_ALIAS_PART_LENGTH:
-            raise ValueError(f"{field} must be at most {MAX_ALIAS_PART_LENGTH} characters")
+            raise ValueError(
+                f"{field} must be at most {MAX_ALIAS_PART_LENGTH} characters"
+            )
         return alias
     if alias.count("~") != 1:
         raise ValueError(f"{field} team~alias must include exactly one '~'")
@@ -114,7 +123,7 @@ def derive_team_address(team_id: str | None, alias: str | None) -> str:
     return f"{namespace}/{alias}"
 
 
-async def get_agent_by_namespace_alias(db, *, namespace: str, alias: str) -> dict[str, Any] | None:
+async def get_agent_by_namespace_alias(db, *, namespace: str, alias: str) -> Mapping[str, Any] | None:
     rows = [
         messaging_identity_projection(row)
         for row in await current_member_projections(db, namespace=namespace, aliases=[alias])

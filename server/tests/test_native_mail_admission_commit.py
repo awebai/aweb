@@ -8,7 +8,7 @@ import asyncpg
 import pytest
 
 from identity_binding_support import register_global_identity
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
 from test_messages_http import _signed_team_headers
 from test_delivery_contract_regressions import _send
 

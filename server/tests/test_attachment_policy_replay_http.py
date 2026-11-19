@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from chat_pair_support import route_pair  # noqa: F401
+from chat_pair_support import route_pair as route_pair
 from test_attachments_http import managed_fixture
 from test_dashboard_privacy import _request
 from test_messages_http import _signed_team_headers
