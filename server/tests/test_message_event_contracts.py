@@ -35,7 +35,7 @@ from awid.signing import canonical_json_bytes
 from test_federation_envelope import _envelope, _sign
 
 
-@pytest.mark.parametrize("mode", list(ContentMode))
+@pytest.mark.parametrize("mode", [*ContentMode, " custom plaintext ", "", None])
 @pytest.mark.parametrize("transport", list(MessageTransport))
 @pytest.mark.parametrize("alias_container", [list, tuple])
 @pytest.mark.asyncio
@@ -70,7 +70,7 @@ async def test_chat_context_matches_the_existing_callback(
         from_did=auth.did_key,
         to_aliases=["recipient"],
         preview="",
-        content_mode=mode.value,
+        content_mode=mode.value if isinstance(mode, ContentMode) else mode,
         federated=transport is MessageTransport.FEDERATED,
     )
     aliases = alias_container(["recipient"])
@@ -88,6 +88,7 @@ async def test_chat_context_matches_the_existing_callback(
         transport=transport,
     )
     assert captured == [(MutationEventType.CHAT_MESSAGE_SENT.value, dto.to_context())]
+    assert type(captured[0][0]) is str
     changed_context = dto.to_context()
     changed_context["to_aliases"].append("someone else")
     assert dto.to_aliases == ("recipient",)

@@ -28,6 +28,8 @@ from aweb.service_errors import ForbiddenError
 from aweb.e2ee_messages import encrypted_message_storage_metadata
 from aweb.federation.authority_state import AuthoritySecurityToken
 from aweb.federation.envelope import FederationEnvelope
+from aweb.message_events import FederatedMessageSentContext
+from aweb.messaging.kinds import MessageKind
 
 BeforeCommit = Callable[[], Awaitable[None]]
 
@@ -961,22 +963,20 @@ async def _deliver_federated_phase_b(
             message_id,
             json.dumps(result, sort_keys=True, separators=(",", ":")),
         )
-        event_payload = {
-            "team_id": recipient.get("team_id"),
-            "from_agent_id": None,
-            "from_did": envelope.sender_current_did_key,
-            "from_did_aw": envelope.sender_did_aw,
-            "to_agent_id": str(recipient.get("agent_id") or "") or None,
-            "from_alias": (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1],
-            "message_id": envelope.message_id,
-            "conversation_id": envelope.conversation_id,
-            "session_id": envelope.conversation_id if envelope.type == "chat" else None,
-            "to_alias": recipient.get("alias"),
-            "subject": envelope.subject or "",
-            "priority": envelope.priority or "normal",
-            "content_mode": envelope.content_mode or "legacy_plaintext_v1",
-            "federated": True,
-        }
+        event_context = FederatedMessageSentContext(
+            kind=MessageKind(envelope.type),
+            team_id=recipient.get("team_id"),
+            from_did=envelope.sender_current_did_key,
+            from_did_aw=envelope.sender_did_aw,
+            to_agent_id=str(recipient.get("agent_id") or "") or None,
+            from_alias=(envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1],
+            message_id=envelope.message_id,
+            conversation_id=envelope.conversation_id,
+            to_alias=recipient.get("alias"),
+            subject=envelope.subject or "",
+            priority=envelope.priority,
+            content_mode=envelope.content_mode,
+        )
         await tx.execute(
             """
             INSERT INTO {{tables.federation_mutation_outbox}} (
@@ -984,8 +984,8 @@ async def _deliver_federated_phase_b(
             ) VALUES ($1, $2, $3::jsonb)
             """,
             message_id,
-            "message.sent" if envelope.type == "mail" else "chat.message_sent",
-            json.dumps(event_payload, sort_keys=True, separators=(",", ":")),
+            event_context.event_type.value,
+            json.dumps(event_context.to_context(), sort_keys=True, separators=(",", ":")),
         )
         if before_commit is not None:
             await before_commit()
