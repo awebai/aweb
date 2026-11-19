@@ -23,7 +23,7 @@ def target():
 
 def test_absent_policy_is_off_and_operator_can_issue_without_awsign(tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    with store._connection() as db:
+    with store.connection() as db:
         assert "human_issuance" not in {
             row[1] for row in db.execute("PRAGMA table_info(configuration)")
         }
@@ -33,7 +33,7 @@ def test_absent_policy_is_off_and_operator_can_issue_without_awsign(tmp_path):
     assert set(result) == {"state", "person", "identity_key", "certificate"}
     assert result["state"] == "issued"
     verify_id_certificate(result["certificate"], issuer_key=store.descriptor().did_key)
-    with store._connection() as db:
+    with store.connection() as db:
         assert db.execute("SELECT count(*) FROM enrollments").fetchone()[0] == 0
     audit = store.audit()
     assert len(audit) == 1 and audit[0]["operation"] == "namespace_id_issue"
@@ -113,7 +113,7 @@ def test_old_private_setting_is_not_an_accepted_alias(tmp_path):
 def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     descriptor = store.descriptor()
-    with store._connection() as db, db:
+    with store.connection() as db, db:
         # Restore the actual v2 schema before running both ordered migrations.
         db.execute("ALTER TABLE enrollments DROP COLUMN retired_at")
         db.execute("DROP TABLE person_revisions")
@@ -127,7 +127,7 @@ def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
     store.migrate()
     reopened = KeyStore.open(store.directory)
     assert reopened.descriptor() == descriptor
-    with reopened._connection() as db:
+    with reopened.connection() as db:
         assert "human_issuance" not in {
             row[1] for row in db.execute("PRAGMA table_info(configuration)")
         }
@@ -169,7 +169,7 @@ def test_applied_policy_changes_are_audited_atomically(tmp_path):
         ({}, {"organisation.human.add": "passkey"}),
         ({"organisation.human.add": "passkey"}, {}),
     ]
-    with store._connection() as db:
+    with store.connection() as db:
         db.execute(
             "CREATE TRIGGER fail_policy BEFORE INSERT ON signatures WHEN NEW.operation='human_approval_change' BEGIN SELECT RAISE(ABORT,'policy_failed'); END"
         )

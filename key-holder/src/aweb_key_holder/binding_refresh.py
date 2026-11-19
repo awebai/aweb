@@ -82,9 +82,9 @@ class HolderBindingRefresher:
             chain, person=person, identity_key=caller.key, organisation=root.domain
         )
         caller.check_time()
-        with holder.store._connection() as database, database:
+        with holder.store.connection() as database, database:
             database.execute("BEGIN IMMEDIATE")
-            current = holder.store._descriptor(database)
+            current = holder.store.descriptor_in_transaction(database)
             self._check_authority(caller=caller, trust=trust, root=current)
             row = database.execute(
                 "SELECT * FROM enrollments WHERE person=?", (person,)
@@ -110,7 +110,7 @@ class HolderBindingRefresher:
             signed = {
                 "binding": binding_body,
                 "signature": encode(
-                    holder.store._sign(
+                    holder.store.sign_authorized_payload(
                         database,
                         current,
                         domain("binding") + canonical(binding_body),

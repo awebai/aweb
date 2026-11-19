@@ -106,14 +106,14 @@ async def test_retire_unactivated_evidence_after_public_certificate_revocation(
             client, f"/v1/enrollments/{own['identity']}/activate", {}, **own
         )
         assert answer.status_code != 200
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         evidence = db.execute(
             "SELECT evidence FROM enrollments WHERE person=?", (own["identity"],)
         ).fetchone()[0]
     retire(holder, own["identity"])
     _, key, person = await register_identity(registry)
     assert (await holder.bootstrap(person, key))["state"] == "enrollment_pending"
-    with holder.store._connection() as db:
+    with holder.store.connection() as db:
         assert (
             db.execute(
                 "SELECT evidence FROM enrollments WHERE person=?", (own["identity"],)
