@@ -251,7 +251,7 @@ func TestLocalTeamBootstrapNameTakenIsAPlainSentence(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, err = bootstrapLocalTeamMemberWithScope(ctx, registry, "", "acme.com", "default", "", controllerKey, memberKey, "", "", "alice", awid.IdentityModeLocal)
+	_, err = bootstrapLocalTeamMember(ctx, localTeamMemberBootstrap{Registry: registry, Domain: "acme.com", TeamName: "default", ControllerKey: controllerKey, MemberKey: memberKey, Alias: "alice", Scope: awid.IdentityScopeLocal})
 	if err == nil {
 		t.Fatal("bootstrap succeeded despite the taken name")
 	}

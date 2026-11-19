@@ -44,7 +44,7 @@ func TestLocalMemberBootstrapRejectsMalformedKeysBeforeRegistryEffect(t *testing
 					t.Fatalf("malformed %s key panicked: %v", which, recovered)
 				}
 			}()
-			_, err = bootstrapLocalTeamMemberWithScope(context.Background(), registry, server.URL, "example.test", "default", "", controller, member, "", "", "child", awid.IdentityModeLocal)
+			_, err = bootstrapLocalTeamMember(context.Background(), localTeamMemberBootstrap{Registry: registry, RegistryURL: server.URL, Domain: "example.test", TeamName: "default", ControllerKey: controller, MemberKey: member, Alias: "child", Scope: awid.IdentityScopeLocal})
 			if err == nil || !strings.Contains(err.Error(), which+" signing key is malformed") || calls != 0 {
 				t.Fatalf("error=%v registry calls=%d", err, calls)
 			}

@@ -9,45 +9,39 @@ import (
 	"strings"
 )
 
-func bootstrapFirstLocalTeamMember(
-	ctx context.Context,
-	registry *awid.RegistryClient,
-	registryURL, domain, teamName, displayName string,
-	controllerKey, memberKey ed25519.PrivateKey,
-	memberDIDAW, memberAddress, alias string,
-) (*localTeamBootstrapResult, error) {
-	return bootstrapLocalTeamMemberWithScope(
-		ctx,
-		registry,
-		registryURL,
-		domain,
-		teamName,
-		displayName,
-		controllerKey,
-		memberKey,
-		memberDIDAW,
-		memberAddress,
-		alias,
-		awid.IdentityModeGlobal,
-	)
+// localTeamMemberBootstrap names the controller and member independently.
+// Namespace/team registration is controller-authorized; the signed certificate
+// grants only the requested membership (docs/identity.md#team-membership-and-authentication).
+type localTeamMemberBootstrap struct {
+	Registry      *awid.RegistryClient
+	RegistryURL   string
+	Domain        string
+	TeamName      string
+	DisplayName   string
+	ControllerKey ed25519.PrivateKey
+	MemberKey     ed25519.PrivateKey
+	MemberDIDAW   string
+	MemberAddress string
+	Alias         string
+	Scope         awid.IdentityScope
 }
 
-func bootstrapLocalTeamMemberWithScope(
-	ctx context.Context,
-	registry *awid.RegistryClient,
-	registryURL, domain, teamName, displayName string,
-	controllerKey, memberKey ed25519.PrivateKey,
-	memberDIDAW, memberAddress, alias, identityScope string,
-) (*localTeamBootstrapResult, error) {
-	if memberKey == nil {
-		return nil, fmt.Errorf("member signing key is required")
+func bootstrapLocalTeamMember(ctx context.Context, input localTeamMemberBootstrap) (*localTeamBootstrapResult, error) {
+	registry, registryURL := input.Registry, input.RegistryURL
+	domain, teamName, displayName := input.Domain, input.TeamName, input.DisplayName
+	controllerKey, memberKey := input.ControllerKey, input.MemberKey
+	memberDIDAW, memberAddress, alias := input.MemberDIDAW, input.MemberAddress, input.Alias
+	if len(memberKey) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("member signing key is malformed")
+	}
+	if len(controllerKey) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("controller signing key is malformed")
 	}
 	resolvedRegistryURL := strings.TrimSpace(registryURL)
 	if resolvedRegistryURL == "" && registry != nil {
 		resolvedRegistryURL = strings.TrimSpace(registry.DefaultRegistryURL)
 	}
-	identityScope = awid.NormalizeIdentityScope(identityScope)
-	if identityScope != awid.IdentityModeLocal && identityScope != awid.IdentityModeGlobal {
+	if input.Scope != awid.IdentityScopeLocal && input.Scope != awid.IdentityScopeGlobal {
 		return nil, fmt.Errorf("identity scope must be local or global")
 	}
 	registration, err := ensureLocalTeamRegistered(ctx, registry, resolvedRegistryURL, domain, teamName, displayName, controllerKey)
@@ -61,7 +55,7 @@ func bootstrapLocalTeamMemberWithScope(
 		MemberDIDAW:   strings.TrimSpace(memberDIDAW),
 		MemberAddress: strings.TrimSpace(memberAddress),
 		Alias:         strings.TrimSpace(alias),
-		IdentityScope: identityScope,
+		IdentityScope: string(input.Scope),
 	})
 	if err != nil {
 		return nil, err
