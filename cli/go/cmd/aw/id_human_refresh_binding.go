@@ -8,9 +8,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	proof "github.com/awebai/approval-service/verify"
 	"github.com/awebai/aw/approval"
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/atomicfile"
 	"github.com/spf13/cobra"
 )
@@ -161,6 +163,25 @@ func humanBindingRefreshIssuer(h *humanParticipation) (string, error) {
 	return canonicalHumanIssuer(session.Issuer)
 }
 
+// humanBindingRefreshHolderError preserves the holder's controlled next step.
+// Holder enrollment errors use an error envelope, not the service answer profile.
+func humanBindingRefreshHolderError(result *idRequestExecutionResult) error {
+	var response struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(result.Body, &response); err == nil && strings.TrimSpace(response.Error.Code) != "" && strings.TrimSpace(response.Error.Message) != "" {
+		message := awid.SanitizeErrorText(response.Error.Message)
+		if message != "" {
+			refusal := &awid.APIError{StatusCode: result.Status, Body: string(result.Body)}
+			return withErrorCode(response.Error.Code, &plainRefusal{text: message, jsonMessage: message, err: refusal})
+		}
+	}
+	return fmt.Errorf("Holder refused binding refresh (HTTP %d). Check the person's current ID chain and active enrollment with the issuer.", result.Status)
+}
+
 func runIDHumanRefreshBinding(cmd *cobra.Command, args []string) error {
 	h := activeHuman
 	h.operation = "refresh your live approval binding"
@@ -186,7 +207,7 @@ func runIDHumanRefreshBinding(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("The holder could not prepare the refresh. Check its availability and retry: %w", requestErr)
 		}
 		if result.Status != http.StatusOK {
-			return fmt.Errorf("Holder refused binding refresh (HTTP %d). Check the person's current ID chain and active enrollment with the issuer.", result.Status)
+			return humanBindingRefreshHolderError(result)
 		}
 		raw = result.Body
 	} else if err != nil {
