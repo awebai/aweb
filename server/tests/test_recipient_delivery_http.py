@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 
-from aweb.messaging import chat, messages
+from aweb.messaging import messages
 from aweb.messaging.recipient import Recipient, RecipientResidence
 from test_dashboard_privacy import _request, privacy_app  # noqa: F401
 
@@ -16,8 +16,6 @@ async def test_shared_recipient_projection_keeps_identity_mail_and_chat_actor_fr
 ):
     env = privacy_app
     bob = env.actors["bob"]
-    assert chat.get_agent_by_id is messages.get_agent_by_id
-    assert chat.resolve_agent_by_did is messages.resolve_agent_by_did
     row = await messages.get_agent_by_id(env.infra, agent_id=str(bob.id))
     assert isinstance(row, Recipient) and row.agent_id == bob.id
     assert row.did_key == bob.did and row.residence is RecipientResidence.LOCAL

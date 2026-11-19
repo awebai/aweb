@@ -129,13 +129,9 @@ async def test_mcp_human_chat_refusal_precedes_custody_and_send(
 @pytest.mark.parametrize(
     "projection", ["verified-human", "raw-human", "wrong-key", "agent", "unknown"]
 )
-async def test_chat_preflight_uses_projections_without_any_registry_io(
+async def test_chat_preflight_classifies_the_retained_kind_projection(
     privacy_app, scope, projection
 ):
-    import os
-    from awid.registry import CachedRegistryClient
-    from awid_service.testing import ServiceTransport
-    from redis.asyncio import Redis
     from aweb.messaging.chat_policy import HumanChatRefused, require_agent_chat
 
     env = privacy_app
@@ -166,20 +162,12 @@ async def test_chat_preflight_uses_projections_without_any_registry_io(
         recipient = dict(
             did_key=env.actors["carol"].did, did_aw=identity, alias="unknown"
         )
-    recording = ServiceTransport(env.registry_app)
-    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-    client = CachedRegistryClient("http://registry.test", redis, transport=recording)
-    try:
-        if projection == "verified-human":
-            with pytest.raises(HumanChatRefused) as refused:
-                await require_agent_chat(env.infra, [recipient])
-            assert refused.value.reason == "recipient_human_mail_only"
-        else:
+    if projection == "verified-human":
+        with pytest.raises(HumanChatRefused) as refused:
             await require_agent_chat(env.infra, [recipient])
-        assert recording.calls == []
-    finally:
-        await client.aclose()
-        await redis.aclose()
+        assert refused.value.reason == "recipient_human_mail_only"
+    else:
+        await require_agent_chat(env.infra, [recipient])
 
 
 @pytest.mark.asyncio
@@ -321,16 +309,12 @@ async def test_native_legacy_label_grants_no_human_chat_treatment(
 
 
 @pytest.mark.asyncio
-async def test_agent_with_verified_human_ancestor_is_allowed_without_registry_io(
+async def test_agent_with_verified_human_ancestor_is_allowed_by_retained_projection(
     privacy_app,
 ):
-    import os
     from copy import deepcopy
     from pathlib import Path
     from awid.id_certificates import IDChainEvidence, verify_id_chain
-    from awid.registry import CachedRegistryClient
-    from awid_service.testing import ServiceTransport
-    from redis.asyncio import Redis
     from aweb.messaging.chat_policy import require_agent_chat
 
     vectors = json.loads(
@@ -376,15 +360,7 @@ async def test_agent_with_verified_human_ancestor_is_allowed_without_registry_io
         subject["did_key"],
         subject["id"],
     )
-    recording = ServiceTransport(env.registry_app)
-    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
-    client = CachedRegistryClient("http://registry.test", redis, transport=recording)
-    try:
-        await require_agent_chat(
-            env.infra,
-            [dict(did_aw=subject["id"], did_key=subject["did_key"], alias="bob")],
-        )
-        assert recording.calls == []
-    finally:
-        await client.aclose()
-        await redis.aclose()
+    await require_agent_chat(
+        env.infra,
+        [dict(did_aw=subject["id"], did_key=subject["did_key"], alias="bob")],
+    )
