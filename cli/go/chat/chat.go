@@ -88,8 +88,8 @@ func streamToChannel(ctx context.Context, stream *awid.SSEStream) (<-chan sseRes
 }
 
 // parseSSEEvent converts an SSE event to a chat Event.
-func isGrantTerminalEvent(eventType string) bool {
-	switch strings.TrimSpace(eventType) {
+func isGrantTerminalEvent(eventType EventType) bool {
+	switch strings.TrimSpace(string(eventType)) {
 	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
 		return true
 	default:
@@ -99,7 +99,7 @@ func isGrantTerminalEvent(eventType string) bool {
 
 func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	ev := Event{
-		Type: sseEvent.Event,
+		Type: EventType(sseEvent.Event),
 	}
 	var data map[string]any
 	if err := json.Unmarshal([]byte(sseEvent.Data), &data); err != nil {
@@ -1050,7 +1050,7 @@ func markReadBestEffort(ctx context.Context, client *awid.Client, sessionID stri
 func markPresentedRead(ctx context.Context, client *awid.Client, sessionID string, events []Event) {
 	messageIDs := make([]string, 0, len(events))
 	for _, event := range events {
-		if event.Type == "message" && event.MessageID != "" {
+		if event.Type == EventMessage && event.MessageID != "" {
 			messageIDs = append(messageIDs, event.MessageID)
 		}
 	}
@@ -1105,7 +1105,7 @@ type messageAcceptor func(ev Event) eventDisposition
 func waitForMessage(ctx context.Context, client *awid.Client, openStream streamOpener, sessionID string, participants []awid.ChatParticipant, selfAlias string, waitSeconds int, after *time.Time, callback StatusCallback, accept messageAcceptor) (*SendResult, error) {
 	result := &SendResult{
 		SessionID: sessionID,
-		Status:    "timeout",
+		Status:    SendTimeout,
 		Events:    []Event{},
 	}
 
@@ -1222,7 +1222,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			if chatEvent.Seq > lastSeq {
 				lastSeq = chatEvent.Seq
 			}
-			if chatEvent.Type == "message" && chatEvent.MessageID != "" {
+			if chatEvent.Type == EventMessage && chatEvent.MessageID != "" {
 				if seenMessages[chatEvent.MessageID] {
 					continue
 				}
@@ -1234,20 +1234,20 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 					detail = strings.TrimSpace(chatEvent.Body)
 				}
 				if detail == "" {
-					detail = chatEvent.Type
+					detail = string(chatEvent.Type)
 				}
-				if chatEvent.Type == "verification_unavailable" {
+				if chatEvent.Type == EventVerificationUnavailable {
 					detail = "identity grant verification unavailable; retry"
 				}
 				return nil, fmt.Errorf("chat stream closed: %s", detail)
 			}
-			if chatEvent.Type == "message" {
+			if chatEvent.Type == EventMessage {
 				if err := verifyStreamMessage(ctx, client, &chatEvent, participants); err != nil {
 					return nil, err
 				}
 			}
 
-			if chatEvent.Type == "read_receipt" {
+			if chatEvent.Type == EventReadReceipt {
 				readerLabel := inferReadReceiptLabel(ctx, client, selfAlias, chatEvent.ReaderAlias, participants)
 				if readerLabel != "" {
 					chatEvent.ReaderAlias = readerLabel
@@ -1262,7 +1262,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				continue
 			}
 
-			if chatEvent.Type == "message" {
+			if chatEvent.Type == EventMessage {
 				disposition := accept(chatEvent)
 				if disposition == skipEvent {
 					continue
@@ -1288,12 +1288,12 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				result.SenderWaiting = chatEvent.SenderWaiting
 
 				if chatEvent.SenderLeaving {
-					result.Status = "sender_left"
+					result.Status = SendSenderLeft
 					result.Reply = chatEvent.Body
 					return result, nil
 				}
 
-				result.Status = "replied"
+				result.Status = SendReplied
 				result.Reply = chatEvent.Body
 				return result, nil
 			}
@@ -1403,7 +1403,7 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	result := &SendResult{
 		SessionID:   resp.SessionID,
 		MessageID:   resp.MessageID,
-		Status:      "sent",
+		Status:      SendSent,
 		TargetAgent: strings.Join(targets, ", "),
 		Events:      []Event{},
 	}
@@ -1436,7 +1436,7 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	}
 
 	if targetHasLeft && !opts.StartConversation {
-		result.Status = "targets_left"
+		result.Status = SendTargetsLeft
 		return result, nil
 	}
 
@@ -1840,7 +1840,7 @@ func ShowPendingConfirmed(ctx context.Context, client *awid.Client, targetAlias 
 		}
 		return &SendResult{
 			SessionID:     p.SessionID,
-			Status:        "pending",
+			Status:        SendPending,
 			TargetAgent:   targetAlias,
 			Reply:         p.LastMessage,
 			SenderWaiting: p.SenderWaiting,

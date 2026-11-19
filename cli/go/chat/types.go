@@ -12,7 +12,7 @@ type Event struct {
 	Attachments          []awid.AttachmentDescriptor `json:"attachments,omitempty"`
 	AttachmentsAvailable bool                        `json:"attachments_available"`
 	SenderMembership     *awid.SenderMembership      `json:"sender_membership,omitempty"`
-	Type                 string                      `json:"type"`
+	Type                 EventType                   `json:"type"`
 	Seq                  int64                       `json:"seq,omitempty"`
 	Agent                string                      `json:"agent,omitempty"`
 	SessionID            string                      `json:"session_id,omitempty"`
@@ -47,18 +47,45 @@ type Event struct {
 	IsContact               *bool                         `json:"is_contact,omitempty"`
 }
 
+// SendStatus is how a chat send ended.
+type SendStatus string
+
+const (
+	// SendSent: delivered, with no wait for a reply.
+	SendSent SendStatus = "sent"
+	// SendReplied: the target replied.
+	SendReplied SendStatus = "replied"
+	// SendSenderLeft: the target replied and left the conversation.
+	SendSenderLeft SendStatus = "sender_left"
+	// SendPending: an unread message is waiting in the conversation.
+	SendPending SendStatus = "pending"
+	// SendTargetsLeft: the target had already left, so nothing waited.
+	SendTargetsLeft SendStatus = "targets_left"
+	// SendTimeout: the wait ended with no reply.
+	SendTimeout SendStatus = "timeout"
+)
+
+// EventType is the kind of a chat stream event.
+type EventType string
+
+const (
+	EventMessage                 EventType = "message"
+	EventReadReceipt             EventType = "read_receipt"
+	EventVerificationUnavailable EventType = "verification_unavailable"
+)
+
 // SendResult is the result of sending a message and optionally waiting for a reply.
 type SendResult struct {
-	SessionID          string  `json:"session_id"`
-	MessageID          string  `json:"message_id,omitempty"`
-	Status             string  `json:"status"` // sent, replied, sender_left, pending, targets_left, timeout
-	TargetAgent        string  `json:"target_agent,omitempty"`
-	Reply              string  `json:"reply,omitempty"`
-	Events             []Event `json:"events"`
-	Error              string  `json:"error,omitempty"`
-	TargetNotConnected bool    `json:"target_not_connected,omitempty"`
-	SenderWaiting      bool    `json:"sender_waiting,omitempty"`
-	WaitedSeconds      int     `json:"waited_seconds,omitempty"`
+	SessionID          string     `json:"session_id"`
+	MessageID          string     `json:"message_id,omitempty"`
+	Status             SendStatus `json:"status"`
+	TargetAgent        string     `json:"target_agent,omitempty"`
+	Reply              string     `json:"reply,omitempty"`
+	Events             []Event    `json:"events"`
+	Error              string     `json:"error,omitempty"`
+	TargetNotConnected bool       `json:"target_not_connected,omitempty"`
+	SenderWaiting      bool       `json:"sender_waiting,omitempty"`
+	WaitedSeconds      int        `json:"waited_seconds,omitempty"`
 }
 
 // OpenResult is the result of opening unread messages for a conversation.
