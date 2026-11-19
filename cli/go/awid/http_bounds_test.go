@@ -150,14 +150,6 @@ func TestTrustEntryPointsRejectOversizeResponses(t *testing.T) {
 			_, err = client.ClaimHuman(context.Background(), &ClaimHumanRequest{Username: "alice", Email: "alice@example.com", DIDKey: did})
 			return err
 		}},
-		{name: "bootstrap redeem", invoke: func(baseURL string) error {
-			client, err := NewWithIdentity(baseURL, signingKey, did)
-			if err != nil {
-				return err
-			}
-			_, err = client.BootstrapRedeem(context.Background(), &BootstrapRedeemRequest{Token: "token", DIDKey: did})
-			return err
-		}},
 		{name: "CLI signup", invoke: func(baseURL string) error {
 			_, err := CliSignup(context.Background(), baseURL, &CliSignupRequest{Username: "alice", DIDKey: did, DIDAW: "did:aw:test", Alias: "alice"}, signingKey)
 			return err

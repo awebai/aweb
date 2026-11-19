@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awid"
 )
 
 // Build current source once per package invocation, never reuse an installed aw
@@ -83,4 +86,13 @@ func buildAwBinary(t *testing.T, ctx context.Context, outPath string) {
 	if closeErr != nil {
 		t.Fatal(closeErr)
 	}
+}
+
+func mustExtractPublicKey(t *testing.T, didKey string) ed25519.PublicKey {
+	t.Helper()
+	pub, err := awid.ExtractPublicKey(didKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pub
 }
