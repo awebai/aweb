@@ -30,9 +30,6 @@ from awid.federation_errors import FederationAuthorityError
 from aweb.agent_wake import agent_wake_scope
 from aweb.attachment_service import attachment_retry, refuse_remote_attachments
 from aweb.db import TransactionInfra
-from aweb.awid_error_handling import (
-    AWID_DEPENDENCY_ERRORS,
-)
 from aweb.e2ee_messages import (
     E2EEEnvelopeError,
     encrypted_message_storage_metadata,
@@ -856,20 +853,9 @@ async def _resolve_remote_chat_route(
             )
     except (DeliveryRefusal, FederationAuthorityError):
         raise
-    except AWID_DEPENDENCY_ERRORS as exc:
-        logger.warning(
-            "AWID registry dependency failed for remote chat route resolution: %s",
-            address,
-            exc_info=True,
-        )
-        raise registry_dependency_refusal(
-            exc, operation="AWID remote chat route resolution"
-        ) from exc
     except Exception as exc:
-        logger.exception(
-            "Unexpected AWID registry dependency error for remote chat route resolution: %s",
-            address,
-        )
+        # This SDK boundary preserves known dependency statuses and maps unknown
+        # faults to 500. The shared refusal logs only type/status, never input.
         raise registry_dependency_refusal(
             exc, operation="AWID remote chat route resolution"
         ) from exc
@@ -1744,9 +1730,7 @@ async def _send_to_named_recipients(
                         system_close=True,
                     )
                 except NotFoundError:
-                    logger.debug(
-                        "chat_session_already_closed session_id=%s", existing_session_id
-                    )
+                    logger.debug("chat_session_already_closed")
             elif (
                 requested_session_id is not None
                 and requested_session_id != existing_session_id
