@@ -82,6 +82,7 @@ def _make_standalone_lifespan():
                 backend=settings.rate_limit_backend,
             )
             app.state.awid_service_token = settings.service_token
+            app.state.awid_read_rate_limits = settings.read_rate_limits
             app.state.db_schema = settings.db_schema
             yield
         finally:
@@ -112,6 +113,7 @@ def _make_library_lifespan(
             backend=settings.rate_limit_backend,
         )
         app.state.awid_service_token = settings.service_token
+        app.state.awid_read_rate_limits = settings.read_rate_limits
         app.state.db_schema = db_infra.schema
         try:
             yield
