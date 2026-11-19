@@ -861,11 +861,9 @@ async def delete_team(
         if active_cert is not None:
             raise HTTPException(status_code=409, detail="Team has active certificates")
 
+        # Every certificate is revoked by now, and the rows stay: the team's
+        # revocations outlive it (docs/awid-sot.md, revocations).
         now = datetime.now(timezone.utc)
-        await tx.execute(
-            "DELETE FROM {{tables.team_certificates}} WHERE team_uuid = $1",
-            row["team_uuid"],
-        )
         await tx.execute(
             """
             UPDATE {{tables.teams}}
@@ -1638,8 +1636,15 @@ async def list_revocations(
         # existed. Explicit limits use the shared clamp.
         validated_limit = _LEGACY_REVOCATION_PAGE_ROWS
 
-    where_clauses = ["team_uuid = $1", "revoked_at IS NOT NULL"]
-    params: list[object] = [team_row["team_uuid"]]
+    # A revocation is one-way: the list covers every team ever created under
+    # this domain and name, so deleting a team or its namespace and creating
+    # the team again does not revive a revoked certificate (docs/awid-sot.md,
+    # revocations).
+    where_clauses = [
+        "team_uuid IN (SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2)",
+        "revoked_at IS NOT NULL",
+    ]
+    params: list[object] = [domain, name]
 
     if since is not None:
         try:

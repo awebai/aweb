@@ -688,7 +688,8 @@ GET    /v1/namespaces/{domain}/teams/{name}
                    "created_at": "..." }
 
 DELETE /v1/namespaces/{domain}/teams/{name}
-       Delete team.
+       Delete team. Refused with 409 while any certificate is unrevoked.
+       The team's revoked certificates are kept; see revocations.
        Auth: namespace controller DIDKey signature.
 
 POST   /v1/namespaces/{domain}/teams/{name}/rotate
@@ -858,7 +859,10 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates/revoke
        Sets revoked_at on the certificate row.
 
 GET    /v1/namespaces/{domain}/teams/{name}/revocations
-       List revoked certificates only.
+       List revoked certificates only. The list covers every team ever
+       created under this domain and name: deleting the team or its
+       namespace and creating the team again, with any key, keeps earlier
+       revocations. A revocation is one-way.
        Auth: none for a public team; private-team read authority as above.
              Services cache this.
        Query params: since (timestamp, optional — for incremental sync)
