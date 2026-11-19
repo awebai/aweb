@@ -769,12 +769,3 @@ func removeCLIAuthConfigForScope(scope string) error {
 	}
 	return nil
 }
-
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}

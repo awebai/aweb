@@ -1537,18 +1537,6 @@ func initResultIsHosted(result *initResult) bool {
 	return false
 }
 
-func normalizeAwebBaseURL(baseURL string) (string, error) {
-	u, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil {
-		return "", err
-	}
-	u.Path = strings.TrimSuffix(u.Path, "/")
-	u.RawPath = ""
-	u.RawQuery = ""
-	u.Fragment = ""
-	return strings.TrimSuffix(u.String(), "/"), nil
-}
-
 func hostFromBaseURL(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {

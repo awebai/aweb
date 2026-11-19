@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -698,7 +697,7 @@ func validateAPIKeyBootstrapResponse(
 }
 
 func normalizeBootstrapServerURL(raw string) (string, error) {
-	u, err := url.Parse(strings.TrimSpace(raw))
+	u, err := parseAwebSelectionURL(raw)
 	if err != nil {
 		return "", err
 	}
@@ -706,10 +705,7 @@ func normalizeBootstrapServerURL(raw string) (string, error) {
 		return "", fmt.Errorf("server_url must include scheme and host")
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/")
-	u.RawPath = ""
-	u.RawQuery = ""
-	u.Fragment = ""
-	return strings.TrimSuffix(u.String(), "/"), nil
+	return awebSelectionURLString(u), nil
 }
 
 func normalizeAPIKeyBootstrapBaseURL(raw string) (string, error) {
@@ -717,16 +713,13 @@ func normalizeAPIKeyBootstrapBaseURL(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	u, err := url.Parse(baseURL)
+	u, err := parseAwebSelectionURL(baseURL)
 	if err != nil {
 		return "", err
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/")
 	u.Path = strings.TrimSuffix(u.Path, "/api")
-	u.RawPath = ""
-	u.RawQuery = ""
-	u.Fragment = ""
-	return strings.TrimSuffix(u.String(), "/"), nil
+	return awebSelectionURLString(u), nil
 }
 
 func verifyAPIKeyBootstrapCertificate(cert *awid.TeamCertificate) error {

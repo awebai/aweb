@@ -868,7 +868,7 @@ func cleanBaseURL(raw string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("empty base url")
 	}
-	u, err := url.Parse(raw)
+	u, err := parseAwebSelectionURL(raw)
 	if err != nil {
 		return "", err
 	}
@@ -876,10 +876,7 @@ func cleanBaseURL(raw string) (string, error) {
 		return "", fmt.Errorf("invalid base url %q", raw)
 	}
 	u.Path = strings.TrimSuffix(u.Path, "/")
-	u.RawPath = ""
-	u.RawQuery = ""
-	u.Fragment = ""
-	return strings.TrimSuffix(u.String(), "/"), nil
+	return awebSelectionURLString(u), nil
 }
 
 // redirectLocationDisplay is diagnostic-only: never use its output for a request.
