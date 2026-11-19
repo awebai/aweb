@@ -310,17 +310,9 @@ func localHomeOfOtherTeam(home, team string) error {
 // refusal must not read as an unavailable registry. The team key's signature
 // binds the certificate's id to its member.
 func checkCurrentTeamCertificate(ctx context.Context, c teamCertificateInstall, cert *awid.TeamCertificate) error {
-	err := c.Registry.CheckCurrentTeamCertificate(ctx, awid.CurrentTeamCertificateCheck{
+	return c.Registry.CheckCurrentTeamCertificate(ctx, awid.CurrentTeamCertificateCheck{
 		RegistryURL: c.RegistryURL, Certificate: cert,
 	})
-	if err == nil {
-		return nil
-	}
-	var refusal *awid.CurrentTeamCertificateError
-	if errors.As(err, &refusal) {
-		return withErrorCode(string(refusal.Code), err)
-	}
-	return err
 }
 
 // sameTeamCertificate reports whether a and b are the same signed
