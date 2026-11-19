@@ -2,7 +2,10 @@
 
 import asyncio
 import os
+import ssl
 from contextlib import asynccontextmanager
+from http import HTTPStatus
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -15,17 +18,63 @@ from fastapi import FastAPI
 from aweb_secrets.console import OwnerConsole, owner_console_router
 from aweb_secrets.console_ui import console_ui_router
 from aweb_secrets.console_values import ConsoleValues, console_values_router
-from aweb_secrets.custody import CustodyUnavailable, SealContext, decode_value
+from aweb_secrets.custody import (
+    Custody,
+    CustodyUnavailable,
+    LocalKeyFileProvider,
+    SealContext,
+    decode_value,
+)
 from aweb_secrets.owners import OWNER_ROLE
+from aweb_secrets.secret import SecretBackend, SecretKind
 from tests.console_home import no_banner
 from tests.test_change_sets import ALICE, ORIGIN, TEAM, enrol_owner
 from tests.test_change_sets import world as _world
 from tests.test_console import API, login
+from tests.test_production_bootstrap import enrolled_owner
+from tests.test_production_bootstrap import root as root
+from tests.test_production_native_values import production_console as production_console
+from tests.test_production_native_values import production_settings as production_settings
+from tests.test_production_native_values import upstream as upstream
 from tests.test_use_approvals import uses as _uses
 
 world = _world
 uses = _uses
 PATH = f"/installations/{INSTALLATION_ID}/backend-credentials/onepassword/versions"
+
+
+@pytest.fixture
+async def production_client(production_console, console_tls):
+    """Use the maintained Uvicorn socket and verify its private TLS CA.
+
+    The root still seeds external installation/hook/holder state; each migrated
+    case documents that limit, tracked in aweb-adje.16.8.
+    """
+    context = ssl.create_default_context(cafile=str(console_tls.ca_file))
+    async with httpx.AsyncClient(
+        base_url=production_console, verify=context, trust_env=False
+    ) as client:
+        yield client
+
+
+def production_token_path(root) -> str:
+    installation = root[4]
+    return (
+        f"/installations/{installation['installation_id']}/backend-credentials/onepassword/versions"
+    )
+
+
+async def login_production_owner(client: httpx.AsyncClient, *, root) -> str:
+    holder = await enrolled_owner(root)
+    options = await client.post("/login/options", json={"scope": holder.scope})
+    assert options.status_code == HTTPStatus.OK
+    logged = await client.post(
+        "/login", json={"scope": holder.scope, "assertion": holder.device.get(options.json())}
+    )
+    assert logged.status_code == HTTPStatus.OK
+    csrf = logged.json()["csrf_token"]
+    assert isinstance(csrf, str) and csrf
+    return csrf
 
 
 @asynccontextmanager
@@ -68,99 +117,126 @@ def no_value(response, value):
         raise AssertionError("submitted value appeared in response")
 
 
-async def test_owner_token_ingress_is_sealed_scoped_inert_and_never_echoed(world):
-    w = world
-    scope = await enrol_owner(w, ALICE, "alice@acme.com")
+async def test_owner_token_ingress_is_sealed_scoped_inert_and_never_echoed(root, production_client):
+    """Actual TLS ingress; external installation/hook/holder setup is fixture-seeded (16.8)."""
+    service, _, configured, member, installed, *_ = root
+    db = service.runtime.db()
+    path = production_token_path(root)
     value = os.urandom(24).hex()
-    async with clients(w) as (human, agent):
-        logged = await login(w, human, scope)
-        response = await human.post(
-            PATH, json={"value": value}, headers={"X-CSRF-Token": logged.json()["csrf_token"]}
-        )
-        assert response.status_code == 201
-        assert response.json() == {
-            "v": 1,
-            "backend": "onepassword",
-            "credential_id": "bkc_onepassword",
-            "version": 1,
-        }
-        assert response.headers["cache-control"] == "no-store"
-        no_value(response, value)
-        assert (await agent.post(PATH, json={"value": value})).status_code == 404
-    context = SealContext(INSTALLATION_ID, TEAM, "bkc_onepassword", 1)
-    opened = await w.custody.backend_credential_preview.open(context)
-    if decode_value("bearer", opened.plaintext.reveal())["value"] != value:
+    csrf = await login_production_owner(production_client, root=root)
+    response = await production_client.post(
+        path, json={"value": value}, headers={"X-CSRF-Token": csrf}
+    )
+    assert response.status_code == HTTPStatus.CREATED
+    assert response.json() == {
+        "v": 1,
+        "backend": SecretBackend.ONEPASSWORD,
+        "credential_id": "bkc_onepassword",
+        "version": 1,
+    }
+    assert response.headers["cache-control"] == "no-store"
+    no_value(response, value)
+    # The same real application chooses its agent surface by Host. This is
+    # application routing evidence, not acceptance of the deployment's TLS front.
+    agent_response = await production_client.post(
+        path, json={"value": value}, headers={"Host": urlsplit(configured.public_origin).netloc}
+    )
+    assert agent_response.status_code == HTTPStatus.NOT_FOUND
+    no_value(agent_response, value)
+    custody = Custody(LocalKeyFileProvider(configured.custody_key_file), db)
+    context = SealContext(
+        installation_id=installed["installation_id"],
+        team_id=member.team_id,
+        secret_id="bkc_onepassword",
+        version=1,
+    )
+    opened = await custody.backend_credential_preview.open(context)
+    if decode_value(SecretKind.BEARER, opened.plaintext.reveal())["value"] != value:
         raise AssertionError("sealed token differs from entered token")
     with pytest.raises(CustodyUnavailable):
-        await w.custody.backend_credential_opener.open(context)
+        await custody.backend_credential_opener.open(context)
     with pytest.raises(CustodyUnavailable):
-        await w.custody.opener.open(context)
+        await custody.opener.open(context)
     assert (
-        await w.db.fetch_value("SELECT active_version FROM {{tables.onepassword_credentials}}")
+        await db.fetch_value("SELECT active_version FROM {{tables.onepassword_credentials}}")
         is None
     )
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.secrets}}") == 0
-    for row in await w.db.fetch_all("SELECT * FROM {{tables.sealed_versions}}"):
+    assert await db.fetch_value("SELECT count(*) FROM {{tables.secrets}}") == 0
+    for row in await db.fetch_all("SELECT * FROM {{tables.sealed_versions}}"):
         if value in str(dict(row)):
             raise AssertionError("entered token present as plaintext in custody")
 
 
-async def test_ingress_requires_login_and_this_tabs_csrf_before_any_allocation(world):
-    w = world
-    scope = await enrol_owner(w, ALICE, "alice@acme.com")
+async def test_ingress_requires_login_and_this_tabs_csrf_before_any_allocation(
+    root, production_client
+):
+    """Actual TLS session/CSRF refusal; external authority setup remains seeded (16.8)."""
+    path = production_token_path(root)
     value = os.urandom(24).hex()
-    async with clients(w) as (human, _):
-        assert (await human.post(PATH, json={"value": value})).status_code == 401
-        await login(w, human, scope)
-        response = await human.post(PATH, json={"value": value})
-        assert response.status_code == 403
-        assert response.json() == {"detail": "csrf_token_required"}
-        no_value(response, value)
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.custody_secrets}}") == 0
+    anonymous = await production_client.post(path, json={"value": value})
+    assert anonymous.status_code == HTTPStatus.UNAUTHORIZED
+    no_value(anonymous, value)
+    await login_production_owner(production_client, root=root)
+    response = await production_client.post(path, json={"value": value})
+    assert response.status_code == HTTPStatus.FORBIDDEN
+    assert response.json() == {"detail": "csrf_token_required"}
+    no_value(response, value)
+    assert (
+        await root[0].runtime.db().fetch_value("SELECT count(*) FROM {{tables.custody_secrets}}")
+        == 0
+    )
 
 
 @pytest.mark.parametrize(
     "body",
     [{"value": ""}, {"value": {}}, {"value": 1}, {}, {"value": "x", "team_id": "another-team"}],
 )
-async def test_invalid_ingress_body_is_constant_and_allocates_nothing(world, body):
-    w = world
-    scope = await enrol_owner(w, ALICE, "alice@acme.com")
-    async with clients(w) as (human, _):
-        logged = await login(w, human, scope)
-        response = await human.post(
-            PATH, json=body, headers={"X-CSRF-Token": logged.json()["csrf_token"]}
-        )
-        assert response.status_code == 400
-        assert response.json() == {"detail": "request_invalid"}
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.custody_secrets}}") == 0
+async def test_invalid_ingress_body_is_constant_and_allocates_nothing(
+    root, production_client, body
+):
+    """Actual TLS body validation; external authority setup remains seeded (16.8)."""
+    csrf = await login_production_owner(production_client, root=root)
+    response = await production_client.post(
+        production_token_path(root), json=body, headers={"X-CSRF-Token": csrf}
+    )
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    assert response.json() == {"detail": "request_invalid"}
+    assert (
+        await root[0].runtime.db().fetch_value("SELECT count(*) FROM {{tables.custody_secrets}}")
+        == 0
+    )
 
 
-async def test_ingress_json_and_scope_fail_without_reflecting_submitted_bytes(world):
-    w = world
-    scope = await enrol_owner(w, ALICE, "alice@acme.com")
+async def test_ingress_json_and_scope_fail_without_reflecting_submitted_bytes(
+    root, production_client
+):
+    """Actual TLS media/JSON/scope refusal; external authority setup remains seeded (16.8)."""
+    path = production_token_path(root)
+    csrf = await login_production_owner(production_client, root=root)
+    headers = {"X-CSRF-Token": csrf}
     value = os.urandom(24).hex()
-    async with clients(w) as (human, _):
-        logged = await login(w, human, scope)
-        headers = {"X-CSRF-Token": logged.json()["csrf_token"]}
-        response = await human.post(
-            PATH, content=value, headers={**headers, "Content-Type": "text/plain"}
-        )
-        assert response.status_code == 415
-        no_value(response, value)
-        response = await human.post(
-            PATH, content=value, headers={**headers, "Content-Type": "application/json"}
-        )
-        assert response.status_code == 400
-        no_value(response, value)
-        response = await human.post(
-            PATH.replace(INSTALLATION_ID, "another-installation"),
-            json={"value": value},
-            headers=headers,
-        )
-        assert response.status_code == 403
-        no_value(response, value)
-    assert await w.db.fetch_value("SELECT count(*) FROM {{tables.custody_secrets}}") == 0
+    response = await production_client.post(
+        path, content=value, headers={**headers, "Content-Type": "text/plain"}
+    )
+    assert response.status_code == HTTPStatus.UNSUPPORTED_MEDIA_TYPE
+    no_value(response, value)
+    response = await production_client.post(
+        path, content=value, headers={**headers, "Content-Type": "application/json"}
+    )
+    assert response.status_code == HTTPStatus.BAD_REQUEST
+    no_value(response, value)
+    installation_id = root[4]["installation_id"]
+    response = await production_client.post(
+        path.replace(installation_id, "another-installation"),
+        json={"value": value},
+        headers=headers,
+    )
+    assert response.status_code == HTTPStatus.FORBIDDEN
+    no_value(response, value)
+    assert (
+        await root[0].runtime.db().fetch_value("SELECT count(*) FROM {{tables.custody_secrets}}")
+        == 0
+    )
 
 
 async def test_owner_role_revoked_during_lookup_cannot_enter_a_token(world):
