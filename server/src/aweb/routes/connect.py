@@ -210,6 +210,12 @@ async def _ensure_agent(
     certificates do not carry these fields).
     """
 
+    stored_certificate_id = (
+        certificate_id
+        if profile_update is _ProfileUpdate.IMPORT
+        else (certificate_id or "").strip() or None
+    )
+
     async def _update_existing_agent(existing_agent) -> str:
         _require_planned_id(existing_agent["agent_id"], planned_agent_id)
         existing_alias = existing_agent["alias"]
@@ -243,7 +249,7 @@ async def _ensure_agent(
             effective_type,
             effective_role,
             existing_agent["agent_id"],
-            (certificate_id or "").strip() or None,
+            stored_certificate_id,
             did_key if did_aw else None,
             effective_human_key,
             accepted_team_did_key,
@@ -300,7 +306,7 @@ async def _ensure_agent(
                 human_name,
                 agent_type,
                 role,
-                (certificate_id or "").strip() or None,
+                stored_certificate_id,
                 did_key if did_aw else None,
                 inbound_mode,
                 human_verified_key,
