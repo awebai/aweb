@@ -86,7 +86,11 @@ func executeGuidedOnboardingWizard(req guidedOnboardingRequest) (*guidedOnboardi
 		return resumeHostedSignup(req, retained)
 	}
 
-	if guidedOnboardingHasReconnectState(req.WorkingDir) {
+	reconnect, err := guidedOnboardingReconnectState(req.WorkingDir)
+	if err != nil {
+		return nil, err
+	}
+	if reconnect {
 		return executeReconnectPath(req)
 	}
 
@@ -246,13 +250,20 @@ func executeBYODPath(req guidedOnboardingRequest) (*guidedOnboardingResult, erro
 	return &guidedOnboardingResult{}, nil
 }
 
-func guidedOnboardingHasReconnectState(workingDir string) bool {
-	_, err := os.Stat(awconfig.WorktreeSigningKeyPath(workingDir))
-	if err != nil {
-		return false
+// guidedOnboardingReconnectState distinguishes a clean creation target from
+// installed credentials that must be reused (docs/identity.md:219-225).
+func guidedOnboardingReconnectState(workingDir string) (bool, error) {
+	if _, err := os.Stat(awconfig.WorktreeSigningKeyPath(workingDir)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("load reconnect signing key: %w", err)
 	}
 	stored, err := awconfig.ListTeamCertificates(workingDir)
-	return err == nil && len(stored) > 0
+	if err != nil {
+		return false, fmt.Errorf("load reconnect membership: %w", err)
+	}
+	return len(stored) > 0, nil
 }
 
 // guidedSetup runs the wizard's setup after connecting for printInitOutcome.
