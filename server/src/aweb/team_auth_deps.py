@@ -286,6 +286,57 @@ async def verify_request_certificate(
     except ValueError:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 
+    cert_info, team_did_key = await _verify_admitting_certificate(
+        request,
+        db=db,
+        cert_team_id=cert_team_id,
+        cert_header=cert_header,
+        cert_data=cert_data,
+        did_key=did_key,
+    )
+
+    # Team authority does not establish the member's stable identity/address.
+    binding = await verify_identity_binding(
+        request,
+        did_key=did_key,
+        did_aw=cert_info.get("member_did_aw", ""),
+        address=cert_info.get("member_address", ""),
+        fresh=fresh,
+    )
+    await authenticate_id_chain(request, binding)
+    cert_info["identity_kind"] = getattr(request.state, "identity_kind", None)
+    cert_info["identity_binding"] = binding
+    cert_info["identity_binding_fresh"] = binding.fresh_observation
+    cert_info["verified_member_did_aw"] = binding.did_aw
+    cert_info["verified_member_address"] = binding.address
+    cert_info["did_aw_verified_key"] = did_key if binding.did_aw else ""
+    # Include the registry-resolved team key (not the certificate's claim)
+    cert_info["verified_team_did_key"] = team_did_key
+    if envelope.version == 1:
+        count_legacy_request_auth(request, "certificate")
+    set_verified_audit_actor(
+        request,
+        AuditActor(
+            team_id=cert_info["team_id"],
+            principal_type="c",
+            auth_mode="team_auth_v2" if envelope.version == 2 else "team_auth_v1",
+            did_key=cert_info["did_key"],
+            did_aw=binding.did_aw or None,
+        ),
+    )
+    return cert_info
+
+
+async def _verify_admitting_certificate(
+    request: Request,
+    *,
+    db,
+    cert_team_id: str,
+    cert_header: str,
+    cert_data: dict,
+    did_key: str,
+) -> tuple[dict, str]:
+    """Verify the certificate against the admitted key and registry records."""
     # -- Step 4: Resolve team public key from awid --
     team_did_key = await _resolve_team_key(request, cert_team_id, db=_aweb_db(db))
     if not team_did_key:
@@ -414,36 +465,7 @@ async def verify_request_certificate(
             )
         raise certificate_refusal(e) from None
 
-    # Team authority does not establish the member's stable identity/address.
-    binding = await verify_identity_binding(
-        request,
-        did_key=did_key,
-        did_aw=cert_info.get("member_did_aw", ""),
-        address=cert_info.get("member_address", ""),
-        fresh=fresh,
-    )
-    await authenticate_id_chain(request, binding)
-    cert_info["identity_kind"] = getattr(request.state, "identity_kind", None)
-    cert_info["identity_binding"] = binding
-    cert_info["identity_binding_fresh"] = binding.fresh_observation
-    cert_info["verified_member_did_aw"] = binding.did_aw
-    cert_info["verified_member_address"] = binding.address
-    cert_info["did_aw_verified_key"] = did_key if binding.did_aw else ""
-    # Include the registry-resolved team key (not the certificate's claim)
-    cert_info["verified_team_did_key"] = team_did_key
-    if envelope.version == 1:
-        count_legacy_request_auth(request, "certificate")
-    set_verified_audit_actor(
-        request,
-        AuditActor(
-            team_id=cert_info["team_id"],
-            principal_type="c",
-            auth_mode="team_auth_v2" if envelope.version == 2 else "team_auth_v1",
-            did_key=cert_info["did_key"],
-            did_aw=binding.did_aw or None,
-        ),
-    )
-    return cert_info
+    return cert_info, team_did_key
 
 
 async def resolve_team_identity_with_grant_scope(
