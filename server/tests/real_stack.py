@@ -27,11 +27,11 @@ from awid.ratelimit import NoOpRateLimiter
 from awid.signing import sign_message
 from awid.team_server_record import record_signing_bytes
 from awid_service.db import AwidDatabaseInfra
+from awid_service.main import create_app as create_registry_app
+from redis.asyncio import Redis
 from awid_service.routes.attestation_records import (
     router as awid_attestation_records_router,
 )
-from awid_service.routes.did import router as awid_did_router
-from awid_service.routes.teams import router as awid_teams_router
 from fastapi import FastAPI
 from nacl.signing import SigningKey
 
@@ -161,26 +161,27 @@ async def real_stack(
     infra = AwidDatabaseInfra(schema="awid")
     monkeypatch.setenv("AWID_DATABASE_URL", awid_database.config.get_dsn())
     await infra.initialize(run_migrations=True)
-    awid_app = FastAPI()
-    awid_app.state.db = infra
-    awid_app.state.rate_limiter = NoOpRateLimiter()
-    awid_app.state.awid_service_token = service_token
-    # Its public origin, which covering controller signatures name.
+    redis = Redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    awid_app = create_registry_app(
+        db_infra=infra, redis=redis, rate_limiter=NoOpRateLimiter()
+    )
+    # One full registry owner mounts namespace, address, team and DID routes.
+    # Its public origin is configuration, never inferred from a request Host.
     awid_app.state.awid_public_origins = (REGISTRY_URL,)
-    awid_app.include_router(awid_teams_router)
-    awid_app.include_router(awid_attestation_records_router)
-    awid_app.include_router(awid_did_router)
+    awid_app.state.awid_service_token = service_token
 
     aweb_app = _build_events_app(aweb_cloud_db.aweb_db, public_origin=AWEB_URL)
     aweb_app.include_router(apps_router)
     aweb_app.include_router(app_hooks_router)
     try:
-        yield RealStack(
-            aweb_db=aweb_cloud_db.aweb_db,
-            awid_db=infra.get_manager("aweb"),
-            awid=ServiceTransport(awid_app),
-            aweb=ServiceTransport(aweb_app),
-            service_token=service_token,
-        )
+        async with awid_app.router.lifespan_context(awid_app):
+            yield RealStack(
+                aweb_db=aweb_cloud_db.aweb_db,
+                awid_db=infra.get_manager("aweb"),
+                awid=ServiceTransport(awid_app),
+                aweb=ServiceTransport(aweb_app),
+                service_token=service_token,
+            )
     finally:
+        await redis.aclose()
         await infra.close()
