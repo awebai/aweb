@@ -16,6 +16,9 @@ export const DEFAULT_AWID_REGISTRY_URL = "https://api.awid.ai";
 const REGISTRY_DISCOVERY_TTL_MS = 15 * 60 * 1000;
 const REGISTRY_ADDRESS_TTL_MS = 5 * 60 * 1000;
 const REGISTRY_KEY_TTL_MS = 15 * 60 * 1000;
+/** One read per sender per interval that a disagreeing cached answer may
+ * force (docs/trust-model.md, bounded refetch). */
+const REGISTRY_FORCED_READ_INTERVAL_MS = 30 * 1000;
 
 export interface DomainAuthority {
   controllerDid: string;
@@ -115,6 +118,8 @@ export class RegistryResolver {
   private keyCache = new Map<string, CacheEntry<DidKeyResolution>>();
   private headCache = new Map<string, VerifiedLogHead>();
   private receivedRegistries = new Map<string, RegistryResolver>();
+  /** The last read a disagreeing cached answer forced, per sender address or key. */
+  private forcedReads = new Map<string, { at: number; failed: boolean }>();
   private readonly fallbackRegistryURL: string;
   private readonly identityDomain: string;
 
@@ -154,10 +159,47 @@ export class RegistryResolver {
     }
 
     if (resolvedAddress.response.did_aw !== stableID) {
-      return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      const readKey = `address:${split.domain}/${split.name}`;
+      const claim = this.claimForcedRead(readKey);
+      if (!claim.allowed && claim.lastFailed) {
+        return { outcome: "STALE_CACHE", error: "registry address could not be read again in this interval" };
+      }
+      if (claim.allowed) {
+        try {
+          resolvedAddress = await this.resolveAddress(split.domain, split.name, true);
+          this.recordForcedRead(readKey, false);
+        } catch (error) {
+          this.recordForcedRead(readKey, true);
+          return { outcome: "STALE_CACHE", error: String(error) };
+        }
+      }
+      if (resolvedAddress.response.did_aw !== stableID) {
+        return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      }
     }
 
     return this.verifyStableIdentityAtRegistry(resolvedAddress.registryURL, stableID, expectedCurrentDidKey);
+  }
+
+  /**
+   * Whether a cached answer that disagrees with a signed message may be read
+   * again from the registry now: once per REGISTRY_FORCED_READ_INTERVAL_MS for
+   * that sender. When it may not, lastFailed says whether the read that used
+   * the interval failed; the cache then still holds the older answer.
+   */
+  private claimForcedRead(key: string): { allowed: boolean; lastFailed: boolean } {
+    const now = this.now();
+    const last = this.forcedReads.get(key);
+    if (last && now - last.at < REGISTRY_FORCED_READ_INTERVAL_MS) {
+      return { allowed: false, lastFailed: last.failed };
+    }
+    this.forcedReads.set(key, { at: now, failed: false });
+    return { allowed: true, lastFailed: false };
+  }
+
+  private recordForcedRead(key: string, failed: boolean): void {
+    const read = this.forcedReads.get(key);
+    if (read) this.forcedReads.set(key, { ...read, failed });
   }
 
   /** Addressless receive authority comes only from the selected delivery team.
@@ -207,11 +249,32 @@ export class RegistryResolver {
       return { outcome: "OK_DEGRADED", error: String(error) };
     }
     const expectedKey = expectedCurrentDidKey.trim();
+    if (expectedKey && resolution.current_did_key !== expectedKey && !fresh) {
+      const readKey = `key:${registryURL}|${stableID}`;
+      const claim = this.claimForcedRead(readKey);
+      if (!claim.allowed && claim.lastFailed) {
+        return {
+          outcome: "STALE_CACHE",
+          currentDidKey: resolution.current_did_key,
+          error: "registry key could not be read again in this interval",
+        };
+      }
+      if (claim.allowed) {
+        const staleKey = resolution.current_did_key;
+        try {
+          resolution = await this.resolveDidKey(registryURL, stableID, true);
+          this.recordForcedRead(readKey, false);
+        } catch (error) {
+          this.recordForcedRead(readKey, true);
+          return { outcome: "STALE_CACHE", currentDidKey: staleKey, error: String(error) };
+        }
+      }
+    }
     if (expectedKey && resolution.current_did_key !== expectedKey) {
       return {
-        outcome: fresh ? "HARD_ERROR" : "STALE_CACHE",
+        outcome: "HARD_ERROR",
         currentDidKey: resolution.current_did_key,
-        error: "registry key cache does not match the signed current key",
+        error: "registry key does not match the signed current key",
       };
     }
     if (resolution.did_aw !== stableID) {
@@ -389,16 +452,17 @@ export class RegistryResolver {
     return resolvedAuthority;
   }
 
-  private async resolveAddress(domain: string, name: string): Promise<{ registryURL: string; response: AddressResponse }> {
+  private async resolveAddress(domain: string, name: string, fresh = false): Promise<{ registryURL: string; response: AddressResponse }> {
     const key = `${domain}/${name}`;
     const cached = this.addressCache.get(key);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!fresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const registryURL = await this.discoverRegistry(domain);
     const response = await this.getJSON<AddressResponse>(
       registryURL,
       `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`,
+      fresh,
     );
     const value = { registryURL, response };
     this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
