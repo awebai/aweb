@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from datetime import datetime
 from datetime import timezone as timezone_mod
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, cast
 from urllib.parse import quote
 
 from redis.asyncio import Redis
@@ -160,7 +161,10 @@ async def _store_presence_fields(
         async with redis.pipeline(transaction=True) as pipe:
             try:
                 await pipe.watch(key)
-                current = {**await pipe.hgetall(key), **fields}
+                current = {
+                    **await cast(Awaitable[dict[str, str]], pipe.hgetall(key)),
+                    **fields,
+                }
                 set_indices = [_all_workspaces_index_key()]
                 alias_indices = []
                 if current.get("team_id"):

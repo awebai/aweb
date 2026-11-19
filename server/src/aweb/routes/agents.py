@@ -511,14 +511,12 @@ async def list_agents(
         activity = selected.activity if selected else None
         presence = activity.presence if activity else None
         online = activity is not None and activity.is_online(now=now)
-        status = PresenceStatus.OFFLINE
+        status = activity.display_status(now=now) if activity else PresenceStatus.OFFLINE
+        last_seen_at = activity.last_seen_at if activity else None
         last_seen = None
         role = (ctx.get("ws_role") if ctx else None) or (r.get("role") or None)
-        if online:
-            status = (
-                presence.get("status") if presence else None
-            ) or PresenceStatus.ACTIVE
-            last_seen = activity.last_seen_at.astimezone(timezone.utc).isoformat()
+        if online and last_seen_at is not None:
+            last_seen = last_seen_at.astimezone(timezone.utc).isoformat()
         if presence:
             role = presence.get("role") or role
 
