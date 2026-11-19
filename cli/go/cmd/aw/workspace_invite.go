@@ -100,10 +100,14 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 	if identityHome != "" {
 		home = awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
 	}
-	registryURL := registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
-	plan, err := planTeamInvite(teamInviteSource{WorkingDir: workingDir, Home: home, Domain: domain, Team: team, RegistryURL: registryURL, AwebURL: awebURL})
+	plan, err := planTeamInvite(teamInviteSource{WorkingDir: workingDir, Home: home, Domain: domain, Team: team, AwebURL: awebURL})
 	if err != nil {
 		return workspaceTeamInvite{}, err
+	}
+	// Hosted minting uses the selected service's authority and needs no
+	// controller registry discovery (docs/byot-onboarding-contract.md:36-46).
+	if plan.Kind == inviteAuthorityController {
+		plan.Source.RegistryURL = registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
 	}
 	created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: inviteMemberLocal})
 	if err != nil {

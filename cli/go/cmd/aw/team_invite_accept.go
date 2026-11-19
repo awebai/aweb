@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
@@ -43,27 +48,28 @@ func validateTeamInviteAcceptance(request teamInviteAcceptanceRequest) (string, 
 }
 
 type nativeInviteDefaultClaimRequest struct {
-	Plan        *teamMemberEnrollmentPlan
+	Plan        teamMemberEnrollmentPlan
 	Registry    *awid.RegistryClient
 	RegistryURL string
 }
 
 func claimNativeInviteDefaultAddress(ctx context.Context, request nativeInviteDefaultClaimRequest) (*awid.AtomicAddressClaimResult, error) {
 	plan, registry, registryURL := request.Plan, request.Registry, request.RegistryURL
-	var appliedDefaultClaim *awid.AtomicAddressClaimResult
-	var err error
-	if plan.DefaultClaim != nil {
-		if _, err := registry.ClaimIdentityAddressAt(ctx, registryURL, *plan.DefaultClaim); err != nil {
-			return nil, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err)
-		}
-		plan.DefaultClaim.DryRun = false
-		appliedDefaultClaim, err = registry.ClaimIdentityAddressAt(ctx, registryURL, *plan.DefaultClaim)
-		if err != nil {
-			return nil, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err)
-		}
+	if plan.DefaultClaim == nil {
+		return nil, nil
 	}
-
-	return appliedDefaultClaim, nil
+	dryRun := *plan.DefaultClaim
+	dryRun.DryRun = true
+	if _, err := registry.ClaimIdentityAddressAt(ctx, registryURL, dryRun); err != nil {
+		return nil, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err)
+	}
+	commit := *plan.DefaultClaim
+	commit.DryRun = false
+	applied, err := registry.ClaimIdentityAddressAt(ctx, registryURL, commit)
+	if err != nil {
+		return nil, idAddressClaimAtomicError(plan.MemberAddress, registryURL, err)
+	}
+	return applied, nil
 }
 
 type hostedInviteAddressClaimRequest struct {
@@ -128,21 +134,550 @@ type hostedInviteResponseRequest struct {
 func obtainHostedInviteResponse(ctx context.Context, request hostedInviteResponseRequest) (*awid.SpawnAcceptInviteResponse, error) {
 	creation, recoveryPath := request.Creation, request.RecoveryPath
 	client, req := request.Client, request.Request
-	var err error
-	var resp *awid.SpawnAcceptInviteResponse
 	if creation.ResponseJSON != "" {
-		resp = &awid.SpawnAcceptInviteResponse{}
-		err = json.Unmarshal([]byte(creation.ResponseJSON), resp)
-	} else {
-		attempted := true
-		creation.AcceptAttempted = &attempted
-		if err := creation.save(recoveryPath); err != nil {
-			return nil, err
+		response := &awid.SpawnAcceptInviteResponse{}
+		if err := json.Unmarshal([]byte(creation.ResponseJSON), response); err != nil {
+			return nil, fmt.Errorf("decode retained hosted invite response: %w; preserve this identity home and restore its recovery record from a trusted backup before retrying the same invite", err)
 		}
-		resp, err = client.AcceptSpawnInvite(ctx, req)
+		return response, nil
 	}
+	attempted := true
+	creation.AcceptAttempted = &attempted
+	if err := creation.save(recoveryPath); err != nil {
+		return nil, err
+	}
+	response, err := client.AcceptSpawnInvite(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("accept hosted team invite: %w", err)
 	}
-	return resp, nil
+	return response, nil
+}
+
+type hostedInviteAcceptanceRequest struct {
+	WorkingDir    string
+	Token         string
+	Options       teamAcceptInviteOptions
+	Scope         teamInviteMemberScope
+	Alias         string
+	MemberAddress string
+	Material      workspaceTeamIdentityMaterial
+	Home          awconfig.IdentityHome
+	Creation      *hostedInviteCreation
+	RecoveryPath  string
+	Client        *awid.Client
+}
+
+type hostedInviteSubmissionHistory uint8
+
+const (
+	hostedSubmissionUnknown hostedInviteSubmissionHistory = iota
+	hostedSubmissionNotAttempted
+	hostedSubmissionAttempted
+)
+
+func hostedInviteSubmissionBefore(creation *hostedInviteCreation) hostedInviteSubmissionHistory {
+	if creation.AcceptAttempted == nil {
+		return hostedSubmissionUnknown
+	}
+	if *creation.AcceptAttempted {
+		return hostedSubmissionAttempted
+	}
+	return hostedSubmissionNotAttempted
+}
+
+// Only a known pre-submission refusal may release the selection (docs/identity.md:235-245).
+func finishHostedInviteRefusal(request hostedInviteAcceptanceRequest, history hostedInviteSubmissionHistory, cause error) error {
+	if request.Creation.ResponseJSON != "" || history == hostedSubmissionAttempted {
+		return cause
+	}
+	if history == hostedSubmissionNotAttempted || awid.IDCertificateErrorCode(cause) == "human_mismatch" {
+		return releaseRefusedHostedInvite(request.RecoveryPath, hostedAcceptPendingMarkerPath(request.WorkingDir, request.Home.Root), cause)
+	}
+	return cause
+}
+
+type hostedInviteChildPreparation struct {
+	LocalLink   *awconfig.TeamInvite
+	TreeRequest *awid.IDTreeCreationRequest
+}
+
+func prepareHostedInviteChild(ctx context.Context, request hostedInviteAcceptanceRequest) (hostedInviteChildPreparation, error) {
+
+	workingDir := request.WorkingDir
+	token := request.Token
+	opts := request.Options
+	scope := string(request.Scope)
+	material := request.Material
+	home := request.Home
+	creation := request.Creation
+	recoveryPath := request.RecoveryPath
+
+	var err error
+	if opts.ParentHome != "" {
+		if err := completeExplicitInviteParent(ctx, workingDir, home.Root, token, opts.ParentHome); err != nil {
+			return hostedInviteChildPreparation{}, err
+		}
+	}
+	var localLink *awconfig.TeamInvite
+	if scope == awid.IdentityModeLocal && creation.Tree.Mode == "self_custodial" {
+		localLink, err = localHostedInviteLink(token, creation)
+		if err != nil {
+			return hostedInviteChildPreparation{}, &hostedInviteSignaturePendingError{err: fmt.Errorf("native agent signature pending in %s; child key and request retained: %w", home.Root, err)}
+		}
+	}
+	var treeRequest *awid.IDTreeCreationRequest
+	if creation.ResponseJSON == "" {
+		treeRequest, err = creation.prepareRequest(home.Root, material)
+		if saveErr := creation.save(recoveryPath); saveErr != nil {
+			return hostedInviteChildPreparation{}, saveErr
+		}
+		var pending *hostedInviteSignaturePendingError
+		if errors.As(err, &pending) && localLink != nil {
+			if exchangeErr := completeLocalHostedInvite(ctx, localLink, creation, workingDir, home.Root); exchangeErr != nil {
+				return hostedInviteChildPreparation{}, &hostedInviteSignaturePendingError{err: fmt.Errorf("native agent signature pending in %s; child key and request retained: %w", home.Root, exchangeErr)}
+			}
+			treeRequest, err = creation.prepareRequest(home.Root, material)
+		}
+		if err != nil {
+			return hostedInviteChildPreparation{}, err
+		}
+		if err := creation.save(recoveryPath); err != nil {
+			return hostedInviteChildPreparation{}, err
+		}
+	}
+
+	return hostedInviteChildPreparation{LocalLink: localLink, TreeRequest: treeRequest}, nil
+}
+
+type hostedInviteAcceptedResponseRequest struct {
+	Acceptance       hostedInviteAcceptanceRequest
+	Response         *awid.SpawnAcceptInviteResponse
+	Registry         *awid.RegistryClient
+	RegistryURL      string
+	MembershipResult *awid.IDChainResult
+	LocalLink        *awconfig.TeamInvite
+}
+
+func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInviteAcceptedResponseRequest) (*acceptedTeamInvite, error) {
+	request := responseRequest.Acceptance
+
+	workingDir := request.WorkingDir
+	token := request.Token
+	opts := request.Options
+	scope := string(request.Scope)
+	alias := request.Alias
+	memberAddress := request.MemberAddress
+	home := request.Home
+	creation := request.Creation
+	recoveryPath := request.RecoveryPath
+	signingKey := request.Material.SigningKey
+	didKey := request.Material.DIDKey
+	stableID := request.Material.StableID
+
+	resp := responseRequest.Response
+	registryURL := responseRequest.RegistryURL
+	localLink := responseRequest.LocalLink
+	cert, serverURL, err := validateHostedTeamInviteAcceptResponse(resp, didKey, alias, stableID, memberAddress, scope, opts.NoAddress)
+	if err != nil {
+		return nil, err
+	}
+	if cert.Team != creation.TeamID {
+		return nil, errors.New("hosted membership differs from the preview-selected team")
+	}
+	if err := creation.Tree.retainResponse(resp.IDTreeCreationResponse); err != nil {
+		return nil, err
+	}
+	if creation.Tree.NativeChainHeader != "" {
+		header, headerErr := awid.EncodeIDChainHeader(map[string]any(resp.IDChain))
+		if headerErr != nil || header != creation.Tree.NativeChainHeader || resp.RegistrationRequest != nil {
+			return nil, errors.New("hosted invite changed the original native child chain")
+		}
+	}
+	if creation.ResponseJSON == "" {
+		raw, marshalErr := json.Marshal(resp)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		creation.ResponseJSON = string(raw)
+	}
+	if err := creation.save(recoveryPath); err != nil {
+		return nil, err
+	}
+	responsibility, err := verifyHostedInviteAcceptedAttribution(ctx, responseRequest)
+	if err != nil {
+		return nil, err
+	}
+	registration := "unknown"
+	if responsibility != nil {
+		registration = "registered"
+		if scope == awid.IdentityModeLocal {
+			registration = "not_required"
+		}
+	} else {
+		responsibility = &awid.IDChainResult{Outcome: "unknown", Reason: "legacy_no_chain"}
+	}
+	if scope == awid.IdentityModeGlobal {
+		if err := persistLocalSigningKeyAndCertificateAt(workingDir, home.Root, signingKey, cert); err != nil {
+			return nil, err
+		}
+	} else if err := persistGuidedHostedState(workingDir, registryURL, signingKey, cert, didKey, stableID, memberAddress, false, home.Root); err != nil {
+		return nil, err
+	}
+	// Accept completed: clear the pending marker so the home is no longer in
+	// pending-accept state. (The completed-identity guard already protects it.)
+	if err := removeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(workingDir, home.Root)); err != nil {
+		return nil, err
+	}
+
+	if err := os.Remove(recoveryPath); err != nil {
+		return nil, err
+	}
+	if localLink != nil {
+		if err := recordConsumedTeamInvite(localLink.InviteID); err != nil {
+			return nil, err
+		}
+	}
+	consumedInviteParent(token, opts.ParentHome)
+	return &acceptedTeamInvite{
+		Output: &teamAcceptInviteOutput{
+			IDRegistration: registration,
+			Responsibility: responsibility,
+			Status:         "accepted",
+			TeamID:         cert.Team,
+			Alias:          strings.TrimSpace(cert.Alias),
+			CertPath:       awconfig.TeamCertificateRelativePath(cert.Team),
+		},
+		Certificate: cert,
+		AwebURL:     serverURL,
+		Domain:      strings.TrimSpace(resp.Namespace),
+		TeamName:    strings.TrimSpace(resp.TeamSlug),
+	}, nil
+}
+
+func completeHostedInviteAcceptance(ctx context.Context, request hostedInviteAcceptanceRequest) (*acceptedTeamInvite, error) {
+
+	token := request.Token
+	opts := request.Options
+	scope := string(request.Scope)
+	alias := request.Alias
+	memberAddress := request.MemberAddress
+	material := request.Material
+	home := request.Home
+	creation := request.Creation
+	recoveryPath := request.RecoveryPath
+	client := request.Client
+	pub := request.Material.PublicKey
+	didKey := request.Material.DIDKey
+	stableID := request.Material.StableID
+	child, err := prepareHostedInviteChild(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	localLink, treeRequest := child.LocalLink, child.TreeRequest
+	var membershipResult *awid.IDChainResult
+	if creation.MembershipChain != nil {
+		subjectID := didKey
+		if scope == awid.IdentityModeGlobal {
+			subjectID = stableID
+		}
+		membershipResult, err = verifyInviteMembership(ctx, creation.MembershipChain, awid.IDChainSubject{ID: subjectID, DIDKey: didKey}, creation.ForHuman, opts.Registry, opts.TXTResolver)
+		if err != nil {
+			return nil, err
+		}
+	}
+	registry := opts.Registry
+	if treeRequest != nil && treeRequest.IDChain != nil {
+		if registry == nil {
+			registry, err = newConfiguredRegistryClient(nil)
+			if err != nil {
+				return nil, err
+			}
+		}
+		verdict, err := finishHostedIDTree(ctx, creation.Tree, awid.IDTreeCreationResponse{FieldsPresent: true, IDChain: awid.ReceivedIDChain(treeRequest.IDChain)}, material, home.Root, registry, opts.TXTResolver)
+		if err != nil {
+			return nil, fmt.Errorf("native invite child chain is not currently valid: %w", err)
+		}
+		if err := checkInviteHuman(verdict, creation.ForHuman); err != nil {
+			return nil, err
+		}
+	}
+	registryURL := ""
+	var atomicAddressClaim *awid.AtomicAddressClaimIdentityProof
+	if creation.ResponseJSON == "" && scope == awid.IdentityModeGlobal && memberAddress != "" {
+		registryURL, atomicAddressClaim, err = buildHostedInviteAddressClaim(ctx, hostedInviteAddressClaimRequest{MemberAddress: memberAddress, Material: material})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	req := &awid.SpawnAcceptInviteRequest{
+		IDChain:       creation.MembershipChain,
+		IDTree:        treeRequest,
+		Token:         strings.TrimSpace(token),
+		DID:           didKey,
+		PublicKey:     base64.StdEncoding.EncodeToString(pub),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+	}
+	if scope == awid.IdentityModeGlobal {
+		req.Name = alias
+		req.StableID = stableID
+		req.IdentityScope = awid.IdentityModeGlobal
+		req.AtomicAddressClaim = atomicAddressClaim
+	} else {
+		req.Alias = alias
+	}
+	resp, err := obtainHostedInviteResponse(ctx, hostedInviteResponseRequest{Creation: creation, RecoveryPath: recoveryPath, Client: client, Request: req})
+	if err != nil {
+		return nil, err
+	}
+
+	return completeHostedInviteResponse(ctx, hostedInviteAcceptedResponseRequest{Acceptance: request, Response: resp, Registry: registry, RegistryURL: registryURL, MembershipResult: membershipResult, LocalLink: localLink})
+
+}
+
+type nativeInviteAttributionRequest struct {
+	WorkingDir  string
+	Token       string
+	Options     teamAcceptInviteOptions
+	Home        awconfig.IdentityHome
+	Invite      *awconfig.TeamInvite
+	Plan        teamMemberEnrollmentPlan
+	Registry    *awid.RegistryClient
+	Attribution nativeInviteAttributionKind
+}
+
+type nativeInviteAttributionKind uint8
+
+const (
+	nativeInviteExistingIdentity nativeInviteAttributionKind = iota
+	nativeInviteChildIdentity
+)
+
+// Enrollment verifies the selected recipient chain before issuance (docs/identity.md:227-240).
+func prepareNativeInviteAttribution(ctx context.Context, request nativeInviteAttributionRequest) error {
+	workingDir, token, opts := request.WorkingDir, request.Token, request.Options
+	home, invite, plan := request.Home, request.Invite, request.Plan
+	registry := request.Registry
+	if request.Attribution == nativeInviteChildIdentity {
+		if invite.IDChild.ChildDIDKey != "" && invite.IDChild.ChildDIDKey != plan.MemberDIDKey {
+			return fmt.Errorf("invite recipient key changed; restore the original identity")
+		}
+		invite.IDChild.ChildDIDKey = plan.MemberDIDKey
+		if err := awconfig.SaveTeamInvite(invite); err != nil {
+			return err
+		}
+	}
+	if opts.ParentHome != "" {
+		if err := completeExplicitInviteParent(ctx, workingDir, home.Root, token, opts.ParentHome); err != nil {
+			return err
+		}
+	} else if request.Attribution == nativeInviteChildIdentity {
+		if err := prepareInviteChildIdentity(home.Root); err != nil {
+			return err
+		}
+		if err := completeTeamInviteIDChild(ctx, invite, workingDir, home.Root); err != nil {
+			return err
+		}
+	}
+	installed, err := awconfig.LoadInstalledIDChain(home.Root)
+	if err != nil {
+		return err
+	}
+	var bundle map[string]any
+	if installed != nil {
+		bundle = installed.Bundle
+	} else if invite.ForHuman != nil {
+		if err := prepareInviteChildIdentity(home.Root); err != nil {
+			return err
+		}
+	}
+	subjectID := plan.MemberDIDKey
+	if plan.MemberDIDAW != "" {
+		subjectID = plan.MemberDIDAW
+	}
+	if _, err := verifyInviteMembership(ctx, bundle, awid.IDChainSubject{ID: subjectID, DIDKey: plan.MemberDIDKey}, invite.ForHuman, registry, opts.TXTResolver); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Retained success never authorizes a different chain (docs/identity.md:227-245).
+func verifyHostedInviteAcceptedAttribution(ctx context.Context, responseRequest hostedInviteAcceptedResponseRequest) (*awid.IDChainResult, error) {
+	request := responseRequest.Acceptance
+	creation, opts, home := request.Creation, request.Options, request.Home
+	material := request.Material
+	registry, resp := responseRequest.Registry, responseRequest.Response
+	membershipResult := responseRequest.MembershipResult
+	var err error
+	if registry == nil && resp.IDChain != nil {
+		registry, err = newConfiguredRegistryClient(nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	responsibility := membershipResult
+	if creation.MembershipChain != nil {
+		if resp.RegistrationRequest != nil {
+			return nil, errors.New("membership-only acceptance requested identity registration")
+		}
+		if resp.IDChain != nil {
+			expected, err := awid.EncodeIDChainHeader(creation.MembershipChain)
+			if err != nil {
+				return nil, fmt.Errorf("encode selected membership chain: %w", err)
+			}
+			actual, err := awid.EncodeIDChainHeader(map[string]any(resp.IDChain))
+			if err != nil || expected != actual {
+				return nil, errors.New("membership-only acceptance changed the original chain")
+			}
+		}
+	} else {
+		responsibility, err = finishHostedIDTree(ctx, creation.Tree, resp.IDTreeCreationResponse, material, home.Root, registry, opts.TXTResolver)
+		if err != nil {
+			return nil, fmt.Errorf("hosted membership accepted; identity attribution incomplete, retry the same invite: %w", err)
+		}
+		if err := checkInviteHuman(responsibility, creation.ForHuman); err != nil {
+			return nil, err
+		}
+	}
+
+	return responsibility, nil
+}
+
+type hostedInviteRecipient struct {
+	Alias   string
+	Address string
+}
+
+func resolveHostedInviteRecipient(request teamInviteAcceptanceRequest) (hostedInviteRecipient, error) {
+	workingDir, opts := request.WorkingDir, request.Options
+	alias := strings.TrimSpace(opts.Name)
+	memberAddress := strings.TrimSpace(opts.Address)
+	addressName := ""
+	if memberAddress != "" {
+		_, name, err := parseAddress(memberAddress)
+		if err != nil {
+			return hostedInviteRecipient{}, err
+		}
+		addressName = name
+	}
+	if alias == "" {
+		alias = resolveAliasFromIdentityAt(workingDir, opts.IdentityHome)
+	}
+	if alias == "" && addressName != "" {
+		alias = addressName
+	}
+	if alias == "" {
+		return hostedInviteRecipient{}, usageError("--name is required for hosted team invites")
+	}
+	alias, err := normalizeIDCreateName(alias)
+	if err != nil {
+		return hostedInviteRecipient{}, err
+	}
+
+	return hostedInviteRecipient{Alias: alias, Address: memberAddress}, nil
+}
+
+type nativeInviteIssuanceRequest struct {
+	Invite             *awconfig.TeamInvite
+	Plan               teamMemberEnrollmentPlan
+	TeamKey            ed25519.PrivateKey
+	Registry           *awid.RegistryClient
+	RegistryURL        string
+	DefaultClaimResult *awid.AtomicAddressClaimResult
+}
+
+// Registry success consumes enrollment before recipient writes (docs/cli-integration-contract.md:133-144).
+func issueNativeInviteCertificate(ctx context.Context, request nativeInviteIssuanceRequest) (*awid.TeamCertificate, error) {
+	invite, plan, teamKey := request.Invite, request.Plan, request.TeamKey
+	registry, registryURL := request.Registry, request.RegistryURL
+	appliedDefaultClaim := request.DefaultClaimResult
+	teamID := awid.BuildTeamID(invite.Domain, invite.TeamName)
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:          teamID,
+		MemberDIDKey:  plan.MemberDIDKey,
+		MemberDIDAW:   plan.MemberDIDAW,
+		MemberAddress: plan.MemberAddress,
+		Alias:         plan.Name,
+		IdentityScope: plan.Scope,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := registry.RegisterCertificate(ctx, registryURL, invite.Domain, invite.TeamName, cert, teamKey); err != nil {
+		registerErr := fmt.Errorf("register certificate at registry: %w", err)
+		if isAliasConflict(err) {
+			// A refused registration does not consume the invite, so it still
+			// works with another name.
+			registerErr = &plainRefusal{text: nameTakenText(plan.Name, teamID, "--name") + " Your invite is still valid.", err: err}
+		}
+		return nil, rollbackDefaultAddressClaimAfterCertificateFailure(
+			registry,
+			registryURL,
+			plan.DefaultClaim,
+			appliedDefaultClaim,
+			registerErr,
+		)
+	}
+	// Registry issuance consumes enrollment even if a later recipient write
+	// fails. Keep that fact before attempting to persist the recipient copy.
+	if err := recordConsumedTeamInvite(invite.InviteID); err != nil {
+		return nil, err
+	}
+
+	return cert, nil
+}
+
+func teamInviteSigningPublicKey(key ed25519.PrivateKey) (ed25519.PublicKey, error) {
+	publicKey, valid := key.Public().(ed25519.PublicKey)
+	if !valid {
+		return nil, errors.New("invite signing key has an invalid public key")
+	}
+	return publicKey, nil
+}
+
+func loadGlobalHostedInviteMaterial(request teamInviteAcceptanceRequest) (workspaceTeamIdentityMaterial, error) {
+	identity, signingKey, err := resolveGlobalIdentityForTeamAccept(request.WorkingDir, request.Options.IdentityHome)
+	if err != nil {
+		return workspaceTeamIdentityMaterial{}, err
+	}
+	publicKey, err := teamInviteSigningPublicKey(signingKey)
+	if err != nil {
+		return workspaceTeamIdentityMaterial{}, err
+	}
+	return workspaceTeamIdentityMaterial{SigningKey: signingKey, PublicKey: publicKey, DIDKey: strings.TrimSpace(identity.DID), StableID: strings.TrimSpace(identity.StableID), IdentityScope: awid.IdentityModeGlobal}, nil
+}
+
+type localHostedInviteMaterialRequest struct {
+	WorkingDir string
+	Home       awconfig.IdentityHome
+	Prior      *hostedInviteCreation
+}
+
+// A pending attempt must reuse its original key (docs/identity.md:239-245).
+func loadLocalHostedInviteMaterial(request localHostedInviteMaterialRequest) (workspaceTeamIdentityMaterial, error) {
+	var publicKey ed25519.PublicKey
+	var signingKey ed25519.PrivateKey
+	if request.Prior != nil {
+		keyPath, err := awconfig.IdentityHomePath(request.Home, "signing.key")
+		if err != nil {
+			return workspaceTeamIdentityMaterial{}, err
+		}
+		signingKey, err = awid.LoadSigningKey(keyPath)
+		if err != nil {
+			return workspaceTeamIdentityMaterial{}, err
+		}
+		publicKey, err = teamInviteSigningPublicKey(signingKey)
+		if err != nil {
+			return workspaceTeamIdentityMaterial{}, err
+		}
+	} else {
+		var err error
+		publicKey, signingKey, err = hostedAcceptSigningKeyAt(request.WorkingDir, request.Home.Root)
+		if err != nil {
+			return workspaceTeamIdentityMaterial{}, err
+		}
+	}
+	return workspaceTeamIdentityMaterial{SigningKey: signingKey, PublicKey: publicKey, DIDKey: awid.ComputeDIDKey(publicKey), IdentityScope: awid.IdentityModeLocal}, nil
 }

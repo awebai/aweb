@@ -2986,9 +2986,9 @@ func TestHostedTeamAcceptInviteRetryAllowsPendingKeyWithSavedCertificateNoIdenti
 		t.Fatal(err)
 	}
 
-	reusedPub, _, err := hostedAcceptSigningKey(tmp)
+	reusedPub, _, err := hostedAcceptSigningKeyAt(tmp, "")
 	if err != nil {
-		t.Fatalf("hostedAcceptSigningKey should allow marked partial cert recovery: %v", err)
+		t.Fatalf("hostedAcceptSigningKeyAt should allow marked partial cert recovery: %v", err)
 	}
 	if got, want := awid.ComputeDIDKey(reusedPub), awid.ComputeDIDKey(pub); got != want {
 		t.Fatalf("reused DID=%q want %q", got, want)
@@ -3026,7 +3026,7 @@ func TestHostedTeamAcceptInvitePartialCertWithoutMarkerGivesRecoveryGuidance(t *
 		t.Fatal(err)
 	}
 
-	_, _, err = hostedAcceptSigningKey(tmp)
+	_, _, err = hostedAcceptSigningKeyAt(tmp, "")
 	if err == nil {
 		t.Fatal("expected unmarked partial cert state to be refused")
 	}
@@ -4923,10 +4923,20 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTeamKeyForTest(t, tmp, "acme.com", "ops", teamKey)
-	inviteID, token, err := createTeamInviteToken("acme.com", "ops", server.URL, "", false)
+	workingDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
+	sourceHome, err := identityHomeForDir(workingDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mintRequest := teamInviteMintRequest{Plan: teamInvitePlan{Kind: inviteAuthorityController, Source: teamInviteSource{WorkingDir: workingDir, Home: sourceHome, Domain: "acme.com", Team: "ops", RegistryURL: server.URL}}, Scope: inviteMemberGlobal}
+	createdInvite, err := mintPlannedTeamInvite(mintRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inviteID, token := createdInvite.InviteID, createdInvite.Token
 
 	canonicalTmp, err := filepath.EvalSymlinks(tmp)
 	if err != nil {
@@ -5001,10 +5011,11 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmp, ".aw", "team-certs", "ops_acme.com.jwt")); !os.IsNotExist(err) {
 		t.Fatalf("external local accept wrote root certificate: %v", err)
 	}
-	globalInviteID, token, err := createTeamInviteToken("acme.com", "ops", server.URL, "", false)
+	createdInvite, err = mintPlannedTeamInvite(mintRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
+	globalInviteID, token := createdInvite.InviteID, createdInvite.Token
 
 	runAdd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "--global", "--address", "acme.com/alice", token, "--json")
 	runAdd.Env = testCommandEnv(tmp)

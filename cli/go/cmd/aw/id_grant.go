@@ -113,30 +113,37 @@ type grantMintOutput struct {
 	CustodySocketPath string                  `json:"custody_socket_path,omitempty"`
 }
 
-// activeGrantHome loads the grant home the current identity-home resolution
-// points at, or reports false when the identity home is not a grant home.
-func activeGrantHome() (*awconfig.GrantHome, bool) {
-	wd, _ := os.Getwd()
+// loadSelectedGrantHome distinguishes a root identity from an unreadable selected
+// grant; a broken selected home cannot fall back to root authority (docs/cli-identity-selection.md:13-17).
+func loadSelectedGrantHome() (*awconfig.GrantHome, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("resolve current grant directory: %w", err)
+	}
 	home, err := identityHomeForDir(wd)
-	if err != nil || !awconfig.IsGrantHome(home.Root) {
-		return nil, false
+	if err != nil {
+		return nil, err
+	}
+	if _, err := os.Lstat(awconfig.GrantHomeStatePath(home.Root)); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("inspect selected grant home: %w", err)
 	}
 	grant, err := awconfig.LoadGrantHome(home.Root)
 	if err != nil {
-		return nil, false
+		return nil, fmt.Errorf("load selected grant home: %w", err)
 	}
-	return grant, true
+	return grant, nil
 }
 
 // requireGrantAuthorityHome refuses grant subcommands from a grant home: they
 // all need the identity's root team-certificate authority.
 func requireGrantAuthorityHome() error {
-	wd, _ := os.Getwd()
-	home, err := identityHomeForDir(wd)
+	grant, err := loadSelectedGrantHome()
 	if err != nil {
 		return err
 	}
-	if awconfig.IsGrantHome(home.Root) {
+	if grant != nil {
 		return errGrantHomeRootAuthority
 	}
 	return nil
