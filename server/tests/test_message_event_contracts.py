@@ -1,0 +1,215 @@
+"""Canonical message DTOs retain the documented embedding callback shapes."""
+
+import json
+from collections import OrderedDict
+from dataclasses import FrozenInstanceError
+from pathlib import Path
+from uuid import UUID
+
+import pytest
+
+from aweb import events as existing_transport
+from aweb.event_types import MutationEventType, TransportEventType
+from aweb.identity_auth_deps import MessagingAuth
+from aweb.message_events import (
+    ChatMessageEvent,
+    ChatMessageSentContext,
+    FederatedMessageSentContext,
+    MailSentContext,
+    MessageAcknowledgedContext,
+    MessageAcknowledgedEvent,
+    MessageDeliveredEvent,
+)
+from aweb.messaging.chat_send import _fire_chat_message_sent
+from aweb.messaging.kinds import (
+    ContentMode,
+    MessageKind,
+    MessagePriority,
+    MessageTransport,
+)
+from aweb.messaging.runtime import MessagingRuntime
+
+
+@pytest.mark.parametrize("mode", list(ContentMode))
+@pytest.mark.parametrize("transport", list(MessageTransport))
+@pytest.mark.asyncio
+async def test_chat_context_matches_the_existing_callback(mode, transport):
+    captured = []
+
+    async def receive(event_type, context):
+        captured.append((event_type, context))
+
+    auth = MessagingAuth(did_key="did:key:sender", did_aw=None, address=None)
+    runtime = MessagingRuntime(
+        registry_client=None,
+        federation_authority=None,
+        mail_transport=None,
+        chat_transport=None,
+        public_origin="https://example.test",
+        public_origins=frozenset({"https://example.test"}),
+        on_mutation=receive,
+        agent_wake_publisher=None,
+        identity_binding_cache=OrderedDict(),
+    )
+    session_id = UUID("00000000-0000-0000-0000-000000000001")
+    message_id = UUID("00000000-0000-0000-0000-000000000002")
+    await _fire_chat_message_sent(
+        runtime,
+        auth,
+        session_id=session_id,
+        message_id=message_id,
+        from_agent_id=None,
+        from_did=auth.did_key,
+        to_aliases=["recipient"],
+        preview="",
+        content_mode=mode.value,
+        federated=transport is MessageTransport.FEDERATED,
+    )
+    dto = ChatMessageSentContext(
+        team_id=None,
+        session_id=str(session_id),
+        message_id=str(message_id),
+        from_agent_id=None,
+        from_alias="",
+        from_did=auth.did_key,
+        from_did_aw=None,
+        to_aliases=("recipient",),
+        preview="",
+        content_mode=mode,
+        transport=transport,
+    )
+    assert captured == [(MutationEventType.CHAT_MESSAGE_SENT.value, dto.to_context())]
+    changed_context = dto.to_context()
+    changed_context["to_aliases"].append("someone else")
+    assert dto.to_aliases == ("recipient",)
+
+
+@pytest.mark.parametrize("mode", list(ContentMode))
+@pytest.mark.parametrize("transport", list(MessageTransport))
+def test_mail_context_preserves_nullable_identity_and_optional_federation(
+    mode, transport
+):
+    dto = MailSentContext(
+        team_id=None,
+        from_agent_id=None,
+        from_did="did:key:sender",
+        from_did_aw=None,
+        to_agent_id=None,
+        from_alias="sender",
+        message_id="message",
+        conversation_id=None,
+        to_alias=None,
+        subject="",
+        priority=MessagePriority.NORMAL,
+        content_mode=mode,
+        transport=transport,
+    )
+    context = json.loads(json.dumps(dto.to_context()))
+    assert context == {
+        "team_id": None,
+        "from_agent_id": None,
+        "from_did": "did:key:sender",
+        "from_did_aw": None,
+        "to_agent_id": None,
+        "from_alias": "sender",
+        "message_id": "message",
+        "conversation_id": None,
+        "to_alias": None,
+        "subject": "",
+        "priority": "normal",
+        "content_mode": mode.value,
+        **({"federated": True} if transport is MessageTransport.FEDERATED else {}),
+    }
+    assert dto.event_type is MutationEventType.MAIL_SENT
+    with pytest.raises(FrozenInstanceError):
+        dto.message_id = "changed"
+
+
+@pytest.mark.parametrize("kind", [MessageKind.MAIL, MessageKind.CHAT])
+@pytest.mark.parametrize("mode", list(ContentMode))
+def test_inbound_federation_preserves_its_distinct_documented_context(kind, mode):
+    dto = FederatedMessageSentContext(
+        kind=kind,
+        team_id=None,
+        from_did="did:key:sender",
+        from_did_aw="did:aw:sender",
+        to_agent_id=None,
+        from_alias="sender",
+        message_id="message",
+        conversation_id="conversation",
+        to_alias="recipient",
+        subject="",
+        priority=MessagePriority.NORMAL,
+        content_mode=mode,
+    )
+    context = dto.to_context()
+    assert context == {
+        "team_id": None,
+        "from_agent_id": None,
+        "from_did": "did:key:sender",
+        "from_did_aw": "did:aw:sender",
+        "to_agent_id": None,
+        "from_alias": "sender",
+        "message_id": "message",
+        "conversation_id": "conversation",
+        "session_id": "conversation" if kind is MessageKind.CHAT else None,
+        "to_alias": "recipient",
+        "subject": "",
+        "priority": "normal",
+        "content_mode": mode.value,
+        "federated": True,
+    }
+    expected_type = (
+        MutationEventType.MAIL_SENT
+        if kind is MessageKind.MAIL
+        else MutationEventType.CHAT_MESSAGE_SENT
+    )
+    assert dto.event_type is expected_type
+    assert "to_aliases" not in context and "preview" not in context
+
+
+@pytest.mark.parametrize("mode", list(ContentMode))
+def test_acknowledgement_context_retains_the_existing_identity_fields(mode):
+    dto = MessageAcknowledgedContext(
+        team_id=None,
+        agent_id=None,
+        alias="recipient",
+        message_id="message",
+        from_alias="sender",
+        subject="",
+        content_mode=mode,
+    )
+    assert dto.event_type is MutationEventType.MAIL_ACKNOWLEDGED
+    assert dto.to_context() == {
+        "team_id": None,
+        "agent_id": None,
+        "alias": "recipient",
+        "message_id": "message",
+        "from_alias": "sender",
+        "subject": "",
+        "content_mode": mode.value,
+    }
+
+
+def test_standard_mutation_vocabulary_covers_the_retained_call_site_inventory():
+    root = Path(__file__).resolve().parents[2]
+    inventory = json.loads(
+        (root / "docs/vectors/mutation-hook-call-sites-v1.json").read_text()
+    )
+    assert {site["event"] for site in inventory["call_sites"]} <= {
+        event.value for event in MutationEventType
+    }
+    # Known names are constants, not a new callback admission gate.
+    assert MutationEventType.MAIL_SENT == "message.sent"
+    assert "host.custom_event" != MutationEventType.MAIL_SENT
+
+
+def test_transport_exports_reuse_existing_public_dtos_instead_of_a_second_set():
+    assert MessageDeliveredEvent is existing_transport.MessageDeliveredEvent
+    assert MessageAcknowledgedEvent is existing_transport.MessageAcknowledgedEvent
+    assert ChatMessageEvent is existing_transport.ChatMessageEvent
+    event = MessageDeliveredEvent(
+        workspace_id="workspace", content_mode=ContentMode.ENCRYPTED
+    )
+    assert json.loads(event.to_json())["content_mode"] == "encrypted_v2"
+    assert event.type == TransportEventType.MAIL_DELIVERED
