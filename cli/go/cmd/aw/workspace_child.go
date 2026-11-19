@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,7 +54,7 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("create local team invite for %s: %w", teamID, err)
 	}
-	acceptedInvite, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+	_, err = acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
 		WorkingDir: worktreePath,
 		Token:      created.Token,
 		Options: teamAcceptInviteOptions{
@@ -65,17 +64,14 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 		},
 	})
 	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		if !retainUnfinishedProvisioningIdentity(err) {
+			cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		}
 		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
 	}
 
-	rollback := func(step string, cause error) (connectOutput, error) {
-		rollbackErr := revokeAcceptedTeamCertificate(acceptedInvite)
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		if rollbackErr != nil {
-			return connectOutput{}, fmt.Errorf("%s: %w (rollback revoke failed: %v)", step, cause, rollbackErr)
-		}
-		return connectOutput{}, fmt.Errorf("%s: %w", step, cause)
+	retain := func(step string, cause error) (connectOutput, error) {
+		return connectOutput{}, retainWorktreeSetupFailure(worktreeSetupFailure{Creation: input, Cause: fmt.Errorf("%s: %w", step, cause), AwebURL: sourceServerURL})
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
@@ -85,10 +81,10 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 		AgentType: strings.TrimSpace(state.AgentType),
 	})
 	if err != nil {
-		return rollback("connect new worktree", err)
+		return retain("connect new worktree", err)
 	}
 	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
-		return rollback(
+		return retain(
 			"validate new worktree name",
 			fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(connectResult.Alias), alias),
 		)
@@ -130,12 +126,13 @@ func addWorktreeViaCloudBootstrap(input worktreeAgentCreation) (connectOutput, e
 		Global:       false,
 	})
 	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		if !retainUnfinishedProvisioningIdentity(err) {
+			cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
+		}
 		return connectOutput{}, fmt.Errorf("cloud bootstrap for new worktree: %w", err)
 	}
 	if strings.TrimSpace(result.Alias) != "" && !strings.EqualFold(strings.TrimSpace(result.Alias), alias) {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(result.Alias), alias)
+		return connectOutput{}, retainWorktreeSetupFailure(worktreeSetupFailure{Creation: input, AwebURL: sourceServerURL, Cause: fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(result.Alias), alias)})
 	}
 	return result, nil
 }
@@ -156,13 +153,15 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 
 	accepted, err := acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, worktreePath, invite.Token, strings.TrimSpace(invite.AwebURL), alias)
 	if err != nil {
-		var pending *hostedInviteSignaturePendingError
-		if !errors.As(err, &pending) {
+		if !retainUnfinishedProvisioningIdentity(err) {
 			cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		}
 		return connectOutput{}, fmt.Errorf("accept team invite in new worktree: %w", err)
 	}
 
+	if accepted == nil || accepted.Certificate == nil || accepted.Output == nil {
+		return connectOutput{}, retainWorktreeSetupFailure(worktreeSetupFailure{Creation: input, AwebURL: sourceServerURL, Cause: fmt.Errorf("accepted invitation is missing its membership installation material")})
+	}
 	awebURL := strings.TrimSpace(accepted.AwebURL)
 	if awebURL == "" {
 		awebURL = strings.TrimSpace(invite.AwebURL)
@@ -179,8 +178,7 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 		AwebURL:     awebURL,
 		Activation:  membershipMakeActive,
 	}); err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, err
+		return connectOutput{}, retainProvisionedRecordFailure(provisionedRecordFailure{Home: awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(worktreePath)}, Certificate: *accepted.Certificate, RegistryURL: accepted.RegistryURL, AwebURL: awebURL, Cause: err})
 	}
 
 	fmt.Fprintln(os.Stderr, "Connecting new workspace...")
@@ -190,12 +188,10 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 		AgentType: strings.TrimSpace(state.AgentType),
 	})
 	if err != nil {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("connect new worktree: %w", err)
+		return connectOutput{}, retainWorktreeSetupFailure(worktreeSetupFailure{Creation: input, AwebURL: awebURL, Cause: fmt.Errorf("connect new worktree: %w", err)})
 	}
 	if strings.TrimSpace(connectResult.Alias) != "" && !strings.EqualFold(strings.TrimSpace(connectResult.Alias), alias) {
-		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
-		return connectOutput{}, fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)
+		return connectOutput{}, retainWorktreeSetupFailure(worktreeSetupFailure{Creation: input, AwebURL: awebURL, Cause: fmt.Errorf("new workspace connected as name %q, expected %q", strings.TrimSpace(connectResult.Alias), alias)})
 	}
 	return connectResult, nil
 }
