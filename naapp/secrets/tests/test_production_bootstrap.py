@@ -491,7 +491,15 @@ async def _register_approval_runner(
 
 
 def _member_approval_request(
-    *, kind: ApprovalAction, job, runner_id, operation, params, agent_headers, request_id: str
+    *,
+    kind: ApprovalAction,
+    job,
+    runner_id,
+    operation,
+    params,
+    agent_headers,
+    request_id: str,
+    reason: str = "",
 ) -> MemberToolRequest:
     """Build the one signed member submission used for production approval tests."""
     path = (
@@ -513,6 +521,8 @@ def _member_approval_request(
         }
     if agent_headers:
         request["headers"] = [name + ": " + value for name, value in agent_headers]
+    if reason:
+        request["reason"] = reason
     raw = json.dumps(request).encode()
     return MemberToolRequest(path=path, raw=raw)
 
@@ -564,6 +574,7 @@ async def approval_request(
     operation: OperationTemplate | None = None,
     params: Mapping[str, Any] | None = None,
     job_timeout_seconds: int | None = None,
+    reason: str = "",
 ) -> ProductionRequest:
     """Seed confirmed metadata, then mint through the actual signed root tool.
 
@@ -628,6 +639,7 @@ async def approval_request(
         params=params,
         agent_headers=agent_headers,
         request_id=uuid4().hex,
+        reason=reason,
     )
     path, raw = submission.path, submission.raw
     reply = await client.post(
