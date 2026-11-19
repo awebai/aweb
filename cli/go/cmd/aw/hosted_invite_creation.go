@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -136,6 +137,10 @@ func loadHostedInviteCreation(path string) (*hostedInviteCreation, error) {
 	decoder.UseNumber()
 	if err := decoder.Decode(&state); err != nil {
 		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, errors.New("invalid hosted invite recovery JSON; retain the file for reconciliation")
 	}
 	if state.Tree == nil || !hostedIdentityTeamUUID.MatchString(state.Tree.RequestID) || state.TokenHash == "" || state.DIDKey == "" {
 		return nil, errors.New("invalid hosted invite recovery")
