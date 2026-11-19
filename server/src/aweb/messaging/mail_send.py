@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from aweb.messaging.mail_storage import (
     MailIdAvailability,
     MailStorageInput,
@@ -70,6 +70,7 @@ from aweb.messaging.contacts import (
 )
 from aweb.messaging.conversations import (
     create_conversation,
+    ConversationParticipant,
     get_conversation,
     touch_conversation_activity,
 )
@@ -657,7 +658,6 @@ async def deliver_remote_mail_and_project_locally(
     else:
         conversation = await _create_mail_conversation(
             db,
-            conversation_type="mail",
             created_by_did=sender_did,
             conversation_id=conversation_id,
             initiator={
@@ -832,9 +832,26 @@ async def _stored_exact_send(db, *, payload, sender_did: str) -> MailReplayLooku
     )
 
 
-async def _create_mail_conversation(db, **kwargs):
+async def _create_mail_conversation(
+    db,
+    *,
+    created_by_did: str,
+    initiator: ConversationParticipant | dict[str, Any],
+    recipients: Sequence[ConversationParticipant | dict[str, Any]],
+    conversation_id: str | UUID | None,
+    team_id: str | None,
+) -> dict[str, Any]:
+    """Create the requested mail thread, translating only an insertion race."""
     try:
-        return await create_conversation(db, **kwargs)
+        return await create_conversation(
+            db,
+            conversation_type=MessageKind.MAIL.value,
+            created_by_did=created_by_did,
+            initiator=initiator,
+            recipients=recipients,
+            conversation_id=conversation_id,
+            team_id=team_id,
+        )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         # The preflight read cannot exclude a concurrent insertion. Creation is
         # transactional: losing that race must refuse rather than reuse or 500.
@@ -1712,7 +1729,6 @@ async def _commit_new_local_mail(
         # initial id. Continuations use conversation_id without recipient fields.
         conversation = await _create_mail_conversation(
             send_db,
-            conversation_type="mail",
             created_by_did=sender_did,
             conversation_id=payload.conversation_id,
             initiator={
