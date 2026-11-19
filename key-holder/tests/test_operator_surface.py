@@ -117,7 +117,7 @@ def test_hardware_manifest_flag_keeps_unattested_enrollment_available(
     ]
     log_path = tmp_path / "holder.log"
     with log_path.open("w") as log:
-        child = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=log, text=True)
+        child = subprocess.Popen(command, stdout=log, stderr=log, text=True)
         try:
             deadline = time.monotonic() + 5
             with httpx.Client(timeout=0.2, trust_env=False) as client:

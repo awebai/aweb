@@ -8,6 +8,7 @@ import select
 import ssl
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -251,32 +252,37 @@ def test_private_stdin_registration_reads_one_line_without_waiting_for_eof(
             os.pathsep.join(filter(None, (str(tmp_path), os.environ.get("PYTHONPATH")))),
         )
     extra = encode64(os.urandom(32))
-    with subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "aweb_secrets_runner",
-            "register",
-            "--origin",
-            service["origin"],
-            "--state-dir",
-            str(service["state_dir"]),
-            "--ca-file",
-            str(service["ca_file"]),
-        ],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    ) as process:
+    with (
+        tempfile.TemporaryFile() as output,
+        tempfile.TemporaryFile() as errors,
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "aweb_secrets_runner",
+                "register",
+                "--origin",
+                service["origin"],
+                "--state-dir",
+                str(service["state_dir"]),
+                "--ca-file",
+                str(service["ca_file"]),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=output,
+            stderr=errors,
+            start_new_session=True,
+        ) as process,
+    ):
         try:
             assert process.stdin is not None
-            assert process.stdout is not None and process.stderr is not None
             process.stdin.write((service["code"] + "\n" + extra + "\n").encode())
             process.stdin.flush()
             # Keep the private pipe open: registration needs one line, not EOF.
             assert process.wait(timeout=10) == 0
-            stdout, stderr = process.stdout.read(), process.stderr.read()
+            output.seek(0)
+            errors.seek(0)
+            stdout, stderr = output.read(), errors.read()
         finally:
             if process.poll() is None:
                 process.kill()
