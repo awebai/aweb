@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.client_address import request_client_address
 from aweb.agent_wake import agent_wake_publisher
 
@@ -1413,6 +1414,11 @@ async def send_message(
             existing = await attachment_retry(db, payload, "chat")
             if existing:
                 binding, row = existing
+                # This accepted attachment retry bypasses the common send entry.
+                observe_message_vocabulary(
+                    source=MessageInputSource.CHAT_SEND,
+                    content_mode=payload.content_mode,
+                )
                 if binding.conversation_id != session_id:
                     raise HTTPException(409, detail={"code": "attachment_conflict"})
                 return SendMessageResponse(
