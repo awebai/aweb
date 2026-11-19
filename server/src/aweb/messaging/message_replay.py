@@ -108,7 +108,7 @@ class StoredMessageLookup:
             )
         if self.state is StoredMessageState.CONFLICT:
             raise ConflictError(
-                "message_id already exists for a different signed message. Choose a new message_id and retry."
+                "message_id already exists for a different signed message. Retry the original request unchanged; choose a new message_id only if you intend to send a different message."
             )
 
 
