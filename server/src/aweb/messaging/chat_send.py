@@ -24,7 +24,7 @@ from dataclasses import dataclass, replace
 from enum import Enum, auto
 from aweb.messaging.recipient import Recipient
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NoReturn
 from uuid import UUID
 
 import asyncpg.exceptions
@@ -179,7 +179,7 @@ def _payload_is_encrypted(payload: CreateSessionRequest | SendMessageRequest) ->
 
 
 def _chat_envelope_recipients(
-    rows: list[dict[str, Any]],
+    rows: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, str | None]]:
     recipients: list[dict[str, str | None]] = []
     for row in rows:
@@ -281,7 +281,7 @@ async def resolve_stored_remote_chat_route(
     *,
     registry_client,
     recipient: Mapping[str, Any],
-) -> dict[str, str | bool]:
+) -> dict[str, str]:
     """Read the participant's recorded DID, key and delivery route without an address lookup."""
     address = str(recipient.get("address") or "").strip()
     did_aw = str(recipient.get("did_aw") or "").strip()
@@ -350,7 +350,7 @@ async def deliver_federated_chat(
     auth: MessagingAuth,
     sender_address: str | None,
     id_chain: dict | None,
-    route: dict[str, Any],
+    route: Mapping[str, Any],
     session_id: str,
 ) -> dict[str, Any]:
     """Verify the sender envelope and deliver through the selected federated route."""
@@ -825,7 +825,7 @@ def _actor_did(auth: MessagingAuth) -> str:
     return (auth.did_aw or auth.did_key or "").strip()
 
 
-def _actor_alias(auth: MessagingAuth, actor_agent: dict[str, Any] | None) -> str:
+def _actor_alias(auth: MessagingAuth, actor_agent: Mapping[str, Any] | None) -> str:
     require_address_evidence(auth)
     return (
         (auth.alias or "").strip()
@@ -959,7 +959,7 @@ async def _resolve_remote_chat_route(
     }
 
 
-def _raise_bare_did_chat_first_contact_unsupported() -> None:
+def _raise_bare_did_chat_first_contact_unsupported() -> NoReturn:
     raise DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         detail="Bare did:aw first-contact is unsupported; use to_addresses=domain/name or continue an existing session",
@@ -1012,7 +1012,7 @@ async def _update_chat_participant_route(
 def _apply_remote_chat_route(
     participant_rows: list[dict[str, Any]],
     recipient: Recipient,
-    route: dict[str, Any],
+    route: Mapping[str, Any],
 ) -> Recipient:
     recipient = replace(
         recipient,
@@ -1041,7 +1041,7 @@ def _is_stale_delivery_origin_status(status_code: int) -> bool:
     return status_code in {404, 410, 421}
 
 
-async def resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | None:
+async def resolve_actor_agent(db, actor_dids: list[str]) -> Mapping[str, Any] | None:
     """Find a local sender projection for the adapter's authenticated DIDs."""
     for did in actor_dids:
         if not did:
@@ -1100,11 +1100,12 @@ async def _resolve_named_recipients(
     signed_payload: str | None = None,
     signature: str | None = None,
     recipient_binding: RecipientIdentityBinding | None = None,
-) -> list[dict[str, Any]]:
+) -> list[Mapping[str, Any]]:
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     sender_address = _sender_address(auth)
-    resolved: dict[str, dict[str, Any]] = {}
+    resolved: dict[str, Mapping[str, Any]] = {}
+    row: Mapping[str, Any] | None
 
     if to_aliases:
         if auth.team_id is None:
@@ -1112,7 +1113,7 @@ async def _resolve_named_recipients(
                 status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 detail="to_aliases requires team context",
             )
-        target_rows: list[dict[str, Any]] = []
+        target_rows: list[Mapping[str, Any]] = []
         local_aliases: list[str] = []
         for alias in to_aliases:
             if "~" not in alias:
@@ -1257,7 +1258,8 @@ async def _resolve_session_recipient_rows(
                 resolved, str(participant.get("address") or "")
             )
         policy_rows = await policy_rows_for_participant(db, participant)
-        policy = resolved or (policy_rows[0] if policy_rows else {})
+        policy: Mapping[str, Any] = resolved or (policy_rows[0] if policy_rows else {})
+        resolved_projection: Mapping[str, Any] = resolved or {}
         participant_did = (participant.get("did") or "").strip()
         if participant_did in left_dids:
             continue
@@ -1268,22 +1270,22 @@ async def _resolve_session_recipient_rows(
                 "session_id": str(session_id),
                 "did": participant_did,
                 "alias": participant_alias,
-                "address": ((resolved or {}).get("address") or "").strip()
+                "address": (resolved_projection.get("address") or "").strip()
                 or participant_address
                 or _address_from_alias(participant_alias),
                 "delivery_origin": (participant.get("delivery_origin") or "").strip()
                 or None,
                 "current_did_key": (participant.get("current_did_key") or "").strip()
                 or None,
-                "did_aw": ((resolved or {}).get("did_aw") or "").strip()
+                "did_aw": (resolved_projection.get("did_aw") or "").strip()
                 or (participant_did if participant_did.startswith("did:aw:") else ""),
-                "did_key": ((resolved or {}).get("did_key") or "").strip()
+                "did_key": (resolved_projection.get("did_key") or "").strip()
                 or (participant.get("current_did_key") or "").strip()
                 or (participant_did if participant_did.startswith("did:key:") else ""),
-                "agent_id": ((resolved or {}).get("agent_id") if resolved else None),
-                "team_id": ((resolved or {}).get("team_id") if resolved else None),
+                "agent_id": (resolved_projection.get("agent_id") if resolved else None),
+                "team_id": (resolved_projection.get("team_id") if resolved else None),
                 "inbound_mode": (
-                    (resolved or {}).get("inbound_mode") if resolved else None
+                    resolved_projection.get("inbound_mode") if resolved else None
                 ),
                 "local_resolved": resolved is not None,
                 "identity_scope": policy.get("identity_scope"),
@@ -2358,7 +2360,9 @@ async def _send_in_continued_session(
     if existing_message is not None:
         return SentChat(session_id=session_uuid, message=dict(existing_message))
 
-    remote_recipients = [row for row in recipient_rows if _target_delivery_origin(row)]
+    remote_recipients: list[Mapping[str, Any]] = [
+        row for row in recipient_rows if _target_delivery_origin(row)
+    ]
     if (
         not remote_recipients
         and payload.signature is not None

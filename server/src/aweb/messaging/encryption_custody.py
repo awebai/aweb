@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping, Sequence
+from typing import Any
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -56,7 +58,7 @@ async def _verified_hosted_key(db, *, agent_id, did, stable_id, key_id, invalid_
 async def require_non_custodial_recipients(
     db,
     envelope: dict,
-    recipients: list[dict],
+    recipients: Sequence[Mapping[str, Any]],
     *,
     sender: MessagingAuth,
 ) -> None:
