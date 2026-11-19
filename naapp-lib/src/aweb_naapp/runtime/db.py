@@ -36,6 +36,27 @@ async def require_separate_database(
         raise ValueError(f"the {ledger_name} must use a separate database")
 
 
+async def prepare_naapp_schema(
+    db: AsyncDatabaseManager,
+    *,
+    module_name: str,
+    migrations_path: Path,
+    stores: Sequence[Store] = (),
+) -> None:
+    """Prepare shared stores then the app schema using one connected operator DB."""
+
+    async def apply(path: Path, module: str) -> None:
+        await AsyncMigrationManager(
+            db, migrations_path=str(path), module_name=module
+        ).apply_pending_migrations()
+
+    await apply(_SHARED_MIGRATIONS, _SHARED_MODULE)
+    await apply_outbox_migrations(db)
+    for store in stores:
+        await store(db)
+    await apply(migrations_path, module_name)
+
+
 class NaappDatabase:
     """Owns the pgdbm manager for a standalone naapp deployment.
 
@@ -69,17 +90,12 @@ class NaappDatabase:
 
     async def connect(self) -> None:
         await self.db.connect()
-        await self._apply(_SHARED_MIGRATIONS, _SHARED_MODULE)
-        await apply_outbox_migrations(self.db)
-        for store in self.stores:
-            await store(self.db)
-        await self._apply(self.migrations_path, self.module_name)
-
-    async def _apply(self, migrations_path: Path, module_name: str) -> None:
-        migrations = AsyncMigrationManager(
-            self.db, migrations_path=str(migrations_path), module_name=module_name
+        await prepare_naapp_schema(
+            self.db,
+            module_name=self.module_name,
+            migrations_path=self.migrations_path,
+            stores=self.stores,
         )
-        await migrations.apply_pending_migrations()
 
     async def disconnect(self) -> None:
         await self.db.disconnect()
