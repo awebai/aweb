@@ -18,7 +18,7 @@ from tests.test_production_runner_dispatch import runner_headers
 @pytest.fixture
 async def upstream(tmp_path):
     host = local_address()
-    certificates = make_certificates(tmp_path, [], [host])
+    certificates = make_certificates(tmp_path, ["upstream.reconciliation.test"], [host])
     state = {"drop": True}
 
     async def respond(seen):
