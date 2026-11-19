@@ -27,6 +27,11 @@
     text.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
     parent.append(heading, text);
   }
+  function renderFrozenHeaders({action, headers}) {
+    // Frozen request disclosure: docs/design/secrets.md §10.4, line 1768.
+    const lines = headers.map(({name, value}) => `${name}: ${value}`);
+    appendTextBlock({parent: action, title: "Headers", value: lines.join("\n")});
+  }
   function renderOpenRequest({facts, action, request}) {
     // Full open-request disclosure: docs/design/secrets.md §10.4, line 1768.
     fact(facts, "Method", request.method);
@@ -37,7 +42,7 @@
     host.textContent = request.host;
     url.append(document.createTextNode(request.url_before_host), host, document.createTextNode(request.url_after_host));
     action.append(url);
-    fact(facts, "Header names", request.header_names.join(", "));
+    renderFrozenHeaders({action, headers: request.headers});
     appendTextBlock({parent: action, title: "Complete request body", value: request.body_text});
   }
   function render(result) {
@@ -56,6 +61,7 @@
       fact(facts, "Operation", v.operation.operation_id);
       fact(facts, "Operation digest", v.operation.operation_digest);
       appendTextBlock({parent: action, title: "Parameters", value: v.operation.params});
+      renderFrozenHeaders({action, headers: v.operation.headers});
     }
     if (v.open_request) {
       renderOpenRequest({facts, action, request: v.open_request});
