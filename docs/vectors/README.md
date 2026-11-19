@@ -1083,3 +1083,12 @@ released Python spelling differences without narrowing them. R13 rulings
 `beb23450-5400-473e-9651-0e25bfb649f9` authorize mixed-order-R refusal in TypeScript
 and small-order-R refusal in Go, respectively. The file names the deliberate
 profile changes. See [the primitive contract](../signature-primitives.md).
+
+## Team-control request signatures
+
+`team-control-requests-v1.json` is the Go/Python authority for the released
+ordinary-import preimage and the distinct fully-unowned controller-claim
+artifact. It includes the existing CLI import signature, null/blank selector
+neighbors, exact Unicode bytes, both dry-run values, and prospective/existing
+account targets. These are pure signature/codec cases, not fresh-controller or
+ownership-effect evidence. See [the request contract](../team-control-requests.md).
