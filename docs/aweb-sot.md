@@ -1224,6 +1224,26 @@ verified actor in the operator audit transaction, emits the ordinary
 holder's workspace. Grants cannot invoke emergency revoke. Neither operation
 deletes coordination history.
 
+The Python coordination lifecycle owner accepts a named `AgentDisposition`
+(`PRESERVED`, `DELETED`, `RETIRED`, `PREPARED_REMOVAL`) in
+`LifecycleCascadeRequest.agent_disposition`. This is an embedding API, not an
+HTTP authority flag. The existing local-delete boolean remains a compatibility
+adapter. Explicit `target_agent_id` cleanup works with zero or already-deleted
+workspaces; `all_for_agent` cleans all active workspace paths. Claims on deleted
+paths, reservations, session admission leases, grant liveness, pending controls,
+status and presence are also cleared. Pending controls become consumed history;
+chat participants become left, retaining chat/mail/identity history.
+
+`DELETED` and `RETIRED` set the corresponding native status and `deleted_at`.
+`PREPARED_REMOVAL` sets `deleted_at` while retaining native status `active`,
+reports neither terminal identity flag, and denies ordinary native activity.
+The embedding host owns the exact removal ledger, restricted completion access,
+external certificate revocation and credential/custody disposal. Clearing grant
+liveness does not revoke retained session grants. `PRESERVED` leaves identity
+state unchanged while cleaning coordination. Named dispositions never destroy
+host credentials. The released archive option still archives native state;
+hosted custody cleanup belongs to the embedding host in that path as well.
+
 Lifecycle Redis effects are driven by `lifecycle_side_effect_outbox`, not by
 reconstructing deleted claim rows. Claim release captures workspace/team
 unclaim events, chat-waiting cleanup, and presence cleanup in the same

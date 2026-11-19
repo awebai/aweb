@@ -19,6 +19,9 @@ from aweb_naapp.key_file import read_key_file
 from aweb_naapp.egress import EgressRefused, InternalDestinations
 from aweb_naapp.egress.addresses import check_internal_cidr
 
+from aweb.app_registry import canonical_app_origin
+from aweb.service_errors import ServiceError
+
 
 def _env_bool(*names: str, default: bool = False) -> bool:
     for name in names:
@@ -58,9 +61,6 @@ def get_app_internal_origins() -> AppInternalOrigins:
     Unset, every app origin is public: a manifest on a private address is
     refused. These are operator startup settings; no install request names them.
     """
-    from aweb.app_registry import canonical_app_origin
-    from aweb.service_errors import ServiceError
-
     raw_origins = (os.getenv("AWEB_APP_INTERNAL_ORIGINS") or "").strip()
     raw_cidr = (os.getenv("AWEB_APP_INTERNAL_CIDR") or "").strip()
     if not raw_origins and not raw_cidr:

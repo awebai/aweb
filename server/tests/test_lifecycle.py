@@ -849,7 +849,7 @@ async def test_lifecycle_archive_global_agent_cleans_coordination_state(
         agent_id,
     )
     participant_count = await aweb_cloud_db.aweb_db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.chat_participants}} WHERE agent_id = $1",
+        "SELECT COUNT(*) FROM {{tables.chat_participants}} WHERE agent_id = $1 AND left_at IS NULL",
         agent_id,
     )
     wait_started_by = await aweb_cloud_db.aweb_db.fetch_value(
@@ -867,7 +867,7 @@ async def test_lifecycle_archive_global_agent_cleans_coordination_state(
 
     assert agent["status"] == "archived"
     assert agent["deleted_at"] is not None
-    assert agent["signing_key_enc"] is None
+    assert agent["signing_key_enc"] == b"hosted-key"
     assert claim_count == 0
     assert reservation_count == 0
     assert participant_count == 0
@@ -921,7 +921,8 @@ async def test_lifecycle_archive_global_agent_without_workspace_archives_agent(
     assert result.errors == ()
     assert result.workspace_changes == ()
     assert result.identity_archived is True
-    assert result.post_commit_status == "completed"
+    assert result.post_commit_status == "skipped_no_redis"
+    assert result.outbox_operation_id is not None
     assert agent["status"] == "archived"
     assert agent["deleted_at"] is not None
 
