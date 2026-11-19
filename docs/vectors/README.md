@@ -1075,3 +1075,18 @@ released Python spelling differences without narrowing them. R13 rulings
 `beb23450-5400-473e-9651-0e25bfb649f9` authorize mixed-order-R refusal in TypeScript
 and small-order-R refusal in Go, respectively. The file names the deliberate
 profile changes. See [the primitive contract](../signature-primitives.md).
+
+### `signature-point-encoding-v2.json`
+
+Current shared component evidence for the canonical compressed Ed25519
+representation of A and R. Canonical, noncanonical and negative-zero cases call
+`signaturewire.CanonicalPointEncoding`, `awid.signature_wire.canonical_point_encoding`
+and TypeScript `canonicalPointEncoding` directly. Those same predicates run
+inside the production verifiers. Canonical identity and torsion encodings are
+positive representation controls; they do not establish admissible signature
+points. Curve, subgroup and signature-equation rules remain separate checks.
+
+These cases do not claim a full signature invalid solely because of a
+noncanonical point encoding. Antares accepted this scope in `0a7453e1`, relayed
+in `7be295e4-3463-473a-8dd5-f9eb522aa145`. The frozen v1 full-signature corpus,
+including mixed-order and small-order single-fault controls, is unchanged.

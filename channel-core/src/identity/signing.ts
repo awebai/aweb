@@ -75,7 +75,7 @@ function b64Decode(s: string): Uint8Array {
 
 /** Sign bytes with an Ed25519 seed. Returns raw standard base64 (no padding). */
 export function signBytes(seed: Uint8Array, bytes: Uint8Array): string {
-  return b64Encode(signEd25519({message: bytes, seed}));
+  return b64Encode(signEd25519({ message: bytes, seed }));
 }
 
 /** Sign a message envelope. Returns base64 signature (no padding). */
@@ -119,7 +119,11 @@ export async function verifyMessage(
   try {
     const sigBytes = b64Decode(env.signature);
     const payload = canonicalJSON(env);
-    const valid = verifyBytes({signature: sigBytes, message: new TextEncoder().encode(payload), publicKey: publicKey});
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(payload),
+      publicKey,
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -157,7 +161,11 @@ export async function verifySignedPayload(
 
   try {
     const sigBytes = b64Decode(signatureB64);
-    const valid = verifyBytes({signature: sigBytes, message: new TextEncoder().encode(signedPayload), publicKey: publicKey});
+    const valid = verifyBytes({
+      signature: sigBytes,
+      message: new TextEncoder().encode(signedPayload),
+      publicKey,
+    });
     return valid ? "verified" : "failed";
   } catch {
     return "failed";
@@ -171,9 +179,14 @@ export function signedPayloadConversationStatus(
   const expected = (conversationID || "").trim();
   if (!expected) return "verified";
   try {
-    const payload = JSON.parse(signedPayload) as { conversation_id?: unknown };
-    if (payload.conversation_id === expected) return "verified";
-    if (payload.conversation_id === undefined || payload.conversation_id === "") {
+    const payload: unknown = JSON.parse(signedPayload);
+    if (payload === null) return "failed";
+    const conversationID =
+      typeof payload === "object" && "conversation_id" in payload
+        ? payload.conversation_id
+        : undefined;
+    if (conversationID === expected) return "verified";
+    if (conversationID === undefined || conversationID === "") {
       return "verified_legacy";
     }
     return "failed";

@@ -119,3 +119,28 @@ local field and target. A plan's description never grants or removes permission;
 key-content writes, replacement/deletion, identity lifecycle and coordination
 cleanup remain outside these safe local repairs. Serialized output explains a
 plan; it is not an execution capability or a persisted-plan interface.
+
+
+## Canonical point representation evidence
+
+`signature-point-encoding-v2.json` isolates compressed-coordinate representation,
+per [RFC 8032 sections 5.1.2–5.1.3](https://www.rfc-editor.org/rfc/rfc8032.html#section-5.1.3).
+The production predicate in each language checks the 32-byte length, field bound
+and zero-x sign rule for both A and R. Curve membership, nonidentity, subgroup
+and signature-equation checks remain separate. The shared cases call these
+predicates directly and are labelled component evidence; canonical identity and
+torsion encodings are valid representation controls, not admissible signers.
+
+Antares accepted this evidence in `0a7453e1` (relayed in
+`7be295e4-3463-473a-8dd5-f9eb522aa145`). A noncanonical encoding is available only
+for the few y values at or above the field prime. Constructing a full valid
+signature for those points would require an unknown discrete logarithm; the
+corpus therefore makes no claim that its full-signature negatives isolate the
+encoding rule. The frozen v1 signature and ID corpora stay unchanged.
+
+Author mutation checks inverted the production A or R gate in Go and Python,
+and their common point gate in TypeScript. In each case the existing
+`raw-standard` positive full-signature case failed: Go
+`TestPublicSignaturePrimitiveVectors/raw-standard`, Python
+`test_all_public_message_verification_cases`, and TypeScript `raw-standard`.
+Restoring the source passes the same tests and the shared component cases.

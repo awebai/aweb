@@ -42,7 +42,7 @@ function littleEndian(bytes: Uint8Array): bigint {
 
 /** Canonical nonidentity point; malformed encodings are ordinary refusals. */
 function canonicalPoint(encoded: Uint8Array): Ed25519Point | undefined {
-  if (encoded.length !== 32) return undefined;
+  if (!canonicalPointEncoding(encoded)) return undefined;
   let point: Ed25519Point;
   try {
     point = ed.ExtendedPoint.fromHex(encoded, false);
@@ -50,8 +50,7 @@ function canonicalPoint(encoded: Uint8Array): Ed25519Point | undefined {
     return undefined;
   }
   if (point.is0()) return undefined;
-  const canonical = Buffer.from(point.toRawBytes());
-  return canonical.equals(Buffer.from(encoded)) ? point : undefined;
+  return point;
 }
 
 export function primeSubgroupPoint(encoded: Uint8Array): Ed25519Point | undefined {
@@ -81,4 +80,17 @@ export function verifyBytes(proof: SignatureProof): boolean {
   const left = scalarS === 0n ? ed.ExtendedPoint.ZERO : ed.ExtendedPoint.BASE.multiply(scalarS);
   const challengePoint = challenge === 0n ? ed.ExtendedPoint.ZERO : publicPoint.multiply(challenge);
   return left.equals(pointR.add(challengePoint));
+}
+
+
+/** Representation only, per RFC 8032 5.1.2-3; curve/subgroup checks are separate.
+ * Both A and R reach this production predicate (docs/signature-primitives.md).
+ */
+export function canonicalPointEncoding(encoded: Uint8Array): boolean {
+  if (encoded.length !== 32) return false;
+  const coordinate = littleEndian(encoded);
+  const sign = coordinate >> 255n;
+  const y = coordinate & ((1n << 255n) - 1n);
+  const fieldPrime = (1n << 255n) - 19n;
+  return y < fieldPrime && !(sign === 1n && (y === 1n || y === fieldPrime - 1n));
 }

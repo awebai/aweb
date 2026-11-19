@@ -45,6 +45,9 @@ func Verify(proof Proof) bool {
 	if !PrimePoint(key) || len(signature) != ed25519.SignatureSize {
 		return false
 	}
+	if !CanonicalPointEncoding(signature[:32]) {
+		return false
+	}
 	point, err := new(edwards25519.Point).SetBytes(signature[:32])
 	if err != nil || new(edwards25519.Point).MultByCofactor(point).Equal(edwards25519.NewIdentityPoint()) == 1 {
 		return false
@@ -73,8 +76,11 @@ func DecodeCanonicalURL(value string) ([]byte, error) {
 }
 
 func PrimePoint(raw []byte) bool {
+	if !CanonicalPointEncoding(raw) {
+		return false
+	}
 	p, err := new(edwards25519.Point).SetBytes(raw)
-	if err != nil || !bytes.Equal(p.Bytes(), raw) || p.Equal(edwards25519.NewIdentityPoint()) == 1 {
+	if err != nil || p.Equal(edwards25519.NewIdentityPoint()) == 1 {
 		return false
 	}
 	eight := [32]byte{8}
@@ -94,4 +100,43 @@ func ValidIDSignatureShape(signature []byte) bool {
 	}
 	_, err := new(edwards25519.Scalar).SetCanonicalBytes(signature[32:])
 	return err == nil
+}
+
+// CanonicalPointEncoding checks representation only (RFC 8032 sections 5.1.2-3).
+// Curve membership, identity and subgroup rules remain separate. Both A and R
+// pass this predicate in production, as specified in docs/signature-primitives.md.
+func CanonicalPointEncoding(raw []byte) bool {
+	if len(raw) != ed25519.PublicKeySize {
+		return false
+	}
+	var y [32]byte
+	copy(y[:], raw)
+	y[31] &= 0x7f
+	fieldPrime := [32]byte{
+		0xed, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f,
+	}
+	belowPrime := false
+	for index := len(y) - 1; index >= 0; index-- {
+		if y[index] > fieldPrime[index] {
+			return false
+		}
+		if y[index] < fieldPrime[index] {
+			belowPrime = true
+			break
+		}
+	}
+	if !belowPrime {
+		return false
+	}
+	if raw[31]&0x80 == 0 {
+		return true
+	}
+	// x is zero only at y=1 or y=-1; its sign bit must be zero.
+	identity := [32]byte{1}
+	orderTwo := fieldPrime
+	orderTwo[0]--
+	return !bytes.Equal(y[:], identity[:]) && !bytes.Equal(y[:], orderTwo[:])
 }

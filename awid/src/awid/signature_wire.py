@@ -51,6 +51,8 @@ def verify_bytes(
     """Verify exact bytes per docs/signature-primitives.md:13-18; callers map errors."""
     if not prime_point(bytes(key)):
         raise BadSignatureError("invalid Ed25519 public key")
+    if len(signature) != 64 or not canonical_point_encoding(signature[:32]):
+        raise BadSignatureError("invalid Ed25519 R encoding")
     if profile is Ed25519Profile.ID_CERTIFICATE and (
         len(signature) != 64
         or not prime_point(signature[:32])
@@ -100,4 +102,21 @@ def decode_legacy_signature(value: str) -> bytes:
 
 def prime_point(encoded: bytes) -> bool:
     """Canonical, nonidentity Ed25519 point in the prime subgroup."""
-    return len(encoded) == 32 and bool(crypto_core_ed25519_is_valid_point(encoded))
+    return canonical_point_encoding(encoded) and bool(
+        crypto_core_ed25519_is_valid_point(encoded)
+    )
+
+
+def canonical_point_encoding(encoded: bytes) -> bool:
+    """Representation only, per RFC 8032 5.1.2-3; curve/subgroup checks are separate.
+
+    Both A and R reach this production predicate; the shared v2 component
+    corpus does not claim full-signature isolation of noncanonical encodings.
+    """
+    if len(encoded) != 32:
+        return False
+    coordinate = int.from_bytes(encoded, "little")
+    sign = coordinate >> 255
+    y = coordinate & (2**255 - 1)
+    field_prime = 2**255 - 19
+    return y < field_prime and not (sign == 1 and y in {1, field_prime - 1})
