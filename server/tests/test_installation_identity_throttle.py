@@ -16,10 +16,12 @@ from uuid import uuid4
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from nacl.signing import SigningKey
 
 from aweb.identity_binding import observe_identity_binding
+from aweb.error_responses import install_service_error_handlers
+from aweb.service_errors import IdentityBindingError
 from aweb.routes import apps
 from awid.did import did_from_public_key, stable_id_from_did_key
 from awid.registry import RegistryClient
@@ -47,14 +49,31 @@ class Storage:
         yield self
 
     async def fetch_one(self, sql, *args):
-        if "FROM {{tables.teams}}" in sql:
+        if "FROM {{tables.teams}}" in sql and "FROM {{tables.agents}}" not in sql:
             # The team's admitted key pin: the key the registry serves.
             assert args == (TEAM,)
-            return {"team_did_key": self.world.team_did, "team_key_act_at": None}
+            return {
+                "team_did_key": self.world.team_did,
+                "team_key_act_at": None,
+                "created_at": self.world.created_at,
+            }
         assert "FROM {{tables.agents}}" in sql
+        assert args == (self.world.member_did, TEAM)
         return {
             "agent_id": self.world.agent_id,
+            "team_id": TEAM,
+            "alias": "member",
+            "did_key": self.world.member_did,
             "certificate_id": "registered-cert",
+            "did_aw_verified_key": self.world.member_did,
+            "identity_scope": "global",
+            "accepted_team_did_key": self.world.team_did,
+            "current_team_did_key": self.world.team_did,
+            "status": "active",
+            "deleted_at": None,
+            "agent_type": "agent",
+            "human_verified_key": None,
+            "inbound_mode": "open",
             "did_aw": self.world.identity,
             "address": "",
         }
@@ -91,6 +110,7 @@ async def world(monkeypatch):
         member_did=did_from_public_key(bytes(member.verify_key)),
         team_did=did_from_public_key(bytes(team.verify_key)),
         agent_id=uuid4(),
+        created_at=datetime.now(UTC),
         status=429,
         retry_after="53",
         mismatched=False,
@@ -119,6 +139,7 @@ async def world(monkeypatch):
 
     value.registry = Registry(value, httpx.MockTransport(registry_http))
     app = FastAPI()
+    install_service_error_handlers(app)
     app.state.public_origin = ORIGIN
     app.state.awid_registry_client = value.registry
     app.state.db = Storage(value)
@@ -184,7 +205,10 @@ async def test_authenticated_installation_throttle_preserves_hint_without_readin
     response = await installation_get(world)
     assert (response.status_code, response.json()) == (
         503,
-        {"detail": "identity_binding_unavailable"},
+        {
+            "detail": "identity_binding_unavailable",
+            "message": "Identity verification is unavailable. Retry when the identity registry is available.",
+        },
     )
     assert response.headers.get("Retry-After") == "53"
     assert "private upstream body" not in response.text
@@ -198,7 +222,10 @@ async def test_generic_registry_failure_remains_503_without_hint(world):
     response = await installation_get(world)
     assert (response.status_code, response.json()) == (
         503,
-        {"detail": "identity_binding_unavailable"},
+        {
+            "detail": "identity_binding_unavailable",
+            "message": "Identity verification is unavailable. Retry when the identity registry is available.",
+        },
     )
     assert "Retry-After" not in response.headers
     assert world.installation_reads == 0
@@ -209,7 +236,10 @@ async def test_identity_mismatch_remains_403_without_installation_read(world):
     response = await installation_get(world)
     assert (response.status_code, response.json()) == (
         403,
-        {"detail": "identity_binding_mismatch"},
+        {
+            "detail": "identity_binding_mismatch",
+            "message": "The claimed identity and signing key do not match. Check the identity and its current public-key binding, then correct the request and retry.",
+        },
     )
     assert "Retry-After" not in response.headers
     assert world.installation_reads == 0
@@ -247,7 +277,7 @@ async def test_only_sanitized_throttle_hint_is_exposed(delay, header):
         async def resolve_key_fresh(self, identity):
             raise RegistryThrottled(retry_after_seconds=delay, attempts=1, reason="elapsed_budget")
 
-    with pytest.raises(HTTPException) as caught:
+    with pytest.raises(IdentityBindingError) as caught:
         await observe_identity_binding(
             Throttled(), did_key="did:key:subject", did_aw="did:aw:subject"
         )

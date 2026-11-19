@@ -49,7 +49,8 @@ from aweb.installations import (
     uninstall_installation_on,
 )
 from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
-from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError
+from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError, IdentityBindingError
+from aweb.application_state import RegistryClientUnavailable
 from aweb.team_auth_deps import get_team_identity
 
 router = APIRouter(prefix="/v1/apps", tags=["apps"], route_class=OperatorAuditRoute)
@@ -127,6 +128,8 @@ class AppGrantStatusResponse(BaseModel):
 
 
 def _failure(exc: ServiceError) -> HTTPException:
+    if isinstance(exc, (IdentityBindingError, RegistryClientUnavailable)):
+        raise exc
     code = getattr(exc, "code", None)
     detail = {"code": code, "message": str(exc)} if code is not None else exc.detail
     return HTTPException(status_code=exc.status_code, detail=detail)
