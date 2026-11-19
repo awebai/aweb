@@ -206,41 +206,13 @@ class NaappRuntime:
         self._registry_client: RegistryClient | None = None
         self._database: NaappDatabase | None = None
         self._attestation_records: AWIDAttestationRecords | None = None
-        template = json.loads(manifest_path.read_bytes())
-        _refuse_the_hosted_app_id_elsewhere(settings, template)
-        self._manifest_bytes = fill_manifest(
-            template,
-            app_id=settings.app_id,
-            origin=settings.public_origin,
-            did_keys=declared_did_keys(settings, template),
+        self._manifest, self._manifest_variants = _published_manifests(
+            settings,
+            json.loads(manifest_path.read_bytes()),
+            owner_acts=owner_acts,
+            owner_acts_origin=owner_acts_origin,
         )
-        self._manifest = load_manifest(self._manifest_bytes)
-        self._manifest_variants = {self._manifest.manifest_version: self._manifest_bytes}
-        if owner_acts is not None:
-            if self._manifest.manifest_version != 2 or not owner_acts_origin:
-                raise ValueError("owner acts require a v2 template and a configured human origin")
-            v3 = copy.deepcopy(template)
-            v3["manifest_version"] = 3
-            v3["owner_acts"] = {**copy.deepcopy(dict(owner_acts)), "origin": owner_acts_origin}
-            self._manifest_bytes = fill_manifest(
-                v3,
-                app_id=settings.app_id,
-                origin=settings.public_origin,
-                did_keys=declared_did_keys(settings, v3),
-            )
-            self._manifest = load_manifest(self._manifest_bytes)
-            check_v2_variant(self._manifest_variants[2], self._manifest_bytes)
-            self._manifest_variants[3] = self._manifest_bytes
-        elif owner_acts_origin is not None:
-            raise ValueError("a human origin requires an owner-acts declaration")
-        elif self._manifest.manifest_version == 3:
-            if self._manifest.owner_acts is None:
-                raise ValueError("a v3 publication requires owner-designated roles")
-            v2 = json.loads(self._manifest_bytes)
-            v2.pop("owner_acts", None)
-            v2["manifest_version"] = 2
-            self._manifest_variants[2] = canonical_bytes(v2)
-            check_v2_variant(self._manifest_variants[2], self._manifest_bytes)
+        self._manifest_bytes = self._manifest_variants[self._manifest.manifest_version]
         self._catalog_bytes = (
             _catalog_bytes(self._manifest, self._manifest_variants)
             if self._manifest.manifest_version >= 2
@@ -251,15 +223,8 @@ class NaappRuntime:
         # Configuration only: these objects perform no I/O until a request.
         # Grant sources and guards must be wired before lifespan validation.
         self._awid_member_credentials = read_member_credentials(settings.awid_member_credentials)
-        self._team_cache = AWIDTeamCache(
-            registry_url=settings.awid_registry_url,
-            ttl_seconds=settings.auth_cache_ttl_seconds,
-            service_token=settings.awid_service_token,
-            member_credentials=self._awid_member_credentials,
-            transport=awid_transport,
-            team_key_pins=DatabaseTeamKeyPins(self.db),
-            txt_resolver=awid_txt_resolver,
-            enforce_team_key_pins=settings.enforce_team_key_pins,
+        self._team_cache = self._awid_team_cache(
+            settings, transport=awid_transport, txt_resolver=awid_txt_resolver
         )
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache,
@@ -283,6 +248,25 @@ class NaappRuntime:
         )
         # Each authorized() guard, with the action_kind it was given.
         self._guards: dict[Callable[..., object], ActionKind | None] = {}
+
+    def _awid_team_cache(
+        self,
+        settings: NaappSettings,
+        *,
+        transport: httpx.AsyncBaseTransport | None,
+        txt_resolver: TXTOutcomeResolver | None,
+    ) -> AWIDTeamCache:
+        """AWID team facts for authentication, with team keys held to this app's pins."""
+        return AWIDTeamCache(
+            registry_url=settings.awid_registry_url,
+            ttl_seconds=settings.auth_cache_ttl_seconds,
+            service_token=settings.awid_service_token,
+            member_credentials=self._awid_member_credentials,
+            transport=transport,
+            team_key_pins=DatabaseTeamKeyPins(self.db),
+            txt_resolver=txt_resolver,
+            enforce_team_key_pins=settings.enforce_team_key_pins,
+        )
 
     def _installation_grant_source(
         self, settings: NaappSettings, reach: TeamServerReach
@@ -928,6 +912,57 @@ def _only_this_host_reaches(host: str) -> bool:
         return ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+def _published_manifests(
+    settings: NaappSettings,
+    template: dict[str, Any],
+    *,
+    owner_acts: Mapping[str, Any] | None,
+    owner_acts_origin: str | None,
+) -> tuple[Manifest, dict[int, bytes]]:
+    """The served manifest and the bytes of every version published beside it.
+
+    The template is filled with this deployment's app id, origin and key
+    did:keys. Owner acts publish a v3 manifest beside the v2 template; a v3
+    template publishes its v2 variant. The served manifest is the highest
+    version, and each v2 variant is checked against it.
+    """
+    _refuse_the_hosted_app_id_elsewhere(settings, template)
+    served_bytes = fill_manifest(
+        template,
+        app_id=settings.app_id,
+        origin=settings.public_origin,
+        did_keys=declared_did_keys(settings, template),
+    )
+    served = load_manifest(served_bytes)
+    variants = {served.manifest_version: served_bytes}
+    if owner_acts is not None:
+        if served.manifest_version != 2 or not owner_acts_origin:
+            raise ValueError("owner acts require a v2 template and a configured human origin")
+        v3 = copy.deepcopy(template)
+        v3["manifest_version"] = 3
+        v3["owner_acts"] = {**copy.deepcopy(dict(owner_acts)), "origin": owner_acts_origin}
+        served_bytes = fill_manifest(
+            v3,
+            app_id=settings.app_id,
+            origin=settings.public_origin,
+            did_keys=declared_did_keys(settings, v3),
+        )
+        served = load_manifest(served_bytes)
+        check_v2_variant(variants[2], served_bytes)
+        variants[3] = served_bytes
+    elif owner_acts_origin is not None:
+        raise ValueError("a human origin requires an owner-acts declaration")
+    elif served.manifest_version == 3:
+        if served.owner_acts is None:
+            raise ValueError("a v3 publication requires owner-designated roles")
+        v2 = json.loads(served_bytes)
+        v2.pop("owner_acts", None)
+        v2["manifest_version"] = 2
+        variants[2] = canonical_bytes(v2)
+        check_v2_variant(variants[2], served_bytes)
+    return served, variants
 
 
 def _refuse_the_hosted_app_id_elsewhere(
