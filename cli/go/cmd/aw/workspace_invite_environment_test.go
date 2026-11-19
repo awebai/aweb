@@ -23,7 +23,7 @@ func TestWorkspaceInviteAcceptanceDoesNotChangeAmbientServiceSelection(t *testin
 		http.NotFound(w, r)
 	}))
 	defer server.Close()
-	_, err := acceptTeamInviteWithPreferredAwebURL(t.TempDir(), "", t.TempDir(), "aw_inv_environment_fixture", server.URL, "child")
+	_, err := acceptWorkspaceTeamInvite(workspaceInviteAcceptance{SourceDir: t.TempDir(), ChildDir: t.TempDir(), Invite: workspaceTeamInvite{Token: "aw_inv_environment_fixture", AwebURL: server.URL}, Alias: "child"})
 	if err == nil || calls != 1 {
 		t.Fatalf("expected refusal from the explicitly selected service: calls=%d error=%v", calls, err)
 	}

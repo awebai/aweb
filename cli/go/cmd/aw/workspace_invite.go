@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -68,27 +66,20 @@ func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID
 	return workspaceTeamInvite{Token: token, AwebURL: awebURL, ExpiresAt: expiry}, nil
 }
 
-func acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, homeDir, token, preferredAwebURL, alias string) (*acceptedTeamInvite, error) {
-	preferredAwebURL = strings.TrimSpace(preferredAwebURL)
-	opts := teamAcceptInviteOptions{
-		IdentityHome: filepath.Join(filepath.Clean(homeDir), ".aw"),
-		Name:         alias,
-		Scope:        awid.IdentityModeLocal,
-	}
-	if preferredAwebURL == "" {
-		return acceptProvisionedTeamInvite(primaryDir, primaryIdentityHome, homeDir, token, opts)
-	}
+type workspaceInviteAcceptance struct {
+	SourceDir  string
+	SourceHome string
+	ChildDir   string
+	Invite     workspaceTeamInvite
+	Alias      string
+}
 
-	previous, hadPrevious := os.LookupEnv("AWEB_URL")
-	if err := os.Setenv("AWEB_URL", preferredAwebURL); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if hadPrevious {
-			_ = os.Setenv("AWEB_URL", previous)
-		} else {
-			_ = os.Unsetenv("AWEB_URL")
-		}
-	}()
-	return acceptProvisionedTeamInvite(primaryDir, primaryIdentityHome, homeDir, token, opts)
+// acceptWorkspaceTeamInvite names the selected service in the acceptance
+// request rather than changing selection for other operations in this process
+// (docs/cli-identity-selection.md:13-33).
+func acceptWorkspaceTeamInvite(input workspaceInviteAcceptance) (*acceptedTeamInvite, error) {
+	return acceptProvisionedTeamInvite(input.SourceDir, input.SourceHome, input.ChildDir, input.Invite.Token, teamAcceptInviteOptions{
+		IdentityHome: awconfig.WorktreeIdentityHome(input.ChildDir), Name: input.Alias,
+		Scope: awid.IdentityModeLocal, AwebURL: strings.TrimSpace(input.Invite.AwebURL),
+	})
 }

@@ -151,7 +151,7 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 		invite.AwebURL = sourceServerURL
 	}
 
-	accepted, err := acceptTeamInviteWithPreferredAwebURL(primaryDir, primaryIdentityHome, worktreePath, invite.Token, strings.TrimSpace(invite.AwebURL), alias)
+	accepted, err := acceptWorkspaceTeamInvite(workspaceInviteAcceptance{SourceDir: primaryDir, SourceHome: primaryIdentityHome, ChildDir: worktreePath, Invite: invite, Alias: alias})
 	if err != nil {
 		var pending *hostedInviteSignaturePendingError
 		if !errors.As(err, &pending) {
