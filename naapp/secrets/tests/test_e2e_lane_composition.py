@@ -5,10 +5,12 @@ import json
 import re
 from types import SimpleNamespace
 
+import dns.asyncresolver
 import pytest
 import yaml
+from aweb_naapp_testing.network import DnsServer
 from awid.did import did_from_public_key
-from awid.dns_verify import _parse_awid_record
+from awid.dns_verify import discover_registry_override
 from nacl.signing import SigningKey
 
 from tests.test_e2e_owner_acts import (
@@ -123,15 +125,27 @@ def test_the_owners_identity_is_issued_into_the_folder_the_controller_machine_se
     [secrets_env, lambda: LANE["services"]["logs"]["environment"]],
     ids=["secrets", "logs"],
 )
-def test_the_lanes_apps_accept_the_registry_the_lanes_dns_names(app_env, tmp_path, monkeypatch):
-    # The app checks the team's domain names its registry before it reads the
-    # team's server; the lane's registry is http, as every lane service runs it.
+async def test_the_lanes_apps_accept_the_registry_the_lanes_dns_names(
+    app_env, tmp_path, monkeypatch
+):
+    # The app asks which registry the team's domain names before it reads the
+    # team's server; the lane's DNS names its http registry, as every lane
+    # service runs it.
     (tmp_path / "dns").mkdir()
     controller = did_from_public_key(bytes(SigningKey.generate().verify_key))
     publish_awid_txt(SimpleNamespace(runtime=tmp_path), controller)
-    record = re.search(r'TXT "(.*)"', next((tmp_path / "dns").glob("*.zone")).read_text()).group(1)
-    for name in ("APP_ENV", "ENVIRONMENT"):
-        monkeypatch.delenv(name, raising=False)
-    for name, value in app_env().items():
-        monkeypatch.setenv(name, value)
-    assert _parse_awid_record(record, dns_name=f"_awid.{DOMAIN}").registry_url == REGISTRY
+    record = re.search(r'TXT (".*")', next((tmp_path / "dns").glob("*.zone")).read_text()).group(1)
+    server = DnsServer(records={(f"_awid.{DOMAIN}", "TXT"): [record]})
+    await server.start()
+    try:
+        resolver = dns.asyncresolver.Resolver(configure=False)
+        resolver.nameservers = ["127.0.0.1"]
+        resolver.port = server.port
+        monkeypatch.setattr(dns.asyncresolver, "default_resolver", resolver)
+        for name in ("APP_ENV", "ENVIRONMENT"):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in app_env().items():
+            monkeypatch.setenv(name, value)
+        assert await discover_registry_override(DOMAIN) == REGISTRY
+    finally:
+        server.close()
