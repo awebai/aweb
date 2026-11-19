@@ -156,3 +156,19 @@ def test_a_client_delivery_without_the_registered_certificates_is_refused() -> N
     with pytest.raises(Refused) as refused:
         verify_delivery("POST", "/hooks/ingest", case["headers"], case["body"].encode(), _options(receive))
     assert refused.value.code == "verifier_misconfigured"
+
+
+def test_transport_stage_and_authority_stage_share_the_complete_verifier():
+    from aweb_naapp.hooks.delivery import verify_delivery_authority, verify_delivery_transport
+
+    for case in VECTOR["positive_cases"]:
+        options = _options(case["receive"])
+        transport = verify_delivery_transport(
+            "POST", json.loads(case["canonical_signed_payload"])["path"],
+            case["headers"], case["body"].encode(),
+            audience=options.audience, binding_id=options.binding_id, now=options.now,
+        )
+        received = verify_delivery_authority(transport, case["headers"], options)
+        assert received == verify_delivery(
+            "POST", transport.payload["path"], case["headers"], case["body"].encode(), options,
+        )

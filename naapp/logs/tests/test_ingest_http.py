@@ -11,9 +11,12 @@ import asyncio
 import base64
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
+from types import SimpleNamespace
+
+import aweb_naapp.runtime.team_auth as team_auth_module
 
 import httpx
 import pytest
@@ -383,27 +386,36 @@ async def test_a_revoked_client_certificate_is_refused_by_the_certificate_check(
     assert (response.status_code, _code(response)) == (401, "transport_certificate_invalid")
 
 
-async def test_client_certificate_verification_reads_the_controller_key_fresh(world):
+async def test_client_certificate_verification_refreshes_the_controller_at_cache_expiry(world, monkeypatch):
+    clock = _client_facts_clock(monkeypatch)
     assert (await world.send(world.delivery("client"))).status_code == 200
     await world.coordination.registry.rotate_team_key_by_controller(
         world.member.team_id, did_key(bytes(SigningKey.generate())), NAMESPACE_KEY,
     )
+    clock[0] += 61_000_000_000
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (401, "transport_certificate_invalid")
 
 
-async def test_a_registry_substituted_team_key_is_refused_by_name(world):
+async def test_a_registry_substituted_team_key_is_refused_by_name(world, monkeypatch):
+    clock = _client_facts_clock(monkeypatch)
     assert (await world.send(world.delivery("client"))).status_code == 200
     await world.coordination.registry.rotate_team_key(world.member.team_id, did_key(bytes(SigningKey.generate())))
+    clock[0] += 61_000_000_000
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (401, "team_key_unverified")
 
 
-async def test_a_client_cannot_use_a_warm_key_cache_during_a_registry_outage(world):
-    assert (await world.send(world.delivery("client"))).status_code == 200
+async def test_client_cache_keeps_its_original_deadline_during_registry_outage(world, monkeypatch):
+    clock = _client_facts_clock(monkeypatch)
+    delivery = world.delivery("client")
+    assert (await world.send(delivery)).status_code == 200
     world.coordination.registry.transport.down = True
-    response = await world.send(world.delivery("client"))
+    assert (await world.send(delivery)).status_code == 200
+    clock[0] += 61_000_000_000
+    response = await world.send(delivery)
     assert (response.status_code, _code(response)) == (503, "client_authority_unavailable")
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 1
 
 
 @pytest.mark.parametrize("world", [{"customer_hosted": True}], indirect=True)
@@ -515,3 +527,46 @@ async def test_invalid_observed_value_refusal_uses_the_packaged_catalog(world):
         "secret_version": 4, "secret_backend": "onepassword", "refusal_code": "secret_value_invalid",
     }))
     assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize("fault,code", [
+    ("audience", "audience_mismatch"), ("path", "request_mismatch"),
+    ("body", "body_mismatch"), ("expired", "timestamp_outside_window"),
+])
+async def test_client_transport_refuses_before_registry_or_effects(world, fault, code):
+    delivery = world.delivery("client", target="https://other.example" + PATH if fault == "audience" else None)
+    if fault == "expired":
+        fields = json.loads(delivery.signed_payload)
+        fields["timestamp"] = (world.now - timedelta(seconds=301)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        from aweb_naapp.hooks.strictjson import canonical, encode_base64url, encode_signature
+        signed = canonical(fields)
+        headers = dict(delivery.headers)
+        headers["X-AWEB-Signed-Payload"] = encode_base64url(signed)
+        headers["Authorization"] = "AWEB-Hook DIDKey " + world.member.did_key + " " + encode_signature(SigningKey(MEMBER_SEED).sign(signed).signature)
+        delivery = replace(delivery, headers=headers)
+    world.coordination.registry.transport.calls.clear()
+    world.coordination.server.transport.calls.clear()
+    response = await world.send(delivery, body=delivery.body + b" " if fault == "body" else None,
+                                path=PATH + "?changed=1" if fault == "path" else None)
+    assert (response.status_code, _code(response)) == (401, "transport_" + code)
+    assert world.coordination.registry.transport.calls == []
+    assert world.coordination.server.transport.calls == []
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 0
+
+
+async def test_warm_client_deliveries_do_not_read_registry_again(world):
+    delivery = world.delivery("client")
+    assert (await world.send(delivery)).status_code == 200
+    cold = len(world.coordination.registry.transport.calls)
+    world.coordination.registry.transport.calls.clear()
+    results = await asyncio.gather(*(world.send(delivery) for _ in range(16)))
+    assert all(result.status_code == 200 for result in results)
+    assert world.coordination.registry.transport.calls == []
+    assert await world.db.fetch_value("SELECT count(*) FROM {{tables.chain_events}}") == 1
+    print(json.dumps({"R10_cold_registry_reads": cold, "warm_deliveries": 16, "warm_registry_reads": 0}))
+
+
+def _client_facts_clock(monkeypatch):
+    clock = [team_auth_module.time.monotonic_ns()]
+    monkeypatch.setattr(team_auth_module, "time", SimpleNamespace(monotonic_ns=lambda: clock[0]))
+    return clock
