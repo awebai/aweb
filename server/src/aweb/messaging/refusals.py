@@ -5,6 +5,7 @@ from http import HTTPStatus
 
 from aweb.service_errors import ServiceError, ValidationError
 from aweb.messaging.kinds import MessageKind
+from aweb.messaging.recipient_bindings import RecipientSelectorField
 
 
 class DeliveryRefusalCode(StrEnum):
@@ -61,6 +62,16 @@ class SignedRecipientMismatch(DeliveryRefusal):
             code=DeliveryRefusalCode.SIGNED_RECIPIENT_MISMATCH,
             detail=f"signed_payload recipient must match the {target}. Check the recipient and sign the message again.",
         )
+
+
+def recipient_selector_mismatch(
+    *, supplied: RecipientSelectorField, resolved: RecipientSelectorField
+) -> DeliveryRefusal:
+    """Explain conflicting explicit selectors before signing or storing a send."""
+    return DeliveryRefusal(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        detail=f"{supplied.value} must match the {resolved.value} recipient. Check the recipient and try again.",
+    )
 
 
 def registry_configuration_refusal(*, operation: str) -> DeliveryRefusal:

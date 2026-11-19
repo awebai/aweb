@@ -2,7 +2,15 @@
 
 from collections.abc import Mapping, Sequence
 from typing import Any
-from enum import Enum, auto
+from enum import Enum, StrEnum, auto
+
+
+class RecipientSelectorField(StrEnum):
+    AGENT_ID = "to_agent_id"
+    ALIAS = "to_alias"
+    DID = "to_did"
+    STABLE_ID = "to_stable_id"
+    ADDRESS = "to_address"
 
 
 class RecipientBindingUse(Enum):

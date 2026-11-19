@@ -20,7 +20,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import asyncpg
-from aweb.messaging.refusals import DeliveryRefusal, SignedRecipientMismatch
+from aweb.messaging.refusals import (
+    DeliveryRefusal,
+    SignedRecipientMismatch,
+    recipient_selector_mismatch,
+)
 from http import HTTPStatus
 from pgdbm.errors import QueryError
 
@@ -84,7 +88,10 @@ from aweb.messaging.messages import (
 )
 from aweb.messaging.participant_succession import predecessor_target_for_mail
 from aweb.messaging.participants import messaging_participant_by_alias
-from aweb.messaging.recipient_bindings import signed_recipient_matches
+from aweb.messaging.recipient_bindings import (
+    signed_recipient_matches,
+    RecipientSelectorField,
+)
 from aweb.messaging.kinds import (
     MessageKind,
     MessagePriorityValue,
@@ -1271,7 +1278,7 @@ async def resolve_mail_target(
     if not sender_did:
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNAUTHORIZED,
-            detail="Authenticated identity is missing a routing DID",
+            detail="Authenticated identity is missing a routing DID. Reconnect with your current identity credentials and retry.",
         )
 
     continuation = await _resolve_requested_mail_continuation(
@@ -1371,7 +1378,7 @@ async def _resolve_requested_mail_continuation(
             if not target_matches:
                 raise DeliveryRefusal(
                     status_code=HTTPStatus.CONFLICT,
-                    detail="conversation_id recipient does not match the requested recipient",
+                    detail="conversation_id recipient does not match the requested recipient. Use the stored recipient or start a new conversation.",
                 )
             return MailTarget(continuation=requested_continuation)
 
@@ -1403,23 +1410,24 @@ async def _resolve_new_mail_target(
             if recipient_did.startswith("did:aw:"):
                 _raise_bare_did_first_contact_unsupported()
             raise DeliveryRefusal(
-                status_code=HTTPStatus.NOT_FOUND, detail="Recipient agent not found"
+                status_code=HTTPStatus.NOT_FOUND,
+                detail="Recipient agent not found. Check the recipient or ask them to reconnect, then retry.",
             )
         if payload.to_did is not None and payload.to_did.strip():
             bound_recipient = await resolve_agent_by_did(db, payload.to_did.strip())
             if not _recipient_identity_matches(bound_recipient, recipient):
-                raise DeliveryRefusal(
-                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                    detail="to_did must match the to_stable_id recipient",
+                raise recipient_selector_mismatch(
+                    supplied=RecipientSelectorField.DID,
+                    resolved=RecipientSelectorField.STABLE_ID,
                 )
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(
                 db, auth, payload.to_alias.strip(), registry_client=registry_client
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
-                raise DeliveryRefusal(
-                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                    detail="to_alias must match the to_stable_id recipient",
+                raise recipient_selector_mismatch(
+                    supplied=RecipientSelectorField.ALIAS,
+                    resolved=RecipientSelectorField.STABLE_ID,
                 )
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias")
@@ -1432,16 +1440,17 @@ async def _resolve_new_mail_target(
             if requested_recipient_did.startswith("did:aw:"):
                 _raise_bare_did_first_contact_unsupported()
             raise DeliveryRefusal(
-                status_code=HTTPStatus.NOT_FOUND, detail="Recipient agent not found"
+                status_code=HTTPStatus.NOT_FOUND,
+                detail="Recipient agent not found. Check the recipient or ask them to reconnect, then retry.",
             )
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(
                 db, auth, payload.to_alias.strip(), registry_client=registry_client
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
-                raise DeliveryRefusal(
-                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                    detail="to_alias must match the to_did recipient",
+                raise recipient_selector_mismatch(
+                    supplied=RecipientSelectorField.ALIAS,
+                    resolved=RecipientSelectorField.DID,
                 )
         recipient_did = (
             recipient.get("did_aw")
@@ -1455,7 +1464,7 @@ async def _resolve_new_mail_target(
         if "/" not in address:
             raise DeliveryRefusal(
                 status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                detail="to_address must be domain/name",
+                detail="to_address must be domain/name. Use a domain/name address and retry.",
             )
         recipient = await resolve_address_recipient(
             db,
@@ -1474,27 +1483,27 @@ async def _resolve_new_mail_target(
         if payload.to_alias is not None and payload.to_alias.strip():
             if recipient.get("external"):
                 if payload.to_alias.strip() != recipient["alias"]:
-                    raise DeliveryRefusal(
-                        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                        detail="to_alias must match the to_address recipient",
+                    raise recipient_selector_mismatch(
+                        supplied=RecipientSelectorField.ALIAS,
+                        resolved=RecipientSelectorField.ADDRESS,
                     )
             else:
                 bound_recipient = await _resolve_message_alias(
                     db, auth, payload.to_alias.strip(), registry_client=registry_client
                 )
                 if not _recipient_identity_matches(bound_recipient, recipient):
-                    raise DeliveryRefusal(
-                        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                        detail="to_alias must match the to_address recipient",
+                    raise recipient_selector_mismatch(
+                        supplied=RecipientSelectorField.ALIAS,
+                        resolved=RecipientSelectorField.ADDRESS,
                     )
         if payload.to_stable_id is not None and payload.to_stable_id.strip():
             if (
                 payload.to_stable_id.strip()
                 != str(recipient.get("did_aw") or "").strip()
             ):
-                raise DeliveryRefusal(
-                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                    detail="to_stable_id must match the to_address recipient",
+                raise recipient_selector_mismatch(
+                    supplied=RecipientSelectorField.STABLE_ID,
+                    resolved=RecipientSelectorField.ADDRESS,
                 )
         if payload.to_did is not None and payload.to_did.strip():
             candidate_dids = {
@@ -1502,9 +1511,9 @@ async def _resolve_new_mail_target(
                 str(recipient.get("did_key") or "").strip(),
             }
             if payload.to_did.strip() not in candidate_dids:
-                raise DeliveryRefusal(
-                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                    detail="to_did must match the to_address recipient",
+                raise recipient_selector_mismatch(
+                    supplied=RecipientSelectorField.DID,
+                    resolved=RecipientSelectorField.ADDRESS,
                 )
         to_agent_id = str(recipient["agent_id"]) if recipient.get("agent_id") else None
         to_alias = recipient.get("alias") or address
@@ -1520,16 +1529,17 @@ async def _resolve_new_mail_target(
         )
         if recipient is None:
             raise DeliveryRefusal(
-                status_code=HTTPStatus.NOT_FOUND, detail="Recipient agent not found"
+                status_code=HTTPStatus.NOT_FOUND,
+                detail="Recipient agent not found. Check the recipient or ask them to reconnect, then retry.",
             )
         if payload.to_alias is not None and payload.to_alias.strip():
             bound_recipient = await _resolve_message_alias(
                 db, auth, payload.to_alias.strip(), registry_client=registry_client
             )
             if not _recipient_identity_matches(bound_recipient, recipient):
-                raise DeliveryRefusal(
-                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                    detail="to_alias must match the to_agent_id recipient",
+                raise recipient_selector_mismatch(
+                    supplied=RecipientSelectorField.ALIAS,
+                    resolved=RecipientSelectorField.AGENT_ID,
                 )
         recipient_did = (
             recipient.get("did_aw") or recipient.get("did_key") or ""
@@ -1541,7 +1551,8 @@ async def _resolve_new_mail_target(
         )
         if recipient is None:
             raise DeliveryRefusal(
-                status_code=HTTPStatus.NOT_FOUND, detail="Recipient agent not found"
+                status_code=HTTPStatus.NOT_FOUND,
+                detail="Recipient agent not found. Check the recipient or ask them to reconnect, then retry.",
             )
         recipient_did = (
             recipient.get("did_aw") or recipient.get("did_key") or ""
@@ -1551,7 +1562,7 @@ async def _resolve_new_mail_target(
     else:
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-            detail="Must provide to_did, to_address, to_agent_id, or to_alias",
+            detail="Must provide to_did, to_address, to_agent_id, or to_alias. Choose a recipient and retry.",
         )
 
     if payload.to_agent_id and any(
@@ -1565,13 +1576,16 @@ async def _resolve_new_mail_target(
             selected_member, recipient
         ):
             field = (
-                "to_address"
+                RecipientSelectorField.ADDRESS
                 if payload.to_address is not None
-                else ("to_stable_id" if payload.to_stable_id is not None else "to_did")
+                else (
+                    RecipientSelectorField.STABLE_ID
+                    if payload.to_stable_id is not None
+                    else RecipientSelectorField.DID
+                )
             )
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                detail=f"to_agent_id must match the {field} recipient. Check the recipient and try again.",
+            raise recipient_selector_mismatch(
+                supplied=RecipientSelectorField.AGENT_ID, resolved=field
             )
 
     return MailTarget(

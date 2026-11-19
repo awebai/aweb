@@ -64,6 +64,125 @@ async def test_matching_agent_selector_preserves_identity_participant(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "resolved,supplied",
+    [
+        ("to_stable_id", "to_did"),
+        ("to_stable_id", "to_alias"),
+        ("to_did", "to_alias"),
+        ("to_address", "to_alias"),
+        ("to_address", "to_stable_id"),
+        ("to_address", "to_did"),
+        ("to_agent_id", "to_alias"),
+    ],
+)
+async def test_mail_selector_disagreement_is_actionable_without_affecting_matching_send(
+    privacy_app,
+    resolved,
+    supplied,
+):
+    env = privacy_app
+    refs = {}
+    for name in ("bob", "carol"):
+        actor = env.actors[name]
+        stable = await register_global_identity(env, actor)
+        await env.db.execute(
+            "UPDATE {{tables.agents}} SET did_aw=$1,did_aw_verified_key=did_key,identity_scope='global' WHERE agent_id=$2",
+            stable,
+            actor.id,
+        )
+        refs[name] = dict(
+            to_agent_id=str(actor.id),
+            to_alias=name,
+            to_did=actor.did,
+            to_stable_id=stable,
+            to_address="example.test/" + name,
+        )
+    matching = {
+        resolved: refs["bob"][resolved],
+        supplied: refs["bob"][supplied],
+        "body": "Matching selector neighbour",
+    }
+    sent = await _send(env, matching)
+    assert sent.status_code == 200, sent.text
+    refused = await _send(env, {**matching, supplied: refs["carol"][supplied]})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"] == (
+        f"{supplied} must match the {resolved} recipient. Check the recipient and try again."
+    )
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 1
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_mail_without_recipient_names_a_recovery_action(privacy_app):
+    env = privacy_app
+    refused = await _send(env, {"body": "No selected recipient"})
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["detail"] == (
+        "Must provide to_did, to_address, to_agent_id, or to_alias. Choose a recipient and retry."
+    )
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_mail_continuation_mismatch_explains_how_to_keep_or_change_the_thread(
+    privacy_app,
+):
+    env = privacy_app
+    first = await _send(env, {"to_did": env.actors["bob"].did, "body": "First message"})
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["conversation_id"]
+    refused = await _send(
+        env,
+        {
+            "conversation_id": conversation_id,
+            "to_did": env.actors["carol"].did,
+            "body": "Conflicting thread recipient",
+        },
+    )
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"] == (
+        "conversation_id recipient does not match the requested recipient. Use the stored recipient or start a new conversation."
+    )
+    continued = await _send(
+        env, {"conversation_id": conversation_id, "body": "Same participant"}
+    )
+    assert continued.status_code == 200, continued.text
+    assert continued.json()["conversation_id"] == conversation_id
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 2
+
+
+@pytest.mark.asyncio
+async def test_mail_missing_native_recipient_explains_reconnection_and_keeps_live_neighbour(
+    privacy_app,
+):
+    env = privacy_app
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET deleted_at=NOW() WHERE agent_id=$1",
+        env.actors["carol"].id,
+    )
+    refused = await _send(
+        env, {"to_did": env.actors["carol"].did, "body": "Unavailable identity"}
+    )
+    assert refused.status_code == 404, refused.text
+    assert refused.json()["detail"] == (
+        "Recipient agent not found. Check the recipient or ask them to reconnect, then retry."
+    )
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    assert (
+        await env.db.fetch_value("SELECT count(*) FROM {{tables.conversations}}") == 0
+    )
+    live = await _send(env, {"to_did": env.actors["bob"].did, "body": "Live neighbour"})
+    assert live.status_code == 200, live.text
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("valid", [True, False])
 @pytest.mark.parametrize("recipient_claims", [True, False])
 async def test_plaintext_send_verifies_signature_before_any_effect(
