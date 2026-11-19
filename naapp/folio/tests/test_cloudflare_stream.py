@@ -25,8 +25,13 @@ DOCUMENTED_STATES = {
 }
 
 
-def _status(status: dict | None, *, ready_to_stream: bool = False) -> object:
-    result: dict = {"uid": "stream-uid", "readyToStream": ready_to_stream}
+ABSENT = object()
+
+
+def _status(status: dict | None, *, ready_to_stream: object = False) -> object:
+    result: dict = {"uid": "stream-uid"}
+    if ready_to_stream is not ABSENT:
+        result["readyToStream"] = ready_to_stream
     if status is not None:
         result["status"] = status
     return video_status_from_cloudflare(result)
@@ -82,3 +87,18 @@ def test_an_unrecognized_or_missing_state_is_refused_naming_it(status) -> None:
     with pytest.raises(cloudflare_stream.UnrecognizedStreamState) as refused:
         _status(status)
     assert refused.value.state == (status or {}).get("state")
+
+
+@pytest.mark.parametrize("ready_to_stream", [False, None, ABSENT])
+def test_an_unready_absent_or_empty_readiness_leaves_the_state(ready_to_stream) -> None:
+    assert _status({"state": "inprogress"}, ready_to_stream=ready_to_stream) == (
+        StreamStatus.PROCESSING
+    )
+
+
+@pytest.mark.parametrize("ready_to_stream", ["false", "true", 0, 1, "", {}])
+def test_a_readiness_that_is_not_a_boolean_is_refused_naming_it(ready_to_stream) -> None:
+    with pytest.raises(cloudflare_stream.UndocumentedStreamReply) as refused:
+        _status({"state": "inprogress"}, ready_to_stream=ready_to_stream)
+    assert refused.value.field == "readyToStream"
+    assert refused.value.value == ready_to_stream
