@@ -726,7 +726,10 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
     assert await server.mcp_chat(
         "pilot", to="acme.com/nobody", message="hello", plaintext=True
     ) == {
-        "error": unreachable_address_refusal("acme.com/nobody"),
+        "error": "Recipient not found. Check the address acme.com/nobody. "
+        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+        "reason": "recipient_identity_not_found",
+        "retryable": False,
     }
     assert await server.mcp_chat(
         "pilot", conversation_id=str(uuid4()), message="hello", plaintext=True
@@ -1094,8 +1097,7 @@ def test_mcp_chat_codes_keep_their_code_and_add_a_recovery_action():
         }
     # A refusal with no next action keeps the route's detail.
     assert json.loads(_send_refusal(_refusal(404, "Unknown aliases: nobody"))) == {
-        "error": "Recipient name does not identify a current member of the team: nobody. "
-        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
+        "error": "Unknown aliases: nobody",
     }
 
 
