@@ -150,3 +150,12 @@ def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
         detail=detail.rstrip(".")
         + ". Check the chat fields and sign the message again.",
     )
+
+
+def encrypted_message_refusal(*, detail: str) -> DeliveryRefusal:
+    """An encrypted artifact refusal never tells a timeout retry to duplicate it."""
+    return DeliveryRefusal(
+        status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+        detail=detail.rstrip(".")
+        + ". Check whether the original message was delivered before preparing a new encrypted message.",
+    )

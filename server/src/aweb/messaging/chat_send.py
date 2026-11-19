@@ -29,6 +29,7 @@ from uuid import UUID
 
 import asyncpg.exceptions
 from aweb.messaging.refusals import (
+    encrypted_message_refusal,
     DeliveryRefusalCode,
     signed_chat_payload_refusal,
     registry_configuration_refusal,
@@ -259,9 +260,7 @@ def validate_encrypted_chat_payload(
             recipients=_chat_envelope_recipients(recipient_rows),
         )
     except E2EEEnvelopeError as exc:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
+        raise encrypted_message_refusal(detail=str(exc)) from exc
     if str(envelope.get("signature") or "").strip() == "":
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY,

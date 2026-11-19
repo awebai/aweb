@@ -23,6 +23,7 @@ from uuid import UUID
 
 import asyncpg
 from aweb.messaging.refusals import (
+    encrypted_message_refusal,
     DeliveryRefusal,
     SignedRecipientMismatch,
     recipient_selector_mismatch,
@@ -421,9 +422,7 @@ def _validate_encrypted_payload(
             recipient_address=recipient_address,
         )
     except E2EEEnvelopeError as exc:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
+        raise encrypted_message_refusal(detail=str(exc)) from exc
     return encrypted_message_storage_metadata(payload.encrypted_envelope or {})
 
 
