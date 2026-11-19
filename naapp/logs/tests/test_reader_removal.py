@@ -176,19 +176,26 @@ async def held_open(world: World) -> tuple[asyncio.Event, asyncio.Event]:
 
 async def race(world: World, first, second) -> list[Any]:
     entered, release = await held_open(world)
-    started = asyncio.create_task(first())
-    await asyncio.wait_for(entered.wait(), 10)
-    racing = asyncio.create_task(second())
-    # The second change runs until it waits on a lock the open first one
-    # holds, or until it ends.
-    async with asyncio.timeout(10):
-        while not racing.done() and not await world.db.fetch_value(
-            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity"
-            " WHERE datname=current_database() AND wait_event_type='Lock')"
-        ):
-            await asyncio.sleep(0.01)
-    release.set()
-    return list(await asyncio.gather(started, racing, return_exceptions=True))
+    tasks = [asyncio.create_task(first())]
+    try:
+        await asyncio.wait_for(entered.wait(), 10)
+        tasks.append(asyncio.create_task(second()))
+        # The second change runs until it waits on a lock the open first one
+        # holds, or until it ends.
+        async with asyncio.timeout(10):
+            while not tasks[1].done() and not await world.db.fetch_value(
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity"
+                " WHERE datname=current_database() AND wait_event_type='Lock')"
+            ):
+                await asyncio.sleep(0.01)
+        release.set()
+        return list(await asyncio.gather(*tasks, return_exceptions=True))
+    finally:
+        # Neither change outlives the race, however it ended.
+        release.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def test_concurrent_member_removals_leave_a_reader(world: World):
