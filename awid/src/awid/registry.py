@@ -430,10 +430,20 @@ def _raise_registry_response_error(*, status_code: int, content: bytes) -> None:
         code = None
     response_text = _safe_error_text(content)
     if status_code == 409:
-        conflict = code if code is not None else _ADDRESS_CONFLICT_DETAILS.get(detail)
-        error_type = _ADDRESS_CONFLICT_ERRORS.get(conflict)
-        if error_type is not None:
-            raise error_type()
+        conflict = None
+        if code is not None:
+            conflict = next(
+                (
+                    known_code
+                    for known_code in _AddressConflictCode
+                    if known_code == code
+                ),
+                None,
+            )
+        elif detail is not None:
+            conflict = _ADDRESS_CONFLICT_DETAILS.get(detail)
+        if conflict is not None:
+            raise _ADDRESS_CONFLICT_ERRORS[conflict]()
     raise RegistryError(
         detail or response_text,
         status_code=status_code,

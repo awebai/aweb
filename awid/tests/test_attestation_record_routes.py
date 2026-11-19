@@ -460,18 +460,23 @@ async def test_a_publish_waits_for_a_rotation_in_progress_and_then_refuses_the_o
     if scenario == "overwrite":
         path = f"{BASE}/custodians/custodian.example"
         record = _custodian(env, issued_at=_now(-1))
-        racing = lambda: publish_custodian(env, record)
+
+        def publish_racing_record():
+            return publish_custodian(env, record)
     else:
         path = f"{BASE}/certificates/{cert['certificate_id']}/person"
         record = _person(env, cert)
-        racing = lambda: publish_person(env, record)
+
+        def publish_racing_record():
+            return publish_person(env, record)
+
     before = await env.client.get(path)
     assert before.status_code == (200 if scenario == "overwrite" else 404), before.text
     new = keypair()
     async with paused_rotation(
         env.db, domain="local", name="base", rotate=lambda: _rotate(env, new[1])
     ) as barrier:
-        pending = await barrier.start_competing(racing)
+        pending = await barrier.start_competing(publish_racing_record)
     rotation, response = barrier.rotation.result(), pending.result()
     assert rotation.status_code == 200, rotation.text
     assert rotation.json()["team_did_key"] == new[1]
