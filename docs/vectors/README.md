@@ -1042,8 +1042,8 @@ passes and the lifecycle label above still describes what the bytes prove.
   and refusal vectors with a public synthetic key. These do not establish actual
   owner, recipient, membership or custody authority.
 
-The [P0 contract](../human-channels-contract-v1.md) fixes the public embedding
-ports and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
+The [P0 contract](../human-channels-contract-v1.md) fixes the record grammar
+and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
 remain refused until exact-SHA Athena review; current native fixtures are unchanged.
 
 `human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.

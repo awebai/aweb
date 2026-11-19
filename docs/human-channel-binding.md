@@ -39,7 +39,7 @@ Source facts:
   blinded commitment, audience, generation and request. Its owner lane verifies
   `BindingOwnershipProof` from an independently pinned authority. It grants no
   custody, team role or message authority
-  ([human-channels-contract-v1.md:405–423](human-channels-contract-v1.md#presence-and-native-operation-records)).
+  ([human-channels-contract-v1.md:415–433](human-channels-contract-v1.md#presence-and-native-operation-records)).
 - P8 requires a host transaction recheck and generation/request CAS; public actor
   locks stabilize local projections, not remote AWID
   ([human-channels-presence-verification.md:104–145](human-channels-presence-verification.md#applying-a-verified-result)).
@@ -159,7 +159,7 @@ recovers its original result; it never reactivates a stopped binding. A differen
 operation or target under the same request ID conflicts.
 
 Public errors use the existing P8 vocabulary and HTTP map
-([human-channels-contract-v1.md:125–137](human-channels-contract-v1.md#capabilities-and-failure-results)).
+([human-channels-contract-v1.md:138–150](human-channels-contract-v1.md#capabilities-and-failure-results)).
 Log the actual cause at the decision boundary; do not expose raw channel
 identifiers, addresses, credentials or private account mappings in public errors.
 
@@ -244,7 +244,7 @@ Source fact: at this base, `via` accepts open well-formed platform kinds, but
 `PresenceIntent`, `OwnershipProof`, `PresenceBindingIntent`,
 `BindingOwnershipProof` and verified-presence profiles have closed platform
 enums containing telegram/msteams/slack/whatsapp/discord, **not email**
-([human-channels-contract-v1.md:83–88](human-channels-contract-v1.md#compatibility-bytes-and-signatures);
+([human-channels-contract-v1.md:96–101](human-channels-contract-v1.md#compatibility-bytes-and-signatures);
 [human-channels-profile-v1.json](vectors/human-channels-profile-v1.json)).
 **Hypothesis:** email needs a separately reviewed additive platform-profile and
 signed-vector extension, publication and consumer pins before activation. No

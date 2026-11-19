@@ -86,8 +86,7 @@ async def activate(env, tx, expected=None):
 
 
 async def assert_no_send_effects(db):
-    for table in ('messages', 'conversations', 'chat_sessions', 'chat_messages',
-                  'human_channel_sends', 'human_channel_ingress', 'human_channel_mutations'):
+    for table in ('messages', 'conversations', 'chat_sessions', 'chat_messages'):
         assert await db.fetch_value('SELECT count(*) FROM {{tables.' + table + '}}') == 0
 
 

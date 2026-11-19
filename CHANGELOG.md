@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Removed surfaces: the server routes `GET /v1/messaging/capabilities`,
+  `POST /v1/messaging/resolve`, `POST /v1/messaging/prepare` and
+  `GET /v1/messaging/ingress-results/{namespace}/{key}`, with the unconfigured
+  `NativeMessagingService` embedding behind them. They never returned anything
+  but `authority_unavailable` (capabilities: a fixed list reporting the send
+  facade as refused); neither aweb nor aweb Cloud configured the service. They
+  now answer 404, and grant-authenticated requests to them are refused as outside
+  the grant surface. Migration 054 drops the three outbox tables only that
+  service wrote. `GET /v1/messaging/participants/{alias}` is unchanged.
 - `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
 - AWID cache invalidation for identity-tree, address and team-certificate
   writes no longer scans unrelated Redis keys. Random cache generations keep

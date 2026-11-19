@@ -1,27 +1,25 @@
-"""Trusted embedding facts for native messaging; never inferred from wire data.
+"""Actor bindings a host locks on its own transaction; never inferred from wire data.
 
-Providers own their identity/custody/access authority. They must not look up OSS
-private tables. Resolve/prepare can do network I/O; acceptance hooks use only the
-supplied transaction to lock/recheck host-owned state, with no network I/O.
+Hosts own their identity/custody/access authority and must not look up OSS
+private tables. lock_native_actors rechecks the OSS actor projections on the
+host's open transaction and performs no network I/O.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from pgdbm import TransactionManager
 
 from aweb.identity_binding import verified_projection
 
-from .contract import ContractError, ContractRecord
+from .contract import ContractError
 
 if TYPE_CHECKING:
     from asyncpg import Connection
-
-    from aweb.identity_auth_deps import MessagingAuth
 
 
 @dataclass(frozen=True)
@@ -90,50 +88,3 @@ async def lock_native_actors(
             raise ContractError("stale", "current actor binding")
         facts.append(current)
     return tuple(facts)
-
-
-class NativeMessagingAuthority(Protocol):
-    async def current(
-        self,
-        auth: MessagingAuth,
-        subject: NativeMessagingSubject,
-    ) -> ContractRecord:
-        """Return bound AuthorityFacts or ContractError(authority_unavailable).
-
-        Bind exact actor/principal/current signing key/team/service audience;
-        require active identity, access and current inbound policy. Signing-key
-        custody is independent of encryption-key assertions/custody. Missing
-        authority never defaults to self_custodial. No external IDs or secrets.
-        """
-        ...
-
-    async def lock_authority(
-        self,
-        auth: MessagingAuth,
-        prepared: ContractRecord,
-        ingress_key: ContractRecord,
-        transaction: Connection,
-    ) -> None:
-        """Before accept: lock/recheck current host authority on THIS connection.
-
-        Check current identity/signing custody, actor binding, account/session,
-        link, organization policy/consent and private binding revision as
-        applicable. Refuse stale/revoked/unavailable facts with ContractError.
-        Locks last through accept, own correlation/delivery-intent writes and
-        finish_ingress. No independent transaction or network I/O. This method
-        is invoked by accept; a TTL/revision snapshot alone is insufficient.
-        """
-        ...
-
-    async def authorize_recovery(
-        self,
-        auth: MessagingAuth,
-        ingress_key: ContractRecord,
-        transaction: Connection,
-    ) -> None:
-        """Current requester authority before original-result disclosure.
-
-        Check only host-owned current recovery authority on this connection.
-        Returning an original result never sends or revives an old route.
-        """
-        ...

@@ -698,9 +698,6 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `task_answers`
 - `task_app_requests`
 - `task_answer_stage_nonces`
-- `human_channel_sends`
-- `human_channel_ingress`
-- `human_channel_mutations`
 - `team_rooms`
 - `room_messages`
 - `room_post_notices`

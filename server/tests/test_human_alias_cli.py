@@ -197,59 +197,10 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         assert stored["body"] == body_file.read_text()
 
 
-        # With a native messaging service configured on the same TCP server, a
-        # participant lookup refuses a stale local key projection.
-        from aweb.human_channels.contract import decode_record
-        from aweb.human_channels.native import NativeMessagingService
-        from awid.signing import canonical_json_bytes
-        from test_human_channels_native_send import HostAuthority
+        # A participant lookup refuses a stale local key projection.
         from test_messages_http import _signed_identity_headers
 
-        await env.db.execute(
-            "CREATE TABLE public.host_authority (actor_id UUID PRIMARY KEY,principal TEXT,signing_key TEXT,custody TEXT,active BOOLEAN,revision INTEGER,encryption_assertion JSONB)"
-        )
         sender = env.actors["bob"]
-        _, sender_public = generate_x25519_keypair()
-        sender_assertion = build_encryption_key_assertion(
-            signing_key=sender.sk,
-            identity_did=sender.did,
-            identity_stable_id="",
-            encryption_public_key=sender_public,
-            custody="self",
-            now=datetime.now(UTC),
-        )
-        for participant, principal, key, custody, proof in (
-            (sender, sender.did, sender.did, "self_custodial", sender_assertion),
-            (
-                actor,
-                row["did_aw"] or actor.did,
-                actor.did,
-                "hosted_custodial",
-                assertion,
-            ),
-        ):
-            await env.db.execute(
-                "INSERT INTO public.host_authority VALUES ($1,$2,$3,$4,true,1,$5::jsonb)",
-                participant.id,
-                principal,
-                key,
-                custody,
-                json.dumps(proof),
-            )
-        binding = decode_record(
-            "ServiceBinding",
-            canonical_json_bytes(
-                {
-                    "service": sender.did,
-                    "signing_key_id": sender.did,
-                    "audience": str(env.client.base_url).rstrip("/"),
-                }
-            ),
-        )
-        provider = HostAuthority(env.db, binding)
-        service = NativeMessagingService(env.infra, authority=provider, service=binding)
-        env.app.state.human_channels_service = service
-
         if global_human:
             # A current registry rotation defeats the stale local key projection.
             from test_messages_http import _make_keypair

@@ -152,6 +152,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "051_team_key_pin_act.sql",
         "052_member_accepted_team_key.sql",
         "053_drop_retired_signer.sql",
+        "054_drop_native_send_tables.sql",
     ]
 
 

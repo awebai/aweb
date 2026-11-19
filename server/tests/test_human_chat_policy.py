@@ -7,9 +7,8 @@ import pytest
 from test_dashboard_privacy import privacy_app  # noqa: F401
 from test_messages_http import _signed_identity_headers
 from test_mcp_mail_conversation_parity import mail_server  # noqa: F401
-from test_human_channels_native_send import native_send  # noqa: F401
 
-__all__ = ["privacy_app", "mail_server", "native_send"]
+__all__ = ["privacy_app", "mail_server"]
 
 
 async def request(env, path, payload):
@@ -123,17 +122,6 @@ async def test_chat_preflight_uses_projections_without_any_registry_io(privacy_a
 
 
 @pytest.mark.asyncio
-async def test_native_human_chat_prepare_refuses_without_retaining_or_writing(native_send):
-    from aweb.messaging.chat_policy import HumanChatRefused
-    with pytest.raises(HumanChatRefused) as refused:
-        await native_send['prepared']('chat')
-    assert refused.value.reason == 'recipient_human_mail_only'
-    assert native_send['service']._preparations == {}
-    for table in ('chat_messages', 'chat_sessions', 'human_channel_sends'):
-        assert await native_send['db'].fetch_val('SELECT count(*) FROM {{tables.' + table + '}}') == 0
-
-
-@pytest.mark.asyncio
 async def test_federated_ingress_cannot_send_chat_to_authoritative_human(aweb_cloud_db):
     from aweb.messaging.chat_policy import HumanChatRefused
     from aweb.federation.delivery import deliver_federated_phase_b
@@ -182,24 +170,6 @@ async def test_refusal_names_exclude_agent_and_unknown_members(privacy_app):
     with pytest.raises(HumanChatRefused) as refused:
         await require_agent_chat(env.infra, rows)
     assert refused.value.body()['recipients'] == ['bob']
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize('stamp_before_accept', [False, True])
-async def test_native_legacy_label_grants_no_human_chat_treatment(native_send, stamp_before_accept):
-    from aweb.messaging.chat_policy import HumanChatRefused
-    from test_human_channels_native_send import complete
-
-    env = native_send
-    await env['db'].execute('UPDATE {{tables.agents}} SET human_verified_key=NULL WHERE agent_id=$1', UUID(env['b']))
-    prepared = await env['prepared']('chat')
-    if stamp_before_accept:
-        await env['db'].execute('UPDATE {{tables.agents}} SET human_verified_key=did_key WHERE agent_id=$1', UUID(env['b']))
-        with pytest.raises(HumanChatRefused):
-            await complete(env, prepared)
-    else:
-        await complete(env, prepared)
-    assert await env['db'].fetch_val('SELECT count(*) FROM {{tables.chat_messages}}') == (0 if stamp_before_accept else 1)
 
 
 @pytest.mark.asyncio

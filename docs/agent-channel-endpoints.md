@@ -183,9 +183,9 @@ Thread identity is `conversation_id`; the subject is a title, never a routing
 key. Starting a thread and continuing one are separate actions. The originating
 adapter resolves correlation before constructing the signed native message;
 it cannot rewrite a signed conversation ID later. This preserves
-[original native envelope bytes](human-channels-native-send.md#public-embedding),
-lines 92–115, and the existing reply-correlation rule
-([human-channels-contract-v1.md](human-channels-contract-v1.md), lines 439–440).
+[original native envelope bytes](human-channels-contract-v1.md#compatibility-bytes-and-signatures)
+and the existing reply-correlation rule
+([human-channels-contract-v1.md](human-channels-contract-v1.md), lines 449–450).
 A platform's fresh-message/thread UI belongs to its reviewed profile; there is
 no generic "latest thread" fallback. The email rules appear in its profile.
 
