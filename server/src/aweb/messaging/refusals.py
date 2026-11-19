@@ -2,10 +2,13 @@
 
 from enum import StrEnum
 from http import HTTPStatus
+import logging
 
 from aweb.service_errors import ServiceError, ValidationError
 from aweb.messaging.kinds import MessageKind
 from aweb.messaging.recipient_bindings import RecipientSelectorField
+
+logger = logging.getLogger(__name__)
 
 
 class DeliveryRefusalCode(StrEnum):
@@ -97,7 +100,8 @@ def registry_configuration_refusal(*, operation: str) -> DeliveryRefusal:
 
     return DeliveryRefusal(
         status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
-        detail=awid_registry_not_configured_detail(operation=operation),
+        detail=awid_registry_not_configured_detail(operation=operation)
+        + ". Ask the server operator to configure the registry and retry.",
     )
 
 
@@ -105,5 +109,19 @@ def registry_dependency_refusal(exc: Exception, *, operation: str) -> DeliveryRe
     """Use the shared upstream classifier without importing HTTP into delivery."""
     from aweb.awid_error_handling import classify_awid_dependency_error
 
-    status_code, detail = classify_awid_dependency_error(exc, operation=operation)
-    return DeliveryRefusal(status_code=status_code, detail=detail)
+    # The shared owner classifies status. Upstream exception/body text is not
+    # part of the delivery response or log: it can contain request data.
+    classification = classify_awid_dependency_error(exc, operation=operation)
+    status_code = classification[0]
+    logger.log(
+        logging.ERROR
+        if status_code == HTTPStatus.INTERNAL_SERVER_ERROR
+        else logging.WARNING,
+        "delivery_registry_dependency_failed failure_type=%s status=%d",
+        type(exc).__name__,
+        status_code,
+    )
+    return DeliveryRefusal(
+        status_code=status_code,
+        detail=f"{operation} could not be completed. Retry when the registry is available; if this persists, ask the server operator to check the registry connection.",
+    )
