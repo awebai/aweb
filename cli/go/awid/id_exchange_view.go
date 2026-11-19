@@ -18,6 +18,8 @@ type IDCertificateRequestView struct {
 	operation                         IDCertificateRequestOperation
 	kind                              IDCertificateKind
 	parent                            IDCertificateParent
+	invitationID                      string
+	oldCertificate                    *IDCertificateView
 }
 
 // DecodeIDCertificateRequest reuses the released parser's exact field and
@@ -46,7 +48,26 @@ func DecodeIDCertificateRequest(raw []byte) (IDCertificateRequestView, error) {
 	if !parentIDOK || !parentKindOK {
 		return IDCertificateRequestView{}, idCertificateRefusal(IDRefusalInvalidShape)
 	}
-	return IDCertificateRequestView{signed: copyIDObject(signed), requestID: requestID, id: id, domain: domain, subjectKey: subject,
+	var invitationID string
+	var oldCertificate *IDCertificateView
+	if IDCertificateRequestOperation(operation) == IDCertificateRequestIssue {
+		var ok bool
+		invitationID, ok = fields["invitation_id"].(string)
+		if !ok {
+			return IDCertificateRequestView{}, idCertificateRefusal(IDRefusalInvalidShape)
+		}
+	} else {
+		old, ok := fields["old_certificate"].(map[string]any)
+		if !ok {
+			return IDCertificateRequestView{}, idCertificateRefusal(IDRefusalInvalidShape)
+		}
+		checked, err := checkedIDCertificateView(old)
+		if err != nil {
+			return IDCertificateRequestView{}, err
+		}
+		oldCertificate = &checked
+	}
+	return IDCertificateRequestView{invitationID: invitationID, oldCertificate: oldCertificate, signed: copyIDObject(signed), requestID: requestID, id: id, domain: domain, subjectKey: subject,
 		operation: IDCertificateRequestOperation(operation), kind: IDCertificateKind(kind), parent: IDCertificateParent{id: parentID, kind: IDParentKind(parentKind)},
 	}, nil
 }
@@ -73,6 +94,25 @@ func (request IDCertificateRequestView) Kind() IDCertificateKind { return reques
 
 // Parent names the proposed immediate signer, without proving its authority.
 func (request IDCertificateRequestView) Parent() IDCertificateParent { return request.parent }
+
+// InvitationID identifies the issuer's saved invitation for an issue request.
+// A re-sign request has no invitation and returns an empty string.
+func (request IDCertificateRequestView) InvitationID() string { return request.invitationID }
+
+// PreviousCertificate returns the checked certificate presented for re-signing.
+// The presence result is false for an initial issue request.
+func (request IDCertificateRequestView) PreviousCertificate() (IDCertificateView, bool) {
+	if request.oldCertificate == nil {
+		return IDCertificateView{}, false
+	}
+	return *request.oldCertificate, true
+}
+
+// CertificateFields returns an independent expected child binding for the
+// released map-based signing and import APIs. It contains no authorization.
+func (request IDCertificateRequestView) CertificateFields() map[string]any {
+	return map[string]any{"id": request.id, "domain": request.domain, "parent": request.parent.Fields(), "kind": string(request.kind)}
+}
 
 // Signed supplies an independent envelope to the released map-based importer.
 func (request IDCertificateRequestView) Signed() map[string]any { return copyIDObject(request.signed) }

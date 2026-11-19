@@ -23,7 +23,7 @@ func TestIDRequestViewKeepsTheVerifiedRequestIndependentOfCallerMaps(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.ID() != id || request.RequestID() != "20000000-0000-4000-8000-000000000001" || request.Domain() != "example.com" || request.Operation() != IDCertificateRequestIssue || request.Kind() != IDCertificateKindHuman || request.SubjectKey() != ComputeDIDKey(pub) || request.Parent().Kind() != IDParentKindNamespace || request.Parent().ID() != "example.com" {
+	if request.InvitationID() != "10000000-0000-4000-8000-000000000001" || request.ID() != id || request.RequestID() != "20000000-0000-4000-8000-000000000001" || request.Domain() != "example.com" || request.Operation() != IDCertificateRequestIssue || request.Kind() != IDCertificateKindHuman || request.SubjectKey() != ComputeDIDKey(pub) || request.Parent().Kind() != IDParentKindNamespace || request.Parent().ID() != "example.com" {
 		t.Fatal("request binding lost")
 	}
 	copy := request.Signed()
