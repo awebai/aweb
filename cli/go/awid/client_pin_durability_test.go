@@ -193,8 +193,8 @@ func TestAdvancedCheckpointThatPersistsIsVerified(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := checkpointSeq(t, reloaded, f.stableID); got != 2 {
-		t.Errorf("checkpoint was reported verified but is not on disk: seq=%d", got)
+	if got := checkpointHead(t, reloaded, f.stableID); got.Seq != 2 || got.EntryHash == "" {
+		t.Errorf("checkpoint was reported verified but is not on disk: seq=%d hash=%q", got.Seq, got.EntryHash)
 	}
 }
 

@@ -228,13 +228,13 @@ func TestNewRegistryPresentingAnOlderKeyThanThePinIsAMismatch(t *testing.T) {
 
 // checkpointSeq is the sequence an identity's checkpoint holds at whichever
 // registry has one (0 when none does).
-func checkpointSeq(t *testing.T, pins *PinStore, stableID string) int {
+func checkpointHead(t *testing.T, pins *PinStore, stableID string) VerifiedLogHead {
 	t.Helper()
-	seq := 0
+	var latest VerifiedLogHead
 	for _, identities := range checkpointsOf(t, pins) {
-		if head := identities[stableID]; head != nil && head.Seq > seq {
-			seq = head.Seq
+		if head := identities[stableID]; head != nil && head.Seq > latest.Seq {
+			latest = *head
 		}
 	}
-	return seq
+	return latest
 }
