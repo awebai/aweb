@@ -352,6 +352,12 @@ class FederationAuthorityActivation:
                 await self._publish_failure(exc, leases=(evidence_lease, discovery))
             raise
         finally:
+            if result_published:
+                # The published result carries evidence, not an active worker.
+                # A cohort that expires may immediately elect its next reader.
+                for lease in (evidence_lease, discovery):
+                    if lease is not None and lease.acquired:
+                        await self.work.release_lease(lease)
             await self.work.release_permits(owner_id=owner_id)
             if authority_generation is not None:
                 await self.resolver.expire_generation(authority_generation)
