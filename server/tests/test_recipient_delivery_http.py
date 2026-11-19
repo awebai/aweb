@@ -17,7 +17,6 @@ async def test_shared_recipient_projection_keeps_identity_mail_and_chat_actor_fr
     env = privacy_app
     bob = env.actors["bob"]
     assert chat.get_agent_by_id is messages.get_agent_by_id
-    assert chat.get_agent_by_alias is messages.get_agent_by_alias
     assert chat.resolve_agent_by_did is messages.resolve_agent_by_did
     row = await messages.get_agent_by_id(env.infra, agent_id=str(bob.id))
     assert isinstance(row, Recipient) and row.agent_id == bob.id

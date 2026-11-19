@@ -13,7 +13,6 @@ from awid.did import did_from_public_key
 from aweb.messaging.contacts import has_exact_active_identity_contact
 from aweb.messaging.messages import (
     admit_message_delivery,
-    get_agent_by_alias,
     get_agent_by_id,
     resolve_agent_by_did,
 )
@@ -692,12 +691,6 @@ async def test_resolve_agent_helpers(aweb_cloud_db):
         did_aw=alice_did_aw,
         address="acme.com/alice",
     )
-
-    by_alias = await get_agent_by_alias(
-        db_shim, team_id="backend:acme.com", alias="alice"
-    )
-    assert by_alias is not None
-    assert str(by_alias["agent_id"]) == alice_id
 
     by_id = await get_agent_by_id(
         db_shim, team_id="backend:acme.com", agent_id=alice_id
