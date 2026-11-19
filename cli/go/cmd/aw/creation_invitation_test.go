@@ -108,7 +108,7 @@ func TestHostedInvitePreviewConsumesPersonInvitationAndRetainsItOnRetry(t *testi
 			defer server.Close()
 			origin = server.URL
 			material := workspaceTeamIdentityMaterial{DIDKey: v.Keys["root_agent"].DIDKey, IdentityScope: scope, StableID: v.Keys["global_agent"].DIDAW}
-			state, err := prepareHostedInviteCreation(t.Context(), nil, "aw_inv_test", server.URL, "terminal", "other.example/different-address", false, material)
+			state, err := prepareHostedInviteCreation(t.Context(), nil, "aw_inv_test", server.URL, "terminal", "other.example/different-address", false, material, true, false, "", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -119,7 +119,7 @@ func TestHostedInvitePreviewConsumesPersonInvitationAndRetainsItOnRetry(t *testi
 			if request == nil || request.InvitationID != "11111111-1111-4111-8111-111111111111" || request.Parent["id"] != v.Keys["alice"].DIDAW || request.Domain != "example.com" {
 				t.Fatalf("lost person selection: %+v", request)
 			}
-			retry, err := prepareHostedInviteCreation(t.Context(), state, "aw_inv_test", server.URL, "terminal", "other.example/different-address", false, material)
+			retry, err := prepareHostedInviteCreation(t.Context(), state, "aw_inv_test", server.URL, "terminal", "other.example/different-address", false, material, false, false, "", "")
 			if err != nil || retry != state || previewReads != 1 {
 				t.Fatalf("retry: %v reads=%d", err, previewReads)
 			}

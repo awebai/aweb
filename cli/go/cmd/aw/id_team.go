@@ -235,15 +235,16 @@ type acceptedTeamInvite struct {
 }
 
 type teamAcceptInviteOptions struct {
-	ParentHome   string
-	Registry     *awid.RegistryClient
-	TXTResolver  awid.TXTResolver
-	IdentityHome string
-	Name         string
-	Address      string
-	Scope        string
-	NoAddress    bool
-	AwebURL      string
+	ParentFromSource bool
+	ParentHome       string
+	Registry         *awid.RegistryClient
+	TXTResolver      awid.TXTResolver
+	IdentityHome     string
+	Name             string
+	Address          string
+	Scope            string
+	NoAddress        bool
+	AwebURL          string
 }
 
 type teamMemberEnrollmentResolveOptions struct {
@@ -1160,7 +1161,7 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 	if err != nil {
 		return err
 	}
-	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeTeamInviteIDChild(rawToken, home.Root) {
+	if home.External() && acceptScope == awid.IdentityModeLocal && !canResumeTeamInviteIDChild(rawToken, home.Root) && !canResumeHostedInvite(rawToken, home.Root) {
 		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
 			return err
 		}
@@ -1825,9 +1826,6 @@ func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, loca
 // createHostedTeamInvite creates a single-use hosted invite and returns the
 // service's response, which carries its expiry.
 func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember bool, forHuman ...string) (*awid.SpawnCreateInviteResponse, error) {
-	if !localMember {
-		return nil, usageError("--member-global is not supported for hosted team invites")
-	}
 	var client *aweb.Client
 	var selected *awconfig.Selection
 	var err error
@@ -1904,7 +1902,7 @@ func createHostedTeamInvite(workingDir, identityHome, teamID string, localMember
 		if err := awconfig.SaveTeamInvite(&awconfig.TeamInvite{
 			InviteID: hostedTeamInviteRecordID(created.Token),
 			Domain:   domain, TeamName: name,
-			IdentityScope: awid.IdentityModeLocal, IDChild: link,
+			IdentityScope: teamAcceptScopeFromGlobal(!localMember), IDChild: link,
 		}); err != nil {
 			return nil, err
 		}
@@ -2115,7 +2113,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", invite.InviteID, err)
 	}
 
-	consumedInviteParent(token, opts.ParentHome)
+	consumedInviteParent(token, home.Root)
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			Status:   "accepted",
@@ -2258,6 +2256,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 
+	mintedKey := false
 	if scope == awid.IdentityModeLocal {
 		// Persist the generated signing key to the home BEFORE calling AC, so a retry
 		// after AC has committed presents the SAME key and hits AC's idempotent
@@ -2272,6 +2271,13 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 				pub = signingKey.Public().(ed25519.PublicKey)
 			}
 		} else {
+			_, keyErr := os.Stat(filepath.Join(home.Root, "signing.key"))
+			if keyErr != nil && !errors.Is(keyErr, os.ErrNotExist) {
+				return nil, keyErr
+			}
+			// A definitive refusal may release the old invite but retain this
+			// acceptance-minted key for a corrected name or replacement invite.
+			mintedKey = errors.Is(keyErr, os.ErrNotExist) || statHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(workingDir, home.Root), filepath.Join(home.Root, "signing.key")) == nil
 			pub, signingKey, err = hostedAcceptSigningKeyAt(workingDir, opts.IdentityHome)
 		}
 		if err != nil {
@@ -2309,9 +2315,13 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			prior = nil
 		}
 	}
-	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material)
+	creation, err := prepareHostedInviteCreation(ctx, prior, strings.TrimSpace(token), awebURL, alias, memberAddress, opts.NoAddress, material, mintedKey, opts.ParentFromSource, opts.ParentHome, recoveryPath)
 	if err != nil {
 		return nil, err
+	}
+	opts.ParentHome = creation.ParentHome
+	if creation.IssuerCreationStarted && !creation.parentageSelected() {
+		return nil, uncertainHostedInviteError(home.Root, creation.TeamID, errors.New("retained creation has no recorded key mint or explicit parent; reconcile the earlier attempt before retrying"))
 	}
 	if err := creation.save(recoveryPath); err != nil {
 		return nil, err
@@ -2325,6 +2335,13 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		localMismatch := awid.IDCertificateErrorCode(resultErr) == "human_mismatch"
 		if creation.ResponseJSON == "" && !submittedBefore && (knownUnsubmitted || localMismatch) {
 			resultErr = releaseRefusedHostedInvite(recoveryPath, hostedAcceptPendingMarkerPath(workingDir, home.Root), resultErr)
+		}
+		// Unknown 4xx codes remain resumable, including the first answer.
+		// Give every retained refusal the same reconciliation exit.
+		if status, ok := awid.HTTPStatusCode(resultErr); ok && status >= 400 && status < 500 {
+			if _, err := os.Stat(recoveryPath); err == nil {
+				resultErr = uncertainHostedInviteError(home.Root, creation.TeamID, resultErr)
+			}
 		}
 	}()
 	if opts.ParentHome != "" {
@@ -2360,7 +2377,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		}
 	}
 	var membershipResult *awid.IDChainResult
-	if creation.MembershipChain != nil {
+	if creation.MembershipOnly || creation.MembershipChain != nil {
 		subjectID := didKey
 		if scope == awid.IdentityModeGlobal {
 			subjectID = stableID
@@ -2494,7 +2511,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		}
 	}
 	responsibility := membershipResult
-	if creation.MembershipChain != nil {
+	if creation.MembershipOnly || creation.MembershipChain != nil {
 		if resp.RegistrationRequest != nil {
 			return nil, errors.New("membership-only acceptance requested identity registration")
 		}
@@ -2544,7 +2561,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 			fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", localLink.InviteID, err)
 		}
 	}
-	consumedInviteParent(token, opts.ParentHome)
+	consumedInviteParent(token, home.Root)
 	return &acceptedTeamInvite{
 		Output: &teamAcceptInviteOutput{
 			IDRegistration: registration,
@@ -2675,7 +2692,7 @@ func ensureHostedAcceptTargetClean(workingDir, identityHome string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Name() != hostedInviteRecoveryFile+".lock" {
+		if entry.Name() != hostedInviteRecoveryFile+".lock" && entry.Name() != initInviteRecoveryFile && entry.Name() != initInviteRecoveryFile+".lock" {
 			return usageError("refusing to overwrite non-empty identity home %s", root)
 		}
 	}

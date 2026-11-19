@@ -205,7 +205,8 @@ Rules:
 - A global join without an existing global identity should fail with guidance to
   claim/create a global identity first.
 
-- `aw init --join-from ...` and `aw init --admission-team-id ...` follow the same
+- `aw init --join-from ...`, `aw init --admission-team-id ...` and
+  `aw init --invite ...` follow the same
   rule: local is the default, while `--global` is an opt-in to reuse the current
   self-custodial global identity. They do not silently downgrade `--global` to a
   local join. `aw init --workspace-team` is the only `aw init` outcome that
@@ -214,6 +215,10 @@ Rules:
   account id (`--expect-account`) chosen from `aw auth status --json`; the CLI
   sends it as `expected_account_id` and fails closed if the logged-in account or
   recorded owner does not match.
+- These global init joins preserve the existing identity and signing key, but
+  refuse to overwrite an existing `workspace.yaml`. Use ordinary `aw init` to
+  reconnect that workspace, or a separate invite acceptance to add membership
+  without replacing its workspace binding.
 
 A parent source and a team invite can be selected independently:
 `aw init --parent <creator-home> --invite <token>`, or
@@ -238,11 +243,35 @@ A definitive hosted human-condition refusal releases the pending join when no
 earlier submission is uncertain. The identity, key and chain remain available
 for a correct invite. An interrupted attempt or unavailable evidence keeps the
 original invite and selection for resumption.
-If a first submission timed out and its retry then returned 409, first confirm
-with the hosting service that the first attempt did not apply, then, with no
-join running, remove only `<identity-home>/hosted-invite-creation.json` (normally
-`.aw/hosted-invite-creation.json`) to abandon that pending attempt and use a
-correct invite.
+If a first submission timed out and its retry then returned 409, or an invite
+expired after a possibly applied submission, the earlier attempt may have
+succeeded. State stays in `<identity-home>/hosted-invite-creation.json`, with
+`init-invite.json` alongside it for `init --join-from`. Check with the hosting
+service whether this agent is a member. If it is, obtain its certificate ID and
+run `aw --identity-home <identity-home> id team fetch-cert --namespace <domain>
+--team <team> --cert-id <certificate-id>`, then retry init. If it is not, with no
+join running remove `hosted-invite-creation.json` and, if present,
+`init-invite.json` from that home before using a correct invite. Keep the key
+and chain.
+
+`init --join-from` retains its issued invite privately (0600) in
+`<identity-home>/init-invite.json`. Repeat the same command after interruption:
+it reuses that invite and child key and resumes connection if membership is
+already installed. A changed source, team, name or scope refuses. Successful
+completion removes the record; an expired unsubmitted invite releases it so
+init can issue a new invite using the retained identity.
+
+An explicit `--parent` is retained in the child home with its exchange. A retry
+may omit it; choosing a different creator refuses. It may be added only before
+any submission could have reached the service. Each child of a multi-use invite
+has its own exchange, and import retries reuse the parent's recorded issuance.
+
+`aw team admin add --global` uses a registered creator's existing parent exchange
+and registers the new child's ID certificate before membership. A local creator
+with an installed chain cannot parent a registered child and refuses before
+creating identity or address state; the controller can instead use the
+unconditional `aw id team add-member` path. Chainless creators keep the existing
+behaviour.
 
 For teams whose key is on the host, this changes `--member-global` invites:
 when their issuer has a verified human, they previously carried no human
@@ -273,9 +302,20 @@ before retrying the same invite.
 A global acceptor with its own current valid chain joins by membership only,
 including when the invite issuer is local. A global identity without a chain
 cannot obtain its parent certificate from a local `did:key` issuer.
+`--join-from` explicitly selects its source as parent for a chainless joiner;
+an existing registered joiner therefore needs a registered source, or direct
+person adoption with `aw id parent request --human`. A bare invite or admission
+does not select a parent for an existing identity. It preserves parentage and
+refuses a conditioned chainless join with `human_required` and creator guidance.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
-<token>`. A hosted local accept into an explicit external `--identity-home`
+<token>`. Hosted invite issuance accepts `--member-global` as well as
+`--member-local`; it uses the selected member's existing hosted invite
+authority and preserves any human condition. The recipient selects `--global`
+on acceptance to reuse its existing self-custodial global identity; issuing the
+invite does not create that identity.
+
+A hosted local accept into an explicit external `--identity-home`
 auto-connects that root when the invite names an aweb service; if connection
 fails after membership installation, the printed recovery command is `aw
 --identity-home <root> workspace connect --service <url>` and does not reuse the

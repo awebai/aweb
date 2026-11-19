@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,10 +20,7 @@ import (
 // it is joining. All signature, ancestry and current-status rules are SDK rules.
 func verifyInviteMembership(ctx context.Context, bundle map[string]any, subject awid.IDChainSubject, required *string, registry *awid.RegistryClient, resolver awid.TXTResolver) (*awid.IDChainResult, error) {
 	if bundle == nil {
-		if required != nil {
-			return nil, fmt.Errorf("%w: this invite requires a chain to %s; obtain it from your own creator using aw id child invite, aw id parent request --domain <creator-domain>, and aw id parent import --domain <creator-domain>, then retry this join; on this machine use --parent HOME", &awid.IDCertificateError{Code: "human_required"}, *required)
-		}
-		return nil, nil
+		return nil, missingInviteHumanChain(required)
 	}
 	plan, err := awid.IDStatusRequest(bundle, subject, "")
 	if err != nil {
@@ -51,6 +49,13 @@ func verifyInviteMembership(ctx context.Context, bundle map[string]any, subject 
 		return nil, err
 	}
 	return &verdict, nil
+}
+
+func missingInviteHumanChain(required *string) error {
+	if required == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: this invite requires a chain to %s; obtain it from your own creator using aw id child invite, aw id parent request --domain <creator-domain>, and aw id parent import --domain <creator-domain>, then retry this join; on this machine use --parent HOME", &awid.IDCertificateError{Code: "human_required"}, *required)
 }
 
 func checkInviteHuman(verdict *awid.IDChainResult, required *string) error {
@@ -120,8 +125,9 @@ func completeExplicitInviteParent(ctx context.Context, wd, home, token, parentHo
 	if _, err := os.Stat(filepath.Join(parentHome, "signing.key")); errors.Is(err, os.ErrNotExist) {
 		parentHome = filepath.Join(parentHome, ".aw")
 	}
-	recordID := "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
-	invite, err := awconfig.LoadTeamInvite(recordID)
+	recordID := hostedTeamInviteRecordID(token)
+	path := filepath.Join(home, inviteParentRecoveryFile)
+	invite, err := loadInviteParentRecovery(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -146,11 +152,15 @@ func completeExplicitInviteParent(ctx context.Context, wd, home, token, parentHo
 		}
 		link.ChildHome, link.ChildDIDKey = home, awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
 		invite = &awconfig.TeamInvite{InviteID: recordID, IDChild: link}
-		if err := awconfig.SaveTeamInvite(invite); err != nil {
+		raw, err := json.Marshal(invite)
+		if err != nil {
+			return err
+		}
+		if err := awid.AtomicWriteFile(path, raw); err != nil {
 			return err
 		}
 	}
-	if invite.IDChild == nil || invite.IDChild.IssuerHome != parentHome || invite.IDChild.ChildHome != home || !teamInviteChildKeyMatches(invite.IDChild, home) {
+	if invite.InviteID != recordID || invite.IDChild == nil || invite.IDChild.IssuerHome != parentHome || invite.IDChild.ChildHome != home || !teamInviteChildKeyMatches(invite.IDChild, home) {
 		return usageError("retry changed the selected creator, child home or key")
 	}
 	if err := prepareInviteChildIdentity(home); err != nil {
@@ -179,12 +189,72 @@ func prepareInviteChildIdentity(home string) error {
 	return awconfig.SaveWorktreeIdentityTo(path, &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)), IdentityScope: awid.IdentityModeLocal, Custody: awid.CustodySelf, CreatedAt: time.Now().UTC().Format(time.RFC3339)})
 }
 
-func consumedInviteParent(token, parentHome string) {
-	if parentHome == "" {
+const inviteParentRecoveryFile = "invite-parent.json"
+
+func loadInviteParentRecovery(path string) (*awconfig.TeamInvite, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var invite awconfig.TeamInvite
+	if json.Unmarshal(raw, &invite) != nil || invite.IDChild == nil {
+		return nil, errors.New("invalid retained creator exchange")
+	}
+	return &invite, nil
+}
+
+func consumedInviteParent(token, home string) {
+	path := filepath.Join(home, inviteParentRecoveryFile)
+	invite, err := loadInviteParentRecovery(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to read consumed creator exchange: %v\n", err)
 		return
 	}
-	id := "creator-" + strings.TrimPrefix(hostedTeamInviteRecordID(token), "hosted-")
-	if err := awconfig.DeleteTeamInvite(id); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed invite %s: %v\n", id, err)
+	if invite == nil || invite.InviteID != hostedTeamInviteRecordID(token) {
+		return
 	}
+	if err := os.Remove(path); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to delete consumed creator exchange: %v\n", err)
+	}
+}
+
+func normalizeInviteParentHome(parent string) (string, error) {
+	if parent == "" {
+		return "", nil
+	}
+	home, err := filepath.Abs(parent)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(filepath.Join(home, "signing.key")); errors.Is(err, os.ErrNotExist) {
+		home = filepath.Join(home, ".aw")
+	}
+	return home, nil
+}
+
+func (s *hostedInviteCreation) selectParent(parent string) (string, error) {
+	selected, err := normalizeInviteParentHome(parent)
+	if err != nil {
+		return "", err
+	}
+	if selected == "" && s.ParentSelected {
+		return s.ParentHome, nil
+	}
+	if selected != s.ParentHome {
+		if s.ResponseJSON != "" || s.AcceptAttempted == nil || *s.AcceptAttempted {
+			return "", errors.New("cannot change parent after a possibly applied invite submission")
+		}
+		if s.ParentHome != "" {
+			return "", errors.New("retry changed the selected creator")
+		}
+		// No request went to Cloud. The explicit creator now supplies parentage.
+		s.IssuerCreationStarted = false
+		s.MembershipOnly = false
+		s.RequestReady = false
+	}
+	s.ParentHome, s.ParentSelected = selected, true
+	return selected, nil
 }

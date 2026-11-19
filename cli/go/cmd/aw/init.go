@@ -431,7 +431,7 @@ func runInitIndependentInvite(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := ensureConnectTargetClean(wd); err != nil {
+	if err := ensureInitInviteTarget(wd); err != nil {
 		return err
 	}
 	raw, origin, err := decodeJoinToken(initInvite)
@@ -442,24 +442,20 @@ func runInitIndependentInvite(cmd *cobra.Command) error {
 }
 
 func runInitJoinFrom(cmd *cobra.Command) error {
-	wd, _ := os.Getwd()
-	if err := ensureConnectTargetClean(wd); err != nil {
+	wd, err := os.Getwd()
+	if err != nil {
 		return err
 	}
 	sourceWorkingDir, sourceIdentityHome, teamID, err := resolveInitJoinSource(strings.TrimSpace(initJoinFrom), strings.TrimSpace(initJoinTeam))
 	if err != nil {
 		return err
 	}
-	invite, err := createWorkspaceTeamInviteForTeamAt(sourceWorkingDir, sourceIdentityHome, teamID)
-	if err != nil {
-		return fmt.Errorf("%w; alternatively use --admission-team-id %s with host authorization", err, teamID)
-	}
-	return acceptInitInviteAndConnect(cmd, wd, invite.Token, invite.AwebURL)
+	return runRecoverableJoinFrom(cmd, wd, sourceWorkingDir, sourceIdentityHome, teamID)
 }
 
 func runInitAdmissionTeamID(cmd *cobra.Command) error {
 	wd, _ := os.Getwd()
-	if err := ensureConnectTargetClean(wd); err != nil {
+	if err := ensureInitInviteTarget(wd); err != nil {
 		return err
 	}
 	if strings.TrimSpace(initExpectedAccountID) == "" {
@@ -517,18 +513,47 @@ func initInviteIdentityScope() string {
 	return teamAcceptScopeFromGlobal(initGlobal)
 }
 
+// Local init creates a key; global init reuses the selected identity and key.
+// Neither is permission to replace an existing workspace binding.
+func ensureInitInviteTarget(workingDir string) error {
+	if !initGlobal {
+		return ensureConnectTargetClean(workingDir)
+	}
+	if err := validateGlobalInitTarget(workingDir); err != nil {
+		return err
+	}
+	return ensureAwebRuntimeGitIgnored(workingDir)
+}
+
+func validateGlobalInitTarget(workingDir string) error {
+	if _, _, err := resolveGlobalIdentityForTeamAccept(workingDir, ""); err != nil {
+		return err
+	}
+	path := awconfig.WorktreeWorkspacePath(workingDir)
+	if _, err := os.Stat(path); err == nil {
+		return usageError("refusing to overwrite existing %s", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferredAwebURL string, parentHome ...string) error {
-	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	parent := ""
 	if len(parentHome) > 0 {
 		parent = parentHome[0]
 	}
+	return acceptInitInviteAndConnectWithSource(cmd, workingDir, token, preferredAwebURL, parent, false)
+}
+
+func acceptInitInviteAndConnectWithSource(cmd *cobra.Command, workingDir, token, preferredAwebURL, parent string, parentFromSource bool) error {
 	alias := resolveAliasValue(resolveInitLocalName())
 	accepted, err := acceptAndStoreTeamInvite(workingDir, token, teamAcceptInviteOptions{
-		ParentHome: parent,
-		Name:       alias,
-		Scope:      initInviteIdentityScope(),
-		AwebURL:    strings.TrimSpace(preferredAwebURL),
+		ParentHome:       parent,
+		ParentFromSource: parentFromSource,
+		Name:             alias,
+		Scope:            initInviteIdentityScope(),
+		AwebURL:          strings.TrimSpace(preferredAwebURL),
 	}, teamInviteStoreOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true})
 	if err != nil {
 		return err
@@ -537,6 +562,11 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferred
 	if awebURL == "" {
 		return usageError("accepted invite did not include an aweb URL; rerun aw init with --aweb-url")
 	}
+	return connectInitAcceptedInvite(cmd, workingDir, awebURL)
+}
+
+func connectInitAcceptedInvite(cmd *cobra.Command, workingDir, awebURL string) error {
+	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	result, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
 		Role:      identity.Role,
 		HumanName: identity.HumanName,
