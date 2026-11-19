@@ -2069,14 +2069,6 @@ async def _send_mail_to_resolved_target(
     except DeliveryPolicyRefused:
         raise
     except (ValidationError, NotFoundError, ForbiddenError, ConflictError) as exc:
-        if (
-            isinstance(exc, ForbiddenError)
-            and payload.to_address
-            and recipient.get("identity_scope") == "local"
-            and not recipient.get("has_global_claim")
-            and not recipient.get("did_aw")
-        ):
-            raise FederationAuthorityError("local_recipient_route_missing") from exc
         raise DeliveryRefusal(status_code=exc.status_code, detail=exc.detail) from exc
 
     await record_successful_contact_side_effect(
