@@ -1302,7 +1302,19 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	result, err := bootstrapLocalTeamMemberWithScope(ctx, registry, "", "acme.com", "default", "", controllerKey, memberKey, awid.ComputeStableID(memberPub), "acme.com/alice", "alice", awid.IdentityModeGlobal)
+	result, err := bootstrapLocalTeamMember(ctx, localTeamMemberBootstrap{
+		Registry:      registry,
+		RegistryURL:   "",
+		Domain:        "acme.com",
+		TeamName:      "default",
+		DisplayName:   "",
+		ControllerKey: controllerKey,
+		MemberKey:     memberKey,
+		MemberDIDAW:   awid.ComputeStableID(memberPub),
+		MemberAddress: "acme.com/alice",
+		Alias:         "alice",
+		Scope:         awid.IdentityScopeGlobal,
+	})
 	if err != nil {
 		t.Fatalf("bootstrapLocalTeamMemberWithScope: %v", err)
 	}
