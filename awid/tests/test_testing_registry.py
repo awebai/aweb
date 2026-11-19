@@ -14,6 +14,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from awid.did import did_from_public_key
+from awid.contract import IdentityScope
 from awid.registry import RegistryClient, RegistryError
 from awid.signing import canonical_json_bytes, sign_message
 from awid.team_server_record import verify_team_server_record
@@ -31,7 +32,7 @@ def _did_key(key: SigningKey) -> str:
 
 
 def _certificate(
-    team_key: SigningKey, member_key: SigningKey, certificate_id: str
+    *, team_key: SigningKey, member_key: SigningKey, certificate_id: str
 ) -> dict:
     cert = {
         "version": 1,
@@ -40,7 +41,7 @@ def _certificate(
         "team_did_key": _did_key(team_key),
         "member_did_key": _did_key(member_key),
         "alias": "alice",
-        "lifetime": "persistent",
+        "identity_scope": IdentityScope.LOCAL.value,
         "issued_at": "2026-01-01T00:00:00Z",
     }
     cert["signature"] = sign_message(bytes(team_key), canonical_json_bytes(cert))
@@ -82,7 +83,10 @@ async def test_an_added_certificate_is_listed_until_revoked(database_url) -> Non
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
         await registry.add_certificate(
-            _certificate(team_key, member_key, "cert-1"), team_key=team_key
+            _certificate(
+                team_key=team_key, member_key=member_key, certificate_id="cert-1"
+            ),
+            team_key=team_key,
         )
         client = RegistryClient(registry_url=REGISTRY_URL, transport=registry.transport)
         listed = await client.list_team_certificates("example.com", "backend")
@@ -120,7 +124,9 @@ async def test_fixture_setup_stores_the_registered_signed_certificate(
     database_url,
 ) -> None:
     team_key, member_key = SigningKey.generate(), SigningKey.generate()
-    certificate = _certificate(team_key, member_key, "cert-1")
+    certificate = _certificate(
+        team_key=team_key, member_key=member_key, certificate_id="cert-1"
+    )
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
         await registry.add_certificate(certificate, team_key=team_key)
@@ -136,9 +142,13 @@ async def test_fixture_setup_rejects_a_forged_certificate_without_writing(
     database_url,
 ) -> None:
     team_key, member_key = SigningKey.generate(), SigningKey.generate()
-    certificate = _certificate(team_key, member_key, "cert-forged")
+    certificate = _certificate(
+        team_key=team_key, member_key=member_key, certificate_id="cert-forged"
+    )
     certificate["signature"] = _certificate(
-        SigningKey.generate(), member_key, "cert-forged"
+        team_key=SigningKey.generate(),
+        member_key=member_key,
+        certificate_id="cert-forged",
     )["signature"]
     async with running_registry(database_url) as registry:
         await registry.add_team(TEAM_ID, _did_key(team_key))
