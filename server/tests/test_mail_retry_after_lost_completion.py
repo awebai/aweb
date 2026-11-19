@@ -43,6 +43,7 @@ class HeldMailCompletions:
         self.host, self.port = target.hostname, target.port
         self.response_count = response_count
         self.responses: list[bytes] = []
+        self.response_bodies: list[bytes] = []
         self.failures: list[BaseException] = []
         self.all_held = asyncio.Event()
         self.release = asyncio.Event()
@@ -81,7 +82,16 @@ class HeldMailCompletions:
                 self._forward_request(client_reader, upstream_writer)
             )
             status_line = await upstream_reader.readuntil(b"\r\n")
+            header_block = await upstream_reader.readuntil(b"\r\n\r\n")
+            headers = {
+                name.strip().lower(): value.strip()
+                for line in header_block.split(b"\r\n")
+                if b":" in line
+                for name, _, value in [line.partition(b":")]
+            }
+            body = await upstream_reader.readexactly(int(headers[b"content-length"]))
             self.responses.append(status_line)
+            self.response_bodies.append(body)
             if len(self.responses) == self.response_count:
                 self.all_held.set()
             await self.release.wait()
