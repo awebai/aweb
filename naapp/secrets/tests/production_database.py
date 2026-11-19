@@ -47,7 +47,7 @@ async def _prepared_database(factory, *, suffix: str) -> AsyncIterator[AsyncData
         )
         pool = await AsyncDatabaseManager.create_shared_pool(configured)
         try:
-            yield AsyncDatabaseManager(configured, pool=pool, schema=operator.schema)
+            yield AsyncDatabaseManager(pool=pool, schema=operator.schema)
         finally:
             await pool.close()
     finally:
