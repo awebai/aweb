@@ -27,6 +27,9 @@ Optional environment:
 - `AWID_PORT` default `8010`
 - `AWID_DB_SCHEMA` default `awid`
 - `AWID_RATE_LIMIT_BACKEND` default `redis`
+- `AWID_PUBLIC_ORIGINS` comma-separated canonical external registry origins
+  used by covering controller requests. Request or proxy headers do not
+  configure the trusted origin.
 - `AWEB_CF_EDGE_CIDRS` and `AWEB_TRUSTED_PROXY_CIDRS` default empty. Both must
   contain valid JSON-array, comma- or pipe-separated CIDR lists to use forwarded
   client IPs for rate limits. Configured proxy peers are trusted first-party
@@ -56,6 +59,12 @@ Optional environment:
   to start unless connections carry the `search_path` pin and the pgdbm
   timeouts (`statement_timeout`, `lock_timeout`,
   `idle_in_transaction_session_timeout`, `jit`).
+
+### Private teams and public certificate status
+
+Private team metadata remains permission-gated. Anyone who knows a certificate
+ID can read its public four-field status, without member fields or a signed
+certificate blob. Callers still verify certificates under the current team key.
 
 ### Session settings in the connection URL
 

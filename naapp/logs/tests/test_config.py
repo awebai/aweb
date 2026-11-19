@@ -8,6 +8,7 @@ from aweb_logs.ingest import ClientQuota
 
 def test_logs_reads_its_own_env_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     monkeypatch.setenv("PUBLIC_ORIGIN", "https://unprefixed.test")
@@ -17,19 +18,42 @@ def test_logs_reads_its_own_env_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.app_id == "logs"
 
 
-def test_logs_needs_its_database_and_both_origins(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("LOGS_DATABASE_URL", "LOGS_PUBLIC_ORIGIN", "LOGS_CONSOLE_ORIGIN"):
+def test_logs_needs_its_databases_and_both_origins(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "LOGS_DATABASE_URL",
+        "LOGS_PURGE_LEDGER_DATABASE_URL",
+        "LOGS_PUBLIC_ORIGIN",
+        "LOGS_CONSOLE_ORIGIN",
+    ):
         monkeypatch.delenv(name, raising=False)
     with pytest.raises(ValueError) as caught:
         LogsSettings(_env_file=None)
     missing = {error["loc"][0] for error in caught.value.errors()}  # type: ignore[attr-defined]
-    assert missing == {"database_url", "public_origin", "console_origin"}
+    assert missing == {
+        "database_url",
+        "purge_ledger_database_url",
+        "public_origin",
+        "console_origin",
+    }
+
+
+def test_the_purge_ledger_database_is_read_from_its_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
+    monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
+    monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
+    settings = LogsSettings(_env_file=None)
+    assert settings.purge_ledger_database_url == "postgresql://localhost/logs_purges"
+    assert "logs_purges" not in repr(settings)
 
 
 def test_the_client_address_header_is_unset_unless_the_deployment_names_one(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     monkeypatch.delenv("LOGS_CLIENT_ADDRESS_HEADER", raising=False)
@@ -40,6 +64,7 @@ def test_the_client_address_header_is_unset_unless_the_deployment_names_one(
 
 def test_the_console_origin_is_read_from_its_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     assert LogsSettings(_env_file=None).console_origin == "https://console.logs.example.test"
@@ -61,6 +86,7 @@ def test_the_console_is_a_plain_https_origin_on_its_own_host(
     monkeypatch: pytest.MonkeyPatch, console_origin: str
 ) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", console_origin)
     with pytest.raises(ValueError) as caught:
@@ -70,6 +96,7 @@ def test_the_console_is_a_plain_https_origin_on_its_own_host(
 
 def test_checkpoints_are_issued_every_five_minutes_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     assert LogsSettings(_env_file=None).checkpoint_interval_seconds == 300
@@ -80,6 +107,7 @@ def test_checkpoints_are_issued_every_five_minutes_by_default(monkeypatch: pytes
 
 def test_retention_is_applied_every_hour_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     assert LogsSettings(_env_file=None).retention_interval_seconds == 3600
@@ -90,6 +118,7 @@ def test_retention_is_applied_every_hour_by_default(monkeypatch: pytest.MonkeyPa
 
 def test_client_quotas_default_and_read_their_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     assert LogsSettings(_env_file=None).client_quota == ClientQuota(
@@ -105,6 +134,7 @@ def test_client_quotas_default_and_read_their_settings(monkeypatch: pytest.Monke
 @pytest.mark.parametrize("name", ["LOGS_CLIENT_EVENTS_PER_MINUTE", "LOGS_CLIENT_BYTES_PER_MINUTE"])
 def test_a_client_quota_admits_at_least_one_event(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     monkeypatch.setenv(name, "0")
@@ -122,6 +152,7 @@ def test_the_public_origin_is_never_under_the_console_host(
 ) -> None:
     # A passkey's relying party, the console host, is usable from its subdomains.
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", public_origin)
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     with pytest.raises(ValueError) as caught:
@@ -131,6 +162,31 @@ def test_the_public_origin_is_never_under_the_console_host(
 
 def test_the_console_may_be_under_the_public_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LOGS_DATABASE_URL", "postgresql://localhost/logs")
+    monkeypatch.setenv("LOGS_PURGE_LEDGER_DATABASE_URL", "postgresql://localhost/logs_purges")
     monkeypatch.setenv("LOGS_PUBLIC_ORIGIN", "https://logs.example.test")
     monkeypatch.setenv("LOGS_CONSOLE_ORIGIN", "https://console.logs.example.test")
     assert LogsSettings(_env_file=None).console_origin == "https://console.logs.example.test"
+
+
+def test_file_mounted_databases_use_existing_logs_settings(tmp_path, monkeypatch):
+    import secrets
+
+    mounted = {}
+    for name, database in (("DATABASE_URL", "logs"), ("PURGE_LEDGER_DATABASE_URL", "logs_purges")):
+        dsn = "postgresql://logs:" + secrets.token_urlsafe(24) + "@postgres/" + database
+        path = tmp_path / name.lower()
+        path.write_text(dsn + "\n")
+        path.chmod(0o400)
+        monkeypatch.delenv("LOGS_" + name, raising=False)
+        monkeypatch.setenv("LOGS_" + name + "_FILE", str(path))
+        mounted[name.lower()] = dsn
+    settings = LogsSettings(
+        _env_file=None,
+        public_origin="https://logs.example",
+        console_origin="https://console.logs.example",
+    )
+    if (settings.database_url, settings.purge_ledger_database_url) != (
+        mounted["database_url"],
+        mounted["purge_ledger_database_url"],
+    ):
+        raise AssertionError("mounted database URLs did not reach Logs settings")

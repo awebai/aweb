@@ -1114,7 +1114,6 @@ async def resolve_mail_target(
     federation authority's rate bucket for this caller.
     """
     registry_client = runtime.registry_client
-    sender_address = _sender_address(auth)
     sender_did = (auth.did_aw or auth.did_key or "").strip()
     if not sender_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")

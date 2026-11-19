@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import HTTPException
@@ -19,6 +19,7 @@ from aweb.identity_auth_deps import (
 )
 from aweb.agent_wake import agent_wake_publisher
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
+from aweb.identity_address import AddressResolution
 from aweb.internal_auth import parse_internal_auth_context, resolve_internal_actor
 from aweb.mcp.mutations import (
     mutation_callback_from_scope,
@@ -42,12 +43,12 @@ class AuthContext:
     address: str | None = None
     workspace_id: str | None = None
     request: Request | None = None
-    human_channels_service: Any = None
     trusted_proxy: bool = False
     identity_scope: str | None = None
     # Evidence from get_team_identity verifying the presented certificate,
     # never from the agent projection's stored certificate_id.
     certificate_id: str | None = None
+    address_resolution: AddressResolution = field(default_factory=AddressResolution)
 
 
 def auth_dids(auth: AuthContext) -> list[str]:
@@ -93,10 +94,9 @@ def get_auth() -> AuthContext:
 class MCPAuthMiddleware:
     """ASGI middleware that resolves identity for MCP requests."""
 
-    def __init__(self, app: ASGIApp, db_infra: Any, human_channels_service=None) -> None:
+    def __init__(self, app: ASGIApp, db_infra: Any) -> None:
         self.app = app
         self.db_infra = db_infra
-        self.human_channels_service = human_channels_service
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -127,7 +127,6 @@ class MCPAuthMiddleware:
         # The mounted inner Starlette app mutates scope["app"]. Keep the
         # authenticated parent policy/registry context stable for tool reads.
         ctx.request = Request(dict(request.scope))
-        ctx.human_channels_service = self.human_channels_service
         cv_token = _auth_context.set(ctx)
         mutation_token = set_mutation_callback(mutation_callback_from_scope(scope))
         try:
@@ -158,6 +157,7 @@ class MCPAuthMiddleware:
             # projection whose admitting certificate is revoked must not grant
             # team context here either.
             row = await _enforce_current_membership(request, row)
+            outcome = getattr(request.state, "identity_address_resolution", identity.address_resolution)
             return AuthContext(
                 team_id=(row or {}).get("team_id") or None,
                 agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
@@ -165,8 +165,10 @@ class MCPAuthMiddleware:
                 alias=(row or {}).get("alias") or None,
                 did_key=identity.did_key,
                 did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
-                address=identity.address or ((row or {}).get("address") or None),
+                address=(outcome.stored_address if outcome.state == "unknown"
+                         else identity.address or ((row or {}).get("address") or None)),
                 identity_scope=(row or {}).get("identity_scope") or None,
+                address_resolution=outcome,
             )
 
         identity = await get_team_identity(request, self.db_infra)

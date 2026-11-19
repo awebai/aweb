@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 import re
-import uuid as uuid_module
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse

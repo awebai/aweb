@@ -12,6 +12,7 @@ from playwright.async_api import expect
 from aweb_secrets import records
 from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.policy import Policy
+from tests.console_network import passkey_origin as passkey_origin
 from tests.test_admission import POLICY_BODY
 from tests.test_change_sets import ALICE, TEAM
 from tests.test_console_access import (
@@ -60,7 +61,7 @@ async def jobs_on_terms(w):
     syncing = await job_using(w, [ORDERS_DB.ref, PAYMENTS.ref], job_id="orders-sync")
     archive = await job_using(w, [ORDERS_DB.ref, "retired-key"], job_id="orders-archive")
     async with w.db.transaction() as tx:
-        await records.create_policy(tx, INSTALLATION_ID, TERMS)
+        await records.create_policy(tx, INSTALLATION_ID, TERMS, team_id=TEAM)
         for grant_id, job in (("grt_runsync1", syncing), ("grt_runarch1", archive)):
             await records.create_grant(
                 tx, INSTALLATION_ID, TEAM, run_grant(grant_id, ORDERS_DB, READER, job, TERMS)

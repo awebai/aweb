@@ -4,6 +4,7 @@ import base64
 import os
 import subprocess
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -174,6 +175,26 @@ def test_invalid_member_configuration_refused_at_startup(monkeypatch, tmp_path, 
         _build_awid_registry_client(create_app(), redis=None)
 
 
+def test_group_writable_member_key_file_refused_at_startup(monkeypatch, tmp_path):
+    from aweb.config import get_settings
+
+    configure_member(monkeypatch, tmp_path)
+    (tmp_path / "server.pem").chmod(0o664)
+    with pytest.raises(ValueError, match="AWID_MEMBER_KEYS_FILE"):
+        get_settings()
+
+
+def test_member_key_path_that_is_not_a_regular_file_refused_at_startup(monkeypatch, tmp_path):
+    from aweb.config import get_settings
+
+    _, _, config = configure_member(monkeypatch, tmp_path)
+    fifo = tmp_path / "server.fifo"
+    os.mkfifo(fifo)
+    config.write_text(json.dumps({TEAM_ID: str(fifo)}))
+    with pytest.raises(ValueError, match="AWID_MEMBER_KEYS_FILE"):
+        get_settings()
+
+
 @pytest.mark.asyncio
 async def test_real_private_team_verification_revocation_and_recovery(real_stack, monkeypatch, tmp_path):
     """Real AWID gates + aweb's member, app-task and hook authority consumers."""
@@ -189,6 +210,8 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
     from aweb.team_auth_deps import verify_request_certificate
     from aweb.coordination.app_tasks import verify_authorization_certificate
     from aweb.hook_bindings import core_owner_act_verifier, OwnerActTeamKeyUnavailable
+    from aweb.team_key_pins import pinned_team_key
+    from awid_service.testing import TXTAnswers
     from aweb_naapp.hooks.owner_act import owner_act_signing_bytes, hook_binding_subject
     from tests.test_team_auth import _make_certificate, _encode_certificate
     from tests.real_stack import REGISTRY_URL
@@ -228,7 +251,10 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
     }
     request = Request({"type": "http", "method": "GET", "path": "/v1/tasks", "query_string": b"",
         "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
-        "app": SimpleNamespace(state=SimpleNamespace(awid_registry_client=client, public_origin=""))})
+        "app": SimpleNamespace(state=SimpleNamespace(
+            awid_registry_client=client, public_origin="",
+            db=SimpleNamespace(get_manager=lambda _name: real_stack.aweb_db),
+        ))})
     authorization = {"payload": {"team_id": TEAM_ID, "certificate_id": member_cert["certificate_id"], "actor_did_key": member_did},
         "certificate": _encode_certificate(member_cert)}
     moment = datetime.now(timezone.utc)
@@ -244,12 +270,24 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
             hook="post-command-hook", tool="audit", method="POST", path="/hooks/audit", scopes=[]),
     }
     signing = owner_act_signing_bytes(act)
-    verifier = core_owner_act_verifier(audience="https://aweb.example", registry_client=client)
+
+    # Production hands verification the app's database infra (aweb.deps.get_db).
+    aweb_infra = request.app.state.db
+
+    async def pin_team_key(team_id, served_key):
+        return await pinned_team_key(
+            db=real_stack.aweb_db, registry_client=client,
+            txt_resolver=TXTAnswers(), team_id=team_id, served_key=served_key,
+        )
+
+    verifier = core_owner_act_verifier(
+        audience="https://aweb.example", registry_client=client, pin_team_key=pin_team_key,
+    )
     try:
         with pytest.raises(RegistryError) as denied:
             await unsigned.get_team(DOMAIN, TEAM)
         assert denied.value.status_code == 403
-        assert (await verify_request_certificate(request, real_stack.aweb_db))["alias"] == "alice"
+        assert (await verify_request_certificate(request, aweb_infra))["alias"] == "alice"
         assert (await verify_authorization_certificate(request, authorization))[0]["alias"] == "alice"
         await verifier.prepare(signing, sign_message(bytes(team_key), signing), team_id=TEAM_ID)
         assert (await client._request_json("GET", BASE + "/members/alice"))["alias"] == "alice"
@@ -263,12 +301,12 @@ async def test_real_private_team_verification_revocation_and_recovery(real_stack
             await verifier.prepare(signing, sign_message(bytes(team_key), signing), team_id=TEAM_ID)
         now[0] += 61
         with pytest.raises(HTTPException) as auth_denied:
-            await verify_request_certificate(request, real_stack.aweb_db)
+            await verify_request_certificate(request, aweb_infra)
         assert auth_denied.value.status_code == 503
         assert (await hosted.get_team(DOMAIN, TEAM)).team_did_key == team_did
         # Existing controller issuance restores access; no new recovery protocol.
         await issue(server_did, "server")
-        assert (await verify_request_certificate(request, real_stack.aweb_db))["alias"] == "alice"
+        assert (await verify_request_certificate(request, aweb_infra))["alias"] == "alice"
     finally:
         for registry in (client, hosted, owner, unsigned):
             await registry.aclose()

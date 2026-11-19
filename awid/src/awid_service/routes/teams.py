@@ -10,12 +10,11 @@ from datetime import datetime, timezone
 from typing import Literal
 
 import asyncpg
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pgdbm.errors import QueryError
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-_TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 from awid_service.deps import get_db
 from awid.contract import normalize_identity_scope
@@ -32,8 +31,16 @@ from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_wi
 from awid.team_ids import build_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from awid_service.delivery_origin import validate_delivery_origin
-from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
-from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
+from awid.controller_request import (
+    PATH_SIGNED_READ_EVENT,
+    ControllerAuthRoute,
+    record_accepted_auth,
+    verified_controller_proof,
+    verify_controller_json_request,
+)
+from awid_service.attestation_rotation import ResignedRecords, SignedRecord, apply_resigned_records, record_member_records
+
+_TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
 
@@ -99,6 +106,30 @@ async def _require_team_controller(
     if caller_did != row["team_did_key"]:
         raise HTTPException(status_code=403, detail="Only the team controller can perform this action")
     return caller_did, row
+
+
+async def _require_team_key_unchanged(tx, *, domain: str, name: str, team_did_key: str) -> None:
+    """Lock the team row, as rotate_team_key does, and refuse 409
+    team_key_not_current when the team's key is no longer ``team_did_key``,
+    the key the request was authorized and verified under. Held to the end
+    of ``tx``, so a key change cannot commit between this check and the
+    write."""
+    row = await tx.fetch_one(
+        """
+        SELECT team_did_key FROM {{tables.teams}}
+        WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
+        FOR UPDATE
+        """,
+        domain,
+        name,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if row["team_did_key"] != team_did_key:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "team_key_not_current", "message": "The team key changed while this request was checked"},
+        )
 
 
 def _validate_team_name_path(name: str) -> str:
@@ -252,6 +283,32 @@ def _verify_path_signature(request: Request, authorization: str | None) -> str:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+READ_TEAM_OPERATION = "read_team"
+_SIGNED_PAYLOAD_HEADER = "X-AWEB-Signed-Payload"
+
+
+async def _signed_reader(request: Request, *, domain: str, name: str | None) -> str | None:
+    """The did:key that signed this team read, or None when it is unsigned.
+
+    A covering envelope (operation read_team, claims domain and, for one team,
+    name) binds this registry, the method and the path with its query. The path
+    signature binds the path only; it is accepted and counted until measured
+    unused. A supplied proof that does not verify is refused, never read as
+    anonymous. The route decides what the verified key may read.
+    """
+    if request.headers.get(_SIGNED_PAYLOAD_HEADER) is not None:
+        claims = {"domain": domain, "operation": READ_TEAM_OPERATION}
+        if name is not None:
+            claims["name"] = name
+        return await verify_controller_json_request(request, payload_dict=claims)
+    authorization = request.headers.get("Authorization")
+    if not authorization:
+        return None
+    did_key = _verify_path_signature(request, authorization)
+    record_accepted_auth(request, PATH_SIGNED_READ_EVENT, READ_TEAM_OPERATION)
+    return did_key
+
+
 # Machine-readable code for reads blocked by team visibility. The CLI branches
 # on it to retry with a signed request; keep it stable.
 TEAM_PRIVATE_ERROR_CODE = "team_private"
@@ -291,16 +348,17 @@ async def _require_team_read_access(
     db,
     *,
     team_uuid,
+    domain: str,
+    name: str,
     team_did_key: str,
     visibility: str,
-    authorization: str | None,
 ) -> None:
     """Enforce team visibility on a read route.
 
     Public teams are readable by anyone. For a private team the caller must
     present either the trusted service token (the aweb server's
-    server-to-server revocation fetch) or a path-signature — the exact scheme
-    the certificate blob fetch uses — from the team controller key or an
+    server-to-server revocation fetch) or a signed read (_signed_reader, the
+    same verification the certificate blob fetch uses) from the team key or an
     unrevoked member key. Anything else is 403 team_private: existence is
     deliberately disclosed (the team-availability read contract depends on
     404 meaning "name free", and the CLI needs the signal to retry signed).
@@ -309,8 +367,8 @@ async def _require_team_read_access(
         return
     if _presents_trusted_service_token(request):
         return
-    if authorization:
-        caller_did = _verify_path_signature(request, authorization)
+    caller_did = await _signed_reader(request, domain=domain, name=name)
+    if caller_did is not None:
         if caller_did == team_did_key:
             return
         member = await db.fetch_one(
@@ -361,11 +419,24 @@ class TeamCreateRequest(BaseModel):
         return value
 
 
+class MemberCertificateChange(BaseModel):
+    """A kept member's certificate under the new key, replacing
+    ``old_certificate_id``, with the member's records for it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    old_certificate_id: str = Field(..., min_length=1, max_length=256)
+    certificate: str = Field(..., min_length=1, max_length=16384)
+    custody: SignedRecord | None = None
+    person: SignedRecord | None = None
+
+
 class TeamRotateKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     new_team_did_key: str = Field(..., min_length=1, max_length=256)
     resigned_records: ResignedRecords | None = None
+    member_certificates: list[MemberCertificateChange] = Field(default_factory=list)
 
     @field_validator("new_team_did_key")
     @classmethod
@@ -592,7 +663,6 @@ async def list_teams(
     domain: str,
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> TeamListResponse:
     db = db_infra.get_manager("aweb")
@@ -605,11 +675,11 @@ async def list_teams(
     params: list[object] = [domain]
 
     # Visibility: private teams are enumerable only by the trusted service, or
-    # by a path-signed caller who controls the team or holds an unrevoked
+    # by a signed caller who controls the team or holds an unrevoked
     # member certificate in it. Anonymous callers see public teams only.
     if not _presents_trusted_service_token(request):
-        if authorization:
-            viewer_did = _verify_path_signature(request, authorization)
+        viewer_did = await _signed_reader(request, domain=domain, name=None)
+        if viewer_did is not None:
             params.append(viewer_did)
             idx = len(params)
             where_clauses.append(
@@ -671,7 +741,6 @@ async def get_team(
     request: Request,
     domain: str,
     name: str,
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> TeamResponse:
     name = _validate_team_name_path(name)
@@ -693,9 +762,61 @@ async def get_team(
         team_uuid=row["team_uuid"],
         team_did_key=row["team_did_key"],
         visibility=row["visibility"],
-        authorization=authorization,
+        domain=domain,
+        name=name,
     )
     return _team_response(row)
+
+
+_TEAM_KEY_ACT_NOT_FOUND = "Team key act not found"
+
+
+class TeamKeyActResponse(BaseModel):
+    team_id: str
+    team_did_key: str
+    signer_did_key: str
+    signed_payload: str
+    signature: str
+
+
+@router.get(
+    "/{name}/key-act",
+    response_model=TeamKeyActResponse,
+    dependencies=[Depends(rate_limit_dep("team_get", allow_trusted_service=True))],
+)
+async def get_team_key_act(
+    domain: str,
+    name: str,
+    db_infra=Depends(get_db),
+) -> TeamKeyActResponse:
+    """The namespace controller's latest act naming the team's current key,
+    anonymously, for public and private teams.
+
+    Like the certificate-status and team-server reads, it serves relying
+    servers that hold no read credential; it shows only the current team key,
+    which certificate status already shows, and a namespace controller key.
+    The signed bytes are returned exactly as signed (unpadded base64url) so a
+    reader verifies them against the controller its own DNS lookup names. An
+    unknown team and a team whose current key no stored act names answer the
+    same 404.
+    """
+    name = _validate_team_name_path(name)
+    db = db_infra.get_manager("aweb")
+    act = await db.fetch_one(
+        """
+        SELECT a.team_did_key, a.signer_did_key, a.signed_payload, a.signature
+        FROM {{tables.team_key_acts}} a
+        JOIN {{tables.teams}} t ON t.team_uuid = a.team_uuid AND t.team_did_key = a.team_did_key
+        WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
+        ORDER BY a.act_id DESC
+        LIMIT 1
+        """,
+        domain,
+        name,
+    )
+    if act is None:
+        raise HTTPException(status_code=404, detail=_TEAM_KEY_ACT_NOT_FOUND)
+    return TeamKeyActResponse(team_id=build_team_id(domain, name), **dict(act))
 
 
 @router.delete(
@@ -781,6 +902,66 @@ async def _bounded_rotate_body(request: Request) -> TeamRotateKeyRequest:
         raise RequestValidationError(exc.errors()) from exc
 
 
+async def _replace_member_certificates(
+    tx, *, team_uuid, team_id: str, new_team_did_key: str, changes: list[MemberCertificateChange],
+) -> None:
+    """In the rotation's transaction, revoke each named active certificate and
+    register its replacement: the same member, alias and identity scope,
+    signed by the new key. Then record the member's records for it."""
+    now = datetime.now(timezone.utc)
+    for change in changes:
+        old = await tx.fetch_one(
+            """
+            SELECT member_did_key, member_did_aw, member_address, alias, identity_scope
+            FROM {{tables.team_certificates}}
+            WHERE team_uuid = $1 AND certificate_id = $2 AND revoked_at IS NULL
+            FOR UPDATE
+            """,
+            team_uuid, change.old_certificate_id,
+        )
+        if old is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "member_certificate_not_active", "message": f"No active certificate {change.old_certificate_id} in this team"},
+            )
+        cert = _parse_certificate_blob(change.certificate) or {}
+        try:
+            replacement = CertificateRegisterRequest(
+                certificate_id=str(cert.get("certificate_id") or ""),
+                member_did_key=old["member_did_key"],
+                member_did_aw=old["member_did_aw"],
+                member_address=old["member_address"],
+                alias=old["alias"],
+                identity_scope=old["identity_scope"],
+                certificate=change.certificate,
+            )
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail="member certificate is not a team certificate") from exc
+        _verify_certificate_blob(change.certificate, team_id=team_id, team_did_key=new_team_did_key, body=replacement)
+        await tx.execute(
+            """
+            UPDATE {{tables.team_certificates}} SET revoked_at = NOW()
+            WHERE team_uuid = $1 AND certificate_id = $2
+            """,
+            team_uuid, change.old_certificate_id,
+        )
+        await tx.execute(
+            """
+            INSERT INTO {{tables.team_certificates}}
+                (team_uuid, certificate_id, member_did_key, member_did_aw,
+                 member_address, alias, identity_scope, certificate)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            team_uuid, replacement.certificate_id, replacement.member_did_key, replacement.member_did_aw,
+            replacement.member_address, replacement.alias, replacement.identity_scope, change.certificate,
+        )
+        await record_member_records(
+            tx, team_uuid=team_uuid, team_id=team_id, new_team_did_key=new_team_did_key,
+            certificate_id=replacement.certificate_id, member_did_key=replacement.member_did_key,
+            custody=change.custody, person=change.person, now=now,
+        )
+
+
 @router.post(
     "/{name}/rotate",
     response_model=TeamRotateResponse,
@@ -828,6 +1009,23 @@ async def rotate_team_key(
             name,
             body.new_team_did_key,
         )
+        await _replace_member_certificates(
+            tx, team_uuid=old_row["team_uuid"], team_id=build_team_id(domain, name),
+            new_team_did_key=body.new_team_did_key, changes=body.member_certificates,
+        )
+        proof = verified_controller_proof(request)
+        await tx.execute(
+            """
+            INSERT INTO {{tables.team_key_acts}}
+                (team_uuid, team_did_key, signer_did_key, signed_payload, signature)
+            VALUES ($1, $2, $3, $4, $5)
+            """,
+            old_row["team_uuid"],
+            body.new_team_did_key,
+            proof.signer_did_key,
+            base64.urlsafe_b64encode(proof.signed_payload).rstrip(b"=").decode("ascii"),
+            proof.signature,
+        )
 
     resp = _team_response(row)
     return TeamRotateResponse(
@@ -867,24 +1065,27 @@ async def register_certificate(
     )
 
     try:
-        await db.execute(
-            """
-            INSERT INTO {{tables.team_certificates}}
-                (team_uuid, certificate_id, member_did_key, member_did_aw,
-                 member_address, alias, identity_scope, certificate)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            """,
-            team_row["team_uuid"],
-            body.certificate_id,
-            body.member_did_key,
-            body.member_did_aw,
-            body.member_address,
-            body.alias,
-            body.identity_scope,
-            body.certificate,
-        )
-    except QueryError as exc:
-        cause = exc.__cause__
+        async with db.transaction() as tx:
+            await _require_team_key_unchanged(tx, domain=domain, name=name, team_did_key=team_row["team_did_key"])
+            await tx.execute(
+                """
+                INSERT INTO {{tables.team_certificates}}
+                    (team_uuid, certificate_id, member_did_key, member_did_aw,
+                     member_address, alias, identity_scope, certificate)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                team_row["team_uuid"],
+                body.certificate_id,
+                body.member_did_key,
+                body.member_did_aw,
+                body.member_address,
+                body.alias,
+                body.identity_scope,
+                body.certificate,
+            )
+    except (QueryError, asyncpg.UniqueViolationError) as exc:
+        # A transaction's connection raises asyncpg's error unwrapped.
+        cause = exc.__cause__ if isinstance(exc, QueryError) else exc
         if not isinstance(cause, asyncpg.UniqueViolationError):
             raise
         constraint_name = getattr(cause, "constraint_name", "")
@@ -951,7 +1152,6 @@ async def list_certificates(
     since: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> CertificateListResponse:
     db = db_infra.get_manager("aweb")
@@ -970,7 +1170,8 @@ async def list_certificates(
         team_uuid=team_row["team_uuid"],
         team_did_key=team_row["team_did_key"],
         visibility=team_row["visibility"],
-        authorization=authorization,
+        domain=domain,
+        name=name,
     )
 
     try:
@@ -1044,7 +1245,6 @@ async def get_team_member(
     domain: str,
     name: str,
     alias: str,
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> TeamMemberReferenceResponse:
     db = db_infra.get_manager("aweb")
@@ -1061,7 +1261,8 @@ async def get_team_member(
         team_uuid=team_row["team_uuid"],
         team_did_key=team_row["team_did_key"],
         visibility=team_row["visibility"],
-        authorization=authorization,
+        domain=domain,
+        name=name,
     )
 
     row = await db.fetch_one(
@@ -1296,10 +1497,11 @@ async def fetch_certificate(
     domain: str,
     name: str,
     certificate_id: str,
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> CertificateFetchResponse:
-    caller_did = _verify_path_signature(request, authorization)
+    caller_did = await _signed_reader(request, domain=domain, name=name)
+    if caller_did is None:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
     db = db_infra.get_manager("aweb")
 
     row = await db.fetch_one(
@@ -1400,7 +1602,6 @@ async def list_revocations(
     since: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
-    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> RevocationListResponse:
     db = db_infra.get_manager("aweb")
@@ -1421,7 +1622,8 @@ async def list_revocations(
         team_uuid=team_row["team_uuid"],
         team_did_key=team_row["team_did_key"],
         visibility=team_row["visibility"],
-        authorization=authorization,
+        domain=domain,
+        name=name,
     )
 
     try:

@@ -42,6 +42,8 @@ const (
 	doctorCheckIdentityCustody          = "local.identity_yaml.custody_present"
 	doctorCheckIdentityRegistryURL      = "local.identity_yaml.registry_url_syntax"
 	doctorCheckRegistryCoherence        = "local.registry_url.local_coherence"
+	doctorCheckLocalLogKey              = "local.log_key.owner_key_installed"
+	doctorCheckLocalLogPlaintext        = "local.log_key.plaintext_lines"
 )
 
 type doctorLocalState struct {
@@ -112,6 +114,10 @@ func (r *doctorRunner) runLocalChecks() {
 		identityPath:   doctorIdentityStatePath(r.workingDir, r.identityHome, "identity.yaml"),
 	}
 
+	if awconfig.IsGrantHome(r.identityHome) {
+		r.runGrantLogKeyChecks()
+	}
+
 	workspace, workspacePath, err := loadDoctorWorkspaceAt(r.workingDir, r.identityHome)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -178,6 +184,7 @@ func (r *doctorRunner) runLocalChecks() {
 	r.runCertificateChecks(&state)
 	r.runSigningKeyChecks(&state)
 	r.runIdentityChecks(&state)
+	r.runLogKeyChecks(&state)
 }
 
 func (r *doctorRunner) runWorkspaceChecks(state *doctorLocalState) {
@@ -392,8 +399,7 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 	}
 
 	teamDID := strings.TrimSpace(cert.TeamDIDKey)
-	teamPub, err := awid.ExtractPublicKey(teamDID)
-	if err != nil {
+	if _, err := awid.ExtractPublicKey(teamDID); err != nil {
 		r.add(localCheck(
 			doctorCheckCertificateTeamDIDKey,
 			doctorStatusFail,
@@ -407,18 +413,119 @@ func (r *doctorRunner) runCertificateChecks(state *doctorLocalState) {
 	}
 	r.add(localCheck(doctorCheckCertificateTeamDIDKey, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, "Team certificate team_did_key is valid.", "", nil))
 
-	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
+	if err := awid.CheckDecodedTeamCertificate(cert, teamDID); err != nil {
 		r.add(localCheck(
 			doctorCheckCertificateSignature,
 			doctorStatusFail,
 			&doctorTarget{Type: "did", ID: teamDID},
-			"Team certificate signature is invalid.",
+			"Team certificate is invalid.",
 			"Restore a certificate signed by the team controller key.",
 			map[string]any{"error": err.Error()},
 		))
 	} else {
-		r.add(localCheck(doctorCheckCertificateSignature, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, "Team certificate signature verifies with its team_did_key.", "", nil))
+		r.add(localCheck(doctorCheckCertificateSignature, doctorStatusOK, &doctorTarget{Type: "did", ID: teamDID}, "Team certificate verifies with its team_did_key.", "", nil))
 	}
+}
+
+// runLogKeyChecks reports whether this host seals the team's local mail and
+// chat logs to an owner log key the team controller key signed.
+func (r *doctorRunner) runLogKeyChecks(state *doctorLocalState) {
+	if state.membership == nil || state.cert == nil {
+		return
+	}
+	teamDIDKey := state.cert.TeamDIDKey
+	r.reportOwnerLogKey(strings.TrimSpace(state.membership.TeamID), func() (string, error) { return teamDIDKey, nil },
+		"Install a record signed by the team controller key with `aw team admin log-key install <record>`.")
+}
+
+// runGrantLogKeyChecks reports the owner log key for a grant seat, which
+// holds no team certificate: the record is verified against the team key its
+// grant recorded at mint.
+func (r *doctorRunner) runGrantLogKeyChecks() {
+	grant, err := awconfig.LoadGrantHome(r.identityHome)
+	if err != nil {
+		return
+	}
+	r.reportOwnerLogKey(strings.TrimSpace(grant.TeamID), func() (string, error) { return grantLogKeyTeamKey(grant, grant.TeamID) },
+		"A grant that records no team key must be re-minted with `aw id grant mint`; otherwise install a record signed by the team controller key with `aw team admin log-key install <record>`.")
+}
+
+// reportOwnerLogKey reports whether this host seals teamID's local logs to an
+// owner log key signed by the team key that teamKey returns.
+func (r *doctorRunner) reportOwnerLogKey(teamID string, teamKey func() (string, error), verifyNextStep string) {
+	target := &doctorTarget{Type: "team", ID: teamID}
+	rec, err := awconfig.LoadLogKeyRecord(teamID)
+	if errors.Is(err, os.ErrNotExist) {
+		// Plaintext logs are the default until an owner installs a key, so a
+		// team without one is reported for information, not as degraded.
+		r.add(localCheck(
+			doctorCheckLocalLogKey,
+			doctorStatusInfo,
+			target,
+			"No owner log key is installed for this team; local mail and chat logs are written in plaintext.",
+			"The team owner runs `aw team admin log-key create`, has the record signed with `aw team admin log-key sign`, then runs `aw team admin log-key install <record>` on this host.",
+			nil,
+		))
+		return
+	}
+	if err == nil {
+		var teamDIDKey string
+		if teamDIDKey, err = teamKey(); err == nil {
+			err = awid.VerifyLogKeyRecord(rec, teamID, teamDIDKey)
+		}
+	}
+	if err != nil {
+		r.add(localCheck(
+			doctorCheckLocalLogKey,
+			doctorStatusFail,
+			target,
+			"The installed owner log key cannot be verified under the team key; local mail and chat logging is stopped.",
+			verifyNextStep,
+			map[string]any{"error": err.Error()},
+		))
+		return
+	}
+	r.add(localCheck(doctorCheckLocalLogKey, doctorStatusOK, target, "Local mail and chat logs are sealed to the team's owner log key.", "", map[string]any{"key_id": rec.KeyID}))
+	r.runLogPlaintextLineChecks(target)
+}
+
+// runLogPlaintextLineChecks names the logs of this identity that still hold
+// plaintext lines while sealing is on. Such lines were written before the
+// owner log key was installed, or for another team of the same identity or
+// directory; they carry no team, so they are never sealed to this team's key.
+func (r *doctorRunner) runLogPlaintextLineChecks(target *doctorTarget) {
+	paths := []string{interactionLogPath(r.workingDir)}
+	if sel, err := resolveSelectionForDir(r.workingDir); err == nil {
+		paths = append([]string{commLogPath(defaultLogsDir(), commLogNameForSelection(sel))}, paths...)
+	}
+	plaintext := map[string]any{}
+	for _, path := range paths {
+		lines, err := readLocalLogLines(path, 0)
+		if err != nil {
+			continue
+		}
+		count := 0
+		for _, line := range lines {
+			if !isSealedLogLine(line) {
+				count++
+			}
+		}
+		if count > 0 {
+			plaintext[path] = count
+		}
+	}
+	if len(plaintext) == 0 {
+		r.add(localCheck(doctorCheckLocalLogPlaintext, doctorStatusOK, target, "This identity's local logs hold no plaintext lines.", "", nil))
+		return
+	}
+	r.add(localCheck(
+		doctorCheckLocalLogPlaintext,
+		doctorStatusWarn,
+		target,
+		"Local logs hold plaintext lines written before the owner log key was installed or for another team; they are not sealed.",
+		"The owner decides whether to keep, move or delete them; aw never seals them to this team's key.",
+		map[string]any{"plaintext_lines": plaintext},
+	))
 }
 
 func (r *doctorRunner) runSigningKeyFileChecks(state *doctorLocalState) {

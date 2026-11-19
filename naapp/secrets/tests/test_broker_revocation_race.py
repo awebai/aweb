@@ -13,9 +13,11 @@ from aweb_secrets.app import create_app
 from aweb_secrets.containment_routes import containment_api_router
 from aweb_secrets.use_routes import UseServices, use_router
 from tests.harness import running_upstream
+from tests.human_owner import register_holder_member
 from tests.test_app import _settings, allow_all, kms_check
 from tests.test_broker_approved_service import setup
 from tests.test_broker_containment import API, InstalledTools
+from tests.test_change_sets import ALICE
 from tests.test_containment_service import service as containment_service
 from tests.test_use_approvals import REQUESTER, SECRET, TEAM
 from tests.test_use_approvals import uses as uses
@@ -38,6 +40,8 @@ async def test_mounted_revoke_commits_before_final_fence_and_prevents_any_send(
         assert await registry.register_did(member.member_key) == REQUESTER.did_aw
         await registry.add_team(TEAM, member.team_did_key)
         await registry.add_certificate(member.certificate())
+        owner = await register_holder_member(uses.world, registry, ALICE, team_key=member.team_key)
+        assert owner.did_key != member.did_key
 
         def broker_routes(runtime, authorized):
             return use_router(
@@ -77,12 +81,12 @@ async def test_mounted_revoke_commits_before_final_fence_and_prevents_any_send(
                 transport=httpx.ASGITransport(app), base_url=API
             ) as client:
 
-                async def post(path, body):
+                async def post(path, body, *, signer=member):
                     raw = json.dumps(body).encode()
                     return await client.post(
                         path,
                         content=raw,
-                        headers=member.headers(aud=API, method="POST", path=path, body=raw)
+                        headers=signer.headers(aud=API, method="POST", path=path, body=raw)
                         | {"Content-Type": "application/json"},
                     )
 
@@ -149,6 +153,7 @@ async def test_mounted_revoke_commits_before_final_fence_and_prevents_any_send(
                                     "action": "revoke-approvals",
                                     "target": approval_id,
                                 },
+                                signer=owner,
                             ),
                             5,
                         )

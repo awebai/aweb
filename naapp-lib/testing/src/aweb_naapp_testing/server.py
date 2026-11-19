@@ -15,6 +15,10 @@ The ``coordination`` fixture sets the server's environment with
 the server share one DNS: the server's `_awid` lookups answer what AWID's own
 domain verifier answers, so a namespace a test registers (``registered_human``)
 is visible to both, and nothing reaches real DNS.
+
+The server reads the AWID ``coordination_registry`` gives: this repository's,
+in-process. A test module overrides that fixture to run against another AWID,
+for example the release production runs (``production_registry``).
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+import httpx
 import pytest_asyncio
 from aweb.testing import Server, running_server
 from awid.dns_verify import DnsVerificationError, DomainAuthority
@@ -68,7 +73,13 @@ class Coordination:
             response = await client.post(
                 "/v1/connect", content=body, headers={**headers, "Content-Type": "application/json"}
             )
-        response.raise_for_status()
+        if response.is_error:
+            # The server's refusal detail, which raise_for_status() drops.
+            raise httpx.HTTPStatusError(
+                f"/v1/connect answered {response.status_code}: {response.text}",
+                request=response.request,
+                response=response,
+            )
         return response.json()
 
     def directory(self, *, ttl_seconds: int = 60) -> TeamServerDirectory:
@@ -105,20 +116,30 @@ def awid_dns(registry: Registry):
 
 
 @pytest_asyncio.fixture
-async def coordination(test_db_factory, monkeypatch) -> AsyncIterator[Coordination]:
-    monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/aweb")
-    monkeypatch.setenv("AWID_SERVICE_TOKEN", SERVICE_TOKEN)
-    monkeypatch.setenv("AWID_REGISTRY_URL", REGISTRY_URL)
+async def coordination_registry(test_db_factory) -> AsyncIterator[Registry]:
     awid_db = await test_db_factory.create_db(suffix="coordination_awid")
-    server_db = await test_db_factory.create_db(suffix="coordination_aweb")
     async with Redis.from_url(
         os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
     ) as redis:
         async with running_registry(awid_db.config.get_dsn(), redis=redis) as registry:
-            async with running_server(
-                server_db.config.get_dsn(),
-                redis,
-                awid_transport=registry.transport,
-                domain_verifier=awid_dns(registry),
-            ) as server:
-                yield Coordination(registry=registry, server=server)
+            yield registry
+
+
+@pytest_asyncio.fixture
+async def coordination(
+    test_db_factory, monkeypatch, coordination_registry
+) -> AsyncIterator[Coordination]:
+    monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/aweb")
+    monkeypatch.setenv("AWID_SERVICE_TOKEN", SERVICE_TOKEN)
+    monkeypatch.setenv("AWID_REGISTRY_URL", REGISTRY_URL)
+    server_db = await test_db_factory.create_db(suffix="coordination_aweb")
+    async with Redis.from_url(
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True
+    ) as redis:
+        async with running_server(
+            server_db.config.get_dsn(),
+            redis,
+            awid_transport=coordination_registry.transport,
+            domain_verifier=awid_dns(coordination_registry),
+        ) as server:
+            yield Coordination(registry=coordination_registry, server=server)

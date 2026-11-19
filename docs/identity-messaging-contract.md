@@ -46,6 +46,25 @@ Team certificates remain valid for team membership, local ACLs, and certificate
 verification flows. They are not an address reachability or message routing
 oracle.
 
+`aw` refuses a mail or chat send to an alias when recipient lookup fails,
+instead of passing the bare alias to the server without confirming its
+recipient.
+
+Address discovery distinguishes not requested, observed empty, verified value,
+and unavailable evidence. A failed address read is optional UNKNOWN enrichment,
+not proof that an identity has no address: it never clears a stored binding,
+caches an empty result, or changes the sender's From. Identity displays report
+unknown when discovery is unavailable. Independent DID/key authentication and
+membership checks still apply.
+
+Sender, From and routing uses require address evidence. A stored binding
+already verified for the authenticated current key supplies that evidence,
+including a verified empty address, which still permits addressless sending
+during a registry outage. Only when no such binding is available and discovery
+fails does the operation refuse with HTTP 503 `address_evidence_unavailable`,
+before delivery or other effects. Conflicting stored bindings do not select a
+different From. DID-only reads do not acquire this address dependency.
+
 Global recipients expose an explicit delivery-time `inbound_mode`. It is an
 identity property across every non-deleted row for the exact `did:aw`, including
 retired or inactive memberships. The effective policy is the strictest valid
@@ -123,7 +142,10 @@ For a send to a global address (`domain/name`):
    closed on mismatch. The sending server connects only to an `https` delivery
    origin whose host resolves to public addresses (or private ones, for an
    origin its operator lists in `AWEB_FEDERATION_PRIVATE_DELIVERY_ORIGINS`), at
-   the address it checked, and does not follow redirects. A failed delivery
+   the address it checked, and does not follow redirects. A server whose
+   operator set `AWEB_FEDERATION_OUTBOUND` to `off`, or to a list of origins
+   that does not include this one, refuses the send with `403` naming the
+   setting before resolving or connecting. A failed delivery
    returns the status and one fixed reason (`delivery_origin_refused`,
    `delivery_address_refused`, `delivery_origin_unreachable`,
    `delivery_timeout`, `delivery_unavailable`, `HTTP <status>`, or the

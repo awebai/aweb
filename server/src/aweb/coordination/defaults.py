@@ -137,12 +137,3 @@ def get_default_team_instructions(force_reload: bool = False) -> Dict[str, Any]:
                 )
 
     return copy.deepcopy(_DEFAULT_TEAM_INSTRUCTIONS_CACHE)
-
-
-def clear_default_bundle_cache() -> None:
-    """Clear cached defaults (for testing)."""
-    global _DEFAULT_BUNDLE_CACHE
-    global _DEFAULT_TEAM_INSTRUCTIONS_CACHE
-    with _CACHE_LOCK:
-        _DEFAULT_BUNDLE_CACHE = None
-        _DEFAULT_TEAM_INSTRUCTIONS_CACHE = None

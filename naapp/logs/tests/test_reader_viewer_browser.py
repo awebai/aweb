@@ -6,21 +6,21 @@ log on the console origin logs composes."""
 from __future__ import annotations
 
 import asyncio
+import base64
 import socket
+import ssl
 from collections.abc import AsyncIterator
-from datetime import timedelta
 from urllib.parse import urlencode
 
 import pytest
 import uvicorn
 from aweb_naapp.console import (
-    ClientIdentity,
-    ConsoleSessions,
-    LoginLimiter,
     apply_console_migrations,
 )
 from aweb_naapp.runtime.origins import split_origins
 from aweb_naapp.runtime.passkeys import RelyingParty
+from aweb_naapp_testing.network import Certificates, make_certificates
+from cryptography.hazmat.primitives import serialization
 from fastapi import FastAPI
 from playwright.async_api import (
     Browser,
@@ -32,10 +32,8 @@ from playwright.async_api import (
 )
 from playwright.async_api import Error as PlaywrightError
 
-from aweb_logs.reader_service import ReaderService
-
-from .reader_world import CONTACT, World, designated_reader, world_fixture  # noqa: F401
-from .test_reader_viewer import recorded
+from .reader_world import World, held_reader, world_fixture  # noqa: F401
+from .test_reader_viewer import recorded, viewer_service
 
 
 @pytest.fixture
@@ -54,38 +52,39 @@ async def browser() -> AsyncIterator[Browser]:
 
 
 @pytest.fixture
-async def service(world: World) -> AsyncIterator[str]:
-    """logs' console origin as :class:`ReaderService` composes it, served on
-    an ephemeral local port the browser can reach."""
+def console_tls(tmp_path) -> Certificates:
+    """A private CA's certificate for the local HTTPS console."""
+    return make_certificates(tmp_path, ["localhost"], ["127.0.0.1"])
+
+
+@pytest.fixture
+async def service(world: World, console_tls: Certificates) -> AsyncIterator[str]:
+    """logs' console origin as :class:`ReaderService` composes it, served over
+    HTTPS on an ephemeral local port the browser can reach. An owner act's
+    audience is an HTTPS origin, and the credential's relying party is that
+    same origin."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
-        origin = f"http://localhost:{port}"
+        origin = f"https://localhost:{port}"
         # The real verifier, for this ephemeral origin, before anyone enrols.
         world.passkeys.rp = RelyingParty(origin=origin, name="Logs")
         await apply_console_migrations(world.db)
-        reader_service = ReaderService(
-            db=world.db,
-            directory=world.directory,
-            fence=world.fence,
-            designations=world.designations,
-            governance=world.governance,
-            passkeys=world.passkeys,
-            recorder=world.recorder,
-            sessions=ConsoleSessions(
-                world.db, passkeys=world.passkeys, scopes=world.directory.is_current_reader
-            ),
-            limiter=LoginLimiter(
-                world.db, client_identity=ClientIdentity(), limit=12, window=timedelta(minutes=1)
-            ),
-            chain_keys=frozenset({world.signer.did_key}),
-        )
+        reader_service = viewer_service(world)
         human = FastAPI()
         human.include_router(reader_service.console_router)
         app = split_origins(
             FastAPI(), human, agent_origin=f"http://127.0.0.1:{port}", human_origin=origin
         )
-        server = uvicorn.Server(uvicorn.Config(app, log_level="warning", lifespan="off"))
+        server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                log_level="warning",
+                lifespan="off",
+                ssl_certfile=str(console_tls.cert_file),
+                ssl_keyfile=str(console_tls.key_file),
+            )
+        )
         task = asyncio.create_task(server.serve(sockets=[sock]))
         try:
             async with asyncio.timeout(10):
@@ -100,12 +99,12 @@ async def service(world: World) -> AsyncIterator[str]:
 
 
 async def signed_in_page(world: World, context: BrowserContext, service: str) -> Page:
-    """A tab of a designated reader that enrolled its passkey from its mailed
-    link and signed in with it."""
+    """A tab of a reader the owner named, whose authenticator holds the
+    credential the owner's act bound, signed in with it."""
     page = await context.new_page()
     cdp = await context.new_cdp_session(page)
     await cdp.send("WebAuthn.enable")
-    await cdp.send(
+    authenticator = await cdp.send(
         "WebAuthn.addVirtualAuthenticator",
         {
             "options": {
@@ -118,20 +117,29 @@ async def signed_in_page(world: World, context: BrowserContext, service: str) ->
             }
         },
     )
-    scope, _ = await designated_reader(world)
-    await page.goto(service + "/login?" + urlencode({"scope": scope}))
-    status = await page.evaluate(
-        """async link_token => {
-      const response = await fetch('/enrolment/options', {method:'POST',
-        headers:{'Content-Type':'application/json'}, body:JSON.stringify({link_token})});
-      const credential = await navigator.credentials.create({publicKey:
-        PublicKeyCredential.parseCreationOptionsFromJSON(await response.json())});
-      return (await fetch('/enrolment', {method:'POST', headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({link_token, credential:credential.toJSON()})})).status;
-    }""",
-        world.inbox.enrolments[CONTACT][-1],
+    scope, _ = await held_reader(world)
+    (credential,) = world.devices[scope].credentials.values()
+    await cdp.send(
+        "WebAuthn.addCredential",
+        {
+            "authenticatorId": authenticator["authenticatorId"],
+            "credential": {
+                "credentialId": base64.b64encode(credential.credential_id).decode(),
+                "isResidentCredential": True,
+                "rpId": credential.rp_id,
+                "privateKey": base64.b64encode(
+                    credential.key.private_bytes(
+                        serialization.Encoding.DER,
+                        serialization.PrivateFormat.PKCS8,
+                        serialization.NoEncryption(),
+                    )
+                ).decode(),
+                "userHandle": base64.b64encode(credential.user_handle).decode(),
+                "signCount": 0,
+            },
+        },
     )
-    assert status == 200
+    await page.goto(service + "/login?" + urlencode({"scope": scope}))
     await page.locator("#login button[type=submit]").click()
     await page.wait_for_url(service + "/")
     return page
@@ -145,7 +153,9 @@ async def fits(page: Page) -> bool:
 async def test_a_reader_reads_filters_follows_and_checks_its_log_in_a_browser(
     world: World, browser: Browser, service: str, width: int, tmp_path
 ):
-    async with await browser.new_context(viewport={"width": width, "height": 900}) as context:
+    async with await browser.new_context(
+        viewport={"width": width, "height": 900}, ignore_https_errors=True
+    ) as context:
         page = await signed_in_page(world, context, service)
         client = await recorded(world, "client")
         core = await recorded(world, "core")
@@ -199,7 +209,7 @@ async def test_a_reader_reads_filters_follows_and_checks_its_log_in_a_browser(
 async def test_the_follow_page_stops_and_offers_sign_in_when_the_session_ends(
     world: World, browser: Browser, service: str
 ):
-    async with await browser.new_context() as context:
+    async with await browser.new_context(ignore_https_errors=True) as context:
         page = await signed_in_page(world, context, service)
         await page.goto(service + "/follow")
         await context.clear_cookies()
@@ -208,9 +218,10 @@ async def test_the_follow_page_stops_and_offers_sign_in_when_the_session_ends(
 
 
 @pytest.fixture
-async def cut_off() -> AsyncIterator[str]:
-    """A local server that starts an HTML response and closes the connection
-    before its body is complete: the network failing while a page is read."""
+async def cut_off(console_tls: Certificates) -> AsyncIterator[str]:
+    """A local HTTPS server that starts an HTML response and closes the
+    connection before its body is complete: the network failing while a page
+    is read."""
 
     async def respond(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         await reader.readuntil(b"\r\n\r\n")
@@ -220,10 +231,12 @@ async def cut_off() -> AsyncIterator[str]:
         await writer.drain()
         writer.close()
 
-    server = await asyncio.start_server(respond, "127.0.0.1", 0)
+    tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    tls.load_cert_chain(console_tls.cert_file, console_tls.key_file)
+    server = await asyncio.start_server(respond, "127.0.0.1", 0, ssl=tls)
     port = server.sockets[0].getsockname()[1]
     try:
-        yield f"http://127.0.0.1:{port}/follow/events"
+        yield f"https://127.0.0.1:{port}/follow/events"
     finally:
         server.close()
         await server.wait_closed()
@@ -232,7 +245,7 @@ async def cut_off() -> AsyncIterator[str]:
 async def test_follow_keeps_following_when_a_response_is_cut_off(
     world: World, browser: Browser, service: str, cut_off: str
 ):
-    async with await browser.new_context() as context:
+    async with await browser.new_context(ignore_https_errors=True) as context:
         page = await signed_in_page(world, context, service)
         polls: list[str] = []
 
@@ -256,7 +269,7 @@ async def test_follow_keeps_following_when_a_response_is_cut_off(
 async def test_follow_stops_on_a_response_that_is_not_a_list_of_events(
     world: World, browser: Browser, service: str
 ):
-    async with await browser.new_context() as context:
+    async with await browser.new_context(ignore_https_errors=True) as context:
         page = await signed_in_page(world, context, service)
 
         async def malformed(route: Route) -> None:
@@ -277,7 +290,7 @@ async def test_follow_stops_on_a_response_that_is_not_a_list_of_events(
 async def test_follow_shows_it_is_retrying_while_the_server_cannot_be_reached(
     world: World, browser: Browser, service: str
 ):
-    async with await browser.new_context() as context:
+    async with await browser.new_context(ignore_https_errors=True) as context:
         page = await signed_in_page(world, context, service)
         unreachable = {"remaining": 2}
 
@@ -341,7 +354,7 @@ _CONTRAST = """([selector, property, against]) => {
 async def test_the_viewer_s_controls_and_verdicts_have_readable_contrast(
     world: World, browser: Browser, service: str, scheme: str
 ):
-    async with await browser.new_context(color_scheme=scheme) as context:  # type: ignore[arg-type]
+    async with await browser.new_context(color_scheme=scheme, ignore_https_errors=True) as context:  # type: ignore[arg-type]
         page = await signed_in_page(world, context, service)
         await page.goto(service + "/events")
         await page.locator("#filters summary").click()

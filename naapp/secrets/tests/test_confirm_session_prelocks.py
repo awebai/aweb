@@ -51,7 +51,7 @@ async def prepare_inputs(context):
         change_set(
             drafter=on_console(targets[0].b3_scope),
             changes=[grant_role(ALICE)],
-            base_revision=await config_revision(w.db, INSTALLATION_ID),
+            base_revision=await config_revision(w.db, INSTALLATION_ID, team_id=TEAM),
         ),
     )
     await apply_job_migrations(w.db)

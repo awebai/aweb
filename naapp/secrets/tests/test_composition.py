@@ -12,6 +12,7 @@ from aweb_naapp_testing.smtp import SmtpServer
 
 from aweb_secrets.composition import create_service
 from aweb_secrets.config import ServiceSettings
+from aweb_secrets.custody import Custody, LocalKeyFileProvider, encode_value
 from tests.test_app import API, CONSOLE, _settings
 
 
@@ -164,6 +165,52 @@ async def test_missing_required_custody_key_refuses_the_production_constructor(
         configured.custody_key_file.unlink()
         with pytest.raises(KeyFileError):
             create_service(configured, awid_transport=registry.transport)
+
+
+async def test_restarted_service_requires_the_key_for_its_retained_ciphertext(
+    test_db_factory, registry, tmp_path
+):
+    database = await test_db_factory.create_db(suffix="secrets_replaced_custody_key")
+    with SmtpServer(tmp_path / "smtp", password=secrets.token_urlsafe(32)) as smtp:
+        configured = settings(database, tmp_path, smtp)
+        key_file = configured.custody_key_file
+        assert key_file is not None
+        original_key = key_file.read_bytes()
+        value = encode_value("bearer", {"value": secrets.token_urlsafe(32)})
+        retained = None
+        for phase in ("original", "replacement", "restored"):
+            if phase == "replacement":
+                key_file.write_text(secrets.token_hex(32), encoding="ascii")
+            elif phase == "restored":
+                key_file.write_bytes(original_key)
+            service = create_service(configured, awid_transport=registry.transport)
+            async with service.api_app.router.lifespan_context(service.api_app):
+                db = service.runtime.db()
+                custody = Custody(LocalKeyFileProvider(key_file), db)
+                if phase == "original":
+                    async with db.transaction() as tx:
+                        context = await custody.stage_backend_credential(
+                            tx, installation_id="installation-1", team_id="team-1", value=value
+                        )
+                    retained = await db.fetch_all("SELECT * FROM sealed_versions")
+                    assert retained
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(service)) as client:
+                    for origin in (API, CONSOLE):
+                        assert (await client.get(origin + "/live")).status_code == 200
+                        for path in ("/ready", "/health"):
+                            response = await client.get(origin + path)
+                            assert response.status_code == (503 if phase == "replacement" else 200)
+                            assert response.json()["checks"]["kms"] == (
+                                "error" if phase == "replacement" else "ok"
+                            )
+                            assert "local:" not in response.text
+                if await db.fetch_all("SELECT * FROM sealed_versions") != retained:
+                    raise AssertionError("restart/readiness changed retained ciphertext")
+                if phase == "restored":
+                    opened = await custody.backend_credential_preview.open(context)
+                    if opened.plaintext.reveal() != value:
+                        raise AssertionError("restoring original custody key did not recover value")
+            assert service.runtime.connected_db() is None
 
 
 async def test_request_response_and_runner_keys_require_independent_material(

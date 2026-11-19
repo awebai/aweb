@@ -3,9 +3,7 @@ package awid
 // Laboratory reader: no production application imports or advertises this profile.
 import (
 	"bytes"
-	"context"
 	"crypto/ecdh"
-	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -339,64 +337,5 @@ func TestHumanChannelsE2EESpikeVector(t *testing.T) {
 	if err = json.Unmarshal(raw, &f); err != nil {
 		t.Fatal(err)
 	}
-	hcXRun(t, f)
-}
-func TestHumanChannelsE2EELiveInput(t *testing.T) {
-	path := os.Getenv("AW_TEST_HC_E2EE_SPIKE_FIXTURE")
-	if path == "" {
-		t.Skip("provided by real HTTP spike")
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var f hcXFixture
-	if err = json.Unmarshal(raw, &f); err != nil {
-		t.Fatal(err)
-	}
-	bob, err := NewWithIdentity(f.BaseURL, ed25519.NewKeyFromSeed(hcXUn64(t, f.Identities["bob"].Seed)), f.Identities["bob"].DID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	carol, err := NewWithIdentity(f.BaseURL, ed25519.NewKeyFromSeed(hcXUn64(t, f.Identities["carol"].Seed)), f.Identities["carol"].DID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var history struct {
-		Messages []struct {
-			MessageID string          `json:"message_id"`
-			Envelope  json.RawMessage `json:"encrypted_envelope"`
-		} `json:"messages"`
-	}
-	pathToHistory := "/v1/chat/sessions/" + f.Session + "/messages"
-	if err = bob.Do(context.Background(), "GET", pathToHistory, nil, &history); err != nil {
-		t.Fatal(err)
-	}
-	var original E2EEMessageEnvelope
-	if err = json.Unmarshal(f.Original, &original); err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, message := range history.Messages {
-		if message.MessageID == original.MessageID {
-			f.Original = message.Envelope
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("Go HTTP client did not receive original")
-	}
-	if err = carol.Do(context.Background(), "GET", pathToHistory, nil, &history); err == nil {
-		t.Fatal("Go newcomer read old room")
-	} else if status, ok := HTTPStatusCode(err); !ok || (status != 403 && status != 404) {
-		t.Fatal(err)
-	}
-	var delivered struct {
-		Envelope E2EEMessageEnvelope `json:"encrypted_envelope"`
-	}
-	if err = carol.Do(context.Background(), "GET", "/v1/messages/"+f.Capsule.MessageID, nil, &delivered); err != nil {
-		t.Fatal(err)
-	}
-	f.Capsule = delivered.Envelope
 	hcXRun(t, f)
 }

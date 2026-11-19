@@ -3,15 +3,14 @@
 from datetime import timedelta
 
 import pytest
-from aweb_naapp.roles import hold_role, principal_key
 from aweb_naapp_testing.owner_acts import INSTALLATION_ID
 
 from aweb_secrets import records
 from aweb_secrets.admission import AdmissionRefused, admit_use
 from aweb_secrets.containment import ContainmentRefused
 from aweb_secrets.custody import CustodyUnavailable
-from aweb_secrets.owners import OWNER_ROLE
-from tests.test_change_sets import TEAM, world  # noqa: F401
+from aweb_secrets.owners import hold_owner
+from tests.test_change_sets import ALICE, TEAM, world  # noqa: F401
 from tests.test_containment import seal
 from tests.test_containment_service import act, service
 from tests.test_use_approval_lineage import child, seed
@@ -24,7 +23,7 @@ uses = _uses
 async def recover(uses, svc, secret_id, ref, *, rollback=False):
     async with uses.world.db.transaction() as tx:
         await uses.world.fence.admit(tx, uses.grant)
-        assert await hold_role(tx, principal_key(REQUESTER), OWNER_ROLE)
+        assert await hold_owner(tx, ALICE, installation_id=INSTALLATION_ID)
         await svc.prepare_replacements(
             tx, installation_id=INSTALLATION_ID, team_id=TEAM, secret_ids=(secret_id,)
         )

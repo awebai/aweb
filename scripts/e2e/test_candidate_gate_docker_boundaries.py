@@ -11,6 +11,8 @@ import tempfile
 import time
 import unittest
 import uuid
+import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -30,7 +32,7 @@ def _bind_tmp() -> tempfile.TemporaryDirectory:
 
 
 PROBE_SERVICE_IMAGE = (
-    "nginx:alpine@sha256:1d40e3eb3bf4f138de1d67193f2aa5309fcaf343eb5ffadbf5e9439de1eb1ebb"
+    "nginx:1.31.3-alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752"
 )
 # Buildx timestamp presentation can drift without a cache mutation, including
 # CreatedAt fractional seconds. Neither timestamp defines cache identity/content.
@@ -156,7 +158,10 @@ class PublishedPortWaitTests(unittest.TestCase):
                 else:
                     result = subprocess.CompletedProcess(args, 0, "127.0.0.1:32768\n", "")
             elif args[:3] == ("docker", "run", "--detach"):
-                result = subprocess.CompletedProcess(args, 0, "delayed-mapping-container\n", "")
+                if "--name" in args:
+                    result = subprocess.CompletedProcess(args, 1, "", "port is already allocated")
+                else:
+                    result = subprocess.CompletedProcess(args, 0, "delayed-mapping-container\n", "")
             elif args[:3] == ("docker", "container", "inspect"):
                 result = subprocess.CompletedProcess(args, 1, "", "removed")
             else:
@@ -165,15 +170,8 @@ class PublishedPortWaitTests(unittest.TestCase):
                 raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
             return result
 
-        boundary = DockerBoundaryTests("test_fixed_docker_host_reaches_published_port_but_loopback_does_not")
-        boundary.image = "synthetic-candidate"
-        # Only Docker's external command boundary is delayed. Exercise the real
-        # boundary test, including its host-vs-loopback command and cleanup.
         with patch(__name__ + ".run", side_effect=docker):
-            try:
-                boundary.test_fixed_docker_host_reaches_published_port_but_loopback_does_not()
-            except subprocess.CalledProcessError as error:
-                self.fail(f"Delayed port publication must be retried, not fail at the first docker port: {error.stderr}")
+            self.assertEqual(wait_for_published_port("delayed-mapping-container"), "32768")
         self.assertEqual(port_reads, 3)
 
     def test_missing_mapping_times_out_with_container_state(self) -> None:
@@ -411,29 +409,107 @@ class DockerBoundaryTests(unittest.TestCase):
             )
             self.assertEqual(result.stdout.strip(), "visible")
 
-    def test_fixed_docker_host_reaches_published_port_but_loopback_does_not(self) -> None:
-        container = run(
-            "docker", "run", "--detach", "--publish", "127.0.0.1::80",
-            PROBE_SERVICE_IMAGE,
-        ).stdout.strip()
-        try:
-            port = wait_for_published_port(container)
-            result = run(
-                "docker", "run", "--rm",
-                "--add-host", "aweb-docker.test:host-gateway",
-                self.image, "bash", "-ceu",
-                f"ready=; for _ in $(seq 1 30); do "
-                f"curl -fsS http://aweb-docker.test:{port} >/dev/null && {{ ready=1; break; }}; "
-                f"sleep 0.2; done; test -n \"$ready\"; "
-                f"! curl -fsS --connect-timeout 1 http://127.0.0.1:{port} >/dev/null 2>&1",
-                check=False,
+
+def read_published_response(port: str) -> str:
+    # A proxy would prove a different route. This request must originate on
+    # the Docker host, not in the bridge-network candidate runner.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(f"http://127.0.0.1:{port}/", timeout=2) as response:
+        return response.read(4096).decode("utf-8")
+
+
+class HostPublishedPortTests(unittest.TestCase):
+    """Only the host-side checks preflight invokes this real-socket test."""
+
+    def test_docker_assigned_published_port_is_reserved_by_its_service(self) -> None:
+        self.assertNotIn("CANDIDATE_RUNNER_NAME", os.environ,
+                         "published loopback must be tested from the Docker host")
+        token = uuid.uuid4().hex[:12]
+        original = f"aweb-publish-original-{token}"
+        competitor = f"aweb-publish-competitor-{token}"
+        expected = f"original-{token}"
+        label = os.environ.get("AWEB_CANDIDATE_RESOURCE_LABEL", f"acwx-published-{token}")
+
+        def launch(name: str, binding: str, response: str):
+            return run(
+                "docker", "run", "--detach", "--name", name,
+                "--label", f"aweb.candidate-gate={label}",
+                "--publish", binding, "--env", f"PROBE_RESPONSE={response}",
+                "--entrypoint", "sh", PROBE_SERVICE_IMAGE, "-ceu",
+                'printf "%s\\n" "$PROBE_RESPONSE" > /usr/share/nginx/html/index.html; '
+                "exec nginx -g 'daemon off;'", check=False, timeout=30,
             )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        def snapshot(name: str):
+            result = run("docker", "inspect", name, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            info, = json.loads(result.stdout)
+            return {"state": info["State"], "ports": info["NetworkSettings"]["Ports"]}
+
+        def owner(snapshot_value):
+            self.assertTrue(snapshot_value["state"]["Running"], snapshot_value)
+            self.assertIn({"HostIp": "127.0.0.1", "HostPort": port},
+                          snapshot_value["ports"].get("80/tcp") or [], snapshot_value)
+
+        before = None
+        try:
+            created = launch(original, "127.0.0.1::80", expected)
+            self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+            port = wait_for_published_port(original)
+            deadline = time.monotonic() + 10
+            while True:
+                try:
+                    response = read_published_response(port)
+                    break
+                except (urllib.error.URLError, TimeoutError) as error:
+                    if time.monotonic() >= deadline:
+                        self.fail(f"original host publication never became reachable: {error}")
+                    time.sleep(0.1)
+            self.assertEqual(response, expected + "\n")
+            before = snapshot(original)
+            owner(before)
+            attempted = launch(competitor, f"127.0.0.1:{port}:80", f"competitor-{token}")
+            if attempted.returncode:
+                self.assertRegex(attempted.stderr.lower(),
+                                 "port is already allocated|address already in use|ports are not available")
+            else:
+                # Desktop can start a container without installing its requested
+                # conflicting binding. Successful startup is not publication.
+                competing = snapshot(competitor)
+                self.assertFalse(any(
+                    binding["HostPort"] == port
+                    for bindings in competing["ports"].values()
+                    for binding in (bindings or [])
+                ), competing)
+            owner(snapshot(original))
+            self.assertEqual(read_published_response(port), expected + "\n",
+                             "competitor displaced the original host response")
+            # Observe again after the actual request, including any asynchronous
+            # publication that completed while the request was in flight.
+            owner(snapshot(original))
+            if attempted.returncode == 0:
+                competing = snapshot(competitor)
+                self.assertFalse(any(binding["HostPort"] == port
+                                     for bindings in competing["ports"].values()
+                                     for binding in (bindings or [])), competing)
+            print(f"host publication PASS: original response retained; competitor "
+                  f"{'refused' if attempted.returncode else 'started without the reserved binding'}")
+        except Exception:
+            print(f"original before competition: {before}")
+            for name in (original, competitor):
+                state = run("docker", "inspect", "--format",
+                            "{{json .State}} {{json .NetworkSettings.Ports}}", name,
+                            check=False, timeout=10)
+                logs = run("docker", "logs", "--tail", "30", name, check=False, timeout=10)
+                print(f"{name}: {state.stdout}{state.stderr}\nlogs: {logs.stdout}{logs.stderr}")
+            raise
         finally:
-            removed = run("docker", "rm", "-f", container, check=False)
-            self.assertEqual(removed.returncode, 0, removed.stdout + removed.stderr)
-            remains = run("docker", "container", "inspect", container, check=False)
-            self.assertNotEqual(remains.returncode, 0, "probe container survived cleanup")
+            for name in (competitor, original):
+                run("docker", "rm", "-f", name, check=False, timeout=15)
+            for name in (competitor, original):
+                remains = run("docker", "container", "inspect", name, check=False, timeout=10)
+                self.assertNotEqual(remains.returncode, 0, "probe container survived cleanup")
+            run("docker", "info", timeout=10)
 
 
 def main() -> int:
@@ -441,7 +517,11 @@ def main() -> int:
     parser.add_argument("--image", required=True)
     args, remaining = parser.parse_known_args()
     os.environ["CANDIDATE_GATE_TEST_IMAGE"] = args.image
-    program = unittest.main(argv=[__file__, *remaining], exit=False)
+    # The host socket proof is explicitly invoked by the outer gate. Never
+    # execute it from this file's default in-runner boundary suite.
+    program = unittest.main(argv=[__file__, *remaining], exit=False,
+                            defaultTest=["DockerBoundaryTests", "PublishedPortWaitTests",
+                                         "StableBuildxDuRecordsTests"])
     return 0 if program.result.wasSuccessful() else 1
 
 

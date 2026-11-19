@@ -28,7 +28,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 | `naapp-lib/src/aweb_naapp/hooks/catalog-v1.json` | The byte-enforced package copy of `hook-catalog-v1.json`, shipped in the naapp-lib wheel so an installed app loads the catalog (`aweb_naapp.hooks.catalog.packaged_catalog`) with no repository checkout. |
 | `naapp-lib/tests/vectors/` | External cryptographic known-answer fixtures: `hpke-rfc9180-base-x25519.json` pins RFC 9180 upstream test-vector data for `test_crypto_hpke.py`; it is not an aweb public protocol vector. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
-| `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
+| `naapp/library/tests/vectors/` | Library blueprint input/output goldens. |
 | `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |
 | `test-vectors/` | Repository-level policy, blueprint, app-manifest, and packaging fixtures governed by their own indexes. |
 
@@ -40,17 +40,6 @@ digest-pinned experimental app-manifest snapshots documented by
 identity/trust vector family.
 
 ## Accepting protocols awaiting client rollout
-
-### `human-assurance-v1.json` — frozen policy contract
-
-The [human-assurance contract](../human-assurance-contract.md) defines the
-shared protected-signing operation catalog and its positive/refusal policy
-scenarios for hosted and independent implementations. The fixture separates
-live exact-act approvals from bounded unattended operations, with typed
-custody, requester and receipt boundaries. These are implementation acceptance
-inputs, not cryptographic known answers or evidence that runtime paths have
-passed. Implementations must exercise the applicable cases against their
-shared signer and adapters; static catalog validation is not runtime acceptance.
 
 ### `id-certificates-v1.json` — contract candidate
 
@@ -137,7 +126,7 @@ checkpoints, rather than evidence those paths have already been implemented.
 
 ### `member-attribution-v1.json` — superseded, historical only
 
-The [old member attribution proposal](../member-attribution.md) is superseded
+The [old member attribution proposal](../drafts/member-attribution.md) is superseded
 by the identity tree. Its frozen bytes remain evidence, not a new email/SMTP
 implementation contract. No new consumer should implement this record.
 
@@ -149,6 +138,19 @@ The real AWID route consumes this vector, including wrong-audience and team-auth
 purpose refusals. Legacy forms remain accepted and measured until the operator's
 cutoff; clients emit this shape only after the accepting registry is deployed.
 See [AWID controller requests](../awid-controller-requests.md).
+
+### `awid-controller-writes-v1.json`
+
+The controller writes aw and the Python `awid` client both make (namespace
+register, update and delete; team create, visibility, delete and key rotation;
+certificate register and revoke; address register and delete, one with an
+escaped name), as the Python client sends them: the call's arguments, and the
+exact method, raw path, body bytes and signing headers of the covering-v2
+request. Keys come from fixed seeds and the timestamp is fixed.
+`scripts/generate_controller_write_vectors.py` writes the file from the Python
+client and checks it with `--check`; the Python client is the reference because
+the deployed registry is shown to accept its bytes. aw's Go client must send the
+same bytes for the same call.
 
 ## Current protocol fixtures
 
@@ -1044,7 +1046,7 @@ The [P0 contract](../human-channels-contract-v1.md) fixes the public embedding
 ports and signature boundary. X-E2/X-GF encrypted re-share/federation annexes
 remain refused until exact-SHA Athena review; current native fixtures are unchanged.
 
-`human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `server/tests/test_human_channels_e2ee_spike.py` and `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.
+`human-channels-e2ee-spike.json` is an **unfrozen** X-E2 laboratory fixture, consumed by `cli/go/awid/human_channels_e2ee_spike_test.go`. It enables no profile.
 
 ## Human-channel presence verification
 

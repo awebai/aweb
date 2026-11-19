@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import OrderedDict
 from dataclasses import replace
 from time import monotonic
@@ -120,7 +121,18 @@ async def observe_identity_binding(client, *, did_key: str, did_aw: str, address
         )
     except IdentityObservationRefused as exc:
         status = 403 if exc.code == "identity_binding_mismatch" else 503
-        raise HTTPException(status_code=status, detail=exc.code) from exc
+        delay = getattr(exc, "retry_after_seconds", None)
+        headers = None
+        if (
+            status == 503
+            and isinstance(delay, (int, float))
+            and not isinstance(delay, bool)
+            and math.isfinite(delay)
+            and delay >= 0
+        ):
+            # Never shorten an upstream window or busy-loop a zero hint.
+            headers = {"Retry-After": str(max(1, math.ceil(delay)))}
+        raise HTTPException(status_code=status, detail=exc.code, headers=headers) from exc
 
 
 async def refresh_projection_binding(

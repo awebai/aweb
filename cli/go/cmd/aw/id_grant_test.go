@@ -181,6 +181,15 @@ func TestRunGrantMintWritesGrantHome(t *testing.T) {
 	if grant.Subject.Alias != "alice" || grant.Subject.DIDAW != "did:aw:alice" {
 		t.Fatalf("grant subject=%+v", grant.Subject)
 	}
+	// The resident's team key is recorded so the grant seat can verify the
+	// team's owner log-key record without a team certificate of its own.
+	residentCert, err := awconfig.LoadTeamCertificateForTeam(tmp, "backend:demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.TeamDIDKey == "" || grant.TeamDIDKey != residentCert.TeamDIDKey {
+		t.Fatalf("grant home team_did_key=%q, want the resident certificate's %q", grant.TeamDIDKey, residentCert.TeamDIDKey)
+	}
 
 	keyPath := awconfig.GrantHomeSigningKeyPath(outDir)
 	info, err := os.Stat(keyPath)
@@ -770,5 +779,134 @@ func TestGrantCommandsWithGrantIdentityHomeRefuseRootAuthorityInRealBinary(t *te
 	}
 	if strings.Contains(string(out), "not yet identity-home-aware") {
 		t.Fatalf("grant-home command stopped at policy gate instead of root-authority refusal:\n%s", out)
+	}
+}
+
+// Mint reads the resident's team certificate the way the rest of aw does,
+// through the membership's stored cert_path, so a workspace whose certificate
+// sits at a legacy path still mints and records the team key.
+func TestRunGrantMintReadsTheStoredCertPath(t *testing.T) {
+	resetGrantCommandGlobals(t)
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	setGrantTestEnv(t, tmp)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"grant_id": "grant-legacy", "team_id": "backend:demo", "subject_alias": "alice",
+			"subject_did_aw": "did:aw:alice", "grant_did_key": body["grant_did_key"], "scopes": body["scopes"],
+			"issued_at": "2026-08-12T00:00:00Z", "expires_at": "2026-08-12T08:00:00Z",
+		})
+	}))
+	t.Cleanup(server.Close)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	canonical := awconfig.TeamCertificatePath(tmp, "backend:demo")
+	cert, err := awid.LoadTeamCertificate(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(tmp, ".aw", "certificate.json")
+	if err := os.Rename(canonical, legacy); err != nil {
+		t.Fatal(err)
+	}
+	// A different certificate at the canonical path must not be read: the
+	// stored cert_path is authoritative.
+	_, otherTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := awid.SignTeamCertificate(otherTeamKey, awid.TeamCertificateFields{
+		Team: cert.Team, MemberDIDKey: cert.MemberDIDKey, MemberDIDAW: cert.MemberDIDAW,
+		MemberAddress: cert.MemberAddress, Alias: cert.Alias, IdentityScope: cert.IdentityScope,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveTeamCertificate(canonical, wrong); err != nil {
+		t.Fatal(err)
+	}
+	workspacePath := filepath.Join(tmp, awconfig.DefaultWorktreeWorkspaceRelativePath())
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range workspace.Memberships {
+		workspace.Memberships[i].CertPath = "certificate.json"
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := awconfig.LoadTeamState(tmp); err == nil {
+		for i := range state.Memberships {
+			state.Memberships[i].CertPath = "certificate.json"
+		}
+		if err := awconfig.SaveTeamState(tmp, state); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	outDir := filepath.Join(tmp, "legacy-grant")
+	grantMintScopes = []string{"mail.read"}
+	grantMintOut = outDir
+	var runErr error
+	captureIDCommandStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
+	if runErr != nil {
+		t.Fatalf("mint with a legacy cert_path: %v", runErr)
+	}
+	grant, err := awconfig.LoadGrantHome(outDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grant.TeamDIDKey != cert.TeamDIDKey {
+		t.Fatalf("team_did_key=%q, want %q", grant.TeamDIDKey, cert.TeamDIDKey)
+	}
+}
+
+// When the selected certificate cannot be loaded, mint refuses before it asks
+// the server for anything: no grant is created and no grant home is written.
+func TestRunGrantMintRefusesBeforeMintingWhenTheSelectedCertificateCannotLoad(t *testing.T) {
+	resetGrantCommandGlobals(t)
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	setGrantTestEnv(t, tmp)
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+		requests++
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+	if err := os.Remove(awconfig.TeamCertificatePath(tmp, "backend:demo")); err != nil {
+		t.Fatal(err)
+	}
+
+	outDir := filepath.Join(tmp, "no-cert-grant")
+	grantMintScopes = []string{"mail.read"}
+	grantMintOut = outDir
+	var runErr error
+	captureIDCommandStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
+	if runErr == nil {
+		t.Fatal("mint must refuse when the selected team certificate cannot be loaded")
+	}
+	if requests != 0 {
+		t.Fatalf("the server was asked %d time(s) before the refusal", requests)
+	}
+	// The out directory is created empty during argument preflight, as for any
+	// failed mint; no grant credential or state is written into it.
+	if awconfig.IsGrantHome(outDir) {
+		t.Fatal("a refused mint left a grant home")
+	}
+	if _, err := os.Stat(awconfig.GrantHomeSigningKeyPath(outDir)); !os.IsNotExist(err) {
+		t.Fatalf("a refused mint left a session key: %v", err)
 	}
 }

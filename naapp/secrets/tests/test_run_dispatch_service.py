@@ -559,7 +559,7 @@ async def test_two_distinct_slots_wait_for_all_approvals_and_release_in_original
     job = jobs.JobDefinition.from_after(body)
     async with uses.world.db.transaction() as tx:
         policy = Policy.from_body({**POLICY_BODY, "approval": "per_use", "approvers": ["finance"]})
-        await records.create_policy(tx, scope.installation_id, policy)
+        await records.create_policy(tx, scope.installation_id, policy, team_id=TEAM)
         await records.create_secret(tx, scope.installation_id, TEAM, other)
         version = await uses.world.custody.sealer.ingest(
             tx,
@@ -598,7 +598,7 @@ async def test_two_distinct_slots_wait_for_all_approvals_and_release_in_original
                 "finance", "finance@acme.com", [SECRET["secret_id"], other.secret_id]
             )
         ],
-        base_revision=await config_revision(w.db, scope.installation_id),
+        base_revision=await config_revision(w.db, scope.installation_id, team_id=TEAM),
     )
     await owner_decide(w, await draft(w, change), "alice@acme.com")
     async with w.db.transaction() as tx:

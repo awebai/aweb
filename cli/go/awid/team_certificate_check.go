@@ -16,8 +16,9 @@ import (
 // it is decoded.
 const MaxTeamCertificateHeaderBytes = 8192
 
-// TeamCertificateReasons are why CheckTeamCertificate refuses a certificate.
-// Each is a fault of the certificate presented.
+// TeamCertificateReasons is the shared certificate-verification refusal catalog,
+// including exact registered-artifact binding checked by protected consumers.
+// CheckTeamCertificate checks the primitive facts its caller supplies.
 var TeamCertificateReasons = []string{
 	"malformed",
 	"unsupported_version",
@@ -26,6 +27,7 @@ var TeamCertificateReasons = []string{
 	"bad_signature",
 	"revoked",
 	"unregistered",
+	"certificate_binding_mismatch",
 }
 
 // teamCertificateSignature is a signature as every issuer writes it: standard
@@ -133,6 +135,31 @@ func CheckTeamCertificate(header string, facts TeamCertificateFacts) (map[string
 		return nil, &TeamCertificateError{Reason: "unregistered"}
 	}
 	return certificate, nil
+}
+
+// CheckDecodedTeamCertificate runs CheckTeamCertificate on a certificate aw
+// already holds, under teamDIDKey, for its own member key. aw stores and
+// diagnoses certificates rather than relying on them, so it has no
+// registry's revoked or registered set to state. aw reads identity_scope, so
+// the certificate must also carry one aw knows.
+func CheckDecodedTeamCertificate(cert *TeamCertificate, teamDIDKey string) error {
+	if cert == nil {
+		return errors.New("nil certificate")
+	}
+	scope := NormalizeIdentityScope(cert.IdentityScope)
+	if scope != IdentityModeGlobal && scope != IdentityModeLocal {
+		return &TeamCertificateError{Reason: "invalid_field", Field: "identity_scope"}
+	}
+	header, err := EncodeTeamCertificateHeader(cert)
+	if err != nil {
+		return err
+	}
+	_, err = CheckTeamCertificate(header, TeamCertificateFacts{
+		SubjectDIDKey: cert.MemberDIDKey,
+		TeamDIDKey:    teamDIDKey,
+		Registered:    RegistrationNotRequired(),
+	})
+	return err
 }
 
 // DecodeTeamCertificate decodes the header: padded base64 of one JSON

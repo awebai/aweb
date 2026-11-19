@@ -107,3 +107,20 @@ def test_invalid_private_input_is_not_printed_by_startup_validation():
     with pytest.raises(ValidationError) as failure:
         DeploymentSettings(_env_file=None, **configured, awid_service_token=marker[:20])
     assert marker[:20] not in str(failure.value)
+
+
+def test_file_mounted_service_credentials_use_existing_deployment_settings(tmp_path, monkeypatch):
+    configured = inputs()
+    configured.pop("database_url")
+    configured.pop("email_username")
+    dsn = "postgresql://secrets:" + secrets.token_urlsafe(24) + "@postgres/secrets"
+    username = secrets.token_urlsafe(16)
+    for name, value in (("DATABASE_URL", dsn), ("EMAIL_USERNAME", username)):
+        path = tmp_path / name
+        path.write_text(value + "\n")
+        path.chmod(0o400)
+        monkeypatch.delenv("SECRETS_" + name, raising=False)
+        monkeypatch.setenv("SECRETS_" + name + "_FILE", str(path))
+    settings = DeploymentSettings(_env_file=None, **configured)
+    if settings.database_url != dsn or settings.email_username != username:
+        raise AssertionError("mounted service credentials did not reach the production settings")

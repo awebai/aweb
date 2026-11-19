@@ -10,9 +10,14 @@ import (
 )
 
 type teamCertificateVectorFile struct {
-	Version int      `json:"version"`
-	Reasons []string `json:"reasons"`
-	Cases   []struct {
+	Version        int      `json:"version"`
+	Reasons        []string `json:"reasons"`
+	RefusalAnswers []struct {
+		Reason string `json:"reason"`
+		Field  string `json:"field"`
+		Detail string `json:"detail"`
+	} `json:"refusal_answers"`
+	Cases []struct {
 		Name                     string   `json:"name"`
 		CertificateHeader        string   `json:"certificate_header"`
 		RequestDIDKey            string   `json:"request_did_key"`
@@ -127,5 +132,22 @@ func TestCheckTeamCertificateRequiresRegistrationToBeStated(t *testing.T) {
 	var refused *TeamCertificateError
 	if err == nil || certificate != nil || errors.As(err, &refused) {
 		t.Fatalf("certificate=%v err=%v", certificate, err)
+	}
+}
+
+// Every catalog reason has one shared, input-free refusal text, including the
+// protected registry binding reason that primitive facts alone cannot produce.
+func TestTeamCertificateRefusalTextUsesSharedVectors(t *testing.T) {
+	vectors := readTeamCertificateVectors(t)
+	var reasons []string
+	for _, c := range vectors.RefusalAnswers {
+		reasons = append(reasons, c.Reason)
+		refused := &TeamCertificateError{Reason: c.Reason, Field: c.Field}
+		if refused.Error() != c.Detail {
+			t.Fatalf("reason %s: text=%q want %q", c.Reason, refused.Error(), c.Detail)
+		}
+	}
+	if !reflect.DeepEqual(reasons, TeamCertificateReasons) {
+		t.Fatalf("refusal reasons=%v want %v", reasons, TeamCertificateReasons)
 	}
 }

@@ -29,6 +29,8 @@ type IDOutgoingRequest struct {
 	Request      string `json:"request"`
 	State        string `json:"state"`
 	Response     string `json:"response,omitempty"`
+	// ReplacesCertificateID freezes the organization certificate for one-time adoption.
+	ReplacesCertificateID string `json:"replaces_certificate_id,omitempty"`
 	// Registration is "pending" until AWID accepted the certificate, then
 	// "registered"; empty for a local child, which registers nothing.
 	Registration string `json:"registration,omitempty"`

@@ -180,7 +180,7 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 		"--name", "laptop",
 		"--url", server.URL,
 	)
-	run.Env = append(testCommandEnv(tmp), "USERPROFILE="+tmp)
+	run.Env = append(testCommandEnv(tmp), "USERPROFILE="+tmp, "AWID_REGISTRY_URL="+server.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -462,7 +462,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 	buildAwBinary(t, ctx, bin)
 
 	initCmd := exec.CommandContext(ctx, bin, "--json", "init", "--new-account", "--persistent", "--username", "hostedchain", "--name", "laptop", "--url", server.URL)
-	initCmd.Env = testCommandEnv(tmp)
+	initCmd.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	initCmd.Dir = repo
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		t.Fatalf("init failed: %v\n%s", err, string(out))
@@ -481,7 +481,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 
 	for _, alias := range []string{"bob", "carol"} {
 		cmd := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer", "--name", alias)
-		cmd.Env = testCommandEnv(tmp)
+		cmd.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 		cmd.Dir = repo
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("add-worktree %s failed: %v\n%s", alias, err, string(out))
@@ -652,7 +652,7 @@ func TestInitSelfCustodialGlobalCLITreatsSameKeyAlreadyRegisteredAsSuccess(t *te
 		"--name", "laptop",
 		"--url", server.URL,
 	)
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

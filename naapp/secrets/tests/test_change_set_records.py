@@ -328,7 +328,7 @@ async def test_a_grant_template_is_created_then_updated(world: World) -> None:  
     updated = {**TEMPLATE, "subject": {"role": "secrets.role.operators"}}
     await confirmed(world, [item("grant_template", "update", "gtp_sts-derived", updated)], base=1)
     async with world.db.transaction() as tx:
-        stored = await records.grant_template(tx, INSTALLATION_ID, "gtp_sts-derived")
+        stored = await records.grant_template(tx, INSTALLATION_ID, "gtp_sts-derived", team_id=TEAM)
     assert stored is not None and stored.after == updated
     again = change_set(
         drafter=by_member(BOB),

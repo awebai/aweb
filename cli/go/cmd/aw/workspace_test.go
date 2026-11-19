@@ -1227,7 +1227,7 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -1244,11 +1244,11 @@ func TestAwWorkspaceAddWorktreeCreatesLocalSelfCustodialCLIWorkspaceWithTeamKey(
 	if registeredCert["identity_scope"] != awid.IdentityModeLocal {
 		t.Fatalf("registered lifetime=%v", registeredCert["identity_scope"])
 	}
-	if _, ok := registeredCert["member_did_aw"]; ok {
-		t.Fatalf("local CLI add-worktree cert should not include member_did_aw: %v", registeredCert["member_did_aw"])
+	if registeredCert["member_did_aw"] != nil {
+		t.Fatalf("local CLI add-worktree cert should carry no member_did_aw: %v", registeredCert["member_did_aw"])
 	}
-	if _, ok := registeredCert["member_address"]; ok {
-		t.Fatalf("local CLI add-worktree cert should not include member_address: %v", registeredCert["member_address"])
+	if registeredCert["member_address"] != nil {
+		t.Fatalf("local CLI add-worktree cert should carry no member_address: %v", registeredCert["member_address"])
 	}
 
 	child := filepath.Join(tmp, "repo-charlie")
@@ -1380,7 +1380,13 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			mu.Lock()
+			agents := make([]awid.AgentView, 0, len(didToAlias))
+			for did, alias := range didToAlias {
+				agents = append(agents, awid.AgentView{AgentID: alias + "-agent", Alias: alias, DIDKey: did})
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: agents})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/roles/active"):
@@ -1553,6 +1559,8 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		run.Env = withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWID_REGISTRY_URL")
 		if len(args) > 0 && args[0] == "mail" {
 			run.Env = append(run.Env, "AWID_REGISTRY_URL=http://127.0.0.1:1")
+		} else {
+			run.Env = append(run.Env, "AWID_REGISTRY_URL="+registryServer.URL)
 		}
 		run.Dir = dir
 		out, err := run.CombinedOutput()
@@ -1590,11 +1598,11 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	if registeredChild == nil {
 		t.Fatal("expected child certificate registration")
 	}
-	if _, ok := registeredChild["member_did_aw"]; ok {
-		t.Fatalf("local child cert registration should omit member_did_aw: %v", registeredChild["member_did_aw"])
+	if registeredChild["member_did_aw"] != nil {
+		t.Fatalf("local child cert registration should carry no member_did_aw: %v", registeredChild["member_did_aw"])
 	}
-	if _, ok := registeredChild["member_address"]; ok {
-		t.Fatalf("local child cert registration should omit member_address: %v", registeredChild["member_address"])
+	if registeredChild["member_address"] != nil {
+		t.Fatalf("local child cert registration should carry no member_address: %v", registeredChild["member_address"])
 	}
 	mu.Unlock()
 
@@ -1737,7 +1745,13 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
+			mu.Lock()
+			agents := make([]awid.AgentView, 0, len(didToAlias))
+			for did, alias := range didToAlias {
+				agents = append(agents, awid.AgentView{AgentID: alias + "-agent", Alias: alias, DIDKey: did})
+			}
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: agents})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/conversations"):
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/roles/active"):
@@ -2016,7 +2030,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectFails(t *testing.T) 
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()
@@ -2131,7 +2145,7 @@ func TestAwWorkspaceAddWorktreeRevokesCertificateWhenConnectAliasMismatches(t *t
 	}
 
 	run := exec.CommandContext(ctx, bin, "workspace", "add-worktree", "developer")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 	run.Stdin = strings.NewReader("")
 	run.Dir = repo
 	out, err := run.CombinedOutput()

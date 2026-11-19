@@ -53,6 +53,7 @@ func TestChatLocalSessionPlaintextThenE2EE(t *testing.T) {
 			var mu sync.Mutex
 			var sessionID string
 			var posted []awid.ChatSendMessageRequest
+			var reassigned *awid.ChatCreateSessionRequest
 			creates := 0
 			corrupt := false
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +118,13 @@ func TestChatLocalSessionPlaintextThenE2EE(t *testing.T) {
 					var req awid.ChatCreateSessionRequest
 					_ = json.NewDecoder(r.Body).Decode(&req)
 					creates++
+					if corrupt && tc.corrupt == "alias" && sessionID != "" {
+						// The alias now names another DID: a chat to it
+						// is a new session, not the old one.
+						reassigned = &req
+						_ = json.NewEncoder(w).Encode(awid.ChatCreateSessionResponse{SessionID: req.SessionID, MessageID: req.MessageID})
+						return
+					}
 					if sessionID != "" || req.Encrypted != nil || req.Message != "first plaintext" {
 						t.Error("expected only the initial plaintext session creation")
 					}
@@ -175,9 +183,20 @@ func TestChatLocalSessionPlaintextThenE2EE(t *testing.T) {
 			mu.Lock()
 			corrupt = tc.corrupt != ""
 			mu.Unlock()
-			run(tc.first, tc.corrupt == "", "chat", "send-and-wait", tc.second, "encrypted continuation", "--e2ee", "--wait", "0")
+			run(tc.first, tc.corrupt == "" || tc.corrupt == "alias", "chat", "send-and-wait", tc.second, "encrypted continuation", "--e2ee", "--wait", "0")
 			mu.Lock()
 			defer mu.Unlock()
+			if tc.corrupt == "alias" {
+				// The session with the alias's former DID is never continued:
+				// a new session is created for the alias, encrypted to the
+				// key of the DID the roster now names for it, and only that.
+				row := actors[tc.first].row
+				if creates != 2 || len(posted) != 2 || reassigned == nil || len(reassigned.ToAliases) != 1 || reassigned.ToAliases[0] != tc.second ||
+					reassigned.Encrypted == nil || len(reassigned.Encrypted.Recipients) != 1 || reassigned.Encrypted.Recipients[0].DID != row.DIDKey {
+					t.Fatalf("reassigned alias: creates=%d posts=%#v created=%#v", creates, posted, reassigned)
+				}
+				return
+			}
 			if creates != 1 || len(posted) < 2 || posted[0].Body != "reply plaintext" || posted[1].Body != "continuation plaintext" {
 				t.Fatalf("plaintext conversation was not preserved: creates=%d posts=%#v", creates, posted)
 			}

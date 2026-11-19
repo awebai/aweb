@@ -26,6 +26,8 @@ set -euo pipefail
 CLI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 REPO_ROOT="$(cd "$CLI_DIR/.." && pwd -P)"
 STACK="$REPO_ROOT/scripts/e2e-library-stack.sh"
+source "$REPO_ROOT/scripts/journey-network.sh"
+PROJECT="${LIBRARY_E2E_PROJECT:-aweb-e2e-stack-$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1)}"
 
 AWID_PORT="${LIBRARY_E2E_AWID_PORT:-18010}"
 AWEB_PORT="${LIBRARY_E2E_AWEB_PORT:-18000}"
@@ -36,9 +38,9 @@ case "$DOCKER_PUBLISHED_HOST" in
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
 
-AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
-AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
-LIBRARY_URL="http://$DOCKER_PUBLISHED_HOST:$LIBRARY_PORT"
+AWEB_URL="$(journey_url "$PROJECT" aweb 8000 "http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT")"
+AWID_URL="$(journey_url "$PROJECT" awid 8010 "http://$DOCKER_PUBLISHED_HOST:$AWID_PORT")"
+LIBRARY_URL="$(journey_url "$PROJECT" library 8765 "http://$DOCKER_PUBLISHED_HOST:$LIBRARY_PORT")"
 
 teardown() {
   local status=$? cleanup_status=0

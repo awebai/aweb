@@ -34,6 +34,7 @@ from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import mail as mail_tools
 from did_key_fixtures import named_did_key, named_signing_key
 from test_messages_http import _encrypted_mail_envelope
+from team_facts_fixtures import legacy_registry
 
 
 class DBInfra:
@@ -102,7 +103,7 @@ def _request_with_headers(headers: dict[str, str], *, verified_bindings=()) -> R
             "client": ("127.0.0.1", 12345),
             "http_version": "1.1",
             "app": SimpleNamespace(state=SimpleNamespace(
-                awid_registry_client=object(),
+                awid_registry_client=legacy_registry(),
                 identity_binding_cache=OrderedDict({
                     (did_aw,did_key,address): (monotonic()+60,IdentityBinding(
                         did_aw, address, did_key=did_key, id_tree=IDTreeEnrollment(False, None),
@@ -488,7 +489,7 @@ async def test_mcp_auth_fails_when_proxy_trust_enabled_without_secret(aweb_cloud
     str(uuid4()),
     "",
     "nocolon",
-])
+], ids=['extra-part', 'space', 'scheme', 'uppercase', 'empty-label', 'trailing-dot', 'uuid', 'empty', 'no-colon'])
 async def test_mcp_auth_rejects_invalid_proxy_team_id(aweb_cloud_db, monkeypatch, bad_team_id):
     secret = "proxy-secret"
     actor_id = str(uuid4())

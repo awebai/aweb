@@ -1497,6 +1497,18 @@ def _same(a: Any, b: Any) -> bool:
 _MAPPED_TOOL_FIELDS = ("method", "path", "params", "input_schema", "body", "scopes", "auth", "mutation")
 
 
+def check_v2_variant(v2: bytes, v3: bytes) -> None:
+    """V3 adds only owner_acts; all other declarations must match its v2 variant."""
+    old, new = load_manifest(v2), load_manifest(v3)
+    if old.manifest_version != 2 or new.manifest_version != 3:
+        raise ManifestError("v2_variant_incompatible", "variants must be manifest versions 2 and 3")
+    common = dict(new.document)
+    common.pop("owner_acts", None)
+    common["manifest_version"] = 2
+    if not _same(dict(old.document), common):
+        raise ManifestError("v2_variant_incompatible", "v2 and v3 common declarations differ")
+
+
 def check_v1_variant(v1: bytes, v2: bytes) -> None:
     """Refuse a v1 variant that is not an agent-safe, identically mapped subset
     of the v2 variant it is served beside. Apps run this before publishing."""

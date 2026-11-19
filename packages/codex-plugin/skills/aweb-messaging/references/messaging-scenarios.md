@@ -10,7 +10,7 @@ aweb mail event received.
 
 Metadata:
 - type: mail
-- from: juan.aweb.ai/olivia
+- from: acme.aweb.ai/olivia
 - message_id: 344de6f3-d94e-4252-b833-96d876b59453
 - trust_status: verified
 - verified: true

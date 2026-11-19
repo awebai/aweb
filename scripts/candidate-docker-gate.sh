@@ -75,7 +75,8 @@ canonical_git_input() {
   printf '%s\n' "$canonical"
 }
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
-LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || refuse "source checkout is dirty or has untracked files"
@@ -235,7 +236,7 @@ suite_projects=(
   "$gate_run_id-library"
 )
 # Install cleanup before the first Docker allocation. Logs outlive the run.
-[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA" ]] || refuse "unsafe log directory"
+[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA-$run_id" ]] || refuse "unsafe log directory"
 rm -rf -- "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 : > "$LOG_DIR/owned-resources.tsv"
@@ -253,8 +254,14 @@ if [[ -n "${USER_PATHS_LATEST_METADATA:-}" ]]; then
     || refuse "released aw metadata changed after the ledger lookup"
 fi
 checkout="$work/aweb"
-git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
-git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
+# Tracked source is also mounted into services running as other UIDs (notably
+# Library's PostgreSQL initdb). Materialize its Git modes independently of the
+# operator's private umask; keep the work parent and later runtime files private.
+(
+  umask 0022
+  git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
+  git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
+)
 git -C "$checkout" remote set-url origin "$checkout"
 [[ "$(git -C "$checkout" rev-parse HEAD)" == "$SOURCE_SHA" ]] || refuse "clone selected the wrong SHA"
 git -C "$checkout" diff --quiet && git -C "$checkout" diff --cached --quiet \
@@ -286,6 +293,16 @@ printf 'NOT RELEVANT: OSS packages do not bundle Library; it is built only for i
   > "$LOG_DIR/compatibility.txt"
 
 python3 "$ROOT/scripts/candidate-host-pressure.py" capture "$LOG_DIR/host-before.json"
+# The published socket belongs to the Docker host, not the bridge runner.
+if [[ " $pending " == *" checks "* ]]; then
+  if ! AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" python3 \
+    "$checkout/scripts/e2e/test_candidate_gate_docker_boundaries.py" \
+    --image unused HostPublishedPortTests -v > "$LOG_DIR/host-published-port.log" 2>&1; then
+    cp "$LOG_DIR/host-published-port.log" "$LOG_DIR/checks.log"
+    cat "$LOG_DIR/checks.log" >&2
+    exit 1
+  fi
+fi
 mkdir -p "$buildx_config"
 printf 'builder\t%s\n' "$builder_name" >> "$LOG_DIR/owned-resources.tsv"
 BUILDX_CONFIG="$buildx_config" docker buildx create \
@@ -379,9 +396,11 @@ socket_gid="$(docker run --rm \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
 naapp_packages_text="$(make -s --no-print-directory -C "$ROOT" naapp-e2e-packages)"
 read -r -a naapp_packages <<<"$(printf '%s\n' "$naapp_packages_text" | tr '\n' ' ')"
-python3 "$checkout/scripts/candidate-ports.py" "$gate_run_id" \
-  "$work/ports.env" "$work/naapp-ports.tsv" "${naapp_packages[@]}"
-naapp_e2e_allocations="$(cat "$work/naapp-ports.tsv")"
+naapp_e2e_allocations=""
+for package in "${naapp_packages[@]}"; do
+  # These are container ports; no host socket is allocated or published.
+  naapp_e2e_allocations+="$package $gate_run_id-naapp-${package##*/} 8010 5432"$'\n'
+done
 
 # Copy the exact checkout and inputs through the Docker API. The host checkout
 # is never mounted into a container; extracted dependency trees stay in Docker.
@@ -405,12 +424,12 @@ docker run --rm --init \
   --network "$owned_network" \
   --user "$(id -u):$(id -g)" \
   --group-add "$socket_gid" \
-  --add-host aweb-docker.test:host-gateway \
   -e HOME="$checkout/.candidate-home" \
   -e PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
   -e PATH="$checkout/candidate-gate/bin:/usr/local/go/bin:/opt/uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   -e AWEB_CANDIDATE_REAL_DOCKER=/usr/bin/docker \
   -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
+  -e AWEB_GATE_UNIT_PROFILE="${AWEB_GATE_UNIT_PROFILE:-portable}" \
   -e AWEB_CANDIDATE_SIBLING_CPUS="$sibling_cpus" \
   -e AWEB_CANDIDATE_SIBLING_MEMORY="$sibling_memory" \
   -e AWEB_CANDIDATE_SIBLING_PIDS="$sibling_pids" \
@@ -433,20 +452,18 @@ docker run --rm --init \
   -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
   -e BUILDX_CONFIG="$buildx_config" \
   -e BUILDX_BUILDER="$builder_name" \
-  -e UV_CACHE_DIR=/tmp/uv-cache \
   -e UV_LINK_MODE=copy \
   -e GOCACHE=/tmp/go-build \
   -e GOMODCACHE="$go_mod_cache" \
   -e GOFLAGS=-modcacherw \
   -e NPM_CONFIG_CACHE=/tmp/npm-cache \
   -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
-  -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \
-  --env-file "$work/ports.env" \
   -e AWEB_SKEW_PROJECT_TOKEN="${suite_projects[0]}" \
   -e AWEB_E2E_PROJECT="${suite_projects[1]}" \
   -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
   -e AWEB_FED_E2E_PROJECT="${suite_projects[3]}" \
   -e LIBRARY_E2E_PROJECT="${suite_projects[4]}" \
+  -e NAAPP_E2E_CONTAINER_NETWORK=1 \
   -e NAAPP_E2E_ALLOCATIONS="$naapp_e2e_allocations" \
   -e TEST_DB_HOST="$pg_name" \
   -e TEST_DB_PORT=5432 \
@@ -482,7 +499,6 @@ printf 'candidate gate PASSED at %s; logs: %s\n' \
 # The child owns Docker cleanup. A stage is recorded only after it exits, and
 # only from this invocation's logs; stale logs cannot supply a missing result.
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
 set +e
 run_candidate 2>&1 | tee "$run_log"

@@ -23,7 +23,8 @@ from aweb_secrets.change_policy import (
 )
 from aweb_secrets.owners import OWNER_ROLE
 from aweb_secrets.revisions import apply_revision_migrations, config_revision
-from tests.test_owner_directory import ALICE, BOB, TEAM, World, designate_owner, world  # noqa: F401
+from tests.test_change_sets import World
+from tests.test_owner_directory import ALICE, BOB, TEAM, designate_owner, world  # noqa: F401
 
 
 @pytest.fixture
@@ -50,7 +51,7 @@ async def _revoke_owner(owners: World, principal) -> None:
 
 
 async def test_four_eyes_is_off_until_an_owner_requires_it(settings: World) -> None:
-    assert await four_eyes(settings.db, INSTALLATION_ID) == "not_required"
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id=TEAM) == "not_required"
 
 
 async def test_requiring_four_eyes_takes_two_enrolled_owners(settings: World) -> None:
@@ -58,12 +59,12 @@ async def test_requiring_four_eyes_takes_two_enrolled_owners(settings: World) ->
     with pytest.raises(ChangeRefused) as refused:
         await _require(settings)
     assert refused.value.code == "four_eyes_needs_two_owners"
-    assert await four_eyes(settings.db, INSTALLATION_ID) == "not_required"
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id=TEAM) == "not_required"
     await designate_owner(settings, BOB, "bob@acme.com")
-    before = await config_revision(settings.db, INSTALLATION_ID)
+    before = await config_revision(settings.db, INSTALLATION_ID, team_id=TEAM)
     await _require(settings)
-    assert await four_eyes(settings.db, INSTALLATION_ID) == "required"
-    assert await config_revision(settings.db, INSTALLATION_ID) == before + 1
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id=TEAM) == "required"
+    assert await config_revision(settings.db, INSTALLATION_ID, team_id=TEAM) == before + 1
 
 
 async def test_relaxing_four_eyes_turns_it_off(settings: World) -> None:
@@ -71,8 +72,8 @@ async def test_relaxing_four_eyes_turns_it_off(settings: World) -> None:
     await designate_owner(settings, BOB, "bob@acme.com")
     await _require(settings)
     async with settings.db.transaction() as tx:
-        await relax_four_eyes(tx, installation_id=INSTALLATION_ID)
-    assert await four_eyes(settings.db, INSTALLATION_ID) == "not_required"
+        await relax_four_eyes(tx, installation_id=INSTALLATION_ID, team_id=TEAM)
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id=TEAM) == "not_required"
 
 
 async def test_while_four_eyes_is_required_the_second_last_owner_stays(settings: World) -> None:
@@ -108,7 +109,7 @@ async def test_requiring_while_an_owner_is_revoked_waits_and_is_refused(settings
     # The setting already exists, so only its row lock can serialise the two.
     await _require(settings)
     async with settings.db.transaction() as tx:
-        await relax_four_eyes(tx, installation_id=INSTALLATION_ID)
+        await relax_four_eyes(tx, installation_id=INSTALLATION_ID, team_id=TEAM)
     held = asyncio.Event()
     revoking = asyncio.create_task(_revoke_and_hold(settings, ALICE, held))
     await asyncio.sleep(0.2)
@@ -119,4 +120,15 @@ async def test_requiring_while_an_owner_is_revoked_waits_and_is_refused(settings
     with pytest.raises(ChangeRefused) as refused:
         await requiring
     assert refused.value.code == "four_eyes_needs_two_owners"
-    assert await four_eyes(settings.db, INSTALLATION_ID) == "not_required"
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id=TEAM) == "not_required"
+
+
+async def test_four_eyes_does_not_cross_teams_with_the_same_installation(settings: World) -> None:
+    await designate_owner(settings, ALICE, "alice@acme.com")
+    await designate_owner(settings, BOB, "bob@acme.com")
+    await _require(settings)
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id=TEAM) == "required"
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id="other:acme.com") == "not_required"
+    async with settings.db.transaction() as tx:
+        await relax_four_eyes(tx, installation_id=INSTALLATION_ID, team_id="other:acme.com")
+    assert await four_eyes(settings.db, INSTALLATION_ID, team_id=TEAM) == "required"

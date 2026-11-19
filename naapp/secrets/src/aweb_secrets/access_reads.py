@@ -123,7 +123,7 @@ async def confirmed_access(
     remains explicit. Fixed slot sources describe requirements, never authority
     for an entire run. No custody value, draft, rate bucket or intent is read.
     """
-    revision = await config_revision(tx, installation.installation_id)
+    revision = await config_revision(tx, installation.installation_id, team_id=installation.team_id)
     secrets = await tx.fetch_all(
         "SELECT record,state,active_version FROM {{tables.secrets}} "
         "WHERE installation_id=$1 AND team_id=$2 AND ($3::text IS NULL OR secret_id=$3) "
@@ -146,7 +146,9 @@ async def confirmed_access(
             lock=False,
         )
         for grant in grants:
-            policy = await records.policy(tx, installation.installation_id, grant.policy_digest)
+            policy = await records.policy(
+                tx, installation.installation_id, grant.policy_digest, team_id=installation.team_id
+            )
             operations = []
             for operation_id, digest in grant.operations:
                 current = await derived_lineage.current_operation_snapshot(

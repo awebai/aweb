@@ -511,8 +511,34 @@ class Passkeys:
             raise DesignationRefused("the first approver needs app-role.designate")
         if previous is not None and kind != RECOVER_ACT:
             raise DesignationRefused("replacing an approver needs app-credential.recover")
+        return await self._designated(
+            tx,
+            scope=scope,
+            subject=str(uuid.uuid4()),
+            contact=contact,
+            act=(act_id, kind, actor),
+            previous=previous,
+            now=now,
+        )
+
+    async def _designated(
+        self,
+        tx: TransactionManager,
+        *,
+        scope: str,
+        subject: str,
+        contact: str,
+        act: tuple[str, str, str],
+        previous: Mapping[str, Any] | None,
+        now: datetime,
+    ) -> Designation:
+        """`subject`, the new approver for `scope` under `act` (its id, kind
+        and actor), replacing `previous` after the cooling-off when there is
+        one; its enrolment link, the act's record and its audit event, in
+        `tx`."""
+        act_id, kind, actor = act
         approver = Approver(
-            scope=scope, subject=str(uuid.uuid4()), subject_type=SUBJECT_TYPE, contact=contact
+            scope=scope, subject=subject, subject_type=SUBJECT_TYPE, contact=contact
         )
         effective_at = now
         notified: list[str] = []
@@ -707,7 +733,11 @@ class Passkeys:
         once, and a new one, with the act's credential, takes effect after the
         recovery cooling-off; the holding and its `held_since` are kept and its
         certificate replaced. The returned notices go to the contacts recorded
-        for the scope; deliver them after the commit."""
+        for the scope; deliver them after the commit.
+
+        The caller takes F6 and then `prepare_retirement` on this same
+        transaction before calling, ahead of any role, B3 or S4 hold; this
+        method does not check that it did."""
         act_id, actor = await self._verified_act(tx, act, (HOLDER_REPLACE_ACT,))
         await self._refuse_used(tx, act_id)
         self._require_bound(act, credential, notice_contact)
@@ -746,7 +776,11 @@ class Passkeys:
         """End the holding a `human-role.revoke` act names, in the transaction
         that consumed it, and retire its approver with its credentials. It
         reads no membership: a holder who has left the team is revoked too.
-        The installation's record stays as history."""
+        The installation's record stays as history.
+
+        The caller takes F6 and then `prepare_retirement` on this same
+        transaction before calling, ahead of any role, B3 or S4 hold; this
+        method does not check that it did."""
         act_id, actor = await self._verified_act(tx, act, (HOLDER_REVOKE_ACT,))
         await self._refuse_used(tx, act_id)
         key = _holding_key(act)
@@ -1472,6 +1506,8 @@ class Passkeys:
         fence prepares authority in the effect tx before B3, and checks it
         after audit before commit. A refused effect leaves the link unused;
         its WebAuthn challenge stays spent, so retry needs fresh options.
+        The challenge and the link must both still be live once the fence's
+        check has returned, just before the commit.
         """
         enrolment = await self._usable_enrolment(link_token)
         try:
@@ -1536,6 +1572,10 @@ class Passkeys:
             )
             if fence is not None:
                 await fence.check(tx)
+            # After the last await: a lock wait in the fence may outlast the
+            # registration challenge or the link, which then enrol nothing.
+            if self._clock() >= min(issued["expires_at"], enrolment["expires_at"]):
+                raise EnrolmentRefused("the registration or its link expired")
         return Approver(
             scope=enrolment["scope"],
             subject=enrolment["subject"],
@@ -2256,12 +2296,13 @@ class Passkeys:
             proof = RetainedPasskeyProof.from_export(json.loads(row["record"]))
         except (ValueError, KeyError, TypeError):
             raise PasskeyProofUnavailable() from None
+        expected = {
+            field: row[field]
+            for field in ("app_id", "team_id", "installation_id", "generation")
+        }
         if (
             proof.metadata["evidence_ref"] != evidence_ref
-            or any(
-                proof.context[field] != row[field]
-                for field in ("app_id", "team_id", "installation_id", "generation")
-            )
+            or any(proof.context[field] != value for field, value in expected.items())
             or passkey_evidence_commitment(proof) != row["commitment"]
         ):
             raise PasskeyProofUnavailable()

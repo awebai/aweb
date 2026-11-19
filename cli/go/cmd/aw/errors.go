@@ -58,12 +58,23 @@ func withErrorCode(code string, err error) error {
 	return &codedError{code: code, err: err}
 }
 
+// errorCodeOf is err's refusal code, or "" when it has none.
+func errorCodeOf(err error) string {
+	var coded *codedError
+	if errors.As(err, &coded) {
+		return coded.code
+	}
+	return ""
+}
+
 // plainRefusal is a refusal by an aweb server or AWID registry told in a
 // sentence for people. It wraps the refusal, so --json keeps its code, status
 // and detail.
 type plainRefusal struct {
 	text string
 	err  error
+	// Preserve the server's sentence in JSON when terminal text names a target.
+	jsonMessage string
 }
 
 func (e *plainRefusal) Error() string { return e.text }
@@ -135,6 +146,10 @@ type cliErrorBody struct {
 
 func errorEnvelope(err error, message string) cliErrorEnvelope {
 	detail := awid.DescribeError(err)
+	var plain *plainRefusal
+	if errors.As(err, &plain) && plain.jsonMessage != "" {
+		message = plain.jsonMessage
+	}
 	var coded *codedError
 	if errors.As(err, &coded) {
 		detail.Code = coded.code

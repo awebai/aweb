@@ -101,6 +101,7 @@ async def _ensure_agent(
     role: str,
     certificate_id: str,
     human_verified_key: str | None,
+    accepted_team_did_key: str,
 ) -> str:
     """Find or create the agent row. Returns agent_id as string.
 
@@ -126,7 +127,8 @@ async def _ensure_agent(
             """
             UPDATE {{tables.agents}}
             SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
-                agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9, human_verified_key = $10
+                agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9, human_verified_key = $10,
+                accepted_team_did_key = $11
             WHERE agent_id = $7
             """,
             did_aw or None,
@@ -139,6 +141,7 @@ async def _ensure_agent(
             (certificate_id or "").strip() or None,
             did_key if did_aw else None,
             human_verified_key,
+            accepted_team_did_key,
         )
         return str(existing_agent["agent_id"])
 
@@ -167,8 +170,8 @@ async def _ensure_agent(
                 INSERT INTO {{tables.agents}}
                     (agent_id, team_id, did_key, did_aw, address,
                      alias, identity_scope, human_name, agent_type, role, inbound_mode,
-                     certificate_id, did_aw_verified_key, human_verified_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $13, $11, $12, $14)
+                     certificate_id, did_aw_verified_key, human_verified_key, accepted_team_did_key)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $13, $11, $12, $14, $15)
                 ON CONFLICT (team_id, did_key) WHERE deleted_at IS NULL DO NOTHING
                 """,
                 agent_id,
@@ -185,6 +188,7 @@ async def _ensure_agent(
                 did_key if did_aw else None,
                 inbound_mode,
                 human_verified_key,
+                accepted_team_did_key,
             )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
@@ -208,7 +212,8 @@ async def _ensure_agent(
                 """
                 UPDATE {{tables.agents}}
                 SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
-                    agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9, human_verified_key = $10
+                    agent_type = $5, role = $6, status = 'active', certificate_id = $8, did_aw_verified_key = $9, human_verified_key = $10,
+                    accepted_team_did_key = $11
                 WHERE agent_id = $7
                 """,
                 did_aw or None,
@@ -221,6 +226,7 @@ async def _ensure_agent(
                 (certificate_id or "").strip() or None,
                 did_key if did_aw else None,
                 human_verified_key,
+                accepted_team_did_key,
             )
             return str(existing_agent["agent_id"])
         existing_alias = await db.fetch_one(
@@ -437,6 +443,7 @@ async def connect_agent(
             role=role,
             certificate_id=cert_info.get("certificate_id", ""),
             human_verified_key=human_verified_key,
+            accepted_team_did_key=team_did_key,
         )
 
         if identity_binding is not None:

@@ -15,7 +15,12 @@ from typing import Any, Literal
 
 from awid.did import stable_id_from_did_key
 from awid.id_certificates import IDCertificateError, status_request, verify_id_chain
-from awid.registry_types import DIDKeyNotFoundError, IDTreeEnrollment, RegistryError
+from awid.registry_types import (
+    DIDKeyNotFoundError,
+    IDTreeEnrollment,
+    RegistryError,
+    RegistryThrottled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +29,17 @@ class IdentityObservationRefused(ValueError):
     """A binding mismatch or unavailable evidence; no web-framework dependency."""
 
     def __init__(
-        self, code: Literal["identity_binding_mismatch", "identity_binding_unavailable"]
+        self, code: Literal["identity_binding_mismatch", "identity_binding_unavailable"],
+        *, retry_after_seconds: float | None = None,
     ) -> None:
         if code not in ("identity_binding_mismatch", "identity_binding_unavailable"):
             raise ValueError("unknown identity observation refusal")
         self.code = code
+        # Only dependency unavailability can carry a typed upstream retry hint.
+        # HTTP adapters retain their own safe serialization policy.
+        self.retry_after_seconds = (
+            retry_after_seconds if code == "identity_binding_unavailable" else None
+        )
         super().__init__(code)
 
 
@@ -92,7 +103,12 @@ async def observe_identity_binding(
         if exc.status_code == 404:
             raise IdentityObservationRefused("identity_binding_mismatch") from exc
         logger.warning("Identity binding registry dependency failed", exc_info=True)
-        raise IdentityObservationRefused("identity_binding_unavailable") from exc
+        raise IdentityObservationRefused(
+            "identity_binding_unavailable",
+            retry_after_seconds=(
+                exc.retry_after_seconds if isinstance(exc, RegistryThrottled) else None
+            ),
+        ) from exc
     except Exception as exc:
         logger.warning("Identity binding registry dependency failed", exc_info=True)
         raise IdentityObservationRefused("identity_binding_unavailable") from exc

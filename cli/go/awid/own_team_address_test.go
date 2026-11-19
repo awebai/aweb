@@ -69,6 +69,7 @@ func newOwnTeamAddressFixture(t *testing.T) *ownTeamAddressFixture {
 	client.SetStableID(ComputeStableID(senderKey.Public().(ed25519.PublicKey)))
 	client.SetRequireRecipientBindingForDirectAddresses(true)
 	registryResolver := NewRegistryResolver(nil, nil)
+	routeUntrustedResolverRegistriesToInjectedClient(registryResolver)
 	if err := registryResolver.SetFallbackRegistryURL(registry.URL); err != nil {
 		t.Fatal(err)
 	}

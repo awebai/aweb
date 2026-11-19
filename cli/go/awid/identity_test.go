@@ -212,7 +212,10 @@ func TestChainResolverFallsBackToPinWhenRegistryAddressMissing(t *testing.T) {
 	var registryHits atomic.Int64
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		registryHits.Add(1)
-		http.NotFound(w, r)
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]string{
+			"code": "address_not_found", "message": "Address not found",
+		}})
 	}))
 	t.Cleanup(server.Close)
 
@@ -226,6 +229,7 @@ func TestChainResolverFallsBackToPinWhenRegistryAddressMissing(t *testing.T) {
 	ps.Addresses[address] = stableID
 
 	registry := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(registry)
 	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
 		t.Fatal(err)
 	}
@@ -265,6 +269,7 @@ func TestChainResolverDoesNotFallBackToPinOnRegistryHardError(t *testing.T) {
 	ps := NewPinStore()
 	ps.StorePin("did:key:z6MkpfXL8ijUSkuwevHQhYJaUwoD46EekWmdRc6jX7p5bmEm", address, "randy", server.URL)
 	registry := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(registry)
 	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
 		t.Fatal(err)
 	}
@@ -296,6 +301,7 @@ func TestChainResolverDoesNotFallBackToPinOnRegistryUnauthorized(t *testing.T) {
 	ps := NewPinStore()
 	ps.StorePin("did:key:z6MkpfXL8ijUSkuwevHQhYJaUwoD46EekWmdRc6jX7p5bmEm", address, "randy", server.URL)
 	registry := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(registry)
 	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
 		t.Fatal(err)
 	}
@@ -360,6 +366,7 @@ func TestRegistryResolverResolvesPersistentAddress(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL, ControllerDID: did},
 		expiresAt: time.Now().Add(time.Minute),
@@ -418,6 +425,7 @@ func TestRegistryResolverResolveFreshBypassesLocalTeamMemberCache(t *testing.T) 
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value: DomainAuthority{RegistryURL: server.URL}, expiresAt: time.Now().Add(time.Minute),
 	}
@@ -493,6 +501,7 @@ func TestRegistryResolverResolvesGlobalTeamMemberReference(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
@@ -557,6 +566,7 @@ func TestRegistryResolverResolvesLocalTeamMemberReference(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
@@ -631,6 +641,7 @@ func TestRegistryResolverUsesEmbeddedFallbackWhenTXTIsMissing(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {
 		t.Fatal(err)
 	}
@@ -680,6 +691,7 @@ func TestRegistryResolverEmbeddedFallbackBypassesDNSForAddress(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {
 		t.Fatal(err)
 	}
@@ -741,6 +753,7 @@ func TestRegistryResolverRejectsKeyDidAWMismatch(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
@@ -785,6 +798,7 @@ func TestChainResolverAddressUsesRegistry(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	registry := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(registry)
 	registry.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
@@ -836,6 +850,7 @@ func TestRegistryResolverVerifyStableIdentityRejectsKeyDidAWMismatch(t *testing.
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
@@ -920,6 +935,7 @@ func TestRegistryResolverVerifyStableIdentityWalksFullLogOnFirstContact(t *testi
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),
@@ -990,6 +1006,7 @@ func TestRegistryResolverRefreshesCachedKeyForExpectedSignedMessageKey(t *testin
 	}))
 	t.Cleanup(server.Close)
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{value: DomainAuthority{RegistryURL: server.URL}, expiresAt: time.Now().Add(time.Minute)}
 
 	initial := resolver.VerifyStableIdentity(context.Background(), "acme.com/alice", stableID)
@@ -1045,6 +1062,7 @@ func TestRegistryResolverReportsStaleCacheWhenExpectedKeyRefreshFails(t *testing
 	}))
 	t.Cleanup(server.Close)
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{value: DomainAuthority{RegistryURL: server.URL}, expiresAt: time.Now().Add(time.Minute)}
 	_ = resolver.VerifyStableIdentity(context.Background(), "acme.com/alice", stableID)
 
@@ -1129,6 +1147,7 @@ func TestRegistryResolverVerifyStableIdentityWalksFullLogRejectsTailMismatch(t *
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},
 		expiresAt: time.Now().Add(time.Minute),

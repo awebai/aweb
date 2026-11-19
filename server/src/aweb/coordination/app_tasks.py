@@ -15,13 +15,14 @@ from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, Va
 from aweb.task_contracts import validate_app_task
 from awid.team_certificate import TeamCertificateError
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
+from aweb.team_key_pins import pinned_team_key_for_request
 from .tasks_service import (
     _allocate_root_task_seq_on, _allocate_task_number_on, _answer_receipt,
     _encode_alpha_component, _get_team_slug, format_task_ref,
 )
 
 from aweb_naapp.runtime.task_requests import (
-    AUTHORIZATION_PREFIX, TaskRequestRefused, task_body_sha256,
+    TaskRequestRefused, task_body_sha256,
     verify_task_authorization as shared_verify_task_authorization,
     verify_stage_receipt as shared_verify_stage_receipt,
 )
@@ -79,9 +80,13 @@ async def verify_authorization_certificate(request, authorization):
         # C2 requires live authority even when the app otherwise uses a
         # CachedRegistryClient. Never use its stale/outage-grace reads here.
         team_key = await registry.get_team_public_key_fresh(domain, name)
-        revoked = await registry.get_team_revocations_fresh(domain, name)
+        select = getattr(registry, "get_team_revocations_for_certificates", None)
+        revoked = (await select(domain, name, [payload["certificate_id"]], fresh=True)
+                   if callable(select) else await registry.get_team_revocations_fresh(domain, name))
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
+    if team_key:
+        team_key = await pinned_team_key_for_request(request, payload["team_id"], team_key)
     certificates = await _current_certificates(request, payload["team_id"])
     try:
         info = parse_and_verify_certificate(authorization["certificate"],

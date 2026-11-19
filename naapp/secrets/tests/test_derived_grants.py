@@ -43,7 +43,7 @@ async def test_snapshot_is_immutable_and_fence_refuses_edited_complete_terms(db)
     async with db.transaction() as tx:
         await _setup(tx)
         original = _template()
-        await records.set_grant_template(tx, INSTALLATION, original)
+        await records.set_grant_template(tx, INSTALLATION, original, team_id=TEAM)
         nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
         snapshot = await _snapshot(tx, nodes, original)
         # A caller's mutable view cannot alter the persisted canonical snapshot.
@@ -58,7 +58,7 @@ async def test_snapshot_is_immutable_and_fence_refuses_edited_complete_terms(db)
             )
         ).after == original.after
         await records.set_grant_template(
-            tx, INSTALLATION, _template(subject={"principal": DID_KEY})
+            tx, INSTALLATION, _template(subject={"principal": DID_KEY}), team_id=TEAM
         )
         with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
             await derived_grants.fence_grant_snapshot(
@@ -73,7 +73,7 @@ async def test_missing_or_unpinned_template_refuses(db, missing):
         await _setup(tx)
         template = _template()
         if not missing:
-            await records.set_grant_template(tx, INSTALLATION, template)
+            await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
         with pytest.raises(derived_grants.DerivedGrantRefused):
             await derived_grants.snapshot_grant_template(
@@ -90,7 +90,7 @@ async def test_missing_current_job_cannot_authorize_a_run_template(db):
         template = _template(
             capability="run", open_request=False, jobs=[{"job_id": "backup", "digest": "1" * 64}]
         )
-        await records.set_grant_template(tx, INSTALLATION, template)
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
         with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
             await _snapshot(tx, nodes, template)
@@ -115,11 +115,11 @@ async def test_child_open_grant_must_match_its_inherited_sensitivity_and_policy(
             )
         elif incompatibility == "policy_open":
             policy = Policy.from_body({**POLICY.body, "open_request": False})
-            await records.create_policy(tx, INSTALLATION, policy)
+            await records.create_policy(tx, INSTALLATION, policy, team_id=TEAM)
             template = _template(policy_digest=policy.digest)
         else:
             template = _template(policy_digest="0" * 64)
-        await records.set_grant_template(tx, INSTALLATION, template)
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
         with pytest.raises(derived_grants.DerivedGrantRefused):
             await _snapshot(tx, nodes, template)
@@ -137,9 +137,9 @@ async def test_only_the_nearest_current_operation_and_both_pins_can_authorize_ch
         policy = Policy.from_body(
             {**POLICY.body, "operations": [] if mutation == "policy_pin" else [pin]}
         )
-        await records.create_policy(tx, INSTALLATION, policy)
+        await records.create_policy(tx, INSTALLATION, policy, team_id=TEAM)
         template = _template(open_request=False, operations=[pin], policy_digest=policy.digest)
-        await records.set_grant_template(tx, INSTALLATION, template)
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, child.secret_id)
         if mutation in ("policy_pin", "missing_operation"):
             with pytest.raises(derived_grants.DerivedGrantRefused):
@@ -200,7 +200,7 @@ async def test_run_template_accepts_its_current_job_and_one_lineage_slot(db, sel
         job = _job([SECRET.ref if selector == "root" else child.ref])
         await create_job(tx, INSTALLATION, TEAM, job)
         template = _run_template(job)
-        await records.set_grant_template(tx, INSTALLATION, template)
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         snapshot = await _snapshot(tx, nodes, template)
         assert (
             await derived_grants.fence_grant_snapshot(
@@ -246,7 +246,7 @@ async def test_run_template_refuses_incompatible_jobs_before_snapshot(db, bounda
                 open_request=False,
                 jobs=[{"job_id": job.job_id, "digest": "1" * 64}],
             )
-        await records.set_grant_template(tx, INSTALLATION, template)
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
             await _snapshot(tx, nodes, template)
         assert refused.value.code == "job_not_allowed"
@@ -258,7 +258,7 @@ async def test_current_job_edit_refuses_at_run_template_fence_without_history_fa
         job = _job([SECRET.ref])
         await create_job(tx, INSTALLATION, TEAM, job)
         template = _run_template(job)
-        await records.set_grant_template(tx, INSTALLATION, template)
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
         snapshot = await _snapshot(tx, nodes, template)
         edited = job.after
@@ -278,7 +278,7 @@ async def test_run_template_still_requires_its_child_policy_pin(db):
         job = _job([SECRET.ref])
         await create_job(tx, INSTALLATION, TEAM, job)
         template = _run_template(job, policy_digest="0" * 64)
-        await records.set_grant_template(tx, INSTALLATION, template)
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
         with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
             await _snapshot(tx, nodes, template)
@@ -298,7 +298,7 @@ async def test_every_job_pin_in_a_run_template_must_be_current_and_compatible(db
                 {"job_id": "zz-missing", "digest": "1" * 64},
             ],
         )
-        await records.set_grant_template(tx, INSTALLATION, template)
+        await records.set_grant_template(tx, INSTALLATION, template, team_id=TEAM)
         nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, SECRET.secret_id)
         with pytest.raises(derived_grants.DerivedGrantRefused) as refused:
             await _snapshot(tx, nodes, template)

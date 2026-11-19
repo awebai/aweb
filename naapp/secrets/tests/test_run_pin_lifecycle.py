@@ -359,9 +359,9 @@ async def test_ordinary_grant_revocation_disposes_only_its_original_assignment(u
         "SELECT dispatch_id FROM {{tables.run_contexts}} WHERE dispatch_ref=$1",
         other_wire["assignment"]["dispatch_id"],
     )
-    before = await config_revision(db, scope.installation_id)
+    before = await config_revision(db, scope.installation_id, team_id=TEAM)
     await act(await service(uses), uses, "revoke-grant", "grt_durable001", "revoke-root-run")
-    assert await config_revision(db, scope.installation_id) == before + 1
+    assert await config_revision(db, scope.installation_id, team_id=TEAM) == before + 1
     original_pin_count = await db.fetch_value(
         "SELECT count(*) FROM {{tables.run_redaction_pins}} WHERE dispatch_id=$1", first_id
     )

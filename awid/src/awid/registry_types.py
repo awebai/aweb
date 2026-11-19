@@ -6,7 +6,54 @@ awid.registry re-exports these identical classes for compatibility.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from typing import Any
+
+ADDRESS_NOT_FOUND = "address_not_found"
+logger = logging.getLogger(__name__)
+_legacy_address_not_found_count = 0
+_legacy_team_not_found_count = 0
+
+
+def is_address_not_found(status_code: int, body: Any) -> bool:
+    """Address-endpoint answers only; retain the exact released legacy body."""
+    if status_code != 404 or not isinstance(body, dict):
+        return False
+    if (
+        isinstance(body.get("detail"), dict)
+        and body["detail"].get("code") == ADDRESS_NOT_FOUND
+    ):
+        return True
+    if body in ({"detail": "Address not found"}, {"detail": "Namespace not found"}):
+        # Removal requires a supported registry floor and measured zero use;
+        # see the address-read compatibility contract in docs/awid-sot.md.
+        global _legacy_address_not_found_count
+        _legacy_address_not_found_count += 1
+        logger.warning(
+            "AWID legacy address absence accepted",
+            extra={
+                "event": "awid_legacy_address_not_found",
+                "count": _legacy_address_not_found_count,
+            },
+        )
+        return True
+    return False
+
+
+def is_team_not_found(status_code: int, body: Any) -> bool:
+    """Exact released missing-team answer; caller must gate route and page."""
+    if status_code != 404 or body != {"detail": "Team not found"}:
+        return False
+    global _legacy_team_not_found_count
+    _legacy_team_not_found_count += 1
+    logger.warning(
+        "AWID legacy missing team accepted",
+        extra={
+            "event": "awid_legacy_team_not_found",
+            "count": _legacy_team_not_found_count,
+        },
+    )
+    return True
 
 
 @dataclass(frozen=True)
@@ -40,6 +87,34 @@ class RegistryError(Exception):
         # The refusal's parsed JSON body, of whatever type, when body_is_json.
         self.body = body
         self.body_is_json = body_is_json
+
+
+class RegistryThrottled(RegistryError):
+    """A bounded read could not proceed, or its proof cannot be refreshed.
+
+    Fixed text and machine fields only: upstream bodies/identities never enter
+    this refusal. A caller may expose an appropriate transient response without
+    treating throttling as absence, stale evidence or an operation conflict.
+    """
+
+    def __init__(
+        self, *, retry_after_seconds: float | None, attempts: int, reason: str
+    ):
+        super().__init__(
+            "AWID registry rate limit exceeded", status_code=429, code="rate_limited"
+        )
+        self.retry_after_seconds = retry_after_seconds
+        self.attempts = attempts
+        self.reason = reason
+
+    def __str__(self) -> str:
+        # Existing operator exception logging calls str(error). Keep the
+        # bounded retry facts there as well as on the typed object; no path,
+        # identity, header text or upstream body is included.
+        return (
+            f"AWID registry rate limit exceeded (reason={self.reason}, "
+            f"attempts={self.attempts}, retry_after_seconds={self.retry_after_seconds})"
+        )
 
 
 class DIDKeyNotFoundError(RegistryError):

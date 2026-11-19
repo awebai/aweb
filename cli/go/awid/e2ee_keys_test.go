@@ -204,6 +204,7 @@ func TestRegistryResolverReturnsVerifiedEncryptionKey(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.Now = func() time.Time { return time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC) }
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},
@@ -258,6 +259,7 @@ func TestRegistryResolverRejectsInvalidEncryptionKeyAssertion(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	resolver := NewRegistryResolver(server.Client(), staticTXTResolver{})
+	routeUntrustedResolverRegistriesToInjectedClient(resolver)
 	resolver.Now = func() time.Time { return time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC) }
 	resolver.registryCache["acme.com"] = cachedValue[DomainAuthority]{
 		value:     DomainAuthority{RegistryURL: server.URL},

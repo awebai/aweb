@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
+import os
+import sys
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -102,6 +105,7 @@ async def test_health_answers_503_and_hides_backend_exception_details(
     assert response.status_code == 503
     payload = response.json()
     assert payload["status"] == "unhealthy"
+    assert "capabilities" not in payload
     assert payload["checks"]["redis"] == ("error" if redis_fails else "ok")
     assert payload["checks"]["database"] == ("error" if database_fails else "ok")
     assert "secret-host" not in response.text
@@ -193,17 +197,64 @@ async def test_wrong_trusted_service_token_falls_back_and_emits_metric_signal(
     _, public_key = generate_keypair()
     missing_did_aw = stable_id_from_did_key(did_from_public_key(public_key))
 
-    async with app.router.lifespan_context(app):
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
-            response = await test_client.get(
-                f"/v1/did/{missing_did_aw}/key",
-                headers={"X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"},
-            )
+    # The embedding host, rather than the library, selects its output sink.
+    rate_logger = logging.getLogger("awid.ratelimit")
+    handler = logging.StreamHandler(sys.stdout)
+    rate_logger.addHandler(handler)
+    try:
+        async with app.router.lifespan_context(app):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+                response = await test_client.get(
+                    f"/v1/did/{missing_did_aw}/key",
+                    headers={"X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"},
+                )
+    finally:
+        rate_logger.removeHandler(handler)
+        handler.close()
 
     assert response.status_code == 404
     assert len(fake_redis.eval_calls) == 1
     assert "event=awid_service_credential_rejected" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_standalone_registry_configures_stdout_and_logs_rejected_service_token(test_db_factory, monkeypatch, capsys):
+    db = await test_db_factory.create_db(suffix="standalone_stdout")
+    monkeypatch.setenv("AWID_DATABASE_URL", db.config.get_dsn())
+    monkeypatch.setenv("AWID_REDIS_URL", os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"))
+    monkeypatch.setenv("AWID_LOG_LEVEL", "info")
+    monkeypatch.setenv("AWID_LOG_JSON", "false")
+    monkeypatch.setenv("AWID_SERVICE_TOKEN", "trusted-service-token-with-at-least-32-bytes")
+    app = create_app()  # No injected dependencies: enter the real standalone lifespan.
+    root = logging.getLogger()
+    handlers, level = root.handlers[:], root.level
+    try:
+        async with app.router.lifespan_context(app):
+            assert root.level == logging.INFO
+            transport = ASGITransport(app=app, client=("192.0.2.91", 12345))
+            async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+                assert (await client.get("/health")).status_code == 200
+                _, public_key = generate_keypair()
+                did = stable_id_from_did_key(did_from_public_key(public_key))
+                response = await client.get(
+                    f"/v1/did/{did}/key",
+                    headers={"X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes"},
+                )
+                assert response.status_code == 404
+    finally:
+        # Restore the test process only AFTER observing real standalone startup;
+        # no handler is installed by the test to satisfy its stdout assertions.
+        standalone_handlers = [handler for handler in root.handlers if handler not in handlers]
+        root.handlers[:] = handlers
+        root.setLevel(level)
+        for handler in standalone_handlers:
+            handler.close()
+    output = capsys.readouterr().out
+    assert "Starting awid registry service (standalone mode)" in output
+    assert "event=awid_service_credential_rejected" in output
+    assert "trusted-service-token-with-at-least-32-bytes" not in output
+    assert "wrong-service-token-with-at-least-32-bytes" not in output
 
 
 @pytest.mark.asyncio
@@ -340,6 +391,7 @@ def _assert_limited(response):
 async def test_every_read_bucket_trusted_exemption(
     client, fake_redis, monkeypatch, caplog, bucket, path, status
 ):
+    caplog.set_level(logging.INFO, logger="awid.ratelimit")
     token = "trusted-service-token-with-at-least-32-bytes"
     wrong = "wrong-service-token-with-at-least-32-bytes"
     app = client._transport.app
@@ -543,6 +595,7 @@ async def test_service_provisioning_token_does_not_authorize_writes(client, monk
 
 @pytest.mark.asyncio
 async def test_service_exemption_telemetry_is_aggregated_per_bucket(client, fake_redis, monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger="awid.ratelimit")
     token = "trusted-service-token-with-at-least-32-bytes"
     monkeypatch.setattr(client._transport.app.state, "awid_service_token", token)
     path = _missing_did_path("/v1/did/{did}")

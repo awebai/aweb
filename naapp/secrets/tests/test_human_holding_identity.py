@@ -7,6 +7,7 @@ import sys
 import unittest
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from aweb_naapp.runtime.installation import AdmittedInstallation
 
@@ -69,6 +70,7 @@ class HoldingIdentity(unittest.TestCase):
         for seed in ("1", "293"):
             result = subprocess.run(
                 [sys.executable, "-c", program],
+                cwd=Path(__file__).resolve().parents[1],
                 env={**os.environ, "PYTHONHASHSEED": seed},
                 capture_output=True,
                 text=True,

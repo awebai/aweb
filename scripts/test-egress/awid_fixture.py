@@ -5,6 +5,13 @@ A second stdout line is JSON naming the fixture's storage (database URL and
 schema), for test helpers that seed state the CLI cannot publish itself.
 Rate limits are off unless AWID_FIXTURE_RATE_LIMITS=production, which runs the
 production bucket values on the in-memory limiter, private to this fixture.
+AWID_PUBLIC_ORIGINS is the fixture's own loopback origin, unless
+AWID_FIXTURE_PUBLIC_ORIGINS=none leaves it unset or names other origins.
+
+With AWID_FIXTURE_RELEASE=production it serves the AWID release production runs,
+as published (pinned in production-awid/), instead of this repository's AWID;
+the DNS dependency is not available there. Run uv sync --frozen in that project
+beforehand.
 
 Uses the suite's PG/Redis when configured, otherwise owns disposable containers.
 No service responses are synthesized. Run uv sync --frozen in awid beforehand.
@@ -14,6 +21,7 @@ import os
 from pathlib import Path
 import socket
 import subprocess
+import tempfile
 import sys
 import time
 import urllib.request
@@ -49,6 +57,7 @@ def fixture_app():
 def main():
     owned = []
     process = None
+    listener = None
     env = dict(os.environ)
     schema = 'test_cli_' + uuid.uuid4().hex
     try:
@@ -69,9 +78,10 @@ def main():
                 if subprocess.run(['docker', 'exec', owned[0], 'pg_isready', '-U', 'postgres'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
                     break
                 time.sleep(.25)
-        with socket.socket() as sock:
-            sock.bind(('127.0.0.1', 0))
-            port = sock.getsockname()[1]
+        listener = socket.socket()
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        port = listener.getsockname()[1]
         from urllib.parse import quote
         database = (f"postgresql://{quote(env.get('PGUSER', 'postgres'), safe='')}:"
                     f"{quote(env.get('PGPASSWORD', 'postgres'), safe='')}@{env['PGHOST']}:"
@@ -81,13 +91,35 @@ def main():
         if os.environ.get('AWID_FIXTURE_RATE_LIMITS') == 'production':
             env.pop('AWID_RATE_LIMIT_DISABLED')
             env['AWID_RATE_LIMIT_BACKEND'] = 'memory'
-        if env.get('AWID_FIXTURE_DNS_DOMAIN'):
-            env['AWID_PUBLIC_ORIGINS'] = f'http://127.0.0.1:{port}'
-        process = subprocess.Popen(['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'),
-                                    'python', '-c',
-                                    "import runpy, sys, uvicorn; uvicorn.run(runpy.run_path(sys.argv[1])['fixture_app'](), host='127.0.0.1', port=int(sys.argv[2]))",
-                                    str(Path(__file__).resolve()), str(port)],
-                                   env=env, stdout=sys.stderr, stderr=sys.stderr)
+        # The origin it serves on, which covering controller signatures name,
+        # as any deployed registry has; a test of the missing setting opts out,
+        # and a test that fronts the fixture with its own server names that
+        # server's origin.
+        public_origins = os.environ.get('AWID_FIXTURE_PUBLIC_ORIGINS', '')
+        if public_origins == 'none':
+            env.pop('AWID_PUBLIC_ORIGINS', None)
+        else:
+            env['AWID_PUBLIC_ORIGINS'] = public_origins or f'http://127.0.0.1:{port}'
+        if os.environ.get('AWID_FIXTURE_RELEASE') == 'production':
+            if env.get('AWID_FIXTURE_DNS_DOMAIN'):
+                raise RuntimeError('the production AWID fixture has no DNS dependency')
+            # The release's own server, settings and migrations; nothing of
+            # this repository on its path.
+            env.pop('PYTHONPATH', None)
+            env.pop('VIRTUAL_ENV', None)
+            env.pop('AWID_RATE_LIMIT_DISABLED', None)
+            env['AWID_RATE_LIMIT_BACKEND'] = 'memory'
+            command = ['uv', 'run', '--offline', '--frozen', '--project', str(Path(__file__).resolve().parent / 'production-awid'),
+                       'python', '-m', 'uvicorn', 'awid_service.main:create_app', '--factory', '--fd', str(listener.fileno())]
+            cwd = tempfile.gettempdir()
+        else:
+            command = ['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'),
+                       'python', '-c',
+                       "import runpy, sys, uvicorn; uvicorn.run(runpy.run_path(sys.argv[1])['fixture_app'](), fd=int(sys.argv[2]))",
+                       str(Path(__file__).resolve()), str(listener.fileno())]
+            cwd = None
+        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=sys.stderr, stderr=sys.stderr, pass_fds=(listener.fileno(),))
+        listener.close()
         url = f'http://127.0.0.1:{port}'
         for _ in range(120):
             if process.poll() is not None:
@@ -104,6 +136,8 @@ def main():
         print(json.dumps({'database_url': database, 'schema': schema}), flush=True)
         sys.stdin.read()
     finally:
+        if listener is not None:
+            listener.close()
         if process is not None:
             process.terminate()
             try:
@@ -122,8 +156,14 @@ async def clean():
 asyncio.run(clean())
 """
                 subprocess.run(['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'), 'python', '-c', cleanup], env=env, check=True)
-        for container in reversed(owned):
-            subprocess.run(['docker', 'rm', '-f', container], stdout=sys.stderr, check=True)
+        remove_owned_containers(owned)
+
+
+def remove_owned_containers(owned):
+    # --rm removes anonymous volumes only when Docker itself removes the
+    # container; an explicit removal must name -v to remove them.
+    for container in reversed(owned):
+        subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=sys.stderr, check=True)
 
 
 if __name__ == '__main__':

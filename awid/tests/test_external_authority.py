@@ -407,3 +407,25 @@ def test_wrong_claim_cannot_poison_correct_claim() -> None:
         delivery_origin="https://aweb-alpha.example",
     )
     assert result["generation"] == 4
+
+
+# IPv6 transition prefixes that embed an IPv4 address are refused: behind a
+# NAT64 gateway 64:ff9b::a00:1 reaches 10.0.0.1, and 6to4 or Teredo can carry a
+# private IPv4 the same way. The Go reader refuses the same prefixes.
+@pytest.mark.parametrize(
+    "address",
+    [
+        "64:ff9b::a00:1",  # NAT64 well-known, 10.0.0.1
+        "64:ff9b::a9fe:a9fe",  # NAT64 well-known, 169.254.169.254
+        "64:ff9b::5db8:d822",  # NAT64 well-known, public 93.184.216.34
+        "64:ff9b:1::a00:1",  # NAT64 local-use
+        "2002:a00:1::",  # 6to4, 10.0.0.1
+        "2002:5db8:d822::",  # 6to4, public
+        "2001::a00:1",  # Teredo
+        "2001:0:5db8:d822::1",  # Teredo
+    ],
+)
+def test_ipv4_embedding_transition_prefixes_are_refused(address: str) -> None:
+    with pytest.raises(FederationAuthorityError) as raised:
+        validate_resolved_addresses([address])
+    assert raised.value.reason == "sender_registry_origin_forbidden"

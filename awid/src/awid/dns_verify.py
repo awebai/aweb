@@ -42,6 +42,10 @@ class DnsVerificationError(Exception):
     """Raised when DNS verification of a domain fails."""
 
 
+class DnsLookupError(DnsVerificationError):
+    """The resolver could not answer; this is not absent or invalid DNS proof."""
+
+
 _AWID_PREFIX = "awid="
 
 
@@ -94,8 +98,8 @@ async def _lookup_domain_authority(domain: str) -> DomainAuthority | None:
             answers = await dns.asyncresolver.resolve(qname, "TXT")
         except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
             continue
-        except (dns.resolver.NoNameservers, dns.exception.Timeout) as exc:
-            raise DnsVerificationError(f"DNS lookup failed for {qname}") from exc
+        except (dns.exception.DNSException, OSError) as exc:
+            raise DnsLookupError(f"DNS lookup failed for {qname}") from exc
 
         awid_records = []
         for rdata in answers:

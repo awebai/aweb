@@ -9,8 +9,23 @@ import shutil
 import sys
 import tempfile
 
-from test_candidate_ports import held_library_default
+from contextlib import contextmanager
+import errno
+import socket
+
 from fixture_repo import init_fixture_repo, run_fixture
+
+
+@contextmanager
+def held_library_default():
+    with socket.socket() as held:
+        try:
+            held.bind(("127.0.0.1", 55432))
+            held.listen()
+        except OSError as error:
+            if error.errno != errno.EADDRINUSE:
+                raise
+        yield
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = "checks user-paths unit artifacts integration"
@@ -59,7 +74,7 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="aweb-ledger-proof.") as temporary:
         repo = Path(temporary)
         for name in ("candidate-docker-gate.sh", "candidate-suite.sh", "candidate-cleanup.sh",
-                     "candidate-host-pressure.py", "candidate-ports.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
+                     "candidate-host-pressure.py", "candidate-network.py", "fetch_released_aw.py", "next_tag_version.py", "release_candidate.py", "release_versions.py"):
             destination = repo / "scripts" / name
             destination.parent.mkdir(exist_ok=True)
             shutil.copy2(ROOT / "scripts" / name, destination)
@@ -77,6 +92,10 @@ def main() -> None:
         (repo / "naapp/library/test-vectors/blueprints/team/proof").write_text("fixture\n")
         shutil.copy2(ROOT / "docker-compose.e2e.yml", repo / "docker-compose.e2e.yml")
         shutil.copytree(ROOT / "scripts/e2e/initdb", repo / "scripts/e2e/initdb")
+        # The real wrapper's host preflight must execute the real probe from
+        # this committed fixture checkout, just as it does for a candidate.
+        shutil.copy2(ROOT / "scripts/e2e/test_candidate_gate_docker_boundaries.py",
+                     repo / "scripts/e2e/test_candidate_gate_docker_boundaries.py")
         (repo / "server").mkdir()
         (repo / "server/pyproject.toml").write_text('[project]\nname="ledger-proof"\nversion="1.2.3"\n')
         recipes = f".PHONY: candidate-gate {' '.join(SOURCE_CHECKS)}\n{' '.join(SOURCE_CHECKS)}:\n\t@git diff --exit-code\n"
@@ -101,7 +120,7 @@ freshness:
 naapp-e2e-packages:
 \t@printf '%s\\n' proof/first proof/second
 e2e-naapp:
-\t@python3 -c 'import os; rows=[row.split() for row in os.environ["NAAPP_E2E_ALLOCATIONS"].splitlines()]; assert [row[0] for row in rows] == ["proof/first", "proof/second"]; assert len({port for row in rows for port in row[2:]}) == 4; assert all(row[1].startswith("aweb-candidate-") and "-naapp-" in row[1] for row in rows); assert os.environ["AWEB_DOCKER_PUBLISHED_HOST"] == "aweb-docker.test"'
+\t@python3 -c 'import os; rows=[row.split() for row in os.environ["NAAPP_E2E_ALLOCATIONS"].splitlines()]; assert [row[0] for row in rows] == ["proof/first", "proof/second"]; assert all(row[2:] == ["8010", "5432"] for row in rows); assert all(row[1].startswith("aweb-candidate-") and "-naapp-" in row[1] for row in rows); assert "AWEB_DOCKER_PUBLISHED_HOST" not in os.environ'
 candidate-gate:
 \tbash scripts/candidate-docker-gate.sh
 '''

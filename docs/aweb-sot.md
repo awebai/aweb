@@ -522,6 +522,27 @@ The OSS request middleware does not impose a per-client limit before team
 authentication, so an auth-failing request is not counted by a global client
 rate limiter here. Hosted proxy admission is deployment policy.
 
+**Registered-certificate cache misses.** In strict registration mode, a
+correctly signed, unrevoked presented certificate absent from the cached
+all-certificates list gets one fresh list read and one verification retry.
+A completed read that still omits it answers 401 `unregistered`. Suppressed
+admission, Redis failure, timeout or failed fresh authority answers transient
+503; the old cached omission is not current proof of absence. The successful
+read replaces only the existing registry/team/reader cache partition, with
+its ordinary TTL and retention. Already registered certificates take the
+existing path without a new admission check.
+
+The fresh-list producer and its waiters each retain the registry client's
+total timeout; cancellation of a waiter propagates immediately and cannot
+extend the bounded producer. Concurrent callers in one client share that
+producer. Across clients, a separate five-second per-registry/team Redis
+`SET NX` window bounds added list refreshes to 12 attempts per minute.
+Bad request signatures spend neither refresh budget; bad certificate
+signatures spend only the existing key-refresh budget. A newly valid
+certificate after key rotation still requires fresh revocations, including
+when that certificate also misses the registered list. This changes no
+registration-mode activation or revocation freshness policy.
+
 **Revocation.** Against an honest, available registry, a newly revoked
 certificate may continue to verify for at most the 120-second fresh-plus-stale
 window. During a registry failure only, the revocation tier may serve the last
@@ -595,6 +616,13 @@ changes nothing: which version stays active is a decision about that team's
 data. Deactivate all but one active version for those teams, then run it again.
 A hosted deployment that keeps its own copy of the aweb migrations needs the
 same file in that copy.
+
+Creation of a team's instructions or roles version takes the same per-team
+transaction advisory lock as activation (`team-instructions-activation` or
+`team-roles-activation`). Version allocation and the optional active-base check
+run after taking that lock, so concurrent creators allocate distinct ordered
+versions rather than racing on `MAX(version) + 1`. The database's one-active
+indexes remain the final invariant for every writer.
 
 ### Current table inventory
 
@@ -827,11 +855,37 @@ a stored participant route, so the transport admits it before any connection:
 the origin is `https` and named by host, the host is resolved once, and every
 answer is a public address (loopback, private, link-local, shared CGNAT,
 unique-local, multicast, reserved, unspecified and IPv4-mapped forms of those
-are refused, and one refused answer refuses the name). The connection goes to an
+are refused; one refused answer refuses the name). Both readers apply the same
+explicit tables, which are conservative rather than a restatement of the IANA
+classification. An IPv4 answer is refused in `0.0.0.0/8`, `10.0.0.0/8`,
+`100.64.0.0/10`, `127.0.0.0/8`, `169.254.0.0/16`, `172.16.0.0/12`,
+`192.0.0.0/24` (except `192.0.0.9` and `192.0.0.10`), `192.0.2.0/24`,
+`192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`,
+`224.0.0.0/4` and `240.0.0.0/4`. An IPv6 answer is admitted only inside
+`2000::/3`, and refused there in `2001::/23` (except `2001:1::1`,
+`2001:1::2`, `2001:3::/32`, `2001:4:112::/48`, `2001:20::/28` and
+`2001:30::/28`), `2001:db8::/32`, `2002::/16` and `3fff::/20`; so the
+transition prefixes that embed an IPv4 address (NAT64 `64:ff9b::/96` and
+`64:ff9b:1::/48`, 6to4, Teredo) and site-local `fec0::/10` are refused. The connection goes to an
 admitted address, trying the answers in order until one accepts a connection,
 while TLS verification, SNI and `Host` name the origin; proxy
 settings in the environment are not read, redirects are not followed, each
 delivery resolves and checks again, and no connection outlives its response.
+Before the transport is used, `deliver_federated_message`, which every federated
+mail and chat send calls, applies the operator's `AWEB_FEDERATION_OUTBOUND`
+(`aweb.config.get_federation_outbound`):
+- unset or empty delivers wherever the transport admits, as before the setting
+  existed;
+- `off` delivers nowhere;
+- a comma-separated list of origins, canonicalised as delivery origins are and
+  compared for equality, delivers only to those.
+A refused send raises `FederatedDeliveryRefused`, which reaches the sender as
+`403` with `Federated delivery to <origin> is refused: AWEB_FEDERATION_OUTBOUND
+is off` (or `does not list this origin`), before any resolution or connection.
+An unreadable value refuses start-up through `get_settings` naming the entry,
+and refuses every send (`is not a valid setting`) where settings were never
+loaded.
+
 Routes and MCP tools both take the transport from the federation authority, which
 shares its resolver, origin policy and trust anchors with strict registry reads
 (`docs/vectors/federation-origin-ip-v1.json`). `http` origins, address literals
@@ -1302,6 +1356,12 @@ Supported clean-directory outcomes:
   default identity scope is local. With `--global`, this reuses the current
   self-custodial global identity; if none exists the CLI fails with `aw id
   create` guidance rather than silently creating a local identity.
+- `--invite <token> [--parent <creator-home>]`: accept an existing invite and
+  connect. `--parent` selects a same-machine creator for a fresh child,
+  independently of the invite issuer; omit it to reuse an existing chain.
+  Joining preserves existing parentage and checks the invite's stored human
+  condition. `--join-from` is the shorthand that selects the same source for
+  both the creator and the invite.
 - `--admission-team-id <team> --expect-account <account-id>`: use host CLI
   auth with scope `cli.team_admission` to issue one admission invite, then
   accept and connect. Missing CLI auth starts bounded device authorization in
@@ -1362,16 +1422,26 @@ namespace family.
 
 ### Global agent (joining an existing team via invite)
 
+This example uses an invite issuer with no verified nearest human, so the
+invite has no human condition. An issuer with a verified nearest human defaults
+all its invites, including `--member-global`, to requiring that human;
+`--for-human <did:aw>` requires the named person instead. Acceptance checks the
+joining agent's chain against current registry evidence before granting
+membership. A chainless global identity cannot meet a human condition: joining
+never gives an existing identity the issuer as its parent. A conditioned join
+refuses if the chain is missing, names another human, or current evidence is
+unavailable. See [creator selection and invite conditions](identity.md#3-join-team).
+
 ```
 1. aw id create --name alice --domain acme.com
    → identity created at awid (did:aw, did:key, address)
 
-2. Team controller invites alice:
+2. Team controller, acting with an issuer that has no verified human, invites alice:
    aw id team invite --member-global
    → returns invite token
 
 3. Alice accepts:
-   aw id team accept-invite <token> --address acme.com/alice
+   aw id team accept-invite <token> --global --address acme.com/alice
    → team controller signs certificate for alice's did:key
    → certificate saved under .aw/team-certs/<team>.pem
 
@@ -1413,8 +1483,10 @@ own server URL for self-hosted aweb.)
    → aweb rejects the certificate after its revocation view refreshes
 ```
 
-With Redis, the documented cache policy permits up to 20 minutes of stale
-revocation state; without Redis the next verification reads AWID directly.
+With Redis, revocations are fresh for 60 seconds with one additional 60-second
+stale window. During registry failure only, last-known data may be served while
+its original fetch age is at most 15 minutes, with warnings; then the read
+fails closed. Without Redis the next verification reads AWID directly.
 Revocation does not itself mutate or delete the aweb runtime projection. That
 row remains available for history until an explicit aweb lifecycle operation
 changes it.
@@ -1450,7 +1522,7 @@ relies on are:
 |---------|---------|
 | `aw run <provider>` | Primary human entrypoint; guided onboarding + provider loop |
 | `aw init` | Bind the current workspace using the active certificate from `.aw/team-certs/` (`POST /v1/connect`) |
-| `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Join a team via a dashboard-issued bootstrap token; global when `--address` is supplied, local otherwise |
+| `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Unsupported bootstrap-token command retained for this release; use a dashboard setup key or `aw init --join-from` |
 | `aw id team create --name X --namespace Y` | Create team at awid |
 | `aw id team invite [--team X --namespace Y] [--member-global]` | Create invite token; defaults to the active team and a local invite. `--member-local` is the explicit default; the old `--global` and `--local` spellings are deprecated hidden aliases |
 | `aw id team accept-invite <token>` | Accept a hosted `aw_inv_` or local-controller invite, receive certificate; hosted local accepts into an explicit external `--identity-home` auto-connect that root when the invite names a service |
@@ -2002,7 +2074,8 @@ AWEB_APP_GRANT_MAX_AGE_SECONDS=60
 AWEB_HOOK_PRODUCER_KEYS=
 ```
 
-`AWEB_REDIS_URL` falls back to `REDIS_URL`, `AWEB_DATABASE_USES_TRANSACTION_POOLER`
+`AWEB_REDIS_URL` falls back to `REDIS_URL`, and `AWEB_REDIS_URL_FILE` names a
+file that holds the whole URL instead (never both); `AWEB_DATABASE_USES_TRANSACTION_POOLER`
 falls back to `DATABASE_USES_TRANSACTION_POOLER`, and
 `AWEB_DATABASE_STATEMENT_CACHE_SIZE` falls back to
 `DATABASE_STATEMENT_CACHE_SIZE`.

@@ -289,9 +289,9 @@ Remote HTTP cannot join a Cloud database transaction. It prepares/sends the
 original envelope with fixed message UUID through existing native HTTP send
 paths (managed session send in P3/P4), durably records its local intent first,
 and recovers the original receipt using stable IDs and public acceptance/ingress
-reads. Idempotency request headers are `X-AWEB-Ingress-Namespace`,
-`X-AWEB-Ingress-Key`, `X-AWEB-Ingress-Input-Hash`; the authenticated issuer is
-never taken from a header. This is durable reconciliation, **not cross-DB
+reads. Native HTTP sends ignore `X-AWEB-Ingress-*` headers
+and apply their existing message-ID and replay rules, with the issuer derived
+from the authenticated caller context. This is durable reconciliation, **not cross-DB
 atomicity**. A timeout after possible acceptance stays unresolved until lookup or
 an exact retry proves the result. Changed bytes never get a fresh UUID to force
 success. Public native acceptance retains current receiver-wide replay rules.

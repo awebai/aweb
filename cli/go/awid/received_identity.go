@@ -41,6 +41,7 @@ func (r *RegistryResolver) receivedRegistry(ctx context.Context, teamID string) 
 	if scoped == nil {
 		scoped = NewRegistryResolver(r.HTTPClient, r.DNSResolver)
 		scoped.Now = r.Now
+		scoped.inheritRegistryPolicy(r)
 		r.receivedRegistries[registryURL] = scoped
 	}
 	return registryURL, scoped, nil
@@ -316,6 +317,7 @@ func (c *Client) ReceivedAddressIDTreeEnrollment(ctx context.Context, address, s
 	}
 	reader := NewAWIDRegistryClient(registry.HTTPClient, registry.DNSResolver)
 	reader.Now = registry.Now
+	reader.Resolver.inheritRegistryPolicy(registry)
 	key, err := reader.ResolveKeyAt(ctx, resolved.authority.RegistryURL, stableID)
 	if err != nil {
 		return unknown

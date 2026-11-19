@@ -866,7 +866,9 @@ func TestCustodyUnwrapRequiresReadableStoredE2EEMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc.client = client
-	svc.readStoredEnvelope = svc.storedE2EEEnvelopeViaClient
+	svc.readStoredEnvelope = func(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
+		return svc.storedE2EEEnvelopeViaClient(ctx, client, kind, messageID, conversationID)
+	}
 	readable := signedE2EEUnwrapRequest(t, sessionKey, alice, incoming)
 	out, err := svc.unwrapE2EEMessage(context.Background(), readable)
 	if err != nil {
@@ -1114,6 +1116,7 @@ func TestCustodyCreateE2EEResolvesRecipientThroughRealRegistryResolver(t *testin
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(registry.Close)
+	t.Setenv("AWID_REGISTRY_URL", registry.URL)
 
 	resolver := awid.NewRegistryResolver(registry.Client(), nil)
 	if err := resolver.SetFallbackRegistryURL(registry.URL); err != nil {

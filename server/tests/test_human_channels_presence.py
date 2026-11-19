@@ -117,7 +117,8 @@ async def test_live_go_signature_public_identity_and_python_host_verification(pr
         resolution = await registry.resolve_key_fresh(stable)
         assert resolution.current_did_key == actor.did
         identities[name] = PresenceIdentity(stable if global_subject else actor.did, resolution.current_did_key, True)
-        await env.db.execute("UPDATE {{tables.agents}} SET identity_scope=$1, did_aw=$2, certificate_id=$3 WHERE agent_id=$4",
+        await env.db.execute("UPDATE {{tables.agents}} SET identity_scope=$1, did_aw=$2, certificate_id=$3, "
+                             "accepted_team_did_key=(SELECT team_did_key FROM {{tables.teams}} t WHERE t.team_id = agents.team_id) WHERE agent_id=$4",
                              'global' if global_subject else 'local', stable if global_subject else None, 'privacy-' + name, actor.id)
     old_key = None
     if rotated:

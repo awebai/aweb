@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
@@ -30,12 +33,32 @@ func installationApprovalError(code, origin, home, teamID string) error {
 		formatShellCommand([]string{"aw", "--identity-home", home, "--team", teamID, "id", "grant", "mint", "--bundle", "normal-agent", "--ttl", "1h", "--custody-socket", "auto", "--out", "<new-empty-grant-home>"}))}
 }
 
+// installationUnavailable is an installation the service could not report
+// now. Its text is the stable code; retryAfter is the service's explicit
+// delta-seconds hint of when to read again, when hinted.
+type installationUnavailable struct {
+	retryAfter time.Duration
+	hinted     bool
+}
+
+func (e *installationUnavailable) Error() string { return "app_installation_unavailable" }
+
+// retryAfterHint reads an unavailable answer's Retry-After as delta-seconds.
+// An HTTP-date or anything else is no hint: nothing is waited for on it.
+func retryAfterHint(value string) (time.Duration, bool) {
+	seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	if err != nil || seconds < 0 || seconds > int64(math.MaxInt64/int64(time.Second)) || strings.TrimSpace(value) == "" || strings.ContainsAny(value, "+-") {
+		return 0, false
+	}
+	return time.Duration(seconds) * time.Second, true
+}
+
 // No cache: a custody signing decision must observe the current installation,
 // including when the request would otherwise reuse a cached signed response.
 func activeInstallation(ctx context.Context, client *aweb.Client, teamID, appID string) (appInstallationReceipt, error) {
 	var current appInstallationReceipt
 	if client == nil {
-		return current, fmt.Errorf("app_installation_unavailable")
+		return current, &installationUnavailable{}
 	}
 	err := client.Get(ctx, "/v1/apps/"+url.PathEscape(appID)+"/installation?team_id="+url.QueryEscape(teamID), &current)
 	if err != nil {
@@ -43,7 +66,11 @@ func activeInstallation(ctx context.Context, client *aweb.Client, teamID, appID 
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 			return current, fmt.Errorf("app_installation_inactive")
 		}
-		return current, fmt.Errorf("app_installation_unavailable")
+		unavailable := &installationUnavailable{}
+		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusServiceUnavailable {
+			unavailable.retryAfter, unavailable.hinted = retryAfterHint(apiErr.RetryAfter)
+		}
+		return current, unavailable
 	}
 	if current.State != "active" || !current.OriginVerified || strings.TrimSpace(current.InstallationID) == "" || current.Generation <= 0 {
 		return current, fmt.Errorf("app_installation_inactive")

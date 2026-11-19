@@ -24,7 +24,7 @@ class PasskeyContexts:
     async def __call__(self, scope: str, *, tx: TransactionManager) -> PasskeyInstallationContext:
         bindings = await tx.fetch_all(
             """
-            SELECT installation_id,team_id FROM {{tables.owner_principals}} WHERE scope=$1
+            SELECT installation_id,team_id FROM {{tables.role_holdings}} WHERE role='secrets.owner' AND b3_scope=$1
             UNION
             SELECT installation_id,team_id FROM {{tables.approvers}} WHERE scope=$1
             """,

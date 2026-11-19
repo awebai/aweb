@@ -130,6 +130,7 @@ func TestRegistryClientReconcilesAppliedRotationAfterResponseDrop(t *testing.T) 
 	})
 
 	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	mapping, err := client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
 	if err != nil {
 		t.Fatalf("RotateDIDKey after committed response drop: %v", err)
@@ -155,6 +156,7 @@ func TestRegistryClientRetriesRotationOnlyAfterConfirmingFirstAttemptDidNotApply
 	})
 
 	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	mapping, err := client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
 	if err != nil {
 		t.Fatalf("RotateDIDKey before-apply response drop: %v", err)
@@ -182,6 +184,7 @@ func TestRegistryClientKeepsOutcomeUnknownWhenRetryCannotResolveFirstAmbiguousAt
 	})
 
 	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err := client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
 	var outcomeErr *DIDRotationError
 	if !errors.As(err, &outcomeErr) || outcomeErr.Outcome != DIDRotationOutcomeUnknown {
@@ -197,6 +200,7 @@ func TestRegistryClientAcceptsExactRotationReplayWhenRegistryHasReplacementKey(t
 	})
 
 	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	mapping, err := client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
 	if err != nil {
 		t.Fatalf("RotateDIDKey exact replay: %v", err)
@@ -213,6 +217,7 @@ func TestRegistryClientKeepsRotationOutcomeUnknownForOversizeSubmitResponse(t *t
 	})
 
 	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err := client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
 	var outcomeErr *DIDRotationError
 	if !errors.As(err, &outcomeErr) || outcomeErr.Outcome != DIDRotationOutcomeUnknown {
@@ -227,6 +232,7 @@ func TestRegistryClientReportsRotationDefinitelyNotAppliedWhenRegistryRemainsOld
 	})
 
 	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err := client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
 	var outcomeErr *DIDRotationError
 	if !errors.As(err, &outcomeErr) || outcomeErr.Outcome != DIDRotationDefinitelyNotApplied {
@@ -242,6 +248,7 @@ func TestRegistryClientReportsRotationOutcomeUnknownWhenCurrentStateCannotBeReso
 	})
 
 	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err := client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
 	var outcomeErr *DIDRotationError
 	if !errors.As(err, &outcomeErr) || outcomeErr.Outcome != DIDRotationOutcomeUnknown {
@@ -262,6 +269,7 @@ func TestRegistryClientReportsRotationOutcomeUnknownForUnexpectedCurrentKey(t *t
 	})
 
 	client := NewAWIDRegistryClient(fixture.server.Client(), nil)
+	routeUntrustedRegistriesToInjectedClient(client)
 	_, err = client.RotateDIDKey(context.Background(), fixture.server.URL, didAW, oldPrivate, newPrivate)
 	var outcomeErr *DIDRotationError
 	if !errors.As(err, &outcomeErr) || outcomeErr.Outcome != DIDRotationOutcomeUnknown {

@@ -76,6 +76,9 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 		return nil, err
 	}
 	r := signed["request"].(map[string]any)
+	if r["domain"] != domain {
+		return nil, fmt.Errorf("this child belongs to %s but its parent is now in %s; its ancestry cannot refresh across domains; respawn under the adopted parent", r["domain"], domain)
+	}
 	if len(parentChain) == 0 {
 		return nil, fmt.Errorf("the parent's own chain is required")
 	}
@@ -88,11 +91,8 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 	if !ok {
 		return nil, fmt.Errorf("the parent chain does not end in %s", parentID)
 	}
-	_, current, _, err := idSigningParent(parentID, evidence, domain)
+	_, err = idIssuingKey(map[string]any{"kind": "identity", "id": parentID}, domain, "agent", parentChain, evidence)
 	if err != nil {
-		return nil, err
-	}
-	if err := idParentChainVerified(parentChain, parentID, current, evidence, domain); err != nil {
 		return nil, err
 	}
 	req := IDResignRequest{
@@ -101,7 +101,7 @@ func ApproveIDResignRequest(store IDIssuanceStore, requestID, parentID string, p
 		SubjectKey: r["subject_key"].(string),
 	}
 	var response []byte
-	_, err = resignIDCertificate(req, parentID, evidence, domain, store, sign, now, func(child map[string]any, id string) error {
+	_, err = resignIDCertificate(req, parentID, parentChain, evidence, domain, store, sign, now, func(child map[string]any, id string) error {
 		certificates := append(append([]any{}, parentChain...), child)
 		chain := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": certificates}
 		encoded, err := EncodeIDCertificateResponse(requestID, chain)
@@ -265,23 +265,17 @@ func importIDCertificateChain(expected, chain map[string]any, evidence *IDChainE
 	if parent["kind"] != "identity" || len(certificates) < 2 {
 		return nil, idCertificateRefusal("invalid_shape")
 	}
-	parentID := parent["id"].(string)
 	if evidence == nil {
 		return nil, idCertificateRefusal("evidence_unavailable")
 	}
-	// The verdict below refuses evidence outside the cache bounds.
-	status, err := parseIDStatus(evidence, domain)
+	current, err := idIssuingKey(parent, domain, c["kind"].(string), certificates[:len(certificates)-1], evidence)
 	if err != nil {
+		// Import preserves the chain verifier's refusal contract; the
+		// signing helper names a revoked signing parent more specifically.
+		if IDCertificateErrorCode(err) == "parent_revoked" {
+			return nil, idCertificateRefusal("revoked")
+		}
 		return nil, err
-	}
-	current, err := status.currentKey(parentID)
-	if err != nil {
-		return nil, err
-	}
-	parentBundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": certificates[:len(certificates)-1]}
-	verdict := VerifyIDChain(parentBundle, IDChainSubject{ID: parentID, DIDKey: current}, evidence, domain)
-	if verdict.IdentityValid == nil || !*verdict.IdentityValid {
-		return nil, idCertificateRefusal(verdict.Reason)
 	}
 	// Parsing verified the child's signature under its own issuer_key.
 	if c["issuer_key"] != current {

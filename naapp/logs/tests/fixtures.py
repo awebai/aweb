@@ -12,6 +12,9 @@ from typing import Any
 from aweb_naapp.hooks import envelope as hook_envelope
 from awid.did import did_from_public_key
 from nacl.signing import SigningKey
+from pgdbm import AsyncDatabaseManager
+
+from aweb_logs.purge_ledger import PurgeLedger, apply_purge_ledger_migrations
 
 TEAM_ID = "demo:example.com"
 LOGS_ORIGIN = "https://logs.example.com"
@@ -157,5 +160,30 @@ def signed_event(
     return hook_envelope.sign(key_seed, event)
 
 
+def admitted_evidence(event: hook_envelope.Envelope) -> dict[str, Any]:
+    """The key evidence logs' ingest records for ``event`` when it admits it
+    (docs/logs-chain.md, the record's ``key_evidence``): the producer's kid,
+    did:key and purposes, an app producer's installation and generation, and
+    the bindings and admissions it was admitted under, here none."""
+    producer = event.fields["producer"]
+    app = event.producer_kind == "app"
+    return {
+        "kid": event.producer_kid,
+        "did_key": event.producer_did_key,
+        "purposes": [] if event.producer_kind == "client" else ["hook-event"],
+        "installation_id": producer["installation_id"] if app else None,
+        "generation": producer["generation"] if app else None,
+        "binding_ids": [],
+        "admissions": [],
+    }
+
+
 def producer_did_key(kind: str) -> str:
     return did_key(_TEMPLATES[kind][1])
+
+
+async def purge_ledger(test_db_factory: Any, content: AsyncDatabaseManager) -> PurgeLedger:
+    """A purge ledger in a database of its own beside ``content``, as Logs runs one."""
+    ledger = await test_db_factory.create_db(suffix="logs_purge_ledger")
+    await apply_purge_ledger_migrations(content, ledger)
+    return PurgeLedger(ledger)

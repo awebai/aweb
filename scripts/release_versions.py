@@ -14,9 +14,9 @@ SEMVER = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 PYTHON_VERSION = rf"{SEMVER}(?:rc[1-9][0-9]*)?"
 NPM_VERSION = rf"{SEMVER}(?:-rc\.[1-9][0-9]*)?"
 TAG_PATTERN = re.compile(
-    rf"^(?:(server-v|awid-service-v|aweb-naapp-v|aweb-secrets-runner-v)({PYTHON_VERSION})"
+    rf"^(?:(server-v|awid-service-v|aweb-naapp-v|aweb-secrets-runner-v|awid-v)({PYTHON_VERSION})"
     rf"|(aw-v)({NPM_VERSION})"
-    rf"|(awid-v|channel-v|pi-v|skills-v|a2a-gw-v|secrets-v|logs-v)({SEMVER}))$"
+    rf"|(channel-v|pi-v|skills-v|a2a-gw-v|secrets-v|logs-v)({SEMVER}))$"
 )
 
 
@@ -25,7 +25,7 @@ TAG_PATTERN = re.compile(
 # Dependencies installed from registries are not bundled source. The shared
 # publisher contains build commands/flags; checkout filters can affect sdists.
 PROMOTION_TREES = {
-    "server-v": "server",
+    "server-v": ("server", "awid", "naapp-lib"),
     "awid-service-v": "awid",
     "aweb-naapp-v": "naapp-lib",
     "aw-v": "cli/go",
@@ -42,6 +42,10 @@ def _promotion_input(prefix: str, path: str) -> bool:
     tree = PROMOTION_TREES[prefix]
     trees = (tree,) if isinstance(tree, str) else tree
     config = GO_BUILD_INPUTS if prefix == "aw-v" else PYTHON_BUILD_INPUTS
+    if prefix == "server-v":
+        # The server image bundles local dependency source, unlike its wheel.
+        config = config | {".dockerignore", "scripts/oci-exact-publish.sh",
+                           ".github/workflows/service-image-release.yml"}
     return any(path == item or path.startswith(item + "/") for item in trees) or path in COMMON_BUILD_INPUTS | config
 
 

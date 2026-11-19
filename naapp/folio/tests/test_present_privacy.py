@@ -30,7 +30,7 @@ OWNER = Principal(
 async def present_world(test_db_factory, monkeypatch):
     # Isolate only AWID's external registry in these local PG/HTTP/browser tests.
     # Docker e2e uses the real registry and signatures.
-    async def current(self, team_id, *, certificate_id, team_did_key):
+    async def current(self, team_id, *, certificate_id, team_did_key, principal=None, member_alias=None):
         now = time.monotonic_ns()
         return MembershipProof(team_id, certificate_id, team_did_key, now, now + seconds_to_ns(60))
     monkeypatch.setattr(NaappRuntime, "check_current_member", current)

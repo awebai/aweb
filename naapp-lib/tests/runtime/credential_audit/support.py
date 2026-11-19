@@ -25,7 +25,7 @@ from aweb_naapp_testing.owner_acts import (
     team_owner,
 )
 from aweb_naapp_testing.webauthn import SoftAuthenticator
-from awid_service.testing import running_registry
+from awid_service.testing import Registry, running_registry
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
@@ -90,6 +90,7 @@ class Installations:
 @dataclass
 class Inbox:
     enrolments: dict[str, list[str]] = field(default_factory=dict)
+    notices: list[tuple[str, object]] = field(default_factory=list)
 
     async def deliver_enrolment_link(self, approver, link_token: str) -> DeliveryStatus:
         self.enrolments.setdefault(approver.contact, []).append(link_token)
@@ -99,6 +100,7 @@ class Inbox:
         return DeliveryStatus.DELIVERED
 
     async def deliver_notice(self, contact: str, notice) -> DeliveryStatus:
+        self.notices.append((contact, notice))
         return DeliveryStatus.DELIVERED
 
 
@@ -165,11 +167,12 @@ class World:
     handed: list[tuple[int, UUID]]
     fail_after_enqueue: list[bool]
     target_registered: list[bool]
+    registry: Registry
     recorder: CredentialAudit = field(init=False)
     passkeys: Passkeys = field(init=False)
 
 
-@pytest.fixture
+@pytest.fixture(name="world")
 async def world(test_db_factory) -> AsyncIterator[World]:
     db = await test_db_factory.create_db(suffix="credential_audit_owner_act_app")
     registry_db = await test_db_factory.create_db(suffix="credential_audit_owner_act_app_awid")
@@ -220,7 +223,7 @@ async def world(test_db_factory) -> AsyncIterator[World]:
             registry, team_id=TEAM_ID, acts=APP_ACTS + LOGS_ACTS + HUMAN_ROLE_ACTS
         )
         inbox = Inbox()
-        state = World(db, owner, fence, admitted, inbox, handed, fail, registered)
+        state = World(db, owner, fence, admitted, inbox, handed, fail, registered, registry)
         state.recorder = CredentialAudit(
             db=db,
             app_id=APP_ID,

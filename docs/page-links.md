@@ -87,13 +87,21 @@ separate from the membership evidence.
 
 Before opening the joined transaction, the host calls
 `runtime.check_current_member(creator.scope.team_id,
-certificate_id=creator.certificate_id, team_did_key=creator.team_did_key)`.
+certificate_id=creator.certificate_id, team_did_key=creator.team_did_key,
+principal=creator.principal_did)`.
 It uses the request verifier's AWID facts/cache, requires an active known
 certificate and the same current team key, and returns the shared frozen
 `MembershipProof {team_id, certificate_id, team_did_key, checked_at, fresh_until}`.
 Both times are integer monotonic nanoseconds and retain the facts' original fetch-start and expiry;
 a cache hit never extends that expiry. The window is at most 60 seconds.
 The proof is an in-process object, never request JSON, stored data or a token.
+Membership requires a valid certificate under the team's admitted key, with
+current membership and the original creator/principal binding checked by the
+request verifier. A certificate-less retained creator reference still requires
+current registry certificate/key facts; an ID and controller alone do not
+establish membership. Unreadable facts remain unavailable, and a conflicting
+registered subject is refused as invalid. No alias or rights are reconstructed
+from a current record. Resource ACL checks remain independent.
 Phase 1 refuses unknown/revoked/rotated/incomplete evidence with 403
 `current_member_required`; unavailable facts remain 503
 `current_membership_unavailable`.

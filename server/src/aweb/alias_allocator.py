@@ -33,11 +33,3 @@ def used_name_prefixes(existing_aliases: Iterable[str]) -> set[str]:
         if prefix:
             used.add(prefix)
     return used
-
-
-def suggest_next_name_prefix(existing_aliases: Iterable[str]) -> str | None:
-    used = used_name_prefixes(existing_aliases)
-    for candidate in candidate_name_prefixes():
-        if candidate not in used:
-            return candidate
-    return None

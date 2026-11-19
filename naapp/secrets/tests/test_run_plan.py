@@ -313,21 +313,27 @@ async def test_prepared_live_recheck_works_inside_joint_savepoint_and_after_wait
 
     from aweb_secrets import derived_lineage, records
     from aweb_secrets.run_plan import PreparedRun
+    from tests.test_derived_lineage import (
+        INSTALLATION as LINEAGE_INSTALLATION,
+    )
     from tests.test_derived_lineage import NOW, Clock, _child, _setup, _wait_for_database_lock
 
     async with db.transaction() as tx:
         await _setup(tx)
         child = await _child(tx)
     inputs = _inputs()
+    inputs["installation"] = replace(inputs["installation"], installation_id=LINEAGE_INSTALLATION)
     clock = Clock()
     pid = asyncio.Future()
 
     async def submit():
         async with db.transaction() as tx:
-            nodes = await derived_lineage.lock_ancestry(tx, INSTALLATION, TEAM, child.secret_id)
+            nodes = await derived_lineage.lock_ancestry(
+                tx, LINEAGE_INSTALLATION, TEAM, child.secret_id
+            )
             slot = inputs["slots"][0]
             child_grant = replace(slot.parent_grant, secret_id=child.secret_id)
-            await records.create_grant(tx, INSTALLATION, TEAM, child_grant)
+            await records.create_grant(tx, LINEAGE_INSTALLATION, TEAM, child_grant)
             inputs["slots"] = (
                 replace(slot, source=nodes[-1].secret, ancestry=nodes, parent_grant=child_grant),
             )
@@ -363,7 +369,15 @@ async def test_prepared_live_recheck_works_inside_joint_savepoint_and_after_wait
         await blocker.execute("LOCK TABLE {{tables.config_revisions}} IN ACCESS EXCLUSIVE MODE")
         task = asyncio.create_task(submit())
         try:
-            await _wait_for_database_lock(db, await asyncio.wait_for(asyncio.shield(pid), 3))
+            done, _ = await asyncio.wait(
+                (task, pid), timeout=3, return_when=asyncio.FIRST_COMPLETED
+            )
+            if task in done:
+                # Surface a setup failure instead of hiding it behind the PID timeout.
+                await task
+                pytest.fail("the recheck finished before the blocked SQL phase")
+            assert pid in done, "the recheck did not reach its blocked SQL phase"
+            await _wait_for_database_lock(db, pid.result())
             if expired:
                 clock.at = NOW + timedelta(seconds=61)
         except BaseException:

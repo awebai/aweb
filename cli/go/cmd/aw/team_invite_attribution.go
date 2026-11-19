@@ -89,20 +89,25 @@ func teamInviteIssuerRegistry(ctx context.Context, opts idChildOptions, identity
 // No chain is the legacy path only when current evidence establishes absence.
 // A team key is never an ID-parent credential.
 func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconfig.TeamInviteIDChild, error) {
+	link, _, err := prepareTeamInviteAuthority(ctx, opts, true, nil)
+	return link, err
+}
+
+func prepareTeamInviteAuthority(ctx context.Context, opts idChildOptions, createChild bool, requested *string) (*awconfig.TeamInviteIDChild, *string, error) {
 	identity, err := resolveIDExchangeIdentity(opts.WorkingDir, opts.IdentityHome)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	home := filepath.Dir(identity.SigningKeyPath)
 	chain, err := awconfig.LoadInstalledIDChain(home)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if chain == nil && identity.StableID == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	domain := identity.Domain
 	if chain != nil {
@@ -111,67 +116,80 @@ func prepareTeamInviteIDChild(ctx context.Context, opts idChildOptions) (*awconf
 	}
 	opts.RegistryURL, err = teamInviteIssuerRegistry(ctx, opts, identity, domain)
 	if err != nil {
-		return nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
+		return nil, nil, fmt.Errorf("inviter cannot select its identity registry: %w", err)
+	}
+	if chain == nil && !createChild {
+		return nil, nil, nil
 	}
 	if chain == nil {
 		resolution, err := identityKeyRoute(ctx, identity, opts.RegistryURL)
 		if err != nil {
-			return nil, fmt.Errorf("inviter cannot issue: evidence_unavailable; check the inviter's identity registry connection and retry: %w", err)
+			return nil, nil, fmt.Errorf("inviter cannot issue: evidence_unavailable; check the inviter's identity registry connection and retry: %w", err)
 		}
 		if resolution.DIDAW != identity.StableID || resolution.CurrentDIDKey != identity.DID {
-			return nil, fmt.Errorf("inviter key is not current; restore the identity's current signing key before inviting")
+			return nil, nil, fmt.Errorf("inviter key is not current; restore the identity's current signing key before inviting")
 		}
 		enrollment := resolution.IDTreeEnrollment(time.Now())
 		switch enrollment.State {
 		case "not_enrolled":
-			return nil, nil
+			return nil, nil, nil
 		case "enrolled":
-			return nil, fmt.Errorf("inviter cannot issue: install this identity's ID chain first")
+			return nil, nil, fmt.Errorf("inviter cannot issue: install this identity's ID chain first")
 		default:
-			return nil, fmt.Errorf("inviter cannot issue: %w; check or upgrade the inviter's identity registry, then retry", &awid.IDCertificateError{Code: "evidence_unavailable"})
+			return nil, nil, fmt.Errorf("inviter cannot issue: %w; check or upgrade the inviter's identity registry, then retry", &awid.IDCertificateError{Code: "evidence_unavailable"})
 		}
 	}
 	opts.IdentityHome = home
 	issuer, err := selectChildIssuer(ctx, opts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := checkSelectedTeamInviteIssuer(ctx, issuer); err != nil {
-		return nil, err
+	defer issuer.close()
+	verdict, err := selectedTeamInviteAuthority(ctx, issuer)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !createChild || (requested != nil && (verdict.HumanID == nil || *requested != *verdict.HumanID)) {
+		return nil, verdict.HumanID, nil
 	}
 	out, err := executeIDChildInvite(ctx, opts, "agent", "agent spawn", 7*24*time.Hour)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	inv, err := issuer.invitations.Invitation(out.InvitationID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	inv.Purpose = "agent spawn"
 	if err := issuer.invitations.PutInvitation(inv); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: out.Parent["id"].(string), Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, nil
+	return &awconfig.TeamInviteIDChild{InvitationID: out.InvitationID, Parent: out.Parent["id"].(string), Domain: out.Domain, IssuerHome: home, RegistryURL: issuer.registryURL}, verdict.HumanID, nil
 }
 
 func checkSelectedTeamInviteIssuer(ctx context.Context, issuer *selectedChildIssuer) error {
+	_, err := selectedTeamInviteAuthority(ctx, issuer)
+	return err
+}
+
+func selectedTeamInviteAuthority(ctx context.Context, issuer *selectedChildIssuer) (awid.IDChainResult, error) {
 	identity, err := resolveIDExchangeIdentity("", filepath.Dir(issuer.invitations.Dir))
 	if err != nil {
-		return err
+		return awid.IDChainResult{}, err
 	}
 	evidence, err := issuer.evidence(ctx, "", "")
 	if err != nil {
-		return err
+		return awid.IDChainResult{}, err
 	}
 	bundle := map[string]any{"v": 1, "type": "aweb.id-chain", "certificates": issuer.parentChain}
 	verdict := awid.VerifyIDChain(bundle, awid.IDChainSubject{ID: identityID(identity), DIDKey: identity.DID}, evidence, issuer.domain)
 	if verdict.IdentityValid == nil || !*verdict.IdentityValid || verdict.Kind == nil || *verdict.Kind != "agent" {
 		if verdict.Reason == "evidence_unavailable" {
-			return fmt.Errorf("inviter cannot issue: %w; check the inviter's namespace DNS and identity registry, then retry", &awid.IDCertificateError{Code: verdict.Reason})
+			return awid.IDChainResult{}, fmt.Errorf("inviter cannot issue: %w; check the inviter's namespace DNS and identity registry, then retry", &awid.IDCertificateError{Code: verdict.Reason})
 		}
-		return fmt.Errorf("inviter cannot issue: %s", verdict.Reason)
+		return awid.IDChainResult{}, fmt.Errorf("inviter cannot issue: %s", verdict.Reason)
 	}
-	return nil
+	return verdict, nil
 }
 
 func linkedTeamInviteIssuer(ctx context.Context, link *awconfig.TeamInviteIDChild) (idChildOptions, *selectedChildIssuer, error) {
@@ -189,6 +207,7 @@ func linkedTeamInviteIssuer(ctx context.Context, link *awconfig.TeamInviteIDChil
 		return opts, nil, err
 	}
 	if issuer.domain != link.Domain || issuer.parent["id"] != link.Parent {
+		issuer.close()
 		return opts, nil, fmt.Errorf("inviter no longer matches the linked ID parent")
 	}
 	return opts, issuer, nil
@@ -199,6 +218,7 @@ func checkTeamInviteIssuer(ctx context.Context, link *awconfig.TeamInviteIDChild
 	if err != nil {
 		return err
 	}
+	defer issuer.close()
 	return checkSelectedTeamInviteIssuer(ctx, issuer)
 }
 
@@ -223,6 +243,7 @@ func completeTeamInviteIDChild(ctx context.Context, invite *awconfig.TeamInvite,
 	if err != nil {
 		return err
 	}
+	defer issuer.close()
 	received, err := executeIDChildReceive(ctx, issuerOpts, raw)
 	if err != nil {
 		return err
@@ -271,6 +292,13 @@ func acceptProvisionedTeamInvite(anchorDir, issuerHome, childDir, token string, 
 	var pending *hostedInviteSignaturePendingError
 	if !errors.As(err, &pending) {
 		return accepted, err
+	}
+	// A current local link owns its retained exchange. Do not replace that
+	// invitation/request with the compatibility completion for older invites.
+	if _, linkErr := awconfig.LoadTeamInvite(hostedTeamInviteRecordID(token)); linkErr == nil {
+		return nil, err
+	} else if !errors.Is(linkErr, os.ErrNotExist) {
+		return nil, linkErr
 	}
 	ctx, cancel := commandAPIContext(nil)
 	exchangeErr := completeHostedProvisioningIDChild(ctx, anchorDir, issuerHome, childDir, opts.IdentityHome)

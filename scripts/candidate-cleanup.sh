@@ -1,5 +1,15 @@
 #!/usr/bin/env bash
 # Sourced by the gate after declaring its per-run resource names.
+cleanup_work() {
+  case "$work" in
+    /|"$ROOT"|"$ROOT"/*) return 1 ;;
+    */aweb-candidate-work.*) rm -rf -- "$work" || return 1 ;;
+    *) return 1 ;;
+  esac
+  # Includes run-owned Compose overlays, even after their CLI was SIGKILLed.
+  [[ ! -e "$work" ]]
+}
+
 cleanup() {
   local original_status="${1:-$?}" cleanup_status=0 resource filter ids item
   local -a filters list remove
@@ -56,12 +66,7 @@ cleanup() {
   ! docker image inspect "$IMAGE" >/dev/null 2>&1 || cleanup_status=1
   # A daemon outage must not look like successful absence checks.
   docker info >/dev/null 2>&1 || cleanup_status=1
-  case "$work" in
-    /|"$ROOT"|"$ROOT"/*) cleanup_status=1 ;;
-    */aweb-candidate-work.*) rm -rf -- "$work" || cleanup_status=1 ;;
-    *) cleanup_status=1 ;;
-  esac
-  [[ ! -e "$work" ]] || cleanup_status=1
+  cleanup_work || cleanup_status=1
   printf 'absence-check\tstatus=%s\n' "$cleanup_status" >> "$LOG_DIR/owned-resources.tsv"
   if [[ -f "$LOG_DIR/host-before.json" ]]; then
     python3 "$ROOT/scripts/candidate-host-pressure.py" settle \

@@ -197,11 +197,8 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         assert stored["body"] == body_file.read_text()
 
 
-        # The same actual TCP server now accepts the protected native envelope
-        # through the public stable-ID headers and survives loss of preparations.
-        from uuid import uuid4
-
-        from aweb.e2ee_messages import encrypt_e2ee_mail
+        # With a native messaging service configured on the same TCP server, a
+        # participant lookup refuses a stale local key projection.
         from aweb.human_channels.contract import decode_record
         from aweb.human_channels.native import NativeMessagingService
         from awid.signing import canonical_json_bytes
@@ -212,7 +209,7 @@ async def test_cli_first_contact_human_alias_with_signed_key(
             "CREATE TABLE public.host_authority (actor_id UUID PRIMARY KEY,principal TEXT,signing_key TEXT,custody TEXT,active BOOLEAN,revision INTEGER,encryption_assertion JSONB)"
         )
         sender = env.actors["bob"]
-        sender_private, sender_public = generate_x25519_keypair()
+        _, sender_public = generate_x25519_keypair()
         sender_assertion = build_encryption_key_assertion(
             signing_key=sender.sk,
             identity_did=sender.did,
@@ -252,62 +249,6 @@ async def test_cli_first_contact_human_alias_with_signed_key(
         provider = HostAuthority(env.db, binding)
         service = NativeMessagingService(env.infra, authority=provider, service=binding)
         env.app.state.human_channels_service = service
-        mid, cid = str(uuid4()), str(uuid4())
-        envelope = encrypt_e2ee_mail(
-            sender={
-                "did": sender.did,
-                "signing_key": sender.sk,
-                "private_key": sender_private,
-                "encryption_key": sender_assertion,
-            },
-            recipients=[
-                {
-                    "did": actor.did,
-                    "stable_id": row["did_aw"],
-                    "encryption_key": assertion,
-                }
-            ],
-            subject="transaction",
-            body="recover exactly once",
-            message_id=mid,
-            conversation_id=cid,
-            created_at=datetime.now(UTC),
-        )
-        payload = {
-            "to_alias": "alice",
-            "conversation_id": cid,
-            "message_id": mid,
-            "content_mode": "encrypted_v2",
-            "message_version": 2,
-            "encrypted_envelope": envelope,
-        }
-        raw = json.dumps(payload).encode()
-        headers = {
-            "Content-Type": "application/json",
-            "X-AWEB-Ingress-Namespace": "journey",
-            "X-AWEB-Ingress-Key": "input1",
-            "X-AWEB-Ingress-Input-Hash": "sha256:" + "55" * 32,
-            **_signed_identity_headers(sender.sk, sender.did, "", raw),
-        }
-        first = await env.client.post("/v1/messages", content=raw, headers=headers)
-        assert first.status_code == 200, first.text
-        env.app.state.human_channels_service = NativeMessagingService(
-            env.infra, authority=provider, service=binding
-        )
-        again = await env.client.post("/v1/messages", content=raw, headers=headers)
-        assert again.status_code == 200, again.text
-        assert again.json() == first.json()
-        assert (
-            await env.db.fetch_one(
-                "SELECT count(*) AS n FROM {{tables.messages}} WHERE message_id=$1",
-                UUID(mid),
-            )
-        )["n"] == 1
-        assert (
-            await env.db.fetch_one(
-                "SELECT count(*) AS n FROM {{tables.human_channel_mutations}}"
-            )
-        )["n"] == 1
 
         if global_human:
             # A current registry rotation defeats the stale local key projection.

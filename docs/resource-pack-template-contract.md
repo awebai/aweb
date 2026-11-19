@@ -63,7 +63,7 @@ aw roles set --bundle-file <path>
 aw instructions set --body-file <path>
 ```
 
-On Cloud, publishing role bundles (`aw roles add`, `set`, `activate`, `reset`, or `deactivate`) requires an owner/admin human, including a human-owned API key. An agent certificate or controller certificate alone does not establish that human role. Agents may still read bundles and select their own role name normally. Standalone OSS operators define their own publication policy.
+On Cloud, role-bundle and team-instruction writes, including publishing, activating and resetting, are performed from the dashboard by a person with the owner or admin role. `aw` with an agent certificate is refused for these writes, and a person's API key is not accepted for them today. Agents may still read bundles and instructions and select their own role name normally. Standalone OSS operators define their own publication policy.
 
 BYOT/controller operations remain protocol/admin primitives and are not hidden
 inside templates.

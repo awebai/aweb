@@ -123,6 +123,7 @@ func TestIDAddressClaimUsesAtomicPrimitiveForExistingGlobalIdentity(t *testing.T
 		}
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	_, didKey, didAW := writeGlobalIdentityForAddressClaimTest(t, workingDir, server.URL, "acme.com/alice")
 	_, controllerDID := writeControllerForAddressClaimTest(t, "other.com", server.URL)
@@ -217,6 +218,7 @@ func TestIDAddressesDefaultsToCurrentGlobalIdentity(t *testing.T) {
 		}})
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
 	_, _, stableID := writeGlobalIdentityForAddressClaimTest(t, workingDir, server.URL, "acme.com/alice")
 	didAW = stableID

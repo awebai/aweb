@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 )
@@ -199,28 +198,29 @@ func (c *RegistryClient) RegisterNamespaceWithDeliveryOriginAt(
 		return nil, err
 	}
 	defaultDeliveryOrigin = strings.TrimSpace(defaultDeliveryOrigin)
-	extraPayload := map[string]string(nil)
+	claims := map[string]any(nil)
 	if defaultDeliveryOrigin != "" {
 		canonicalOrigin, err := CanonicalServerOrigin(defaultDeliveryOrigin)
 		if err != nil {
 			return nil, fmt.Errorf("default delivery origin: %w", err)
 		}
 		defaultDeliveryOrigin = canonicalOrigin
-		extraPayload = map[string]string{"default_delivery_origin": defaultDeliveryOrigin}
+		claims = map[string]any{"default_delivery_origin": defaultDeliveryOrigin}
 	}
 
 	var out RegistryNamespace
-	if err := c.requestJSON(
+	if err := c.controllerWrite(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		"/v1/namespaces",
-		signedNamespaceHeaders(domain, "register", signingKey, extraPayload),
+		domain, "register", claims,
 		namespaceRegisterRequest{
 			Domain:                domain,
 			ControllerDID:         controllerDID,
 			DefaultDeliveryOrigin: defaultDeliveryOrigin,
 		},
+		KeySigner(signingKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -262,18 +262,14 @@ func (c *RegistryClient) UpdateNamespaceDeliveryOriginAt(
 	}
 
 	var out RegistryNamespace
-	if err := c.requestJSON(
+	if err := c.controllerWrite(
 		ctx,
 		http.MethodPatch,
 		registryURL,
 		"/v1/namespaces/"+urlPathEscape(domain),
-		signedNamespaceHeaders(
-			domain,
-			"update_namespace",
-			controllerSigningKey,
-			map[string]string{"default_delivery_origin": canonicalOrigin},
-		),
+		domain, "update_namespace", map[string]any{"default_delivery_origin": canonicalOrigin},
 		namespaceUpdateRequest{DefaultDeliveryOrigin: canonicalOrigin},
+		KeySigner(controllerSigningKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -314,13 +310,14 @@ func (c *RegistryClient) DeleteNamespaceAt(
 	if strings.TrimSpace(reason) != "" {
 		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
 	}
-	return c.requestJSON(
+	return c.controllerWrite(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		path,
-		signedNamespaceHeaders(domain, "delete_namespace", controllerSigningKey, nil),
+		domain, "delete_namespace", nil,
 		body,
+		KeySigner(controllerSigningKey), nil,
 		nil,
 	)
 }
@@ -397,17 +394,18 @@ func (c *RegistryClient) RegisterAddressAt(
 
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/addresses"
 	var out RegistryAddress
-	if err := c.requestJSON(
+	if err := c.controllerWrite(
 		ctx,
 		http.MethodPost,
 		registryURL,
 		path,
-		signedAddressHeaders(domain, name, "register_address", controllerSigningKey),
+		domain, "register_address", map[string]any{"name": name},
 		addressRegisterRequest{
 			Name:          name,
 			DIDAW:         didAW,
 			CurrentDIDKey: currentDIDKey,
 		},
+		KeySigner(controllerSigningKey), nil,
 		&out,
 	); err != nil {
 		return nil, err
@@ -607,13 +605,14 @@ func (c *RegistryClient) DeleteAddressAt(
 	if strings.TrimSpace(reason) != "" {
 		body = deleteReasonRequest{Reason: strings.TrimSpace(reason)}
 	}
-	return c.requestJSON(
+	return c.controllerWrite(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		path,
-		signedAddressHeaders(domain, name, "delete_address", controllerSigningKey),
+		domain, "delete_address", map[string]any{"name": name},
 		body,
+		KeySigner(controllerSigningKey), nil,
 		nil,
 	)
 }
@@ -644,23 +643,25 @@ func (c *RegistryClient) DeleteAddressIfMatchesAt(
 		return fmt.Errorf("controller signing key is required")
 	}
 
-	preconditions := map[string]string{
+	claims := map[string]any{
+		"name":                     name,
 		"expected_address_id":      expectedAddressID,
 		"expected_did_aw":          expectedDIDAW,
 		"expected_current_did_key": expectedCurrentDIDKey,
 	}
-	return c.requestJSON(
+	return c.controllerWrite(
 		ctx,
 		http.MethodDelete,
 		registryURL,
 		"/v1/namespaces/"+urlPathEscape(domain)+"/addresses/"+urlPathEscape(name),
-		signedAddressHeadersWithFields(domain, name, "delete_address", controllerSigningKey, preconditions),
+		domain, "delete_address", claims,
 		conditionalAddressDeleteRequest{
 			Reason:                strings.TrimSpace(reason),
 			ExpectedAddressID:     expectedAddressID,
 			ExpectedDIDAW:         expectedDIDAW,
 			ExpectedCurrentDIDKey: expectedCurrentDIDKey,
 		},
+		KeySigner(controllerSigningKey), nil,
 		nil,
 	)
 }
@@ -674,84 +675,4 @@ func requireSigningKeyMatchesDID(signingKey ed25519.PrivateKey, expectedDID stri
 		return fmt.Errorf("signing key does not match %s", strings.TrimSpace(expectedDID))
 	}
 	return nil
-}
-
-func signedNamespaceHeaders(
-	domain string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-	extraPayload map[string]string,
-) map[string]string {
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	fields := map[string]string{
-		"domain":    canonicalizeDomain(domain),
-		"operation": strings.TrimSpace(operation),
-		"timestamp": timestamp,
-	}
-	for key, value := range extraPayload {
-		fields[key] = strings.TrimSpace(value)
-	}
-	return signedCanonicalHeaders(fields, signingKey, timestamp)
-}
-
-func signedAddressHeaders(
-	domain string,
-	name string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-) map[string]string {
-	return signedAddressHeadersWithFields(domain, name, operation, signingKey, nil)
-}
-
-func signedAddressHeadersWithFields(
-	domain string,
-	name string,
-	operation string,
-	signingKey ed25519.PrivateKey,
-	extra map[string]string,
-) map[string]string {
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	fields := map[string]string{
-		"domain":    canonicalizeDomain(domain),
-		"name":      strings.TrimSpace(name),
-		"operation": strings.TrimSpace(operation),
-		"timestamp": timestamp,
-	}
-	for key, value := range extra {
-		fields[key] = strings.TrimSpace(value)
-	}
-	return signedCanonicalHeaders(fields, signingKey, timestamp)
-}
-
-func signedCanonicalHeaders(fields map[string]string, signingKey ed25519.PrivateKey, timestamp string) map[string]string {
-	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	payload := canonicalRegistryJSON(fields)
-	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(signingKey, []byte(payload)))
-	return map[string]string{
-		"Authorization":    fmt.Sprintf("DIDKey %s %s", did, signature),
-		"X-AWEB-Timestamp": timestamp,
-	}
-}
-
-func canonicalRegistryJSON(fields map[string]string) string {
-	keys := make([]string, 0, len(fields))
-	for key := range fields {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	var b strings.Builder
-	b.WriteByte('{')
-	for idx, key := range keys {
-		if idx > 0 {
-			b.WriteByte(',')
-		}
-		b.WriteByte('"')
-		b.WriteString(key)
-		b.WriteString(`":"`)
-		writeEscapedString(&b, fields[key])
-		b.WriteByte('"')
-	}
-	b.WriteByte('}')
-	return b.String()
 }

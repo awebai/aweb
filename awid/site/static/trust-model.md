@@ -83,9 +83,9 @@ the parent's `controller_did`.
 
 This is the standard mechanism, not a hosted special case. Any namespace owner
 can delegate child namespaces; a hosted operator uses the same public protocol
-under the base domain it controls. The child may register that same parent
-controller as its namespace controller; hosted `*.aweb.ai` namespaces use this
-shape so inherited parent DNS authority and the exact registry row agree.
+under the base domain it controls. A child may register its parent's
+controller key or a distinct child controller key; hosted `*.aweb.ai`
+namespaces use both arrangements.
 
 Authority flows downward: a namespace controller can rotate the team
 controller key, but the team controller cannot rotate the namespace
@@ -415,12 +415,10 @@ failed refresh serves the last successful key only while its original fetch
 is at most 15 minutes old, with a warning naming the team, age and error;
 otherwise it fails closed. A successful team-not-found response clears the
 old key and is never cached as authority. `invalidate_team_certificate_cache`
-also clears the key. OSS controller routes for local key replacement and
-status-host designation verify through this SDK read; the local
-`teams.team_did_key` value is a hint, not authority. Without notification or
-explicit invalidation, rotation can therefore take up to 60 seconds to take
-effect at a verifier; during an outage, the accepted grace can extend that to
-15 minutes of data age. Other metadata caches retain their existing bounds.
+also clears the key. Without notification or explicit invalidation, rotation
+can therefore take up to 60 seconds to take effect at a verifier; during an
+outage, the accepted grace can extend that to 15 minutes of data age. Other
+metadata caches retain their existing bounds.
 
 The committed exit ladder, in order:
 
@@ -457,13 +455,113 @@ The receiver may reuse a complete cohort for at most 60 seconds, but an
 external authority can suppress an unseen change by continuing to serve old
 valid evidence; this protocol therefore makes no global freshness SLA.
 
+### Team-key pins (approved 2026-11-12)
+
+The registry's answer for a team's key is not authority on its own. A relying
+server (the aweb server, and every naapp through `aweb_naapp`) pins the key it
+first admits for a team: the aweb server's `teams.team_did_key`, written at
+admission, and a naapp's `team_key_pins`. Every read that takes authority from
+the team key (certificate checks, controller routes such as key replacement and
+status-host designation, owner acts and app-task authorization) uses the
+registry's key only when it equals the pin. A different key is accepted only
+with the namespace controller's `rotate_team_key` act, which AWID keeps exactly
+as signed and serves at `GET /v1/namespaces/{domain}/teams/{name}/key-act`.
+The verifier (`awid.team_key_acts`) requires that the act names exactly that
+team and key, that its signature verifies, that its signer is the controller
+**DNS** names for the domain (`_awid.<domain>` or the nearest ancestor record,
+never the registry's `controller_did`), and that it was signed after the act
+behind the current pin. The pin then moves by compare-and-swap. Anything else
+is logged as one warning line,
+`team_key_pin_mismatch team=<id> pinned=<key> served=<key> reason=<reason> enforced=<true|false>`,
+and, while enforcement is on, fails closed with 401 `team_key_unverified`.
+One case is neither accepted nor refused: when the registry's act names a
+different key than the one it serves, the served key is a read older than that
+act (a process whose registry cache predates a rotation) or a key substituted
+beside it. In both modes the pin stays, the pinned key is used, and the line is
+`team_key_pin_kept team=<id> pinned=<key> served=<key> reason=key_mismatch`.
+A server remembers its answer for each team's served key for 60 seconds, the
+registry key's own freshness bound, so a lasting mismatch costs one act read
+per minute rather than one per request.
+
+Enforcement is staged. `AWEB_ENFORCE_TEAM_KEY_PINS` (one name for the aweb
+server and every naapp, default off) turns refusal on. While it is off a
+mismatch is logged with `enforced=false`, the registry's key is served, and
+the pin moves to it, logged as
+`team_key_pin_moved_without_act team=<id> from=<key> to=<key> reason=<reason>`
+with the time of the last accepted act kept. The key certificates are verified
+under is then the team's one current key on the server in both modes, so the
+member check (a member is accepted under the current key) agrees with
+certificate verification, and admitted teams whose key differs (a rotation
+from before acts were kept) can be counted and re-attested by their namespace
+controller before enforcement. **Until it is on, the registry-substitution gap
+this section closes stays open.**
+
+What the measuring mode does and does not protect: it keeps a server on the
+team's current key across processes, so a stale registry read cannot move the
+pin back to an older key and remove the team's members. It does not stop a
+registry that serves another key and withholds the act: that answer looks like
+a rotation from before acts were kept, and the pin moves to it. Closing that
+needs enforcement, which hosted organisations cannot have until the act check
+accepts the delegation evidence their inherited DNS record carries (aweb-adfl):
+a hosted namespace has no `_awid` record of its own, so no act of its
+controller verifies against DNS.
+
+Named residuals:
+
+- **First admission trusts the registry.** A key substituted before a team's
+  first contact with a server is pinned. It cannot coexist silently with the
+  genuine team: the team's real certificates fail under it. The `create_team`
+  act does not sign the key, so first admission has no act to check.
+- **Delegated child namespaces** whose controller is a distinct key authorized
+  by the parent, with no `_awid` record of their own, cannot present an act DNS
+  verifies: the inherited record names the parent's key. Under enforcement
+  their servers refuse a rotated key until the server operator re-pins it.
+  Hosted children register either their parent's controller key or a distinct
+  controller key. Before enforcement serves
+  hosted teams, an inherited authority must accept the child's controller
+  through the parent-signed delegation, or hosted team keys are rotated and
+  re-pinned first.
+- **A pin set at first sight has no act time.** An act is required to be newer
+  than the act behind the pin only when there is one, so before enforcement
+  is turned on, a genuine but older act (a historical rotation, or one for a
+  deleted team of the same name) could move such a pin. The admission time is
+  to serve as the floor.
+- **The `local` namespace** has no DNS, so a pinned local team cannot rotate
+  without the server operator re-pinning it.
+- **Hosted teams.** Pinning separates the registry from the namespace
+  controller; it does not protect against an operator that holds both.
+- **The registry can withhold acts.** That denies the new key; it grants
+  nothing.
+
+When the namespace controller has itself rotated since a team-key act, or a
+team was deleted and recreated under the same name, the current controller
+re-submits `rotate` with the team's current key; AWID records that as a fresh
+act (`key_changed: false`).
+
 ### TOFU pins and durable continuity
 
 For global identities, current Go and TypeScript clients keep an address-to-pin
-index. A first verified contact is pinned by `did:aw` when a valid stable id is
-available, otherwise by the observed `did:key`. A stable-identity pin also keeps
-the last verified current key and the highest verified DID-log sequence/hash so
-rollback detection survives process restarts.
+index. A first contact is pinned only after the registry confirms the
+address-to-key binding (by `did:aw` when a valid stable id is present, otherwise
+by `did:key`). Until then it is `verification_stale` (could not check) or
+`identity_mismatch` (the registry disagrees, or has no such address). A client
+built with no registry to ask reports `unverified`: nothing was checked, and a
+retry would not help. A pin written this way records `confirmed_by: registry`;
+pins written before this rule carry no such field. A stable-identity pin also
+keeps the last verified current key and the highest verified DID-log
+sequence/hash so rollback detection survives process restarts.
+
+A sender already pinned stays verified by its pin while the registry cannot be
+reached. A later registry answer that names another key for a pinned address is
+an `identity_mismatch`, and the pin is kept.
+
+For a sender shown only by a display alias, with no address, `verified` means
+the message was signed by the key shown; there is no identity claim behind the
+alias, so this rule has nothing to confirm. A local team sender is still
+checked against the reader's own team roster.
+
+The cases are shared by both clients in
+[`test-vectors/trust/first-contact-v1.json`](https://github.com/awebai/aweb/blob/main/test-vectors/trust/first-contact-v1.json).
 
 Local single-team identities skip persistent global TOFU pinning. Their current
 key is refreshed against the live team roster; a changed key that cannot be
@@ -585,10 +683,16 @@ the stream. The wire protocol does not require a particular cache implementation
 
 ## Plaintext signed display binding
 
-For plaintext mail and chat reads, the Go CLI checks the returned `body`,
-`message_id`, `conversation_id`, `from_did`, `to_did`, and message `type`
-(and mail `subject`) against each field present in `signed_payload`, before
-applying signed metadata. Missing legacy fields are not compared; explicit
+For plaintext mail and chat reads, the Go CLI and the channel client check the
+returned `body`, `message_id`, `conversation_id`, `from_did`, `to_did`, and
+message `type` (and mail `subject`) against `signed_payload`, before applying
+signed metadata. The payload must carry `type`, `body` and `from_did` (and
+`subject` for mail): these are the claims that make it a message, every
+message signer signs them, and a payload without one of them fails. The same
+key signs other documents, such as request envelopes, and without this rule
+such a document could be presented as the signed payload of a message with any
+text. The other fields are compared when the payload carries them; a missing
+`message_id`, `conversation_id` or recipient field is not compared. Explicit
 empty strings are compared exactly, and null or non-string values fail.
 A missing signed conversation ID retains the existing `verified_legacy`
 classification when the response has a conversation ID.
@@ -619,7 +723,8 @@ not the unsigned recipient projection; nonempty signed recipient claims and
 all content, ID, signature, and trust checks remain enforced.
 On a mismatch the CLI reports `failed` and preserves the original response
 fields, rather than hiding the discrepancy by replacing them with signed
-values. It does not claim that absent legacy fields were signed.
+values. It does not claim that absent message id, conversation id or
+recipient fields were signed.
 
 For encrypted-v2 mail and chat, decryption and envelope authentication happen
 first. The outer `message_id` and `conversation_id` must then exactly match

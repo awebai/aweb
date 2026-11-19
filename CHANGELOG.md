@@ -2,6 +2,276 @@
 
 ## Unreleased
 
+- `aw` reports JSON error code `alias_conflict` for HTTP 409 `alias_taken`, preserving the server's `reason` and `detail`.
+- AWID cache invalidation for identity-tree, address and team-certificate
+  writes no longer scans unrelated Redis keys. Random cache generations keep
+  delayed refreshes from restoring invalidated entries without changing the
+  evidence freshness or authorization rules.
+- A 404 that is not one of the registry's own answers is no longer absence
+  or an empty revocation list in the Python registry client.
+- Namespace key-loss recovery and deletion withdraw direct child delegations
+  instead of transferring them to the new key. Approved children are restored
+  by child-and-new-parent signed registration; two-key rotation preserves valid
+  delegations. Child data is retained; this does not revoke team credentials or
+  every registry write made under a stolen key.
+- Embedded aweb and AWID applications preserve their host's logging handlers
+  and root level. Starting them no longer suppresses later host warnings;
+  standalone services still configure their own logging.
+  In library mode, `AWEB_LOG_LEVEL`, `AWEB_LOG_JSON` and `AWID_LOG_JSON` have no effect; the embedding host configures logging.
+
+- `aw init` with a hosted API key shows the hosted service's coded refusal
+  (for example `creator_must_sign`) with what to do about it, in text and as
+  the `--json` error code, instead of `error_code=unknown`. Unknown codes and
+  server messages stay unshown. A refusal whose detail is text or a list no
+  longer loses the response's request ID. When the remedy needs another name,
+  key, scope or setup command, aw says to run the changed command in a new
+  directory and keep `.aw/partial-init.yaml`, instead of "rerun the same
+  command in this directory", which the partial state would refuse.
+- The help for `aw mail send`, `aw chat send-and-wait`, `aw chat
+  send-and-leave` and `aw beads-mail send`, and the CLI reference, now
+  describe how a bare recipient name is looked up in this identity's other
+  local teams, including that a team that cannot be read refuses the send.
+- `aw id child ...`, `aw id parent request|import` and `aw id revoke` again
+  accept the released form `--human ID --domain DOMAIN`, beside the global
+  selector `--human ID --human-domain DOMAIN`: with `--human`, `--domain`
+  names the person's domain. Both may be given only when they name the same
+  domain. `aw id create --human-parent ID --domain DOMAIN` (aw 1.36.58) again
+  works without `--human`: the parent person signs, in the child's domain.
+- `aw chat send-and-wait`, `send-and-leave`, `extend-wait`, `open`,
+  `history`, `listen` and `show-pending` to a teammate's alias now use the
+  conversation found by the DID the team's agent list confirms for that
+  alias, never by the alias, which an outside participant may also hold: a
+  chat session with `other.org/bob` could receive a message meant for
+  teammate `bob`, or be shown as his. A new conversation is still started by the
+  alias, which the server resolves in the team. A bare alias with no
+  confirmed DID still selects a conversation only when it names exactly one
+  participant, and that check now covers every conversation, not just the
+  pending ones, before choosing. When an alias is searched across the
+  sender's other teams, a team whose lookup fails is a refusal, not a team
+  without that alias.
+- A namespace, team or certificate write that aw does not replay, whose
+  answer is lost after the registry received it, now says the registry may
+  have applied it and names a command to check its state before retrying, in
+  text and in the `--json` error message (code `outcome_unknown`). `aw id team
+  rotate-key` no longer reports such a rotation as refused with the team key
+  unchanged: it says the new key is kept as the pending key and that running
+  the command again finishes the rotation.
+- ID-tree status, certificate registration and revocation return retryable
+  HTTP 503 `dns_unavailable` for DNS timeouts and resolver failures. Missing
+  or invalid public proof and missing epochs retain `evidence_unavailable`.
+- `aw mail send` now refuses a bare-alias send when recipient lookup fails,
+  instead of sending by alias as aw 1.20.0 through 1.36.58 did. Plaintext chat
+  follows the same rule. Retry the lookup or use the recipient's full address
+  or DID.
+- The registry accepts private-team reads signed with the covering-v2
+  envelope (operation `read_team`), which binds the registry, the route and
+  its query: team list and get, member lookup, certificate list, revocations,
+  certificate-blob fetch and the signed-records list. Each route admits the
+  same keys as before, whichever form signs it. The path signature, which
+  binds neither the query nor the registry, is still accepted and is counted
+  (`awid_path_signed_read_accepted`) until measured unused. Clients keep the
+  path signature until this registry release is in production.
+- Registry accepted-authentication metrics now name the signed form and the
+  sending client family (`aw/<version>`, `python-httpx` or `other`; never the
+  raw User-Agent; at most 16 aw versions per process, later ones count as
+  `aw/other`), counted per operation and client:
+  `awid_legacy_controller_auth_accepted` (unchanged event name, now with
+  `client=` and `form=legacy`), and the new `awid_controller_auth_accepted`
+  (`form=covering`) and `awid_path_signed_read_accepted` (`form=path`). The
+  in-process counter is `app.state.controller_auth_counts`, keyed by event,
+  operation and client; `app.state.legacy_controller_auth_counts` is gone.
+
+- Remove the unused signed ID-status read and candidate-only signer proof
+  contexts and audit kinds. Public ID-status reads and application passkey
+  proofs are unchanged. Upgrading removes the nine retired signer tables from
+  schemas whose migration ledgers identify those modules; candidate signer
+  data and preinstallation proof rows are discarded. Application proof rows
+  retain their bytes and regain their required installation fields. Stop an
+  old signer before upgrading.
+- `aw id parent`, `aw id child` and `aw id revoke` no longer define a
+  per-command `--human`; select a person with the global
+  `--human ID --human-domain DOMAIN`. Their `--domain` organization input
+  remains for agents and `--as-root` operations.
+- `aw` signs every registry controller write in the covering-v2 form, as the
+  Python client below does, through one write path: namespace register,
+  update and delete; team create, visibility, delete and key rotation;
+  certificate register and revoke; address register and delete. The body is
+  serialized once as canonical JSON and those bytes are signed and sent; there
+  is no fallback to the legacy form. `aw` now needs the registry to have
+  `AWID_PUBLIC_ORIGINS` set (stable `aw` 1.36.58 needed it only for
+  ID-certificate writes); without it these commands fail with the registry's
+  503 message naming the setting. aw and the Python client send identical
+  bytes for the same write (`docs/vectors/awid-controller-writes-v1.json`).
+- The Python controller client (`awid.registry.RegistryClient`, both its
+  typed `controller_request` and its namespace, team, certificate and address
+  methods) signs every registry write in the covering-v2 form: the signature
+  covers the destination registry, the method, the path and the exact body
+  bytes sent, instead of the operation's claims alone. A server or aweb Cloud
+  built from this release needs a registry at **awid-service 0.5.39 or
+  later**, the release it was tested against, with `AWID_PUBLIC_ORIGINS` set to
+  the origin clients write to (without it the registry answers 503). An older
+  registry refuses these writes; the client does not fall back to the legacy
+  form.
+- While team-key pin enforcement is off (`AWEB_ENFORCE_TEAM_KEY_PINS`, the
+  default), a registry answer whose own key act names a different key than
+  the one it serves no longer moves the pin, in either mode: the pinned key is
+  used and `team_key_pin_kept` is logged. A process whose registry read
+  predates a rotation therefore cannot move the team back to the old key and
+  drop its members. Each server remembers its answer for a team's served key
+  for 60 seconds.
+- **Do not rotate a team key until members run an `aw` release that refreshes
+  its certificate on `team_key_not_current`.** Stable `aw` 1.36.58 does not;
+  until then each member needs its new certificate id and
+  `aw id team fetch-cert ... --cert-id <new id> --force`. No hosted team's key
+  rotates until aweb Cloud records the accepted team key on its agents
+  (`aweb-adfr`). See `deploy/team/OPERATIONS.md`, "Before rotating the team
+  key".
+
+- Candidate-only root endorsement, signer admission/removal, signer operation
+  status and protected-profile commands and the in-tree signer host are removed.
+  Root approval and unattended admission through a key holder are not built;
+  ordinary team admission works as in stable releases.
+
+- This candidate removes the retired team-protection and protected-effect receipt tables and retained-effect data from earlier release-candidate installations.
+- Earlier release-candidate clients and packages must be upgraded together with this candidate.
+
+- `aw workspace delete --json` reports `error.code: "certificate_revoked"`
+  when the hosted self-remove route refuses the caller because its own
+  certificate is already revoked (the server's `detail.code`). Such a member
+  cannot finish its own retirement; the team's owner finishes it with
+  `aw team remove-agent`. Both the team-certificate and the workspace-key
+  paths report it, and a workspace-key refusal's `--json` envelope now
+  carries the server's status and code like every other refusal.
+- Failed identity address discovery now remains unknown instead of looking
+  addressless. Identity sends keep using a stored binding verified for the
+  current key, including a verified empty address; an unverified sender gets
+  retryable `503 address_evidence_unavailable` before delivery. Optional
+  identity display reports unknown without clearing stored bindings.
+
+- `aw custody serve` picks up a parent import, certificate install or connect
+  that changes its resident home while it runs, without a restart and
+  without a request mixing old and new credentials. Those commands now
+  commit their change as one credential generation of the home
+  (`credential-generation.json`, with `credential-update.json` marking an
+  update in progress). Custody serves each request from one published
+  snapshot, refuses requests with `credential_update_incomplete` while an
+  update is unfinished, `credential_update_busy` while one holds the home
+  past its wait, and `credential_update_unpublished` after a change
+  made without a generation (a restart re-validates and adopts it), and
+  with `identity_changed` until restart if the resident key changes. While
+  custody serves a home (it holds `credential-reader.lock`), a supported
+  command refuses to publish over such a change; in a home no custody
+  serves, it publishes over it as before.
+
+- `aweb-a2a-gw` reaches the registry its own configuration names
+  (`registry_url`, or `AWEB_A2A_GW_REGISTRY_URL` without a config file) as the
+  operator's explicit choice, so a private or internal registry no longer has
+  to be named again in `AWID_REGISTRY_URL`. A `registry_url` stored in the
+  gateway workspace's `teams.yaml` stays pinned to public `https` addresses.
+
+- The team deployment bundle's `team.registryRoute` (`local` or `external`,
+  default `external`) says where the AWID registry runs for the agents'
+  ingress probe. An external registry, such as the public one at the default
+  `team.registryUrl`, gets a positive control with no backend log, and
+  `teamctl start` no longer requires a `registry` Compose service for it. A
+  local registry keeps its log witness and must be reached at one of
+  `egress.privateIngressAddresses`. Either declaration that does not match
+  the deployment is refused.
+
+  Upgrade: a deployment with agents that runs its own `registry` service
+  must set `team.registryRoute: local`; without it, `teamctl start` refuses
+  and names that setting.
+
+- `aw id team install-cert --identity-home H --certificate F` installs a team
+  certificate file into the home whose identity it names, after checking it at the
+  registry: signed by the team's current key, registered and not revoked. It
+  reads the certificate's public status, which needs no member authority, so
+  a revoked member of a private team is refused `certificate_revoked`. A local identity takes certificates of one team only. Then
+  `aw service init` connects the home. A rerun reports `already_installed`
+  and completes an interrupted install. Refusals carry
+  the codes listed in `--help`; only `registry_unavailable` is worth retrying.
+
+- `aw id create --local --identity-home H` creates a key-only local identity
+  (a did:key registered nowhere, with no address or membership) in a fresh
+  home, for an agent a parent issues and a team admits. `--json` reports
+  `status` and `did_key`. A killed run resumes with the same key, and a rerun
+  on the finished home returns `already_exists` with the same `did_key`;
+  any other home is refused with `identity_exists` and left unchanged.
+
+- aw no longer blind-retries a `503` that carries `Retry-After`: the request
+  returns at once with the service's hint, since a retry before it cannot
+  succeed and repeats what the service asked to wait for. A bare `503` keeps
+  its three brief retries.
+
+
+- aweb server keeps a registry throttling hint on `503 identity_binding_unavailable`
+  responses as `Retry-After`, including authenticated installation lookups.
+  Identity mismatches and ordinary dependency failures retain their existing
+  refusal behavior; the server adds no wait or retry.
+
+- `aw id team add-member` registers the certificate at the team namespace's
+  own registry: the one `AWID_REGISTRY_URL` names, or else the one the
+  namespace's `_awid` record names, as the namespace commands do. A member
+  address is looked up at its own namespace's registry the same way. When DNS
+  cannot answer, nothing is sent. It previously used the default registry
+  whatever the team's namespace said.
+- aweb server: `AWEB_APP_INTERNAL_ORIGINS` (a JSON list of exact HTTPS app
+  origins) with `AWEB_APP_INTERNAL_CIDR` (their one network) lets a self-hosted
+  server install apps that run on internal addresses beside it. Only listed
+  origins, and only addresses inside that network, are fetched as internal;
+  every other app origin stays public. Unset, behaviour is unchanged.
+- Naapp runtime publishes compatible v2/v3 manifests from one v2 template and
+  an owner-role declaration with a configured human origin. Its shared anonymous
+  owner-act route authenticates before app reads and commits the single-use act,
+  effect and governance together, rechecking original authority deadlines after
+  effect waits. Existing exact v2 installation pins remain readable.
+- **An operator can stop the server delivering federated mail and chat to
+  other servers, or limit it to listed servers.** `AWEB_FEDERATION_OUTBOUND=off`
+  delivers to no other server, and a comma-separated list of origins delivers
+  only to those. A refused send answers `403` naming the setting, before the
+  server resolves or connects to the origin. Unset, delivery is unchanged. An
+  entry that is not an origin refuses start-up.
+
+- Chat sends return not-found when the sender leaves the session after target
+  resolution, matching the response for an absent session.
+
+- Secrets keeps installation-scoped state separate by team, even when two teams
+  report the same installation id. Upgrading existing state requires an
+  unambiguous retained team binding; missing or conflicting bindings stop the
+  migration for an explicit attribution decision.
+- Concurrent team instructions and roles version creation allocates distinct
+  version numbers under the same per-team lock as activation.
+
+- The Python registry client checks and pins the addresses of DNS-selected
+  registry overrides, retaining the original hostname for TLS. Registry list
+  scans stop after 500 pages with an explicit error instead of accumulating
+  unbounded results.
+
+- **`aw chat send-and-wait` and `aw chat listen` keep waiting when the server
+  ends the chat stream at its 300-second lifetime cap.** A wait extended by a
+  read receipt or a hang-on, or given with `--wait` above 300, used to end
+  then as a timeout while the other agent was still writing. The client now
+  reopens the stream after the last message or read receipt it saw, so nothing
+  is lost or presented twice, until its own wait ends. The server cap is
+  unchanged.
+
+- **One unreadable file in the `aw wake` registry no longer stops waking for
+  every other registered home.** A registry file that does not parse, or names
+  an empty or relative home, is skipped and logged; `aw wake status` (text and
+  `--json` as `registration_faults`) lists it, with the daemon running or down,
+  and `aw wake register` for another home succeeds beside it. A home whose own
+  file became unreadable keeps its last-good delivery and shows the error.
+
+- **A team deployment answers a member of a private team it does not serve
+  with 403 "team <id> is not served by this server".** A server that reads the
+  registry with member keys, and holds no registry service token, used to
+  answer such a connect with 503 and tell the operator to install
+  `AWID_SERVICE_TOKEN`, which a team deployment must never hold because it
+  reads every private team's roster. When the registry refuses a member key
+  for a team the server does serve, the 503 now names that team and the
+  current member certificate its controller must issue. Only a server
+  configured with the service token is still told to fix that token.
+
 - Human handoffs retain their authenticated team for credential collection and
   console session requests. Existing key-bound console sessions without retained
   team context are refused after migration and require signing in again; there
@@ -83,6 +353,15 @@
   the setting and the limit. The shipped `.env.example` set
   `LIBRARY_AUTH_CACHE_TTL_SECONDS=600`; a deployment made from it must lower
   it to 60 or remove the line before upgrading.
+- **The server reads its database URL from a file.** `AWEB_DATABASE_URL_FILE`
+  names a file that holds the URL, so the database password need not be in
+  the environment. Setting it together with `AWEB_DATABASE_URL` or
+  `DATABASE_URL` is refused at startup.
+- **A Compose file for a customer's own server.**
+  `server/docker-compose.customer.yml` runs aweb with PostgreSQL and Redis
+  against the public AWID registry, with ordinary member keys mounted
+  read-only and no service token or registry of its own. The self-hosting
+  guide's customer-server section shows how to start it.
 - **A hook delivery from a client is checked with the one team-certificate
   check, in Python and in Go.** The receiver (`aweb_naapp.hooks.delivery`,
   `cli/go/hookevent`) takes the team's revoked and registered certificate ids
@@ -1016,6 +1295,7 @@
   `FOLIO_TIMESTAMP_SKEW_SECONDS` at 300, and require `FOLIO_AWID_SERVICE_TOKEN`,
   when set, to be at least 32 bytes; Folio refuses to start otherwise. The first
   boot applies the shared naapp migrations (observed principals, outbox).
+
 
 ## Release preparations
 

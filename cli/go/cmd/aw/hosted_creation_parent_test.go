@@ -71,6 +71,7 @@ func TestHostedChainlessGlobalOwnerRequiresFreshBoundUnenrolledKey(t *testing.T)
 				json.NewEncoder(w).Encode(map[string]any{"did_aw": tt.stable, "current_did_key": tt.key, "id_tree": json.RawMessage(tt.tree)})
 			}))
 			defer server.Close()
+			t.Setenv("AWID_REGISTRY_URL", server.URL)
 			registry := awid.NewAWIDRegistryClient(nil, nil)
 			registry.DefaultRegistryURL = server.URL
 			owner := &hostedOwnerAuthority{did: did, key: key, stableID: stable, registryURL: server.URL}

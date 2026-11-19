@@ -84,11 +84,15 @@ func (c *IDStatusClient) FetchIDCertificateStatus(ctx context.Context, domain st
 	if err != nil {
 		return nil, err
 	}
-	req, err := c.Registry.newRequest(ctx, "POST", registryURL, idStatusPath, nil, request)
+	raw, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := DoNoRedirectWithTimeout(c.Registry.httpClient(), req, APITimeout())
+	req, err := c.Registry.newRequest(ctx, "POST", registryURL, idStatusPath, nil, raw)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := DoNoRedirectWithTimeout(c.Registry.httpClientFor(registryURL), req, APITimeout())
 	if err != nil {
 		return nil, err
 	}

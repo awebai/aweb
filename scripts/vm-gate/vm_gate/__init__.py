@@ -1,0 +1,1 @@
+"""Disposable VM gate dispatcher."""

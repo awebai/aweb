@@ -32,6 +32,7 @@ REASONS = [
     "bad_signature",
     "revoked",
     "unregistered",
+    "certificate_binding_mismatch",
 ]
 
 
@@ -346,6 +347,14 @@ def document() -> str:
         "team_id": TEAM_ID,
         "keys": KEYS,
         "reasons": REASONS,
+        # Refusal formatting is independent of the primitive input cases. Exact
+        # protected registry binding is exercised by protected-membership-v1.
+        "refusal_answers": [
+            {"reason": reason, **({"field": "alias"} if reason == "invalid_field" else {}),
+             "status_code": 401,
+             "detail": f"{reason}: alias" if reason == "invalid_field" else reason}
+            for reason in REASONS
+        ],
         "today_verifiers": {
             "awid": "awid.team_certificate: decode_team_certificate, then verify_team_certificate_signature",
             "server": (

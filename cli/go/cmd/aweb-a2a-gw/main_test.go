@@ -70,6 +70,7 @@ func TestA2AGatewayBuildsFromWorkspaceConfigServesCardAndSendsTask(t *testing.T)
 		}
 	}))
 	defer awebServer.Close()
+	t.Setenv("AWID_REGISTRY_URL", "")
 	writeGatewayWorkspace(t, tmp, awebServer.URL)
 
 	cfgPath := filepath.Join(tmp, "a2a-gw.yaml")

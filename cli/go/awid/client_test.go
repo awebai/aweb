@@ -2119,6 +2119,38 @@ func TestClientRetriesSafe503WithTransientNotice(t *testing.T) {
 	}
 }
 
+func TestClientReturnsAHinted503ForTheCallerToWaitOut(t *testing.T) {
+	oldBaseDelay := apiTransientRetryBaseDelay
+	t.Cleanup(func() { apiTransientRetryBaseDelay = oldBaseDelay })
+	apiTransientRetryBaseDelay = 0
+
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "53")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"detail":"identity_binding_unavailable"}`))
+	}))
+	defer server.Close()
+
+	client, err := New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr := captureStderrForTest(t, func() {
+		err = client.Get(context.Background(), "/v1/apps/secrets/installation?team_id=t%3Aexample.com", &map[string]any{})
+	})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable || apiErr.RetryAfter != "53" {
+		t.Fatalf("err %v", err)
+	}
+	// A blind retry cannot succeed before the hint and repeats what the
+	// service asked the caller to wait for.
+	if calls != 1 || strings.Contains(stderr, "retrying") {
+		t.Fatalf("calls=%d stderr %q", calls, stderr)
+	}
+}
+
 func TestClientRetriesIdempotentSend503(t *testing.T) {
 	oldBaseDelay := apiTransientRetryBaseDelay
 	t.Cleanup(func() { apiTransientRetryBaseDelay = oldBaseDelay })

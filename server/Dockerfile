@@ -16,6 +16,8 @@ ENV UV_HTTP_TIMEOUT=300 UV_CONCURRENT_DOWNLOADS=4
 
 WORKDIR /app
 
+
+
 COPY server/pyproject.toml server/uv.lock server/README.md ./
 COPY awid/pyproject.toml awid/README.md /awid/
 COPY naapp-lib/pyproject.toml naapp-lib/README.md /naapp-lib/

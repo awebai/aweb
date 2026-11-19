@@ -188,9 +188,9 @@ async def test_room_stream_rechecks_global_tree_after_opening(
                 evidence = await cached.id_chain_evidence(None, subject, domain=domain)
                 assert evidence.age_seconds <= 60
                 assert transport.status_calls == 1
-                cache_key = cached._id_status_cache_key(
+                cache_key = await cached._generation_cache_key(cached._id_status_cache_key(
                     status_request(None, subject, domain=domain)
-                )
+                ), cached._id_status_generation_key(domain))
                 raw = await env.redis.get(cache_key)
                 assert raw is not None
                 entry = json.loads(raw)

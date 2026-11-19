@@ -43,14 +43,19 @@ func TestChatToAPersonSaysToUseMail(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
-			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{TeamID: "backend:demo", Agents: []awid.AgentView{{AgentID: "agent-bob", Alias: "bob", DIDKey: "did:key:z6Mkbob"}}})
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{TeamID: "backend:demo", Agents: []awid.AgentView{
+				{AgentID: "agent-bob", Alias: "bob", DIDKey: "did:key:z6Mkbob"},
+				{AgentID: "agent-juan", Alias: "juan", DIDKey: "did:key:z6Mkjuan", AgentType: "human"},
+			}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/pending":
 			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{Pending: []awid.ChatPendingItem{}})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions":
 			// bob's only session is a group that also holds the person juan.
 			_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{
-				{SessionID: "human-1", TeamID: "backend:demo", Participants: []string{"alice", "juan"}, CreatedAt: "2026-10-31T00:00:00Z"},
-				{SessionID: "group-1", TeamID: "backend:demo", Participants: []string{"alice", "bob", "juan"}, CreatedAt: "2026-10-31T00:00:00Z"},
+				{SessionID: "human-1", TeamID: "backend:demo", Participants: []string{"alice", "juan"},
+					ParticipantDIDs: []string{"did:key:z6Mkalice", "did:key:z6Mkjuan"}, CreatedAt: "2026-10-31T00:00:00Z"},
+				{SessionID: "group-1", TeamID: "backend:demo", Participants: []string{"alice", "bob", "juan"},
+					ParticipantDIDs: []string{"did:key:z6Mkalice", "did:key:z6Mkbob", "did:key:z6Mkjuan"}, CreatedAt: "2026-10-31T00:00:00Z"},
 			}})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions":
 			var req awid.ChatCreateSessionRequest

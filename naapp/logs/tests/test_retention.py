@@ -83,49 +83,51 @@ async def report(db: AsyncDatabaseManager) -> dict:
     return await verify_epoch(db, TEAM_ID, 1, receipt_keys=KEYS, checkpoint_keys=KEYS)
 
 
-async def test_a_team_without_a_retention_keeps_every_event(db) -> None:
+async def test_a_team_without_a_retention_keeps_every_event(db, purges) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=3650))
-    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 0
+    assert await apply_retention(db, purges, now=NOW, logs_origin=LOGS_ORIGIN) == 0
     assert await contents(db) == [(1, True, None)]
 
 
-async def test_events_older_than_the_retention_lose_their_content_and_keep_the_chain(db) -> None:
+async def test_events_older_than_the_retention_lose_their_content_and_keep_the_chain(
+    db, purges
+) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=45))
     await appended(db, secret_use(seq=2), age=timedelta(days=31))
     await appended(db, secret_use(seq=3), age=timedelta(days=29))
     setting = await retention_setting(db, TEAM_ID, "all", days=30)
 
-    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 2
+    assert await apply_retention(db, purges, now=NOW, logs_origin=LOGS_ORIGIN) == 2
     act = f"logs.retention.set:{setting}"
     assert await contents(db) == [(1, False, act), (2, False, act), (3, True, None)]
     verified = await report(db)
     assert verified["intact"] is True
     assert verified["purged"] == [{"from": 1, "to": 2, "act": act}]
-    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 0
+    assert await apply_retention(db, purges, now=NOW, logs_origin=LOGS_ORIGIN) == 0
 
 
-async def test_a_hooks_own_retention_comes_before_the_teams(db) -> None:
+async def test_a_hooks_own_retention_comes_before_the_teams(db, purges) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=10))
     await appended(db, certificate_observed(seq=2), age=timedelta(days=10))
     await retention_setting(db, TEAM_ID, "all", days=None)
     setting = await retention_setting(db, TEAM_ID, "post-secret-use-hook", days=7)
 
-    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 1
+    assert await apply_retention(db, purges, now=NOW, logs_origin=LOGS_ORIGIN) == 1
     assert await contents(db) == [(1, False, f"logs.retention.set:{setting}"), (2, True, None)]
 
 
-async def test_setting_a_class_again_replaces_its_retention(db) -> None:
+async def test_setting_a_class_again_replaces_its_retention(db, purges) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=10))
     await retention_setting(db, TEAM_ID, "all", days=7)
     await retention_setting(db, TEAM_ID, "all", days=None)
-    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 0
+    assert await apply_retention(db, purges, now=NOW, logs_origin=LOGS_ORIGIN) == 0
     assert await contents(db) == [(1, True, None)]
 
 
-async def test_a_purge_removes_every_projection_of_the_event(db) -> None:
+async def test_a_purge_removes_every_projection_of_the_event(db, purges) -> None:
     await appended(db, secret_use(seq=1, job_id="job-7"), age=timedelta(days=1))
     async with db.transaction() as tx:
-        assert await purge(tx, TEAM_ID, [(1, 1)], act="logs.erase:7d0e3f1a") == 1
+        assert await purge(tx, purges, TEAM_ID, [(1, 1)], act="logs.erase:7d0e3f1a") == 1
     row = await db.fetch_one(
         "SELECT * FROM {{tables.read_events}} WHERE team_id = $1 AND team_seq = 1", TEAM_ID
     )
@@ -139,16 +141,16 @@ async def test_a_purge_removes_every_projection_of_the_event(db) -> None:
     assert "payload" not in page.events[0]
 
 
-async def test_purging_an_event_again_changes_nothing(db) -> None:
+async def test_purging_an_event_again_changes_nothing(db, purges) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=1))
     async with db.transaction() as tx:
-        assert await purge(tx, TEAM_ID, [(1, 1)], act="logs.erase:first") == 1
+        assert await purge(tx, purges, TEAM_ID, [(1, 1)], act="logs.erase:first") == 1
     async with db.transaction() as tx:
-        assert await purge(tx, TEAM_ID, [(1, 1)], act="logs.erase:second") == 0
+        assert await purge(tx, purges, TEAM_ID, [(1, 1)], act="logs.erase:second") == 0
     assert await contents(db) == [(1, False, "logs.erase:first")]
 
 
-async def test_a_purge_waits_for_a_projection_reading_the_same_events(db) -> None:
+async def test_a_purge_waits_for_a_projection_reading_the_same_events(db, purges) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=1))
     await db.execute("DELETE FROM {{tables.read_events}} WHERE team_id = $1", TEAM_ID)
     async with db.transaction() as projecting:
@@ -156,21 +158,23 @@ async def test_a_purge_waits_for_a_projection_reading_the_same_events(db) -> Non
         with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
             async with db.transaction() as purging:
                 await purging.execute("SET LOCAL lock_timeout = '100ms'")
-                await purge(purging, TEAM_ID, [(1, 1)], act="logs.erase:7d0e3f1a")
+                await purge(purging, purges, TEAM_ID, [(1, 1)], act="logs.erase:7d0e3f1a")
 
 
-async def test_a_pass_stops_between_batches_once_asked_to(db) -> None:
+async def test_a_pass_stops_between_batches_once_asked_to(db, purges) -> None:
     for seq in (1, 2, 3):
         await appended(db, secret_use(seq=seq), age=timedelta(days=45))
     await retention_setting(db, TEAM_ID, "all", days=30)
     stop = asyncio.Event()
     stop.set()
-    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN, batch=1, stop=stop) == 0
-    assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN, batch=1) == 3
+    assert (
+        await apply_retention(db, purges, now=NOW, logs_origin=LOGS_ORIGIN, batch=1, stop=stop) == 0
+    )
+    assert await apply_retention(db, purges, now=NOW, logs_origin=LOGS_ORIGIN, batch=1) == 3
 
 
 async def test_a_team_whose_purge_fails_does_not_keep_the_others_from_theirs(
-    db, caplog: pytest.LogCaptureFixture
+    db, purges, caplog: pytest.LogCaptureFixture
 ) -> None:
     await appended(db, secret_use(seq=1), age=timedelta(days=45))
     await appended(
@@ -187,7 +191,7 @@ async def test_a_team_whose_purge_fails_does_not_keep_the_others_from_theirs(
         f" FOR EACH ROW WHEN (OLD.team_id = '{TEAM_ID}') EXECUTE FUNCTION refuse_update()"
     )
     with caplog.at_level(logging.ERROR, logger="aweb_logs.retention"):
-        assert await apply_retention(db, now=NOW, logs_origin=LOGS_ORIGIN) == 1
+        assert await apply_retention(db, purges, now=NOW, logs_origin=LOGS_ORIGIN) == 1
     assert await contents(db, OTHER_TEAM) == [(1, False, f"logs.retention.set:{other}")]
     assert await contents(db) == [(1, True, None)]
     assert [(record.getMessage(), record.exc_info is not None) for record in caplog.records] == [
@@ -219,7 +223,7 @@ async def test_a_pass_reads_each_class_by_a_range_bounded_by_its_cutoff(db) -> N
     assert all(column in conditions[0] for column in ("team_id", "hook", "received_at"))
 
 
-async def test_a_purge_during_a_readers_catch_up_leaves_no_content_projected(db) -> None:
+async def test_a_purge_during_a_readers_catch_up_leaves_no_content_projected(db, purges) -> None:
     await appended(db, secret_use(seq=1, job_id="job-7"), age=timedelta(days=1))
     await db.execute("DELETE FROM {{tables.read_events}} WHERE team_id = $1", TEAM_ID)
     # Catch-up's insert waits on an advisory lock the test holds, so it has
@@ -246,12 +250,12 @@ async def test_a_purge_during_a_readers_catch_up_leaves_no_content_projected(db)
         try:
             async with db.transaction() as purging:
                 await purging.execute("SET LOCAL lock_timeout = '200ms'")
-                await purge(purging, TEAM_ID, [(1, 1)], act="logs.erase:during")
+                await purge(purging, purges, TEAM_ID, [(1, 1)], act="logs.erase:during")
         except asyncpg.exceptions.LockNotAvailableError:
             pass
     await catch_up
     async with db.transaction() as tx:
-        await purge(tx, TEAM_ID, [(1, 1)], act="logs.erase:after")
+        await purge(tx, purges, TEAM_ID, [(1, 1)], act="logs.erase:after")
     row = await db.fetch_one(
         "SELECT * FROM {{tables.read_events}} WHERE team_id = $1 AND team_seq = 1", TEAM_ID
     )

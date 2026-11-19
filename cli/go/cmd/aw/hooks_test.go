@@ -4,7 +4,6 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -87,14 +86,6 @@ func make64(c byte) []byte {
 		out[i] = c
 	}
 	return out
-}
-
-func errorCodeOf(err error) string {
-	var coded *codedError
-	if errors.As(err, &coded) {
-		return coded.code
-	}
-	return ""
 }
 
 // signableAct is an owner act around subject, so a test can ask the owner-act

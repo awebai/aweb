@@ -24,7 +24,7 @@ from aweb_naapp.hooks.delivery import MAX_DELIVERY_BYTES, sign_delivery
 from aweb_naapp.hooks.strictjson import decode_base64url
 from aweb_naapp.manifest import load_manifest
 from aweb_naapp_testing import Member
-from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN
+from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, dns_naming
 from nacl.signing import SigningKey
 
 from aweb_logs.app import create_app
@@ -48,6 +48,7 @@ CONSOLE = "https://console.logs.example.test"
 PATH = "/v1/hooks/ingest"
 APP_ID = "secrets-test"
 SEEDS = {"core": CORE_SEED, "app": SECRETS_SEED, "client": MEMBER_SEED}
+NAMESPACE_KEY = SigningKey.generate()
 
 
 async def _install(db, team_id, data):
@@ -78,6 +79,7 @@ class World:
     now: datetime
     client: httpx.AsyncClient
     runtime: object = None
+    ledger: object = None
 
     def event(self, kind, *, event_id=None, payload=None, producer=None, occurred_at=None, hook=None):
         signing, _ = signed_event(kind, team_id=self.member.team_id, event_id=event_id or str(uuid4()))
@@ -145,8 +147,8 @@ async def customer_hosted_credential(coordination, member, directory) -> dict[st
     return {"signing_key_file": str(key), "certificate_file": str(certificate)}
 
 
-@pytest.fixture
-async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
+@pytest.fixture(name="world")
+async def world_fixture(coordination, test_db_factory, tmp_path, monkeypatch, request):
     now = datetime.now(UTC).replace(microsecond=0)
     member = Member(
         team_id=f"logs-{uuid4().hex[:12]}:ingest.example", certificate_id="c_41",
@@ -155,11 +157,14 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
     await coordination.add_member(member)
     await coordination.publish_server(member)
     await coordination.connect(member)
+    # Ingest runs with team-key pins enforced, the state the staged flag ends in.
+    monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "true")
     monkeypatch.setenv("AWEB_HOOK_PRODUCER_KEYS", json.dumps([{
         "kid": "hook-2026-10", "did_key": did_key(CORE_SEED),
         "valid_from": "2026-01-01T00:00:00Z", "valid_until": None,
     }]))
     db = await test_db_factory.create_db(suffix="logs_http")
+    ledger = await test_db_factory.create_db(suffix="logs_http_purge_ledger")
     server_db = coordination.server.db.get_manager("aweb")
     overrides = dict(getattr(request, "param", {}))
     awid_authority: dict = {"awid_service_token": SERVICE_TOKEN}
@@ -171,6 +176,7 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
         }}
     settings = LogsSettings(
         _env_file=None, database_url=db.config.get_dsn(), db_schema=db.schema,
+        purge_ledger_database_url=ledger.config.get_dsn(),
         app_id=TEST_APP_ID, public_origin=ORIGIN, console_origin=CONSOLE,
         awid_registry_url=REGISTRY_URL, **awid_authority,
         app_key_files=write_key_files(tmp_path),
@@ -201,13 +207,14 @@ async def world(coordination, test_db_factory, tmp_path, monkeypatch, request):
     )}
     service = create_app(
         settings, email=no_mail(), awid_transport=coordination.registry.transport,
+        awid_txt_resolver=dns_naming("ingest.example", NAMESPACE_KEY),
         team_server_transport=coordination.server.transport, now=lambda: now,
     )
     async with service.api_app.router.lifespan_context(service.api_app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=service), base_url=ORIGIN) as client:
             yield World(
                 coordination, db, server_db, member, settings, installation, bindings, now, client,
-                service.api_app.state.runtime,
+                service.api_app.state.runtime, ledger,
             )
 
 
@@ -378,9 +385,18 @@ async def test_a_revoked_client_certificate_is_refused_by_the_certificate_check(
 
 async def test_client_certificate_verification_reads_the_controller_key_fresh(world):
     assert (await world.send(world.delivery("client"))).status_code == 200
-    await world.coordination.registry.rotate_team_key(world.member.team_id, did_key(bytes(SigningKey.generate())))
+    await world.coordination.registry.rotate_team_key_by_controller(
+        world.member.team_id, did_key(bytes(SigningKey.generate())), NAMESPACE_KEY,
+    )
     response = await world.send(world.delivery("client"))
     assert (response.status_code, _code(response)) == (401, "transport_certificate_invalid")
+
+
+async def test_a_registry_substituted_team_key_is_refused_by_name(world):
+    assert (await world.send(world.delivery("client"))).status_code == 200
+    await world.coordination.registry.rotate_team_key(world.member.team_id, did_key(bytes(SigningKey.generate())))
+    response = await world.send(world.delivery("client"))
+    assert (response.status_code, _code(response)) == (401, "team_key_unverified")
 
 
 async def test_a_client_cannot_use_a_warm_key_cache_during_a_registry_outage(world):

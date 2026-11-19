@@ -1,14 +1,11 @@
-"""secrets' owners and approvers as B3 scopes (decisions 40 and 41).
+"""Secrets owner projections over the canonical shared human-role store.
 
-B3 keeps one approver per scope, and a scope is unique across the database.
-So each owner has its own scope, named from the installation, its team and
-the owner's stable principal (S5's principal_did), and each approver its own,
-named from the installation, its team and the approver's reference. Hashing keeps the name inside
-the role token of an ``aweb.owner-act/1`` subject; the request that designates
-an owner carries the principal, and the app recomputes the scope from it.
-
-An owner scope's approver is designated only by a team owner act. Any other
-scope's approver may be designated by an owner's approval of a change set.
+The owner migration hands existing scope history to role_holdings without
+changing assignments or B3 credentials. Reads of authority require that shared
+holding; context-only reads can use its retained record after containment or
+revocation. The old owner_principals map is migration history, never authority.
+Owner bindings and credential replacement use the shared human-role writers;
+the legacy contact-model entry refuses every scope.
 """
 
 from __future__ import annotations
@@ -20,7 +17,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from aweb_naapp.roles import PrincipalKey, has_role
+from aweb_naapp import roles
+from aweb_naapp.roles import PrincipalKey
 from aweb_naapp.runtime.approvals import ActionPolicy, Approver
 from aweb_naapp.runtime.passkeys import Passkeys
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
@@ -69,31 +67,92 @@ async def apply_owner_migrations(db: AsyncDatabaseManager) -> None:
 async def record_owner(
     tx: TransactionManager, *, installation_id: str, principal: PrincipalKey
 ) -> str:
-    """Record, in the designating transaction, which principal an owner scope stands for.
+    """The legacy owner writer is retired for every scope."""
+    raise OwnerRequired("owner_required")
 
-    Returns the scope. A scope already recorded for another installation, team
-    or principal is refused as ``owner_required``, never silently kept."""
-    scope = owner_scope(installation_id, principal.team_id, principal.principal_did)
-    recorded = await tx.fetch_one(
-        """
-        INSERT INTO {{tables.owner_principals}} (scope, installation_id, team_id, principal_did)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (scope) DO UPDATE SET scope = EXCLUDED.scope
-        RETURNING installation_id, team_id, principal_did
-        """,
-        scope,
-        installation_id,
-        principal.team_id,
-        principal.principal_did,
-    )
-    assert recorded is not None
-    if (recorded["installation_id"], recorded["team_id"], recorded["principal_did"]) != (
-        installation_id,
-        principal.team_id,
-        principal.principal_did,
+
+async def owner_record(
+    db: AsyncDatabaseManager | TransactionManager, scope: str
+) -> roles.HoldingRecord | None:
+    """Resolve scope history for context only; a record grants no authority."""
+    if not is_owner_scope(scope):
+        return None
+    record = await roles.holding_record_of_scope(db, scope)
+    if record is None or record.role != OWNER_ROLE:
+        return None
+    if scope != roles.holding_scope(
+        record.installation_id, record.team_id, OWNER_ROLE, record.principal
     ):
-        raise OwnerRequired("the owner scope is recorded for another owner")
-    return scope
+        return None
+    return record
+
+
+async def owner_binding(
+    db: AsyncDatabaseManager | TransactionManager,
+    scope: str,
+    *,
+    installation_id: str | None = None,
+    team_id: str | None = None,
+) -> dict[str, str] | None:
+    """App context projection of shared history, never a current holding."""
+    record = await owner_record(db, scope)
+    if (
+        record is None
+        or (installation_id is not None and record.installation_id != installation_id)
+        or (team_id is not None and record.team_id != team_id)
+    ):
+        return None
+    return dict(
+        scope=record.b3_scope,
+        installation_id=record.installation_id,
+        team_id=record.team_id,
+        principal_did=record.principal,
+    )
+
+
+async def owner_holding(
+    db: AsyncDatabaseManager | TransactionManager, scope: str
+) -> roles.Holding | None:
+    """The canonical live assignment and installation record, never old history."""
+    if not is_owner_scope(scope):
+        return None
+    held = await roles.read_holding_of_scope(db, scope)
+    return held if held is not None and held.role == OWNER_ROLE else None
+
+
+async def has_owner(
+    db: AsyncDatabaseManager | TransactionManager, principal: PrincipalKey, *, installation_id: str
+) -> bool:
+    if not roles.is_holding_principal(principal.principal_did):
+        return False
+    return (
+        await roles.read_holding(
+            db,
+            installation_id=installation_id,
+            team_id=principal.team_id,
+            role=OWNER_ROLE,
+            principal=principal.principal_did,
+        )
+        is not None
+    )
+
+
+async def hold_owner(
+    tx: TransactionManager, principal: PrincipalKey, *, installation_id: str
+) -> bool:
+    """Hold the complete canonical holding in the caller's original transaction."""
+    if not roles.is_holding_principal(principal.principal_did):
+        return False
+    return (
+        await roles.hold_holding(
+            tx,
+            installation_id=installation_id,
+            team_id=principal.team_id,
+            role=OWNER_ROLE,
+            principal=principal.principal_did,
+        )
+        is not None
+    )
 
 
 @dataclass(frozen=True)
@@ -108,8 +167,8 @@ class OwnerDirectory:
     """The approver directory secrets gives B2 (decisions 34 and 54).
 
     An owner scope's approver is a candidate only while its B3 designation is
-    current and enrolled and its recorded principal holds secrets.owner on its
-    team. Both are read again on every question, so revoking the role stops
+    current and enrolled and the shared store retains its current holding in
+    the installation. Both are read again on every question, so revoking the role stops
     that owner at once. Any other scope's approver is B3's alone: approvers
     are not a DID role (design §4.2).
 
@@ -163,25 +222,25 @@ class OwnerDirectory:
         """The installation's owners that hold secrets.owner and have an enrolled,
         in-effect passkey. Roles are read through ``db``, so a caller's own
         uncommitted role change counts."""
+        if isinstance(db, AsyncDatabaseManager):
+            async with db.transaction() as tx:
+                return await self.enrolled_owners(
+                    tx, installation_id=installation_id, team_id=team_id
+                )
         rows = await db.fetch_all(
-            "SELECT scope, principal_did FROM {{tables.owner_principals}}"
-            " WHERE installation_id = $1 AND team_id = $2 ORDER BY principal_did",
+            "SELECT b3_scope, principal_did FROM {{tables.role_holdings}}"
+            " WHERE installation_id=$1 AND team_id=$2 AND role=$3 ORDER BY principal_did",
             installation_id,
             team_id,
+            OWNER_ROLE,
         )
         owners: list[PrincipalKey] = []
         for row in rows:
-            principal = PrincipalKey(team_id=team_id, principal_did=row["principal_did"])
-            if not await has_role(db, principal, OWNER_ROLE):
+            if await owner_holding(db, row["b3_scope"]) is None:
                 continue
-            if (
-                await self._passkeys.designated_approver(
-                    row["scope"], tx=db if isinstance(db, TransactionManager) else None
-                )
-                is None
-            ):
+            if await self._passkeys.current_subject_in(db, row["b3_scope"]) is None:
                 continue
-            owners.append(principal)
+            owners.append(PrincipalKey(team_id, row["principal_did"]))
         return owners
 
     async def owner_of(
@@ -189,16 +248,8 @@ class OwnerDirectory:
     ) -> PrincipalKey | None:
         """The owner an owner scope stands for, while it holds secrets.owner,
         read through ``db``; None for any other scope."""
-        if not is_owner_scope(scope):
-            return None
-        row = await db.fetch_one(
-            "SELECT team_id, principal_did FROM {{tables.owner_principals}} WHERE scope = $1",
-            scope,
-        )
-        if row is None:
-            return None
-        principal = PrincipalKey(team_id=row["team_id"], principal_did=row["principal_did"])
-        return principal if await has_role(db, principal, OWNER_ROLE) else None
+        held = await owner_holding(db, scope)
+        return None if held is None else PrincipalKey(held.team_id, held.principal)
 
     async def _owner(
         self, scope: str, *, tx: TransactionManager | None = None
@@ -219,8 +270,8 @@ class OwnerDirectory:
             return Drafter(principal_did=drafter.get("principal"))
         if drafter.get("via") == "console":
             scope = drafter.get("scope")
-            principal_did = await (tx or self._db).fetch_value(
-                "SELECT principal_did FROM {{tables.owner_principals}} WHERE scope = $1", scope
+            record = (
+                None if not isinstance(scope, str) else await owner_record(tx or self._db, scope)
             )
-            return Drafter(principal_did=principal_did, scope=scope)
+            return Drafter(principal_did=None if record is None else record.principal, scope=scope)
         return Drafter()

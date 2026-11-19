@@ -177,7 +177,7 @@ func TestExternalIdentityHomeWorkspaceAndSigningLifecycle(t *testing.T) {
 		t.Helper()
 		fullArgs := append([]string{"--identity-home", identityHome}, args...)
 		command := exec.CommandContext(ctx, bin, fullArgs...)
-		command.Env = testCommandEnv(tmp)
+		command.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+registryServer.URL)
 		command.Dir = instance
 		out, err := command.CombinedOutput()
 		if err != nil {
