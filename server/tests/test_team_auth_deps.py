@@ -155,14 +155,30 @@ class TestResolveTeamIdentity:
         address = "example.test/bob"
         async with registry_listener(env) as (registry, _):
             stable = await register_global_identity(env, bob, address)
-            binding = await observe_identity_binding(registry, did_key=bob.did, did_aw=stable, address=address)
-            cert_info = dict(team_id=TEAM, alias="bob", did_key=bob.did, member_did_aw=stable,
-                             member_address=address, identity_scope="global", certificate_id="cert-001",
-                             identity_binding=binding)
+            binding = await observe_identity_binding(
+                registry, did_key=bob.did, did_aw=stable, address=address
+            )
+            cert_info = dict(
+                team_id=TEAM,
+                alias="bob",
+                did_key=bob.did,
+                member_did_aw=stable,
+                member_address=address,
+                identity_scope="global",
+                certificate_id="cert-001",
+                identity_binding=binding,
+            )
             result = await connect_agent(
-                db=env.db, cert_info=cert_info, identity_binding=binding, team_did_key=env.team_did,
-                hostname="Mac.local", workspace_path="/project", repo_origin="", role="developer",
-                human_name="", agent_type="agent",
+                db=env.db,
+                cert_info=cert_info,
+                identity_binding=binding,
+                team_did_key=env.team_did,
+                hostname="Mac.local",
+                workspace_path="/project",
+                repo_origin="",
+                role="developer",
+                human_name="",
+                agent_type="agent",
             )
             identity = await resolve_team_identity(env.db, cert_info)
         assert identity.team_id == TEAM
@@ -243,25 +259,53 @@ async def test_get_team_identity_accepts_raw_manager(privacy_app):
     from identity_binding_support import register_global_identity
     from test_cli_never_grants import registry_listener
     from test_dashboard_privacy import TEAM
-    from test_messages_http import _make_certificate as certificate, _encode_certificate as encode, _signed_team_headers
+    from test_messages_http import (
+        _make_certificate as certificate,
+        _encode_certificate as encode,
+        _signed_team_headers,
+    )
 
     env = privacy_app
     bob = env.actors["bob"]
     address = "example.test/bob"
     async with registry_listener(env) as (registry, _):
         stable = await register_global_identity(env, bob, address)
-        binding = await observe_identity_binding(registry, did_key=bob.did, did_aw=stable, address=address)
+        binding = await observe_identity_binding(
+            registry, did_key=bob.did, did_aw=stable, address=address
+        )
         connected = await connect_agent(
             db=env.db,
-            cert_info=dict(team_id=TEAM, alias="bob", did_key=bob.did, member_did_aw=stable,
-                           member_address=address, identity_scope="global", certificate_id="cert-raw-manager"),
-            identity_binding=binding, team_did_key=env.team_did,
-            hostname="Mac.local", workspace_path="/project", repo_origin="", role="developer",
-            human_name="", agent_type="agent",
+            cert_info=dict(
+                team_id=TEAM,
+                alias="bob",
+                did_key=bob.did,
+                member_did_aw=stable,
+                member_address=address,
+                identity_scope="global",
+                certificate_id="cert-raw-manager",
+            ),
+            identity_binding=binding,
+            team_did_key=env.team_did,
+            hostname="Mac.local",
+            workspace_path="/project",
+            repo_origin="",
+            role="developer",
+            human_name="",
+            agent_type="agent",
         )
-        cert = encode(certificate(env.team_sk, env.team_did, bob.did, team_id=TEAM, alias="bob",
-                                  identity_scope="global", member_did_aw=stable, member_address=address,
-                                  certificate_id="cert-raw-manager"))
+        cert = encode(
+            certificate(
+                env.team_sk,
+                env.team_did,
+                bob.did,
+                team_id=TEAM,
+                alias="bob",
+                identity_scope="global",
+                member_did_aw=stable,
+                member_address=address,
+                certificate_id="cert-raw-manager",
+            )
+        )
         req = _request_with_app_state(_signed_team_headers(bob.sk, bob.did, TEAM, cert, b""))
         req.scope["app"] = env.app
         identity = await get_team_identity(req, env.db)
@@ -359,7 +403,9 @@ async def test_get_messaging_auth_enriches_identity_auth_from_agent_row(aweb_clo
     monkeypatch.setattr(_identity_auth_mod, "resolve_identity_auth", _fake_resolve_identity_auth)
 
     request = _request_with_headers({"Authorization": "DIDKey did:key:z6MkGsk signature"})
-    request.app.state.awid_registry_client = SimpleNamespace(get_team_fresh=AsyncMock(side_effect=legacy_team))
+    request.app.state.awid_registry_client = SimpleNamespace(
+        get_team_fresh=AsyncMock(side_effect=legacy_team)
+    )
     auth = await get_messaging_auth(
         request,
         db,
@@ -373,7 +419,9 @@ async def test_get_messaging_auth_enriches_identity_auth_from_agent_row(aweb_clo
 
 
 @pytest.mark.asyncio
-async def test_get_messaging_auth_rejects_ambiguous_identity_auth_agent_rows(aweb_cloud_db, monkeypatch):
+async def test_get_messaging_auth_rejects_ambiguous_identity_auth_agent_rows(
+    aweb_cloud_db, monkeypatch
+):
     db = aweb_cloud_db.aweb_db
 
     await db.execute(
@@ -409,7 +457,9 @@ async def test_get_messaging_auth_rejects_ambiguous_identity_auth_agent_rows(awe
 
 
 @pytest.mark.asyncio
-async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_membership(aweb_cloud_db, monkeypatch):
+async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_membership(
+    aweb_cloud_db, monkeypatch
+):
     db = aweb_cloud_db.aweb_db
 
     await db.execute(
@@ -431,7 +481,9 @@ async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_member
     )
 
     async def _fake_resolve_identity_auth(_request, *, db=None):
-        return IdentityAuth(did_key="did:key:z6MkGsk", did_aw="did:aw:gsk", address="gsk.aweb.ai/grace")
+        return IdentityAuth(
+            did_key="did:key:z6MkGsk", did_aw="did:aw:gsk", address="gsk.aweb.ai/grace"
+        )
 
     monkeypatch.setattr(_identity_auth_mod, "resolve_identity_auth", _fake_resolve_identity_auth)
 
@@ -440,14 +492,19 @@ async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_member
     # verification. The real registry admission cases live in
     # test_identity_binding_http.py.
     request.app.state.awid_registry_client = object()
-    request.app.state.identity_binding_cache = OrderedDict({
-        ("did:aw:gsk", "did:key:z6MkGsk", "gsk.aweb.ai/grace"): (
-            monotonic() + 60, IdentityBinding(
-                "did:aw:gsk", "gsk.aweb.ai/grace", did_key="did:key:z6MkGsk",
-                id_tree=IDTreeEnrollment(False, None),
+    request.app.state.identity_binding_cache = OrderedDict(
+        {
+            ("did:aw:gsk", "did:key:z6MkGsk", "gsk.aweb.ai/grace"): (
+                monotonic() + 60,
+                IdentityBinding(
+                    "did:aw:gsk",
+                    "gsk.aweb.ai/grace",
+                    did_key="did:key:z6MkGsk",
+                    id_tree=IDTreeEnrollment(False, None),
+                ),
             ),
-        ),
-    })
+        }
+    )
     auth = await get_messaging_auth(request, db)
 
     assert auth.did_key == "did:key:z6MkGsk"
@@ -467,7 +524,9 @@ HOSTILE_CERTIFICATES = {
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys())
+@pytest.mark.parametrize(
+    "certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys()
+)
 async def test_verify_request_certificate_refuses_a_hostile_certificate_with_401(certificate):
     from aweb.team_auth_deps import verify_request_certificate
 
@@ -485,7 +544,9 @@ async def test_verify_request_certificate_refuses_a_hostile_certificate_with_401
     assert refused.value.detail == "malformed"
 
 
-@pytest.mark.parametrize("certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys())
+@pytest.mark.parametrize(
+    "certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys()
+)
 def test_parse_and_verify_certificate_refuses_a_hostile_certificate(certificate):
     from aweb.team_auth import parse_and_verify_certificate
 
