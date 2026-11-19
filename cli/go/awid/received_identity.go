@@ -46,11 +46,30 @@ func (r *RegistryResolver) receivedRegistry(ctx context.Context, teamID string) 
 	return registryURL, scoped, nil
 }
 
+// ReceivedSender is what a received message says about its sender, as trust
+// normalisation reads it.
+type ReceivedSender struct {
+	// Address is the sender's address; Alias names it when there is none.
+	Address     string
+	Alias       string
+	DID         string
+	StableID    string
+	Membership  *SenderMembership
+	Rotation    *RotationAnnouncement
+	Replacement *ReplacementAnnouncement
+	IsContact   *bool
+	// Binding is the delivery server's projection of the sender for a
+	// received read; nil when the read carries none.
+	Binding *ReceivedSenderBinding
+}
+
 // NormalizeReceivedSenderTrust keeps display labels out of cross-team local
 // and no-address global verification. It cannot promote a failed signature or recipient mismatch.
-func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status VerificationStatus, address, alias, did, stableID string, membership *SenderMembership, ra *RotationAnnouncement, repl *ReplacementAnnouncement, contact *bool, binding ...ReceivedSenderBinding) (VerificationStatus, *bool) {
-	if len(binding) > 0 && strings.TrimSpace(stableID) == "" {
-		if localStatus, handled := c.receivedLocalSenderTrust(status, address, did, membership, binding[0]); handled {
+func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status VerificationStatus, sender ReceivedSender) (VerificationStatus, *bool) {
+	address, alias, did, stableID := sender.Address, sender.Alias, sender.DID, sender.StableID
+	membership := sender.Membership
+	if sender.Binding != nil && strings.TrimSpace(stableID) == "" {
+		if localStatus, handled := c.receivedLocalSenderTrust(status, address, did, membership, *sender.Binding); handled {
 			return localStatus, nil
 		}
 	}
@@ -59,7 +78,7 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 		if reference == "" {
 			reference = alias
 		}
-		return c.NormalizeSenderTrust(ctx, status, reference, did, stableID, ra, repl, contact)
+		return c.NormalizeSenderTrust(ctx, status, reference, did, stableID, sender.Rotation, sender.Replacement, sender.IsContact)
 	}
 	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
 		return status, nil

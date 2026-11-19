@@ -247,6 +247,10 @@ func (c *Client) bindAndNormaliseReceived(ctx context.Context, r *receivedMessag
 	ownAddressless := senderRead && strings.TrimSpace(r.fromAddress) == "" && c.stableID != "" &&
 		r.fromStableID == c.stableID && c.ParticipantDID() != "" && r.fromDID == c.ParticipantDID()
 	if !ownAddressless {
-		r.status, r.isContact = c.NormalizeReceivedSenderTrust(ctx, r.status, r.fromAddress, r.trustAlias, r.fromDID, r.fromStableID, r.senderMembership, r.rotationAnnouncement, r.replacementAnnouncement, r.isContact, binding)
+		r.status, r.isContact = c.NormalizeReceivedSenderTrust(ctx, r.status, ReceivedSender{
+			Address: r.fromAddress, Alias: r.trustAlias, DID: r.fromDID, StableID: r.fromStableID,
+			Membership: r.senderMembership, Rotation: r.rotationAnnouncement, Replacement: r.replacementAnnouncement,
+			IsContact: r.isContact, Binding: &binding,
+		})
 	}
 }
