@@ -2,6 +2,8 @@
 """Fetch npm latest once, retaining exact checked wrapper/platform bytes."""
 
 import argparse
+from collections.abc import Callable
+from typing import Any
 import base64
 import hashlib
 import io
@@ -112,7 +114,27 @@ def aw_tag_commit(version, ls_remote=_ls_remote):
 
 
 def latest_metadata(registry="https://registry.npmjs.org", resolve_tag=aw_tag_commit):
-    metadata = json.loads(download(registry + "/@awebai%2faw/latest"))
+    return release_metadata(registry=registry, resolve_tag=resolve_tag)
+
+
+def release_metadata(
+    *,
+    version: str | None = None,
+    registry: str = "https://registry.npmjs.org",
+    resolve_tag: Callable[[str], str] = aw_tag_commit,
+) -> dict[str, Any]:
+    """Resolve one final release, retaining the existing package/source authority."""
+    if version is not None and not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise ValueError("Use an exact final aw release version.")
+    metadata = json.loads(download(registry + "/@awebai%2faw/" + (version or "latest")))
+    if not isinstance(metadata, dict):
+        raise ValueError(
+            "Registry metadata is not an object. Check the release metadata and rerun."
+        )
+    if version is not None and metadata.get("version") != version:
+        raise ValueError(
+            "Registry metadata differs from the requested version. Check the release metadata and rerun."
+        )
     if metadata.get("name") != "@awebai/aw" or not re.fullmatch(
         r"\d+\.\d+\.\d+", metadata.get("version", "")
     ):
@@ -124,6 +146,7 @@ def latest_metadata(registry="https://registry.npmjs.org", resolve_tag=aw_tag_co
         latest.update(gitHead=metadata["gitHead"], source="gitHead")
     else:
         latest.update(source="aw-tag", sourceCommit=resolve_tag(latest["version"]))
+    wrapper_source(latest, resolve_tag)
     return latest
 
 
@@ -148,11 +171,30 @@ def wrapper_source(wrapper, resolve_tag):
 def freeze_latest(
     directory, registry="https://registry.npmjs.org", resolve_tag=aw_tag_commit
 ):
+    return freeze_metadata(
+        directory=directory, metadata=latest_metadata(registry, resolve_tag)
+    )
+
+
+def freeze_release(
+    directory: Path,
+    *,
+    version: str,
+    registry: str = "https://registry.npmjs.org",
+    resolve_tag: Callable[[str], str] = aw_tag_commit,
+) -> Path:
+    return freeze_metadata(
+        directory=directory,
+        metadata=release_metadata(
+            version=version, registry=registry, resolve_tag=resolve_tag
+        ),
+    )
+
+
+def freeze_metadata(*, directory: Path, metadata: dict[str, Any]) -> Path:
     # Concurrent gate invocations can observe different latest versions. A
     # shared mutable filename would let one replace the other's ledger input.
-    body = (
-        json.dumps(latest_metadata(registry, resolve_tag), sort_keys=True) + "\n"
-    ).encode()
+    body = (json.dumps(metadata, sort_keys=True) + "\n").encode()
     directory.mkdir(parents=True, exist_ok=True)
     destination = directory / (
         "released-aw-" + hashlib.sha256(body).hexdigest() + ".json"

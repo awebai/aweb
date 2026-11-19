@@ -57,3 +57,6 @@ The pure controls are in `scripts/test_server_local_controls.py`. Explicit nativ
 acceptance is `server/.venv/bin/python scripts/test-egress/test_local_services.py`:
 it uses real PostgreSQL and checks cleanup after success, failure, INT and TERM.
 Run that native control only when Docker execution on the host is authorized.
+
+For the isolated head/released and forward/reverse messaging selections, use
+[`make test-user-paths-local`](local-user-paths.md).

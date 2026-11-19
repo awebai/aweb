@@ -116,6 +116,15 @@ class ReleasedArtifactTests(unittest.TestCase):
                 self.assertEqual(hits.count("/@awebai%2faw/latest"), 1)
                 self.assertTrue((root / "good/provenance.json").is_file())
                 frozen = fetch.latest_metadata(origin)
+                exact = fetch.freeze_release(
+                    root / "exact", version="1.2.3", registry=origin
+                )
+                self.assertEqual(json.loads(exact.read_text())["version"], "1.2.3")
+                self.assertIn("/@awebai%2faw/1.2.3", hits)
+                with self.assertRaisesRegex(ValueError, "requested version"):
+                    fetch.freeze_release(
+                        root / "wrong", version="9.9.9", registry=origin
+                    )
                 hits.clear()
                 fetch.fetch(root / "frozen", origin, metadata=frozen)
                 self.assertNotIn("/@awebai%2faw/latest", hits)

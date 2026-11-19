@@ -349,6 +349,10 @@ production-awid-sync:
 test-server-local:
 	python3 scripts/test_server_local.py
 
+.PHONY: test-user-paths-local
+test-user-paths-local:
+	python3 scripts/test_user_paths_local.py
+
 test-server: production-awid-sync
 	cd server && uv sync --frozen
 	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
