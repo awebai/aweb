@@ -250,7 +250,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 			RoleName:      strings.TrimSpace(req.Role),
 			HumanName:     strings.TrimSpace(req.HumanName),
 			AgentType:     strings.TrimSpace(req.AgentType),
-			IdentityScope: initIdentityScopeValue(req.Global),
+			IdentityScope: string(identityScopeFromFlags(identityScopeFlags{Global: req.Global})),
 			InboundMode:   strings.TrimSpace(req.InboundMode),
 		}, signingKey)
 		if createErr == nil {
@@ -311,7 +311,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		return connectOutput{}, err
 	}
 	treeContext, treeCancel := commandAPIContext(nil)
-	responsibility, treeErr := finishHostedIDTree(treeContext, state.IDTree, resp.IDTreeCreationResponse, workspaceTeamIdentityMaterial{SigningKey: signingKey, DIDKey: didKey, StableID: localStableID, IdentityScope: initIdentityScopeValue(req.Global)}, req.IdentityHome, registry, nil)
+	responsibility, treeErr := finishHostedIDTree(treeContext, state.IDTree, resp.IDTreeCreationResponse, workspaceTeamIdentityMaterial{SigningKey: signingKey, DIDKey: didKey, StableID: localStableID, IdentityScope: string(identityScopeFromFlags(identityScopeFlags{Global: req.Global}))}, req.IdentityHome, registry, nil)
 	treeCancel()
 	if treeErr != nil {
 		return connectOutput{}, fmt.Errorf("hosted membership created; attribution installation incomplete: %w", treeErr)
@@ -395,13 +395,6 @@ func selectAPIKeyInitTeam(req apiKeyInitRequest) (apiKeyInitRequest, error) {
 	req.SelectedTeamID, req.CanonicalTeamID = selectedTeam.TeamID, selectedTeam.CanonicalTeamID
 	req.CreationInvitation = selectedTeam.CreationInvitation
 	return req, nil
-}
-
-func initIdentityScopeValue(global bool) string {
-	if global {
-		return awid.IdentityModeGlobal
-	}
-	return awid.IdentityModeLocal
 }
 
 func prepareAPIKeyBootstrapIdentity(
@@ -492,7 +485,7 @@ func newAPIKeyPartialInitState(
 	}
 	return &apiKeyPartialInitState{
 		Version:           apiKeyPartialInitVersion,
-		IdentityScope:     initIdentityScopeValue(req.Global),
+		IdentityScope:     string(identityScopeFromFlags(identityScopeFlags{Global: req.Global})),
 		Alias:             strings.TrimSpace(req.Alias),
 		InboundMode:       strings.TrimSpace(req.InboundMode),
 		CanonicalTeamID:   req.CanonicalTeamID,
@@ -664,7 +657,7 @@ func validateAPIKeyBootstrapResponse(
 		return false, "", "", fmt.Errorf(
 			"workspace init response identity_scope %q does not match requested identity_scope %q",
 			identityScope,
-			initIdentityScopeValue(requestedGlobal),
+			string(identityScopeFromFlags(identityScopeFlags{Global: requestedGlobal})),
 		)
 	}
 	stableID = strings.TrimSpace(resp.StableID)
@@ -878,7 +871,7 @@ func newAPIKeyCreationRecovery(req apiKeyInitRequest) (*hostedIDTreeRecovery, er
 		if req.Global {
 			name = strings.TrimSpace(req.Name)
 		}
-		if name != inv.Name || initIdentityScopeValue(req.Global) != inv.IdentityScope {
+		if name != inv.Name || string(identityScopeFromFlags(identityScopeFlags{Global: req.Global})) != inv.IdentityScope {
 			return nil, errors.New("creation invitation differs from requested name or identity scope")
 		}
 		tree, err := newHostedIDTreeRecovery(hostedIdentityContext{Domain: inv.Domain, ParentKind: "identity", ParentID: fmt.Sprint(inv.Parent["id"])})

@@ -528,7 +528,7 @@ func ensureTeamAdmissionAuthForInit(cmd *cobra.Command) error {
 }
 
 func initInviteIdentityScope() string {
-	return teamAcceptScopeFromGlobal(initGlobal)
+	return string(identityScopeFromFlags(identityScopeFlags{Global: initGlobal}))
 }
 
 // Local init creates a key; global init reuses the selected identity and key.
@@ -851,7 +851,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				}
 				return resolveAliasValue(resolveInitLocalName())
 			}(),
-			Name:               resolveInitGlobalName(initGlobal),
+			Name:               resolveInitGlobalName(identityScopeFromFlags(identityScopeFlags{Global: initGlobal})),
 			HumanName:          identity.HumanName,
 			AgentType:          identity.AgentType,
 			Role:               identity.Role,
@@ -929,7 +929,7 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 		AwebURL:      awebURL,
 		RegistryURL:  registryURL,
 		APIKey:       apiKey,
-		Name:         resolveInitGlobalName(initGlobal),
+		Name:         resolveInitGlobalName(identityScopeFromFlags(identityScopeFlags{Global: initGlobal})),
 		Alias:        requestedAlias,
 		Role:         identity.Role,
 		HumanName:    identity.HumanName,
@@ -1209,8 +1209,8 @@ func resolveInitLocalName() string {
 	return strings.TrimSpace(initName)
 }
 
-func resolveInitGlobalName(global bool) string {
-	if !global {
+func resolveInitGlobalName(scope awid.IdentityScope) string {
+	if scope != awid.IdentityScopeGlobal {
 		return ""
 	}
 	return strings.TrimSpace(initName)
