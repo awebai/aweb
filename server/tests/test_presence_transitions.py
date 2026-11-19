@@ -12,7 +12,18 @@ from aweb.events import team_events_channel_name
 from aweb.presence_transitions import PresenceReconciliationError, reconcile_presence
 from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM
-from test_dashboard_privacy import privacy_app as privacy_app
+from test_dashboard_privacy import privacy_stack
+from aweb.embedding import OutboxRecoveryOwnership
+
+
+@pytest_asyncio.fixture
+async def privacy_app(shared_test_pool, monkeypatch):
+    # Exercise the supported HOST scheduler mode: these tests call its public
+    # maintenance operation explicitly, without an uncontrolled second timer.
+    async with privacy_stack(
+        shared_test_pool, monkeypatch, outbox_recovery=OutboxRecoveryOwnership.HOST
+    ) as env:
+        yield env
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -25,6 +25,7 @@ from starlette.requests import Request
 import uvicorn
 
 from aweb.api import create_app
+from aweb.embedding import OutboxRecoveryOwnership
 from aweb.outbox_recovery import stop_outbox_recovery
 from aweb.db import DatabaseInfra
 from aweb.events import MessageDeliveredEvent, ChatMessageEvent, TaskCreatedEvent, publish_event, team_events_channel_name
@@ -61,7 +62,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
 
 
 @asynccontextmanager
-async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
+async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, outbox_recovery=OutboxRecoveryOwnership.NATIVE):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
@@ -91,7 +92,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 transport=httpx.ASGITransport(app=registry_app),
                 service_token=service_token,
             )
-            app = create_app()
+            app = create_app(host_runs_outbox_recovery=outbox_recovery is OutboxRecoveryOwnership.HOST)
             # Externally provisioned resources, exactly as an embedding host
             # supplies them; lifecycle startup would create different ones.
             app.state.db = db
