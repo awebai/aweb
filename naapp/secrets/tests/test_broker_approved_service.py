@@ -4,6 +4,7 @@ import asyncio
 import json
 import secrets
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
 import pytest
 from aweb_naapp.dispatch import apply_dispatch_migrations
@@ -44,12 +45,17 @@ from tests.test_use_approvals import world as world
 from tests.test_use_audit import targets
 
 
+class ApproverMode(StrEnum):
+    OWNER = "owner"
+    DESIGNATED = "designated"
+
+
 async def setup(
     uses,
     tmp_path,
     upstream,
     *,
-    owner=False,
+    approver: ApproverMode = ApproverMode.DESIGNATED,
     path="/bearer/echo",
     max_dispatch=timedelta(seconds=30),
     sweep_margin=timedelta(seconds=5),
@@ -57,7 +63,7 @@ async def setup(
     response_budget_bytes=None,
 ):
     record = SecretRecord.from_after({**SECRET, "backend": SecretBackend.ONEPASSWORD})
-    if owner:
+    if approver is ApproverMode.OWNER:
         await install(uses, secret_record=record, approvers=[f"owner:{ALICE.principal_did}"])
     else:
         await designate(uses, "finance", "finance@acme.com")
@@ -194,16 +200,16 @@ async def setup(
 
 
 @pytest.mark.parametrize(
-    "decision,owner,capacity_blocked",
+    "decision,approver,capacity_blocked",
     [
-        (Decision.APPROVE, False, False),
-        (Decision.REJECT, False, False),
-        (Decision.APPROVE, True, False),
-        (Decision.APPROVE, False, True),
+        (Decision.APPROVE, ApproverMode.DESIGNATED, False),
+        (Decision.REJECT, ApproverMode.DESIGNATED, False),
+        (Decision.APPROVE, ApproverMode.OWNER, False),
+        (Decision.APPROVE, ApproverMode.DESIGNATED, True),
     ],
 )
 async def test_actual_broker_pending_decision_resubmission_and_stored_replay(
-    uses, tmp_path, decision, owner, capacity_blocked
+    uses, tmp_path, decision, approver, capacity_blocked
 ):
     async with running_upstream(tmp_path) as upstream:
         availability = [True]
@@ -211,7 +217,7 @@ async def test_actual_broker_pending_decision_resubmission_and_stored_replay(
             uses,
             tmp_path,
             upstream,
-            owner=owner,
+            approver=approver,
             availability=availability,
             response_budget_bytes=1 if capacity_blocked else None,
         )
@@ -220,7 +226,7 @@ async def test_actual_broker_pending_decision_resubmission_and_stored_replay(
         assert upstream.paths == []
         link = await uses.world.db.fetch_one("SELECT * FROM {{tables.use_approvals}}")
         approval_id = link["approval_id"]
-        contact = "alice@acme.com" if owner else "finance@acme.com"
+        contact = "alice@acme.com" if approver is ApproverMode.OWNER else "finance@acme.com"
         [token] = [t for a, t in uses.world.inbox.links[contact] if a == approval_id]
         options = await uses.approvals.challenge(
             approval_id, decision, Assurance.PASSKEY, link_token=token

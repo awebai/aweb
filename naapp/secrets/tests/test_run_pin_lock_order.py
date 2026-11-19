@@ -12,6 +12,7 @@ from aweb_secrets.change import ChangeRefused
 from aweb_secrets.owners import owner_scope
 from aweb_secrets.revisions import bump_config_revision
 from aweb_secrets.secret import SecretRecord
+from tests.run_world import CredentialLayout
 from tests.test_change_set_containment import confirm, pending_change, seal, value_item
 from tests.test_change_sets import ALICE
 from tests.test_console_changes import clients, sign_in
@@ -31,7 +32,7 @@ async def blocked(db, waiter, holder, task):
 
 
 async def test_confirm_A_and_console_disable_B_share_assignment_without_revision_inversion(uses):
-    context = await setup(uses, paired=True)
+    context = await setup(uses, credential_layout=CredentialLayout.PAIRED)
     await context.assigned()
     w, db = uses.world, uses.world.db
     root = SecretRecord.from_after(SECRET)

@@ -10,6 +10,7 @@ from aweb_secrets import records
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.status_service import UseStatus
 from tests.human_owner import canonical_actor
+from tests.run_world import RunApproval
 from tests.test_admission import BOB
 from tests.test_change_sets import ALICE
 from tests.test_run_dispatch_service import decide, report, setup
@@ -48,7 +49,7 @@ async def snapshot(db):
 
 
 async def test_aggregate_run_approval_status_requires_a_fresh_submission(uses):
-    context = await setup(uses, approval_required=True)
+    context = await setup(uses, approval=RunApproval.PER_USE)
     pending = await context.service.submit(job=context.job.job_id, submission=context.submission)
     await decide(context, pending, Decision.APPROVE)
     service = UseStatus(

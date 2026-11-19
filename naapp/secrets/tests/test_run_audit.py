@@ -16,7 +16,7 @@ from aweb_secrets.run_input import RunInput
 from aweb_secrets.run_planner import RunPlanner
 from aweb_secrets.runner_protocol import canonical
 from aweb_secrets.use_audit import UseAuditUnavailable
-from tests.run_world import setup
+from tests.run_world import RunApproval, setup
 from tests.test_broker_audit import envelopes
 from tests.test_use_approvals import REQUESTER, SECRET, TEAM
 from tests.test_use_approvals import uses as uses
@@ -88,7 +88,7 @@ async def stage(context, *, request_id="run-audit", params=None):
 async def test_run_request_decision_proof_and_activity_keep_the_original_slot(uses):
     from aweb_naapp.runtime.approvals import Assurance, Decision
 
-    context = await setup(uses, approval_required=True)
+    context = await setup(uses, approval=RunApproval.PER_USE)
     dispatch_id, dispatch_ref, pending = await stage(context)
     approval_id = pending[0].approval_id
     approvals = context.arguments["approvals"]
@@ -137,7 +137,7 @@ async def test_run_request_decision_proof_and_activity_keep_the_original_slot(us
 
 
 async def test_b2_run_request_cannot_be_associated_with_another_original_plan(uses):
-    context = await setup(uses, approval_required=True)
+    context = await setup(uses, approval=RunApproval.PER_USE)
     first, _, pending = await stage(context, request_id="first")
     second, _, _ = await stage(context, request_id="second", params={"database": "customers"})
     approval = await context.arguments["approvals"].get(pending[0].approval_id)
@@ -160,7 +160,7 @@ async def test_b2_run_request_cannot_be_associated_with_another_original_plan(us
 
 
 async def test_required_run_audit_failure_rolls_back_plan_approval_and_dispatch(uses):
-    context = await setup(uses, approval_required=True)
+    context = await setup(uses, approval=RunApproval.PER_USE)
     context.available[0] = False
     before = await envelopes(uses.world.db)
     with pytest.raises(Refused) as refused:
@@ -186,7 +186,7 @@ async def test_joint_run_admission_and_b2_final_check_use_the_whole_prepared_aut
     from aweb_secrets.run_approvals import admit_run_approvals
     from aweb_secrets.run_dispatch_authority import RunDispatchAuthority
 
-    context = await setup(uses, approval_required=True)
+    context = await setup(uses, approval=RunApproval.PER_USE)
     dispatch_id, _, pending = await stage(context)
     args, db = context.arguments, uses.world.db
     approval_id, approvals = pending[0].approval_id, args["approvals"]

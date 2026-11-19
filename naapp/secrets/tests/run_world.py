@@ -6,6 +6,7 @@ import hashlib
 import secrets
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
 from aweb_naapp.dispatch import apply_dispatch_migrations
 from aweb_naapp.egress import InternalDestinations
@@ -45,6 +46,16 @@ ORIGIN = "https://secrets.example.com"
 RUN = DeclaredTool(
     "run", "POST", "/v1/jobs/{job}/runs", frozenset({"secrets:run"}), frozenset({"agent"})
 )
+
+
+class RunApproval(StrEnum):
+    NONE = "none"
+    PER_USE = "per_use"
+
+
+class CredentialLayout(StrEnum):
+    SINGLE = "single"
+    PAIRED = "paired"
 
 
 @dataclass(repr=False)
@@ -127,12 +138,12 @@ async def setup(
     uses,
     *,
     backend: SecretBackend = SecretBackend.ONEPASSWORD,
-    approval_required=False,
+    approval: RunApproval = RunApproval.NONE,
     producer_clock=None,
     job_timeout_s=None,
     variant="",
     reuse_source=None,
-    paired=False,
+    credential_layout: CredentialLayout = CredentialLayout.SINGLE,
 ):
     db, scope = uses.world.db, uses.world.admitted
     for migration in (
@@ -145,7 +156,7 @@ async def setup(
         apply_run_dispatch_migrations,
     ):
         await migration(db)
-    if approval_required:
+    if approval is RunApproval.PER_USE:
         await designate(uses, "finance", "finance@acme.com")
     record = {**SECRET, "backend": backend}
     body = after()
@@ -158,7 +169,7 @@ async def setup(
     body["credentials"][0]["secret_ref"] = record["ref"]
     body["env"] = {"DB_ADMIN": {"$credential": record["ref"], "field": "value"}}
     secondary = None
-    if paired:
+    if credential_layout is CredentialLayout.PAIRED:
         assert reuse_source is None
         second_record = SecretRecord.from_after(
             {
@@ -178,8 +189,8 @@ async def setup(
     policy = Policy.from_body(
         {
             **POLICY_BODY,
-            "approval": "per_use" if approval_required else "none",
-            "approvers": ["finance"] if approval_required else [],
+            "approval": approval.value,
+            "approvers": ["finance"] if approval is RunApproval.PER_USE else [],
         }
     )
     credential = secrets.token_urlsafe(32) if reuse_source is None else reuse_source.credential

@@ -9,6 +9,7 @@ from aweb_secrets.admission import Admission
 from aweb_secrets.use_approvals import admit_approved_use
 from aweb_secrets.use_audit import UseAuditUnavailable
 from aweb_secrets.use_dispatch_authority import UseDispatchAuthority
+from tests.run_world import RunApproval
 from tests.test_use_approvals import REQUESTER, approve
 from tests.test_use_approvals import uses as uses
 from tests.test_use_approvals import world as world
@@ -24,7 +25,7 @@ async def approved(uses):
     admission = Admission(
         intent_id=row["intent_id"],
         replayed=True,
-        approval_required=True,
+        approval=RunApproval.PER_USE,
         grant_id=row["grant_id"],
         policy_digest=row["policy_digest"],
         installation=uses.world.admitted,

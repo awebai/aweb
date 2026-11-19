@@ -35,6 +35,7 @@ from aweb_secrets.owners import owner_scope
 from tests.console_home import no_banner
 from tests.console_network import passkey_origin as passkey_origin
 from tests.console_use_world import audit_for, mint
+from tests.run_world import RunApproval
 from tests.test_approval_email import contents, mailer
 from tests.test_change_sets import ALICE, TEAM, Installations, enrol_owner
 from tests.test_change_sets import world as _world
@@ -69,7 +70,7 @@ async def entry_service(world, tmp_path, request, script_delivery, console_tls, 
     run = None
     if getattr(request, "param", "use") == "run":
         await enrol_owner(w, ALICE, "alice@acme.com")
-        run = await run_setup(uses, approval_required=True)
+        run = await run_setup(uses, approval=RunApproval.PER_USE)
         uses.approvals = run.arguments["approvals"]
         audit = run.arguments["use_audit"]
     else:

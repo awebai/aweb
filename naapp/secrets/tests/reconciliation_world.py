@@ -13,6 +13,7 @@ from fastapi import HTTPException, Request
 from aweb_secrets.console import OwnerConsole
 from aweb_secrets.owners import OWNER_ROLE, owner_scope
 from aweb_secrets.reconciliation_service import ReconciliationControls
+from tests.run_world import RunApproval
 from tests.test_reconciliation_control_audit import control_world
 
 
@@ -75,12 +76,10 @@ class OwnerFence:
             raise HTTPException(401, "console_session_required")
 
 
-async def service_world(uses, *, approval_required=False):
+async def service_world(uses, *, approval: RunApproval = RunApproval.NONE):
     from aweb_naapp.console import apply_console_migrations
 
-    context, view, request, audit, _, _ = await control_world(
-        uses, approval_required=approval_required
-    )
+    context, view, request, audit, _, _ = await control_world(uses, approval=approval)
     w = uses.world
     await apply_console_migrations(w.db)
 

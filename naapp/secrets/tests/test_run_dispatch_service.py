@@ -19,7 +19,7 @@ from aweb_secrets.custody import decode_value
 from aweb_secrets.run_service import RunDispatch
 from aweb_secrets.runner_protocol import RunnerRefused, canonical
 from aweb_secrets.secret import SecretBackend
-from tests.run_world import RunWorld
+from tests.run_world import CredentialLayout, RunApproval, RunWorld
 from tests.run_world import setup as setup_world
 from tests.test_broker_audit import envelopes
 from tests.test_use_approvals import SECRET_ID, TEAM
@@ -45,22 +45,22 @@ async def setup(
     uses,
     *,
     backend: SecretBackend = SecretBackend.ONEPASSWORD,
-    approval_required=False,
+    approval: RunApproval = RunApproval.NONE,
     producer_clock=None,
     job_timeout_s=None,
     variant="",
     reuse_source=None,
-    paired=False,
+    credential_layout: CredentialLayout = CredentialLayout.SINGLE,
 ):
     original = await setup_world(
         uses,
         backend=backend,
-        approval_required=approval_required,
+        approval=approval,
         producer_clock=producer_clock,
         job_timeout_s=job_timeout_s,
         variant=variant,
         reuse_source=reuse_source,
-        paired=paired,
+        credential_layout=credential_layout,
     )
     return Context(**vars(original))
 
@@ -392,7 +392,7 @@ async def decide(context, reply, decision):
 
 
 async def test_real_run_approval_requires_explicit_resubmission_before_runner_release(uses):
-    context = await setup(uses, approval_required=True)
+    context = await setup(uses, approval=RunApproval.PER_USE)
     pending = await context.service.submit(job=context.job.job_id, submission=context.submission)
     assert pending.status == 202 and pending.body["state"] == "awaiting_approval"
     approval_id = await decide(context, pending, Decision.APPROVE)
@@ -419,7 +419,7 @@ async def test_real_run_approval_requires_explicit_resubmission_before_runner_re
 
 
 async def test_rejected_run_closes_without_a_target_or_any_assignment(uses):
-    context = await setup(uses, approval_required=True)
+    context = await setup(uses, approval=RunApproval.PER_USE)
     pending = await context.service.submit(job=context.job.job_id, submission=context.submission)
     assert pending.body["state"] == "awaiting_approval"
     await decide(context, pending, Decision.REJECT)
@@ -559,7 +559,7 @@ async def test_two_distinct_slots_wait_for_all_approvals_and_release_in_original
     from tests.test_change_sets import decide as owner_decide
     from tests.test_use_approvals import POLICY_BODY, REQUESTER, SECRET, designate_approver
 
-    context = await setup(uses, approval_required=False)
+    context = await setup(uses, approval=RunApproval.NONE)
     scope = uses.world.admitted
     other = SecretRecord.from_after(
         {
