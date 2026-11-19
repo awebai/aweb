@@ -95,7 +95,7 @@ def _validate_stored_current_keys(
 
 async def _stored_route_participants(
     db, envelope: FederationEnvelope
-) -> dict[str, dict] | None:
+) -> dict[str, dict | None] | None:
     if not envelope.conversation_id:
         return None
     manager = db.get_manager("aweb")
@@ -272,7 +272,7 @@ def _stable_error_response(
 
 async def _verified_delivery_replay(
     request: Request, *, payload: FederatedDeliveryRequest, db
-) -> tuple[FederationEnvelope, str, dict | None]:
+) -> tuple[FederationEnvelope, str, StoredFederationReceipt | None]:
     """Verify integrity and require age only without an exact plaintext receipt.
 
     docs/identity-messaging-contract.md:334-365; Antares69b3a50a. Current

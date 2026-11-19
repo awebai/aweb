@@ -319,7 +319,7 @@ class FederationAuthorityActivation:
                 not_found=lookup.missing_identity,
             )
             token, evidence = committed.token, committed.evidence
-            result = {
+            published_evidence = {
                 "canonical_address": token.canonical_address,
                 "did_aw": token.did_aw,
                 "checkpoint_revision": token.checkpoint_revision,
@@ -331,13 +331,13 @@ class FederationAuthorityActivation:
             published = await self.work.publish_result(
                 evidence_lease,
                 status=AuthorityResultState.VERIFIED,
-                evidence=result,
+                evidence=published_evidence,
                 ttl_seconds=60,
             )
             await self.work.publish_result(
                 discovery,
                 status=AuthorityResultState.VERIFIED,
-                evidence=result,
+                evidence=published_evidence,
                 ttl_seconds=60,
             )
             result_published = True

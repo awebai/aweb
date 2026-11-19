@@ -18,7 +18,7 @@ from aweb.messaging.mail_storage import (
 from dataclasses import dataclass
 from aweb.messaging.recipient import Recipient
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, NoReturn
 from uuid import UUID
 
 import asyncpg
@@ -200,6 +200,28 @@ def _require_fresh_mail_attestation(payload: SendMessageRequest) -> None:
     if payload.timestamp is None:
         raise _timestamp_refusal("timestamp is required for a signed message")
     _parse_signed_timestamp(payload.timestamp)
+
+
+class _MailSignatureFields(TypedDict):
+    """Validated native field inputs forwarded unchanged to the signature rule."""
+
+    signature: str
+    signed_payload: str | None
+    recipient: Mapping[str, Any] | None
+    to_agent_id: str | None
+    to_alias: str | None
+    requested_to_alias: str | None
+    from_alias: str | None
+    from_address: str | None
+    from_stable_id: str | None
+    priority: MessagePriorityValue
+    subject: str
+    body: str
+    from_did: str
+    message_id: str
+    timestamp: str
+    conversation_id: str | None
+    signer_did_key: str | None
 
 
 def _validate_signed_mail_payload(
@@ -489,7 +511,7 @@ def _prepare_remote_mail_envelope(
     runtime: MessagingRuntime,
     payload: SendMessageRequest,
     auth: MessagingAuth,
-    recipient: Recipient,
+    recipient: Mapping[str, Any],
     recipient_did: str,
     sender_did: str,
     sender_address: str | None,
@@ -1028,7 +1050,11 @@ async def _continuation_signature_recipient(
 
 
 async def _commit_mail_continuation(
-    db, *, message: MailStorageInput, recipient: Recipient, sender: DeliverySender
+    db,
+    *,
+    message: MailStorageInput,
+    recipient: Mapping[str, Any],
+    sender: DeliverySender,
 ) -> StoredMail:
     """Recheck stored-route policy and commit the message under its read locks."""
     if message.conversation_id is None:
@@ -1114,7 +1140,7 @@ async def send_mail_conversation_continuation(
                 status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
                 detail="message_id and timestamp are required when signature is provided",
             )
-        validation = dict(
+        validation: _MailSignatureFields = dict(
             signer_did_key=auth.did_key,
             signature=payload.signature,
             signed_payload=payload.signed_payload,
@@ -1341,7 +1367,7 @@ async def _resolve_message_alias(
     )
 
 
-def _raise_bare_did_first_contact_unsupported() -> None:
+def _raise_bare_did_first_contact_unsupported() -> NoReturn:
     raise DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
         detail="Bare did:aw first-contact is unsupported; use to_address=domain/name or continue an existing conversation",
@@ -1545,7 +1571,8 @@ async def _resolve_new_mail_target(
 ) -> MailTarget:
     """Resolve the explicit recipient selectors and require their agreement."""
     registry_client = runtime.registry_client
-    recipient = None
+    recipient: Mapping[str, Any] | None = None
+    bound_recipient: Mapping[str, Any] | None
     recipient_did: str | None = None
     to_agent_id: str | None = payload.to_agent_id
     to_alias: str | None = None
@@ -1825,12 +1852,9 @@ async def _commit_new_local_mail(
                 {
                     "did": recipient_did or "",
                     "agent_id": to_agent_id,
-                    "alias": to_alias
-                    or (recipient or {}).get("alias")
-                    or recipient_did
-                    or "",
+                    "alias": to_alias or recipient.get("alias") or recipient_did or "",
                     "address": _recipient_conversation_address(recipient, payload),
-                    "current_did_key": (recipient or {}).get("did_key"),
+                    "current_did_key": recipient.get("did_key"),
                     "transport_hint": "local",
                 }
             ],
