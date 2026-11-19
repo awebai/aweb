@@ -18,7 +18,7 @@ from aweb_secrets.policy import Policy
 from tests.test_containment_service import act
 from tests.test_containment_service import service as containment_service
 from tests.test_jobs import after as job_after
-from tests.test_production_bootstrap import approval_request, envelopes
+from tests.test_production_bootstrap import ApprovalAction, approval_request, envelopes
 from tests.test_production_bootstrap import root as root
 from tests.test_production_dispatch import admitted_run
 from tests.test_production_runner_dispatch import runner_headers
@@ -133,7 +133,7 @@ async def independent_run(root, original):
 async def test_deregistration_settles_original_runs_before_returning(root, state):
     service, _, _, member, *_ = root
     request = (
-        await approval_request(root, "run")
+        await approval_request(root, kind=ApprovalAction.RUN)
         if state == "awaiting_approval"
         else await admitted_run(root)
     )
@@ -264,7 +264,7 @@ async def test_deregistration_does_not_touch_another_runner_or_its_dispatch(root
 
 async def test_no_approval_job_cancels_without_inventing_an_approval_decision(root):
     service, _, _, member, *_ = root
-    first = await approval_request(root, "run")
+    first = await approval_request(root, kind=ApprovalAction.RUN)
     target = await independent_run(root, first)
     db = service.runtime.db()
     before = await envelopes(db, member.team_id)

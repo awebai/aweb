@@ -12,7 +12,7 @@ from aweb_naapp.runtime.approvals import Decision
 
 from aweb_secrets.operation import OperationTemplate
 from tests.test_operation_record import REFUND
-from tests.test_production_bootstrap import approval_request
+from tests.test_production_bootstrap import ApprovalAction, approval_request
 from tests.test_production_bootstrap import root as root
 
 AGENT_HEADERS = (("X-Project", "project-A"), ("X-Account", "account-A"))
@@ -31,7 +31,7 @@ async def header_request(root, *, request_kind: RequestKind):
         operation = OperationTemplate.from_after(after)
     return await approval_request(
         root,
-        "use",
+        kind=ApprovalAction.USE,
         agent_headers=AGENT_HEADERS,
         operation=operation,
         params={"charge": "ch_test", "amount_minor_units": 100, "currency": "EUR"},

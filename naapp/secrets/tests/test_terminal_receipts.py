@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from tests.test_production_bootstrap import approval_request
+from tests.test_production_bootstrap import ApprovalAction, approval_request
 from tests.test_production_bootstrap import root as root
 from tests.test_production_dispatch import admitted_run, member_replay
 from tests.test_production_runner_dispatch import runner_headers
@@ -75,9 +75,9 @@ async def assert_terminal_receipt(root, pending, expected):
         raise AssertionError("terminal status/replay changed persisted domain or audit state")
 
 
-@pytest.mark.parametrize("kind", ["use", "run"])
+@pytest.mark.parametrize("kind", list(ApprovalAction))
 async def test_revoked_approval_closes_as_cancelled_for_status_and_exact_replay(root, kind):
-    pending = await approval_request(root, kind)
+    pending = await approval_request(root, kind=kind)
     db = root[0].runtime.db()
     approval_id = await db.fetch_value("SELECT approval_id FROM approvals")
     await contain(root, "revoke-approvals", approval_id)

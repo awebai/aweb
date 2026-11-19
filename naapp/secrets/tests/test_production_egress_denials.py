@@ -15,7 +15,7 @@ from aweb_secrets.config import ServiceSettings
 from aweb_secrets.destination import DestinationRecord
 from aweb_secrets.grant import GrantRecord
 from aweb_secrets.policy import Policy
-from tests.test_production_bootstrap import approval_request
+from tests.test_production_bootstrap import ApprovalAction, approval_request
 from tests.test_production_bootstrap import root as root
 from tests.test_use_approvals import POLICY_BODY, SECRET
 
@@ -37,7 +37,7 @@ def deployment_environment(monkeypatch, request):
 
 async def scoped_request(root, url, host, port):
     """Confirmed metadata is fixture state; submission uses actual B1/custody/egress."""
-    pending = await approval_request(root, "use")
+    pending = await approval_request(root, kind=ApprovalAction.USE)
     service, client, configured, member, installed, *_ = root
     db = service.runtime.db()
     policy = Policy.from_body({**POLICY_BODY, "approval": "none", "approvers": []})

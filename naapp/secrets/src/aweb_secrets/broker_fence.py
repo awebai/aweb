@@ -43,6 +43,7 @@ from aweb_secrets.injection import injected_header_names
 from aweb_secrets.operation import OperationTemplate
 from aweb_secrets.operation_request import OperationRequest, render_operation
 from aweb_secrets.policy import Policy
+from aweb_secrets.secret import SecretRecord
 from aweb_secrets.use_approval import BrokerOpen
 
 
@@ -60,6 +61,19 @@ class PreparedBrokerCall:
 def _require(condition: bool, code: str) -> None:
     if not condition:
         raise AdmissionRefused(code)
+
+
+def _validate_broker_headers(*, rendered: OperationRequest, secret: SecretRecord) -> None:
+    """Apply the shared send rule before B2 persists header values (§7.4/§10.4)."""
+    check_headers(
+        rendered.headers,
+        header_allow=rendered.destination.header_allow,
+        rules=HeaderRules(
+            injected=injected_header_names(secret.kind, kind_params=secret.kind_params),
+            amz_allowed=rendered.amz_allowed,
+            is_credential=is_credential_shaped_value,
+        ),
+    )
 
 
 class BrokerFence:
@@ -250,18 +264,7 @@ class BrokerFence:
             )
             target = chosen.path
         _require(len(rendered.body) <= policy.body["request"]["max_bytes"], "params_invalid")
-        # Apply the send guard's one header rule before B2 persists values (§7.4/§10.4).
-        check_headers(
-            rendered.headers,
-            header_allow=rendered.destination.header_allow,
-            rules=HeaderRules(
-                injected=injected_header_names(
-                    stored.record.kind, kind_params=stored.record.kind_params
-                ),
-                amz_allowed=rendered.amz_allowed,
-                is_credential=is_credential_shaped_value,
-            ),
-        )
+        _validate_broker_headers(rendered=rendered, secret=stored.record)
         token_destination = None
         if stored.record.kind == "oauth2-client-credentials":
             token_destination = self._destination(
