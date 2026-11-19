@@ -98,8 +98,8 @@ class SendMessageRequest(BaseModel):
             return v
         try:
             return str(UUID(str(v).strip()))
-        except Exception:
-            raise ValueError("Invalid agent_id format")
+        except ValueError as exc:
+            raise ValueError("Invalid agent_id format") from exc
 
     @field_validator("to_alias")
     @classmethod
@@ -125,8 +125,8 @@ class SendMessageRequest(BaseModel):
             return None
         try:
             return str(UUID(str(v).strip()))
-        except Exception:
-            raise ValueError("Invalid message_id format")
+        except ValueError as exc:
+            raise ValueError("Invalid message_id format") from exc
 
     @field_validator("conversation_id")
     @classmethod
@@ -135,5 +135,5 @@ class SendMessageRequest(BaseModel):
             return None
         try:
             return str(UUID(str(v).strip()))
-        except Exception:
-            raise ValueError("Invalid conversation_id format")
+        except ValueError as exc:
+            raise ValueError("Invalid conversation_id format") from exc
