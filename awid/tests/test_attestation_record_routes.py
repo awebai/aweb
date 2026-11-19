@@ -6,9 +6,13 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-
 from awid.attestation_records import sign_record
-from test_controller_request_v2_http import certificate_body, keypair, send  # noqa: F401
+from rotation_race_harness import paused_rotation
+from test_controller_request_v2_http import (  # noqa: F401
+    certificate_body,
+    keypair,
+    send,
+)
 
 TEAM_ID = "base:local"
 BASE = "/v1/namespaces/local/teams/base"
@@ -448,40 +452,36 @@ async def test_a_rotation_without_resigned_records_still_succeeds_and_leaves_old
 async def test_a_publish_waits_for_a_rotation_in_progress_and_then_refuses_the_old_key(
     controller_app, scenario
 ):
-    import asyncio
-
     env = controller_app
     cert = await register_certificate(env)
     first = _custodian(env, issued_at=_now(-30))
-    assert (await publish_custodian(env, first)).status_code == 200
+    published = await publish_custodian(env, first)
+    assert published.status_code == 200, published.text
     if scenario == "overwrite":
-        path, racing = (
-            f"{BASE}/custodians/custodian.example",
-            publish_custodian(env, _custodian(env, issued_at=_now(-1))),
-        )
+        path = f"{BASE}/custodians/custodian.example"
+        record = _custodian(env, issued_at=_now(-1))
+        racing = lambda: publish_custodian(env, record)
     else:
-        path, racing = (
-            f"{BASE}/certificates/{cert['certificate_id']}/person",
-            publish_person(env, _person(env, cert)),
-        )
+        path = f"{BASE}/certificates/{cert['certificate_id']}/person"
+        record = _person(env, cert)
+        racing = lambda: publish_person(env, record)
     before = await env.client.get(path)
+    assert before.status_code == (200 if scenario == "overwrite" else 404), before.text
     new = keypair()
-    async with env.db.transaction() as tx:
-        # Holds the team row the way rotate_team_key does, then swaps the key.
-        await tx.fetch_one(
-            "SELECT team_uuid FROM {{tables.teams}} WHERE name = 'base' FOR UPDATE"
-        )
-        publish = asyncio.create_task(racing)
-        await asyncio.sleep(0.3)
-        assert not publish.done(), "the publish must wait for the rotation's team lock"
-        await tx.execute(
-            "UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = 'base'", new[1]
-        )
-    response = await publish
+    async with paused_rotation(
+        env.db, domain="local", name="base", rotate=lambda: _rotate(env, new[1])
+    ) as barrier:
+        pending = await barrier.start_competing(racing)
+    rotation, response = barrier.rotation.result(), pending.result()
+    assert rotation.status_code == 200, rotation.text
+    assert rotation.json()["team_did_key"] == new[1]
     assert response.status_code == 409, response.text
     assert response.json()["detail"]["code"] == "team_key_changed"
+    team = await env.client.get(BASE)
+    assert team.status_code == 200, team.text
+    assert team.json()["team_did_key"] == new[1]
     after = await env.client.get(path)
-    assert (after.status_code, after.content) == (before.status_code, before.content)
+    assert (after.status_code, after.json()) == (before.status_code, before.json())
 
 
 @pytest.mark.asyncio
