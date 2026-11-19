@@ -76,19 +76,18 @@ type IDChildRequest struct {
 // byte-identical retry changes nothing; a request proving a different key
 // voids the invitation.
 func ReceiveIDChildRequest(store IDInvitationStore, issuer map[string]any, raw []byte) (*IDInvitation, error) {
-	signed, err := ParseIDCertificateRequest(raw)
+	request, err := DecodeIDCertificateRequest(raw)
 	if err != nil {
 		return nil, err
 	}
-	r := signed["request"].(map[string]any)
-	if r["operation"] != "issue" {
+	if request.Operation() != IDCertificateRequestIssue {
 		return nil, idCertificateRefusal(IDRefusalInvalidShape)
 	}
-	if !idNewChildIDIsSubjectKeys(r["id"].(string), r["subject_key"].(string)) {
+	if !idNewChildIDIsSubjectKeys(request.ID(), request.SubjectKey()) {
 		return nil, idCertificateRefusal(IDRefusalSubjectMismatch)
 	}
 	mismatch := idCertificateRefusal(IDRefusalRequestBindingMismatch)
-	inv, err := store.Invitation(r["invitation_id"].(string))
+	inv, err := store.Invitation(request.InvitationID())
 	if err != nil {
 		return nil, err
 	}
@@ -98,14 +97,14 @@ func ReceiveIDChildRequest(store IDInvitationStore, issuer map[string]any, raw [
 	if inv.Mode != IDInvitationSelfCustodial {
 		return nil, idCertificateRefusal(IDRefusalInvitationModeMismatch)
 	}
-	requestID := r["request_id"].(string)
+	requestID := request.RequestID()
 	if inv.Request != nil && inv.Request.RequestID == requestID {
 		if inv.Request.Request == string(raw) {
 			return inv, nil
 		}
 		return nil, idCertificateRefusal(IDRefusalRequestConflict)
 	}
-	if !reflect.DeepEqual(r["parent"], inv.Parent) || r["domain"] != inv.Domain || r["kind"] != inv.Kind {
+	if !reflect.DeepEqual(request.Parent().Fields(), inv.Parent) || request.Domain() != inv.Domain || string(request.Kind()) != inv.Kind {
 		return nil, mismatch
 	}
 	// A request id names one request for the whole issuer, so approve and
@@ -121,11 +120,11 @@ func ReceiveIDChildRequest(store IDInvitationStore, issuer map[string]any, raw [
 		return nil, idCertificateRefusal(IDRefusalInvitationConflict)
 	}
 	if inv.Request != nil {
-		prior, err := ParseIDCertificateRequest([]byte(inv.Request.Request))
+		prior, err := DecodeIDCertificateRequest([]byte(inv.Request.Request))
 		if err != nil {
 			return nil, err
 		}
-		if prior["request"].(map[string]any)["subject_key"] == r["subject_key"] {
+		if prior.SubjectKey() == request.SubjectKey() {
 			return nil, idCertificateRefusal(IDRefusalRequestConflict)
 		}
 		// A released response cannot be unsent: voiding blocks further signing,
@@ -170,11 +169,10 @@ func ApproveIDChildRequest(invitations IDInvitationStore, issuance IDIssuanceSto
 	if err != nil || !now.Before(expires) {
 		return nil, idCertificateRefusal(IDRefusalInvitationConflict)
 	}
-	signed, err := ParseIDCertificateRequest([]byte(inv.Request.Request))
+	request, err := DecodeIDCertificateRequest([]byte(inv.Request.Request))
 	if err != nil {
 		return nil, err
 	}
-	r := signed["request"].(map[string]any)
 	current, err := idIssuingKey(inv.Parent, inv.Domain, inv.Kind, parentChain, evidence)
 	if err != nil {
 		return nil, err
@@ -186,7 +184,7 @@ func ApproveIDChildRequest(invitations IDInvitationStore, issuance IDIssuanceSto
 	}
 	certificate := map[string]any{
 		"v": 1, "type": "aweb.id-certificate",
-		"id": r["id"], "domain": r["domain"], "parent": r["parent"], "kind": r["kind"],
+		"id": request.ID(), "domain": request.Domain(), "parent": request.Parent().Fields(), "kind": string(request.Kind()),
 		"issuer_key": current, "issued_at": idRecordTime(now),
 	}
 	var response []byte
@@ -348,12 +346,11 @@ func IDChildRequests(invitations IDInvitationStore) ([]IDChildRequest, error) {
 		if inv.Request == nil {
 			continue
 		}
-		signed, err := ParseIDCertificateRequest([]byte(inv.Request.Request))
+		request, err := DecodeIDCertificateRequest([]byte(inv.Request.Request))
 		if err != nil {
 			return nil, err
 		}
-		r := signed["request"].(map[string]any)
-		out = append(out, IDChildRequest{RequestID: inv.Request.RequestID, Operation: "issue", InvitationID: inv.InvitationID, InvitationVoid: inv.Void, State: inv.Request.State, CertificateID: inv.Request.NewCertificateID, ID: r["id"].(string), Domain: inv.Domain, Parent: inv.Parent, Kind: inv.Kind})
+		out = append(out, IDChildRequest{RequestID: inv.Request.RequestID, Operation: "issue", InvitationID: inv.InvitationID, InvitationVoid: inv.Void, State: inv.Request.State, CertificateID: inv.Request.NewCertificateID, ID: request.ID(), Domain: inv.Domain, Parent: inv.Parent, Kind: inv.Kind})
 	}
 	return out, nil
 }

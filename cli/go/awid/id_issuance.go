@@ -100,14 +100,14 @@ func idIssuanceRecordedByKey(store IDIssuanceStore, id string, keyInHistory func
 	if entry == nil {
 		return refused
 	}
-	c, err := idCertificateShape(entry.Signed)
+	c, err := checkedIDCertificateView(entry.Signed)
 	if err != nil {
 		return refused
 	}
-	if stored, err := IDCertificateID(c); err != nil || stored != id {
+	if stored, err := c.CertificateID(); err != nil || stored != id {
 		return refused
 	}
-	issuer := c["issuer_key"].(string)
+	issuer := c.IssuerKey()
 	if !keyInHistory(issuer) || VerifyIDCertificate(entry.Signed, issuer) != nil {
 		return refused
 	}

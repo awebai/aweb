@@ -25,10 +25,11 @@ func ResignIDCertificate(req IDResignRequest, parentID string, evidence *IDChain
 }
 
 func resignIDCertificate(req IDResignRequest, parentID string, parentChain []any, evidence *IDChainEvidence, domain string, store IDIssuanceStore, sign IDCertificateSigner, now time.Time, commit func(map[string]any, string) error) (map[string]any, error) {
-	old, err := idCertificateShape(req.Signed)
+	previous, err := checkedIDCertificateView(req.Signed)
 	if err != nil {
 		return nil, err
 	}
+	old := previous.Fields()
 	if !idCertificateExactFields(req.Requested, "id", "domain", "parent", "kind") {
 		return nil, idCertificateRefusal(IDRefusalResignBindingMismatch)
 	}
@@ -56,10 +57,10 @@ func resignIDCertificate(req IDResignRequest, parentID string, parentChain []any
 	if req.SubjectKey == "" || req.SubjectKey != old["id"] {
 		return nil, idCertificateRefusal(IDRefusalSubjectMismatch)
 	}
-	if !keyInHistory(old["issuer_key"].(string)) {
+	if !keyInHistory(previous.IssuerKey()) {
 		return nil, idCertificateRefusal(IDRefusalInvalidSignature)
 	}
-	if err = VerifyIDCertificate(req.Signed, old["issuer_key"].(string)); err != nil {
+	if err = VerifyIDCertificate(req.Signed, previous.IssuerKey()); err != nil {
 		return nil, err
 	}
 	oldID, err := IDCertificateID(old)
