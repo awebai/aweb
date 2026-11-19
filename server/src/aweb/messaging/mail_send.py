@@ -560,7 +560,6 @@ def _prepare_remote_mail_envelope(
                 "target_address": target_address,
                 "target_did_aw": target_stable_id,
                 "target_current_did_key": target_current_did,
-                "target_delivery_origin": envelope.target_delivery_origin,
                 "message_id": payload.message_id,
                 "conversation_id": payload.conversation_id,
             },
