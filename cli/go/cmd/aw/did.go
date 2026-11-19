@@ -49,11 +49,10 @@ func runDidLog(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if jsonFlag {
-		printJSON(out)
-		return nil
+		return printJSON(out)
 	}
-	fmt.Fprint(commandStdout, formatIDLog(out))
-	return nil
+	_, err = fmt.Fprint(commandStdout, formatIDLog(out))
+	return err
 }
 
 func loadDIDLog(ctx context.Context, workingDir string, args []string) (idLogOutput, error) {
