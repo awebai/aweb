@@ -57,6 +57,7 @@ LifecycleOperation = Literal[
 ]
 WorkspaceScope = Literal["explicit", "latest_for_agent", "all_for_agent"]
 ActorType = Literal["agent", "human", "support", "system"]
+LifecycleEventKind = Literal["workspace_task_unclaimed", "team_task_unclaimed"]
 PresenceCleanupStatus = Literal[
     "not_run",
     "planned",
@@ -135,7 +136,7 @@ class WorkspaceLifecycleChange:
 
 @dataclass(frozen=True)
 class LifecycleEventIntent:
-    event_kind: Literal["workspace_task_unclaimed", "team_task_unclaimed"]
+    event_kind: LifecycleEventKind
     workspace_id: str
     team_id: str
     task_ref: str
@@ -893,8 +894,8 @@ async def plan_lifecycle_cascade(
         dict.fromkeys(workspace_ids + [str(row["workspace_id"]) for row in removed_workspaces])
     )
     claim_count = await _plan_claim_count(db, claim_ids)
-    reservation_count = await _plan_reservation_count(db, agent_ids, request.team_id)
-    chat_participant_count = await _plan_chat_participant_count(db, agent_ids, request.team_id)
+    reservation_count = await _plan_reservation_count(db, agent_ids, targets.team_id)
+    chat_participant_count = await _plan_chat_participant_count(db, agent_ids, targets.team_id)
 
     if precondition_errors:
         return _error_result(
@@ -928,8 +929,15 @@ def _decode_outbox_payload(value) -> dict:
 
 
 def _event_intent_from_payload(effect_kind: str, payload: dict) -> LifecycleEventIntent:
+    event_kind: LifecycleEventKind
+    if effect_kind == "workspace_task_unclaimed":
+        event_kind = "workspace_task_unclaimed"
+    elif effect_kind == "team_task_unclaimed":
+        event_kind = "team_task_unclaimed"
+    else:
+        raise ValueError(f"unknown lifecycle event kind: {effect_kind}")
     return LifecycleEventIntent(
-        event_kind=effect_kind,
+        event_kind=event_kind,
         workspace_id=str(payload["workspace_id"]),
         team_id=str(payload["team_id"]),
         task_ref=str(payload["task_ref"]),
@@ -1627,10 +1635,10 @@ async def apply_lifecycle_cascade(
                     workspace_changes=workspace_changes,
                     task_unclaim_count=await _plan_claim_count(tx, workspace_ids),
                     reservation_release_count=await _plan_reservation_count(
-                        tx, agent_ids, request.team_id
+                        tx, agent_ids, targets.team_id
                     ),
                     chat_participant_cleanup_count=await _plan_chat_participant_count(
-                        tx, agent_ids, request.team_id
+                        tx, agent_ids, targets.team_id
                     ),
                     presence_cleanup_status="planned",
                 )
@@ -1647,9 +1655,9 @@ async def apply_lifecycle_cascade(
             task_unclaim_count += removed_cleanup.claim_count
             event_intents.extend(removed_cleanup.events)
 
-            reservation_release_count = await _release_reservations(tx, agent_ids, request.team_id)
+            reservation_release_count = await _release_reservations(tx, agent_ids, targets.team_id)
             chat_participants, chat_waiting_session_clear_count = await _cleanup_chat_participants(
-                tx, agent_ids, request.team_id
+                tx, agent_ids, targets.team_id
             )
             chat_participant_cleanup_count = len(chat_participants)
 
