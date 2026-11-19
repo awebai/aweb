@@ -190,3 +190,16 @@ func TestRealServerMailChatAndUnregisteredCertificate(t *testing.T) {
 	}
 	world.requireCommand(t, alice.Home, "mail", "send", "--to", "bob", "--subject", "still-valid", "--body", "registered sender remains usable")
 }
+
+func (world *realCommandWorld) registerMemberCertificate(t *testing.T, fields awid.TeamCertificateFields) *awid.TeamCertificate {
+	t.Helper()
+	fields.Team = world.TeamID
+	certificate, err := awid.SignTeamCertificate(world.TeamKey, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := world.Registry.RegisterCertificate(world.Context, world.Stack.RegistryURL, world.Domain, "backend", certificate, world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
+	return certificate
+}
