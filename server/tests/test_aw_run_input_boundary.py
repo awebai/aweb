@@ -102,8 +102,11 @@ async def test_aw_run_mail_verification_boundary(
             "claude",
             "--dir",
             str(command_dir),
+            "--prompt",
+            "Read pending mail.",
+            # The startup prompt runs first; the mail wake runs second.
             "--max-runs",
-            "1",
+            "2",
             "--wait",
             "1",
             cwd=command_dir,
