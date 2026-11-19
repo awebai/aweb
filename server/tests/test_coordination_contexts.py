@@ -135,3 +135,23 @@ async def test_native_claim_release_failure_is_not_a_successful_callback():
     )
     assert outcome.status is MutationDeliveryStatus.FAILED
     assert outcome.failed_stages == (MutationDeliveryStage.TASK_CLAIM_RELEASE,)
+
+
+@pytest.mark.asyncio
+async def test_held_mutation_reports_deferred_until_the_outer_commit_fires_it():
+    from aweb.hooks import HeldMutationEvents
+
+    held = HeldMutationEvents()
+    executed = []
+
+    async def callback(name, context):
+        executed.append((name, context))
+
+    context = {"task_id": "retained-task"}
+    outcome = await fire_mutation_callback(held.record, "task.deleted", context)
+    assert outcome.status.value == "deferred"
+    assert executed == []
+    with pytest.raises(MutationDeliveryFailed):
+        outcome.require_delivery()
+    await held.fire(callback)
+    assert executed == [("task.deleted", context)]

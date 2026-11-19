@@ -17,6 +17,7 @@ class MutationDeliveryStatus(StrEnum):
     """Whether the serving callback ran and completed its native work."""
 
     DELIVERED = "delivered"
+    DEFERRED = "deferred"
     NOT_CONFIGURED = "not_configured"
     FAILED = "failed"
 
@@ -95,9 +96,10 @@ class HeldMutationEvents:
     def __init__(self) -> None:
         self._events: list[tuple[str, dict]] = []
 
-    async def record(self, event_type: str, context: dict) -> None:
-        """Hold one mutation for delivery only after the caller commits its transaction."""
+    async def record(self, event_type: str, context: dict) -> MutationDeliveryOutcome:
+        """Hold a mutation for outer commit, without claiming its callback executed."""
         self._events.append((event_type, context))
+        return MutationDeliveryOutcome(status=MutationDeliveryStatus.DEFERRED)
 
     async def fire(self, on_mutation: MutationCallback | None) -> None:
         """Deliver the recorded events in order; a failing callback is logged, never raised."""
