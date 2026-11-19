@@ -12,12 +12,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/internal/testcapture"
 )
 
 type stubIdentityResolver struct {
@@ -2350,22 +2351,11 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 	}
 }
 
+// captureStderrForTest delegates complete stderr capture to the shared owner.
+// Callers must run serially because os.Stderr belongs to the whole process.
 func captureStderrForTest(t *testing.T, fn func()) string {
 	t.Helper()
-	old := os.Stderr
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = w
-	fn()
-	_ = w.Close()
-	os.Stderr = old
-	data, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
+	return testcapture.Stderr(t, fn)
 }
 
 func TestNewWithIdentitySetsFields(t *testing.T) {
