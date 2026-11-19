@@ -68,8 +68,12 @@ def observe_message_vocabulary(
             UNNAMED_MESSAGE_VOCABULARY.labels(
                 source=source.value, field=field.value
             ).inc()
-    except Exception:
-        logger.exception("message_vocabulary_counter_unavailable")
+    except Exception as exc:
+        # Measurement cannot refuse accepted input or expose a dependency's
+        # exception contents in the request's logging context.
+        logger.error(
+            "message_vocabulary_counter_unavailable failure_type=%s", type(exc).__name__
+        )
     logger.info(
         "message_vocabulary_unnamed source=%s fields=%s",
         source.value,

@@ -70,12 +70,17 @@ def test_empty_and_equivalent_looking_strings_are_measured_without_normalization
 
 def test_counter_failure_does_not_refuse_accepted_input(monkeypatch, caplog):
     def unavailable(**labels):
-        raise RuntimeError("counter unavailable")
+        raise RuntimeError("private dependency contents")
 
     monkeypatch.setattr(UNNAMED_MESSAGE_VOCABULARY, "labels", unavailable)
     with caplog.at_level(logging.INFO):
         observe_message_vocabulary(
             source=MessageInputSource.MAIL_SEND, content_mode="opaque"
         )
-    assert any(record.levelno == logging.ERROR for record in caplog.records)
+    assert (
+        caplog.messages[0]
+        == "message_vocabulary_counter_unavailable failure_type=RuntimeError"
+    )
+    assert "private dependency contents" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
     assert any("message_vocabulary_unnamed" in message for message in caplog.messages)
