@@ -243,5 +243,5 @@ async def store_mail(db, *, message: MailStorageInput) -> StoredMail:
     if not row:
         raise ServiceError("Failed to create message")
 
-    record_did_wakes(message.recipient.wake_dids, "mail")
+    record_did_wakes((did for did in message.recipient.wake_dids if did), "mail")
     return StoredMail(UUID(str(row["message_id"])), row["created_at"])

@@ -459,6 +459,66 @@ class PythonStaticControls(unittest.TestCase):
             timeout=90,
         )
 
+    def test_relocated_allowance_requires_a_strict_total_decrease(self) -> None:
+        self.prepare_cli_packages()
+        old_group: dict[str, object] = {
+            "tool": "ruff",
+            "file": "server/src/aweb/mail.py",
+            "code": "BLE001",
+            "count": 2,
+        }
+        old_path = self.source / "mail.py"
+        old_source = 'def read():\n    try:\n        return int("x")\n    except Exception:\n        return None\n'
+        old_path.write_text(old_source + old_source.replace("read()", "other()"))
+        self.assertEqual(
+            self.scan(),
+            Counter(
+                {
+                    DiagnosticGroup(
+                        tool=Tool.RUFF,
+                        file="server/src/aweb/mail.py",
+                        code="BLE001",
+                    ): 2
+                }
+            ),
+        )
+        self.write_budget([old_group])
+        self.prepare_reviewed_reference()
+        old_path.unlink()
+        path = self.source / "errors.py"
+        path.write_text(
+            'def read():\n    try:\n        return int("x")\n    except Exception:\n        return None\n'
+        )
+        new_group = dict(old_group, file="server/src/aweb/errors.py", count=1)
+        # A moved group with an unchanged total is still refused.
+        self.write_budget([dict(new_group, count=2)])
+        refused = self.run_selected_file(path)
+        self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+        self.assertIn("[BLE001]: 2 > 0", refused.stderr)
+        self.assertTrue(
+            refused.stderr.rstrip().endswith(
+                "Restore the reviewed allowances and fix the additional findings."
+            ),
+            refused.stderr,
+        )
+        # Two removed allowances pay for one relocated allowance, leaving less debt.
+        self.write_budget([new_group])
+        accepted = self.run_selected_file(path)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        self.assertIn("Reviewed allowance relocation: total 2 -> 1", accepted.stdout)
+        self.assertIn("ruff server/src/aweb/mail.py [BLE001]: 2 -> 0", accepted.stdout)
+        self.assertIn(
+            "ruff server/src/aweb/errors.py [BLE001]: 0 -> 1", accepted.stdout
+        )
+        self.assertIn("1 diagnostics in 1 groups", accepted.stdout)
+        # Budget relocation never excuses an actual finding above its new ceiling.
+        path.write_text(
+            path.read_text() + path.read_text().replace("read()", "other()")
+        )
+        growth = self.run_selected_file(path)
+        self.assertEqual(growth.returncode, 1, growth.stdout + growth.stderr)
+        self.assertIn("[BLE001]: 2 > 1", growth.stderr)
+
     def test_raising_reviewed_allowance_refuses_even_when_tools_fit_the_new_budget(
         self,
     ) -> None:

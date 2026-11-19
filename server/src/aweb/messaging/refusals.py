@@ -84,6 +84,7 @@ class SignedRecipientMismatch(DeliveryRefusal):
 class MailConversationExists(DeliveryRefusal):
     """Retain the frozen collision detail and add a separate recovery action."""
 
+    code: DeliveryRefusalCode = DeliveryRefusalCode.CONVERSATION_EXISTS
     recovery_action = (
         "Continue the existing conversation or choose a new conversation_id and retry."
     )
@@ -144,7 +145,7 @@ def signed_chat_payload_refusal(*, detail: str) -> DeliveryRefusal:
     """Keep signed chat field failures actionable at every send/retry boundary.
 
     Implements the sender-artifact checks in
-    docs/identity-messaging-contract.md:132-139.
+    docs/identity-messaging-contract.md:154-166.
     """
     return DeliveryRefusal(
         status_code=HTTPStatus.UNPROCESSABLE_ENTITY,

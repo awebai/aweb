@@ -126,7 +126,10 @@ async def local_recipient_for_own_route(
         projection = await read_participant_identity_projection(db, participant_did=did)
         recipient = Recipient.from_local_projection(projection) if projection is not None else None
     if recipient is None:
-        refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
+        logging.getLogger(__name__).warning(
+            "Refusing same-origin nonresident recipient: recipient_identity_not_found"
+        )
+        raise RecipientNotResidentError()
     if did.startswith("did:aw:"):
         # As with a stable-only signed continuation, discover the current key
         # through the existing binding authority, outside database transactions.

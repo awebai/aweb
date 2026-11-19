@@ -56,7 +56,7 @@ class RecipientIdentityBinding:
 logger = logging.getLogger(__name__)
 
 
-async def _local_recipient_at_address(db, *, domain: str, name: str) -> dict | None:
+async def _local_recipient_at_address(db, *, domain: str, name: str) -> Mapping | None:
     try:
         return await get_agent_by_namespace_alias(db, namespace=domain, alias=name)
     except AmbiguousLocalAddressError as exc:
@@ -67,7 +67,7 @@ async def _local_recipient_at_address(db, *, domain: str, name: str) -> dict | N
 
 
 def _signature_binds_recipient_address(
-    signed, *, address: str, recipient: dict, kind: MessageKind
+    signed, *, address: str, recipient: Mapping, kind: MessageKind
 ) -> bool:
     return bool(
         isinstance(signed, dict)
@@ -133,6 +133,7 @@ async def _resolve_address_identity(
     shared by both message kinds. The returned participant is identity-scoped;
     its membership row does not become actor authority.
     """
+    recipient: Recipient | None
     address = address.strip()
     if "/" not in address:
         raise DeliveryRefusal(

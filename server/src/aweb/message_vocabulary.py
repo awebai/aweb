@@ -62,7 +62,7 @@ def observe_message_vocabulary(
             UNNAMED_MESSAGE_VOCABULARY.labels(
                 source=source.value, field=field.value
             ).inc()
-    except Exception as exc:
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         # Measurement cannot refuse accepted input or expose a dependency's
         # exception contents in the request's logging context.
         logger.error(

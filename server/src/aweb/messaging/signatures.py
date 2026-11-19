@@ -23,7 +23,7 @@ def require_verified_message_signature(
 ) -> None:
     """Authenticate original bytes under the transport sender's key.
 
-    Implements docs/identity-messaging-contract.md:132-139.
+    Implements docs/identity-messaging-contract.md:154-166.
     """
     try:
         verify_did_key_signature(

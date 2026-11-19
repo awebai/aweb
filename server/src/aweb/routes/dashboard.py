@@ -320,6 +320,11 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
                     ignore_subscribe_messages=True,
                     timeout=DASHBOARD_PUBSUB_POLL_SECONDS,
                 )
+            except UnicodeDecodeError:
+                # A decode_responses client rejects malformed data before the
+                # event parser sees it. The consumed frame is still just input.
+                logger.warning("Ignoring malformed dashboard team-event frame")
+                continue
             except Exception:
                 logger.warning(
                     "Dashboard team-events pubsub read failed", exc_info=True

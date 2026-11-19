@@ -485,14 +485,14 @@ class NativeMessagingService:
                         recipient_did=recipient["did_aw"] or recipient["did_key"],
                     )
                 else:
-                    model = CreateSessionRequest(
+                    chat_model = CreateSessionRequest(
                         **fields,
                         to_aliases=[recipient["alias"]],
                         session_id=cid,
                         message="",
                     )
                     metadata = validate_encrypted_chat_payload(
-                        model,
+                        chat_model,
                         auth=auth,
                         actor_did=_principal(auth),
                         session_id=cid,

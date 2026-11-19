@@ -13,7 +13,8 @@ from uuid import uuid4
 
 import pytest
 from awid.signing import canonical_json_bytes, sign_message
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_messages_http import _make_keypair
 from test_team_key_pinning import (  # noqa: F401
     _substitute_registry_team_key,

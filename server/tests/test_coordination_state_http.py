@@ -107,7 +107,7 @@ async def test_claim_and_focus_titles_use_the_full_hyphenated_team_ref(
     )
     assert claimed.status_code == 200, claimed.text
 
-    for path in ("/v1/workspaces", "/v1/workspaces/team"):
+    for path in ("/v1/workspaces?include_claims=true", "/v1/workspaces/team"):
         response = await request_as(env, alias="alice", method="GET", path=path)
         assert response.status_code == 200, response.text
         workspace = next(
@@ -156,7 +156,7 @@ async def test_member_without_a_workspace_cannot_take_another_members_claim(
     assert claimed.status_code == 200, claimed.text
     # An embedding host can release coordination state while keeping a member.
     cleanup = await apply_lifecycle_cascade(
-        env.infra,
+        env.db,
         env.redis,
         LifecycleCascadeRequest(
             operation="cleanup_agent_coordination_state",

@@ -24,6 +24,7 @@ from aweb.task_contracts import AnswerRequest, parse_contract, strict_json_bytes
 from aweb.coordination.tasks_service import (
     AddCommentRequest,
     CreateTaskRequest,
+    TaskDeletionIncompleteError,
     UpdateTaskRequest,
     add_comment,
     add_dependency,
@@ -307,9 +308,14 @@ async def delete_task_route(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> dict[str, Any]:
     """Soft-delete a task through the shared service and its mutation callback."""
-    return await soft_delete_task(
-        db_infra, actor=identity, on_mutation=mutation_callback(request), ref=ref
-    )
+    try:
+        return await soft_delete_task(
+            db_infra, actor=identity, on_mutation=mutation_callback(request), ref=ref
+        )
+    except TaskDeletionIncompleteError as exc:
+        # This expected partial commit is actionable; generic internal service
+        # failures remain private at the application's shared error boundary.
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.post("/{ref}/deps")

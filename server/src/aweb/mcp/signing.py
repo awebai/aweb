@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
 from typing import Any, Awaitable, Callable, Literal
 
 from awid.signing import canonical_payload, verify_did_key_signature
@@ -64,9 +65,16 @@ class HostedMessageDecryptionResult:
 
     def __post_init__(self):
         from aweb.attachments import readable_attachments
+
         projection = readable_attachments(self.attachments)
-        available = self.decryptable and self.attachments_available and projection["attachments_available"]
-        object.__setattr__(self, "attachments", projection["attachments"] if available else [])
+        available = (
+            self.decryptable
+            and self.attachments_available
+            and projection["attachments_available"]
+        )
+        object.__setattr__(
+            self, "attachments", projection["attachments"] if available else []
+        )
         object.__setattr__(self, "attachments_available", bool(available))
 
 
@@ -85,7 +93,9 @@ def canonical_signed_payload(payload: dict[str, Any]) -> str:
     return canonical_payload(payload).decode("utf-8")
 
 
-def _result_field(result: HostedMessageSigningResult | dict[str, Any], field: str) -> Any:
+def _result_field(
+    result: HostedMessageSigningResult | dict[str, Any], field: str
+) -> Any:
     if isinstance(result, dict):
         return result.get(field)
     return getattr(result, field)
@@ -115,23 +125,29 @@ async def encrypt_hosted_message(
     encryptor: HostedMessageEncryptor | None,
     message_type: MessageType,
     payload: dict[str, Any],
-    recipient: dict[str, Any] | None = None,
-    recipients: list[dict[str, Any]] | None = None,
+    recipient: Mapping[str, Any] | None = None,
+    recipients: Sequence[Mapping[str, Any]] | None = None,
 ) -> HostedMessageEncryptionResult | None:
     """Encrypt an MCP message payload when auth came through hosted custody."""
     if not getattr(auth, "trusted_proxy", False):
         return None
     if encryptor is None:
-        raise HostedMessageEncryptionError("hosted custodial encryptor is not configured")
+        raise HostedMessageEncryptionError(
+            "hosted custodial encryptor is not configured"
+        )
     workspace_id = getattr(auth, "workspace_id", None)
     if not workspace_id:
-        raise HostedMessageEncryptionError("hosted custodial encryptor requires workspace_id")
+        raise HostedMessageEncryptionError(
+            "hosted custodial encryptor requires workspace_id"
+        )
 
     recipient_list = [dict(item) for item in (recipients or [])]
     if recipient is not None:
         recipient_list.append(dict(recipient))
     if not recipient_list:
-        raise HostedMessageEncryptionError("hosted custodial encryptor requires at least one recipient")
+        raise HostedMessageEncryptionError(
+            "hosted custodial encryptor requires at least one recipient"
+        )
 
     result = await encryptor(
         agent_id=getattr(auth, "agent_id", None),
@@ -143,21 +159,39 @@ async def encrypt_hosted_message(
         recipients=recipient_list,
     )
     if result is None:
-        raise HostedMessageEncryptionError("hosted custodial encryptor returned no envelope")
+        raise HostedMessageEncryptionError(
+            "hosted custodial encryptor returned no envelope"
+        )
 
     content_mode = str(_encryption_result_field(result, "content_mode") or "").strip()
     message_version = int(_encryption_result_field(result, "message_version") or 0)
     encrypted_envelope = _encryption_result_field(result, "encrypted_envelope")
     if content_mode != "encrypted_v2" or message_version != 2:
-        raise HostedMessageEncryptionError("hosted custodial encryptor returned non-v2 content")
+        raise HostedMessageEncryptionError(
+            "hosted custodial encryptor returned non-v2 content"
+        )
     if not isinstance(encrypted_envelope, dict):
-        raise HostedMessageEncryptionError("hosted custodial encryptor returned no encrypted envelope")
+        raise HostedMessageEncryptionError(
+            "hosted custodial encryptor returned no encrypted envelope"
+        )
     if str(encrypted_envelope.get("kind") or "").strip() != message_type:
-        raise HostedMessageEncryptionError("hosted custodial encryptor returned wrong envelope kind")
-    if str(encrypted_envelope.get("message_id") or "").strip() != str(payload.get("message_id") or "").strip():
-        raise HostedMessageEncryptionError("hosted custodial encryptor returned mismatched message_id")
-    if str(encrypted_envelope.get("conversation_id") or "").strip() != str(payload.get("conversation_id") or "").strip():
-        raise HostedMessageEncryptionError("hosted custodial encryptor returned mismatched conversation_id")
+        raise HostedMessageEncryptionError(
+            "hosted custodial encryptor returned wrong envelope kind"
+        )
+    if (
+        str(encrypted_envelope.get("message_id") or "").strip()
+        != str(payload.get("message_id") or "").strip()
+    ):
+        raise HostedMessageEncryptionError(
+            "hosted custodial encryptor returned mismatched message_id"
+        )
+    if (
+        str(encrypted_envelope.get("conversation_id") or "").strip()
+        != str(payload.get("conversation_id") or "").strip()
+    ):
+        raise HostedMessageEncryptionError(
+            "hosted custodial encryptor returned mismatched conversation_id"
+        )
     return HostedMessageEncryptionResult(
         encrypted_envelope=encrypted_envelope,
         content_mode=content_mode,
@@ -178,10 +212,14 @@ async def decrypt_hosted_message_row(
     if str(row.get("content_mode") or "legacy_plaintext_v1") != "encrypted_v2":
         return None
     if decryptor is None:
-        raise HostedMessageDecryptionError("hosted custodial decryptor is not configured")
+        raise HostedMessageDecryptionError(
+            "hosted custodial decryptor is not configured"
+        )
     workspace_id = getattr(auth, "workspace_id", None)
     if not workspace_id:
-        raise HostedMessageDecryptionError("hosted custodial decryptor requires workspace_id")
+        raise HostedMessageDecryptionError(
+            "hosted custodial decryptor requires workspace_id"
+        )
 
     result = await decryptor(
         agent_id=getattr(auth, "agent_id", None),
@@ -204,8 +242,18 @@ async def decrypt_hosted_message_row(
         body=body if decryptable else "",
         decryptable=decryptable,
         content_notice=(str(notice) if notice else None),
-        attachments=(result.get("attachments") if isinstance(result, dict) else getattr(result, "attachments", None)) if decryptable else None,
-        attachments_available=bool(result.get("attachments_available", True) if isinstance(result, dict) else getattr(result, "attachments_available", True)),
+        attachments=(
+            result.get("attachments")
+            if isinstance(result, dict)
+            else getattr(result, "attachments", None)
+        )
+        if decryptable
+        else None,
+        attachments_available=bool(
+            result.get("attachments_available", True)
+            if isinstance(result, dict)
+            else getattr(result, "attachments_available", True)
+        ),
     )
 
 
@@ -246,13 +294,21 @@ async def sign_hosted_message(
     signing_key_id = str(_result_field(result, "signing_key_id") or "").strip() or None
     signed_payload = str(_result_field(result, "signed_payload") or "")
     if not from_did:
-        raise HostedMessageSigningError("hosted custodial signer returned empty from_did")
+        raise HostedMessageSigningError(
+            "hosted custodial signer returned empty from_did"
+        )
     if from_did != (getattr(auth, "did_key", "") or "").strip():
-        raise HostedMessageSigningError("hosted custodial signer returned mismatched from_did")
+        raise HostedMessageSigningError(
+            "hosted custodial signer returned mismatched from_did"
+        )
     if signing_key_id and signing_key_id != from_did:
-        raise HostedMessageSigningError("hosted custodial signer returned mismatched signing_key_id")
+        raise HostedMessageSigningError(
+            "hosted custodial signer returned mismatched signing_key_id"
+        )
     if not signature:
-        raise HostedMessageSigningError("hosted custodial signer returned empty signature")
+        raise HostedMessageSigningError(
+            "hosted custodial signer returned empty signature"
+        )
     if signed_payload != expected_payload:
         try:
             returned_payload = json.loads(signed_payload)
@@ -264,7 +320,9 @@ async def sign_hosted_message(
             raise HostedMessageSigningError(
                 "hosted custodial signer returned signed_payload for different fields"
             )
-        raise HostedMessageSigningError("hosted custodial signer returned non-canonical signed_payload")
+        raise HostedMessageSigningError(
+            "hosted custodial signer returned non-canonical signed_payload"
+        )
 
     try:
         verify_did_key_signature(
@@ -273,7 +331,9 @@ async def sign_hosted_message(
             signature_b64=signature,
         )
     except Exception as exc:
-        raise HostedMessageSigningError("hosted custodial signer returned invalid signature") from exc
+        raise HostedMessageSigningError(
+            "hosted custodial signer returned invalid signature"
+        ) from exc
 
     return HostedMessageSigningResult(
         from_did=from_did,

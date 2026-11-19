@@ -7,7 +7,7 @@ import pytest
 
 from aweb.messaging import messages
 from aweb.messaging.recipient import Recipient, RecipientResidence
-from test_dashboard_privacy import _request, privacy_app  # noqa: F401
+from test_dashboard_privacy import _request, privacy_app as privacy_app
 
 
 @pytest.mark.asyncio
