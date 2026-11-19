@@ -17,6 +17,7 @@ import re
 import hashlib
 import json
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Any, Literal, Optional
 from uuid import UUID, uuid4
 
@@ -28,11 +29,12 @@ from ..claims import (
     acquire_task_claim_on,
     release_task_claims_on,
 )
-from ..hooks import MutationCallback, fire_mutation_callback
+from ..hooks import MutationCallback, MutationDeliveryStatus, fire_mutation_callback
 from ..service_errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    ServiceError,
     ValidationError,
 )
 from ..team_auth_deps import TeamIdentity
@@ -522,9 +524,25 @@ async def _log_resolution_miss(
         )
 
 
-async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
+class TaskVisibility(StrEnum):
+    ACTIVE = "active"
+    INCLUDING_DELETED = "including_deleted"
+
+
+class TaskDeletionIncompleteError(ServiceError):
+    status_code = 503
+
+
+async def resolve_task_ref(
+    db, *, team_id: str, ref: str, visibility: TaskVisibility = TaskVisibility.ACTIVE
+) -> UUID:
     """Resolve an ID or task reference within the explicit native team scope."""
     aweb_db = db.get_manager("aweb")
+    if type(visibility) is not TaskVisibility:
+        raise TypeError("Expected TaskVisibility")
+    active_clause = (
+        " AND deleted_at IS NULL" if visibility is TaskVisibility.ACTIVE else ""
+    )
 
     try:
         task_uuid = UUID(ref)
@@ -533,7 +551,8 @@ async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
 
     if task_uuid is not None:
         row = await aweb_db.fetch_one(
-            "SELECT task_id FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2 AND deleted_at IS NULL",
+            "SELECT task_id FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2"
+            + active_clause,
             task_uuid,
             team_id,
         )
@@ -555,7 +574,8 @@ async def resolve_task_ref(db, *, team_id: str, ref: str) -> UUID:
         raise NotFoundError("Task not found")
 
     row = await aweb_db.fetch_one(
-        "SELECT task_id FROM {{tables.tasks}} WHERE team_id = $1 AND task_ref_suffix = $2 AND deleted_at IS NULL",
+        "SELECT task_id FROM {{tables.tasks}} WHERE team_id = $1 AND task_ref_suffix = $2"
+        + active_clause,
         team_id,
         ref_suffix,
     )
@@ -1516,6 +1536,14 @@ async def update_task(
                 task_ref = format_task_ref(
                     team_slug=slug, task_ref_suffix=current["task_ref_suffix"]
                 )
+                claimant = await tx.fetch_one(
+                    """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
+                       FROM {{tables.agents}}
+                       WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
+                       FOR SHARE""",
+                    team_id,
+                    actor_alias,
+                )
                 claim_workspace_id = await acquire_task_claim_on(
                     tx,
                     team_id=team_id,
@@ -1527,14 +1555,6 @@ async def update_task(
                 sets.append(f"assignee_alias = ${idx}")
                 params.append(actor_alias)
                 idx += 1
-                claimant = await tx.fetch_one(
-                    """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did
-                       FROM {{tables.agents}}
-                       WHERE team_id = $1 AND alias = $2 AND deleted_at IS NULL
-                       FOR SHARE""",
-                    team_id,
-                    actor_alias,
-                )
                 if current["app_request"] is not None and (
                     not claimant or claimant["principal_did"] != current["assignee_did"]
                 ):
@@ -1694,34 +1714,43 @@ async def soft_delete_task(
     on_mutation: MutationCallback | None,
     ref: str,
 ) -> dict[str, Any]:
-    """Soft-delete an authorized task and publish its deletion mutation."""
+    """Commit deletion, then explicitly report incomplete hook-owned cleanup.
+
+    A repeated DELETE retries the same hook on the already deleted team-scoped
+    row. Descendant claims retain their documented separate policy.
+    """
     team_id = actor.team_id
-    task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
-    slug = _get_team_slug(team_id)
+    task_id = await resolve_task_ref(
+        db,
+        team_id=team_id,
+        ref=ref,
+        visibility=TaskVisibility.INCLUDING_DELETED,
+    )
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
-
     async with aweb_db.transaction() as tx:
         row = await tx.fetch_one(
-            """
-            UPDATE {{tables.tasks}} SET deleted_at = $2, updated_at = $2
-            WHERE task_id = $1 AND deleted_at IS NULL
-            RETURNING task_id, task_ref_suffix
-            """,
+            """SELECT task_id, task_ref_suffix, deleted_at FROM {{tables.tasks}}
+               WHERE task_id=$1 AND team_id=$2 FOR UPDATE""",
             task_id,
-            now,
+            team_id,
         )
         if not row:
             raise NotFoundError("Task not found")
-
+        if row["deleted_at"] is None:
+            await tx.execute(
+                "UPDATE {{tables.tasks}} SET deleted_at=$2, updated_at=$2 WHERE task_id=$1",
+                task_id,
+                now,
+            )
     result = {
         "status": "deleted",
         "task_id": str(task_id),
         "task_ref": format_task_ref(
-            team_slug=slug, task_ref_suffix=row["task_ref_suffix"]
+            team_slug=_get_team_slug(team_id), task_ref_suffix=row["task_ref_suffix"]
         ),
     }
-    await fire_mutation_callback(
+    outcome = await fire_mutation_callback(
         on_mutation,
         MutationEventType.TASK_DELETED.value,
         TaskDeletedContext(
@@ -1731,6 +1760,47 @@ async def soft_delete_task(
             actor_did_aw=actor.did_aw,
         ).to_context(),
     )
+    if outcome.status is MutationDeliveryStatus.DEFERRED:
+        return {**result, "cleanup_status": MutationDeliveryStatus.DEFERRED.value}
+    try:
+        remaining = await aweb_db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE team_id=$1 AND task_ref=$2",
+            team_id,
+            result["task_ref"],
+        )
+    except Exception as exc:
+        logger.error(
+            "Cannot verify claim cleanup after task deletion %s", task_id, exc_info=True
+        )
+        raise TaskDeletionIncompleteError(
+            {
+                **result,
+                "code": "task_deleted_cleanup_pending",
+                "message": "Task deletion committed; claim cleanup could not be verified. Retry this DELETE when the dependency recovers.",
+            }
+        ) from exc
+    if remaining:
+        logger.error(
+            "Task deletion %s committed with %s claims still held", task_id, remaining
+        )
+        raise TaskDeletionIncompleteError(
+            {
+                **result,
+                "code": "task_deleted_cleanup_pending",
+                "remaining_claims": remaining,
+                "message": "Task deletion committed; claim cleanup is incomplete. Restore the deletion callback and retry this DELETE.",
+            }
+        )
+    if outcome.status is MutationDeliveryStatus.FAILED:
+        raise TaskDeletionIncompleteError(
+            {
+                **result,
+                "code": "task_deleted_notification_failed",
+                "remaining_claims": 0,
+                "message": "Task deletion and claim cleanup committed; mutation notification failed. Inspect the serving callback logs.",
+                "failed_stages": [stage.value for stage in outcome.failed_stages],
+            }
+        )
     return result
 
 

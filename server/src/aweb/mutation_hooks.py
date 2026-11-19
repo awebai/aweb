@@ -344,27 +344,18 @@ async def _cascade_task_status_changed(
     title = context.get("title")
     claim_preacquired = bool(context.get("claim_preacquired", False))
 
-    if not actor_workspace_id or not task_ref:
+    if not task_ref:
         return
-
     aweb_db = db_infra.get_manager("aweb")
-    workspace = await aweb_db.fetch_one(
-        """
-        SELECT team_id, alias, human_name
-        FROM {{tables.workspaces}}
-        WHERE workspace_id = $1 AND deleted_at IS NULL
-        """,
-        actor_workspace_id,
+    task = await aweb_db.fetch_one(
+        "SELECT team_id FROM {{tables.tasks}} WHERE task_id=$1",
+        context.get("task_id"),
     )
-    if workspace is None:
-        logger.warning(
-            "task.status_changed: no workspace for actor %s", actor_workspace_id
-        )
+    if task is None:
         return
-
-    team_id = str(workspace["team_id"])
-    alias = workspace["alias"]
-    if new_status == "in_progress" and claim_preacquired:
+    team_id = str(task["team_id"])
+    alias = context.get("actor_alias") or ""
+    if new_status == "in_progress" and claim_preacquired and actor_workspace_id:
         await publish_event(
             redis,
             TaskClaimedEvent(
@@ -411,18 +402,19 @@ async def _cascade_task_status_changed(
                     ),
                 )
 
-    await publish_event(
-        redis,
-        TaskStatusChangedEvent(
-            workspace_id=actor_workspace_id,
-            team_id=team_id,
-            task_ref=task_ref,
-            old_status=context.get("old_status", "") or "",
-            new_status=new_status,
-            title=title,
-            alias=alias,
-        ),
-    )
+    if actor_workspace_id:
+        await publish_event(
+            redis,
+            TaskStatusChangedEvent(
+                workspace_id=actor_workspace_id,
+                team_id=team_id,
+                task_ref=task_ref,
+                old_status=context.get("old_status", "") or "",
+                new_status=new_status,
+                title=title,
+                alias=alias,
+            ),
+        )
 
 
 async def _cascade_task_deleted(
