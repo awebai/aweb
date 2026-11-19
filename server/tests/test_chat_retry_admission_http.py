@@ -25,7 +25,7 @@ async def test_named_plaintext_replay_without_timestamp_is_a_request_refusal(cha
         "session_id": session_id,
         "message_id": message_id,
         "message": signed["body"],
-        "wait_seconds": signed.get("wait_seconds", 30),
+        "wait_seconds": signed.get("wait_seconds"),
         "leaving": signed.get("sender_leaving", False),
         "hang_on": signed.get("hang_on", False),
         "from_did": signed["from_did"],
