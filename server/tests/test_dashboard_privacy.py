@@ -36,7 +36,7 @@ from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
-from test_dashboard import _JWT_SECRET, _make_jwt
+from dashboard_test_support import _JWT_SECRET, _make_jwt
 from test_messages_http import (
     _encode_certificate,
     _make_certificate,
