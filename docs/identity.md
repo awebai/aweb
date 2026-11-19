@@ -518,6 +518,11 @@ the accepted member to its aweb service before publishing its E2E key assertion.
 A local workspace binding alone does not establish server admission. Provisioning
 reports success only after the service confirms publication for that member.
 
+If the accepted certificate is installed but local membership recording fails,
+repair the reported file error and use the printed `id team install-cert` command
+for that same certificate, followed by `workspace connect`. The outer creation
+command retains its home throughout that repair.
+
 A connect failure retains the created home, signing key and accepted certificate
 and reports that this attempt did not publish the key. Run the exact
 `aw --identity-home <member-home> workspace connect --service <url>` command in
