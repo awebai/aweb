@@ -181,9 +181,16 @@ var mailSendCmd = &cobra.Command{
 			}
 			// /v1/agents lists the team's agents; a name it lacks may be a
 			// human on the live roster, which binds the member's current key.
-			if _, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
+			if agent, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
 				return recipientLookupError(targetValue, "agent list", findErr)
-			} else if found || sendEncryptE2EE {
+			} else if found {
+				// The agent list confirms the member: the signature binds it,
+				// and the server routes by the alias.
+				if req.ConfirmedRecipient, err = agentListRecipient(targetValue, agent); err != nil {
+					return err
+				}
+				req.ToAlias = targetValue
+			} else if sendEncryptE2EE {
 				// Key discovery for a human is scoped to the selected team,
 				// using its original identity-signed assertion.
 				req.ToAlias = targetValue

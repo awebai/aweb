@@ -203,6 +203,9 @@ type ChatCreateSessionRequest struct {
 	MessageID      string               `json:"message_id,omitempty"`
 	SignedPayload  string               `json:"signed_payload,omitempty"`
 	EncryptE2EE    bool                 `json:"-"`
+	// ConfirmedRecipient is what the sender's team roster names for the one
+	// alias in ToAliases; it is signed, never sent as a selector.
+	ConfirmedRecipient *ConfirmedRecipient `json:"-"`
 }
 
 type ChatCreateSessionResponse struct {
@@ -279,6 +282,10 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 	}
 	if len(payload.ToDIDs) == 1 {
 		env.ToDID = strings.TrimSpace(payload.ToDIDs[0])
+	}
+	if payload.ConfirmedRecipient != nil && len(payload.ToAliases) == 1 && !directIdentityTargets {
+		env.ToDID = strings.TrimSpace(payload.ConfirmedRecipient.DID)
+		env.ToStableID = strings.TrimSpace(payload.ConfirmedRecipient.StableID)
 	}
 	sf, err := c.signEnvelope(ctx, env)
 	if err != nil {

@@ -123,6 +123,9 @@ type SendOptions struct {
 	// RecipientDID is the DID the caller confirmed for its one target. An
 	// existing session is then selected by this strong identity only.
 	RecipientDID string
+	// ConfirmedRecipient is what the caller's team roster names for its one
+	// alias target; a new session signs it as the recipient binding.
+	ConfirmedRecipient *awid.ConfirmedRecipient
 }
 
 // StatusCallback receives protocol status updates.

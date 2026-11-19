@@ -47,8 +47,22 @@ type SendMessageRequest struct {
 	// verified key assertion says aweb's hosted service holds the key.
 	E2EEInherited bool              `json:"-"`
 	E2EERecipient *E2EERecipientKey `json:"-"`
+	// ConfirmedRecipient is what the sender's team roster names for ToAlias;
+	// it is signed, never sent as a selector.
+	ConfirmedRecipient *ConfirmedRecipient `json:"-"`
 
 	NewConversation bool `json:"new_conversation,omitempty"`
+}
+
+// ConfirmedRecipient is the identity the sender's team roster names for the
+// one alias a message is sent to. The message signs it as its recipient
+// binding and still routes by the alias: the server refuses a signed binding
+// that names another member (docs/aweb-sot.md:1036-1047).
+type ConfirmedRecipient struct {
+	// DID is the member's current did:key.
+	DID string
+	// StableID is the member's did:aw, when it has one.
+	StableID string
 }
 
 type SendMessageResponse struct {
@@ -150,6 +164,13 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	if strings.TrimSpace(payload.ToAddress) != "" {
 		to = strings.TrimSpace(payload.ToAddress)
 	}
+	signedToDID, signedToStableID := toDID, toStableID
+	confirmedAlias := payload.ConfirmedRecipient != nil && strings.TrimSpace(payload.ToAlias) != "" &&
+		toDID == "" && toStableID == "" && strings.TrimSpace(payload.ToAddress) == ""
+	if confirmedAlias {
+		signedToDID = strings.TrimSpace(payload.ConfirmedRecipient.DID)
+		signedToStableID = strings.TrimSpace(payload.ConfirmedRecipient.StableID)
+	}
 	if payload.EncryptE2EE {
 		if err := c.prepareE2EEMail(ctx, &payload, identityTarget, initialConversationID, hasRecipient); err != nil {
 			return nil, err
@@ -167,8 +188,8 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
 		From:                          from,
 		To:                            to,
-		ToDID:                         toDID,
-		ToStableID:                    toStableID,
+		ToDID:                         signedToDID,
+		ToStableID:                    signedToStableID,
 		Type:                          "mail",
 		Priority:                      signedMailPriority(payload.Priority),
 		Subject:                       payload.Subject,
@@ -182,8 +203,10 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	}
 	if c.canAttachPlainMessageSignature() {
 		payload.FromDID = sf.FromDID
-		payload.ToDID = sf.ToDID
-		payload.ToStableID = sf.ToStableID
+		if !confirmedAlias {
+			payload.ToDID = sf.ToDID
+			payload.ToStableID = sf.ToStableID
+		}
 		payload.Signature = sf.Signature
 		payload.MessageID = sf.MessageID
 		payload.Timestamp = sf.Timestamp

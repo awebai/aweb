@@ -1368,12 +1368,13 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 
 	aliases, dids, addresses := classifyChatTargets(targets)
 	req := &awid.ChatCreateSessionRequest{
-		ToAliases:   aliases,
-		ToDIDs:      dids,
-		ToAddresses: addresses,
-		Message:     message,
-		Leaving:     opts.Leaving,
-		EncryptE2EE: opts.EncryptE2EE,
+		ToAliases:          aliases,
+		ToDIDs:             dids,
+		ToAddresses:        addresses,
+		Message:            message,
+		Leaving:            opts.Leaving,
+		EncryptE2EE:        opts.EncryptE2EE,
+		ConfirmedRecipient: opts.ConfirmedRecipient,
 	}
 	if waitSeconds > 0 {
 		req.WaitSeconds = &waitSeconds
