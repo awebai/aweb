@@ -50,16 +50,22 @@ def mcp_messaging_runtime(
     origin = (public_origin or "").strip()
     return MessagingRuntime(
         registry_client=(
-            registry_client if registry_client is not None else getattr(state, "awid_registry_client", None)
+            registry_client
+            if registry_client is not None
+            else getattr(state, "awid_registry_client", None)
         ),
         federation_authority=federation_authority,
         mail_transport=mail_transport,
         chat_transport=chat_transport,
         public_origin=origin or application_public_origin(state),
-        public_origins=frozenset(application_public_origins(state, public_origin=origin or None)),
+        public_origins=frozenset(
+            application_public_origins(state, public_origin=origin or None)
+        ),
         on_mutation=current_mutation_callback(),
         agent_wake_publisher=agent_wake_publisher(state),
-        identity_binding_cache=identity_binding_cache(state) if state is not None else OrderedDict(),
+        identity_binding_cache=identity_binding_cache(state)
+        if state is not None
+        else OrderedDict(),
     )
 
 

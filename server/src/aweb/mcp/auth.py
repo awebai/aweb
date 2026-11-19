@@ -157,16 +157,27 @@ class MCPAuthMiddleware:
             # projection whose admitting certificate is revoked must not grant
             # team context here either.
             row = await _enforce_current_membership(request, row)
-            outcome = getattr(request.state, "identity_address_resolution", identity.address_resolution)
+            outcome = getattr(
+                request.state,
+                "identity_address_resolution",
+                identity.address_resolution,
+            )
             return AuthContext(
                 team_id=(row or {}).get("team_id") or None,
-                agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
+                agent_id=(
+                    str((row or {}).get("agent_id"))
+                    if (row or {}).get("agent_id")
+                    else None
+                ),
                 workspace_id=None,
                 alias=(row or {}).get("alias") or None,
                 did_key=identity.did_key,
                 did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
-                address=(outcome.stored_address if outcome.state == "unknown"
-                         else identity.address or ((row or {}).get("address") or None)),
+                address=(
+                    outcome.stored_address
+                    if outcome.state == "unknown"
+                    else identity.address or ((row or {}).get("address") or None)
+                ),
                 identity_scope=(row or {}).get("identity_scope") or None,
                 address_resolution=outcome,
             )
@@ -209,7 +220,9 @@ class MCPAuthMiddleware:
             certificate_id=identity.certificate_id,
         )
 
-    async def _resolve_proxy_auth(self, internal: dict[str, str], *, request: Request) -> AuthContext:
+    async def _resolve_proxy_auth(
+        self, internal: dict[str, str], *, request: Request
+    ) -> AuthContext:
         aweb_db = _aweb_db(self.db_infra)
         team_id = internal["team_id"]
         row = await resolve_internal_actor(aweb_db, internal)
@@ -217,10 +230,14 @@ class MCPAuthMiddleware:
             raise HTTPException(status_code=403, detail="Agent not connected")
 
         binding = await verify_identity_binding(
-            request, did_key=row["did_key"], did_aw=row.get("did_aw") or "",
+            request,
+            did_key=row["did_key"],
+            did_aw=row.get("did_aw") or "",
             address=row.get("address") or "",
         )
-        await refresh_projection_binding(aweb_db, agent_id=row["agent_id"], did_key=row["did_key"], binding=binding)
+        await refresh_projection_binding(
+            aweb_db, agent_id=row["agent_id"], did_key=row["did_key"], binding=binding
+        )
 
         workspace = await aweb_db.fetch_one(
             """

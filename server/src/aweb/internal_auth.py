@@ -120,14 +120,18 @@ def parse_internal_auth_context(request: Request) -> Optional[InternalAuthContex
         try:
             user_id = str(uuid.UUID(user_id))
         except ValueError as exc:
-            raise HTTPException(status_code=401, detail="Authentication required") from exc
+            raise HTTPException(
+                status_code=401, detail="Authentication required"
+            ) from exc
         principal_type = "u"
         principal_id = user_id
     elif api_key_id:
         try:
             api_key_id = str(uuid.UUID(api_key_id))
         except ValueError as exc:
-            raise HTTPException(status_code=401, detail="Authentication required") from exc
+            raise HTTPException(
+                status_code=401, detail="Authentication required"
+            ) from exc
         principal_type = "k"
         principal_id = api_key_id
     else:
