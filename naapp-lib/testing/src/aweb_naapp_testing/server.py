@@ -24,7 +24,8 @@ for example the release production runs (``production_registry``).
 does instead: each serves real HTTP on a local socket, the naapp names AWID by
 its ``awid_registry_url`` setting, and every `_awid` lookup in the process asks
 a real local DNS server (:func:`aweb_naapp_testing.network.process_dns`) that
-publishes each registered team's namespace record. No transport is handed to
+publishes each registered team's namespace record (its controller, and no
+registry override). No transport is handed to
 the naapp and no private state is set on it.
 """
 
@@ -205,11 +206,14 @@ class ListeningCoordination(Coordination):
 
     async def add_member(self, member: Member) -> None:
         """Registers the member as :meth:`Coordination.add_member` does, and
-        publishes its team namespace's `_awid` record, naming this AWID."""
+        publishes its team namespace's `_awid` record naming the team key as
+        controller. The record names no registry, as a namespace on its
+        clients' configured AWID publishes it, so a naapp uses its own
+        ``awid_registry_url``: this AWID."""
         await super().add_member(member)
         assert self.dns is not None
         domain = member.team_id.split(":", 1)[1]
-        record = awid_txt_value(member.team_did_key, self.registry_url)
+        record = awid_txt_value(member.team_did_key)
         self.dns.records[(f"_awid.{domain}", "TXT")] = [json.dumps(record)]
 
 
