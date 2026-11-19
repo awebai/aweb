@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -96,7 +97,12 @@ func (state *hostedSignupRecovery) identity() (awid.CliSignupRequest, ed25519.Pr
 	if err != nil || len(seed) != ed25519.SeedSize {
 		return request, nil, errors.New("signup recovery signer is malformed")
 	}
-	key := ed25519.NewKeyFromSeed(seed)
+	// The journal retains seed bytes; the shared signing-key codec owns their
+	// reconstruction, as it does for the installed private-key file.
+	key, err := awid.ParseSigningKey(pem.EncodeToMemory(&pem.Block{Type: "ED25519 PRIVATE KEY", Bytes: seed}))
+	if err != nil {
+		return request, nil, errors.New("signup recovery signer is malformed")
+	}
 	public := ed25519.PublicKey(key[ed25519.SeedSize:])
 	if request.DIDKey != awid.ComputeDIDKey(public) || (request.DIDAW != "" && request.DIDAW != awid.ComputeStableID(public)) || request.Username == "" || request.Alias == "" {
 		return request, nil, errors.New("signup recovery request does not match its signer")
