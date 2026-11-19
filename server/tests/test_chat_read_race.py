@@ -10,6 +10,7 @@ from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from awid.did import did_from_public_key
 import aweb.messaging.chat as chat_service
+import aweb.messaging.chat_storage as chat_storage
 from aweb.messaging.chat import (
     ensure_session,
     get_message_history,
@@ -84,6 +85,7 @@ async def test_message_inserted_during_presented_snapshot_remains_unread(
         created_by="alice",
     )
     monkeypatch.setattr(chat_service, "datetime", _FrozenDateTime)
+    monkeypatch.setattr(chat_storage, "datetime", _FrozenDateTime)
 
     presented = await send_in_session(
         db,
