@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from aweb.events import team_events_channel_name
-from aweb.presence_transitions import reconcile_presence
+from aweb.presence_transitions import PresenceReconciliationError, reconcile_presence
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
 
@@ -96,7 +96,9 @@ async def test_corrupt_projection_is_not_empty_presence(privacy_app):
     await env.redis.set(key, "{broken")
     async with env.redis.pubsub() as stream:
         await stream.subscribe(team_events_channel_name(TEAM))
-        with pytest.raises(Exception, match="Presence reconciliation incomplete"):
+        with pytest.raises(
+            PresenceReconciliationError, match="Presence reconciliation incomplete"
+        ):
             await reconcile_presence(
                 env.infra, env.redis, registry_client=env.app.state.awid_registry_client
             )
@@ -105,3 +107,73 @@ async def test_corrupt_projection_is_not_empty_presence(privacy_app):
             await stream.get_message(ignore_subscribe_messages=True, timeout=0.1)
             is None
         )
+
+
+@pytest.mark.asyncio
+async def test_older_observer_cannot_restore_an_expired_alias(privacy_app):
+    from aweb.presence_transitions import _publish_transition
+
+    env = privacy_app
+    now = datetime.now(UTC)
+    async with env.redis.pubsub() as stream:
+        await stream.subscribe(team_events_channel_name(TEAM))
+        assert (
+            await _publish_transition(
+                env.redis, team_id=TEAM, aliases=["alice"], observed_at=now
+            )
+            == 1
+        )
+        assert (await _event(stream))["type"] == "agent.online"
+        assert (
+            await _publish_transition(
+                env.redis,
+                team_id=TEAM,
+                aliases=[],
+                observed_at=now + timedelta(seconds=2),
+            )
+            == 1
+        )
+        assert (await _event(stream))["type"] == "agent.offline"
+        assert (
+            await _publish_transition(
+                env.redis,
+                team_id=TEAM,
+                aliases=["alice"],
+                observed_at=now + timedelta(seconds=1),
+            )
+            == 0
+        )
+        assert (
+            await stream.get_message(ignore_subscribe_messages=True, timeout=0.1)
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_two_dashboard_readers_survive_bad_frames_and_observe_one_transition(
+    privacy_app,
+):
+    from test_dashboard import _make_jwt
+    from test_dashboard_privacy import _next_event
+
+    env = privacy_app
+    headers = {"X-Dashboard-Token": _make_jwt([TEAM])}
+    path = f"/v1/teams/{TEAM}/events/stream"
+    async with env.client.stream("GET", path, headers=headers) as first:
+        async with env.client.stream("GET", path, headers=headers) as second:
+            assert first.status_code == second.status_code == 200
+            readers = [first.aiter_lines(), second.aiter_lines()]
+            for reader in readers:
+                assert (await _next_event(reader))["type"] == "connected"
+                snapshot = await _next_event(reader)
+                assert snapshot["online_aliases"] == sorted(env.actors)
+            for payload in (b"\xff", "{invalid", "null", "[]", '{"type":12}'):
+                await env.redis.publish(team_events_channel_name(TEAM), payload)
+            await reconcile_presence(
+                env.infra, env.redis, registry_client=env.app.state.awid_registry_client
+            )
+            for reader in readers:
+                events = [await _next_event(reader) for _ in env.actors]
+                assert {(event["type"], event["alias"]) for event in events} == {
+                    ("agent.online", alias) for alias in env.actors
+                }
