@@ -24,6 +24,7 @@ from aweb_secrets.grant import GrantRecord
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretRecord
 from tests.custody.test_onepassword import ITEM, VAULT, field, reference, sdk_item
+from tests.production_approvals import requester_status
 from tests.test_production_bootstrap import enrolled_owner
 from tests.test_production_bootstrap import root as root
 from tests.test_use_approvals import POLICY_BODY, SECRET
@@ -41,16 +42,21 @@ async def vault(root, monkeypatch):
     owner = await enrolled_owner(root)
     username, password = secrets.token_hex(12), secrets.token_urlsafe(32)
     backend_token = secrets.token_urlsafe(32)
-    state = SimpleNamespace(scenario=SDKValueScenario.VALID, reads=0, opened=False)
+    state = SimpleNamespace(scenario=SDKValueScenario.VALID, reads=0, opened=False, request_id=None)
 
     async def get(*, vault_id: str, item_id: str):
         if vault_id != VAULT or item_id != ITEM:
             raise AssertionError("the SDK requested a different item")
         state.reads += 1
-        dispatching = await service.runtime.db().fetch_value(
-            "SELECT EXISTS(SELECT 1 FROM dispatches WHERE state=$1)",
-            DispatchState.DISPATCHING.value,
-        )
+        dispatching = False
+        if state.request_id is not None:
+            status = await requester_status(root, ref=state.request_id)
+            if status.status_code == 200:
+                dispatching = status.json()["state"] == DispatchState.DISPATCHING.value
+            else:
+                # The observation before admission has no request yet; an
+                # authentication or service failure must fail the fixture.
+                assert status.status_code == 404
         state.opened |= dispatching
         invalid = state.scenario is SDKValueScenario.INVALID or (
             state.scenario is SDKValueScenario.INVALID_AFTER_DISPATCH and dispatching
@@ -95,6 +101,7 @@ async def vault(root, monkeypatch):
         configured=configured,
         member=member,
         installed=installed,
+        root=root,
     )
 
 
@@ -175,6 +182,7 @@ async def configured_basic(vault):
 
 
 async def submit(vault, *, request_id: str):
+    vault.state.request_id = request_id
     path = f"/v1/secrets/{vault.record.ref}/requests"
     raw = json.dumps(
         {
@@ -211,13 +219,15 @@ async def test_invalid_basic_at_post_commit_open_settles_not_sent_and_does_not_f
     assert first.status_code == 503, "a pre-send injection failure escaped as HTTP 500"
     assert first.json()["state"] == DispatchState.NOT_SENT.value
     assert "username" in first.json()["message"].lower() and ":" in first.json()["message"]
-    db = vault.service.runtime.db()
-    assert await db.fetch_value("SELECT state FROM dispatches") == DispatchState.NOT_SENT.value
     # Leave the provider invalid. A new request must be admitted and settle the
     # same way, rather than a swept outcome_unknown fencing this secret pair.
     second = await submit(vault, request_id=uuid4().hex)
     assert second.status_code == 503 and second.json()["state"] == DispatchState.NOT_SENT.value
-    assert (
-        await db.fetch_value("SELECT count(*) FROM dispatches WHERE state='outcome_unknown'") == 0
-    )
-    assert await db.fetch_value("SELECT count(*) FROM dispatches WHERE state='not_sent'") == 2
+    for receipt in (first.json(), second.json()):
+        status = await requester_status(vault.root, ref=receipt["request_ref"])
+        assert status.status_code == 200
+        assert status.json()["state"] == DispatchState.NOT_SENT.value
+        assert status.json()["request_id"] == receipt["request_id"]
+        assert status.json()["request_ref"] == receipt["request_ref"]
+    assert first.json()["request_id"] != second.json()["request_id"]
+    assert first.json()["request_ref"] != second.json()["request_ref"]

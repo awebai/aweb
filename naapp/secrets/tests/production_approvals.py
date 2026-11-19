@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from aweb_naapp.runtime.approvals import Approval, PgApprovalStore
 
 if TYPE_CHECKING:
@@ -16,14 +17,19 @@ async def stored_approval(root, *, pending: "ProductionRequest") -> Approval:
     return approval
 
 
-async def requester_receipt(root, *, pending: "ProductionRequest") -> dict[str, Any]:
-    """Fetch the existing requester's signed production status response."""
+async def requester_status(root, *, ref: str) -> httpx.Response:
+    """Read one caller-owned locator through the signed production route."""
     _, client, configured, member, *_ = root
-    path = "/v1/status/" + pending.reply["request_ref"]
-    response = await client.get(
+    path = "/v1/status/" + ref
+    return await client.get(
         configured.public_origin + path,
         headers=member.headers(aud=configured.public_origin, method="GET", path=path),
     )
+
+
+async def requester_receipt(root, *, pending: "ProductionRequest") -> dict[str, Any]:
+    """Fetch the requester's receipt, checking its original request and intent."""
+    response = await requester_status(root, ref=pending.reply["request_ref"])
     assert response.status_code == 200
     receipt = response.json()
     assert receipt["request_id"] == pending.reply["request_id"]
