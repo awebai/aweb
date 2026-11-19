@@ -8,6 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,11 +57,9 @@ func packageCommandStack(t *testing.T) commandStack {
 
 func startSharedCommandStack() {
 	shared := &sharedCommandStack
-	script, err := filepath.Abs("../../../../scripts/test-egress/aweb_fixture.py")
-	if err != nil {
-		shared.err = err
-		return
-	}
+	// From the package source, not the working directory: the test that
+	// starts the stack may have changed directory.
+	script := filepath.Join(awTestBinary.sourceDir, "../../scripts/test-egress/aweb_fixture.py")
 	project := filepath.Join(awTestBinary.sourceDir, "../../server")
 	// No test's context: the stack outlives every test that uses it.
 	command := exec.Command("uv", "run", "--offline", "--frozen", "--project", project, "python", "-P", script)
@@ -93,20 +95,26 @@ func startSharedCommandStack() {
 // publishCommandZone publishes domain's _awid TXT record naming controller in
 // the stack's DNS zone. It writes nothing to the registry.
 func publishCommandZone(domain, controllerDID string) error {
+	return sendStackCommand("zone", map[string]string{"domain": domain, "controller": controllerDID})
+}
+
+// sendStackCommand sends one fixture command and waits for its own
+// acknowledgement.
+func sendStackCommand(name string, value any) error {
 	shared := &sharedCommandStack
 	shared.mu.Lock()
 	defer shared.mu.Unlock()
 	shared.nextID++
 	id := shared.nextID
-	line, err := json.Marshal(map[string]any{"id": id, "zone": map[string]string{"domain": domain, "controller": controllerDID}})
+	line, err := json.Marshal(map[string]any{"id": id, name: value})
 	if err != nil {
 		return err
 	}
 	if _, err := shared.input.Write(append(line, '\n')); err != nil {
-		return fmt.Errorf("send zone command: %w", err)
+		return fmt.Errorf("send %s command: %w", name, err)
 	}
 	if !shared.replies.Scan() {
-		return fmt.Errorf("real command stack exited before acknowledging zone %s: %v", domain, shared.replies.Err())
+		return fmt.Errorf("real command stack exited before acknowledging %s command %d: %v", name, id, shared.replies.Err())
 	}
 	var reply struct {
 		ID    int    `json:"id"`
@@ -114,13 +122,13 @@ func publishCommandZone(domain, controllerDID string) error {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(shared.replies.Bytes(), &reply); err != nil {
-		return fmt.Errorf("zone acknowledgement %q: %w", shared.replies.Text(), err)
+		return fmt.Errorf("%s acknowledgement %q: %w", name, shared.replies.Text(), err)
 	}
 	if reply.ID != id {
-		return fmt.Errorf("zone acknowledgement %q does not answer command %d", shared.replies.Text(), id)
+		return fmt.Errorf("%s acknowledgement %q does not answer command %d", name, shared.replies.Text(), id)
 	}
 	if !reply.OK {
-		return fmt.Errorf("zone %s refused: %s", domain, reply.Error)
+		return fmt.Errorf("%s command refused: %s", name, reply.Error)
 	}
 	return nil
 }
@@ -172,6 +180,11 @@ func newRealCommandWorld(t *testing.T) *realCommandWorld {
 	}
 	buildAwBinary(t, ctx, world.Binary)
 	world.Stack = packageCommandStack(t)
+	// Fresh production rate-limit buckets: every test reaches the shared
+	// registry from the same address.
+	if err := sendStackCommand("reset_rate_limits", map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
 	if err := publishCommandZone(world.Domain, didOf(world.NamespaceKey)); err != nil {
 		t.Fatal(err)
 	}
@@ -243,6 +256,103 @@ func (world *realCommandWorld) addLocalMember(t *testing.T, alias string) comman
 	return commandMember{Home: home, Certificate: certificate}
 }
 
+// registerMemberCertificate signs fields' certificate with the team key and
+// registers it at the registry, as the team controller does.
+func (world *realCommandWorld) registerMemberCertificate(t *testing.T, fields awid.TeamCertificateFields) *awid.TeamCertificate {
+	t.Helper()
+	fields.Team = world.TeamID
+	certificate, err := awid.SignTeamCertificate(world.TeamKey, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := world.Registry.RegisterCertificate(world.Context, world.Stack.RegistryURL, world.Domain, "backend", certificate, world.TeamKey); err != nil {
+		t.Fatal(err)
+	}
+	return certificate
+}
+
+// globalMember is a key with its registered did:aw and its address in the
+// world's namespace.
+type globalMember struct {
+	Key     ed25519.PrivateKey
+	DIDKey  string
+	DIDAW   string
+	Address string
+}
+
+func (world *realCommandWorld) registerGlobalMember(t *testing.T, name string) globalMember {
+	t.Helper()
+	key := newKey(t)
+	member := globalMember{Key: key, DIDKey: didOf(key), DIDAW: awid.ComputeStableID(key.Public().(ed25519.PublicKey))}
+	if _, err := world.Registry.RegisterIdentity(world.Context, world.Stack.RegistryURL, member.DIDKey, member.DIDAW, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := world.Registry.RegisterAddressAt(world.Context, world.Stack.RegistryURL, world.Domain, name, member.DIDAW, member.DIDKey, world.NamespaceKey); err != nil {
+		t.Fatal(err)
+	}
+	member.Address = world.Domain + "/" + name
+	return member
+}
+
+// aliasCertificates is the registry's whole certificate history for alias,
+// revoked certificates included.
+func (world *realCommandWorld) aliasCertificates(t *testing.T, alias string) []awid.RegistryCertificate {
+	t.Helper()
+	all, err := world.Registry.ListCertificates(world.Context, world.Stack.RegistryURL, world.Domain, "backend", false, world.TeamKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []awid.RegistryCertificate
+	for _, certificate := range all {
+		if certificate.Alias == alias {
+			out = append(out, certificate)
+		}
+	}
+	return out
+}
+
+// registryFault fronts the shared registry for answers the real registry
+// cannot give on demand, such as a write that fails after its precondition
+// held. Every request it does not answer reaches the real registry.
+type registryFault struct {
+	// Answer, when it returns true, has answered r in place of the registry.
+	Answer func(w http.ResponseWriter, r *http.Request) bool
+	// Rewrite edits a registry response before the command reads it.
+	Rewrite func(response *http.Response) error
+}
+
+// frontRegistry returns the origin of a proxy that applies fault in front of
+// the world's registry.
+func (world *realCommandWorld) frontRegistry(t *testing.T, fault registryFault) string {
+	t.Helper()
+	target, err := url.Parse(world.Stack.RegistryURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	direct := proxy.Director
+	proxy.Director = func(r *http.Request) {
+		direct(r)
+		r.Host = target.Host
+		// Rewrite reads plain bodies.
+		r.Header.Del("Accept-Encoding")
+	}
+	proxy.ModifyResponse = fault.Rewrite
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fault.Answer != nil && fault.Answer(w, r) {
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	// Controller envelopes name the origin the client writes to, as they do
+	// through a deployment's proxy.
+	if err := sendStackCommand("public_origin", server.URL); err != nil {
+		t.Fatal(err)
+	}
+	return server.URL
+}
+
 func TestRealServerWorldsShareOneStackAndKeepTeamsApart(t *testing.T) {
 	first, second := newRealCommandWorld(t), newRealCommandWorld(t)
 	if first.Stack != second.Stack {
@@ -279,6 +389,25 @@ func TestRealServerZoneCommandPublishesOnlyValidNewRecords(t *testing.T) {
 	// The world's own published namespace still resolves after the refusals.
 	member := world.addLocalMember(t, "alice")
 	world.requireCommand(t, member.Home, "mail", "send", "--to", "alice", "--subject", "after-refusals", "--body", "stack still serves")
+}
+
+func TestRealServerStackRefusesMalformedConfigurationCommands(t *testing.T) {
+	newRealCommandWorld(t)
+	for _, refused := range []struct {
+		name   string
+		value  any
+		reason string
+	}{
+		{"public_origin", "https://registry.example", "public_origin is not a canonical http://127.0.0.1 origin"},
+		{"public_origin", "http://127.0.0.1:8080/path", "public_origin is not a canonical http://127.0.0.1 origin"},
+		{"reset_rate_limits", map[string]any{"bucket": "all"}, "reset_rate_limits takes an empty object"},
+		{"seed_certificate", map[string]any{}, "a command is exactly one of zone, public_origin or reset_rate_limits"},
+	} {
+		err := sendStackCommand(refused.name, refused.value)
+		if err == nil || err.Error() != refused.name+" command refused: "+refused.reason {
+			t.Fatalf("%s %v: got %v, want refusal %q", refused.name, refused.value, err, refused.reason)
+		}
+	}
 }
 
 func TestRealServerMailChatAndUnregisteredCertificate(t *testing.T) {

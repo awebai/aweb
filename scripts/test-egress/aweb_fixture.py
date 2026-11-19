@@ -9,10 +9,18 @@ One JSON line on stdout announces readiness. Then each stdin line is one
 command, answered by one stdout line carrying the command's id:
 
     {"id": 1, "zone": {"domain": "a.test", "controller": "did:key:z..."}}
+    {"id": 2, "public_origin": "http://127.0.0.1:61234"}
+    {"id": 3, "reset_rate_limits": {}}
     {"id": 1, "ok": true}            or            {"id": 1, "error": "..."}
 
 A zone command publishes only the domain's _awid TXT record; namespaces, teams
-and certificates are written by the caller through the registry's routes.
+and certificates are written by the caller through the registry's routes. A
+public_origin command adds a loopback origin to the registry's configured
+public origins, as a deployment names the proxy in front of it; a test fronts
+the registry that way only for answers the registry cannot give itself. The
+registry runs production rate-limit buckets, keyed by client IP, which every
+test shares; reset_rate_limits gives a starting test fresh buckets, as its own
+stack would have.
 stdin EOF closes the services and drops only this fixture's database.
 """
 
@@ -33,6 +41,7 @@ from aweb_naapp_testing.network import DnsServer
 from awid.did import validate_did
 from awid.dns_verify import awid_txt_name, awid_txt_value
 from awid.external_authority import FederationAuthorityError, canonical_protocol_domain
+from awid.log import canonical_server_origin
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, running_registry
 from redis.asyncio import Redis
@@ -68,23 +77,10 @@ async def serve_fixture_app(
             await asyncio.sleep(0.01)
 
 
-def apply_command(zone: DnsServer, line: str) -> dict:
-    """Run one stdin command against the zone and return its acknowledgement."""
-    try:
-        command = json.loads(line)
-    except json.JSONDecodeError:
-        return {"error": "command is not JSON"}
-    if not isinstance(command, dict) or not isinstance(command.get("id"), int):
-        return {"error": "command needs an integer id"}
-    reply = {"id": command["id"]}
-    request = command.get("zone")
-    if (
-        set(command) != {"id", "zone"}
-        or not isinstance(request, dict)
-        or set(request) != {"domain", "controller"}
-    ):
-        reply["error"] = "the only command is zone with exactly domain and controller"
-        return reply
+def publish_zone(zone: DnsServer, request) -> str | None:
+    """Publish one domain's _awid record; return the refusal, if any."""
+    if not isinstance(request, dict) or set(request) != {"domain", "controller"}:
+        return "zone needs exactly domain and controller"
     domain, controller = request["domain"], request["controller"]
     try:
         canonical = (
@@ -93,27 +89,68 @@ def apply_command(zone: DnsServer, line: str) -> dict:
     except FederationAuthorityError:
         canonical = None
     if canonical != domain:
-        reply["error"] = "zone domain is not a canonical DNS name"
-        return reply
+        return "zone domain is not a canonical DNS name"
     if (
         not isinstance(controller, str)
         or not controller.startswith("did:key:")
         or not validate_did(controller)
     ):
-        reply["error"] = "zone controller is not an Ed25519 did:key"
-        return reply
+        return "zone controller is not an Ed25519 did:key"
     name = (awid_txt_name(domain), "TXT")
     if name in zone.records:
-        reply["error"] = "zone domain is already published"
-        return reply
+        return "zone domain is already published"
     zone.records[name] = [f'"{awid_txt_value(controller)}"']
-    reply["ok"] = True
+    return None
+
+
+def add_public_origin(registry: FastAPI, origin) -> str | None:
+    """Name a loopback proxy as a registry public origin; return the refusal."""
+    try:
+        canonical = canonical_server_origin(origin) if isinstance(origin, str) else None
+    except ValueError:
+        canonical = None
+    if canonical != origin or not origin.startswith("http://127.0.0.1:"):
+        return "public_origin is not a canonical http://127.0.0.1 origin"
+    registry.state.awid_public_origins += (origin,)
+    return None
+
+
+def reset_rate_limits(registry: FastAPI, request) -> str | None:
+    """Give the registry fresh production buckets; return the refusal, if any."""
+    if request != {}:
+        return "reset_rate_limits takes an empty object"
+    registry.state.rate_limiter = MemoryFixedWindowRateLimiter()
+    return None
+
+
+def apply_command(zone: DnsServer, registry: FastAPI, line: str) -> dict:
+    """Run one stdin command and return its acknowledgement."""
+    try:
+        command = json.loads(line)
+    except json.JSONDecodeError:
+        return {"error": "command is not JSON"}
+    if not isinstance(command, dict) or not isinstance(command.get("id"), int):
+        return {"error": "command needs an integer id"}
+    reply = {"id": command["id"]}
+    names = set(command) - {"id"}
+    if names == {"zone"}:
+        refusal = publish_zone(zone, command["zone"])
+    elif names == {"public_origin"}:
+        refusal = add_public_origin(registry, command["public_origin"])
+    elif names == {"reset_rate_limits"}:
+        refusal = reset_rate_limits(registry, command["reset_rate_limits"])
+    else:
+        refusal = "a command is exactly one of zone, public_origin or reset_rate_limits"
+    if refusal is None:
+        reply["ok"] = True
+    else:
+        reply["error"] = refusal
     return reply
 
 
-async def serve_commands(zone: DnsServer) -> None:
+async def serve_commands(zone: DnsServer, registry: FastAPI) -> None:
     while line := await asyncio.to_thread(sys.stdin.readline):
-        print(json.dumps(apply_command(zone, line)), flush=True)
+        print(json.dumps(apply_command(zone, registry, line)), flush=True)
 
 
 async def main() -> None:
@@ -191,7 +228,7 @@ async def main() -> None:
             json.dumps({"registry_url": registry_url, "server_url": server_url}),
             flush=True,
         )
-        await serve_commands(zone)
+        await serve_commands(zone, registry.app)
 
 
 if __name__ == "__main__":
