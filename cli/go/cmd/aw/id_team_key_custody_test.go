@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,19 @@ type teamCreateRegistry struct {
 }
 
 func (r *teamCreateRegistry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	var payload map[string]any
+	if req.Method == http.MethodPost && req.URL.Path == "/v1/namespaces/acme.com/teams" {
+		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
+			r.t.Error(err)
+			return
+		}
+		// The hook runs outside the lock so it can drive another run against
+		// this registry while this create is in flight.
+		if r.onCreate != nil {
+			teamDID, _ := payload["team_did_key"].(string)
+			r.onCreate(teamDID)
+		}
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch {
@@ -41,15 +55,8 @@ func (r *teamCreateRegistry) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			"domain": "acme.com", "controller_did": payload["controller_did"], "created_at": "2026-04-07T00:00:00Z",
 		})
 	case req.Method == http.MethodPost && req.URL.Path == "/v1/namespaces/acme.com/teams":
-		var payload map[string]any
-		if err := json.NewDecoder(req.Body).Decode(&payload); err != nil {
-			r.t.Fatal(err)
-		}
 		r.creates++
 		teamDID, _ := payload["team_did_key"].(string)
-		if r.onCreate != nil {
-			r.onCreate(teamDID)
-		}
 		if r.existing {
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Team already exists"})
@@ -74,13 +81,14 @@ func (r *teamCreateRegistry) ServeHTTP(w http.ResponseWriter, req *http.Request)
 			"team_did_key": r.teamDID, "created_at": "2026-04-07T00:00:00Z",
 		})
 	default:
-		r.t.Fatalf("unexpected %s %s", req.Method, req.URL.Path)
+		r.t.Errorf("unexpected %s %s", req.Method, req.URL.Path)
 	}
 }
 
 func registerDefaultTeam(t *testing.T, registryURL string) (*localTeamRegistration, error) {
 	t.Helper()
-	registry, err := newConfiguredRegistryClient(nil, "")
+	t.Setenv("AWID_REGISTRY_URL", registryURL)
+	registry, err := newConfiguredRegistryClient(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,11 +171,48 @@ func TestTeamCreateRefusesATeamPinnedToAnotherKey(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already pinned to "+registry.teamDID) {
 		t.Fatalf("err=%v", err)
 	}
+	if !strings.Contains(err.Error(), "Choose another team name, or run this on the machine that holds that team's key") {
+		t.Fatalf("the refusal does not say what to do: %v", err)
+	}
 	exists, err := awconfig.TeamKeyExists("acme.com", "default")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if exists {
 		t.Fatal("a key file was left for a team pinned to another key")
+	}
+}
+
+// A run that starts while another run is registering the team it saved a key
+// for uses that saved key, and both runs register the one key on disk.
+func TestTeamCreateDuringAnotherRegistrationUsesTheSavedKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var started atomic.Bool
+	var second *localTeamRegistration
+	var secondErr error
+	registry := &teamCreateRegistry{t: t}
+	server := newLocalHTTPServer(t, registry)
+	registry.onCreate = func(string) {
+		// The first run has saved its key and is registering it. The second
+		// run's own create comes through here too and must not start a third.
+		if started.CompareAndSwap(false, true) {
+			second, secondErr = registerDefaultTeam(t, server.URL)
+		}
+	}
+
+	first, err := registerDefaultTeam(t, server.URL)
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	if secondErr != nil {
+		t.Fatalf("second run: %v", secondErr)
+	}
+	saved, err := awconfig.LoadTeamKey("acme.com", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	savedDID := awid.ComputeDIDKey(saved.Public().(ed25519.PublicKey))
+	if savedDID != first.TeamDIDKey || second.TeamDIDKey != first.TeamDIDKey || registry.teamDID != first.TeamDIDKey {
+		t.Fatalf("saved=%s first=%s second=%s registry=%s", savedDID, first.TeamDIDKey, second.TeamDIDKey, registry.teamDID)
 	}
 }

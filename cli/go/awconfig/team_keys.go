@@ -4,9 +4,12 @@ import (
 	"crypto/ed25519"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/awebai/aw/internal/atomicfile"
 )
 
 func DefaultTeamKeysDir() (string, error) {
@@ -67,15 +70,38 @@ func SaveTeamKey(domain, name string, key ed25519.PrivateKey) error {
 	return writeTeamKeyFile(path, key)
 }
 
-func writeTeamKeyFile(path string, key ed25519.PrivateKey) error {
-	if key == nil {
-		return errors.New("nil team key")
+// CreateTeamKey saves the key of a team this machine is creating. It never
+// replaces a key file: when one is already there, for example because another
+// run creating the same team saved its key first, it fails with an error
+// matching os.ErrExist and leaves that key untouched.
+func CreateTeamKey(domain, name string, key ed25519.PrivateKey) error {
+	path, err := TeamKeyPath(domain, name)
+	if err != nil {
+		return err
 	}
-	data := pem.EncodeToMemory(&pem.Block{
+	data, err := encodeTeamKey(key)
+	if err != nil {
+		return err
+	}
+	return atomicfile.Options{Mode: 0o600, ParentMode: 0o700, Exclusive: true}.Write(path, data)
+}
+
+func writeTeamKeyFile(path string, key ed25519.PrivateKey) error {
+	data, err := encodeTeamKey(key)
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(path, data)
+}
+
+func encodeTeamKey(key ed25519.PrivateKey) ([]byte, error) {
+	if key == nil {
+		return nil, errors.New("nil team key")
+	}
+	return pem.EncodeToMemory(&pem.Block{
 		Type:  "ED25519 PRIVATE KEY",
 		Bytes: key.Seed(),
-	})
-	return atomicWriteFile(path, data)
+	}), nil
 }
 
 // PendingTeamKeyPath holds a new team key between its creation and the
@@ -113,12 +139,29 @@ func LoadPendingTeamKey(domain, name string) (ed25519.PrivateKey, error) {
 	return decodeTeamKey(data)
 }
 
-// RemoveTeamKey deletes the team key file. It is for a key that was never
-// registered; a registered team key is never removed by the CLI.
-func RemoveTeamKey(domain, name string) error {
+// ErrTeamKeyNotExpected reports a team key file holding a key other than the
+// one the caller meant to remove.
+var ErrTeamKeyNotExpected = errors.New("team key file holds a different key")
+
+// RemoveTeamKey deletes the team key file only when it holds the expected
+// public key: the key a run created and never registered. Any other key is
+// left in place and the error matches ErrTeamKeyNotExpected.
+func RemoveTeamKey(domain, name string, expected ed25519.PublicKey) error {
 	path, err := TeamKeyPath(domain, name)
 	if err != nil {
 		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	key, err := decodeTeamKey(data)
+	if err != nil {
+		return fmt.Errorf("%s: %w", path, err)
+	}
+	held, ok := key.Public().(ed25519.PublicKey)
+	if !ok || !held.Equal(expected) {
+		return fmt.Errorf("%s: %w", path, ErrTeamKeyNotExpected)
 	}
 	return os.Remove(path)
 }
