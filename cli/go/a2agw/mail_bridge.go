@@ -561,6 +561,10 @@ func (b *MailBridge) mailConversationForThread(ctx context.Context, thread *mail
 	return b.client.MailConversation(ctx, thread.ConversationID, limit)
 }
 
+// verifyReplyMessage accepts VerifiedLegacy because its signature covers the
+// body, and verified admission requires that body to carry the fenced task ID
+// (docs/a2a.md:978-984,990). conversationReplyRefusal separately rejects the
+// conversation-only form.
 func (b *MailBridge) verifyReplyMessage(msg awid.InboxMessage) error {
 	if !b.requireVerifiedReplies {
 		return nil
