@@ -610,7 +610,10 @@ async def test_invalid_envelope_message_id_is_a_safe_refusal(privacy_app):
     wire["encrypted_envelope"]["message_id"] = "invalid"
     refused = await _request(env, "alice", "POST", "/v1/messages", wire)
     assert refused.status_code == 422, refused.text
-    assert refused.json()["detail"] == {"code": "request_invalid"}
+    assert refused.json()["detail"] == (
+        "encrypted envelope message_id mismatch. Check whether the original message was delivered before preparing a new encrypted message."
+    )
+    assert "invalid" not in refused.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
 
 
@@ -700,7 +703,13 @@ async def test_attached_create_or_send_retry_reuses_result_without_mutations(
         else:
             altered["message"] = "changed text"
         refused = await _request(env, "alice", "POST", "/v1/chat/sessions", altered)
-        assert refused.status_code == 409, (changed, refused.text)
+        if changed == "plaintext":
+            assert refused.status_code == 422, refused.text
+            assert refused.json()["detail"] == (
+                "Encrypted chat payload body must be empty. Check whether the original message was delivered before preparing a new encrypted message."
+            )
+        else:
+            assert refused.status_code == 409, (changed, refused.text)
         assert await snapshot() == unchanged
     assert len(env.dispatched) == event_count
     assert (
