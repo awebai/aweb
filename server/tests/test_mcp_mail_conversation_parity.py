@@ -305,9 +305,13 @@ async def test_mcp_new_conversation_does_not_bypass_recipient_policy(mail_server
         team_id="ops:otherco.com",
         signing_key=server.human_key,
     )
-    # The old local membership is inactive; the new one was actually admitted.
+    from aweb.member_team_key import MemberStatus
+
+    # The former local membership is retired; the new one was actually admitted.
     await server.db.execute(
-        "UPDATE {{tables.agents}} SET status='inactive' WHERE agent_id=$1", UUID(server.human)
+        "UPDATE {{tables.agents}} SET status=$2 WHERE agent_id=$1",
+        UUID(server.human),
+        MemberStatus.RETIRED.value,
     )
     raw = json.dumps({"inbound_mode": "team_and_contacts"}).encode()
     changed = await server.client.patch(
