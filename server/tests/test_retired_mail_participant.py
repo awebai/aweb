@@ -1,7 +1,6 @@
 """Old identity threads cannot forward to a replacement occupying its alias."""
 
 import json
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -46,22 +45,13 @@ async def test_retired_identity_continuation_refuses_new_alias_mail_reaches_repl
     )
     before = list(env.dispatched)
     # Current team evidence remains required; identity forwarding is unavailable.
-    registry = env.app.state.awid_registry_client
-    env.app.state.awid_registry_client = SimpleNamespace(
-        get_team_fresh=registry.get_team_fresh,
-        get_team_public_key=registry.get_team_public_key,
-        get_team_revocations=registry.get_team_revocations,
+    refused = await _request(
+        env,
+        "alice",
+        "POST",
+        "/v1/messages",
+        {"conversation_id": cid, "body": "must not forward"},
     )
-    try:
-        refused = await _request(
-            env,
-            "alice",
-            "POST",
-            "/v1/messages",
-            {"conversation_id": cid, "body": "must not forward"},
-        )
-    finally:
-        env.app.state.awid_registry_client = registry
     assert refused.status_code == 410, refused.text
     detail = refused.json()["detail"]
     assert detail["code"] == "participant_retired"

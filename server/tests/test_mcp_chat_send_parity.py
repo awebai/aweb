@@ -713,7 +713,8 @@ async def test_mcp_refusals_of_an_unknown_chat_recipient_read_as_the_routes_do(
     server = chat_server
 
     assert await server.mcp_chat("pilot", to="nobody", message="hello", plaintext=True) == {
-        "error": "Unknown aliases: nobody",
+        "error": "Recipient name does not identify a current member of the team: nobody. "
+        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
     }
     assert await server.mcp_chat("pilot", to="did:aw:nobody", message="hello", plaintext=True) == {
         "error": "Bare did:aw first-contact is unsupported; use to_addresses=domain/name "
@@ -1093,7 +1094,8 @@ def test_mcp_chat_codes_keep_their_code_and_add_a_recovery_action():
         }
     # A refusal with no next action keeps the route's detail.
     assert json.loads(_send_refusal(_refusal(404, "Unknown aliases: nobody"))) == {
-        "error": "Unknown aliases: nobody",
+        "error": "Recipient name does not identify a current member of the team: nobody. "
+        "Check the name; if the agent exists, ask it to reconnect with a current team certificate.",
     }
 
 

@@ -40,7 +40,7 @@ async def registry_listener(env, *, listener_socket: socket.socket | None = None
     if listener_socket is None:
         sock.bind(("127.0.0.1", 0))
     server = uvicorn.Server(
-        uvicorn.Config(existing.transport.app, lifespan="off", log_level="error", ws="none")
+        uvicorn.Config(env.registry_app, lifespan="off", log_level="error", ws="none")
     )
     serving = asyncio.create_task(server.serve(sockets=[sock]))
     client = None
@@ -311,11 +311,11 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                     )
                     assert denied.status_code == 403, denied.text
 
-                    async def terminal_event(response):
+                    async def terminal_event(response, *, expected_terminal=terminal):
                         async for line in response.aiter_lines():
-                            if terminal in line:
+                            if expected_terminal in line:
                                 return
-                        raise AssertionError(f"stream closed without {terminal}")
+                        raise AssertionError(f"stream closed without {expected_terminal}")
 
                     await asyncio.wait_for(
                         asyncio.gather(*(terminal_event(r) for r in streams)), 35

@@ -19,7 +19,7 @@ async def test_normalized_history_inbox_unread_exact_read_and_incoming_ack(mail_
     # incoming just because all these messages share the caller's thread.
     others = []
     for sender, recipient in [
-        (env.pilot_did, "did:aw:human"),
+        (env.pilot_did, env.human_stable),
         (env.human_did, env.human_did),
         (env.human_did, "did:key:older-rotated"),
     ]:
@@ -34,15 +34,15 @@ async def test_normalized_history_inbox_unread_exact_read_and_incoming_ack(mail_
         )
         others.append(mid)
     await apply(db)
-    headers = _signed_identity_headers(env.pilot_key, env.pilot_did, "did:aw:pilot", b"")
+    headers = _signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, b"")
     listed = await env.client.get("/v1/conversations?conversation_type=mail", headers=headers)
     assert listed.status_code == 200, listed.text
     assert listed.json()["conversations"][0]["unread_count"] == 1
     counts = await env.client.get(
-        "/v1/conversations/unread-counts?participant_did=did:aw:human", headers=headers
+        f"/v1/conversations/unread-counts?participant_did={env.human_stable}", headers=headers
     )
     assert counts.status_code == 200, counts.text
-    assert counts.json()["counts"] == [{"participant_did": "did:aw:human", "unread_count": 1}]
+    assert counts.json()["counts"] == [{"participant_did": env.human_stable, "unread_count": 1}]
     for mid in [incoming, *others]:
         exact = await env.client.get(f"/v1/messages/{mid}", headers=headers)
         assert exact.status_code == 200, exact.text
@@ -77,14 +77,14 @@ async def test_normalized_history_inbox_unread_exact_read_and_incoming_ack(mail_
         refused = await env.client.post(f"/v1/messages/{mid}/ack", headers=headers)
         assert refused.status_code == 404, refused.text
     counts = await env.client.get(
-        "/v1/conversations/unread-counts?participant_did=did:aw:human", headers=headers
+        f"/v1/conversations/unread-counts?participant_did={env.human_stable}", headers=headers
     )
     assert counts.json()["counts"][0]["unread_count"] == 0
     # Knowledge of a key from some other thread is never attribution here.
     separate, _, _ = await seed_thread(env, "mail")
     await db.execute(
         "UPDATE {{tables.conversation_participants}} SET did=$1,current_did_key=NULL WHERE conversation_id=$2 AND did=$3",
-        "did:aw:pilot",
+        env.pilot_stable,
         separate,
         env.pilot_did,
     )
@@ -97,20 +97,20 @@ async def test_normalized_history_inbox_unread_exact_read_and_incoming_ack(mail_
 async def test_pre_thread_mail_keeps_canonical_only_legacy_behavior(mail_server):
     env, db = mail_server, mail_server.db
     ids = {}
-    for recipient in (env.pilot_did, "did:aw:pilot"):
+    for recipient in (env.pilot_did, env.pilot_stable):
         mid = uuid4()
         await db.execute(
-            "INSERT INTO {{tables.messages}} (message_id,from_did,to_did,body) VALUES ($1,'did:aw:human',$2,'legacy')",
+            f"INSERT INTO {{{{tables.messages}}}} (message_id,from_did,to_did,body) VALUES ($1,'{env.human_stable}',$2,'legacy')",
             mid,
             recipient,
         )
         ids[recipient] = mid
-    headers = _signed_identity_headers(env.pilot_key, env.pilot_did, "did:aw:pilot", b"")
+    headers = _signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, b"")
     for recipient, mid in ids.items():
         exact = await env.client.get(f"/v1/messages/{mid}", headers=headers)
-        assert exact.status_code == (200 if recipient == "did:aw:pilot" else 404), exact.text
+        assert exact.status_code == (200 if recipient == env.pilot_stable else 404), exact.text
     inbox = await env.client.get("/v1/messages/inbox", headers=headers)
-    assert {UUID(m["message_id"]) for m in inbox.json()["messages"]} == {ids["did:aw:pilot"]}
+    assert {UUID(m["message_id"]) for m in inbox.json()["messages"]} == {ids[env.pilot_stable]}
 
 
 @pytest.mark.asyncio
@@ -136,21 +136,21 @@ async def test_normalized_chat_excludes_own_old_key_from_pending_unread_and_ack(
     await apply(db)
     infra = SimpleNamespace(get_manager=lambda _: db)
     history = await get_message_history(
-        infra, session_id=cid, participant_did="did:aw:pilot", unread_only=True
+        infra, session_id=cid, participant_did=env.pilot_stable, unread_only=True
     )
     assert {r["message_id"] for r in history} == {str(messages[1])}
-    pending = await get_pending_conversations(infra, participant_did="did:aw:pilot")
+    pending = await get_pending_conversations(infra, participant_did=env.pilot_stable)
     assert len(pending) == 1 and pending[0]["unread_count"] == 1
     listed = await list_conversations_for_auth(
         infra,
-        MessagingAuth(did_key=env.pilot_did, did_aw="did:aw:pilot", address=None),
+        MessagingAuth(did_key=env.pilot_did, did_aw=env.pilot_stable, address=None),
         conversation_type="chat",
     )
     assert listed.conversations[0].unread_count == 1
     await mark_messages_read(
         infra,
         session_id=cid,
-        participant_did="did:aw:pilot",
+        participant_did=env.pilot_stable,
         message_ids=[str(own), str(messages[1])],
     )
     assert (
@@ -159,7 +159,7 @@ async def test_normalized_chat_excludes_own_old_key_from_pending_unread_and_ack(
         )
         == 0
     )
-    assert await get_pending_conversations(infra, participant_did="did:aw:pilot") == []
+    assert await get_pending_conversations(infra, participant_did=env.pilot_stable) == []
 
 
 @pytest.mark.asyncio
@@ -175,7 +175,7 @@ async def test_thread_index_does_not_promote_a_message_signing_key_to_participan
     key_subject = MessagingAuth(did_key=env.pilot_did, did_aw=None, address=None)
     result = await list_conversations_for_auth(infra, key_subject)
     assert result.conversations == []
-    owner = MessagingAuth(did_key=env.pilot_did, did_aw="did:aw:pilot", address=None)
+    owner = MessagingAuth(did_key=env.pilot_did, did_aw=env.pilot_stable, address=None)
     result = await list_conversations_for_auth(infra, owner)
     assert [item.conversation_id for item in result.conversations] == [str(cid)]
 
@@ -197,16 +197,16 @@ async def test_literal_key_cannot_read_count_or_ack_a_normalized_global_thread(
     await apply(db)
     local = uuid4()
     await db.execute(
-        "INSERT INTO {{tables.messages}} (message_id,from_did,to_did,body) VALUES ($1,'did:aw:human',$2,'genuine pre-thread local mail')",
+        f"INSERT INTO {{{{tables.messages}}}} (message_id,from_did,to_did,body) VALUES ($1,'{env.human_stable}',$2,'genuine pre-thread local mail')",
         local,
         env.pilot_did,
     )
-    owner_headers = _signed_identity_headers(env.pilot_key, env.pilot_did, "did:aw:pilot", b"")
+    owner_headers = _signed_identity_headers(env.pilot_key, env.pilot_did, env.pilot_stable, b"")
     owner_read = await env.client.get(f"/v1/messages/{protected}", headers=owner_headers)
     assert owner_read.status_code == 200, owner_read.text
     # Supply the literal-key subject explicitly at each adapter's auth seam:
     # the signing key must not silently become the migrated global participant.
-    app = env.client._transport.app
+    app = env.fixture.app
     app.dependency_overrides[get_messaging_auth] = lambda: MessagingAuth(
         did_key=env.pilot_did, did_aw=None, address=None
     )
@@ -222,9 +222,11 @@ async def test_literal_key_cannot_read_count_or_ack_a_normalized_global_thread(
         assert response.json() == {"unread_count": 1}
     elif seam == "peer":
         response = await env.client.get(
-            "/v1/conversations/unread-counts?participant_did=did:aw:human", headers=literal
+            f"/v1/conversations/unread-counts?participant_did={env.human_stable}", headers=literal
         )
-        assert response.json()["counts"] == [{"participant_did": "did:aw:human", "unread_count": 1}]
+        assert response.json()["counts"] == [
+            {"participant_did": env.human_stable, "unread_count": 1}
+        ]
     elif seam == "ack":
         response = await env.client.post(f"/v1/messages/{protected}/ack", headers=literal)
         assert response.status_code == 404, response.text

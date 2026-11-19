@@ -37,6 +37,10 @@ func observeTeamKey() observationResult {
 	if err := registry.SetFallbackRegistryURL(input.RegistryURL); err != nil {
 		return observationResult{Error: fmt.Sprintf("select registry: %v", err)}
 	}
+	// The probe's input is the operator-selected disposable registry origin.
+	if err := registry.TrustRegistryOrigin(input.RegistryURL); err != nil {
+		return observationResult{Error: fmt.Sprintf("trust selected registry: %v", err)}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	observed, err := registry.CheckTeamCertificateCurrentKey(ctx, awid.CurrentTeamCertificateCheck{RegistryURL: input.RegistryURL, Certificate: certificate})
