@@ -14,7 +14,7 @@ from typing import Any
 import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pgdbm import AsyncDatabaseManager
+from pgdbm import AsyncDatabaseManager, TransactionManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field
 
@@ -143,7 +143,7 @@ class AliasConflictError(ValueError):
 
 
 async def _ensure_agent(
-    db: AsyncDatabaseManager,
+    db: AsyncDatabaseManager | TransactionManager,
     team_id: str,
     did_key: str,
     did_aw: str,
@@ -315,6 +315,7 @@ async def _ensure_agent(
         team_id,
         did_key,
     )
+    assert row is not None  # The insert or its locked existing winner supplies this row.
     if row["alias"] != alias:
         raise AliasConflictError(
             f"cert claims alias {alias!r} but did_key is already bound to alias {row['alias']!r} in team {team_id}",
@@ -342,7 +343,7 @@ async def _lock_reconnecting_workspace(db, *, team_id: str, alias: str) -> None:
 
 
 async def _ensure_workspace(
-    db: AsyncDatabaseManager,
+    db: AsyncDatabaseManager | TransactionManager,
     team_id: str,
     agent_id: str,
     alias: str,
@@ -438,6 +439,7 @@ async def _ensure_workspace(
                 workspace_path,
                 workspace_type,
             )
+        assert row is not None  # This INSERT always returns the workspace it created.
         return _ConnectedWorkspace(str(row["workspace_id"]), workspace_type)
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(
@@ -456,10 +458,10 @@ async def _ensure_workspace(
 
 
 async def _ensure_repo(
-    db: AsyncDatabaseManager,
+    db: AsyncDatabaseManager | TransactionManager,
     team_id: str,
     repo_origin: str,
-) -> uuid.UUID:
+) -> str:
     """Find or create a repo row. Returns repo id."""
     try:
         return await ensure_repo(db, team_id, repo_origin)
@@ -695,7 +697,7 @@ async def connect_agent(
 @router.post("/connect", response_model=ConnectResponse)
 async def connect_endpoint(
     request: Request, payload: ConnectRequest, db=Depends(get_db)
-) -> ConnectResponse:
+) -> ConnectResponse | JSONResponse:
     """Agent connects with certificate. Auto-provisions team + agent + workspace.
 
     Uses certificate-only auth (no agent lookup) since the agent may not

@@ -30,7 +30,7 @@ from .coordination.routes.tasks import router as tasks_router
 from .coordination.routes.team_instructions import instructions_router
 from .coordination.routes.team_roles import roles_router
 from .coordination.routes.workspaces import router as workspaces_router
-from .db import DatabaseInfra
+from .db import DatabaseInfrastructure
 from .db import db_infra as default_db_infra
 from .federation.errors import authority_error_body
 from .install_admins import install_admin_setup_message
@@ -273,7 +273,7 @@ def _make_standalone_lifespan(*, host_runs_outbox_recovery: bool = False):
 
 
 def _make_library_lifespan(
-    db_infra: DatabaseInfra,
+    db_infra: DatabaseInfrastructure,
     redis: Redis,
     awid_transport: httpx.AsyncBaseTransport | None,
     domain_verifier: DomainVerifier | None,
@@ -316,7 +316,7 @@ def _make_library_lifespan(
 
 def create_app(
     *,
-    db_infra: Optional[DatabaseInfra] = None,
+    db_infra: Optional[DatabaseInfrastructure] = None,
     redis: Optional[Redis] = None,
     attachment_backend: AttachmentBackend | None = None,
     public_origin: str | None = None,
@@ -536,7 +536,7 @@ def create_app(
 
         # Check Database
         try:
-            db_infra: DatabaseInfra = request.app.state.db
+            db_infra: DatabaseInfrastructure = request.app.state.db
             db = db_infra.get_manager("server")
             await db.fetch_value("SELECT 1")
             checks["database"] = "ok"

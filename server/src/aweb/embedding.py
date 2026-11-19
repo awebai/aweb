@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Protocol
 
 from awid.ratelimit import RateLimitDecision, build_rate_limiter
 from awid.registry import RegistryClient
@@ -20,6 +20,7 @@ from redis.asyncio import Redis
 
 from aweb.agent_wake import AgentWakeHub, AgentWakePublisher
 from aweb.attachments import AttachmentBackend
+from aweb.db import DatabaseInfrastructure
 from aweb.federation.activation import (
     FederationAuthorityActivation,
     build_federation_authority_activation,
@@ -37,17 +38,6 @@ from aweb.resource_startup import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class DatabaseInfrastructure(Protocol):
-    @property
-    def is_initialized(self) -> bool:
-        """Whether the host infrastructure has initialized its native managers."""
-        ...
-
-    def get_manager(self, name: str = "aweb") -> Any:
-        """Return the initialized native manager for the requested module."""
-        ...
 
 
 class ServingRateLimiter(Protocol):

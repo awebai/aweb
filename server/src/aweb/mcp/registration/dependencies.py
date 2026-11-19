@@ -8,7 +8,7 @@ import httpx
 from awid.registry import RegistryClient
 from redis.asyncio import Redis
 
-from aweb.db import DatabaseInfra
+from aweb.db import DatabaseInfrastructure
 from aweb.federation.activation import FederationAuthorityActivation
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
@@ -21,7 +21,7 @@ from aweb.mcp.signing import (
 class ToolDependencies:
     """References supplied once by the application registering native tools."""
 
-    db_infra: DatabaseInfra
+    db_infra: DatabaseInfrastructure
     redis: Redis | None
     registry_client: RegistryClient
     federation_authority: FederationAuthorityActivation | None

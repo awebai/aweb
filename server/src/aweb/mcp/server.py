@@ -19,7 +19,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from redis.asyncio import Redis
 
 from aweb.config import get_awid_registry_url
-from aweb.db import DatabaseInfra
+from aweb.db import DatabaseInfrastructure
 from aweb.federation.transport import delivery_transport
 from aweb.internal_auth import ProxyVerificationConfig
 from aweb.mcp.auth import MCPAuthMiddleware
@@ -134,7 +134,7 @@ class ManagedMCPApp:
 
 def register_tools(
     mcp: FastMCP,
-    db_infra: DatabaseInfra,
+    db_infra: DatabaseInfrastructure,
     redis: Optional[Redis],
     registry_client: RegistryClient,
     federation_authority=None,
@@ -195,7 +195,7 @@ class _NudgingFastMCP(FastMCP):
 
 def create_mcp_app(
     *,
-    db_infra: DatabaseInfra,
+    db_infra: DatabaseInfrastructure,
     redis: Optional[Redis] = None,
     registry_client: RegistryClient | None = None,
     federation_authority=None,

@@ -643,7 +643,8 @@ async def transfer_contacts(
                 )
                 groups.setdefault(key, []).append(row)
 
-            survivors, duplicates = [], []
+            survivors: list[dict] = []
+            duplicates: list[UUID] = []
             for group in groups.values():
                 bindings = {row["contact_did_aw"] for row in group if row.get("contact_did_aw")}
                 if len(bindings) > 1:

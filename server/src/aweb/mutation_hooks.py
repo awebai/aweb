@@ -8,7 +8,7 @@ Event dataclasses to Redis pub/sub for the SSE event stream.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -60,7 +60,7 @@ from .lifecycle import (
 from .presence import get_agent_presence
 
 if TYPE_CHECKING:
-    from .db import DatabaseInfra
+    from .db import DatabaseInfrastructure
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def _event_subject(ctx: dict) -> str:
     return str(ctx.get("subject", "") or "")
 
 
-async def _enrich_identity_context(db_infra: "DatabaseInfra", context: dict) -> dict:
+async def _enrich_identity_context(db_infra: "DatabaseInfrastructure", context: dict) -> dict:
     ctx = dict(context)
     identity_fields = (
         ("actor_agent_id", "actor_did", "actor_did_aw"),
@@ -128,7 +128,7 @@ async def _enrich_identity_context(db_infra: "DatabaseInfra", context: dict) -> 
     return ctx
 
 
-async def _enrich_workspace_context(db_infra: "DatabaseInfra", context: dict) -> dict:
+async def _enrich_workspace_context(db_infra: "DatabaseInfrastructure", context: dict) -> dict:
     ctx = dict(context)
     workspace_fields = (
         ("actor_workspace_id", "actor_agent_id", "team_id"),
@@ -178,7 +178,7 @@ async def _enrich_workspace_context(db_infra: "DatabaseInfra", context: dict) ->
     return ctx
 
 
-def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra) -> MutationCallback:
+def create_mutation_handler(redis: Redis, db_infra: DatabaseInfrastructure) -> MutationCallback:
     """Create an on_mutation callback that publishes SSE events.
 
     The returned async callable matches aweb's hook signature:
@@ -202,7 +202,7 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra) -> MutationCa
             context = await _enrich_identity_context(db_infra, context)
             context = await _enrich_workspace_context(db_infra, context)
         except Exception:
-            logger.warning("Mutation context enrichment failed", exc_info=True)
+            logger.exception("Mutation context enrichment failed")
             failures.append(MutationDeliveryStage.CONTEXT_ENRICHMENT)
 
         # Side-effect hooks (cascades that modify state).
@@ -271,7 +271,7 @@ def create_mutation_handler(redis: Redis, db_infra: DatabaseInfra) -> MutationCa
 
 
 async def _cascade_agent_deleted(
-    redis: Redis, db_infra: "DatabaseInfra", context: dict
+    redis: Redis, db_infra: "DatabaseInfrastructure", context: dict
 ) -> None:
     """Cascade ephemeral identity deletion to workspace cleanup.
 
@@ -329,7 +329,7 @@ async def _cascade_agent_deleted(
 
 
 async def _cascade_task_status_changed(
-    redis: Redis, db_infra: "DatabaseInfra", context: dict
+    redis: Redis, db_infra: "DatabaseInfrastructure", context: dict
 ) -> None:
     """Announce the claim changes of a task status change.
 
@@ -418,7 +418,7 @@ async def _cascade_task_status_changed(
 
 
 async def _cascade_task_deleted(
-    redis: Redis, db_infra: "DatabaseInfra", context: dict
+    redis: Redis, db_infra: "DatabaseInfrastructure", context: dict
 ) -> None:
     """Release all claims on a deleted task and publish unclaim events.
 
@@ -498,7 +498,7 @@ async def _alias_for(redis: Redis, workspace_id: str) -> str:
 
 
 async def _enrich(
-    event: Event, redis: Redis, db_infra: DatabaseInfra, context: dict
+    event: Event, redis: Redis, db_infra: DatabaseInfrastructure, context: dict
 ) -> None:
     """Add aliases, subjects, and previews via Redis/DB lookups."""
 
@@ -648,7 +648,7 @@ def _workspace_reservation_renewed(ctx: dict) -> Event | None:
     )
 
 
-_WORKSPACE_BUILDERS = {
+_WORKSPACE_BUILDERS: dict[str, Callable[[dict], Event | None]] = {
     MutationEventType.MAIL_SENT: _workspace_mail_sent,
     MutationEventType.MAIL_ACKNOWLEDGED: _workspace_mail_acknowledged,
     MutationEventType.CHAT_MESSAGE_SENT: _workspace_chat_message_sent,
@@ -797,7 +797,7 @@ def _team_reservation_renewed(ctx: dict) -> TeamEvent | None:
     )
 
 
-_TEAM_BUILDERS = {
+_TEAM_BUILDERS: dict[str, Callable[[dict], TeamEvent | None]] = {
     MutationEventType.AGENT_STATUS: _team_agent_status,
     MutationEventType.TASK_CREATED: _team_task_created,
     MutationEventType.TASK_STATUS_CHANGED: _team_task_status_changed,

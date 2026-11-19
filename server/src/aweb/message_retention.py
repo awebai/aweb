@@ -106,7 +106,7 @@ class _State:
             or any(
                 self.classifications.get(party) != RetentionPartyClassification.KNOWN
                 or not any(item["party_did"] == party for item in self.interests)
-                for party in self.parties
+                for party in self.parties if party is not None
             )
         )
 

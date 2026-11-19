@@ -4,9 +4,9 @@ These projections preserve optional key absence and explicit None separately.
 They do not validate received callbacks or constrain host extension names.
 """
 
-from dataclasses import dataclass, fields
+from dataclasses import Field, dataclass, fields
 from enum import Enum
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from aweb.event_types import MutationEventType
 
@@ -20,6 +20,7 @@ class AbsentContextField(Enum):
 class CoordinationContext:
     """Serialize a producer's declared fields without adding omitted keys."""
 
+    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
     event_type: ClassVar[MutationEventType]
 
     def to_context(self) -> dict[str, object]:

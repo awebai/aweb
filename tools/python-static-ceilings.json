@@ -435,18 +435,6 @@
       "tool": "mypy",
       "file": "server/src/aweb/routes/connect.py",
       "code": "arg-type",
-      "count": 3
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/routes/connect.py",
-      "code": "index",
-      "count": 2
-    },
-    {
-      "tool": "mypy",
-      "file": "server/src/aweb/routes/connect.py",
-      "code": "return-value",
       "count": 1
     },
     {

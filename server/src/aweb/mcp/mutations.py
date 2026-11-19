@@ -21,7 +21,10 @@ _mutation_callback: contextvars.ContextVar[MutationCallback | None] = contextvar
 
 def mutation_callback_from_scope(scope: Any) -> MutationCallback | None:
     """Return the on_mutation callback of the application serving this ASGI scope."""
-    state = native_application_state(getattr(scope.get("app"), "state", None))
+    app_state = getattr(scope.get("app"), "state", None)
+    if app_state is None:
+        return None
+    state = native_application_state(app_state)
     return getattr(state, "on_mutation", None)
 
 
