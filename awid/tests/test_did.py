@@ -87,7 +87,7 @@ def _signed_get_headers(identity_vectors: dict, path: str) -> dict[str, str]:
     seed = bytes.fromhex(identity_vectors["key_seeds"]["initial_seed_hex"])
     did_key = identity_vectors["mapping"]["initial_did_key"]
     timestamp = (
-        datetime.now(timezone.utc)
+        dns_auth._utc_now()
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")
