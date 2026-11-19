@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -59,6 +59,21 @@ async function until({ read, ready, label }) {
   do { value = read(); if (ready(value)) return value; await sleep(100); } while (Date.now() < deadline);
   throw new Error(`${label} did not become ready: ${JSON.stringify(value)}`);
 }
+async function stopOwnedBroker(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise((done) => child.once("exit", done));
+  child.kill("SIGTERM");
+  await Promise.race([exited, sleep(8000)]);
+  if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); await exited; }
+}
+function executionPermissions(status) {
+  const executable = wakeInstances(status).find((row) => row.home === instanceHome)?.channel_core?.bundle_path;
+  assert.ok(typeof executable === "string" && executable, "runner reports its actual execution path");
+  const entries = [permission(dirname(executable)), permission(executable)];
+  assert.deepEqual(entries.map((entry) => entry.mode), ["700", "600"]);
+  assert.ok(entries.every((entry) => entry.uid === process.geteuid()), "execution snapshot belongs to runtime UID");
+  return entries;
+}
 function permission(path) {
   const stat = statSync(path);
   return { path, uid: stat.uid, gid: stat.gid, mode: (stat.mode & 0o7777).toString(8) };
@@ -87,8 +102,13 @@ try {
   writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\nsettings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\nlaunch-configs:\n  passive:\n    harness: claude\n    executable: ${JSON.stringify(join(bin, "passive-session"))}\nsouls:\n  launch:\n    '*': passive\n`);
   const brokerLog = join(root, "broker.log");
   // Capture bounded public failure text; credentials remain in the owned volume.
-  broker = spawn(join(bin, "aw"), ["wake", "run"], { cwd: home, env, stdio: ["ignore", "ignore", "pipe"] });
-  broker.stderr.on("data", (chunk) => { brokerErrors = (brokerErrors + chunk).slice(-16384); });
+  const startOwnedBroker = () => {
+    const child = spawn(join(bin, "aw"), ["wake", "run"], { cwd: home, env, stdio: ["ignore", "ignore", "pipe"] });
+    child.on("error", (error) => { brokerErrors += String(error); });
+    child.stderr.on("data", (chunk) => { brokerErrors = (brokerErrors + chunk).slice(-16384); });
+    return child;
+  };
+  broker = startOwnedBroker();
   const wakeStatus = () => parseObject(command({ argv: [join(bin, "aw"), "wake", "status", "--json"], cwd: home }));
   await until({ read: wakeStatus, ready: (status) => status.daemon_running === true, label: "isolated broker" });
   const spawned = parseObject(oats("spawn", "probe", "--name", "r20-wake-probe", "--json"));
@@ -96,15 +116,22 @@ try {
   ({ instance, home: instanceHome } = spawned.result);
   assert.ok(instance && instanceHome, "kernel spawn must return its instance and home");
   evidence.kernel_status_before = parseObject(oats("status", "--json"));
-  const before = await until({ read: wakeStatus, ready: (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true), label: "kernel-registered wake runner" });
-  evidence.wake_before = before;
-  const executable = wakeInstances(before).find((row) => row.home === instanceHome)?.channel_core?.bundle_path;
-  assert.ok(typeof executable === "string" && executable, "runner reports its actual execution path");
-  evidence.private_execution = [permission(dirname(executable)), permission(executable)];
-  assert.deepEqual(evidence.private_execution.map((entry) => entry.mode), ["700", "600"]);
-  assert.ok(evidence.private_execution.every((entry) => entry.uid === process.geteuid()), "execution snapshot belongs to runtime UID");
+  const runnerReady = (status) => wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
+  const fresh = await until({ read: wakeStatus, ready: runnerReady, label: "kernel-registered wake runner" });
+  evidence.wake_fresh = fresh;
+  evidence.private_execution_fresh = executionPermissions(fresh);
   const state = join(home, ".config/aw/wake"), cache = join(state, "channel-core");
-  evidence.permissions_before = [join(home, ".config/aw"), state, cache].map(permission);
+  evidence.permissions_fresh = [join(home, ".config/aw"), state, cache].map(permission);
+  await stopOwnedBroker(broker);
+  chmodSync(state, 0o770);
+  chmodSync(cache, 0o770);
+  chmodSync(join(cache, "runner.mjs"), 0o660);
+  evidence.storage_mode_setup = "owned fixture emulates group-write widening; not a Kubernetes/PVC qualification";
+  broker = startOwnedBroker();
+  const before = await until({ read: wakeStatus, ready: runnerReady, label: "runner restart with group-widened data cache" });
+  evidence.wake_before = before;
+  evidence.private_execution_after_group_widening = executionPermissions(before);
+  evidence.permissions_before = [join(home, ".config/aw"), state, cache, join(cache, "runner.mjs")].map(permission);
   const address = parseObject(aw({ identity: instanceHome, args: ["whoami", "--json"] }));
   const recipient = address.address || address.alias || address.name;
   assert.ok(typeof recipient === "string" && recipient, "spawned seat must be addressable");
@@ -130,14 +157,7 @@ try {
   process.exitCode = 1;
 } finally {
   if (instance) { try { evidence.retire = parseObject(oats("retire", instance, "--json")); } catch (error) { cleanupErrors.push(String(error)); } }
-  if (broker) {
-    if (broker.exitCode === null && broker.signalCode === null) {
-      const exited = new Promise((done) => broker.once("exit", done));
-      broker.kill("SIGTERM");
-      await Promise.race([exited, sleep(8000)]);
-      if (broker.exitCode === null && broker.signalCode === null) { broker.kill("SIGKILL"); await exited; }
-    }
-  }
+  await stopOwnedBroker(broker);
   const stopped = spawnSync("tmux", ["-L", "oats", "kill-server"], { cwd: deployment, env, encoding: "utf8" });
   if (stopped.error || (stopped.status !== 0 && !/no server running|No such file or directory/.test(stopped.stderr))) cleanupErrors.push(String(stopped.error || stopped.stderr));
   evidence.cleanup_errors = cleanupErrors;
