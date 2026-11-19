@@ -22,9 +22,10 @@ from aweb_naapp_testing.deployment import (
     assert_aw_status,
     aw_json,
     aw_request,
-    team_signing_key,
+    team_key_seed,
     uninstall_app,
 )
+from nacl.signing import SigningKey
 from test_e2e_smoke import connected_team, installed_team
 from test_library_contract_e2e import _blueprint_payload
 
@@ -121,7 +122,7 @@ def test_a_team_signed_certificate_the_registry_never_published_is_unauthenticat
     # Signed by the team's real controller key, never registered at AWID.
     unpublished = Member(
         team_id=team.team_id,
-        team_key=team_signing_key(team),
+        team_key=SigningKey(team_key_seed(team)),
         certificate_id=str(uuid.uuid4()),
         alias="unpublished",
     )
