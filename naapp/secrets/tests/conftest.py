@@ -9,6 +9,8 @@ import pytest_asyncio
 from aweb_naapp_testing.databases import SchemaDatabases
 from awid_service.testing import Registry, running_registry
 
+from tests.production_database import prepared_service_databases as prepared_service_databases
+
 pytest_plugins = ("pgdbm.fixtures.conftest",)
 
 
