@@ -134,7 +134,7 @@ def _reference_review_forms_router(*, changes: ConsoleChanges) -> APIRouter:
             title="Link a 1Password secret",
             session=current,
             body_html="<h1>Link a 1Password secret</h1>"
-            '<p><a href="/secrets/native/new">Store a native secret instead</a></p>'
+            '<p><a href="/secrets/native/new">Store the value here instead of linking 1Password</a></p>'
             + body
             + _STATUS
             + _SCRIPT,

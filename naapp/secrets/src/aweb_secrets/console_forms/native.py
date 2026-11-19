@@ -31,13 +31,13 @@ class NativeValueField(StrEnum):
 
 _VALUE_LABELS = {
     NativeValueField.VALUE: "Value",
-    NativeValueField.USERNAME: "Username",
+    NativeValueField.USERNAME: "Username (leave empty if the service uses only a password)",
     NativeValueField.PASSWORD: "Password",
     NativeValueField.CLIENT_ID: "Client ID",
     NativeValueField.CLIENT_SECRET: "Client secret",
     NativeValueField.ACCESS_KEY_ID: "Access key ID",
     NativeValueField.SECRET_ACCESS_KEY: "Secret access key",
-    NativeValueField.SESSION_TOKEN: "Session token",
+    NativeValueField.SESSION_TOKEN: "Session token (optional)",
 }
 
 
@@ -82,8 +82,9 @@ def native_value_form(*, installation_id: str) -> str:
     )
     installation = escape(installation_id, quote=True)
     return (
-        "<h1>Store a native secret</h1>"
-        "<p>Enter the value once. It is sealed and never shown again. "
+        "<h1>Store a secret in Secrets</h1>"
+        "<p>The value is encrypted and kept by this Secrets service. "
+        "Enter it once; it is never shown again. "
         "Agents cannot use it until you confirm the draft with your passkey and grant access.</p>"
         f'<form id="native-value" method="post" action="/installations/{installation}/native/versions" '
         f'data-installation="{installation}" data-backend="{SecretBackend.NATIVE}" '
@@ -91,7 +92,9 @@ def native_value_form(*, installation_id: str) -> str:
         f'<input type="hidden" name="secret_id" value="{mint_secret_id()}">'
         '<label for="native-name">Secret name</label>'
         '<input id="native-name" name="ref" pattern="[a-z0-9][a-z0-9_-]{0,63}" '
-        'maxlength="64" autocomplete="off" required>'
+        'maxlength="64" autocomplete="off" required aria-describedby="native-name-hint" '
+        'title="Lowercase letters, digits, - and _; up to 64 characters">'
+        '<p id="native-name-hint">Lowercase letters, digits, - and _; up to 64 characters.</p>'
         '<label for="native-description">Description (optional)</label>'
         '<textarea id="native-description" name="description" maxlength="512" rows="2"></textarea>'
         '<label for="native-kind">Authentication kind</label>'
@@ -104,7 +107,7 @@ def native_value_form(*, installation_id: str) -> str:
         + _native_kind_controls()
         + '<label for="native-reason">Reason for this change (optional)</label>'
         '<input id="native-reason" name="reason" autocomplete="off">'
-        '<button type="submit">Save a native draft</button></form>'
+        '<button type="submit">Save the value and draft</button></form>'
         '<p id="form-status" role="status" aria-live="polite"></p>'
         '<link rel="stylesheet" href="/console-forms/forms.css">'
         '<script src="/console-forms/native.js" defer></script>'
@@ -128,7 +131,7 @@ def native_value_forms_router(*, changes: ConsoleChanges) -> APIRouter:
                 await changes.console.fence.check(tx, admitted)
                 changes._unexpired(current)
         return console_page(
-            title="Store a native secret",
+            title="Store a secret in Secrets",
             session=current,
             body_html=native_value_form(installation_id=installation_id),
         )

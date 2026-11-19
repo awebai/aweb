@@ -21,6 +21,7 @@ from aweb_naapp_testing import Member
 from playwright.async_api import BrowserContext, Page, expect
 from playwright.async_api import TimeoutError as BrowserTimeout
 
+from aweb_secrets.custody import Custody, LocalKeyFileProvider
 from aweb_secrets.policy import Policy
 from aweb_secrets.secret import SecretBackend, SecretKind, SecretRecord, SecretSensitivity
 from tests.harness import NAME, running_upstream
@@ -133,7 +134,7 @@ async def enter_and_confirm_native_value(
     await page.get_by_label("Bearer token", exact=True).fill(upstream.creds.bearer)
     mail_before = len(smtp.received)
     async with page.expect_response(origin + changes_path) as saved:
-        await page.get_by_role("button", name="Save a native draft").click()
+        await page.get_by_role("button", name="Save the value and draft").click()
     response = await saved.value
     assert response.status == HTTPStatus.CREATED
     drafted = await response.json()
@@ -275,6 +276,169 @@ async def test_production_owner_enters_native_value_and_agent_brokers_it(
             registry=registry,
         )
     await assert_agent_brokers_native_value(root=root, agent=agent, upstream=upstream)
+
+
+async def assert_native_inputs_cleared(page: Page) -> None:
+    cleared = await page.locator("[data-value-field]").evaluate_all(
+        "inputs => inputs.every(input => input.value === '')"
+    )
+    # Inspect only the boolean: a failed locator-value assertion would print the value.
+    assert cleared, "the console retained an entered value"
+
+
+async def test_native_form_displays_the_real_codec_refusal(root, production_console, browser):
+    service, _, _, _, installed, *_ = root
+    holder = await enrolled_owner(root)
+    stage_path = f"/installations/{installed['installation_id']}/native/versions"
+    async with await browser.new_context() as context:
+        page = await sign_in_browser_owner(context, holder=holder, origin=production_console)
+        await page.goto(production_console + "/secrets/native/new")
+        await page.get_by_label("Secret name", exact=True).fill("refused-value")
+        # Reach the server's codec refusal rather than the browser's required-field hint.
+        await page.locator("#native-value").evaluate("form => { form.noValidate = true; }")
+        async with page.expect_response(production_console + stage_path) as refused:
+            await page.get_by_role("button", name="Save the value and draft").click()
+        response = await refused.value
+        assert response.status == HTTPStatus.BAD_REQUEST
+        detail = (await response.json())["detail"]
+        await expect(page.locator("#form-status")).to_have_text(detail)
+        await assert_native_inputs_cleared(page)
+    assert await service.runtime.db().fetch_value("SELECT count(*) FROM sealed_versions") == 0
+
+
+async def test_native_form_recovers_this_tabs_sign_in_and_discards_the_value(
+    root, production_console, browser, upstream
+):
+    service, _, _, _, installed, *_ = root
+    holder = await enrolled_owner(root)
+    stage_path = f"/installations/{installed['installation_id']}/native/versions"
+    async with await browser.new_context() as context:
+        page = await sign_in_browser_owner(context, holder=holder, origin=production_console)
+        await page.goto(production_console + "/secrets/native/new")
+        await page.get_by_label("Secret name", exact=True).fill("new-tab-value")
+        await page.get_by_label("Bearer token", exact=True).fill(upstream.creds.bearer)
+        await expect(page.locator("#console-reauth-notice")).to_be_hidden()
+        await page.evaluate("sessionStorage.removeItem(window.awebConsole.csrfKey)")
+        async with page.expect_response(production_console + stage_path) as refused:
+            await page.get_by_role("button", name="Save the value and draft").click()
+        response = await refused.value
+        assert response.status == HTTPStatus.FORBIDDEN
+        assert (await response.json())["detail"] == "csrf_token_required"
+        await expect(page.locator("#console-reauth-notice")).to_be_visible()
+        await expect(page.locator("#form-status")).to_have_text(
+            "Sign in with your passkey in this tab, then enter the value again."
+        )
+        await assert_native_inputs_cleared(page)
+    assert await service.runtime.db().fetch_value("SELECT count(*) FROM sealed_versions") == 0
+
+
+async def test_native_form_shows_custody_recovery_without_reflecting_the_value(
+    root, production_console, browser, upstream
+):
+    service, client, configured, member, installed, *_ = root
+    holder = await enrolled_owner(root)
+    db = service.runtime.db()
+    stage_path = f"/installations/{installed['installation_id']}/native/versions"
+    async with await browser.new_context() as context:
+        page = await sign_in_browser_owner(context, holder=holder, origin=production_console)
+        await page.goto(production_console + "/secrets/native/new")
+        secret_id = await page.locator('[name="secret_id"]').input_value()
+        body = native_entry_request(value=upstream.creds.bearer)
+        body["secret"]["secret_id"] = secret_id
+        staged = await client.post(
+            configured.console_origin + stage_path,
+            json=body,
+            headers={"X-CSRF-Token": holder.csrf_token},
+        )
+        assert staged.status_code == HTTPStatus.CREATED
+        # Actual custody state becomes unavailable; the allocator/provider is never replaced.
+        custody = Custody(LocalKeyFileProvider(configured.custody_key_file), db)
+        async with db.transaction() as tx:
+            await custody.disable(
+                tx,
+                installation_id=installed["installation_id"],
+                team_id=member.team_id,
+                secret_id=secret_id,
+            )
+        await page.get_by_label("Secret name", exact=True).fill("native-guard")
+        await page.get_by_label("Bearer token", exact=True).fill(upstream.creds.bearer)
+        async with page.expect_response(production_console + stage_path) as refused:
+            await page.get_by_role("button", name="Save the value and draft").click()
+        response = await refused.value
+        assert response.status == HTTPStatus.SERVICE_UNAVAILABLE
+        await expect(page.locator("#form-status")).to_have_text((await response.json())["detail"])
+        await expect(page.locator("#form-status")).to_contain_text("operator")
+        await assert_native_inputs_cleared(page)
+    assert await db.fetch_value("SELECT count(*) FROM sealed_versions") == 1
+
+
+async def test_lost_native_draft_response_recovers_from_the_actual_approval_email(
+    root, production_console, browser, upstream
+):
+    service, _, _, _, installed, smtp, *_ = root
+    holder = await enrolled_owner(root)
+    changes_path = f"/installations/{installed['installation_id']}/change-sets"
+    reached_server = []
+
+    async def lose_response(route):
+        response = await route.fetch()
+        reached_server.append(response.status)
+        await response.dispose()
+        await route.abort("failed")
+
+    async with await browser.new_context() as context:
+        page = await sign_in_browser_owner(context, holder=holder, origin=production_console)
+        await page.goto(production_console + "/secrets/native/new")
+        await page.get_by_label("Secret name", exact=True).fill("lost-draft")
+        await page.get_by_label("Bearer token", exact=True).fill(upstream.creds.bearer)
+        await page.route(production_console + changes_path, lose_response)
+        mail_before = len(smtp.received)
+        button = page.get_by_role("button", name="Save the value and draft")
+        await button.click()
+        await expect(page.locator("#form-status")).to_have_attribute("data-state", "uncertain")
+        await expect(page.locator("#form-status")).to_contain_text("approval email")
+        await expect(button).to_be_disabled()
+        await assert_native_inputs_cleared(page)
+        await page.locator("#native-value").evaluate("form => form.requestSubmit()")
+        assert reached_server == [HTTPStatus.CREATED]
+        db = service.runtime.db()
+        assert await db.fetch_value("SELECT count(*) FROM change_sets") == 1
+        assert await db.fetch_value("SELECT count(*) FROM secrets") == 0
+        await confirm_from_mail(page, smtp=smtp, message_start_index=mail_before)
+        assert await db.fetch_value("SELECT count(*) FROM change_sets") == 1
+        assert await db.fetch_value("SELECT active_version FROM secrets") == 1
+
+
+class ConsoleTheme(StrEnum):
+    LIGHT = "light"
+    DARK = "dark"
+
+
+async def test_all_native_kind_layouts_share_form_styles_without_overflow(
+    root, production_console, browser, tmp_path
+):
+    holder = await enrolled_owner(root)
+    screenshots = tmp_path / "native-layout"
+    screenshots.mkdir()
+    async with await browser.new_context() as context:
+        page = await sign_in_browser_owner(context, holder=holder, origin=production_console)
+        for width in (375, 1440):
+            await page.set_viewport_size({"width": width, "height": 1000})
+            for theme in ConsoleTheme:
+                await page.emulate_media(color_scheme=theme)
+                await page.goto(production_console + "/secrets/native/new")
+                form = page.locator("#native-value")
+                await expect(form).to_have_css("display", "grid")
+                for kind in SecretKind:
+                    await page.get_by_label("Authentication kind", exact=True).select_option(kind)
+                    await expect(form.locator(f'fieldset[data-kind="{kind}"]')).to_be_visible()
+                    assert await page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth + 1"
+                    )
+                    await assert_native_inputs_cleared(page)
+                    await page.screenshot(
+                        path=screenshots / f"native-{width}-{theme}-{kind}.png", full_page=True
+                    )
 
 
 class InvalidNativeEntry(StrEnum):

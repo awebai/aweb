@@ -47,9 +47,7 @@ class ValueStagingCode(StrEnum):
 _NATIVE_REFUSALS = {
     ValueStagingCode.INVALID_REQUEST: "Check the secret details and value fields, then submit again.",
     ValueStagingCode.JSON_REQUIRED: "Use the console form to submit the value as JSON.",
-    ValueStagingCode.CSRF_REQUIRED: "Sign in with your passkey in this tab, then enter the value again.",
     ValueStagingCode.OWNER_REQUIRED: "Sign in with the current installation owner's passkey to store a value.",
-    ValueStagingCode.SESSION_REQUIRED: "Sign in again with your owner passkey before storing this value.",
     ValueStagingCode.CUSTODY_UNAVAILABLE: "The value could not be sealed. Ask the operator to check custody readiness, then enter it again.",
 }
 
@@ -66,6 +64,12 @@ async def native_value_refusals() -> AsyncIterator[None]:
     try:
         yield
     except HTTPException as refused:
+        # The shared shell owns session recovery and recognises this CSRF code.
+        if refused.status_code == HTTPStatus.UNAUTHORIZED or (
+            refused.status_code == HTTPStatus.FORBIDDEN
+            and refused.detail == ValueStagingCode.CSRF_REQUIRED
+        ):
+            raise
         try:
             code = ValueStagingCode(refused.detail)
         except ValueError:

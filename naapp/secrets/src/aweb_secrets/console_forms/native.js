@@ -8,7 +8,7 @@
   const control = name => form.elements.namedItem(name);
   const read = name => control(name).value;
   const kinds = [...form.querySelectorAll("fieldset[data-kind]")];
-  const NativeEntryState = Object.freeze({READY: "ready", SEALING: "sealing", DRAFTING: "drafting", PENDING: "pending"});
+  const NativeEntryState = Object.freeze({READY: "ready", SEALING: "sealing", DRAFTING: "drafting", PENDING: "pending", UNCERTAIN: "uncertain"});
   let state = NativeEntryState.READY;
 
   function selectKind() {
@@ -77,20 +77,28 @@
       }
       state = NativeEntryState.PENDING;
       status.dataset.state = state;
-      status.textContent = "Sealed version " + staged.version + " at " + staged.created_at +
+      status.textContent = "Sealed version " + staged.version + " at " + new Date(staged.created_at).toLocaleString() +
         ". Draft saved. Open your approval email to confirm the value. ";
       const review = document.createElement("a");
       review.href = root + "/" + encodeURIComponent(draft.change_id) + "/review";
       review.textContent = "Review this draft";
       status.append(review);
     } catch (error) {
-      const action = state === NativeEntryState.DRAFTING
-        ? " Check your pending drafts before entering the value again."
-        : " Sign in as the owner and enter the value again when ready.";
-      status.textContent = error instanceof Error && error.message
-        ? error.message + action
-        : "The draft could not be saved. Sign in as the owner and enter the value again.";
-      state = NativeEntryState.READY;
+      const detail = error && typeof error.detail === "string" ? error.detail.trim() : "";
+      if (error instanceof api.SessionRequired) {
+        state = state === NativeEntryState.DRAFTING ? NativeEntryState.UNCERTAIN : NativeEntryState.READY;
+        status.textContent = "Sign in with your passkey in this tab, then enter the value again.";
+      } else if (state === NativeEntryState.DRAFTING) {
+        state = NativeEntryState.UNCERTAIN;
+        const recovery = "The value was sealed, but saving the draft was not confirmed. " +
+          "Check your approval email for a link to review it. If none arrived, reload this page " +
+          "and enter the value again. Unused sealed copies stay inactive.";
+        status.textContent = detail ? detail + " " + recovery : recovery;
+      } else {
+        state = NativeEntryState.READY;
+        status.textContent = detail || "The value could not be saved. Check your connection and try entering it again.";
+      }
+      status.dataset.state = state;
     } finally {
       for (const name of Object.keys(value)) value[name] = "";
       for (const input of valueInputs) input.value = "";

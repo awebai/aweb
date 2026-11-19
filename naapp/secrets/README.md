@@ -202,6 +202,13 @@ the existing fresh passkey approval and confirmation activate the value and
 record its governance events. Granting an agent access remains a separate
 owner-confirmed change.
 
+If saving a draft is not confirmed, the form prevents another submission.
+Check the approval email for its review link before re-entering the value.
+If no link arrived, reload the entry page to start with a fresh secret ID;
+unused sealed copies remain inactive. A custody refusal can reflect deployment
+readiness or a transient provider failure; the operator checks readiness before
+the owner enters the value again.
+
 `POST /installations/{installation_id}/backend-credentials/onepassword/versions`
 accepts a JSON object with one `value` string and the current tab's
 `X-CSRF-Token`. It uses the authoritative installation lookup, current owner
