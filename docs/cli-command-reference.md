@@ -871,7 +871,10 @@ The approval service checks your own-person packet; no new key is enrolled.
 
 The new live binding is saved separately from the original enrollment and
 historical proof evidence. A retry carries the same retained packet until the
-service confirms it. This command never replaces a lost approval key.
+service confirms it. While that packet exists, --issuer does not replace it.
+A definitive refusal names the retained file to remove before requesting a new
+packet. An uncertain failure keeps the exact packet for replay.
+This command never replaces a lost approval key.
 
 Flags:
 - `-h, --help help for refresh-binding`
