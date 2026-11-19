@@ -605,14 +605,6 @@ type dispatchTarget struct {
 	generation int
 }
 
-// dispatch fans one identity's event out to every instance registered under
-// that identity home, carrying the receive binding context through the hint.
-func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
-	teamID, _ := effectiveTeamID(identityHome, "")
-	key, _ := bindingKey(identityHome, teamID)
-	b.dispatchStream(key, ev)
-}
-
 func (b *Broker) dispatchStream(key string, ev awid.AgentEvent) {
 	b.mu.Lock()
 	targets := make([]dispatchTarget, 0, len(b.instances))

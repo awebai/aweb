@@ -104,7 +104,7 @@ func TestBrokerControlsDuringSlowReconcile(t *testing.T) {
 			}
 			if operation != "deregister" {
 				runner, ok := broker.instanceRunner(target.Home)
-				if !ok || !runner.allStreamsAdmitted() {
+				if !ok || !runner.snapshot().StreamAdmitted {
 					t.Fatal("new home did not admit its stream before reconcile resumed")
 				}
 			}
@@ -128,7 +128,7 @@ func TestBrokerControlsDuringSlowReconcile(t *testing.T) {
 			if streamPresent != wantPresent {
 				t.Fatalf("stream present=%v want=%v", streamPresent, wantPresent)
 			}
-			if untouched, ok := broker.instanceRunner(unrelatedHome); !ok || !untouched.allStreamsAdmitted() {
+			if untouched, ok := broker.instanceRunner(unrelatedHome); !ok || !untouched.snapshot().StreamAdmitted {
 				t.Fatal("control mutation prevented unrelated snapshot entry from applying")
 			}
 			if operation == "reregister" {
@@ -181,10 +181,10 @@ func TestDeferredAdmissionDoesNotReviveRemovedRunner(t *testing.T) {
 	removed.admitted = map[string]bool{}
 	removed.mu.Unlock()
 	broker.admitCurrentRunnerStreams(removed)
-	if removed.allStreamsAdmitted() {
+	if removed.snapshot().StreamAdmitted {
 		t.Fatal("removed runner admitted against replacement")
 	}
-	if !current.allStreamsAdmitted() {
+	if !current.snapshot().StreamAdmitted {
 		t.Fatal("replacement lost stream admission")
 	}
 }
@@ -204,7 +204,7 @@ func TestRegisterReplacesBindingAtStreamBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner, _ := broker.instanceRunner(home)
-	if !runner.allStreamsAdmitted() {
+	if !runner.snapshot().StreamAdmitted {
 		t.Fatal("binding replacement waited for next reconcile at stream bound")
 	}
 	streams := broker.Status().Streams

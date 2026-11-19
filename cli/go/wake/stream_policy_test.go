@@ -121,7 +121,7 @@ func TestRefusedStreamIsReportedRefusedAndRecovers(t *testing.T) {
 	if !ok {
 		t.Fatal("no runner for the registered home")
 	}
-	waitFor(t, "the registration to stop counting the stream as admitted", func() bool { return !runner.allStreamsAdmitted() })
+	waitFor(t, "the registration to stop counting the stream as admitted", func() bool { return !runner.snapshot().StreamAdmitted })
 
 	clock.Advance(30 * time.Second)
 	waitFor(t, "the retry", func() bool { return opener.Opens() == 2 })
@@ -136,7 +136,7 @@ func TestRefusedStreamIsReportedRefusedAndRecovers(t *testing.T) {
 	}
 	waitFor(t, "the registration to count the stream as admitted", func() bool {
 		instance := onlyInstance(t, broker)
-		return instance.StreamAdmitted && instance.ReceiveIdentities[0].StreamAdmitted && runner.allStreamsAdmitted()
+		return instance.StreamAdmitted && instance.ReceiveIdentities[0].StreamAdmitted && runner.snapshot().StreamAdmitted
 	})
 	if entered, left := countLines(logs, "stream quarantined "), countLines(logs, "stream quarantine ended "); entered != 1 || left != 1 {
 		t.Fatalf("quarantine logged %d times on entry and %d on exit, want once each:\n%s", entered, left, logs.all())

@@ -233,7 +233,7 @@ func TestLoadedDuplicateBindingReportsConflictAndReceivesNoDelivery(t *testing.T
 	if conflicts[home1] != "" || conflicts[home2] != home1 {
 		t.Fatalf("conflicts=%#v, want %s to own and %s to conflict", conflicts, home1, home2)
 	}
-	broker.dispatch(identityHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m1"})
+	deliverFixtureStreamEvent(t, broker, identityHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m1"})
 	if got := len(broker.instances[HomeKey(home1)].events); got != 1 {
 		t.Fatalf("winner events=%d want 1", got)
 	}
@@ -253,7 +253,7 @@ func TestDispatchSkipsTransportOnlyEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := broker.instances[HomeKey(home)]
-	broker.dispatch(identityHome, awid.AgentEvent{Type: awid.AgentEventChannelReconnected})
+	deliverFixtureStreamEvent(t, broker, identityHome, awid.AgentEvent{Type: awid.AgentEventChannelReconnected})
 	if got := len(runner.events); got != 0 {
 		t.Fatalf("transport-only event queued=%d", got)
 	}

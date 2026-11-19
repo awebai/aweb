@@ -52,7 +52,7 @@ func TestRetainedRunnerKeepsItsBindingOwnership(t *testing.T) {
 			if got := second.snapshot().ConflictHome; got != home1 {
 				t.Fatalf("second ConflictHome=%q, want it still refused in favour of %s", got, home1)
 			}
-			broker.dispatch(identityHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m1"})
+			deliverFixtureStreamEvent(t, broker, identityHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m1"})
 			if len(first.events) != 1 || len(second.events) != 0 {
 				t.Fatalf("dispatch queues: first=%d second=%d, want the event delivered to the retained owner only", len(first.events), len(second.events))
 			}

@@ -116,7 +116,7 @@ func TestBrokerRestoresPauseBeforeChildDelivery(t *testing.T) {
 	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: logs.log})
 	defer cancel()
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1", ConversationID: "conv-1"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1", ConversationID: "conv-1"})
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
 		return inst.ChannelCore.Paused && inst.ChannelCore.TraceStage == "lane_job_failed" && strings.Contains(inst.ChannelCore.LastError, "paused")
 	})
@@ -126,7 +126,7 @@ func TestBrokerRestoresPauseBeforeChildDelivery(t *testing.T) {
 	}
 	// No readiness queue retains this event; a normal subsequent offer retries it.
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return !inst.ChannelCore.Paused })
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1", ConversationID: "conv-1"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1", ConversationID: "conv-1"})
 	waitForFileContains(t, inputPath, "paused mail")
 	data, _ := os.ReadFile(inputPath)
 	if got := strings.Count(string(data), "paused mail"); got != 1 {
@@ -233,10 +233,10 @@ func TestBrokerBindingChangeRestartsChild(t *testing.T) {
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
 		return inst.IdentityHome == newHome && inst.ChannelCore.Running && inst.ChannelCore.Generation >= 1
 	})
-	broker.dispatch(oldHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "old", ConversationID: "old-conv"})
+	deliverFixtureStreamEvent(t, broker, oldHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "old", ConversationID: "old-conv"})
 	waitForCond(t, "removed binding diagnostic", func() bool { return strings.Contains(logs.all(), "reason=no_registered_binding") })
 	assertFileNotContains(t, inputPath, "old mail")
-	broker.dispatch(newHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "new", ConversationID: "new-conv"})
+	deliverFixtureStreamEvent(t, broker, newHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "new", ConversationID: "new-conv"})
 	waitForFileContains(t, inputPath, "new mail")
 	assertFileNotContains(t, inputPath, "old mail")
 }
@@ -268,7 +268,7 @@ func TestBrokerPauseDuringChildCreationReachesNewChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "creation-pause", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "creation-pause", ConversationID: "conv"})
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
 		return inst.ChannelCore.Paused && inst.ChannelCore.TraceStage == "lane_job_failed" && strings.Contains(inst.ChannelCore.LastError, "paused")
 	})
@@ -277,7 +277,7 @@ func TestBrokerPauseDuringChildCreationReachesNewChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return !inst.ChannelCore.Paused })
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "creation-pause", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "creation-pause", ConversationID: "conv"})
 	waitForFileContains(t, inputPath, "creation pause mail")
 }
 
@@ -314,7 +314,7 @@ func TestBrokerIgnoresStaleInactiveGeneration(t *testing.T) {
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running && inst.ChannelCore.Generation >= 1 })
 	runner := broker.instances[HomeKey(home)]
 	runner.inactive <- inactiveSignal{generation: 0, state: "stopped"}
-	broker.dispatch(newHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "new-inactive", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, newHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "new-inactive", ConversationID: "conv"})
 	waitForFileContains(t, inputPath, "new inactive mail")
 	if inst := instanceByHome(t, broker, home); inst.Phase == PhaseInactive {
 		t.Fatalf("stale inactive generation made new registration inactive: %#v", inst)
@@ -388,7 +388,7 @@ func TestBrokerDeregisterThenSameHomeRegisterStartsFreshAndDelivers(t *testing.T
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
 	writeStoppedOATS(t, root, inputPath)
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-first", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-first", ConversationID: "conv"})
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Phase == PhaseInactive && !inst.ChannelCore.Running })
 	if existed, err := broker.Deregister(home); err != nil || !existed {
 		t.Fatalf("deregister existed=%v err=%v", existed, err)
@@ -400,7 +400,7 @@ func TestBrokerDeregisterThenSameHomeRegisterStartsFreshAndDelivers(t *testing.T
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
 		return inst.ChannelCore.Running && !inst.Paused && inst.Phase == PhaseActive
 	})
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "reactivated", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "reactivated", ConversationID: "conv"})
 	waitForFileContains(t, inputPath, "reactivated mail")
 }
 
@@ -430,7 +430,7 @@ func TestBrokerExplicitRegisterReactivatesInactiveHome(t *testing.T) {
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
 	writeStoppedOATS(t, root, inputPath)
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-first", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-first", ConversationID: "conv"})
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Phase == PhaseInactive && !inst.ChannelCore.Running })
 	writeFakeOATS(t, root, inputPath)
 	if err := broker.Register(reg); err != nil {
@@ -439,7 +439,7 @@ func TestBrokerExplicitRegisterReactivatesInactiveHome(t *testing.T) {
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
 		return inst.ChannelCore.Running && inst.Phase == PhaseActive && inst.LastState == "idle" && inst.LastError == ""
 	})
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "explicit-reactivated", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "explicit-reactivated", ConversationID: "conv"})
 	waitForFileContains(t, inputPath, "explicit reactivate mail")
 }
 
@@ -482,7 +482,7 @@ func TestBrokerExplicitRegisterFencesStaleInactiveCallback(t *testing.T) {
 		return inst.ChannelCore.Running && inst.ChannelCore.Generation > oldGeneration
 	})
 	runner.inactive <- inactiveSignal{generation: oldGeneration, state: "stopped"}
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "after-stale-inactive", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "after-stale-inactive", ConversationID: "conv"})
 	waitForFileContains(t, inputPath, "stale inactive fenced mail")
 	if inst := instanceByHome(t, broker, home); inst.Phase == PhaseInactive {
 		t.Fatalf("stale inactive generation made reactivated registration inactive: %#v", inst)
@@ -634,11 +634,11 @@ func TestBrokerInactiveStopsChildAndDropsLaterEvents(t *testing.T) {
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
 	writeStoppedOATS(t, root, inputPath)
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-1", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-1", ConversationID: "conv"})
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Phase == PhaseInactive && !inst.ChannelCore.Running })
 	assertFileNotContains(t, inputPath, "inactive mail")
 	before := instanceByHome(t, broker, home).Evicted
-	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-2", ConversationID: "conv"})
+	deliverFixtureStreamEvent(t, broker, grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-2", ConversationID: "conv"})
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Evicted > before })
 	waitForCond(t, "inactive drop diagnostic", func() bool {
 		return strings.Contains(logs.all(), "reason=inactive") || strings.Contains(logs.all(), "reason=no_registered_binding")
