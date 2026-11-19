@@ -643,6 +643,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	apiKey := resolveInitAPIKey()
+	if apiKey != "" {
+		if err := checkAPIKeyInitRecoveryAuthority(apiKeyInitAuthorityPreflight{WorkingDir: creationDir, APIKey: apiKey}); err != nil {
+			return err
+		}
+	}
 	var apiSelected *apiKeyCreationTeam
 	// Existing certificates still reconnect normally. An explicitly selected
 	// source principal can create into a fresh directory through its invitation.

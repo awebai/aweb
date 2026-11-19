@@ -112,6 +112,30 @@ type apiKeyBootstrapIdentityMaterial struct {
 	StableID   string
 }
 
+type apiKeyInitAuthorityPreflight struct {
+	WorkingDir string
+	APIKey     string
+}
+
+func (state *apiKeyPartialInitState) matchesAPIKey(apiKey string) bool {
+	return state.APIKeyFingerprint == apiKeyFingerprint(apiKey)
+}
+
+// checkAPIKeyInitRecoveryAuthority keeps a changed key local before selection
+// contacts the service (docs/hosted-global-bootstrap.md:180-190). The full
+// recovery context is checked again under the bootstrap lock before effects.
+func checkAPIKeyInitRecoveryAuthority(in apiKeyInitAuthorityPreflight) error {
+	path := apiKeyPartialInitPath(in.WorkingDir)
+	state, err := loadAPIKeyPartialInit(path)
+	if err != nil || state == nil {
+		return err
+	}
+	if !state.matchesAPIKey(in.APIKey) {
+		return usageError("partial API-key init state at %s was created for a different bootstrap context (api_key_fingerprint differs); retry the original command or remove the file explicitly", path)
+	}
+	return nil
+}
+
 func resolveInitAPIKey() string {
 	return strings.TrimSpace(os.Getenv(initAPIKeyEnvVar))
 }
@@ -713,7 +737,7 @@ func validateAPIKeyPartialInitContext(
 	if state.AgentType != expected.AgentType {
 		mismatches = append(mismatches, fmt.Sprintf("agent_type %q != %q", state.AgentType, expected.AgentType))
 	}
-	if state.APIKeyFingerprint != expected.APIKeyFingerprint {
+	if !state.matchesAPIKey(req.APIKey) {
 		mismatches = append(mismatches, "api_key_fingerprint differs")
 	}
 	if len(mismatches) > 0 {
