@@ -940,8 +940,11 @@ func TestTeamHumanAddRejectsExistingAwSymlinkState(t *testing.T) {
 	teamHumanAddLayoutOnly = true
 
 	err := runTeamHumanAdd(nil, []string{"developer"})
-	if err == nil || !strings.Contains(err.Error(), "already has identity state") {
+	if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
 		t.Fatalf("error=%v", err)
+	}
+	if _, err := os.Lstat(root + "/missing-aw-target"); !os.IsNotExist(err) {
+		t.Fatalf("refusal wrote through the identity-home symlink: %v", err)
 	}
 }
 
@@ -1750,6 +1753,11 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 			return
 		}
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			certificate := requireCertificateAuthForTest(t, r)
+			if err := json.NewEncoder(w).Encode(connectResponse{TeamID: certificate.Team, Alias: certificate.Alias, AgentID: certificate.CertificateID, WorkspaceID: "fixture-" + certificate.CertificateID, TeamDIDKey: certificate.TeamDIDKey}); err != nil {
+				t.Error(err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
@@ -1782,8 +1790,7 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	defer server.Close()
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	teamHumanCreateFirstGlobal = true
-	// Keep the provisioning-time encryption-key publish off the production
-	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	// Keep admission and encryption publication on this fixture service.
 	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Eng"}); err != nil {
@@ -1860,6 +1867,11 @@ func TestTeamHumanCreateBYOTWithAgentsCreatesTeamAndRoster(t *testing.T) {
 		}
 
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			certificate := requireCertificateAuthForTest(t, r)
+			if err := json.NewEncoder(w).Encode(connectResponse{TeamID: certificate.Team, Alias: certificate.Alias, AgentID: certificate.CertificateID, WorkspaceID: "fixture-" + certificate.CertificateID, TeamDIDKey: certificate.TeamDIDKey}); err != nil {
+				t.Error(err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"aweb_url": serverURL, "registry_url": serverURL})
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
@@ -2006,6 +2018,11 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 			return
 		}
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			certificate := requireCertificateAuthForTest(t, r)
+			if err := json.NewEncoder(w).Encode(connectResponse{TeamID: certificate.Team, Alias: certificate.Alias, AgentID: certificate.CertificateID, WorkspaceID: "fixture-" + certificate.CertificateID, TeamDIDKey: certificate.TeamDIDKey}); err != nil {
+				t.Error(err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
 			if !namespaceCreated {
 				http.NotFound(w, r)
@@ -2062,8 +2079,7 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 	teamHumanCreateNamespace = "acme.com"
 	teamHumanCreateRegistryURL = server.URL
 	teamHumanCreateFirstGlobal = true
-	// Keep the provisioning-time encryption-key publish off the production
-	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	// Keep admission and encryption publication on this fixture service.
 	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
@@ -2124,6 +2140,11 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 			return
 		}
 		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			certificate := requireCertificateAuthForTest(t, r)
+			if err := json.NewEncoder(w).Encode(connectResponse{TeamID: certificate.Team, Alias: certificate.Alias, AgentID: certificate.CertificateID, WorkspaceID: "fixture-" + certificate.CertificateID, TeamDIDKey: certificate.TeamDIDKey}); err != nil {
+				t.Error(err)
+			}
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces":
@@ -2156,13 +2177,13 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 		}
 	}))
 	defer server.Close()
+	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	teamHumanCreateBYOT = true
 	teamHumanCreateNamespace = "acme.com"
 	teamHumanCreateRegistryURL = server.URL
 	teamHumanCreateAlias = "captain"
 	teamHumanCreateFirstGlobal = true
-	// Keep the provisioning-time encryption-key publish off the production
-	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	// Keep admission and encryption publication on this fixture service.
 	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
