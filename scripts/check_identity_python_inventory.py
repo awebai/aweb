@@ -159,6 +159,7 @@ def scan_python_source(
 
         def reference(self, node):
             if id(node) in deferred_nodes:
+                self.generic_visit(node)
                 return
             parent = parents.get(id(node))
             is_callee = isinstance(parent, ast.Call) and parent.func is node

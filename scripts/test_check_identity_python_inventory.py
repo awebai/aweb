@@ -144,6 +144,14 @@ class PrimitiveGuardTests(unittest.TestCase):
         )
         self.assertTrue(self.check("pkg/consumer.py", source))
 
+    def test_postponed_attribute_receiver_keeps_its_primitive_constructor_visible(self):
+        source = (
+            "from __future__ import annotations\n"
+            "from nacl.signing import SigningKey\n"
+            "def key_type() -> type(SigningKey(bytes(32)).verify_key): return None\n"
+        )
+        self.assertTrue(self.check("pkg/consumer.py", source))
+
     def test_evaluated_annotation_primitive_references_remain_visible(self):
         source = "from nacl.signing import SigningKey\ndef borrow(key: SigningKey): return key\n"
         self.assertTrue(self.check("pkg/consumer.py", source))
