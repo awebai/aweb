@@ -1246,16 +1246,25 @@ deletes coordination history.
 The Python coordination lifecycle owner accepts a named `AgentDisposition`
 (`PRESERVED`, `DELETED`, `RETIRED`, `PREPARED_REMOVAL`) in
 `LifecycleCascadeRequest.agent_disposition`. This is an embedding API, not an
-HTTP authority flag. The existing local-delete boolean remains a compatibility
-adapter. Explicit `target_agent_id` cleanup works with zero or already-deleted
-workspaces; `all_for_agent` cleans all active workspace paths. Claims on deleted
+HTTP authority flag. `MemberStatus` is the one stored `agents.status`
+vocabulary; each disposition maps explicitly to its constants. Native state
+writes and coordination cleanup require a nonempty team ID. A released Python
+request that omits it must resolve exactly one canonical target team before
+writing; omission never authorizes cross-team cleanup. The existing local-delete
+boolean remains a compatibility adapter for released embedding callers while they convert to the named choice;
+it is removed in a separate change after those callers have migrated. Native
+workspace cleanup already uses the named choice. Explicit `target_agent_id`
+cleanup works with zero or already-deleted workspaces; `all_for_agent` cleans all active workspace paths. Claims on deleted
 paths, reservations, session admission leases, grant liveness, pending controls,
 status and presence are also cleared. Pending controls become consumed history;
-chat participants become left, retaining chat/mail/identity history.
+chat participants become left, retaining chat/mail/identity history. Cleanup
+locks the complete active/retained-claim workspace set in UUID order before
+claim/focus writes; claim acquisition/release uses the same workspace order.
+Bulk repo cleanup locks its combined target set before invoking each cleanup.
 
 `DELETED` and `RETIRED` set the corresponding native status and `deleted_at`.
-`PREPARED_REMOVAL` sets `deleted_at` while retaining native status `active`,
-reports neither terminal identity flag, and denies ordinary native activity.
+`PREPARED_REMOVAL` atomically requires the agent still be active, then sets
+`deleted_at` while retaining native status `active`, reports neither terminal identity flag, and denies ordinary native activity.
 The embedding host owns the exact removal ledger, restricted completion access,
 external certificate revocation and credential/custody disposal. Clearing grant
 liveness does not revoke retained session grants. `PRESERVED` leaves identity

@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from redis.asyncio import Redis
 
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
+
 from aweb.audit import OperatorAuditRoute, audit_success
 
 from ...db import DatabaseInfra, get_db_infra
@@ -25,6 +27,8 @@ from ...lifecycle import (
     LifecycleActor,
     LocalWorkspaceTarget,
     apply_local_workspace_cleanup,
+    load_removed_claim_workspaces,
+    lock_workspace_cleanup_targets_on,
     replay_lifecycle_side_effects,
 )
 from ...redis_client import get_redis
@@ -291,6 +295,10 @@ async def delete_repo(
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> RepoDeleteResponse:
     """Soft-delete a repo and cascade to workspaces."""
+    try:
+        registry_client = application_registry_client(request.app.state)
+    except RegistryClientUnavailable as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     manager = db.get_manager("aweb")
     async with manager.transaction() as aweb_db:
         repo = await aweb_db.fetch_one(
@@ -313,6 +321,20 @@ async def delete_repo(
             str(repo_id),
             identity.team_id,
         )
+        removed = await load_removed_claim_workspaces(
+            aweb_db,
+            agent_ids=[row["agent_id"] for row in workspace_rows if row["agent_id"] is not None],
+            team_id=identity.team_id,
+        )
+        # One outer transaction locks the full repo set before any claim release.
+        await lock_workspace_cleanup_targets_on(
+            aweb_db,
+            targets=tuple(
+                LocalWorkspaceTarget(workspace_id=row["workspace_id"], agent_id=row["agent_id"])
+                for row in workspace_rows + removed
+            ),
+            team_id=identity.team_id,
+        )
         skipped: list[SkippedWorkspace] = []
         deleted_count = 0
         claims_deleted = 0
@@ -331,6 +353,8 @@ async def delete_repo(
                 ),
                 actor=actor,
                 deleted_at=deleted_at,
+                registry_client=registry_client,
+                request_context=request,
             )
             if result.errors:
                 skipped.append(

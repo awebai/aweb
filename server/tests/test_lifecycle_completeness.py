@@ -1,5 +1,9 @@
 """Lifecycle cleanup through the real SQL transaction and Redis outbox."""
 
+import asyncio
+from contextlib import suppress
+from dataclasses import replace
+from datetime import datetime, timezone
 from enum import StrEnum
 from uuid import uuid4
 
@@ -12,6 +16,8 @@ from aweb.lifecycle import (
     replay_lifecycle_side_effects,
 )
 from aweb.messaging.waiting import get_waiting_agents, register_waiting
+from aweb.lifecycle_agent import apply_agent_disposition_on
+from aweb.member_status import MemberStatus
 from aweb.presence import update_agent_presence
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
@@ -196,6 +202,25 @@ async def test_agent_cleanup_retains_history_and_completion_credentials_without_
         db, lifecycle_redis, operation_id=result.outbox_operation_id
     )
     assert replay.pending_count == 0
+    repeated = await apply_lifecycle_cascade(
+        db,
+        lifecycle_redis,
+        LifecycleCascadeRequest(
+            operation="cleanup_agent_coordination_state",
+            actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+            team_id=team,
+            target_agent_id=str(agent),
+            workspace_scope="all_for_agent",
+            agent_disposition=disposition,
+        ),
+    )
+    assert repeated.errors == ()
+    assert repeated.identity_deleted == result.identity_deleted
+    assert repeated.identity_retired == result.identity_retired
+    assert (
+        await db.fetch_value("SELECT status FROM {{tables.agents}} WHERE agent_id=$1", agent)
+        == expected_status
+    )
 
 
 @pytest.mark.asyncio
@@ -317,3 +342,252 @@ async def test_prepared_removal_denies_ordinary_member_activity(privacy_app):
     assert await env.db.fetch_value(
         "SELECT deleted_at IS NOT NULL FROM {{tables.agents}} WHERE agent_id=$1", agent
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal", [AgentDisposition.DELETED, AgentDisposition.RETIRED])
+async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_removal(
+    aweb_cloud_db, lifecycle_redis, terminal
+):
+    """The checked native state and its write agree under READ COMMITTED."""
+    db = aweb_cloud_db.aweb_db
+    team, agent, workspace = await _seed_workspace_with_claim(db)
+    prepared_pid = asyncio.get_running_loop().create_future()
+
+    async def prepare():
+        async with db.transaction() as prepared_tx:
+            prepared_pid.set_result(await prepared_tx.fetch_value("SELECT pg_backend_pid()"))
+            return await apply_lifecycle_cascade(
+                prepared_tx,
+                lifecycle_redis,
+                LifecycleCascadeRequest(
+                    operation="cleanup_agent_coordination_state",
+                    actor=LifecycleActor(
+                        actor_id="owner", actor_type="system", authority="embedding"
+                    ),
+                    team_id=team,
+                    target_agent_id=str(agent),
+                    workspace_scope="all_for_agent",
+                    agent_disposition=AgentDisposition.PREPARED_REMOVAL,
+                ),
+            )
+
+    prepared_task = None
+    try:
+        async with db.transaction() as terminal_tx:
+            terminal_pid = await terminal_tx.fetch_value("SELECT pg_backend_pid()")
+            changed = await apply_agent_disposition_on(
+                terminal_tx,
+                agent_ids=[agent],
+                team_id=team,
+                disposition=terminal,
+                deleted_at=datetime.now(timezone.utc),
+            )
+            assert changed == 1
+            prepared_task = asyncio.create_task(prepare())
+            pid = await prepared_pid
+            assert pid != terminal_pid
+            # Wait for the real blocked UPDATE, not a guessed scheduling delay.
+            async with asyncio.timeout(5):
+                while not await db.fetch_value("SELECT cardinality(pg_blocking_pids($1)) > 0", pid):
+                    assert not prepared_task.done()
+                    await asyncio.sleep(0.01)
+        result = await prepared_task
+        assert [error.code for error in result.errors] == ["terminal_agent_cannot_prepare_removal"]
+        expected_status = {
+            AgentDisposition.DELETED: MemberStatus.DELETED,
+            AgentDisposition.RETIRED: MemberStatus.RETIRED,
+        }[terminal]
+        assert (
+            await db.fetch_value("SELECT status FROM {{tables.agents}} WHERE agent_id=$1", agent)
+            == expected_status
+        )
+        assert (
+            await db.fetch_value(
+                "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+            )
+            is None
+        )
+        assert (
+            await db.fetch_value(
+                "SELECT count(*) FROM {{tables.task_claims}} WHERE workspace_id=$1", workspace
+            )
+            == 1
+        )
+        assert (
+            await db.fetch_value(
+                "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1",
+                team,
+            )
+            == 0
+        )
+    finally:
+        if prepared_task is not None and not prepared_task.done():
+            prepared_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await prepared_task
+
+
+@pytest.mark.asyncio
+async def test_omitted_team_retry_uses_retained_workspace_team_binding(
+    aweb_cloud_db, lifecycle_redis
+):
+    """A released embedding retry stays scoped after its workspace is deleted."""
+    db = aweb_cloud_db.aweb_db
+    team, agent, workspace = await _seed_workspace_with_claim(db)
+    await db.execute(
+        "UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE workspace_id=$1", workspace
+    )
+    result = await apply_lifecycle_cascade(
+        db,
+        lifecycle_redis,
+        LifecycleCascadeRequest(
+            operation="cleanup_agent_coordination_state",
+            actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+            target_workspace_ids=(str(workspace),),
+        ),
+    )
+    assert result.errors == ()
+    assert result.workspace_changes == ()
+    assert result.identity_deleted is False
+    assert (
+        await db.fetch_value("SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", agent)
+        is None
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT team_id FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+        )
+        == team
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_workspace_cannot_select_another_agent_for_cleanup(privacy_app):
+    """The exact agent binding, not a supplied workspace id, chooses the target."""
+    env = privacy_app
+    alice = env.actors["alice"]
+    bob = env.actors["bob"]
+    request = LifecycleCascadeRequest(
+        operation="cleanup_agent_coordination_state",
+        actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+        team_id=TEAM,
+        target_agent_id=str(alice.id).upper(),
+        target_workspace_ids=(str(bob.workspace),),
+        agent_disposition=AgentDisposition.PRESERVED,
+    )
+    refused = await apply_lifecycle_cascade(env.db, env.redis, request)
+    assert [error.code for error in refused.errors] == ["lifecycle_workspace_target_mismatch"]
+    for actor in (alice, bob):
+        assert (
+            await env.db.fetch_value(
+                "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1",
+                actor.workspace,
+            )
+            is None
+        )
+    accepted = await apply_lifecycle_cascade(
+        env.db,
+        env.redis,
+        replace(request, target_workspace_ids=(str(alice.workspace),)),
+    )
+    assert accepted.errors == ()
+    assert await env.db.fetch_value(
+        "SELECT deleted_at IS NOT NULL FROM {{tables.workspaces}} WHERE workspace_id=$1",
+        alice.workspace,
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", alice.id
+        )
+        is None
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", bob.workspace
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_locks_all_workspaces_before_deleting_any_claim(
+    aweb_cloud_db, lifecycle_redis
+):
+    """Cleanup and claim release share UUID workspace order before claim writes."""
+    db = aweb_cloud_db.aweb_db
+    team, agent, first = await _seed_workspace_with_claim(db, identity_scope="global")
+    second = uuid4()
+    await db.execute(
+        "INSERT INTO {{tables.workspaces}} (workspace_id,team_id,agent_id,alias,workspace_type,last_seen_at) "
+        "VALUES ($1,$2,$3,'alice-second','manual',NOW()-INTERVAL '2 hours')",
+        second,
+        team,
+        agent,
+    )
+    await db.execute(
+        "INSERT INTO {{tables.task_claims}} (team_id,workspace_id,alias,human_name,task_ref,claimed_at) "
+        "VALUES ($1,$2,'alice-second','Alice','backend-778',NOW())",
+        team,
+        second,
+    )
+    low, high = sorted((first, second))
+    await db.execute(
+        "UPDATE {{tables.workspaces}} SET updated_at=NOW()-INTERVAL '1 hour' WHERE workspace_id=$1",
+        high,
+    )
+    cleanup_pid = asyncio.get_running_loop().create_future()
+
+    async def clean():
+        async with db.transaction() as cleanup_tx:
+            cleanup_pid.set_result(await cleanup_tx.fetch_value("SELECT pg_backend_pid()"))
+            return await apply_lifecycle_cascade(
+                cleanup_tx,
+                lifecycle_redis,
+                LifecycleCascadeRequest(
+                    operation="cleanup_agent_coordination_state",
+                    actor=LifecycleActor(
+                        actor_id="owner", actor_type="system", authority="embedding"
+                    ),
+                    team_id=team,
+                    target_agent_id=str(agent),
+                    workspace_scope="all_for_agent",
+                    agent_disposition=AgentDisposition.PRESERVED,
+                ),
+            )
+
+    cleanup_task = None
+    try:
+        async with db.transaction() as holder:
+            holder_pid = await holder.fetch_value("SELECT pg_backend_pid()")
+            await holder.fetch_one(
+                "SELECT workspace_id FROM {{tables.workspaces}} WHERE workspace_id=$1 FOR UPDATE",
+                high,
+            )
+            cleanup_task = asyncio.create_task(clean())
+            pid = await cleanup_pid
+            assert pid != holder_pid
+            async with asyncio.timeout(5):
+                while not await db.fetch_value("SELECT cardinality(pg_blocking_pids($1)) > 0", pid):
+                    assert not cleanup_task.done()
+                    await asyncio.sleep(0.01)
+            # A delete before the full workspace lock set would lock this row.
+            claim = await holder.fetch_one(
+                "SELECT task_ref FROM {{tables.task_claims}} WHERE workspace_id=$1 FOR UPDATE NOWAIT",
+                low,
+            )
+            assert claim is not None
+        result = await cleanup_task
+        assert result.errors == ()
+        assert result.task_unclaim_count == 2
+        assert (
+            await db.fetch_value(
+                "SELECT count(*) FROM {{tables.task_claims}} WHERE team_id=$1", team
+            )
+            == 0
+        )
+    finally:
+        if cleanup_task is not None and not cleanup_task.done():
+            cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await cleanup_task

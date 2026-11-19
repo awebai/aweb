@@ -14,9 +14,12 @@ import json
 import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Literal
 from uuid import UUID, uuid4
 
+from awid.registry import RegistryClient
+from fastapi import Request
 from pgdbm import TransactionManager
 from redis.asyncio import Redis
 
@@ -27,8 +30,11 @@ from .events import (
     publish_team_event,
 )
 from .identity_scope import normalize_identity_scope
+from .member_status import MemberStatus
+from .grant_liveness_policy import GrantLivenessFailurePolicy
 from .lifecycle_agent import (
     AgentDisposition,
+    AgentDispositionConflict,
     apply_agent_disposition_on,
     clear_agent_coordination_on,
 )
@@ -456,6 +462,18 @@ def _precondition_errors(
     errors: list[LifecycleError] = []
     for workspace in workspaces:
         workspace_id = str(workspace["workspace_id"])
+        bound_agent = workspace.get("agent_id")
+        if request.target_agent_id and (
+            bound_agent is None or UUID(str(bound_agent)) != UUID(str(request.target_agent_id))
+        ):
+            errors.append(
+                LifecycleError(
+                    code="lifecycle_workspace_target_mismatch",
+                    message="Explicit workspace targets must belong to the selected agent.",
+                    target=workspace_id,
+                )
+            )
+            continue
         identity_scope = str(workspace.get("agent_identity_scope") or "").strip()
         required_scope = request.require_identity_scope or (
             normalize_identity_scope(request.require_lifetime) if request.require_lifetime else None
@@ -518,7 +536,7 @@ def _agent_precondition_errors(
         ]
     if (
         request.agent_disposition == AgentDisposition.PREPARED_REMOVAL
-        and agent["status"] != "active"
+        and agent["status"] != MemberStatus.ACTIVE
     ):
         return [
             LifecycleError(
@@ -530,15 +548,47 @@ def _agent_precondition_errors(
     return []
 
 
+class _TargetRead(StrEnum):
+    PLAN = "plan"
+    LOCK_FOR_CLEANUP = "lock_for_cleanup"
+
+
+async def lock_workspace_cleanup_targets_on(
+    db, *, targets: tuple[LocalWorkspaceTarget, ...], team_id: str
+) -> None:
+    """Lock the complete workspace set in UUID order before claim/focus writes.
+
+    Claim acquisition and release use this same workspace order. Locking the
+    whole set first prevents one cleanup from holding a claim another needs
+    while they each wait for the other's workspace (docs/aweb-sot.md:1232–1241).
+    """
+    workspace_ids = list({target.workspace_id for target in targets})
+    if workspace_ids:
+        await db.fetch_all(
+            "SELECT workspace_id FROM {{tables.workspaces}} "
+            "WHERE workspace_id=ANY($1::uuid[]) AND team_id=$2 "
+            "ORDER BY workspace_id FOR UPDATE",
+            workspace_ids,
+            team_id,
+        )
+
+
 @dataclass(frozen=True)
 class _LifecycleTargets:
     workspaces: list[dict]
+    removed_workspaces: list[dict]
     errors: list[LifecycleError]
-    team_id: str | None
+    team_id: str
 
 
 async def _load_lifecycle_targets(
-    db, *, request: LifecycleCascadeRequest, redis: Redis | None
+    db,
+    *,
+    request: LifecycleCascadeRequest,
+    read: _TargetRead,
+    redis: Redis | None,
+    registry_client: RegistryClient | None,
+    request_context: Request | None,
 ) -> _LifecycleTargets:
     """Resolve targets and enforce lifecycle scope and staleness preconditions.
 
@@ -547,23 +597,74 @@ async def _load_lifecycle_targets(
     agent = await _load_target_agent(db, request)
     workspaces = await _load_target_workspaces(db, request)
     errors = _agent_precondition_errors(request, agent) + _precondition_errors(request, workspaces)
-    if request.stale_before is not None:
-        activity = await workspace_activity_by_id(
-            db, redis, workspace_ids=[str(row["workspace_id"]) for row in workspaces]
+    # Released embedding requests may omit the team. Resolve exactly one
+    # canonical team before any native write; there is no unscoped erasure.
+    team_id = (
+        request.team_id
+        if request.team_id is not None
+        else (agent["team_id"] if agent is not None else None)
+    )
+    if team_id is None:
+        # Retained rows also bind an idempotent retry after workspace removal.
+        bindings = await db.fetch_all(
+            "SELECT DISTINCT team_id FROM {{tables.workspaces}} WHERE workspace_id=ANY($1::uuid[])",
+            _workspace_id_values(request.target_workspace_ids),
         )
-        for workspace_id, observation in activity.items():
-            if observation.is_newer_than(cutoff=request.stale_before):
-                errors.append(
-                    LifecycleError(
-                        code=WorkspaceActivityRefusal.STILL_ACTIVE,
-                        message="Workspace activity is not stale enough for lifecycle cleanup.",
-                        target=workspace_id,
+        workspace_teams = {str(binding["team_id"]) for binding in bindings}
+        if len(workspace_teams) == 1:
+            team_id = workspace_teams.pop()
+    if not isinstance(team_id, str) or not team_id.strip():
+        errors.append(
+            LifecycleError(
+                code="lifecycle_team_scope_required",
+                message="Lifecycle cleanup requires one concrete team; an omitted team cannot select multiple teams.",
+            )
+        )
+        team_id = ""
+    removed_workspaces = []
+    if not errors:
+        removed_workspaces = await load_removed_claim_workspaces(
+            db,
+            agent_ids=_target_agent_ids(request, workspaces),
+            team_id=team_id,
+        )
+        if read == _TargetRead.LOCK_FOR_CLEANUP:
+            await lock_workspace_cleanup_targets_on(
+                db,
+                targets=tuple(
+                    LocalWorkspaceTarget(
+                        workspace_id=UUID(str(row["workspace_id"])),
+                        agent_id=UUID(str(row["agent_id"]))
+                        if row.get("agent_id") is not None
+                        else None,
                     )
-                )
+                    for row in workspaces + removed_workspaces
+                ),
+                team_id=team_id,
+            )
+        if request.stale_before is not None:
+            activity = await workspace_activity_by_id(
+                db,
+                redis,
+                workspace_ids=[str(row["workspace_id"]) for row in workspaces],
+                registry_client=registry_client,
+                request=request_context,
+                failure_policy=GrantLivenessFailurePolicy.REQUIRE_KNOWN,
+            )
+            for workspace_id, observation in activity.items():
+                if observation.is_newer_than(cutoff=request.stale_before):
+                    errors.append(
+                        LifecycleError(
+                            code=WorkspaceActivityRefusal.STILL_ACTIVE,
+                            message="Workspace activity is not stale enough for lifecycle cleanup.",
+                            target=workspace_id,
+                        )
+                    )
     return _LifecycleTargets(
         workspaces=workspaces,
+        removed_workspaces=removed_workspaces,
         errors=errors,
-        team_id=agent["team_id"] if agent is not None else request.team_id,
+        team_id=team_id,
     )
 
 
@@ -604,139 +705,87 @@ def _target_agent_ids(request: LifecycleCascadeRequest, workspaces: list[dict]) 
     return agent_ids
 
 
-async def _plan_reservation_count(db, agent_ids: list[UUID], team_id: str | None) -> int:
+async def _plan_reservation_count(db, agent_ids: list[UUID], team_id: str) -> int:
     if not agent_ids:
         return 0
-    if team_id is None:
-        count = await db.fetch_value(
-            """
-            SELECT COUNT(*)
-            FROM {{tables.reservations}}
-            WHERE holder_agent_id = ANY($1::uuid[])
-            """,
-            agent_ids,
-        )
-    else:
-        count = await db.fetch_value(
-            """
-            SELECT COUNT(*)
-            FROM {{tables.reservations}}
-            WHERE holder_agent_id = ANY($1::uuid[])
-              AND team_id = $2
-            """,
-            agent_ids,
-            team_id,
-        )
+    count = await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.reservations}}
+        WHERE holder_agent_id = ANY($1::uuid[])
+          AND team_id = $2
+        """,
+        agent_ids,
+        team_id,
+    )
     return int(count or 0)
 
 
-async def _plan_chat_participant_count(db, agent_ids: list[UUID], team_id: str | None) -> int:
+async def _plan_chat_participant_count(db, agent_ids: list[UUID], team_id: str) -> int:
     if not agent_ids:
         return 0
-    if team_id is None:
-        count = await db.fetch_value(
-            """
-            SELECT COUNT(*)
-            FROM {{tables.chat_participants}}
-            WHERE agent_id = ANY($1::uuid[]) AND left_at IS NULL
-            """,
-            agent_ids,
-        )
-    else:
-        count = await db.fetch_value(
-            """
-            SELECT COUNT(*)
-            FROM {{tables.chat_participants}} p
-            JOIN {{tables.chat_sessions}} s
-              ON s.session_id = p.session_id
-            WHERE p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
-              AND s.team_id = $2
-            """,
-            agent_ids,
-            team_id,
-        )
+    count = await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.chat_participants}} p
+        JOIN {{tables.chat_sessions}} s
+          ON s.session_id = p.session_id
+        WHERE p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
+          AND s.team_id = $2
+        """,
+        agent_ids,
+        team_id,
+    )
     return int(count or 0)
 
 
-async def _release_reservations(db, agent_ids: list[UUID], team_id: str | None) -> int:
+async def _release_reservations(db, agent_ids: list[UUID], team_id: str) -> int:
     if not agent_ids:
         return 0
-    if team_id is None:
-        rows = await db.fetch_all(
-            """
-            DELETE FROM {{tables.reservations}}
-            WHERE holder_agent_id = ANY($1::uuid[])
-            RETURNING resource_key
-            """,
-            agent_ids,
-        )
-    else:
-        rows = await db.fetch_all(
-            """
-            DELETE FROM {{tables.reservations}}
-            WHERE holder_agent_id = ANY($1::uuid[])
-              AND team_id = $2
-            RETURNING resource_key
-            """,
-            agent_ids,
-            team_id,
-        )
+    rows = await db.fetch_all(
+        """
+        DELETE FROM {{tables.reservations}}
+        WHERE holder_agent_id = ANY($1::uuid[])
+          AND team_id = $2
+        RETURNING resource_key
+        """,
+        agent_ids,
+        team_id,
+    )
     return len(rows)
 
 
 async def _cleanup_chat_participants(
-    db, agent_ids: list[UUID], team_id: str | None
+    db, agent_ids: list[UUID], team_id: str
 ) -> tuple[tuple[tuple[str, str], ...], int]:
     if not agent_ids:
         return (), 0
-    if team_id is None:
-        rows = await db.fetch_all(
-            """
-            UPDATE {{tables.chat_participants}}
-            SET left_at = NOW()
-            WHERE agent_id = ANY($1::uuid[]) AND left_at IS NULL
-            RETURNING session_id, did
-            """,
-            agent_ids,
-        )
-        wait_rows = await db.fetch_all(
-            """
-            UPDATE {{tables.chat_sessions}}
-            SET wait_seconds = NULL,
-                wait_started_at = NULL,
-                wait_started_by = NULL
-            WHERE wait_started_by = ANY($1::uuid[])
-            RETURNING session_id
-            """,
-            agent_ids,
-        )
-    else:
-        rows = await db.fetch_all(
-            """
-            UPDATE {{tables.chat_participants}} p
-            SET left_at = NOW()
-            FROM {{tables.chat_sessions}} s
-            WHERE p.session_id = s.session_id
-              AND p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
-              AND s.team_id = $2
-            RETURNING p.session_id, p.did
-            """,
-            agent_ids,
-            team_id,
-        )
-        wait_rows = await db.fetch_all(
-            """
-            UPDATE {{tables.chat_sessions}}
-            SET wait_seconds = NULL,
-                wait_started_at = NULL,
-                wait_started_by = NULL
-            WHERE wait_started_by = ANY($1::uuid[])
-              AND team_id = $2
-            RETURNING session_id
-            """,
-            agent_ids,
-            team_id,
-        )
+    rows = await db.fetch_all(
+        """
+        UPDATE {{tables.chat_participants}} p
+        SET left_at = NOW()
+        FROM {{tables.chat_sessions}} s
+        WHERE p.session_id = s.session_id
+          AND p.agent_id = ANY($1::uuid[]) AND p.left_at IS NULL
+          AND s.team_id = $2
+        RETURNING p.session_id, p.did
+        """,
+        agent_ids,
+        team_id,
+    )
+    wait_rows = await db.fetch_all(
+        """
+        UPDATE {{tables.chat_sessions}}
+        SET wait_seconds = NULL,
+            wait_started_at = NULL,
+            wait_started_by = NULL
+        WHERE wait_started_by = ANY($1::uuid[])
+          AND team_id = $2
+        RETURNING session_id
+        """,
+        agent_ids,
+        team_id,
+    )
     participants = tuple((str(row["session_id"]), str(row["did"])) for row in rows)
     return participants, len(wait_rows)
 
@@ -764,7 +813,7 @@ async def _clear_chat_waiting(
 
 
 async def _archive_global_agents(
-    db, *, agent_ids: list[UUID], team_id: str | None, deleted_at: datetime
+    db, *, agent_ids: list[UUID], team_id: str, deleted_at: datetime
 ) -> int:
     """Archive native participation; the embedding host owns custody disposal.
 
@@ -775,13 +824,14 @@ async def _archive_global_agents(
         return 0
     rows = await db.fetch_all(
         """UPDATE {{tables.agents}}
-        SET deleted_at=$2, status='archived'
+        SET deleted_at=$2, status=$4
         WHERE agent_id=ANY($1::uuid[]) AND deleted_at IS NULL
-          AND identity_scope='global' AND ($3::text IS NULL OR team_id=$3)
+          AND identity_scope='global' AND team_id=$3
         RETURNING agent_id""",
         agent_ids,
         deleted_at,
         team_id,
+        MemberStatus.ARCHIVED,
     )
     return len(rows)
 
@@ -806,7 +856,12 @@ def _workspace_changes(
 
 
 async def plan_lifecycle_cascade(
-    db, request: LifecycleCascadeRequest, *, redis: Redis | None = None
+    db,
+    request: LifecycleCascadeRequest,
+    *,
+    redis: Redis | None = None,
+    registry_client: RegistryClient | None = None,
+    request_context: Request | None = None,
 ) -> LifecycleCascadeResult:
     """Return planned coordination lifecycle effects without mutating state.
 
@@ -814,19 +869,26 @@ async def plan_lifecycle_cascade(
     planner even if the request itself was not marked dry-run. An empty target
     workspace set still permits target-agent coordination cleanup.
     """
+    request = replace(request, dry_run=True)
     errors = _validate_request(request)
     if errors:
         return _error_result(request, errors)
 
-    targets = await _load_lifecycle_targets(db, request=request, redis=redis)
+    targets = await _load_lifecycle_targets(
+        db,
+        request=request,
+        read=_TargetRead.PLAN,
+        redis=redis,
+        registry_client=registry_client,
+        request_context=request_context,
+    )
+    request = replace(request, team_id=targets.team_id)
     workspaces = targets.workspaces
     precondition_errors = targets.errors
     workspace_changes = _workspace_changes(workspaces, status="planned")
     workspace_ids = [str(workspace["workspace_id"]) for workspace in workspaces]
     agent_ids = _target_agent_ids(request, workspaces)
-    removed_workspaces = await _removed_claim_workspaces(
-        db, agent_ids=agent_ids, team_id=request.team_id
-    )
+    removed_workspaces = targets.removed_workspaces
     claim_ids = list(
         dict.fromkeys(workspace_ids + [str(row["workspace_id"]) for row in removed_workspaces])
     )
@@ -1257,6 +1319,8 @@ async def apply_local_workspace_cleanup(
     target: LocalWorkspaceTarget,
     actor: LifecycleActor,
     deleted_at: datetime,
+    registry_client: RegistryClient | None = None,
+    request_context: Request | None = None,
 ) -> LifecycleCascadeResult:
     """Clean self immediately, or a stale local peer, through the same cascade.
 
@@ -1279,8 +1343,10 @@ async def apply_local_workspace_cleanup(
             require_identity_scope="local",
             stale_before=cutoff,
             deleted_at=deleted_at,
-            mark_local_agent_deleted=True,
+            agent_disposition=AgentDisposition.DELETED,
         ),
+        registry_client=registry_client,
+        request_context=request_context,
     )
 
 
@@ -1345,14 +1411,13 @@ async def _soft_delete_workspaces_on(
     return _WorkspaceCleanup(claim_count=claim_count, events=tuple(events))
 
 
-async def _removed_claim_workspaces(
-    db, *, agent_ids: list[UUID], team_id: str | None
-) -> list[dict]:
+async def load_removed_claim_workspaces(db, *, agent_ids: list[UUID], team_id: str) -> list[dict]:
+    """Find retained workspace bindings that still hold this agent set's claims."""
     rows = await db.fetch_all(
         """SELECT w.workspace_id,w.agent_id,w.team_id,w.alias
         FROM {{tables.workspaces}} w
         WHERE w.agent_id=ANY($1::uuid[]) AND w.deleted_at IS NOT NULL
-          AND ($2::text IS NULL OR w.team_id=$2)
+          AND w.team_id=$2
           AND EXISTS (SELECT 1 FROM {{tables.task_claims}} c WHERE c.workspace_id=w.workspace_id)
         ORDER BY w.workspace_id""",
         agent_ids,
@@ -1374,7 +1439,7 @@ async def _complete_lifecycle_effects(
 ) -> LifecycleCascadeResult:
     """Replay committed effects, or defer replay until the caller's outer commit.
 
-    Implements docs/aweb-sot.md:1247–1258. SQL success and Redis delivery are
+    Implements docs/aweb-sot.md:1254–1265. SQL success and Redis delivery are
     separate outcomes; pending effects retain the same durable operation id.
     """
     operation_id = effects.operation_id
@@ -1492,7 +1557,12 @@ async def _complete_lifecycle_effects(
 
 
 async def apply_lifecycle_cascade(
-    db, redis: Redis | None, request: LifecycleCascadeRequest
+    db,
+    redis: Redis | None,
+    request: LifecycleCascadeRequest,
+    *,
+    registry_client: RegistryClient | None = None,
+    request_context: Request | None = None,
 ) -> LifecycleCascadeResult:
     """Apply the coordination lifecycle cascade and report post-commit status.
 
@@ -1504,7 +1574,13 @@ async def apply_lifecycle_cascade(
     Target-agent coordination is cleaned even when no active workspace remains.
     """
     if request.dry_run:
-        return await plan_lifecycle_cascade(db, request, redis=redis)
+        return await plan_lifecycle_cascade(
+            db,
+            request,
+            redis=redis,
+            registry_client=registry_client,
+            request_context=request_context,
+        )
 
     errors = _validate_request(request)
     if errors:
@@ -1521,95 +1597,111 @@ async def apply_lifecycle_cascade(
     identity_deleted = False
     identity_archived = False
 
-    async with db.transaction() as tx:
-        targets = await _load_lifecycle_targets(tx, request=request, redis=redis)
-        workspaces = targets.workspaces
-        precondition_errors = targets.errors
-        workspace_changes = _workspace_changes(workspaces, status="planned")
-        workspace_ids = [str(workspace["workspace_id"]) for workspace in workspaces]
-        agent_ids = _target_agent_ids(request, workspaces)
-        if precondition_errors:
-            return _error_result(
-                request,
-                precondition_errors,
-                workspace_changes=workspace_changes,
-                task_unclaim_count=await _plan_claim_count(tx, workspace_ids),
-                reservation_release_count=await _plan_reservation_count(
-                    tx, agent_ids, request.team_id
-                ),
-                chat_participant_cleanup_count=await _plan_chat_participant_count(
-                    tx, agent_ids, request.team_id
-                ),
-                presence_cleanup_status="planned",
-            )
-
-        workspace_cleanup = await _soft_delete_workspaces_on(
-            tx, workspaces=workspaces, deleted_at=deleted_at
-        )
-        task_unclaim_count = workspace_cleanup.claim_count
-        event_intents.extend(workspace_cleanup.events)
-        removed_workspaces = await _removed_claim_workspaces(
-            tx, agent_ids=agent_ids, team_id=request.team_id
-        )
-        removed_cleanup = await _soft_delete_workspaces_on(
-            tx, workspaces=removed_workspaces, deleted_at=deleted_at
-        )
-        task_unclaim_count += removed_cleanup.claim_count
-        event_intents.extend(removed_cleanup.events)
-
-        reservation_release_count = await _release_reservations(tx, agent_ids, request.team_id)
-        chat_participants, chat_waiting_session_clear_count = await _cleanup_chat_participants(
-            tx, agent_ids, request.team_id
-        )
-        chat_participant_cleanup_count = len(chat_participants)
-
-        if request.operation == "archive_global_agent":
-            identity_archived = (
-                await _archive_global_agents(
-                    tx, agent_ids=agent_ids, team_id=request.team_id, deleted_at=deleted_at
-                )
-                > 0
-            )
-
-        disposition_count = 0
-        disposition = _requested_disposition(request)
-        if disposition != AgentDisposition.PRESERVED:
-            disposition_count = await apply_agent_disposition_on(
+    try:
+        async with db.transaction() as tx:
+            targets = await _load_lifecycle_targets(
                 tx,
-                agent_ids=agent_ids,
-                team_id=request.team_id,
-                disposition=disposition,
-                deleted_at=deleted_at,
+                request=request,
+                read=_TargetRead.LOCK_FOR_CLEANUP,
+                redis=redis,
+                registry_client=registry_client,
+                request_context=request_context,
             )
-            identity_deleted = disposition_count > 0 and disposition == AgentDisposition.DELETED
-        await clear_agent_coordination_on(tx, agent_ids=agent_ids, team_id=request.team_id)
+            request = replace(request, team_id=targets.team_id)
+            workspaces = targets.workspaces
+            precondition_errors = targets.errors
+            workspace_changes = _workspace_changes(workspaces, status="planned")
+            workspace_ids = [str(workspace["workspace_id"]) for workspace in workspaces]
+            agent_ids = _target_agent_ids(request, workspaces)
+            if precondition_errors:
+                return _error_result(
+                    request,
+                    precondition_errors,
+                    workspace_changes=workspace_changes,
+                    task_unclaim_count=await _plan_claim_count(tx, workspace_ids),
+                    reservation_release_count=await _plan_reservation_count(
+                        tx, agent_ids, request.team_id
+                    ),
+                    chat_participant_cleanup_count=await _plan_chat_participant_count(
+                        tx, agent_ids, request.team_id
+                    ),
+                    presence_cleanup_status="planned",
+                )
 
-        workspace_changes = _workspace_changes(workspaces, status="completed")
-        workspace_ids = [change.workspace_id for change in workspace_changes]
-        presence_rows = await tx.fetch_all(
-            "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=ANY($1::uuid[]) "
-            "AND ($2::text IS NULL OR team_id=$2)",
-            agent_ids,
-            request.team_id,
-        )
-        presence_ids = workspace_ids + [str(row["workspace_id"]) for row in presence_rows]
-        # Agent-keyed compatibility presence also disappears with coordination.
-        presence_ids.extend(str(agent_id) for agent_id in agent_ids)
-        presence_ids = list(dict.fromkeys(presence_ids))
-        outbox_team_id = str(
-            targets.team_id or (workspace_changes[0].team_id if workspace_changes else "")
-        )
-        effects = _lifecycle_side_effects(
-            tuple(event_intents),
-            chat_participants,
-            presence_ids,
-            team_id=outbox_team_id,
-        )
-        await _enqueue_lifecycle_side_effects(
-            tx,
-            operation_id=operation_id,
-            team_id=outbox_team_id,
-            effects=effects,
+            workspace_cleanup = await _soft_delete_workspaces_on(
+                tx, workspaces=workspaces, deleted_at=deleted_at
+            )
+            task_unclaim_count = workspace_cleanup.claim_count
+            event_intents.extend(workspace_cleanup.events)
+            removed_workspaces = targets.removed_workspaces
+            removed_cleanup = await _soft_delete_workspaces_on(
+                tx, workspaces=removed_workspaces, deleted_at=deleted_at
+            )
+            task_unclaim_count += removed_cleanup.claim_count
+            event_intents.extend(removed_cleanup.events)
+
+            reservation_release_count = await _release_reservations(tx, agent_ids, request.team_id)
+            chat_participants, chat_waiting_session_clear_count = await _cleanup_chat_participants(
+                tx, agent_ids, request.team_id
+            )
+            chat_participant_cleanup_count = len(chat_participants)
+
+            if request.operation == "archive_global_agent":
+                identity_archived = (
+                    await _archive_global_agents(
+                        tx, agent_ids=agent_ids, team_id=targets.team_id, deleted_at=deleted_at
+                    )
+                    > 0
+                )
+
+            disposition_count = 0
+            disposition = _requested_disposition(request)
+            if disposition != AgentDisposition.PRESERVED:
+                disposition_count = await apply_agent_disposition_on(
+                    tx,
+                    agent_ids=agent_ids,
+                    team_id=targets.team_id,
+                    disposition=disposition,
+                    deleted_at=deleted_at,
+                )
+                identity_deleted = disposition_count > 0 and disposition == AgentDisposition.DELETED
+            await clear_agent_coordination_on(tx, agent_ids=agent_ids, team_id=targets.team_id)
+
+            workspace_changes = _workspace_changes(workspaces, status="completed")
+            workspace_ids = [change.workspace_id for change in workspace_changes]
+            presence_rows = await tx.fetch_all(
+                "SELECT workspace_id FROM {{tables.workspaces}} WHERE agent_id=ANY($1::uuid[]) "
+                "AND team_id=$2",
+                agent_ids,
+                targets.team_id,
+            )
+            presence_ids = workspace_ids + [str(row["workspace_id"]) for row in presence_rows]
+            # Agent-keyed compatibility presence also disappears with coordination.
+            presence_ids.extend(str(agent_id) for agent_id in agent_ids)
+            presence_ids = list(dict.fromkeys(presence_ids))
+            outbox_team_id = targets.team_id
+            effects = _lifecycle_side_effects(
+                tuple(event_intents),
+                chat_participants,
+                presence_ids,
+                team_id=outbox_team_id,
+            )
+            await _enqueue_lifecycle_side_effects(
+                tx,
+                operation_id=operation_id,
+                team_id=outbox_team_id,
+                effects=effects,
+            )
+    except AgentDispositionConflict:
+        return _error_result(
+            request,
+            [
+                LifecycleError(
+                    code="terminal_agent_cannot_prepare_removal",
+                    message="Prepared removal requires an active agent; retry from its current lifecycle receipt.",
+                    target=request.target_agent_id,
+                )
+            ],
         )
 
     completed_mutations = ["workspace.soft_delete", "task_claims.release"]

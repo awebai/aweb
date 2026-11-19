@@ -66,23 +66,35 @@ def get_app_internal_origins() -> AppInternalOrigins:
     if not raw_origins and not raw_cidr:
         return AppInternalOrigins()
     if not raw_origins or not raw_cidr:
-        raise ValueError("AWEB_APP_INTERNAL_ORIGINS and AWEB_APP_INTERNAL_CIDR must be supplied together")
+        raise ValueError(
+            "AWEB_APP_INTERNAL_ORIGINS and AWEB_APP_INTERNAL_CIDR must be supplied together"
+        )
     try:
         listed = json.loads(raw_origins)
     except json.JSONDecodeError as exc:
-        raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins") from exc
-    if not isinstance(listed, list) or not listed or not all(isinstance(entry, str) for entry in listed):
+        raise ValueError(
+            "AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins"
+        ) from exc
+    if (
+        not isinstance(listed, list)
+        or not listed
+        or not all(isinstance(entry, str) for entry in listed)
+    ):
         raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins")
     origins = set()
     for entry in listed:
         try:
             origins.add(canonical_app_origin(entry))
         except (ServiceError, EgressRefused, ValueError) as exc:
-            raise ValueError(f"AWEB_APP_INTERNAL_ORIGINS: {entry!r} is not an exact HTTPS origin") from exc
+            raise ValueError(
+                f"AWEB_APP_INTERNAL_ORIGINS: {entry!r} is not an exact HTTPS origin"
+            ) from exc
     try:
         cidr = check_internal_cidr(ip_network(raw_cidr, strict=True))
     except (ValueError, EgressRefused) as exc:
-        raise ValueError("AWEB_APP_INTERNAL_CIDR must be an exact, permitted internal network") from exc
+        raise ValueError(
+            "AWEB_APP_INTERNAL_CIDR must be an exact, permitted internal network"
+        ) from exc
     return AppInternalOrigins(frozenset(origins), cidr)
 
 
@@ -137,7 +149,9 @@ def parse_federation_outbound(raw: str | None) -> FederationOutbound:
                 "set it to off, or to a comma-separated list of origins such as https://aweb.example.com"
             ) from None
     if not origins:
-        raise ValueError(f"{FEDERATION_OUTBOUND_SETTING} lists no origin: leave it unset, set it to off, or list origins")
+        raise ValueError(
+            f"{FEDERATION_OUTBOUND_SETTING} lists no origin: leave it unset, set it to off, or list origins"
+        )
     return FederationOutbound(origins=frozenset(origins))
 
 
@@ -150,7 +164,9 @@ def get_federation_outbound() -> FederationOutbound:
     try:
         return parse_federation_outbound(os.getenv(FEDERATION_OUTBOUND_SETTING))
     except ValueError:
-        return FederationOutbound(origins=frozenset(), refusal=f"{FEDERATION_OUTBOUND_SETTING} is not a valid setting")
+        return FederationOutbound(
+            origins=frozenset(), refusal=f"{FEDERATION_OUTBOUND_SETTING} is not a valid setting"
+        )
 
 
 @dataclass
@@ -233,7 +249,9 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
         return load_member_signing_keys(Path(filename))
     except (OSError, ValueError, TypeError):
         # Do not echo file contents or key-parser details into startup logs.
-        raise ValueError("AWID_MEMBER_KEYS_FILE must name a nonempty JSON map of canonical team IDs to readable Ed25519 PEM key files") from None
+        raise ValueError(
+            "AWID_MEMBER_KEYS_FILE must name a nonempty JSON map of canonical team IDs to readable Ed25519 PEM key files"
+        ) from None
 
 
 def require_registered_certificates() -> bool:
@@ -389,7 +407,9 @@ def _key_time(kid: str, name: str, value: object) -> datetime:
         ) from exc
 
 
-def _url_from_environment_or_file(variable: str, fallback: str, file_variable: str, what: str) -> str:
+def _url_from_environment_or_file(
+    variable: str, fallback: str, file_variable: str, what: str
+) -> str:
     """The URL from its environment variable, or the whole content of the file
     the file variable names, read with the shared key-file checks. The file
     holds a password, so no error repeats its content."""
@@ -442,7 +462,9 @@ def get_settings() -> Settings:
         )
 
     redis_url = (
-        _url_from_environment_or_file("AWEB_REDIS_URL", "REDIS_URL", "AWEB_REDIS_URL_FILE", "Redis URL")
+        _url_from_environment_or_file(
+            "AWEB_REDIS_URL", "REDIS_URL", "AWEB_REDIS_URL_FILE", "Redis URL"
+        )
         or "redis://localhost:6379/0"
     )
 

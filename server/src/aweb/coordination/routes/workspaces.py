@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aweb.application_state import application_registry_client
+from aweb.application_state import RegistryClientUnavailable, application_registry_client
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.workspace_activity import WorkspaceActivity, workspace_activity_by_id
 
@@ -633,6 +633,10 @@ async def delete_workspace(
             ),
         )
 
+    try:
+        registry_client = application_registry_client(request.app.state)
+    except RegistryClientUnavailable as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     deleted_at = datetime.now(timezone.utc)
     cascade_result = await apply_local_workspace_cleanup(
         aweb_db,
@@ -648,6 +652,8 @@ async def delete_workspace(
             actor_id=identity.agent_id, actor_type="agent", authority="team_identity"
         ),
         deleted_at=deleted_at,
+        registry_client=registry_client,
+        request_context=request,
     )
     if cascade_result.errors:
         error = cascade_result.errors[0]

@@ -1,13 +1,17 @@
 """Live-workspace deletion protection through real aweb, AWID, PostgreSQL and Redis."""
 
 import json
+import socket
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from uuid import UUID
 
 import pytest
+from awid.registry import RegistryClient
+from fastapi import HTTPException
 from aweb.lifecycle import (
+    AgentDisposition,
     LifecycleActor,
     LifecycleCascadeRequest,
     apply_lifecycle_cascade,
@@ -188,9 +192,16 @@ async def test_live_activity_protects_workspace_from_teammate_delete(
         )
         # Both planner and mutator must enforce the rule, even if a host calls
         # the public owner without the HTTP route's pre-check.
-        planned = await apply_lifecycle_cascade(env.db, env.redis, replace(request, dry_run=True))
+        planned = await apply_lifecycle_cascade(
+            env.db,
+            env.redis,
+            replace(request, dry_run=True),
+            registry_client=env.app.state.awid_registry_client,
+        )
         assert [error.code for error in planned.errors] == ["local_workspace_still_active"]
-        applied = await apply_lifecycle_cascade(env.db, env.redis, request)
+        applied = await apply_lifecycle_cascade(
+            env.db, env.redis, request, registry_client=env.app.state.awid_registry_client
+        )
         assert [error.code for error in applied.errors] == ["local_workspace_still_active"]
         response = await _send_member_request(
             env, alias="bob", method="DELETE", path=f"/v1/workspaces/{actor.workspace}"
@@ -251,3 +262,69 @@ async def test_live_owner_can_still_delete_own_workspace(privacy_app):
     )
     assert response.status_code == 200, response.text
     assert response.json()["identity_deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_unknown_registry_liveness_cannot_authorize_stale_workspace_deletion(privacy_app):
+    """A real registry connection failure is uncertainty, not proof of inactivity."""
+    env = privacy_app
+    actor = env.actors["alice"]
+    await _age_workspace_heartbeat(env)
+    grant_id = await _send_grant_heartbeat(env, path=GrantHeartbeatRoute.AGENT)
+    request = LifecycleCascadeRequest(
+        operation="delete_local_workspace",
+        actor=LifecycleActor(
+            actor_id=str(env.actors["bob"].id), actor_type="agent", authority="team_identity"
+        ),
+        team_id=TEAM,
+        target_agent_id=str(actor.id),
+        target_workspace_ids=(str(actor.workspace),),
+        require_identity_scope="local",
+        stale_before=datetime.now(UTC) - timedelta(minutes=30),
+        agent_disposition=AgentDisposition.DELETED,
+    )
+    available = await apply_lifecycle_cascade(
+        env.db,
+        env.redis,
+        request,
+        registry_client=env.app.state.awid_registry_client,
+    )
+    assert [error.code for error in available.errors] == ["local_workspace_still_active"]
+    before = await env.db.fetch_value(
+        "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1", TEAM
+    )
+    # Keep the port reserved but do not listen: the real SDK must observe refusal.
+    with socket.socket() as unavailable_endpoint:
+        unavailable_endpoint.bind(("127.0.0.1", 0))
+        port = unavailable_endpoint.getsockname()[1]
+        registry = RegistryClient(registry_url=f"http://127.0.0.1:{port}", timeout_seconds=1)
+        try:
+            with pytest.raises(HTTPException) as failure:
+                await apply_lifecycle_cascade(env.db, env.redis, request, registry_client=registry)
+            assert failure.value.status_code == 503
+        finally:
+            await registry.aclose()
+    assert (
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id=$1", actor.workspace
+        )
+        is None
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", actor.id
+        )
+        is None
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1", grant_id
+        )
+        == 1
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.lifecycle_side_effect_outbox}} WHERE team_id=$1", TEAM
+        )
+        == before
+    )

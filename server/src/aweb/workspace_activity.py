@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -16,6 +17,9 @@ from .config import get_presence_ttl_seconds
 from .grant_liveness import valid_grant_liveness_by_workspace
 from .grant_liveness_policy import GrantLivenessFailurePolicy
 from .presence import list_agent_presences_by_workspace_ids
+
+if TYPE_CHECKING:
+    from .grant_liveness import GrantLivenessFailurePolicy
 
 
 class PresenceStatus(StrEnum):
