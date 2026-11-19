@@ -284,7 +284,7 @@ async def test_mcp_mail_on_an_own_origin_federation_route_wakes_the_recipient(se
     )
     assert stored["to_did"] == server.target_did
     assert server.deliveries == []
-    woken = {}
+    woken: dict[str, set[str]] = {}
     for wakes in server.wakes.submitted:
         for key, kinds in wakes.items():
             woken.setdefault(key, set()).update(kinds)
