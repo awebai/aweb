@@ -358,11 +358,19 @@ class UpdateWorkspaceResponse(BaseModel):
 async def update_workspace(
     request: Request,
     workspace_id: str = Path(..., description="Workspace ID to update"),
-    payload: UpdateWorkspaceRequest = None,
+    payload: UpdateWorkspaceRequest | None = None,
     db: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("presence.write")),
 ) -> UpdateWorkspaceResponse:
-    """Update mutable workspace fields."""
+    """Update mutable workspace fields after requiring an explicit JSON body."""
+    if payload is None:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "workspace_update_body_required",
+                "message": "Send a JSON object containing the workspace fields to update, then retry this PATCH.",
+            },
+        )
     try:
         validated_id = str(UUID(workspace_id))
     except ValueError:
