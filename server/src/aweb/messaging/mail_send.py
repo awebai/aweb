@@ -206,7 +206,7 @@ def _validate_signed_mail_payload(
     *,
     signature: str,
     signed_payload: str | None,
-    recipient: dict | None,
+    recipient: Mapping[str, Any] | None,
     to_agent_id: str | None,
     to_alias: str | None,
     requested_to_alias: str | None,
@@ -355,7 +355,7 @@ def _validate_signed_mail_payload(
 
 
 def _recipient_envelope_address(
-    recipient: dict | None, payload: SendMessageRequest
+    recipient: Mapping[str, Any] | None, payload: SendMessageRequest
 ) -> str | None:
     address = str((recipient or {}).get("address") or "").strip()
     if address:
@@ -387,7 +387,7 @@ def _validate_encrypted_payload(
     *,
     auth: MessagingAuth,
     sender_did: str,
-    recipient: dict | None,
+    recipient: Mapping[str, Any] | None,
     recipient_did: str,
 ) -> dict | None:
     if payload.content_mode != ContentMode.ENCRYPTED:
@@ -426,11 +426,11 @@ def _validate_encrypted_payload(
     return encrypted_message_storage_metadata(payload.encrypted_envelope or {})
 
 
-def _remote_delivery_origin(recipient: dict | None) -> str:
+def _remote_delivery_origin(recipient: Mapping[str, Any] | None) -> str:
     return str((recipient or {}).get("delivery_origin") or "").strip()
 
 
-def _concrete_contact_address(recipient: dict | None) -> str:
+def _concrete_contact_address(recipient: Mapping[str, Any] | None) -> str:
     address = str((recipient or {}).get("address") or "").strip()
     return address if "/" in address else ""
 
@@ -440,7 +440,7 @@ async def record_successful_contact_side_effect(
     *,
     owner_did: str,
     sender_team_id: str | None,
-    recipient: dict | None,
+    recipient: Mapping[str, Any] | None,
     registry_client=None,
 ) -> bool:
     """Record an accepted cross-team address contact through its binding owner."""
@@ -598,7 +598,7 @@ async def deliver_remote_mail_and_project_locally(
     sender_address: str | None,
     sender_did: str,
     id_chain: dict | None,
-    recipient: dict,
+    recipient: Mapping[str, Any],
     recipient_did: str,
     to_agent_id: str | None,
     to_alias: str | None,
@@ -943,7 +943,7 @@ async def _continuation_signature_recipient(
     runtime: MessagingRuntime,
     *,
     participant: dict,
-    recipient: dict,
+    recipient: Mapping[str, Any],
     payload: SendMessageRequest,
     sender_did_key: str,
 ) -> dict:
@@ -1067,7 +1067,7 @@ async def send_mail_conversation_continuation(
     sender_did: str,
     id_chain: dict | None,
     conversation_id: str,
-    local_recipient: dict | None = None,
+    local_recipient: Mapping[str, Any] | None = None,
     continuation: MailContinuationContext | None = None,
 ) -> SentMail:
     """Validate a stored participant route and append or acknowledge an exact local mail send."""
@@ -1349,7 +1349,7 @@ def _raise_bare_did_first_contact_unsupported() -> None:
 
 
 def _recipient_conversation_address(
-    recipient: dict | None, payload: SendMessageRequest
+    recipient: Mapping[str, Any] | None, payload: SendMessageRequest
 ) -> str | None:
     address = str((recipient or {}).get("address") or "").strip()
     if address:
@@ -1366,7 +1366,9 @@ def _recipient_conversation_address(
     )
 
 
-def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
+def _recipient_identity_matches(
+    left: Mapping[str, Any] | None, right: Mapping[str, Any] | None
+) -> bool:
     if left is None or right is None:
         return False
     left_did = str(left.get("did_aw") or left.get("did_key") or "").strip()
