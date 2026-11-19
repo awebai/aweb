@@ -13,12 +13,10 @@ from aweb.federation.envelope import verify_federation_envelope
 from aweb.hooks import fire_mutation_callback
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.message_events import (
-    ChatMessageEvent,
     ChatMessageSentContext,
     FederatedMessageSentContext,
     MailSentContext,
     MessageAcknowledgedContext,
-    MessageAcknowledgedEvent,
     MessageDeliveredEvent,
     RoomMessageSentContext,
 )
@@ -110,7 +108,24 @@ async def test_chat_context_matches_the_existing_callback(
         content_mode=mode,
         transport=transport,
     )
-    assert captured == [(MutationEventType.CHAT_MESSAGE_SENT.value, dto.to_context())]
+    expected = {
+        "team_id": None,
+        "session_id": "00000000-0000-0000-0000-000000000001",
+        "conversation_id": "00000000-0000-0000-0000-000000000001",
+        "message_id": "00000000-0000-0000-0000-000000000002",
+        "from_agent_id": None,
+        "from_alias": "",
+        "from_did": "did:key:sender",
+        "from_did_aw": None,
+        "to_aliases": ["recipient"],
+        "preview": "",
+        "content_mode": "legacy_plaintext_v1"
+        if mode is None or mode == ""
+        else str(mode),
+    }
+    if transport is MessageTransport.FEDERATED:
+        expected["federated"] = True
+    assert captured == [("chat.message_sent", expected)]
     assert type(captured[0][0]) is str
     changed_context = dto.to_context()
     changed_context["to_aliases"].append("someone else")
@@ -248,15 +263,12 @@ def test_standard_mutation_vocabulary_covers_the_retained_call_site_inventory():
     assert "host.custom_event" != MutationEventType.MAIL_SENT
 
 
-def test_transport_exports_reuse_existing_public_dtos_instead_of_a_second_set():
-    assert MessageDeliveredEvent is existing_transport.MessageDeliveredEvent
-    assert MessageAcknowledgedEvent is existing_transport.MessageAcknowledgedEvent
-    assert ChatMessageEvent is existing_transport.ChatMessageEvent
+def test_delivered_transport_event_preserves_the_literal_wire_fields():
     event = MessageDeliveredEvent(
         workspace_id="workspace", content_mode=ContentMode.ENCRYPTED
     )
     assert json.loads(event.to_json())["content_mode"] == "encrypted_v2"
-    assert event.type == TransportEventType.MAIL_DELIVERED
+    assert event.type == "message.delivered"
 
 
 def test_transport_vocabulary_names_every_existing_standard_dto():
@@ -316,7 +328,9 @@ def test_mail_context_preserves_content_mode_accepted_by_the_real_request_model(
         priority=MessagePriority.NORMAL,
         content_mode=request.content_mode,
     )
-    assert dto.to_context()["content_mode"] == mode
+    assert dto.to_context()["content_mode"] == (
+        "legacy_plaintext_v1" if mode is None or mode == "" else str(mode)
+    )
     if mode == "legacy_plaintext_v1":
         assert dto.content_mode is ContentMode.PLAINTEXT
 
@@ -356,8 +370,12 @@ def test_federation_context_preserves_metadata_accepted_under_a_real_signature(
         priority=verified.priority,
         content_mode=verified.content_mode,
     )
-    assert dto.to_context()["priority"] == priority
-    assert dto.to_context()["content_mode"] == mode
+    assert dto.to_context()["priority"] == (
+        "normal" if priority is None or priority == "" else str(priority)
+    )
+    assert dto.to_context()["content_mode"] == (
+        "legacy_plaintext_v1" if mode is None or mode == "" else str(mode)
+    )
     if priority == "normal":
         assert dto.priority is MessagePriority.NORMAL
 

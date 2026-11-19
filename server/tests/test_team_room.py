@@ -108,6 +108,7 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.chat_messages}}") == 0
     assert len(env.dispatched) == 1
     event, context = env.dispatched[0]
+    assert type(event) is str
     assert event == "room.message_sent"
     assert context["team_id"] == TEAM
     assert context["from_agent_id"] == str(env.actors["alice"].id)
@@ -554,6 +555,7 @@ async def test_hosted_mcp_room_signs_as_actor_and_reads_shared_history(
         assert stored_post["confidentiality"] == "server_readable"
         assert len(env.dispatched) == 1
         event, context = env.dispatched[0]
+        assert type(event) is str
         assert event == "room.message_sent"
         assert context["message_id"] == stored_post["message_id"]
         assert context["from_agent_id"] == str(actor.id)
@@ -685,8 +687,7 @@ async def test_real_cli_room_post_read_and_who(
 
         empty, notice = await raw("room", "read")
         assert empty == (
-            "The team room is empty. Post with: "
-            "aw room post --subject ... --body-file ...\n"
+            "The team room is empty. Post with: aw room post --subject ... --body-file ...\n"
         )
         assert notice == ""
 
