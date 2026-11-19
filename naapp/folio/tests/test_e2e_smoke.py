@@ -15,6 +15,7 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -1427,11 +1428,21 @@ def test_real_aw_usage_is_measured_not_capped(
     }
 
 
-@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+class _OutputStream(StrEnum):
+    STDOUT = "stdout"
+    STDERR = "stderr"
+
+
+class _StartupOutputPhase(StrEnum):
+    WRITING = "writing"
+    COMPLETE = "complete"
+
+
+@pytest.mark.parametrize("stream", [_OutputStream.STDOUT, _OutputStream.STDERR])
 def test_folio_fixture_captures_large_startup_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    stream: str,
+    stream: _OutputStream,
 ) -> None:
     """Real uvicorn can start even when either log stream exceeds a pipe buffer."""
     phase = tmp_path / "output-phase"
@@ -1439,10 +1450,10 @@ def test_folio_fixture_captures_large_startup_output(
     startup.write_text(
         "import sys\nfrom pathlib import Path\n"
         f"phase = Path({str(phase)!r})\n"
-        "phase.write_text('writing')\n"
+        f"phase.write_text({_StartupOutputPhase.WRITING.value!r})\n"
         f"sys.{stream}.buffer.write(b'x' * (8 * 1024 * 1024))\n"
         f"sys.{stream}.flush()\n"
-        "phase.write_text('complete')\n"
+        f"phase.write_text({_StartupOutputPhase.COMPLETE.value!r})\n"
     )
     monkeypatch.setenv(
         "PYTHONPATH",
@@ -1450,9 +1461,9 @@ def test_folio_fixture_captures_large_startup_output(
     )
     try:
         with _running_folio(awid_service_token=AWID_SERVICE_TOKEN) as running:
-            assert phase.read_text() == "complete"
+            assert phase.read_text() == _StartupOutputPhase.COMPLETE
             _wait_http_ok(f"{running.origin}/health")
     except RuntimeError as exc:
-        if phase.exists() and phase.read_text() == "writing":
+        if phase.exists() and phase.read_text() == _StartupOutputPhase.WRITING:
             pytest.fail(f"folio fixture blocked capturing 8 MiB on {stream}: {exc}")
         raise
