@@ -141,6 +141,8 @@ func init() {
 	markDeprecatedHiddenFlag(initCmd, "persistent", "global")
 	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|team-and-contacts|contacts-only). Only valid with --global.")
 	initCmd.Flags().StringVar(&initInvite, "invite", "", "Join this invite with an independently selected creator")
+	initCmd.Flags().String("token-file", "", "Read the join invitation from this private file instead of --invite")
+	initCmd.Flags().Bool("token-stdin", false, "Read one join invitation from stdin through EOF (max 65536 bytes)")
 	initCmd.Flags().StringVar(&initParent, "parent", "", "Same-machine creator home for a fresh child")
 	initCmd.Flags().StringVar(&initJoinFrom, "join-from", "", "Add an agent to a team by minting one invite from this existing workspace or identity home")
 	initCmd.Flags().StringVar(&initJoinTeam, "join-team", "", "Team ID to use with --join-from when the source has more than one membership")
@@ -161,11 +163,11 @@ func addWorkspaceRoleFlags(cmd *cobra.Command, target *string, description strin
 	cmd.Flags().StringVar(target, "role", "", "Compatibility alias for --role-name")
 }
 
-func validateInitOutcomeFlags() error {
-	if initParent != "" && initInvite == "" {
+func validateInitOutcomeFlags(input initInviteInput) error {
+	if initParent != "" && initInvite == "" && !input.selected() {
 		return usageError("--parent requires --invite; --join-from already selects its creator")
 	}
-	outcomes := initOutcomeFlagNames()
+	outcomes := initOutcomeFlagNames(input)
 	if len(outcomes) > 1 {
 		return usageError("init outcome flags are mutually exclusive: %s", strings.Join(outcomes, ", "))
 	}
@@ -196,9 +198,9 @@ func validateInitOutcomeFlags() error {
 	return nil
 }
 
-func initOutcomeFlagNames() []string {
+func initOutcomeFlagNames(input initInviteInput) []string {
 	var outcomes []string
-	if strings.TrimSpace(initInvite) != "" {
+	if strings.TrimSpace(initInvite) != "" || input.selected() {
 		outcomes = append(outcomes, "--invite")
 	}
 	if strings.TrimSpace(initJoinFrom) != "" {
@@ -374,9 +376,9 @@ const (
 	initDispatchComplete
 )
 
-func dispatchExplicitInitOutcome(cmd *cobra.Command) (initDispatchResult, error) {
-	if strings.TrimSpace(initInvite) != "" {
-		return initDispatchComplete, runInitIndependentInvite(cmd)
+func dispatchExplicitInitOutcome(cmd *cobra.Command, input initInviteInput) (initDispatchResult, error) {
+	if strings.TrimSpace(initInvite) != "" || input.selected() {
+		return initDispatchComplete, runInitIndependentInvite(cmd, input)
 	}
 	if initWorkspaceTeam {
 		return initDispatchComplete, runInitWorkspaceTeam(cmd)
@@ -426,7 +428,7 @@ func runInitWorkspaceTeam(cmd *cobra.Command) error {
 	return runTeamEnsure(cmd.Context(), cmd)
 }
 
-func runInitIndependentInvite(cmd *cobra.Command) error {
+func runInitIndependentInvite(cmd *cobra.Command, input initInviteInput) error {
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -434,7 +436,11 @@ func runInitIndependentInvite(cmd *cobra.Command) error {
 	if err := ensureInitInviteTarget(wd); err != nil {
 		return err
 	}
-	raw, origin, err := decodeJoinToken(initInvite)
+	token, err := initInviteToken(cmd, input)
+	if err != nil {
+		return err
+	}
+	raw, origin, err := decodeJoinToken(token)
 	if err != nil {
 		return err
 	}
@@ -659,10 +665,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err := validateInitInboundMode(); err != nil {
 		return err
 	}
-	if err := validateInitOutcomeFlags(); err != nil {
+	input, err := readInitInviteInput(cmd)
+	if err != nil {
 		return err
 	}
-	if dispatched, err := dispatchExplicitInitOutcome(cmd); dispatched == initDispatchComplete || err != nil {
+	if err := validateInitOutcomeFlags(input); err != nil {
+		return err
+	}
+	if dispatched, err := dispatchExplicitInitOutcome(cmd, input); dispatched == initDispatchComplete || err != nil {
 		return err
 	}
 
@@ -766,7 +776,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if err := requireOrPromptInitOutcome(canPrompt, "create a new self-hosted team", "--new-team"); err != nil {
 					return err
 				}
-				if dispatched, err := dispatchExplicitInitOutcome(cmd); dispatched == initDispatchComplete || err != nil {
+				if dispatched, err := dispatchExplicitInitOutcome(cmd, input); dispatched == initDispatchComplete || err != nil {
 					return err
 				}
 			}
@@ -798,7 +808,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if err := requireOrPromptInitOutcome(canPrompt, "create a new BYOD team", "--new-team"); err != nil {
 					return err
 				}
-				if dispatched, err := dispatchExplicitInitOutcome(cmd); dispatched == initDispatchComplete || err != nil {
+				if dispatched, err := dispatchExplicitInitOutcome(cmd, input); dispatched == initDispatchComplete || err != nil {
 					return err
 				}
 			}
@@ -806,7 +816,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			if err := requireOrPromptInitOutcome(canPrompt, "create a new hosted account", "--new-account"); err != nil {
 				return err
 			}
-			if dispatched, err := dispatchExplicitInitOutcome(cmd); dispatched == initDispatchComplete || err != nil {
+			if dispatched, err := dispatchExplicitInitOutcome(cmd, input); dispatched == initDispatchComplete || err != nil {
 				return err
 			}
 		}

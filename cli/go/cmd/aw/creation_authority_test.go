@@ -189,7 +189,7 @@ func TestInitCreatorPreflightReturnsConcreteStateError(t *testing.T) {
 	t.Cleanup(func() { activeIdentityHome = old })
 	activeIdentityHome = awconfig.IdentityHome{Root: filepath.Join(source, ".aw"), Source: awconfig.IdentityHomeFlag}
 	t.Chdir(t.TempDir())
-	err = validateInitOutcomeFlags()
+	err = validateInitOutcomeFlags(initInviteInput{})
 	if err == nil || err.Error() != "workspace signing key does not match its team certificate" {
 		t.Fatalf("preflight hid state error: %v", err)
 	}

@@ -298,15 +298,15 @@ func TestInitIndependentInviteFlagsKeepOutcomesSeparate(t *testing.T) {
 	})
 	initInvite, initParent, initJoinFrom, initAdmissionTeamID, initWorkspaceTeam, initNewAccount, initNewTeam = "aw_inv_selected", "/creator", "", "", false, false, false
 	activeIdentityHome = awconfig.IdentityHome{}
-	if err := validateInitOutcomeFlags(); err != nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err != nil {
 		t.Fatal(err)
 	}
 	initJoinFrom = "/other"
-	if err := validateInitOutcomeFlags(); err == nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil {
 		t.Fatal("two membership sources accepted")
 	}
 	initJoinFrom, initInvite = "", ""
-	if err := validateInitOutcomeFlags(); err == nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil {
 		t.Fatal("parent accepted without invite")
 	}
 }

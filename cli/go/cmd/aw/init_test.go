@@ -1304,18 +1304,18 @@ func TestInitOutcomeFlagValidation(t *testing.T) {
 	})
 	initJoinFrom = "../source"
 	initAdmissionTeamID = "team:example.com"
-	if err := validateInitOutcomeFlags(); err == nil || !strings.Contains(err.Error(), "--join-from") || !strings.Contains(err.Error(), "--admission-team-id") {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil || !strings.Contains(err.Error(), "--join-from") || !strings.Contains(err.Error(), "--admission-team-id") {
 		t.Fatalf("expected mutual exclusion naming both flags, got %v", err)
 	}
 	initAdmissionTeamID = ""
 	initJoinFrom = ""
 	initJoinTeam = "team:example.com"
-	if err := validateInitOutcomeFlags(); err == nil || !strings.Contains(err.Error(), "--join-team requires --join-from") {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err == nil || !strings.Contains(err.Error(), "--join-team requires --join-from") {
 		t.Fatalf("expected join-team dependency error, got %v", err)
 	}
 	initJoinTeam = ""
 	initNewAccount = true
-	if err := validateInitOutcomeFlags(); err != nil {
+	if err := validateInitOutcomeFlags(initInviteInput{}); err != nil {
 		t.Fatalf("single outcome unexpectedly failed: %v", err)
 	}
 }
