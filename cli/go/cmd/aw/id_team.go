@@ -2552,17 +2552,6 @@ func identityHomeForTarget(workingDir, identityHome string) (awconfig.IdentityHo
 	return identityHomeForDir(workingDir)
 }
 
-// hostedAcceptPendingMarkerPath records that acceptance minted this key and it
-// has not joined yet. It survives a definitive operation release and is removed
-// on successful acceptance, so a correct invite reuses the same fresh key.
-func hostedAcceptPendingMarkerPath(workingDir string, identityHomes ...string) string {
-	root := filepath.Join(filepath.Clean(workingDir), ".aw")
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		root = filepath.Clean(identityHomes[0])
-	}
-	return filepath.Join(root, "pending-hosted-accept")
-}
-
 func validateHostedTeamInviteAcceptResponse(resp *awid.SpawnAcceptInviteResponse, didKey, requestedAlias, expectedStableID, expectedAddress, expectedScope string, expectedNoAddress bool) (*awid.TeamCertificate, string, error) {
 	if resp == nil {
 		return nil, "", fmt.Errorf("missing hosted team invite response")
@@ -2660,47 +2649,6 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 		teamKey,
 	); err != nil {
 		return fmt.Errorf("revoke certificate %s: %w", accepted.Certificate.CertificateID, err)
-	}
-	return nil
-}
-
-func preflightHostedAcceptPendingMarker(markerPath string) error {
-	return pathpreflight.PreflightFile(markerPath, "hosted accept recovery marker", pathpreflight.AllowTempAmbientSymlinkPrefix())
-}
-
-func writeHostedAcceptPendingMarker(markerPath string) error {
-	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
-		return err
-	}
-	if err := os.WriteFile(markerPath, []byte("pending hosted accept\n"), 0o600); err != nil {
-		return fmt.Errorf("write pending hosted accept marker: %w", err)
-	}
-	return nil
-}
-
-func removeHostedAcceptPendingMarker(markerPath string) error {
-	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
-		return err
-	}
-	if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
-func statHostedAcceptPendingMarker(markerPath, keyPath string) error {
-	if err := preflightHostedAcceptPendingMarker(markerPath); err != nil {
-		return err
-	}
-	if _, err := os.Stat(markerPath); err != nil {
-		if os.IsNotExist(err) {
-			return usageError(
-				"refusing to reuse existing %s: not a pending hosted accept (no %s marker); remove it if it is stale. If this directory has .aw/team-certs but no .aw/identity.yaml after a failed hosted global accept, rerun the same accept-invite command only when the marker is present; otherwise back up/remove the partial .aw/signing.key and .aw/team-certs state before retrying",
-				keyPath,
-				filepath.Base(markerPath),
-			)
-		}
-		return err
 	}
 	return nil
 }
@@ -4126,65 +4074,6 @@ func recordAcceptedTeamMembership(workingDir string, output *teamAcceptInviteOut
 	return ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, opts.IdentityHome)
 }
 
-func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, setActive bool, identityHomes ...string) error {
-	if output == nil || cert == nil {
-		return fmt.Errorf("accepted team membership is required")
-	}
-	teamState, err := loadOptionalTeamState(workingDir, identityHomes...)
-	if err != nil {
-		return err
-	}
-	if teamState == nil {
-		teamState = &awconfig.TeamState{}
-	}
-	joinedAt := strings.TrimSpace(cert.IssuedAt)
-	if existing := teamState.Membership(strings.TrimSpace(output.TeamID)); existing != nil {
-		if strings.TrimSpace(registryURL) == "" {
-			registryURL = strings.TrimSpace(existing.RegistryURL)
-		}
-		if strings.TrimSpace(awebURL) == "" {
-			awebURL = strings.TrimSpace(existing.AwebURL)
-		}
-		// JoinedAt is the original join time; a re-accept or certificate
-		// rotation must not overwrite it with the newer cert.IssuedAt.
-		if strings.TrimSpace(existing.JoinedAt) != "" {
-			joinedAt = strings.TrimSpace(existing.JoinedAt)
-		}
-	}
-	teamState.AddMembership(awconfig.TeamMembership{
-		TeamID:      strings.TrimSpace(output.TeamID),
-		Alias:       strings.TrimSpace(output.Alias),
-		CertPath:    filepath.ToSlash(strings.TrimSpace(output.CertPath)),
-		JoinedAt:    joinedAt,
-		RegistryURL: strings.TrimSpace(registryURL),
-		AwebURL:     strings.TrimSpace(awebURL),
-	})
-	if setActive || strings.TrimSpace(teamState.ActiveTeam) == "" {
-		teamState.ActiveTeam = strings.TrimSpace(output.TeamID)
-	}
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		return awconfig.SaveTeamStateToIdentityHome(identityHomes[0], teamState)
-	}
-	return awconfig.SaveTeamState(workingDir, teamState)
-}
-
-func loadOptionalTeamState(workingDir string, identityHomes ...string) (*awconfig.TeamState, error) {
-	var teamState *awconfig.TeamState
-	var err error
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		teamState, err = awconfig.LoadTeamStateFromIdentityHome(identityHomes[0])
-	} else {
-		teamState, err = awconfig.LoadTeamState(workingDir)
-	}
-	if err == nil {
-		return teamState, nil
-	}
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	return nil, err
-}
-
 func upsertWorkspaceMembershipCache(workspace *awconfig.WorktreeWorkspace, membership awconfig.WorktreeMembership) {
 	if workspace == nil {
 		return
@@ -4292,79 +4181,6 @@ func ensureLocalTeamRegistered(
 		TeamDIDKey:  teamDIDKey,
 		TeamKey:     teamPriv,
 		TeamKeyPath: teamKeyPath,
-	}, nil
-}
-
-func bootstrapFirstLocalTeamMember(
-	ctx context.Context,
-	registry *awid.RegistryClient,
-	registryURL, domain, teamName, displayName string,
-	controllerKey, memberKey ed25519.PrivateKey,
-	memberDIDAW, memberAddress, alias string,
-) (*localTeamBootstrapResult, error) {
-	return bootstrapLocalTeamMemberWithScope(
-		ctx,
-		registry,
-		registryURL,
-		domain,
-		teamName,
-		displayName,
-		controllerKey,
-		memberKey,
-		memberDIDAW,
-		memberAddress,
-		alias,
-		awid.IdentityModeGlobal,
-	)
-}
-
-func bootstrapLocalTeamMemberWithScope(
-	ctx context.Context,
-	registry *awid.RegistryClient,
-	registryURL, domain, teamName, displayName string,
-	controllerKey, memberKey ed25519.PrivateKey,
-	memberDIDAW, memberAddress, alias, identityScope string,
-) (*localTeamBootstrapResult, error) {
-	if memberKey == nil {
-		return nil, fmt.Errorf("member signing key is required")
-	}
-	resolvedRegistryURL := strings.TrimSpace(registryURL)
-	if resolvedRegistryURL == "" && registry != nil {
-		resolvedRegistryURL = strings.TrimSpace(registry.DefaultRegistryURL)
-	}
-	identityScope = awid.NormalizeIdentityScope(identityScope)
-	if identityScope != awid.IdentityModeLocal && identityScope != awid.IdentityModeGlobal {
-		return nil, fmt.Errorf("identity scope must be local or global")
-	}
-	registration, err := ensureLocalTeamRegistered(ctx, registry, resolvedRegistryURL, domain, teamName, displayName, controllerKey)
-	if err != nil {
-		return nil, err
-	}
-	memberDIDKey := awid.ComputeDIDKey(memberKey.Public().(ed25519.PublicKey))
-	cert, err := awid.SignTeamCertificate(registration.TeamKey, awid.TeamCertificateFields{
-		Team:          registration.TeamID,
-		MemberDIDKey:  memberDIDKey,
-		MemberDIDAW:   strings.TrimSpace(memberDIDAW),
-		MemberAddress: strings.TrimSpace(memberAddress),
-		Alias:         strings.TrimSpace(alias),
-		IdentityScope: identityScope,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if err := registry.RegisterCertificate(ctx, resolvedRegistryURL, awconfig.NormalizeDomain(domain), strings.ToLower(strings.TrimSpace(teamName)), cert, registration.TeamKey); err != nil {
-		if isAliasConflict(err) {
-			// aw init's local and guided paths call this, and --name sets
-			// their name.
-			return nil, &plainRefusal{text: nameTakenText(strings.TrimSpace(alias), registration.TeamID, "--name"), err: err}
-		}
-		return nil, fmt.Errorf("register certificate at registry: %w", err)
-	}
-	return &localTeamBootstrapResult{
-		TeamID:      registration.TeamID,
-		TeamDIDKey:  registration.TeamDIDKey,
-		TeamKeyPath: registration.TeamKeyPath,
-		Certificate: cert,
 	}, nil
 }
 
