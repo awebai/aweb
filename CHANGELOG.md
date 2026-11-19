@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Provisioning and creator self-enrollment connect before publishing the member's E2E assertion. A failed connect or unconfirmed publication retains the identity and reports the exact recovery command instead of creation success.
+
 - CLI signup retains its original signer and request before submission and its received credential before connect. `aw init` resumes that attempt; doctor names unfinished recovery without exposing secrets.
 
 - Local child creation uses indexed request lookup instead of rereading the issuer's invitation and re-sign history. Existing records and older writers remain readable.

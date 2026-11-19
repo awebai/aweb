@@ -77,9 +77,11 @@ func recordAcceptedTeamMembership(request acceptedTeamMembershipRequest) error {
 		return err
 	}
 	if request.Binding == membershipWriteWorkspaceBinding {
-		if err := ensureAcceptedTeamWorkspaceBinding(request.WorkingDir, request.Output, request.Certificate, request.AwebURL); err != nil {
-			return err
+		home := awconfig.IdentityHome{Root: identityHomeRoot}
+		if home.Root == "" {
+			home.Root = awconfig.WorktreeIdentityHome(request.WorkingDir)
 		}
+		return completeProvisionedTeamMembership(provisionedTeamMembership{WorkingDir: request.WorkingDir, Home: home, AwebURL: request.AwebURL})
 	}
 	return ensureAndPublishLocalIdentityEncryptionKeyForDir(request.WorkingDir, request.IdentityHome)
 }

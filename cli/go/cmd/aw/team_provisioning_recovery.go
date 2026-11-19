@@ -4,5 +4,6 @@ import "errors"
 
 func retainUnfinishedProvisioningIdentity(err error) bool {
 	var pending *hostedInviteSignaturePendingError
-	return errors.As(err, &pending)
+	var incomplete *provisionedMembershipIncompleteError
+	return errors.As(err, &pending) || errors.As(err, &incomplete)
 }
