@@ -158,10 +158,9 @@ async def _require_current_stored_route(
     )
     participants = {row["did"]: dict(row) for row in rows}
     expected_conversation = expected.get("conversation") or {}
-    if (
-        set(participants) != {envelope.sender_did_aw, envelope.target_did_aw}
-        or set(expected_conversation) != set(participants)
-    ):
+    if set(participants) != {envelope.sender_did_aw, envelope.target_did_aw} or set(
+        expected_conversation
+    ) != set(participants):
         raise FederationAuthorityError("federation_conversation_invalid")
 
     def require_participants(
@@ -191,15 +190,13 @@ async def _require_current_stored_route(
             raise FederationAuthorityError("federation_conversation_invalid")
         sender_key = _route_value(sender.get("current_did_key"))
         target_key = _route_value(target.get("current_did_key"))
-        if (
-            envelope.sender_did_aw.startswith("did:aw:")
-            and not sender_key
-        ) or (sender_key and sender_key != envelope.sender_current_did_key):
+        if (envelope.sender_did_aw.startswith("did:aw:") and not sender_key) or (
+            sender_key and sender_key != envelope.sender_current_did_key
+        ):
             raise FederationAuthorityError("federation_conversation_invalid")
-        if (
-            envelope.target_did_aw.startswith("did:aw:")
-            and not target_key
-        ) or (target_key and target_key != envelope.target_current_did_key):
+        if (envelope.target_did_aw.startswith("did:aw:") and not target_key) or (
+            target_key and target_key != envelope.target_current_did_key
+        ):
             raise FederationAuthorityError("federation_conversation_invalid")
         if _route_value(target.get("delivery_origin")):
             raise FederationAuthorityError("federation_conversation_invalid")
@@ -236,10 +233,10 @@ async def _require_current_stored_route(
     )
     chat_participants = {row["did"]: dict(row) for row in chat_rows}
     expected_chat = expected.get("chat") or {}
-    if (
-        set(chat_participants) != {envelope.sender_did_aw, envelope.target_did_aw}
-        or set(expected_chat) != set(chat_participants)
-    ):
+    if set(chat_participants) != {
+        envelope.sender_did_aw,
+        envelope.target_did_aw,
+    } or set(expected_chat) != set(chat_participants):
         raise FederationAuthorityError("federation_conversation_invalid")
     require_participants(
         chat_participants,
@@ -260,14 +257,19 @@ async def _lock_current_recipient(
     # Lock the whole identity in stable order before touching the selected row.
     # SHARE suffices for the selected row too; upgrading to UPDATE would deadlock
     # concurrent deliveries that address different memberships of this identity.
-    identity_did = str(await tx.fetch_value(
-        "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1 AND deleted_at IS NULL",
-        agent_id,
-    ) or "")
+    identity_did = str(
+        await tx.fetch_value(
+            "SELECT did_aw FROM {{tables.agents}} WHERE agent_id=$1 AND deleted_at IS NULL",
+            agent_id,
+        )
+        or ""
+    )
     identity_mode = None
     if identity_did.startswith("did:aw:"):
         try:
-            identity_mode = await effective_inbound_mode(tx, identity_did, for_share=True)
+            identity_mode = await effective_inbound_mode(
+                tx, identity_did, for_share=True
+            )
         except ForbiddenError as exc:
             raise FederationAuthorityError("recipient_policy_rejected") from exc
     row = await tx.fetch_one(
@@ -545,7 +547,9 @@ async def _ensure_chat_session(
         session_id,
         preserve_existing_route=preserve_existing_route,
     )
-    for did, agent_id, alias, address, origin, current_key in _participants(envelope, recipient):
+    for did, agent_id, alias, address, origin, current_key in _participants(
+        envelope, recipient
+    ):
         await tx.execute(
             """
             INSERT INTO {{tables.chat_participants}} (
@@ -571,7 +575,9 @@ async def _ensure_chat_session(
 
 def _participants(envelope: FederationEnvelope, recipient: dict):
     sender_alias = (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1]
-    target_alias = str(recipient.get("alias") or envelope.target_address.split("/", 1)[-1])
+    target_alias = str(
+        recipient.get("alias") or envelope.target_address.split("/", 1)[-1]
+    )
     return (
         (
             envelope.sender_did_aw,
@@ -640,7 +646,9 @@ async def _upsert_conversation_participants(
         raise FederationAuthorityError("federation_conversation_invalid")
 
 
-async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipient: dict, id_chain=None):
+async def _store_mail(
+    tx, envelope: FederationEnvelope, signature: str, recipient: dict, id_chain=None
+):
     metadata = (
         encrypted_message_storage_metadata(envelope.encrypted_envelope or {})
         if envelope.content_mode == "encrypted_v2"
@@ -679,9 +687,15 @@ async def _store_mail(tx, envelope: FederationEnvelope, signature: str, recipien
         UUID(str(envelope.conversation_id)),
         2 if metadata else 1,
         "encrypted_v2" if metadata else "legacy_plaintext_v1",
-        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":")) if metadata else None,
+        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":"))
+        if metadata
+        else None,
         metadata.get("encrypted_ciphertext"),
-        json.dumps(metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")) if metadata.get("encrypted_key_wraps") is not None else None,
+        json.dumps(
+            metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")
+        )
+        if metadata.get("encrypted_key_wraps") is not None
+        else None,
         metadata.get("encrypted_ciphertext_hash"),
         metadata.get("encrypted_ciphertext_size"),
         metadata.get("encrypted_key_wraps_hash"),
@@ -743,9 +757,15 @@ async def _store_chat(tx, envelope: FederationEnvelope, signature: str, id_chain
         None if metadata else envelope.signed_payload,
         "encrypted_v2" if metadata else "legacy_plaintext_v1",
         2 if metadata else 1,
-        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":")) if metadata else None,
+        json.dumps(envelope.encrypted_envelope, sort_keys=True, separators=(",", ":"))
+        if metadata
+        else None,
         metadata.get("encrypted_ciphertext"),
-        json.dumps(metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")) if metadata.get("encrypted_key_wraps") is not None else None,
+        json.dumps(
+            metadata.get("encrypted_key_wraps"), sort_keys=True, separators=(",", ":")
+        )
+        if metadata.get("encrypted_key_wraps") is not None
+        else None,
         metadata.get("encrypted_ciphertext_hash"),
         metadata.get("encrypted_ciphertext_size"),
         metadata.get("encrypted_key_wraps_hash"),
@@ -781,7 +801,9 @@ async def replay_federation_mutation_outbox(app, manager, *, limit: int = 100) -
     return await deliver_federation_mutation_outbox(manager, callback, limit=limit)
 
 
-async def deliver_federation_mutation_outbox(manager, callback, *, limit: int = 100) -> int:
+async def deliver_federation_mutation_outbox(
+    manager, callback, *, limit: int = 100
+) -> int:
     delivered = 0
     async with manager.transaction() as tx:
         rows = await tx.fetch_all(
@@ -949,7 +971,9 @@ async def _deliver_federated_phase_b(
             message = await _store_chat(tx, envelope, signature, id_chain)
         # Wake the recipient row this delivery resolved and locked, never the
         # envelope's target or the stored to_did.
-        record_did_wakes((recipient.get("did_aw"), recipient.get("did_key")), envelope.type)
+        record_did_wakes(
+            (recipient.get("did_aw"), recipient.get("did_key")), envelope.type
+        )
 
         created_at: datetime = message["created_at"]
         result: dict[str, object] = {
@@ -975,7 +999,9 @@ async def _deliver_federated_phase_b(
             "from_did": envelope.sender_current_did_key,
             "from_did_aw": envelope.sender_did_aw,
             "to_agent_id": str(recipient.get("agent_id") or "") or None,
-            "from_alias": (envelope.sender_address or envelope.sender_did_aw).split("/", 1)[-1],
+            "from_alias": (envelope.sender_address or envelope.sender_did_aw).split(
+                "/", 1
+            )[-1],
             "message_id": envelope.message_id,
             "conversation_id": envelope.conversation_id,
             "session_id": envelope.conversation_id if envelope.type == "chat" else None,
