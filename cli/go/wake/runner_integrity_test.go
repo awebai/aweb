@@ -2,9 +2,7 @@ package wake
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,106 +10,82 @@ import (
 	"testing"
 )
 
-func TestRunnerCacheRepairsActualExecutable(t *testing.T) {
-	for _, damage := range []string{"changed", "empty", "missing"} {
-		t.Run(damage, func(t *testing.T) {
-			store, err := NewStore(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			runner := NewChannelCoreRunner(store)
-			path, err := runner.bundlePath()
-			if err != nil {
-				t.Fatal(err)
-			}
-			want, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			legacySum := sha256.Sum256(want)
-			// This marker is produced by a released aw; retaining it models upgrade.
-			stamp := filepath.Join(filepath.Dir(path), "runner.sha256")
-			if err := os.WriteFile(stamp, []byte(fmt.Sprintf("%x\n", legacySum)), 0600); err != nil {
-				t.Fatal(err)
-			}
-			switch damage {
-			case "changed":
-				err = os.WriteFile(path, []byte("throw new Error('changed')"), 0600)
-			case "empty":
-				err = os.WriteFile(path, nil, 0600)
-			case "missing":
-				err = os.Remove(path)
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = runner.bundlePath(); err != nil {
-				t.Fatal(err)
-			}
-			got, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(got, want) {
-				t.Fatalf("runner not repaired with intact stamp: %v", err)
-			}
-			if _, err := os.Lstat(stamp); !os.IsNotExist(err) {
-				t.Fatalf("legacy stamp could mislead an older aw after downgrade: %v", err)
-			}
-		})
-	}
-}
-
-func TestRunnerCacheDoesNotWriteThroughSymlink(t *testing.T) {
+func TestRunnerNeverReadsOrRewritesLegacyCache(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := NewChannelCoreRunner(store)
-	path, err := runner.bundlePath()
-	if err != nil {
+	root := filepath.Join(store.Dir(), "channel-core")
+	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(t.TempDir(), "user-file")
-	if err := os.WriteFile(outside, []byte("keep"), 0600); err != nil {
+	if err := os.WriteFile(outside, []byte("untrusted legacy bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(path); err != nil {
+	cache := filepath.Join(root, "runner.mjs")
+	if err := os.Symlink(outside, cache); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(outside, path); err != nil {
+	stamp := filepath.Join(root, "runner.sha256")
+	if err := os.WriteFile(stamp, []byte("legacy"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runner.bundlePath(); err != nil {
+	snapshot, err := NewChannelCoreRunner(store).executableSnapshot()
+	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(outside)
-	if err != nil || string(got) != "keep" {
-		t.Fatalf("modified symlink target: %q %v", got, err)
+	t.Cleanup(func() {
+		if err := snapshot.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	expected, err := channelCoreRunnerFS.ReadFile("channel_core_runner_bundle.mjs")
+	if err != nil {
+		t.Fatal(err)
 	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		t.Fatalf("runner cache remains symlink: %v", err)
+	got, err := os.ReadFile(snapshot.Path)
+	if err != nil || !bytes.Equal(got, expected) {
+		t.Fatalf("execution trusted legacy cache: %v", err)
+	}
+	if _, err := os.Lstat(stamp); !os.IsNotExist(err) {
+		t.Fatalf("legacy stamp survives downgrade: %v", err)
+	}
+	info, err := os.Lstat(cache)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("unused cache was rewritten: %v", err)
+	}
+	got, err = os.ReadFile(outside)
+	if err != nil || string(got) != "untrusted legacy bytes" {
+		t.Fatalf("changed cache symlink target: %v", err)
 	}
 }
 
-func TestRunnerExecutesPrivateSnapshotOfSharedCache(t *testing.T) {
+func TestRunnerDoesNotCreateUnusedCache(t *testing.T) {
 	store, err := NewStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := NewChannelCoreRunner(store)
-	cache, err := runner.bundlePath()
+	snapshot, err := NewChannelCoreRunner(store).executableSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected, err := os.ReadFile(cache)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(filepath.Dir(cache), 0o777); err != nil {
-			t.Fatal(err)
+	t.Cleanup(func() {
+		if err := snapshot.close(); err != nil {
+			t.Error(err)
 		}
+	})
+	if _, err := os.Stat(filepath.Join(store.Dir(), "channel-core")); !os.IsNotExist(err) {
+		t.Fatalf("created unused persistent cache: %v", err)
 	}
-	snapshot, err := runner.executableSnapshot()
+}
+
+func TestRunnerExecutesPrivateSnapshotOfEmbeddedBytes(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewChannelCoreRunner(store).executableSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,12 +97,16 @@ func TestRunnerExecutesPrivateSnapshotOfSharedCache(t *testing.T) {
 	if strings.HasPrefix(snapshot.Path, store.Dir()+string(os.PathSeparator)) {
 		t.Fatal("execution snapshot remains in shared state")
 	}
-	if err := os.WriteFile(cache, []byte("changed after verification"), 0o600); err != nil {
+	got, err := os.ReadFile(snapshot.Path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(snapshot.Path)
-	if err != nil || !bytes.Equal(got, expected) {
-		t.Fatalf("cache mutation changed execution bytes: %v", err)
+	expected, err := channelCoreRunnerFS.ReadFile("channel_core_runner_bundle.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, expected) {
+		t.Fatal("execution bytes differ from embedded bundle")
 	}
 	if runtime.GOOS != "windows" {
 		fileInfo, err := os.Stat(snapshot.Path)

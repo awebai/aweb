@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWakeSharedStateWarnsOnceWithoutRefusingCommands(t *testing.T) {
@@ -46,9 +47,12 @@ func TestWakeSharedStateWarnsOnceWithoutRefusingCommands(t *testing.T) {
 			if info.Mode().Perm() != 0o770 {
 				t.Fatal("inspection changed operator permissions")
 			}
-			_, err = NewChannelCoreRunner(store).bundlePath()
+			snapshot, err := NewChannelCoreRunner(store).executableSnapshot()
 			if err != nil {
-				t.Fatalf("shared state blocked runner cache: %v", err)
+				t.Fatal(err)
+			}
+			if err := snapshot.close(); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -63,8 +67,12 @@ func TestRunnerDoesNotRefuseStorageManagedAncestor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewChannelCoreRunner(store).bundlePath(); err != nil {
-		t.Fatalf("private runner beneath storage-managed mount: %v", err)
+	snapshot, err := NewChannelCoreRunner(store).executableSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshot.close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -130,11 +138,11 @@ func TestReadOnlyCacheDoesNotBlockPrivateExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := NewChannelCoreRunner(store)
-	cache, err := runner.bundlePath()
-	if err != nil {
+	root := filepath.Join(store.Dir(), "channel-core")
+	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Dir(cache)
+	cache := filepath.Join(root, "runner.mjs")
 	if err := os.WriteFile(cache, []byte("tampered read-only shared cache"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +185,100 @@ func TestReadOnlyCacheDoesNotBlockPrivateExecution(t *testing.T) {
 	if err != nil || string(cached) != "tampered read-only shared cache" {
 		t.Fatalf("read-only cache was changed: %v", err)
 	}
-	if !strings.Contains(warning.String(), "chmod u+w") || !strings.Contains(warning.String(), "private verified snapshot") {
+	if !strings.Contains(warning.String(), "runner.sha256") || !strings.Contains(warning.String(), "retry aw wake") {
 		t.Fatalf("missing cache recovery warning: %s", warning.String())
+	}
+}
+
+func TestReadOnlyRootUsesWritableTemporaryVolume(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses read-only fixture permissions")
+	}
+	root := t.TempDir()
+	readOnlyRoot := filepath.Join(root, "root")
+	if err := os.Mkdir(readOnlyRoot, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(readOnlyRoot, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+	if _, err := os.MkdirTemp(readOnlyRoot, "must-not-write-"); !os.IsPermission(err) {
+		t.Fatalf("root fixture is writable: %v", err)
+	}
+	writable := filepath.Join(root, "temporary-volume")
+	if err := os.Mkdir(writable, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", writable)
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewChannelCoreRunner(store).executableSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := snapshot.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if filepath.Dir(snapshot.directory) != writable {
+		t.Fatalf("runner ignored writable TMPDIR: %s", snapshot.directory)
+	}
+}
+
+func TestRunnerStartupRemovesOnlyStaleUnheldOwnSnapshots(t *testing.T) {
+	parent := t.TempDir()
+	t.Setenv("TMPDIR", parent)
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := NewChannelCoreRunner(store).executableSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := active.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	stale := filepath.Join(parent, "aw-wake-runner-stale")
+	recent := filepath.Join(parent, "aw-wake-runner-recent")
+	unrelated := filepath.Join(parent, "other-directory")
+	for _, path := range []string{stale, recent, unrelated} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-25 * time.Hour)
+	for _, path := range []string{stale, unrelated, active.directory} {
+		if err := os.Chtimes(path, old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+	symlink := filepath.Join(parent, "aw-wake-runner-link")
+	if err := os.Symlink(unrelated, symlink); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := NewChannelCoreRunner(store).executableSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := snapshot.close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale snapshot remains: %v", err)
+	}
+	for _, path := range []string{recent, unrelated, active.directory, symlink} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("removed live/recent/unrelated entry %s: %v", path, err)
+		}
 	}
 }
