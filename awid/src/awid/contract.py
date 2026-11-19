@@ -40,14 +40,17 @@ class ResolvedIdentityContract:
 
     @property
     def is_local(self) -> bool:
-        return self.identity_scope == "local"
+        """Whether the identity has the local scope defined in docs/identity.md:66."""
+        return self.identity_scope == IdentityScope.LOCAL
 
     @property
     def is_global(self) -> bool:
-        return self.identity_scope == "global"
+        """Whether the identity has the global scope defined in docs/identity.md:66."""
+        return self.identity_scope == IdentityScope.GLOBAL
 
     @property
     def can_have_address(self) -> bool:
+        """Whether scope permits an address; registry authority still controls publication."""
         return self.is_global
 
     @property
@@ -75,10 +78,17 @@ def resolve_identity_contract(
     lifetime: str | None = None,
     namespace: str | None = None,
 ) -> ResolvedIdentityContract:
+    """Validate custody and scope, normalizing the released lifetime aliases.
+
+    Global self-custodial identities receive a stable ID. Address publication
+    remains subject to namespace authority in docs/identity.md.
+    """
     did = (did or "").strip() or None
     public_key = (public_key or "").strip() or None
     custody = (custody or "").strip() or None
-    scope = normalize_identity_scope(identity_scope if identity_scope is not None else lifetime)
+    scope = normalize_identity_scope(
+        identity_scope if identity_scope is not None else lifetime
+    )
 
     if (did is None) != (public_key is None):
         raise ValueError("did and public_key must be provided together")
@@ -97,7 +107,9 @@ def resolve_identity_contract(
     if namespace is not None and namespace.strip() and scope != "global":
         raise ValueError("Only global identities may own or publish addresses")
 
-    stable_id = stable_id_from_did_key(did) if did is not None and scope == "global" else None
+    stable_id = (
+        stable_id_from_did_key(did) if did is not None and scope == "global" else None
+    )
     return ResolvedIdentityContract(
         did=did,
         public_key=public_key,
