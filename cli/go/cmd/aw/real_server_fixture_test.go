@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -286,7 +287,15 @@ type registryFault struct {
 	Answer func(w http.ResponseWriter, r *http.Request) bool
 	// Rewrite edits a registry response before the command reads it.
 	Rewrite func(response *http.Response) error
+	// DropAnswer, when it returns true for a registry response, closes the
+	// command's connection instead of answering: the registry has applied
+	// the request and the command never hears so.
+	DropAnswer func(response *http.Response) bool
 }
+
+// errAnswerDropped is how the front's response hook asks its error handler to
+// drop the connection.
+var errAnswerDropped = errors.New("registry answer dropped by the fault front")
 
 // frontRegistry returns the origin of a proxy that applies fault in front of
 // the world's registry.
@@ -302,7 +311,25 @@ func (world *realCommandWorld) frontRegistry(t *testing.T, fault registryFault) 
 		direct(r)
 		r.Host = target.Host
 	}
-	proxy.ModifyResponse = fault.Rewrite
+	proxy.ModifyResponse = func(response *http.Response) error {
+		if fault.DropAnswer != nil && fault.DropAnswer(response) {
+			return errAnswerDropped
+		}
+		if fault.Rewrite != nil {
+			return fault.Rewrite(response)
+		}
+		return nil
+	}
+	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+		if errors.Is(err, errAnswerDropped) {
+			if conn, _, hijackErr := w.(http.Hijacker).Hijack(); hijackErr == nil {
+				_ = conn.Close()
+				return
+			}
+		}
+		t.Errorf("registry fault front %s %s: %v", r.Method, r.URL.Path, err)
+		w.WriteHeader(http.StatusBadGateway)
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if fault.Answer != nil && fault.Answer(w, r) {
 			return
