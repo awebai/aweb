@@ -1,14 +1,15 @@
 Image: `secrets.image`, built from `naapp/secrets/Dockerfile` at one SOURCE_COMMIT, user `10001:10001`; same artifact and settings on both platforms.
 Port: `8770` HTTP at `secrets:8770`; external API and console HTTPS Hosts both route here; no serving TLS key in this container.
 Health endpoint: API Host `GET /live` for liveness; `GET /ready` for readiness (database, custody canary, outbox); `/health` adds build/check detail. Readiness is not owner/hook-activation acceptance.
-Depends on: provision mounted files and dedicated PostgreSQL database/role first; DNS/customer registry/team-server and SMTP reachable; startup applies package migrations/stores before serving. Internal-hook DNS/TLS preflight runs before stores. Install manifests and activate hook bindings through supported owner APIs after both services are ready; start the journey after that.
+Depends on: provision mounted files and dedicated PostgreSQL database/role first; DNS/customer registry/team-server and SMTP reachable. The operator prepares schema and initializes erasure authority before first start; runtime checks integrity before composing authority or serving. The bundled first-install path invokes the one-shot operator job automatically. Install manifests and activate hook bindings through supported owner APIs after both services are ready; start the journey after that.
 
 | Schema key | Existing env name or mount | Type/constraint | Default | Purpose |
 | --- | --- | --- | --- | --- |
 | secrets.image | wrapper image reference | Immutable image digest; same in Helm and Compose | required | Build with SOURCE_COMMIT; no credentials in layers |
 | secrets.secrets | /run/secrets/secrets/ | Existing Kubernetes Secret reference or Compose directory reference; read-only | required | Reference only; never credential values in deployment.yaml/env/argv |
 | secrets.databaseUrlFile | SECRETS_DATABASE_URL_FILE | Path to whole UTF-8 DSN, including role password; <=1 KiB, one optional LF | /run/secrets/secrets/database-url | Secret file; dedicated secrets database and role; replaces env-valued DATABASE_URL |
-| secrets.dbSchema | SECRETS_DB_SCHEMA | PostgreSQL schema identifier | public | Plain config; startup migrations use this schema |
+| secrets.dbSchema | SECRETS_DB_SCHEMA | PostgreSQL schema identifier | public | Operator-prepared content schema; startup only checks |
+| secrets.backupMaxAgeSeconds | SECRETS_BACKUP_MAX_AGE_SECONDS (operator job only) | Integer 1..2147483647 | none; required for first install | Enforced maximum decryptable backup lifetime, retained in deadline receipts |
 | secrets.appId | SECRETS_APP_ID | Stable installed app ID | required | Plain config; choose before installing served manifest |
 | secrets.publicOrigin | SECRETS_PUBLIC_ORIGIN | Plain HTTPS API origin | required | Plain config; proxy/Ingress preserves external Host; DNS/TLS must match |
 | secrets.consoleOrigin | SECRETS_CONSOLE_ORIGIN | Distinct plain HTTPS console origin | required | Plain config; passkeys bind this host; proxy routes to same service port |

@@ -176,15 +176,30 @@ or the full real-vault setup journey.
 
 ## Backup and restore
 
-**Gap: restore is not supported by this draft.** Secrets design §15 item 5
-requires a destroyed-version tombstone list outside restorable content,
-reapplied before a restored database serves, and a bounded backup-expiry
-policy. Logs must reapply its purge tombstones before a restored database serves
-(L5 acceptance in the [audit build plan](../../../docs/design/audit-substrate-build-plan.md),
-following the closed `aweb-acgg.13` backup-tombstone rule); this is not implemented.
-That Logs gap does not establish the Secrets tombstone implementation status.
-There is no exercised combined restore command or procedure. A database restore
-without the required controls must not be opened to customer traffic.
+**Full recovery remains unsupported.** The release slice of `acyp/18.20`
+records destruction and allocation floors in a protected `secrets_erasure`
+schema of the same database, atomically through database triggers. Content
+dumps exclude it. Startup checks the binding and refuses a missing, unreadable
+or mismatched ledger, surviving tombstoned material or regressed allocation;
+it never initialises, repairs or replays history. Loss of both content and
+ledger is unsupported. Do not initialise a replacement after loss or restore.
+
+The explicit offline initializer, first-install bootstrap and identifier-only
+deadline receipts are documented in
+[team operations](../../../deploy/team/OPERATIONS.md#secrets-first-installation-and-destruction-deadlines).
+The operator must declare and enforce a finite maximum backup lifetime;
+receipts state `destroyed_at`, `recoverable_until` and the resulting last
+possible recovery deadline. No universal duration is assumed.
+
+Logs' separate authoritative purge database and pre-serve replay are built
+(`f268e6596`). Restore `logs` content alone, never its ledger to an earlier
+state. Logs' startup does not refuse an older chain: independently retained
+receipts/checkpoints expose contradictions through verification. This does not
+qualify the deployment restore command.
+
+Full Secrets replay, offline key rewrap with a crash journal, and synthetic
+Hestia rehearsal are a separate post-release head, required before the first
+customer installation. No current customer recovery or rotation is claimed.
 
 Before a supported procedure can be approved, the operator must establish:
 
@@ -192,7 +207,7 @@ Before a supported procedure can be approved, the operator must establish:
    required custody keys and service-signing material, and retained public
    receipt/checkpoint keys. Key backups need at least the same access boundary
    as live keys. Do not place secrets in a release artifact or evidence bundle.
-2. Independent tombstone storage and recovery, with reapplication completed
+2. Tombstone authority retained outside content restores, with reapplication completed
    before any restored service is admitted to traffic. Restoring a version that
    was destroyed must remain refused through the real service.
 3. A concrete maximum backup lifetime and the resulting destruction-completion

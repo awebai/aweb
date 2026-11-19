@@ -133,6 +133,7 @@ def test_up_checks_every_service_even_though_exec_reads_its_input(tmp_path):
         for app in ("secrets", "logs")
     }
     apps["secrets"]["hookInternalOrigins"] = ["https://logs.example.com"]
+    apps["secrets"]["backupMaxAgeSeconds"] = 604800
     aweb = {**EXAMPLE["aweb"], "appInternalOrigins": ["https://secrets.example.com", "https://logs.example.com"]}
     path = deployment(tmp_path, {**EXAMPLE, "aweb": aweb, **apps})
     result = run(tmp_path, "compose", "up", path, docker_ok=True)

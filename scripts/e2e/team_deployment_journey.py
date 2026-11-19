@@ -506,6 +506,8 @@ class World:
                 "egressDeniedNetworks": ["169.254.0.0/16"],
             }
         # Secrets sends its use and governance events to this deployment's Logs.
+        # Synthetic run-owned backups have a declared seven-day expiry ceiling.
+        config["secrets"]["backupMaxAgeSeconds"] = 604800
         config["secrets"]["hookInternalOrigins"] = [origin("logs-api")]
         config["secrets"]["hookCaFile"] = "/run/secrets/secrets/hook-ca.pem"
         if self.agents_configured:

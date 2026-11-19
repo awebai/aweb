@@ -97,7 +97,8 @@ project, the test world's included, and the deployment's data with them.
 | Artifact | Where | Holds | In `teamctl backup` |
 | --- | --- | --- | --- |
 | aweb's database | `postgres_data` volume, database `aweb` | Teams' messages, chats, tasks, workspaces, app installations | Yes, `pg_dump` |
-| Secrets' database | `postgres_data`, database `secrets` | Every retained secret value, sealed under the custody key (references for values kept in 1Password); grants, receipts | Yes |
+| Secrets' content | `postgres_data`, database `secrets`, excluding `secrets_erasure` | Retained sealed values and 1Password references; grants and receipts | Yes, content only; restore remains unsupported |
+| Secrets' erasure authority | Protected schema `secrets_erasure` in that same database | Identifiers, destruction deadlines and allocation floors; no values, keys or ciphertext | No: exclude it from content dumps and never roll it back |
 | Logs' database | `postgres_data`, database `logs` | Every retained event's content and its chain | Yes |
 | Logs' purge ledger | `postgres_data`, database `logsledger` | The tombstone of every purged event, which Logs reapplies to its content at each start | Yes, for the loss of the ledger itself only: never restore it with Logs' content, or to any earlier state |
 | Redis | `redis_data` volume | Rebuildable runtime state: presence and its indexes, active chat waits, current activity and listening hints, wake counters and pub/sub, registry-read caches, short-lived rate and cooldown state | **No.** Start with a fresh Redis and its restored credentials: clients reconnect and heartbeat, caches refill, and the previous transient hints and current rate and cooldown windows are lost. No durable aweb record needs this volume (federation state, work, leases and the lifecycle outbox are in PostgreSQL), and a cold registry cache reads fresh evidence upstream. aweb needs Redis reachable to start. This does not qualify the unsupported team restore. |
@@ -127,13 +128,16 @@ deploy/team/teamctl backup deployment.yaml /srv/team-backups/2026-11-13
 no application or agent writes during it. It starts PostgreSQL alone if it is
 stopped, and stops it again afterwards. The set holds:
 
-- `databases/<name>.dump`: `pg_dump -Fc` of every database, and
+- `databases/<name>.dump`: `pg_dump -Fc` of every database, excluding the
+  protected `secrets_erasure` schema from the `secrets` dump, and
   `databases/server-version`;
 - `archives/<key>.tar`: the secrets directory, without the agents' harness login, and the agents' state and work, regular files and
   directories only, owners and modes kept;
 - `files/<key>`: every file `deployment.yaml` names;
 - `manifest.json`: the source revision, every image digest, the PostgreSQL
-  version, and the SHA-256 and recorded path of every part. It holds no value.
+  version, and the SHA-256 and recorded path of every part. Each database entry
+  records `excludedSchemas`; the Secrets entry records `["secrets_erasure"]`.
+  It holds no value.
 
 The directory is created `0700` and must not exist before. **It holds every
 credential of the deployment, including Secrets' custody
@@ -153,8 +157,8 @@ each component can restore without bringing back what was destroyed:
 
 | Component | What a restore needs | Owner and task | State |
 | --- | --- | --- | --- |
-| Secrets | Reapply the externally retained destroyed-version tombstones before serving; never resurrect a destroyed value. Custody-key rotation. | aweb-expert-secrets-root, `aweb-acyp` (after `aweb-acwd.24`) | OPEN |
-| Logs | Restore `logs` alone and keep the live `logsledger`: Logs reapplies the ledger's tombstones before serving. A restore path that never rolls the ledger back. | aweb-expert-logs, `aweb-acgh.16.23` (L5) | OPEN |
+| Secrets | Retain the protected same-database erasure schema. Startup refuses missing/mismatched authority, surviving destroyed material and allocation regression. Replay and offline custody rotation remain first-customer prerequisites. | `aweb-acyp` / `aweb-acgh.18.20`; startup integration owned by Secrets root | Ledger/refusal built; full recovery deferred |
+| Logs | Restore `logs` alone and keep live `logsledger`. | Logs replay built at `f268e6596`; deployment restore path deferred with `acyp/18.20` | Replay built; deployment recovery OPEN |
 
 Logs' purge ledger is a database of its own, `logsledger`, with its own role
 and its whole DSN in `logs/purge-ledger-database-url`. Logs refuses to start
@@ -175,8 +179,60 @@ backup rolls it back to that backup: the events purged after it come back with
 the content restored beside it. A ledger that must outlive the host needs its
 own server, with its own durability.
 
+Secrets uses a protected schema in the content database so each trigger writes
+its tombstone in the deletion transaction. That schema is excluded from content
+dumps. It shares the host and volume failure domain: losing both content and
+authority is unsupported. A backup of an old ledger cannot establish current
+erasure history. Keep Secrets stopped after ledger loss; never initialise a
+replacement over restored or existing content.
+The check cannot detect a jointly rolled-back, matching content/ledger pair.
+Whole-volume or whole-server snapshots are not a recovery path; the supported
+operator command refuses Secrets restores rather than trusting such a pair.
+
+### Secrets first installation and destruction deadlines
+
+Declare `secrets.backupMaxAgeSeconds` in `deployment.yaml`: a positive whole
+number of seconds, at most 2147483647, with no default. This is the operator's
+enforceable maximum lifetime of decryptable content backups, WAL and snapshots,
+including copies held with retained keys. Enforce that expiry for every copy;
+the service records the bound but does not delete the operator's backups.
+
+On a fresh bundled PostgreSQL volume, `teamctl start` starts PostgreSQL alone,
+runs the one-shot `secrets-erasure-init` operator service and then starts the
+applications. It only does this when it observed the volume absent before this
+start. The operator service alone mounts PostgreSQL's password. Secrets' runtime
+container has neither that file nor operator authority. The initializer moves
+database, content-schema and protected-table ownership to the NOLOGIN
+`secrets_erasure_owner`; runtime receives DML and read access to the ledger,
+and cannot disable triggers or change ledger history.
+
+If initial installation was interrupted, run
+`teamctl init-erasure deployment.yaml` explicitly, while Secrets is stopped.
+It is idempotent for the same identity, role and expiry policy, and refuses
+existing content without a matching ledger. For external PostgreSQL, run the
+same image offline with a protected administrator DSN file:
+
+```sh
+python -m aweb_secrets.erasure init-erasure \
+  --operator-dsn-file /protected/secrets-operator-dsn \
+  --application-role secrets --content-schema public \
+  --max-backup-age-seconds <operator-enforced-seconds>
+python -m aweb_secrets.erasure receipts \
+  --operator-dsn-file /protected/secrets-operator-dsn --content-schema public
+```
+
+The administrator must have permission to establish the ownership split (the
+current initializer requires PostgreSQL superuser authority). Never mount its
+DSN file in the runtime container. Protect it like the custody key.
+The receipt command emits identifiers, `destroyed_at`, `recoverable_until`
+and the last possible recovery deadline under that declared policy. Live
+deletion is not immediate cryptographic erasure while a backup and its key
+survive. It does not change the frozen application audit-event schema.
+
 `teamctl restore --lab-rehearsal <deployment.yaml> <backup>` restores a backup
-of **disposable lab data** to rehearse the mechanics, never a team's. It checks
+of **disposable lab data** to rehearse the mechanics, never a team's. A manifest
+containing a Secrets dump is refused before restoring files, creating volumes
+or starting containers; full Secrets recovery is deferred. Otherwise it checks
 every part against the manifest's digests and takes every target path from the
 `deployment.yaml` given, not from the backup. It refuses before writing
 anything if a target exists, a parent is reached through a symbolic link, an
@@ -190,8 +246,10 @@ disposable lab data.
 
 ## Upgrade
 
-The images are pinned by digest in `deployment.yaml`. Each component runs its
-database migrations when it starts; existing migrations are never edited.
+The images are pinned by digest in `deployment.yaml`. Secrets requires
+operator-owned schema preparation before its runtime integrity check; the
+runtime cannot apply DDL. Other components apply their migrations at startup.
+Existing migrations are never edited.
 Before changing a digest, `stop` and `backup`. There is no supported rollback:
 starting an older image on a migrated database is not a migration rollback, and
 restore is not supported. The Secrets procedure is pending

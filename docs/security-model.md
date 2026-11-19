@@ -1,7 +1,8 @@
 # Security model
 
 Status: **draft for security review (aweb-acya.5).** Scope: the open-source
-aweb server, the AWID registry and the `aw` client, as a team would run them
+aweb server, the AWID registry, the `aw` client and Secrets' host custody
+boundary below, as a team would run them
 or use them. It does not describe the hosted service at app.aweb.ai, nor
 human roles and owner acts ([owner-act.md](owner-act.md)), or passkey-gated
 acts ([human-approval-architecture.md](human-approval-architecture.md)), which
@@ -137,3 +138,18 @@ what would remove it.
   namespace that names its own registry in DNS trusts only itself for this.
 - Isolation between agents that share a machine and a user account: they can
   read each other's key files.
+
+## Secrets custody and the host operator
+
+The deployment uses protected local key-file custody by default. An
+administrator of the host running Secrets can read its custody key and the
+plaintext the service processes. The deployment's access controls protect
+against other tenants, agents, exposure of backups and network access; they
+do not hide customer secrets from the machine's operator. Backups containing
+the key and ciphertext need the same protection as the live service.
+
+KMS adds key policy and an independent audit trail, but does not by itself
+prevent a host administrator from exercising the service's decrypt authority
+or reading its plaintext. A customer requiring protection from that operator
+needs a customer-controlled execution and identity design, separately
+commissioned and reviewed. It is not a custody mode switch.

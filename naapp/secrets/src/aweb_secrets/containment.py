@@ -929,6 +929,8 @@ class Containment:
             raise ContainmentRefused("approver_unknown", 404)
 
         async def protect(guard_tx: TransactionManager, guarded_scope: str, holder: str) -> None:
+            if guarded_scope != scope or holder != subject:
+                raise RetirementRefused("approver_not_current")
             if owner is None:
                 return
             # Losing one of multiple keys does not lock the owner out.
