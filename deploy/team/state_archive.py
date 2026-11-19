@@ -18,7 +18,8 @@ checked before anything is written, on both sides:
 
 Packing leaves sockets and FIFOs out, each reported, and refuses device files
 and links it could not restore, writing no archive. Unpacking writes only to a
-destination where nothing is, not even a dangling link, and creates links last.
+destination where nothing is, not even a dangling link, creates links last, and
+fails, naming the destination incomplete, if any owner, mode or time cannot be set.
 """
 
 from __future__ import annotations
@@ -152,8 +153,14 @@ def unpack(archive: Path, destination: Path) -> None:
         ordered = [member for member in members if not member.issym()] + [member for member in members if member.issym()]
         os.mkdir(destination, 0o700)
         # Every member was checked above: the names, the kinds, the links and
-        # the order. The trusted filter keeps the recorded modes and owners.
-        tar.extractall(destination, members=ordered, numeric_owner=True, filter="fully_trusted")
+        # the order. The trusted filter keeps the recorded modes and owners,
+        # and errorlevel 2 makes a refused owner, mode or time fatal, rather
+        # than a restore that reports success with other metadata.
+        tar.errorlevel = 2
+        try:
+            tar.extractall(destination, members=ordered, numeric_owner=True, filter="fully_trusted")
+        except (tarfile.TarError, OSError) as error:
+            raise Refused(f"{error}; {destination} is incomplete and left for inspection") from None
 
 
 def main(argv: list[str]) -> int:
@@ -166,6 +173,9 @@ def main(argv: list[str]) -> int:
             os.chmod(archive, 0o400)
             return 0
         if argv[:1] == ["unpack"] and len(argv) == 3:
+            if os.geteuid() != 0:
+                # Unprivileged, tarfile skips the numeric owners without a word.
+                raise Refused("unpack runs as root, so that every numeric owner is restored")
             unpack(Path(argv[1]), Path(argv[2]))
             return 0
     except Refused as refused:

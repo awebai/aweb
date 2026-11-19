@@ -244,7 +244,13 @@ def restore(read: Callable[[], BinaryIO], target: Path, count: int) -> int:
         # Every member was checked above, and each is compared with its
         # checked self as it is written: the trusted filter keeps the
         # recorded owners and modes.
-        read_whole(read, lambda tar: tar.extractall(target, numeric_owner=True, filter=same))
+        def extract(tar: tarfile.TarFile) -> None:
+            # errorlevel 2: a refused owner, mode or time is fatal, not a
+            # restore that reports success with other metadata.
+            tar.errorlevel = 2
+            tar.extractall(target, numeric_owner=True, filter=same)
+
+        read_whole(read, extract)
         if written != set(expected):
             raise Refused("the second read ended early")
     except Refused as refused:
@@ -463,6 +469,9 @@ def capture_command(args: argparse.Namespace) -> None:
 
 
 def restore_command(args: argparse.Namespace) -> None:
+    if os.geteuid() != 0:
+        # Unprivileged, tarfile skips the numeric owners without a word.
+        raise Refused("restore runs as root, so that every numeric owner is restored")
     if listed(docker("container", "ls", "--all", "--no-trunc", "--format", "{{json .}}"), args.container) is not None:
         raise Refused(f"a container {args.container} exists on this host; a restore starts from none")
     manifest = json.loads((args.backup / "manifest.json").read_text())

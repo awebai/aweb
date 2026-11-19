@@ -451,3 +451,23 @@ def test_a_terminated_cli_ends_its_age_child_and_leaves_no_partial(tmp_path):
     assert cli.returncode == 143 and "terminated" in stderr
     assert left == []
     assert group_gone, "the CLI left a process in its group (its age child)"
+
+
+def test_a_refused_mode_change_fails_the_restore_and_names_the_incomplete_target(tmp_path, monkeypatch):
+    stream, inventory = capture(state(tmp_path))
+
+    def refused(path, mode, **kwargs):
+        raise PermissionError(1, "Operation not permitted", str(path))
+
+    monkeypatch.setattr(os, "chmod", refused)
+    target = tmp_path / "restored"
+    with pytest.raises(agent_state.Refused, match=f"{target} is incomplete"):
+        agent_state.restore(lambda: io.BytesIO(stream), target, inventory["members"])
+
+
+def test_the_restore_command_refuses_to_run_unprivileged(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    code = agent_state.main(["restore", "--backup", str(tmp_path), "--container", "agent", "--age", "/usr/bin/age",
+                             "--age-sha256", "0" * 64, "--identity", str(tmp_path / "id"),
+                             "--target", str(tmp_path / "restored")])
+    assert code == 1 and "runs as root" in capsys.readouterr().err

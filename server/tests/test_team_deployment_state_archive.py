@@ -204,3 +204,30 @@ def test_unpack_writes_only_where_nothing_is(tmp_path):
         with pytest.raises(state_archive.Refused, match="exists"):
             state_archive.unpack(archive, occupied)
     assert not (tmp_path / "nowhere").exists()
+
+
+def test_a_refused_mode_change_fails_the_unpack_and_names_the_incomplete_target(tmp_path, monkeypatch):
+    # A filesystem that refuses a mode: the restore must not report success
+    # with whatever mode the file was created with.
+    root = home(tmp_path)
+    archive = tmp_path / "state.tar"
+    state_archive.pack(root, archive)
+
+    def refused(path, mode, **kwargs):
+        raise PermissionError(1, "Operation not permitted", str(path))
+
+    monkeypatch.setattr(os, "chmod", refused)
+    destination = tmp_path / "restored"
+    with pytest.raises(state_archive.Refused, match=f"{destination} is incomplete"):
+        state_archive.unpack(archive, destination)
+
+
+def test_the_unpack_command_refuses_to_run_unprivileged(tmp_path, monkeypatch, capsys):
+    # Without root, tarfile skips the numeric owners without a word.
+    root = home(tmp_path)
+    archive = tmp_path / "state.tar"
+    state_archive.pack(root, archive)
+    monkeypatch.setattr(os, "geteuid", lambda: 1000)
+    assert state_archive.main(["unpack", str(archive), str(tmp_path / "restored")]) == 1
+    assert "runs as root" in capsys.readouterr().err
+    assert not os.path.lexists(tmp_path / "restored")
