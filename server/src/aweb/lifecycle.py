@@ -1266,6 +1266,88 @@ async def apply_local_workspace_cleanup(
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class _WorkspaceCleanup:
+    claim_count: int
+    events: tuple[LifecycleEventIntent, ...]
+    identity_deleted: bool
+
+
+async def _soft_delete_workspaces_on(
+    tx, *, request: LifecycleCascadeRequest, workspaces: list[dict], deleted_at: datetime
+) -> _WorkspaceCleanup:
+    """Delete workspace state and capture its claim events in the caller's transaction."""
+    claim_count = 0
+    events: list[LifecycleEventIntent] = []
+    identity_deleted = False
+    for workspace in workspaces:
+        workspace_id = str(workspace["workspace_id"])
+        team_id = str(workspace["team_id"])
+        alias = str(workspace.get("alias") or "")
+        await tx.execute(
+            """
+            UPDATE {{tables.workspaces}}
+            SET deleted_at = $2
+            WHERE workspace_id = $1
+              AND deleted_at IS NULL
+            """,
+            UUID(workspace_id),
+            deleted_at,
+        )
+        claimed_rows = await tx.fetch_all(
+            """
+            DELETE FROM {{tables.task_claims}}
+            WHERE workspace_id = $1
+            RETURNING task_ref
+            """,
+            UUID(workspace_id),
+        )
+        claim_count += len(claimed_rows)
+        for row in claimed_rows:
+            task_ref = str(row["task_ref"])
+            event_timestamp = datetime.now(timezone.utc).isoformat()
+            events.append(
+                LifecycleEventIntent(
+                    event_kind="workspace_task_unclaimed",
+                    workspace_id=workspace_id,
+                    team_id=team_id,
+                    task_ref=task_ref,
+                    alias=alias,
+                    timestamp=event_timestamp,
+                )
+            )
+            events.append(
+                LifecycleEventIntent(
+                    event_kind="team_task_unclaimed",
+                    workspace_id=workspace_id,
+                    team_id=team_id,
+                    task_ref=task_ref,
+                    alias=alias,
+                    timestamp=event_timestamp,
+                )
+            )
+        if request.mark_local_agent_deleted and workspace.get("agent_id") is not None:
+            deleted_agent = await tx.fetch_one(
+                """
+                UPDATE {{tables.agents}}
+                SET deleted_at = $2,
+                    status = 'deleted'
+                WHERE agent_id = $1
+                  AND team_id = $3
+                  AND deleted_at IS NULL
+                  AND identity_scope = 'local'
+                RETURNING agent_id
+                """,
+                workspace["agent_id"],
+                deleted_at,
+                team_id,
+            )
+            identity_deleted = identity_deleted or deleted_agent is not None
+    return _WorkspaceCleanup(
+        claim_count=claim_count, events=tuple(events), identity_deleted=identity_deleted
+    )
+
+
 async def apply_lifecycle_cascade(
     db, redis: Redis | None, request: LifecycleCascadeRequest
 ) -> LifecycleCascadeResult:
@@ -1318,69 +1400,12 @@ async def apply_lifecycle_cascade(
                 presence_cleanup_status="planned",
             )
 
-        for workspace in workspaces:
-            workspace_id = str(workspace["workspace_id"])
-            team_id = str(workspace["team_id"])
-            alias = str(workspace.get("alias") or "")
-            await tx.execute(
-                """
-                UPDATE {{tables.workspaces}}
-                SET deleted_at = $2
-                WHERE workspace_id = $1
-                  AND deleted_at IS NULL
-                """,
-                UUID(workspace_id),
-                deleted_at,
-            )
-            claimed_rows = await tx.fetch_all(
-                """
-                DELETE FROM {{tables.task_claims}}
-                WHERE workspace_id = $1
-                RETURNING task_ref
-                """,
-                UUID(workspace_id),
-            )
-            task_unclaim_count += len(claimed_rows)
-            for row in claimed_rows:
-                task_ref = str(row["task_ref"])
-                event_timestamp = datetime.now(timezone.utc).isoformat()
-                event_intents.append(
-                    LifecycleEventIntent(
-                        event_kind="workspace_task_unclaimed",
-                        workspace_id=workspace_id,
-                        team_id=team_id,
-                        task_ref=task_ref,
-                        alias=alias,
-                        timestamp=event_timestamp,
-                    )
-                )
-                event_intents.append(
-                    LifecycleEventIntent(
-                        event_kind="team_task_unclaimed",
-                        workspace_id=workspace_id,
-                        team_id=team_id,
-                        task_ref=task_ref,
-                        alias=alias,
-                        timestamp=event_timestamp,
-                    )
-                )
-            if request.mark_local_agent_deleted and workspace.get("agent_id") is not None:
-                deleted_agent = await tx.fetch_one(
-                    """
-                    UPDATE {{tables.agents}}
-                    SET deleted_at = $2,
-                        status = 'deleted'
-                    WHERE agent_id = $1
-                      AND team_id = $3
-                      AND deleted_at IS NULL
-                      AND identity_scope = 'local'
-                    RETURNING agent_id
-                    """,
-                    workspace["agent_id"],
-                    deleted_at,
-                    team_id,
-                )
-                identity_deleted = identity_deleted or deleted_agent is not None
+        workspace_cleanup = await _soft_delete_workspaces_on(
+            tx, request=request, workspaces=workspaces, deleted_at=deleted_at
+        )
+        task_unclaim_count = workspace_cleanup.claim_count
+        event_intents.extend(workspace_cleanup.events)
+        identity_deleted = workspace_cleanup.identity_deleted
 
         reservation_release_count = await _release_reservations(tx, agent_ids, request.team_id)
         chat_participants, chat_waiting_session_clear_count = await _cleanup_chat_participants(
