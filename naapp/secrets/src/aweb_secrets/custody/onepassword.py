@@ -186,7 +186,9 @@ class OnePasswordSDK:
                     integration_name="aweb secrets",
                     integration_version="0.1.0",
                 )
-                item = await client.items.get(vault_id=reference.vault_id, item_id=reference.item_id)
+                item = await client.items.get(
+                    vault_id=reference.vault_id, item_id=reference.item_id
+                )
             return project_item(
                 reference,
                 item,

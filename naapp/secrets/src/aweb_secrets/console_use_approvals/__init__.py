@@ -33,7 +33,12 @@ from aweb_secrets.console_changes import _errors
 from aweb_secrets.console_ui import _page, console_page
 from aweb_secrets.run_approvals import run_approval_view
 from aweb_secrets.run_plan import RunPlanRefused
-from aweb_secrets.use_approval import UseApprovalRefused, UseApprovalView, use_approval_view
+from aweb_secrets.use_approval import (
+    UseAction,
+    UseApprovalRefused,
+    UseApprovalView,
+    use_approval_view,
+)
 from aweb_secrets.use_audit import UseApprovalAudit, UseAuditUnavailable
 
 
@@ -85,7 +90,8 @@ class ConsoleUseApprovals:
             or (frozen["installation_id"], frozen["team_id"], frozen["install_generation"])
             != (admitted.installation_id, admitted.team_id, admitted.generation)
             or frozen["type"] != "aweb.secrets.use-approval"
-            or frozen["action"] != ("broker" if kind == Kind.USE else "run_job")
+            or frozen["action"]
+            != (UseAction.BROKER.value if kind == Kind.USE else UseAction.RUN_JOB.value)
         ):
             raise HTTPException(409, "approval_unavailable")
         async with self.console.db.transaction() as tx:

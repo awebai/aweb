@@ -48,9 +48,9 @@ _TIME = "%Y-%m-%dT%H:%M:%SZ"
 class UseApprovalRefused(Exception):
     """The use cannot be put to an approver. `code` is the refusal code."""
 
-    def __init__(self, code: str, detail: str) -> None:
+    def __init__(self, *, code: str, detail: str) -> None:
         super().__init__(f"{code}: {detail}")
-        self.code = code
+        self.code = str(code)
         self.detail = detail
 
 
@@ -58,7 +58,7 @@ class ApprovalUnrenderable(UseApprovalRefused):
     """An open request whose body the console cannot show in full."""
 
     def __init__(self, detail: str) -> None:
-        super().__init__(UseApprovalRefusalCode.UNRENDERABLE, detail)
+        super().__init__(code=UseApprovalRefusalCode.UNRENDERABLE, detail=detail)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -190,7 +190,10 @@ def use_approval_request(
     if ttl <= timedelta(0):
         raise ValueError("an approval's ttl must be positive")
     if len(reason) > MAX_REASON_LENGTH:
-        raise UseApprovalRefused("params_invalid", "the reason is longer than its bound")
+        raise UseApprovalRefused(
+            code=UseApprovalRefusalCode.PARAMS_INVALID,
+            detail="Shorten the reason to at most 1024 characters and submit it again.",
+        )
     issued = issued_at.replace(microsecond=0)
     kind, key, body = _action(action)
     return {

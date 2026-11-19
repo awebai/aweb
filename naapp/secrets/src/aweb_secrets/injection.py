@@ -70,7 +70,7 @@ def required_kind_parameter(values: Mapping[str, str], *, name: str) -> str:
     return value
 
 
-def _header(name: str, value: str, *, url: str, known: KnownValues) -> Injection:
+def _header(*, name: str, value: str, url: str, known: KnownValues) -> Injection:
     if not _TOKEN.match(name) or name.lower() in _GUARD_HEADERS:
         raise ValueInvalid(ValueInvalidReason.INJECTION_CONFIGURATION)
     return Injection(
@@ -82,7 +82,7 @@ def _header(name: str, value: str, *, url: str, known: KnownValues) -> Injection
     )
 
 
-def _query(param: str, value: str, *, url: str, known: KnownValues) -> Injection:
+def _query(*, param: str, value: str, url: str, known: KnownValues) -> Injection:
     query = urlsplit(url).query
     if any(name == param for name, _ in parse_qsl(query, keep_blank_values=True)):
         raise EgressRefused("params_invalid", "query", f"the request may not set {param}")
@@ -112,9 +112,9 @@ def injected_header_names(kind: str, *, kind_params: Mapping[str, str]) -> froze
 
 
 def _sigv4(
+    *,
     value: Mapping[str, str],
     kind_params: Mapping[str, str],
-    *,
     secret_ref: str,
     url: str,
     method: str,
@@ -179,8 +179,8 @@ def inject(
     if kind == ValueKind.AWS_SIGV4:
         try:
             return _sigv4(
-                value,
-                kind_params,
+                value=value,
+                kind_params=kind_params,
                 secret_ref=secret_ref,
                 url=url,
                 method=method,
@@ -195,15 +195,17 @@ def inject(
         password = value["password"]
         known.add_basic(secret_ref, username, password)
         composite = base64.b64encode(f"{username}:{password}".encode()).decode()
-        return _header("Authorization", f"Basic {composite}", url=url, known=known)
+        return _header(name="Authorization", value=f"Basic {composite}", url=url, known=known)
     if kind not in (ValueKind.BEARER, ValueKind.HEADER, ValueKind.QUERY):
         raise ValueInvalid(ValueInvalidReason.INJECTION_CONFIGURATION)
     raw = value["value"]
     known.add(secret_ref, raw)
     if kind == ValueKind.BEARER:
-        return _header("Authorization", f"Bearer {raw}", url=url, known=known)
+        return _header(name="Authorization", value=f"Bearer {raw}", url=url, known=known)
     if kind == ValueKind.HEADER:
         name = required_kind_parameter(kind_params, name="name")
         prefix = kind_params.get("prefix", "")
-        return _header(name, f"{prefix}{raw}", url=url, known=known)
-    return _query(required_kind_parameter(kind_params, name="param"), raw, url=url, known=known)
+        return _header(name=name, value=f"{prefix}{raw}", url=url, known=known)
+    return _query(
+        param=required_kind_parameter(kind_params, name="param"), value=raw, url=url, known=known
+    )
