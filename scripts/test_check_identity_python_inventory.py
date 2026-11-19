@@ -120,6 +120,38 @@ class PrimitiveGuardTests(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertTrue(self.check("pkg/consumer.py", prefix + body))
 
+    def test_explicitly_evaluated_postponed_annotations_keep_primitive_boundary(self):
+        prefix = (
+            "from __future__ import annotations\n"
+            "from nacl.signing import SigningKey\n"
+            "from typing import get_type_hints as resolve\n"
+        )
+        for body in (
+            "def key_type() -> type(SigningKey(bytes(32))): return None\n"
+            'resolved_type = resolve(key_type)["return"]\n',
+            "def key_type() -> SigningKey: return None\n"
+            'factory = resolve(key_type)["return"]\n'
+            'signature = factory(bytes(32)).sign(b"annotation-review-control").signature\n',
+        ):
+            with self.subTest(body=body):
+                self.assertTrue(self.check("pkg/consumer.py", prefix + body))
+
+    def test_primitive_constructor_in_a_postponed_annotation_remains_visible(self):
+        source = (
+            "from __future__ import annotations\n"
+            "from nacl.signing import SigningKey\n"
+            "def key_type() -> type(SigningKey(bytes(32))): return None\n"
+        )
+        self.assertTrue(self.check("pkg/consumer.py", source))
+
+    def test_postponed_attribute_receiver_keeps_its_primitive_constructor_visible(self):
+        source = (
+            "from __future__ import annotations\n"
+            "from nacl.signing import SigningKey\n"
+            "def key_type() -> type(SigningKey(bytes(32)).verify_key): return None\n"
+        )
+        self.assertTrue(self.check("pkg/consumer.py", source))
+
     def test_evaluated_annotation_primitive_references_remain_visible(self):
         source = "from nacl.signing import SigningKey\ndef borrow(key: SigningKey): return key\n"
         self.assertTrue(self.check("pkg/consumer.py", source))
