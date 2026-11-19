@@ -771,8 +771,9 @@ async def _stored_exact_chat_send(
         _parse_signed_timestamp(str(payload.timestamp))
     else:
         if payload.signature is None or payload.timestamp is None:
-            raise RuntimeError(
-                "An exact plaintext replay must retain its signature and timestamp"
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="message_id and timestamp are required when signature is provided",
             )
         if payload.from_did not in auth_dids(auth):
             raise DeliveryRefusal(

@@ -64,6 +64,9 @@ continuation stdout and stderr separately.
 Refusal controls check the actual user-facing diagnostic and no delivery:
 
 - A local sender to a global `contacts_only` recipient without a contact.
+  aw 1.36.40 normalizes that CLI spelling to `team_and_contacts`; the driver
+  checks the returned policy and its corresponding `403 recipient_policy_rejected`
+  diagnostic. It does not claim to have configured `contacts_only` in that lane.
   Same-team `team_and_contacts` delivery remains a positive neighbor.
 - An address published in real AWID whose identity has not connected residence.
 - A local first-contact sender to the real second-server recipient without an
@@ -71,11 +74,15 @@ Refusal controls check the actual user-facing diagnostic and no delivery:
   `local_sender_route_mismatch` refusal with HTTP 422; actf-only certificate and
   team-server discovery errors are not this server's contract.
 
-Released 1.36.53/1.36.54 diagnose a nonresident target during CLI preflight;
-the current client reaches the server's `recipient_identity_not_found` response.
+Released 1.36.40 reports `agent not found: <address>` during nonresident
+preflight; 1.36.53/1.36.54 use their longer team-or-address diagnostic.
+The current client reaches the server's `recipient_identity_not_found` response.
 The suite checks each documented release's exact diagnostic rather than
 requiring a historical binary to produce a newer error envelope. Transport
-errors never count as these refusals.
+errors never count as these refusals. Older stderr-only errors retain their
+actual exit status and HTTP carrier when present; preflight errors are never
+assigned a synthetic HTTP status. Public reads and channel sinks still prove
+no delivery independently of the diagnostic format.
 
 ## Required human coverage
 
@@ -141,18 +148,31 @@ retry or coverage reduction makes a stage pass.
 
 ## Reviewed released-client issue budget
 
-There are no reviewed released-client issues. npm `latest` aw 1.36.55 carries
-the aweb-actw fix, so both local encrypted-chat directions must pass in both
-lanes. Coordinator decision 143e403a supersedes the former d51223e6 allowance
-for aw 1.36.53–1.36.54.
+Coordinator decision 9a4b69f3 authorizes one historical exception after the
+main-without-chain control reproduced the same failure: **aweb-actw**, fixed by
+`5be20e32e6` in aw 1.36.55. For released clients **>=1.36.40 and <1.36.55**, only
+`released/t1->t2/chat/v2` and `released/t2->t1/chat/v2` may be `KNOWN_ISSUE`.
+They still run ordinary session discovery after the successful plaintext flow;
+the retained public roster must show both local published keys and the session
+read must show the existing local conversation. The exact initial
+`chat send-and-wait <alias> <case-body> --e2ee --wait 0` must exit 1 with this
+stderr line:
+
+```text
+sending message: recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext
+```
+
+No plaintext or fresh-session substitution is permitted. Head clients and
+released clients >=1.36.55 must complete both encrypted flows normally.
 
 Any future exception requires a reviewed entry for the exact case, released
 version range, task and failure receipt. Budgeted failures remain
 `KNOWN_ISSUE`, never passed cases. A different command, actor, diagnostic,
-exit code or failure phase, an unexpected success, an unsupported version or
-any undeclared failure is red. The parent stage rechecks the receipt. Remove
-an entry when the fixed aw becomes npm `latest`; extending the range cannot
-excuse an unexpected success.
+exit code or failure phase, missing session/key evidence, an unexpected success
+inside the affected range or any undeclared failure is red. The parent stage
+rechecks the receipt. Outside the reviewed range this exception never applies:
+success remains success and a failure remains red. Extending the range needs
+a separate ruling; it cannot excuse an unexpected success.
 
 For an additional author-only version comparison, set
 `USER_PATHS_COMPARISON_METADATA` to immutable npm metadata for that exact

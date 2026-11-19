@@ -12,9 +12,7 @@ from aweb.messaging.kinds import ContentMode, MessagePriority
 
 
 def _count(source, field):
-    return UNNAMED_MESSAGE_VOCABULARY.labels(
-        source=source.value, field=field
-    )._value.get()
+    return UNNAMED_MESSAGE_VOCABULARY.labels(source=source.value, field=field)._value.get()
 
 
 @pytest.mark.parametrize("source", list(MessageInputSource))
@@ -26,9 +24,7 @@ def test_unnamed_metadata_counts_fields_once_and_logs_no_values(source, caplog):
             content_mode="private arbitrary mode",
             priority="private priority",
         )
-    assert {
-        field: _count(source, field) - count for field, count in before.items()
-    } == {
+    assert {field: _count(source, field) - count for field, count in before.items()} == {
         "content_mode": 1,
         "priority": 1,
     }
@@ -43,6 +39,9 @@ def test_unnamed_metadata_counts_fields_once_and_logs_no_values(source, caplog):
     "mode,priority",
     [
         (None, None),
+        ("", None),
+        (None, ""),
+        ("", ""),
         (ContentMode.PLAINTEXT, MessagePriority.NORMAL),
         ("encrypted_v2", "urgent"),
     ],
@@ -56,10 +55,8 @@ def test_named_or_absent_metadata_is_not_measured(mode, priority, caplog):
     assert not caplog.records
 
 
-@pytest.mark.parametrize("mode", ["", " legacy_plaintext_v1", "LEGACY_PLAINTEXT_V1"])
-def test_empty_and_equivalent_looking_strings_are_measured_without_normalization(
-    mode, caplog
-):
+@pytest.mark.parametrize("mode", [" legacy_plaintext_v1", "LEGACY_PLAINTEXT_V1"])
+def test_nonempty_equivalent_looking_strings_are_measured_without_normalization(mode, caplog):
     source = MessageInputSource.MAIL_SEND
     before = _count(source, "content_mode")
     with caplog.at_level(logging.INFO):
@@ -68,18 +65,17 @@ def test_empty_and_equivalent_looking_strings_are_measured_without_normalization
     assert len(caplog.records) == 1
 
 
-def test_counter_failure_does_not_refuse_accepted_input(monkeypatch, caplog):
+@pytest.mark.parametrize("failure_type", [RuntimeError, KeyError])
+def test_counter_failure_does_not_refuse_accepted_input(monkeypatch, caplog, failure_type):
     def unavailable(**labels):
-        raise RuntimeError("private dependency contents")
+        raise failure_type("private dependency contents")
 
     monkeypatch.setattr(UNNAMED_MESSAGE_VOCABULARY, "labels", unavailable)
     with caplog.at_level(logging.INFO):
-        observe_message_vocabulary(
-            source=MessageInputSource.MAIL_SEND, content_mode="opaque"
-        )
+        observe_message_vocabulary(source=MessageInputSource.MAIL_SEND, content_mode="opaque")
     assert (
         caplog.messages[0]
-        == "message_vocabulary_counter_unavailable failure_type=RuntimeError"
+        == f"message_vocabulary_counter_unavailable failure_type={failure_type.__name__}"
     )
     assert "private dependency contents" not in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
