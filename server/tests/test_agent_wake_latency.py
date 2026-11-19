@@ -652,18 +652,19 @@ async def test_a_send_that_commits_then_fails_still_wakes_the_recipient(
     import aweb.messaging.mail_send as mail_send_module
 
     env = wake_app
-    record_contact = mail_send_module.record_successful_contact_side_effect
+    commit_continuation = mail_send_module._commit_mail_continuation
 
-    async def record_then_fail(*args, **kwargs):
-        await record_contact(*args, **kwargs)
+    async def commit_then_fail(db, *, message, recipient, sender):
+        await commit_continuation(
+            db, message=message, recipient=recipient, sender=sender
+        )
         raise RuntimeError("failed after the message committed")
 
     first = await _send_mail(env, subject="opening")
     await _request(env, "bob", "POST", f"/v1/messages/{first['message_id']}/ack")
-    # Contact effects run after both new-thread and continuation storage commit.
-    monkeypatch.setattr(
-        mail_send_module, "record_successful_contact_side_effect", record_then_fail
-    )
+    # Fail only after the actual continuation transaction commits; its wake scope
+    # must flush on this exceptional exit as well as on a successful response.
+    monkeypatch.setattr(mail_send_module, "_commit_mail_continuation", commit_then_fail)
     async with agent_stream(env, "bob") as next_event:
         await _quiet(next_event)
         started = time.monotonic()

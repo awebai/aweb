@@ -1,5 +1,6 @@
 """Shared replay comparison on real managed attachment mail/chat paths."""
 
+import base64
 from copy import deepcopy
 
 import pytest
@@ -27,7 +28,12 @@ async def test_managed_attachment_exact_retry_never_binds_or_emits_twice(
     assert original.status_code == 200, original.text
     assert original.json() == accepted.json()
     changed = deepcopy(wire)
-    changed["encrypted_envelope"]["ciphertext"] += "A"
+    ciphertext = changed["encrypted_envelope"]["ciphertext"]
+    corrupted = bytearray(base64.b64decode(ciphertext + "=" * (-len(ciphertext) % 4)))
+    corrupted[0] ^= 1
+    changed["encrypted_envelope"]["ciphertext"] = (
+        base64.b64encode(corrupted).decode().rstrip("=")
+    )
     refused = await _request(env, "alice", "POST", path, changed)
     # Corruption fails ordinary integrity before the replay comparison.
     assert refused.status_code == 422, refused.text
