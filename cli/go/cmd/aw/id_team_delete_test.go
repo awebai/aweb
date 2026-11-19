@@ -2,9 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -12,66 +9,38 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+// teamDeleteWorld is a real world whose namespace controller key is installed
+// where aw id team delete loads it.
+func teamDeleteWorld(t *testing.T) *realCommandWorld {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	world := newRealCommandWorld(t)
+	if err := awconfig.SaveControllerKey(world.Domain, world.NamespaceKey); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
+	return world
+}
+
 func TestTeamDeleteHappyPath(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	world := teamDeleteWorld(t)
 
-	controllerPub, controllerPriv, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	controllerDID := awid.ComputeDIDKey(controllerPub)
-	if err := awconfig.SaveControllerKey("acme.com", controllerPriv); err != nil {
-		t.Fatal(err)
-	}
-
-	var gotBody map[string]any
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"namespace_id":        "ns-acme",
-				"domain":              "acme.com",
-				"controller_did":      controllerDID,
-				"verification_status": "verified",
-				"created_at":          "2026-04-01T00:00:00Z",
-			})
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/namespaces/acme.com/teams/backend":
-			verifyRegistrySignatureForTest(t, r, controllerPub, map[string]string{
-				"domain":    "acme.com",
-				"operation": "delete_team",
-				"team_name": "backend",
-			})
-			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-				t.Fatal(err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"deleted": true})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	t.Cleanup(server.Close)
-	t.Setenv("AWID_REGISTRY_URL", server.URL)
-
-	out, err := executeTeamDelete(context.Background(), teamDeleteOptions{
-		Domain: "acme.com",
+	// The registry refuses unknown body fields, so its acceptance proves the
+	// reason travels under the field it defines.
+	out, err := executeTeamDelete(world.Context, teamDeleteOptions{
+		Domain: world.Domain,
 		Team:   "backend",
 		Reason: "retry clean byot setup",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Status != "deleted" {
-		t.Fatalf("status=%s want deleted", out.Status)
+	if out.Status != "deleted" || out.TeamID != world.TeamID || out.ControllerDID != didOf(world.NamespaceKey) {
+		t.Fatalf("delete output = %+v, want deleted %s by %s", out, world.TeamID, didOf(world.NamespaceKey))
 	}
-	if out.TeamID != "backend:acme.com" {
-		t.Fatalf("team_id=%s", out.TeamID)
-	}
-	if out.ControllerDID != controllerDID {
-		t.Fatalf("controller=%s want %s", out.ControllerDID, controllerDID)
-	}
-	if gotBody["reason"] != "retry clean byot setup" {
-		t.Fatalf("reason=%v", gotBody["reason"])
+	_, err = world.Registry.GetTeam(world.Context, world.Stack.RegistryURL, world.Domain, "backend", world.TeamKey)
+	if code, ok := registryStatusCode(err); !ok || code != 404 {
+		t.Fatalf("deleted team is still readable: %v", err)
 	}
 }
 
@@ -89,43 +58,26 @@ func TestTeamDeleteRejectsFullTeamID(t *testing.T) {
 }
 
 func TestTeamDeleteActiveCertificatesMessage(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-
-	controllerPub, controllerPriv, err := awid.GenerateKeypair()
+	world := teamDeleteWorld(t)
+	member := newKey(t)
+	certificate, err := awid.SignTeamCertificate(world.TeamKey, awid.TeamCertificateFields{
+		Team: world.TeamID, MemberDIDKey: didOf(member), Alias: "alice", IdentityScope: awid.IdentityModeLocal,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	controllerDID := awid.ComputeDIDKey(controllerPub)
-	if err := awconfig.SaveControllerKey("acme.com", controllerPriv); err != nil {
+	if err := world.Registry.RegisterCertificate(world.Context, world.Stack.RegistryURL, world.Domain, "backend", certificate, world.TeamKey); err != nil {
 		t.Fatal(err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"namespace_id":        "ns-acme",
-				"domain":              "acme.com",
-				"controller_did":      controllerDID,
-				"verification_status": "verified",
-				"created_at":          "2026-04-01T00:00:00Z",
-			})
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/namespaces/acme.com/teams/backend":
-			w.WriteHeader(http.StatusConflict)
-			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Team has active certificates"})
-		default:
-			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	t.Cleanup(server.Close)
-	t.Setenv("AWID_REGISTRY_URL", server.URL)
-
-	_, err = executeTeamDelete(context.Background(), teamDeleteOptions{
-		Domain: "acme.com",
+	_, err = executeTeamDelete(world.Context, teamDeleteOptions{
+		Domain: world.Domain,
 		Team:   "backend",
 	})
 	if err == nil || !strings.Contains(err.Error(), "remove-member") {
 		t.Fatalf("err=%v", err)
+	}
+	if _, err := world.Registry.GetTeam(world.Context, world.Stack.RegistryURL, world.Domain, "backend", world.TeamKey); err != nil {
+		t.Fatalf("refused delete removed the team: %v", err)
 	}
 }
