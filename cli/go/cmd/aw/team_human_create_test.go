@@ -1975,7 +1975,7 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalWithoutAuthorityFailsBeforeRegister(
 func TestTeamHumanAddGlobalIdentityFallbackDoesNotNameCreateFlags(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	t.Setenv("HOME", t.TempDir())
-	err := bootstrapTeamCreateGlobalIdentity(t.TempDir(), "aw-coord", "missing-controller.invalid", "https://api.awid.ai", false)
+	err := bootstrapTeamCreateGlobalIdentity(globalIdentityBootstrap{WorkingDir: t.TempDir(), Name: "aw-coord", Domain: "missing-controller.invalid", RegistryURL: "https://api.awid.ai", Purpose: globalIdentityForTeamMember})
 	if err == nil || !strings.Contains(err.Error(), "global identity creation requires namespace controller authority") || !strings.Contains(err.Error(), "--api-key") {
 		t.Fatalf("add fallback error=%v", err)
 	}

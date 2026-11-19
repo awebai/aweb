@@ -72,7 +72,7 @@ func createProvisionedTeamMember(input teamMemberCreation) (result *acceptedTeam
 			return nil, err
 		}
 		if !identityExists {
-			if err := bootstrapTeamCreateGlobalIdentity(homeDir, alias, domain, registryURL, false); err != nil {
+			if err := bootstrapTeamCreateGlobalIdentity(globalIdentityBootstrap{WorkingDir: homeDir, Name: alias, Domain: domain, RegistryURL: registryURL, Purpose: globalIdentityForTeamMember}); err != nil {
 				return nil, err
 			}
 		}

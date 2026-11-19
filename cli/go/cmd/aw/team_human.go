@@ -620,7 +620,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 				return err
 			}
 			if !identityExists {
-				if err := bootstrapTeamCreateGlobalIdentity(wd, alias, domain, strings.TrimSpace(teamHumanCreateRegistryURL), true); err != nil {
+				if err := bootstrapTeamCreateGlobalIdentity(globalIdentityBootstrap{WorkingDir: wd, Name: alias, Domain: domain, RegistryURL: strings.TrimSpace(teamHumanCreateRegistryURL), Purpose: globalIdentityForTeamFounding}); err != nil {
 					return err
 				}
 			}
@@ -943,8 +943,30 @@ func runTeamHumanCreateRosterAdd(specs []teamAgentSpec) error {
 	return runTeamHumanAddWithOptions(nil, args, teamHumanAddRunOptions{Specs: append([]teamAgentSpec(nil), specs...)})
 }
 
-func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string, allowCreateFlagGuidance bool) error {
-	domain = awconfig.NormalizeDomain(domain)
+type globalIdentityBootstrapPurpose uint8
+
+const (
+	globalIdentityForTeamMember globalIdentityBootstrapPurpose = iota
+	globalIdentityForTeamFounding
+)
+
+type globalIdentityBootstrap struct {
+	WorkingDir  string
+	Name        string
+	Domain      string
+	RegistryURL string
+	Purpose     globalIdentityBootstrapPurpose
+}
+
+// bootstrapTeamCreateGlobalIdentity prepares the member's own durable identity;
+// namespace authority authorizes its address, not its later creator attribution
+// (docs/identity.md#1-claim-address).
+func bootstrapTeamCreateGlobalIdentity(input globalIdentityBootstrap) error {
+	if input.Purpose != globalIdentityForTeamMember && input.Purpose != globalIdentityForTeamFounding {
+		return errors.New("global identity bootstrap purpose is unknown")
+	}
+	domain := awconfig.NormalizeDomain(input.Domain)
+	alias := input.Name
 	if domain == "" {
 		return usageError("--first-agent-global requires --namespace with --byot when no global identity exists")
 	}
@@ -953,15 +975,15 @@ func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string, al
 		return err
 	}
 	if !exists {
-		if allowCreateFlagGuidance {
+		if input.Purpose == globalIdentityForTeamFounding {
 			return usageError("--first-agent-global with --byot requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or use hosted onboarding", domain, domain, alias)
 		}
 		return usageError("global identity creation requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or run aw team admin extend from a fresh directory with --api-key <key>", domain, domain, alias)
 	}
-	_, err = executeIDCreate(wd, idCreateOptions{
+	_, err = executeIDCreate(input.WorkingDir, idCreateOptions{
 		Name:        alias,
 		Domain:      domain,
-		RegistryURL: registryURL,
+		RegistryURL: input.RegistryURL,
 		Now:         time.Now,
 	})
 	return err
