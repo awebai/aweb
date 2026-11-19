@@ -40,7 +40,7 @@ from aweb.application_state import application_registry_client
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.presence_transitions import team_online_aliases
 from aweb.workspace_activity import latest_workspace_activity, workspace_activity_by_id
-from aweb.redis_subscriptions import open_subscription, release_subscription
+from aweb.redis_subscriptions import raw_subscription
 from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
 
@@ -295,8 +295,7 @@ async def _build_dashboard_snapshot(
 
 async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
     channel = team_events_channel_name(team_id)
-    pubsub = await open_subscription(redis, channel)
-    try:
+    async with raw_subscription(redis, channel) as pubsub:
         yield ": keepalive\n\n"
         yield _format_sse(
             "connected",
@@ -320,11 +319,6 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
                     ignore_subscribe_messages=True,
                     timeout=DASHBOARD_PUBSUB_POLL_SECONDS,
                 )
-            except UnicodeDecodeError:
-                # A decode_responses client rejects malformed data before the
-                # event parser sees it. The consumed frame is still just input.
-                logger.warning("Ignoring malformed dashboard team-event frame")
-                continue
             except Exception:
                 logger.warning(
                     "Dashboard team-events pubsub read failed", exc_info=True
@@ -355,8 +349,6 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
             if now - last_keepalive >= DASHBOARD_KEEPALIVE_SECONDS:
                 yield ": keepalive\n\n"
                 last_keepalive = now
-    finally:
-        await release_subscription(pubsub)
 
 
 # ---------------------------------------------------------------------------
