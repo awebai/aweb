@@ -1,7 +1,7 @@
 # ruff: noqa: F811 -- pytest imports the real shared fixture by name.
 """Historical chat rows migrate without changing participant read authority."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -139,3 +139,180 @@ async def test_migrated_pair_group_and_single_keep_exact_history_and_empty_stays
                     (row["message_id"], row["body"])
                     for row in response.json()["messages"]
                 ] == [(str(message_id), f"historical {count}")]
+
+
+async def _legacy_pair(env, *, created_at, party_override=None):
+    session_id, message_id = uuid4(), uuid4()
+    await env.db.execute(
+        "INSERT INTO {{tables.chat_sessions}} (session_id,team_id,created_by,created_at) VALUES ($1,$2,'alice',$3)",
+        session_id,
+        TEAM,
+        created_at,
+    )
+    for name in ("alice", "bob"):
+        actor = env.actors[name]
+        party = dict(did=actor.did, alias=name)
+        if name == "bob":
+            party.update(party_override or {})
+        await env.db.execute(
+            """INSERT INTO {{tables.chat_participants}}
+               (session_id,did,agent_id,alias,current_did_key,joined_at)
+               VALUES ($1,$2,$3,$4,$5,$6)""",
+            session_id,
+            party["did"],
+            actor.id,
+            party["alias"],
+            actor.did,
+            created_at,
+        )
+    await env.db.execute(
+        """INSERT INTO {{tables.chat_messages}}
+           (message_id,session_id,from_agent_id,from_did,from_alias,body,created_at)
+           VALUES ($1,$2,$3,$4,'alice','retained legacy history',$5)""",
+        message_id,
+        session_id,
+        env.actors["alice"].id,
+        env.actors["alice"].did,
+        created_at,
+    )
+    return session_id, message_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "party_override,bob_status",
+    [
+        ({"alias": ""}, 200),
+        ({"alias": "  "}, 200),
+        ({"did": ""}, 404),
+        ({"did": "  "}, 404),
+    ],
+)
+async def test_blank_legacy_party_retains_history_without_aborting_valid_coverage(
+    privacy_app, party_override, bob_status
+):
+    env = privacy_app
+    at = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    malformed, message_id = await _legacy_pair(
+        env, created_at=at, party_override=party_override
+    )
+    valid, _ = await _legacy_pair(env, created_at=at + timedelta(days=1))
+    before = await env.db.fetch_all(
+        "SELECT * FROM {{tables.chat_participants}} WHERE session_id=$1 ORDER BY participant_id",
+        malformed,
+    )
+    for viewer, expected_status in (("alice", 200), ("bob", bob_status)):
+        old = await _request(
+            env, viewer, "GET", f"/v1/chat/sessions/{malformed}/messages"
+        )
+        assert old.status_code == expected_status, old.text
+    await migrate_chat_conversation_coverage(env.db)
+    await migrate_chat_conversation_coverage(env.db)
+    assert (
+        await env.db.fetch_all(
+            "SELECT * FROM {{tables.chat_participants}} WHERE session_id=$1 ORDER BY participant_id",
+            malformed,
+        )
+        == before
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.conversations}} WHERE conversation_id=$1",
+            malformed,
+        )
+        == 0
+    )
+    assert (
+        await env.db.fetch_value(
+            "SELECT count(*) FROM {{tables.conversations}} WHERE conversation_id=$1",
+            valid,
+        )
+        == 1
+    )
+    for viewer, expected_status in (("alice", 200), ("bob", bob_status)):
+        history = await _request(
+            env, viewer, "GET", f"/v1/chat/sessions/{malformed}/messages"
+        )
+        assert history.status_code == expected_status, history.text
+        if expected_status == 200:
+            assert [
+                (m["message_id"], m["body"]) for m in history.json()["messages"]
+            ] == [(str(message_id), "retained legacy history")]
+
+
+@pytest.mark.asyncio
+async def test_only_newest_uncovered_pair_is_active_and_older_history_remains_readable(
+    privacy_app,
+):
+    from aweb.messaging.chat import find_session_between
+
+    env = privacy_app
+    at = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    older, old_message = await _legacy_pair(env, created_at=at)
+    newer, _ = await _legacy_pair(env, created_at=at + timedelta(days=1))
+    await migrate_chat_conversation_coverage(env.db)
+    rows = await env.db.fetch_all(
+        "SELECT conversation_id,status FROM {{tables.conversations}} WHERE conversation_id=ANY($1::uuid[])",
+        [older, newer],
+    )
+    assert {row["conversation_id"]: row["status"] for row in rows} == {
+        older: "closed",
+        newer: "active",
+    }
+    assert (
+        await find_session_between(
+            env.infra,
+            did_a=env.actors["alice"].did,
+            did_b=env.actors["bob"].did,
+        )
+        == newer
+    )
+    history = await _request(env, "alice", "GET", f"/v1/chat/sessions/{older}/messages")
+    assert history.status_code == 200, history.text
+    assert [m["message_id"] for m in history.json()["messages"]] == [str(old_message)]
+
+
+@pytest.mark.asyncio
+async def test_active_canonical_pair_wins_over_newer_uncovered_pair(privacy_app):
+    from aweb.messaging.chat import find_session_between
+
+    env = privacy_app
+    current = await _request(
+        env,
+        "alice",
+        "POST",
+        "/v1/chat/sessions",
+        {
+            "to_dids": [env.actors["bob"].did],
+            "message": "current canonical conversation",
+        },
+    )
+    assert current.status_code == 200, current.text
+    canonical_id = current.json()["session_id"]
+    uncovered, old_message = await _legacy_pair(
+        env,
+        created_at=datetime.now(timezone.utc) + timedelta(days=1),
+    )
+    await migrate_chat_conversation_coverage(env.db)
+    assert (
+        await env.db.fetch_value(
+            "SELECT status FROM {{tables.conversations}} WHERE conversation_id=$1",
+            uncovered,
+        )
+        == "closed"
+    )
+    assert (
+        str(
+            await find_session_between(
+                env.infra,
+                did_a=env.actors["alice"].did,
+                did_b=env.actors["bob"].did,
+            )
+        )
+        == canonical_id
+    )
+    history = await _request(
+        env, "bob", "GET", f"/v1/chat/sessions/{uncovered}/messages"
+    )
+    assert history.status_code == 200, history.text
+    assert [m["message_id"] for m in history.json()["messages"]] == [str(old_message)]
