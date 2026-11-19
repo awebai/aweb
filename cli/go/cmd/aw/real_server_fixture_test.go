@@ -71,6 +71,7 @@ func realCommandStack(t *testing.T, ctx context.Context, authority commandStackA
 type realCommandWorld struct {
 	Context      context.Context
 	Binary       string
+	UserHome     string
 	Stack        commandStack
 	Domain       string
 	TeamID       string
