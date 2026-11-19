@@ -16,8 +16,26 @@ import (
 )
 
 type teamInviteAcceptanceRequest struct {
+	Token      string
 	WorkingDir string
 	Options    teamAcceptInviteOptions
+}
+
+type teamInviteConnectionTarget struct {
+	Token        string
+	PreferredURL string
+	Accepted     *acceptedTeamInvite
+}
+
+// Native connection follows the issuer's saved route after acceptance; an
+// unsigned token hint never overrides it (docs/cli-integration-contract.md:143-145).
+// Hosted tokens retain their service-envelope selection.
+func acceptedInviteServiceURL(target teamInviteConnectionTarget) string {
+	acceptedURL := firstNonEmptyString(strings.TrimSpace(target.Accepted.AwebURL), strings.TrimSpace(target.Accepted.Output.AwebURL))
+	if awid.IsHostedSpawnInviteToken(target.Token) {
+		return firstNonEmptyString(strings.TrimSpace(target.PreferredURL), acceptedURL)
+	}
+	return acceptedURL
 }
 
 type teamInviteCompletionMode uint8
@@ -328,7 +346,11 @@ func completeHostedInviteResponse(ctx context.Context, responseRequest hostedInv
 		if err := persistLocalSigningKeyAndCertificateAt(workingDir, home.Root, signingKey, cert); err != nil {
 			return nil, err
 		}
-	} else if err := persistGuidedHostedState(workingDir, registryURL, signingKey, cert, didKey, stableID, memberAddress, false, home.Root); err != nil {
+	} else if err := persistHostedIdentityState(hostedStatePersistence{
+		WorkingDir: workingDir, IdentityHome: home, RegistryURL: registryURL,
+		SigningKey: signingKey, Certificate: cert, DIDKey: didKey,
+		DIDAW: stableID, MemberAddress: memberAddress, Scope: localHostedIdentity,
+	}); err != nil {
 		return nil, err
 	}
 	// Accept completed: clear the pending marker so the home is no longer in

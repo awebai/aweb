@@ -29,7 +29,11 @@ func TestOATSExpiredAndUnknownNativeInvitesRefuseBeforeRecipientCreation(t *test
 			t.Fatal(err)
 		}
 		home := filepath.Join(dir, id, ".aw")
-		_, err = acceptTeamInviteWithDetails(dir, token, teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: awid.IdentityModeLocal})
+		_, err = acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+			WorkingDir: dir,
+			Token:      token,
+			Options:    teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: awid.IdentityModeLocal},
+		})
 		if err == nil || errorCodeOf(err) != "invite_unknown_or_expired" || err.Error() != "This invitation is unknown or expired; ask its issuer for a new invite." {
 			t.Fatalf("expiry/unknown refusal lost its one-sentence renewal action: %v", err)
 		}

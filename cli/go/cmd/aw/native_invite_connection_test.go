@@ -54,7 +54,11 @@ func TestOATSNativeInviteConnectionFailureRetainsTheExactAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, acceptErr := acceptTeamInviteWithDetails(dir, token, teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: awid.IdentityModeLocal})
+	_, acceptErr := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: dir,
+		Token:      token,
+		Options:    teamAcceptInviteOptions{IdentityHome: home, Name: "recipient", Scope: awid.IdentityModeLocal},
+	})
 	if acceptErr == nil {
 		t.Fatal("unavailable registry unexpectedly accepted membership")
 	}

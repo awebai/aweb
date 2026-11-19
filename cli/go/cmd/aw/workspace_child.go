@@ -3,11 +3,12 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/awebai/aw/awconfig"
-	"github.com/awebai/aw/awid"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 // worktreeAgentCreation keeps the creator, new home and cleanup context
@@ -54,10 +55,14 @@ func addWorktreeViaLocalTeamKey(input worktreeAgentCreation) (connectOutput, err
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, fmt.Errorf("create local team invite for %s: %w", teamID, err)
 	}
-	acceptedInvite, err := acceptTeamInviteWithDetails(worktreePath, created.Token, teamAcceptInviteOptions{
-		IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
-		Name:         alias,
-		Scope:        awid.IdentityModeLocal,
+	acceptedInvite, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: worktreePath,
+		Token:      created.Token,
+		Options: teamAcceptInviteOptions{
+			IdentityHome: filepath.Join(filepath.Clean(worktreePath), ".aw"),
+			Name:         alias,
+			Scope:        awid.IdentityModeLocal,
+		},
 	})
 	if err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
@@ -166,7 +171,14 @@ func addWorktreeViaPrimaryInvite(input worktreeAgentCreation) (connectOutput, er
 		awebURL = strings.TrimSpace(sourceServerURL)
 	}
 	awebURL = awebURLOrDefault(awebURL)
-	if err := upsertAcceptedTeamMembershipState(worktreePath, accepted.Output, accepted.Certificate, accepted.RegistryURL, awebURL, true); err != nil {
+	if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
+		Location:    teamMembershipLocation{WorkingDir: worktreePath, IdentityHome: ""},
+		Output:      accepted.Output,
+		Certificate: accepted.Certificate,
+		RegistryURL: accepted.RegistryURL,
+		AwebURL:     awebURL,
+		Activation:  membershipMakeActive,
+	}); err != nil {
 		cleanupWorkspaceWorktree(root, worktreePath, branchName, branchCreated)
 		return connectOutput{}, err
 	}

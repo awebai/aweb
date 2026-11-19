@@ -110,7 +110,11 @@ func TestOATSRealInviteResumesExactIssuanceAfterControllerPersistenceFailure(t *
 	}
 	other := filepath.Join(userHome, ".other.aw")
 	world.requireCommand(t, other, "id", "create", "--local")
-	_, err = acceptTeamInviteWithDetails(userHome, unused.Token, teamAcceptInviteOptions{IdentityHome: other, Name: "recipient", Scope: awid.IdentityModeLocal})
+	_, err = acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: userHome,
+		Token:      unused.Token,
+		Options:    teamAcceptInviteOptions{IdentityHome: other, Name: "recipient", Scope: awid.IdentityModeLocal},
+	})
 	if err == nil || !strings.Contains(err.Error(), "Your invite is still valid.") {
 		t.Fatalf("fresh alias refusal lost its remedy: %v", err)
 	}
@@ -118,7 +122,11 @@ func TestOATSRealInviteResumesExactIssuanceAfterControllerPersistenceFailure(t *
 	if err != nil || available.Issuance != nil || available.Secret == "" || available.ConsumedAt != "" {
 		t.Fatalf("definite refusal did not restore unused enrollment: %v", err)
 	}
-	accepted, err := acceptTeamInviteWithDetails(userHome, unused.Token, teamAcceptInviteOptions{IdentityHome: other, Name: "different-recipient", Scope: awid.IdentityModeLocal})
+	accepted, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: userHome,
+		Token:      unused.Token,
+		Options:    teamAcceptInviteOptions{IdentityHome: other, Name: "different-recipient", Scope: awid.IdentityModeLocal},
+	})
 	if err != nil || accepted.Certificate.CertificateID == cert.CertificateID {
 		t.Fatalf("valid alias retry failed: %v", err)
 	}

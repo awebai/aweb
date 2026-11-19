@@ -2398,13 +2398,21 @@ func TestTeamAcceptHostedGlobalInviteRetryReusesPendingSigningKey(t *testing.T) 
 	t.Setenv("AWEB_URL", server.URL)
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
-	_, err = acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_global", teamAcceptInviteOptions{Address: "globalhosted.aweb.ai/retry-child", Scope: awid.IdentityModeGlobal})
+	_, err = acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: acceptDir,
+		Token:      "aw_inv_retry_global",
+		Options:    teamAcceptInviteOptions{Address: "globalhosted.aweb.ai/retry-child", Scope: awid.IdentityModeGlobal},
+	})
 	if err == nil {
 		t.Fatal("first accept should fail")
 	}
 	assertPathExists(t, awconfig.WorktreeSigningKeyPath(acceptDir))
 
-	accepted, err := acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_global", teamAcceptInviteOptions{Address: "globalhosted.aweb.ai/retry-child", Scope: awid.IdentityModeGlobal})
+	accepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: acceptDir,
+		Token:      "aw_inv_retry_global",
+		Options:    teamAcceptInviteOptions{Address: "globalhosted.aweb.ai/retry-child", Scope: awid.IdentityModeGlobal},
+	})
 	if err != nil {
 		t.Fatalf("retry accept: %v", err)
 	}
@@ -2490,7 +2498,11 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 	t.Setenv("AWEB_URL", server.URL)
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 
-	_, err = acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_local", teamAcceptInviteOptions{Name: "retry-child", Scope: awid.IdentityModeLocal})
+	_, err = acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: acceptDir,
+		Token:      "aw_inv_retry_local",
+		Options:    teamAcceptInviteOptions{Name: "retry-child", Scope: awid.IdentityModeLocal},
+	})
 	if err == nil {
 		t.Fatal("first accept should fail")
 	}
@@ -2498,7 +2510,11 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 	// survives a post-commit failure and the retry presents the same did:key.
 	assertPathExists(t, awconfig.WorktreeSigningKeyPath(acceptDir))
 
-	accepted, err := acceptHostedTeamInviteWithDetails(acceptDir, "aw_inv_retry_local", teamAcceptInviteOptions{Name: "retry-child", Scope: awid.IdentityModeLocal})
+	accepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: acceptDir,
+		Token:      "aw_inv_retry_local",
+		Options:    teamAcceptInviteOptions{Name: "retry-child", Scope: awid.IdentityModeLocal},
+	})
 	if err != nil {
 		t.Fatalf("retry accept: %v", err)
 	}
@@ -3090,7 +3106,11 @@ func TestTeamAcceptInviteLocalRejectsSecondTeam(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_second_local", teamAcceptInviteOptions{Name: "bob", Scope: awid.IdentityModeLocal})
+	_, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Token:      "aw_inv_second_local",
+		Options:    teamAcceptInviteOptions{Name: "bob", Scope: awid.IdentityModeLocal},
+	})
 	if err == nil || !strings.Contains(err.Error(), "local identities can only join one team") {
 		t.Fatalf("expected local one-team guard, got %v", err)
 	}
@@ -3100,7 +3120,11 @@ func TestTeamAcceptInviteGlobalWithoutIdentityErrorsToIDCreate(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workingDir := t.TempDir()
-	_, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_identity", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, Address: "globalhosted.aweb.ai/alice"})
+	_, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Token:      "aw_inv_no_identity",
+		Options:    teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, Address: "globalhosted.aweb.ai/alice"},
+	})
 	if err == nil || !strings.Contains(err.Error(), "aw id create") {
 		t.Fatalf("expected aw id create guidance, got %v", err)
 	}
@@ -3219,7 +3243,11 @@ func TestHostedGlobalAcceptNoAddressUsesExistingStableID(t *testing.T) {
 	defer server.Close()
 	t.Setenv("AWEB_URL", server.URL)
 
-	accepted, err := acceptHostedTeamInviteWithDetails(workingDir, "aw_inv_no_address", teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, NoAddress: true})
+	accepted, err := acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Token:      "aw_inv_no_address",
+		Options:    teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal, NoAddress: true},
+	})
 	if err != nil {
 		t.Fatalf("hosted global no-address accept: %v", err)
 	}
@@ -3363,7 +3391,11 @@ func TestTeamAcceptInviteGlobalDefaultClaimUsesNamespaceAuthority(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	accepted, err := acceptTeamInviteWithDetails(workingDir, token, teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
+	accepted, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Token:      token,
+		Options:    teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal},
+	})
 	if err != nil {
 		t.Fatalf("acceptTeamInviteWithDetails: %v", err)
 	}
@@ -3500,7 +3532,11 @@ func TestTeamAcceptInviteGlobalDefaultClaimResumesAfterClaimRollbackFailure(t *t
 		t.Fatal(err)
 	}
 
-	_, err = acceptTeamInviteWithDetails(workingDir, token, teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
+	_, err = acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Token:      token,
+		Options:    teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal},
+	})
 	if err == nil || !strings.Contains(err.Error(), "newly claimed") || !strings.Contains(err.Error(), "rollback failed") || !strings.Contains(err.Error(), "retry the same invite") {
 		t.Fatalf("first failure lacks honest recovery state: %v", err)
 	}
@@ -3508,7 +3544,11 @@ func TestTeamAcceptInviteGlobalDefaultClaimResumesAfterClaimRollbackFailure(t *t
 		t.Fatal("failed rollback should leave the claimed address for retry")
 	}
 
-	accepted, err := acceptTeamInviteWithDetails(workingDir, token, teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal})
+	accepted, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Token:      token,
+		Options:    teamAcceptInviteOptions{Name: "alice", Scope: awid.IdentityModeGlobal},
+	})
 	if err != nil {
 		t.Fatalf("retry should reuse the existing claim: %v", err)
 	}

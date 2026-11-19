@@ -1190,15 +1190,22 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 			return err
 		}
 	}
-	accepted, err := acceptAndStoreTeamInvite(workingDir, rawToken, teamAcceptInviteOptions{
-		IdentityHome: externalIdentityHomeRoot(home),
-		Name:         teamAcceptAlias,
-		Address:      teamAcceptAddress,
-		Scope:        acceptScope,
-		NoAddress:    teamAcceptNoAddress,
-		AwebURL:      inviteAwebURL,
-		ParentHome:   inviteParentFlag(cmd),
-	}, teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), SetActive: true})
+	accepted, err := acceptAndStoreTeamInvite(teamInviteStoreRequest{
+		Acceptance: teamInviteAcceptanceRequest{
+			WorkingDir: workingDir,
+			Token:      rawToken,
+			Options: teamAcceptInviteOptions{
+				IdentityHome: externalIdentityHomeRoot(home),
+				Name:         teamAcceptAlias,
+				Address:      teamAcceptAddress,
+				Scope:        acceptScope,
+				NoAddress:    teamAcceptNoAddress,
+				AwebURL:      inviteAwebURL,
+				ParentHome:   inviteParentFlag(cmd),
+			},
+		},
+		Store: teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), Activation: membershipMakeActive},
+	})
 	if err != nil {
 		return err
 	}
@@ -1222,10 +1229,7 @@ func runTeamInviteAcceptance(cmd *cobra.Command, args []string, completion teamI
 		}
 	}
 	if connectWorkspace || externalHostedLocalAccept {
-		connectURL := accepted.AwebURL
-		if awid.IsHostedSpawnInviteToken(rawToken) {
-			connectURL = firstNonEmpty(inviteAwebURL, accepted.AwebURL)
-		}
+		connectURL := acceptedInviteServiceURL(teamInviteConnectionTarget{Token: rawToken, PreferredURL: inviteAwebURL, Accepted: accepted})
 		if connectURL == "" {
 			connectURL = awebURLForTeamInviteAt(workingDir, externalIdentityHomeRoot(home), accepted.Output.TeamID)
 		}
@@ -1295,19 +1299,26 @@ func teamAcceptScopeFromGlobal(global bool) string {
 	return awid.IdentityModeLocal
 }
 
-type teamInviteStoreOptions struct {
-	IdentityHome    encryptionKeyIdentityHomeIntent
-	SetActive       bool
-	RejectDuplicate bool
+type teamInviteStoreRequest struct {
+	Acceptance teamInviteAcceptanceRequest
+	Store      teamInviteStoreOptions
 }
 
-func acceptAndStoreTeamInvite(workingDir, token string, opts teamAcceptInviteOptions, store teamInviteStoreOptions) (*acceptedTeamInvite, error) {
+type teamInviteStoreOptions struct {
+	IdentityHome encryptionKeyIdentityHomeIntent
+	Activation   membershipActivation
+	Duplicates   membershipDuplicatePolicy
+}
+
+func acceptAndStoreTeamInvite(request teamInviteStoreRequest) (*acceptedTeamInvite, error) {
+	workingDir, token, opts := request.Acceptance.WorkingDir, request.Acceptance.Token, request.Acceptance.Options
+	store := request.Store
 	identityHomeRoot, explicitIdentityHome, err := store.IdentityHome.resolve()
 	if err != nil {
 		return nil, err
 	}
 	var teamState *awconfig.TeamState
-	if store.RejectDuplicate {
+	if store.Duplicates == membershipRejectDuplicate {
 		loaded, err := requireTeamStateForMembershipAt(workingDir, identityHomeRoot)
 		if err != nil {
 			if !os.IsNotExist(err) {
@@ -1317,17 +1328,29 @@ func acceptAndStoreTeamInvite(workingDir, token string, opts teamAcceptInviteOpt
 		}
 		teamState = loaded
 	}
-	accepted, err := acceptTeamInviteWithDetails(workingDir, token, opts)
+	accepted, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Token:      token,
+		Options:    opts,
+	})
 	if err != nil {
 		return nil, err
 	}
 	if teamState != nil && teamState.Membership(accepted.Output.TeamID) != nil {
 		return nil, rollbackAddedTeamCertificate(workingDir, identityHomeRoot, accepted, usageError("team %q is already present in local team memberships", accepted.Output.TeamID))
 	}
-	// Join deliberately leaves the worktree binding for `aw init`; only the
-	// teams.yaml membership and the encryption key are recorded here.
-	if err := recordAcceptedTeamMembership(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{IdentityHome: store.IdentityHome, SetActive: store.SetActive}); err != nil {
-		if store.RejectDuplicate {
+	// Membership recording prepares teams.yaml and encryption. The caller
+	// connects the workspace separately when its join mode requires it.
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
+		WorkingDir:   workingDir,
+		Output:       accepted.Output,
+		Certificate:  accepted.Certificate,
+		RegistryURL:  accepted.RegistryURL,
+		AwebURL:      accepted.AwebURL,
+		IdentityHome: store.IdentityHome,
+		Activation:   store.Activation,
+	}); err != nil {
+		if store.Duplicates == membershipRejectDuplicate {
 			return nil, rollbackAddedTeamCertificate(workingDir, identityHomeRoot, accepted, err)
 		}
 		return nil, err
@@ -1407,13 +1430,20 @@ func runTeamAdd(cmd *cobra.Command, args []string) error {
 	if teamAddMemberAddress == "" && !teamAcceptNoAddress {
 		_, teamAddMemberAddress = resolveIdentityFieldsForCert(workingDir)
 	}
-	accepted, err := acceptAndStoreTeamInvite(workingDir, args[0], teamAcceptInviteOptions{
-		IdentityHome: externalIdentityHomeRoot(home),
-		Name:         teamAddAlias,
-		Address:      teamAddMemberAddress,
-		Scope:        awid.IdentityModeGlobal,
-		NoAddress:    teamAcceptNoAddress,
-	}, teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), SetActive: false, RejectDuplicate: true})
+	accepted, err := acceptAndStoreTeamInvite(teamInviteStoreRequest{
+		Acceptance: teamInviteAcceptanceRequest{
+			WorkingDir: workingDir,
+			Token:      args[0],
+			Options: teamAcceptInviteOptions{
+				IdentityHome: externalIdentityHomeRoot(home),
+				Name:         teamAddAlias,
+				Address:      teamAddMemberAddress,
+				Scope:        awid.IdentityModeGlobal,
+				NoAddress:    teamAcceptNoAddress,
+			},
+		},
+		Store: teamInviteStoreOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), Activation: membershipPreserveActive, Duplicates: membershipRejectDuplicate},
+	})
 	if err != nil {
 		return err
 	}
@@ -1876,9 +1906,14 @@ func createHostedTeamInvite(request teamInviteMintRequest) (*awid.SpawnCreateInv
 	return created, nil
 }
 
-func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
+func acceptTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTeamInvite, error) {
+	workingDir, token, opts := input.WorkingDir, input.Token, input.Options
 	if awid.IsHostedSpawnInviteToken(token) {
-		return acceptHostedTeamInviteWithDetails(workingDir, token, opts)
+		return acceptHostedTeamInviteWithDetails(teamInviteAcceptanceRequest{
+			WorkingDir: workingDir,
+			Token:      token,
+			Options:    opts,
+		})
 	}
 
 	decoded, err := awconfig.DecodeInviteToken(token)
@@ -1918,7 +1953,10 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if lifecycle.State == awconfig.TeamInviteConsumed {
 		return nil, withErrorCode("invite_already_used", usageError("this invite was already used; retain its recipient home and recover that membership instead of accepting it again"))
 	}
-	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{WorkingDir: workingDir, Options: opts})
+	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Options:    opts,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -2055,13 +2093,20 @@ func rollbackDefaultAddressClaimAfterCertificateFailure(
 	return fmt.Errorf("%w; newly claimed default address %s was rolled back", cause, address)
 }
 
-func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
-	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{WorkingDir: workingDir, Options: opts})
+func acceptHostedTeamInviteWithDetails(input teamInviteAcceptanceRequest) (*acceptedTeamInvite, error) {
+	workingDir, token, opts := input.WorkingDir, input.Token, input.Options
+	scope, err := validateTeamInviteAcceptance(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Options:    opts,
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	recipient, err := resolveHostedInviteRecipient(teamInviteAcceptanceRequest{WorkingDir: workingDir, Options: opts})
+	recipient, err := resolveHostedInviteRecipient(teamInviteAcceptanceRequest{
+		WorkingDir: workingDir,
+		Options:    opts,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -2070,7 +2115,10 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 	// Global reuse is checked before locking can create a recipient home.
 	material := workspaceTeamIdentityMaterial{IdentityScope: scope}
 	if scope == awid.IdentityModeGlobal {
-		material, err = loadGlobalHostedInviteMaterial(teamInviteAcceptanceRequest{WorkingDir: workingDir, Options: opts})
+		material, err = loadGlobalHostedInviteMaterial(teamInviteAcceptanceRequest{
+			WorkingDir: workingDir,
+			Options:    opts,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -4031,7 +4079,7 @@ func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentR
 		if opts.NoAddress {
 			return teamMemberEnrollmentPlan{}, usageError("--no-address requires --global")
 		}
-		teamState, err := loadOptionalTeamState(opts.WorkingDir, opts.IdentityHome)
+		teamState, err := loadOptionalTeamState(teamMembershipLocation{WorkingDir: opts.WorkingDir, IdentityHome: opts.IdentityHome})
 		if err != nil {
 			return teamMemberEnrollmentPlan{}, err
 		}
@@ -4098,7 +4146,7 @@ func resolveTeamMemberEnrollment(ctx context.Context, opts teamMemberEnrollmentR
 }
 
 func ensureTeamAcceptScopeAllowed(workingDir, identityHome, scope string) error {
-	teamState, err := loadOptionalTeamState(workingDir, identityHome)
+	teamState, err := loadOptionalTeamState(teamMembershipLocation{WorkingDir: workingDir, IdentityHome: identityHome})
 	if err != nil {
 		return err
 	}

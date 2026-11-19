@@ -52,6 +52,33 @@ func TestOATSRealExplicitHomeJoinFrom(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(target), ".aw", "signing.key")); !os.IsNotExist(err) {
 		t.Fatalf("join wrote checkout identity: %v", err)
 	}
+	// Native init must also connect to the saved service when the unsigned
+	// transport token carries another hint. Both mint and connect use real writers.
+	createdJSON := world.requireCommand(t, source.Home, "team", "invite", "--team-id", world.TeamID)
+	var created teamInviteOutput
+	if err := json.Unmarshal([]byte(createdJSON), &created); err != nil {
+		t.Fatal(err)
+	}
+	wire, err := awconfig.DecodeInviteToken(created.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire.AwebURL = "http://127.0.0.1:1"
+	changedToken, err := awconfig.EncodeInviteToken(&awconfig.TeamInvite{InviteID: wire.InviteID, Domain: wire.Domain, TeamName: wire.TeamName, Secret: wire.Secret, RegistryURL: wire.RegistryURL, AwebURL: wire.AwebURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nativeTarget := filepath.Join(filepath.Dir(target), "native-identity")
+	world.requireCommand(t, nativeTarget, "init", "--invite", changedToken, "--name", "native-worker", "--do-not-touch-agents-md")
+	nativeStatus := world.requireCommand(t, nativeTarget, "id", "status", "--team", world.TeamID)
+	var native identityStatusOutput
+	if err := json.Unmarshal([]byte(nativeStatus), &native); err != nil {
+		t.Fatal(err)
+	}
+	if !native.MintComplete || native.Service != world.Stack.ServerURL || native.Alias != "native-worker" {
+		t.Fatalf("native init did not complete at its saved service: %s", nativeStatus)
+	}
+
 	after := fileDigestsForTest(t, source.Home)
 	if len(after) != len(sourceBefore) {
 		t.Fatal("source state changed")
@@ -123,7 +150,11 @@ func TestOATSRealIssuedInviteRemainsUsedWhenRecipientPersistenceFails(t *testing
 	if err := os.MkdirAll(certificatePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	_, acceptErr := acceptTeamInviteWithDetails(filepath.Dir(child), created.Token, teamAcceptInviteOptions{IdentityHome: child, Name: "recipient", Scope: awid.IdentityModeLocal})
+	_, acceptErr := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: filepath.Dir(child),
+		Token:      created.Token,
+		Options:    teamAcceptInviteOptions{IdentityHome: child, Name: "recipient", Scope: awid.IdentityModeLocal},
+	})
 	if acceptErr == nil {
 		t.Fatal("accept unexpectedly persisted over the blocked certificate path")
 	}

@@ -513,16 +513,23 @@ type initInviteConnection struct {
 func acceptInitInviteAndConnect(cmd *cobra.Command, request initInviteConnection) error {
 	workingDir := request.WorkingDir
 	alias := resolveAliasValue(resolveInitLocalName())
-	accepted, err := acceptAndStoreTeamInvite(workingDir, request.Token, teamAcceptInviteOptions{
-		ParentHome: request.ParentHome,
-		Name:       alias,
-		Scope:      initInviteIdentityScope(),
-		AwebURL:    strings.TrimSpace(request.PreferredAwebURL),
-	}, teamInviteStoreOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true})
+	accepted, err := acceptAndStoreTeamInvite(teamInviteStoreRequest{
+		Acceptance: teamInviteAcceptanceRequest{
+			WorkingDir: workingDir,
+			Token:      request.Token,
+			Options: teamAcceptInviteOptions{
+				ParentHome: request.ParentHome,
+				Name:       alias,
+				Scope:      initInviteIdentityScope(),
+				AwebURL:    strings.TrimSpace(request.PreferredAwebURL),
+			},
+		},
+		Store: teamInviteStoreOptions{IdentityHome: currentEncryptionKeyIdentityHome(), Activation: membershipMakeActive},
+	})
 	if err != nil {
 		return err
 	}
-	awebURL := firstNonEmptyString(strings.TrimSpace(request.PreferredAwebURL), strings.TrimSpace(accepted.AwebURL), strings.TrimSpace(accepted.Output.AwebURL))
+	awebURL := acceptedInviteServiceURL(teamInviteConnectionTarget{Token: request.Token, PreferredURL: request.PreferredAwebURL, Accepted: accepted})
 	if awebURL == "" {
 		return usageError("accepted invite did not include an aweb URL; rerun aw init with --aweb-url")
 	}

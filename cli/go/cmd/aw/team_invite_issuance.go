@@ -193,7 +193,7 @@ func validateNativeInviteResumeTarget(request nativeInviteResumeRequest) (ed2551
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read recipient certificate path: %w; repair its certificate path before resuming the exact invite", err)
 	}
-	state, err := loadOptionalTeamState(request.WorkingDir, home.Root)
+	state, err := loadOptionalTeamState(teamMembershipLocation{WorkingDir: request.WorkingDir, IdentityHome: home.Root})
 	if err != nil {
 		return nil, err
 	}

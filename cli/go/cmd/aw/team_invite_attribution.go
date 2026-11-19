@@ -321,7 +321,11 @@ func completeHostedProvisioningIDChild(ctx context.Context, anchorDir, issuerHom
 // The caller owns both homes and explicitly provisions a new agent. Ordinary
 // invite accept never guesses where another participant's signer might live.
 func acceptProvisionedTeamInvite(anchorDir, issuerHome, childDir, token string, opts teamAcceptInviteOptions) (*acceptedTeamInvite, error) {
-	accepted, err := acceptTeamInviteWithDetails(childDir, token, opts)
+	accepted, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: childDir,
+		Token:      token,
+		Options:    opts,
+	})
 	var pending *hostedInviteSignaturePendingError
 	if !errors.As(err, &pending) {
 		return accepted, err
@@ -341,7 +345,11 @@ func acceptProvisionedTeamInvite(anchorDir, issuerHome, childDir, token string, 
 	}
 	// Resume with the original child key, request UUID and successful preview.
 	// No Cloud acceptance was sent while the native signature was pending.
-	return acceptTeamInviteWithDetails(childDir, token, opts)
+	return acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+		WorkingDir: childDir,
+		Token:      token,
+		Options:    opts,
+	})
 }
 
 // Reserve a fresh recipient before minting its key. A prepared identity joins

@@ -156,7 +156,15 @@ func runTeamResumeInvite(cmd *cobra.Command, args []string) (resultErr error) {
 	if err != nil {
 		return err
 	}
-	if err := recordAcceptedTeamMembership(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{IdentityHome: resolvedEncryptionKeyIdentityHome(home), SetActive: true}); err != nil {
+	if err := recordAcceptedTeamMembership(acceptedTeamMembershipRequest{
+		WorkingDir:   workingDir,
+		Output:       accepted.Output,
+		Certificate:  accepted.Certificate,
+		RegistryURL:  accepted.RegistryURL,
+		AwebURL:      accepted.AwebURL,
+		IdentityHome: resolvedEncryptionKeyIdentityHome(home),
+		Activation:   membershipMakeActive,
+	}); err != nil {
 		return err
 	}
 	if err := writeExternalLocalIdentityStateIfNeeded(home.Root, accepted.Certificate); err != nil {

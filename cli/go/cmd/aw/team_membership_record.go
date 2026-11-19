@@ -10,50 +10,96 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-// recordMembershipOptions controls the two steps that legitimately differ across
-// accept/enroll paths. WriteWorkspaceBinding is the intended join-vs-provision
-// boundary: agent-provisioning paths write the worktree binding immediately so the
-// agent is ready to run, while `aw team join`/`aw team accept-invite` leave it unset
-// and defer it to `aw init`.
-type recordMembershipOptions struct {
-	IdentityHome          encryptionKeyIdentityHomeIntent
-	SetActive             bool
-	WriteWorkspaceBinding bool
+type membershipActivation uint8
+type membershipWorkspaceBinding uint8
+type membershipDuplicatePolicy uint8
+
+const (
+	membershipPreserveActive membershipActivation = iota
+	membershipMakeActive
+)
+
+const (
+	membershipLeaveWorkspaceBinding membershipWorkspaceBinding = iota
+	membershipWriteWorkspaceBinding
+)
+
+const (
+	membershipAllowExisting membershipDuplicatePolicy = iota
+	membershipRejectDuplicate
+)
+
+// teamMembershipLocation identifies the credential store without changing the
+// principal selected by a caller (docs/cli-identity-selection.md:13-33).
+// An empty IdentityHome names the supplied worktree's .aw directory.
+type teamMembershipLocation struct {
+	WorkingDir   string
+	IdentityHome string
 }
 
-// recordAcceptedTeamMembership finalizes an accepted team membership: the steps
-// every accept/enroll path shares once the certificate is in hand. It records the
-// teams.yaml membership, optionally writes the worktree binding, and ensures the
-// local identity encryption key so the member can do E2E messaging. How the
-// certificate was obtained (local mint / hosted accept / cross-machine fetch) stays
-// with each caller; only these shared steps live here.
-func recordAcceptedTeamMembership(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, opts recordMembershipOptions) error {
-	identityHomeRoot, _, err := opts.IdentityHome.resolve()
+type acceptedTeamMembershipRequest struct {
+	WorkingDir   string
+	IdentityHome encryptionKeyIdentityHomeIntent
+	Output       *teamAcceptInviteOutput
+	Certificate  *awid.TeamCertificate
+	RegistryURL  string
+	AwebURL      string
+	Activation   membershipActivation
+	Binding      membershipWorkspaceBinding
+}
+
+type teamMembershipStateUpdate struct {
+	Location    teamMembershipLocation
+	Output      *teamAcceptInviteOutput
+	Certificate *awid.TeamCertificate
+	RegistryURL string
+	AwebURL     string
+	Activation  membershipActivation
+}
+
+// recordAcceptedTeamMembership records the accepted certificate in the selected
+// home and prepares its encryption key (docs/cli-identity-selection.md:26-30).
+// Provisioning may also write a workspace binding; joining installs membership
+// before its separate connection step (docs/cli-identity-selection.md:43-48).
+func recordAcceptedTeamMembership(request acceptedTeamMembershipRequest) error {
+	identityHomeRoot, _, err := request.IdentityHome.resolve()
 	if err != nil {
 		return err
 	}
-	if err := upsertAcceptedTeamMembershipState(workingDir, output, cert, registryURL, awebURL, opts.SetActive, identityHomeRoot); err != nil {
+	if err := upsertAcceptedTeamMembershipState(teamMembershipStateUpdate{
+Location:    teamMembershipLocation{WorkingDir: request.WorkingDir, IdentityHome: identityHomeRoot},
+Output:      request.Output,
+Certificate: request.Certificate,
+RegistryURL: request.RegistryURL,
+AwebURL:     request.AwebURL,
+Activation:  request.Activation,
+}); err != nil {
 		return err
 	}
-	if opts.WriteWorkspaceBinding {
-		if err := ensureAcceptedTeamWorkspaceBinding(workingDir, output, cert, awebURL); err != nil {
+	if request.Binding == membershipWriteWorkspaceBinding {
+		if err := ensureAcceptedTeamWorkspaceBinding(request.WorkingDir, request.Output, request.Certificate, request.AwebURL); err != nil {
 			return err
 		}
 	}
-	return ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, opts.IdentityHome)
+	return ensureAndPublishLocalIdentityEncryptionKeyForDir(request.WorkingDir, request.IdentityHome)
 }
 
-func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, setActive bool, identityHomes ...string) error {
+// upsertAcceptedTeamMembershipState preserves routing and the original JoinedAt
+// on reinstallation, activating a membership only on request or for an empty
+// store (docs/cli-identity-selection.md:28-33).
+func upsertAcceptedTeamMembershipState(request teamMembershipStateUpdate) error {
+	output, cert := request.Output, request.Certificate
 	if output == nil || cert == nil {
 		return fmt.Errorf("accepted team membership is required")
 	}
-	teamState, err := loadOptionalTeamState(workingDir, identityHomes...)
+	teamState, err := loadOptionalTeamState(request.Location)
 	if err != nil {
 		return err
 	}
 	if teamState == nil {
 		teamState = &awconfig.TeamState{}
 	}
+	registryURL, awebURL := request.RegistryURL, request.AwebURL
 	joinedAt := strings.TrimSpace(cert.IssuedAt)
 	if existing := teamState.Membership(strings.TrimSpace(output.TeamID)); existing != nil {
 		if strings.TrimSpace(registryURL) == "" {
@@ -62,36 +108,31 @@ func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInvi
 		if strings.TrimSpace(awebURL) == "" {
 			awebURL = strings.TrimSpace(existing.AwebURL)
 		}
-		// JoinedAt is the original join time; a re-accept or certificate
-		// rotation must not overwrite it with the newer cert.IssuedAt.
 		if strings.TrimSpace(existing.JoinedAt) != "" {
 			joinedAt = strings.TrimSpace(existing.JoinedAt)
 		}
 	}
 	teamState.AddMembership(awconfig.TeamMembership{
-		TeamID:      strings.TrimSpace(output.TeamID),
-		Alias:       strings.TrimSpace(output.Alias),
-		CertPath:    filepath.ToSlash(strings.TrimSpace(output.CertPath)),
-		JoinedAt:    joinedAt,
-		RegistryURL: strings.TrimSpace(registryURL),
-		AwebURL:     strings.TrimSpace(awebURL),
+		TeamID: strings.TrimSpace(output.TeamID), Alias: strings.TrimSpace(output.Alias),
+		CertPath: filepath.ToSlash(strings.TrimSpace(output.CertPath)), JoinedAt: joinedAt,
+		RegistryURL: strings.TrimSpace(registryURL), AwebURL: strings.TrimSpace(awebURL),
 	})
-	if setActive || strings.TrimSpace(teamState.ActiveTeam) == "" {
+	if request.Activation == membershipMakeActive || strings.TrimSpace(teamState.ActiveTeam) == "" {
 		teamState.ActiveTeam = strings.TrimSpace(output.TeamID)
 	}
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		return awconfig.SaveTeamStateToIdentityHome(identityHomes[0], teamState)
+	if strings.TrimSpace(request.Location.IdentityHome) != "" {
+		return awconfig.SaveTeamStateToIdentityHome(request.Location.IdentityHome, teamState)
 	}
-	return awconfig.SaveTeamState(workingDir, teamState)
+	return awconfig.SaveTeamState(request.Location.WorkingDir, teamState)
 }
 
-func loadOptionalTeamState(workingDir string, identityHomes ...string) (*awconfig.TeamState, error) {
+func loadOptionalTeamState(location teamMembershipLocation) (*awconfig.TeamState, error) {
 	var teamState *awconfig.TeamState
 	var err error
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		teamState, err = awconfig.LoadTeamStateFromIdentityHome(identityHomes[0])
+	if strings.TrimSpace(location.IdentityHome) != "" {
+		teamState, err = awconfig.LoadTeamStateFromIdentityHome(location.IdentityHome)
 	} else {
-		teamState, err = awconfig.LoadTeamState(workingDir)
+		teamState, err = awconfig.LoadTeamState(location.WorkingDir)
 	}
 	if err == nil {
 		return teamState, nil

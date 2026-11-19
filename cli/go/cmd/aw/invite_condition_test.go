@@ -156,7 +156,11 @@ func TestLocalInviteConditionPrecedesMembershipEffect(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			accepted, err := acceptTeamInviteWithDetails(wd, token, teamAcceptInviteOptions{IdentityHome: home, Name: "child", Scope: "local"})
+			accepted, err := acceptTeamInviteWithDetails(teamInviteAcceptanceRequest{
+				WorkingDir: wd,
+				Token:      token,
+				Options:    teamAcceptInviteOptions{IdentityHome: home, Name: "child", Scope: "local"},
+			})
 			certPath, _ := awconfig.TeamCertificatePathFromIdentityHome(home, "backend:example.com")
 			if scenario == "current human" {
 				if err != nil || accepted == nil || registrations != 1 {
