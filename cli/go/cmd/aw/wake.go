@@ -385,14 +385,9 @@ func wakeSetPaused(cmd *cobra.Command, home string, paused bool) error {
 	return nil
 }
 
-// wakeCallOrFallback sends a control request to the running daemon, and writes
-// the state files directly when nothing is listening.
-//
-// The fallback is what keeps an OATS hook from failing because the broker
-// happens to be restarting: the daemon reconciles registry.d on start and on a
-// timer, so a file written here is picked up either way. It is not a bypass of
-// the exclusivity check — Registration.Validate runs on the command side, and
-// the daemon re-validates every file it reconciles.
+// wakeCallOrFallback writes state files only while holding the daemon lock.
+// A missing socket can mean startup or failure of a live daemon, so only the
+// lock permits mutation fallback (docs/terminal-wake-broker.md, Local state).
 func wakeCallOrFallback(store *wake.Store, req wake.ControlRequest, fallback func() error) (wake.ControlResponse, error) {
 	resp, err := wake.Call(store.SocketPath(), req)
 	if err == nil {
@@ -401,7 +396,10 @@ func wakeCallOrFallback(store *wake.Store, req wake.ControlRequest, fallback fun
 	if !errors.Is(err, wake.ErrDaemonDown) {
 		return resp, err
 	}
-	return wake.ControlResponse{OK: true}, fallback()
+	if err := wake.WithDaemonStopped(store, fallback); err != nil {
+		return wake.ControlResponse{}, err
+	}
+	return wake.ControlResponse{OK: true}, nil
 }
 
 // wakeStore resolves the state directory: the flag, then AW_WAKE_STATE_DIR,

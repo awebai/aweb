@@ -306,8 +306,10 @@ home exits 0 with a note because the hook may run twice.
 
 Ordinary deregistration keeps its offline/idempotent behavior. Its successful
 exit, registry-file removal, and status absence are **not** a managed-stop
-completion receipt: a control timeout can use file fallback while the daemon
-is still joining the worker.
+completion receipt. File fallback is permitted only while holding the daemon
+lock, excluding a live daemon or a concurrent start. A control timeout or broken
+exchange refuses the command; retry or inspect the daemon instead of changing
+its state files.
 
 For an explicitly authorized withdrawal requiring that proof, the additive
 strict mode is:
