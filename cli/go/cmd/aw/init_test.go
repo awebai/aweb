@@ -292,13 +292,8 @@ func TestInitTTYMissingOutcomeUsesChooserConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer inR.Close()
-	defer outR.Close()
-	os.Stdin, os.Stderr = inR, outW
+	os.Stdin = inR
 	if _, err := inW.WriteString("new-account\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -317,11 +312,11 @@ func TestInitTTYMissingOutcomeUsesChooserConfirmation(t *testing.T) {
 	cmd.Command.SetContext(context.Background())
 	cmd.Command.SetOut(io.Discard)
 	cmd.Command.SetErr(io.Discard)
-	if err := runInit(&cmd.Command, nil); err != nil {
-		t.Fatalf("runInit: %v", err)
-	}
-	outW.Close()
-	promptBytes, _ := io.ReadAll(outR)
+	promptBytes := captureStderr(t, func() {
+		if err := runInit(&cmd.Command, nil); err != nil {
+			t.Fatalf("runInit: %v", err)
+		}
+	})
 	if !strings.Contains(string(promptBytes), "Confirmed: this will create a NEW ACCOUNT") {
 		t.Fatalf("missing visible confirmation: %s", promptBytes)
 	}
@@ -431,23 +426,18 @@ func TestRequireInitOutcomeTTYCanSelectDiscoveryEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer inR.Close()
-	defer outR.Close()
-	os.Stdin, os.Stderr = inR, outW
+	os.Stdin = inR
 	if _, err := inW.WriteString("1\n"); err != nil {
 		t.Fatal(err)
 	}
 	inW.Close()
 
-	if err := requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account"); err != nil {
-		t.Fatalf("prompt outcome: %v", err)
-	}
-	outW.Close()
-	promptBytes, _ := io.ReadAll(outR)
+	promptBytes := captureStderr(t, func() {
+		if err := requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account"); err != nil {
+			t.Fatalf("prompt outcome: %v", err)
+		}
+	})
 	if initJoinFrom != discovered || initJoinTeam != "backend:acme.com" {
 		t.Fatalf("selected join source=%q team=%q", initJoinFrom, initJoinTeam)
 	}
@@ -474,21 +464,16 @@ func TestRequireInitOutcomeTTYUnavailableDiscoveryEntryReportsReason(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer inR.Close()
-	defer outR.Close()
-	os.Stdin, os.Stderr = inR, outW
+	os.Stdin = inR
 	if _, err := inW.WriteString("1\n"); err != nil {
 		t.Fatal(err)
 	}
 	inW.Close()
 
-	err = requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account")
-	outW.Close()
-	promptBytes, _ := io.ReadAll(outR)
+	promptBytes := captureStderr(t, func() {
+		err = requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account")
+	})
 	if err == nil || !strings.Contains(err.Error(), "workspace discovery entry 1 is unavailable") || !strings.Contains(err.Error(), "stat") {
 		t.Fatalf("expected unavailable-entry reason, got err=%v prompt=%s", err, promptBytes)
 	}

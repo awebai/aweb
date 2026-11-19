@@ -60,21 +60,7 @@ func TestPrintJSONOnlyAddsNameCompatibility(t *testing.T) {
 
 func captureIDCommandStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
-	defer func() { os.Stdout = oldStdout }()
-	fn()
-	_ = w.Close()
-	os.Stdout = oldStdout
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(out)
+	return captureStdout(t, fn)
 }
 
 func TestFormatIDCreateUsesGlobalVocabulary(t *testing.T) {

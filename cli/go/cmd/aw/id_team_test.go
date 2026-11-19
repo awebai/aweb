@@ -5422,26 +5422,10 @@ func TestVerifyNamedMemberRefusesAResolvedAliasThatIsNotTheOneNamed(t *testing.T
 	}
 }
 
-// captureTeamMembersStdout drains the pipe while fn runs, so a roster large
-// enough to fill the pipe buffer cannot deadlock the test it is proving.
+// captureTeamMembersStdout records the complete roster through the shared capture owner.
 func captureTeamMembersStdout(t *testing.T, fn func()) string {
 	t.Helper()
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
-	done := make(chan string, 1)
-	go func() {
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
-	}()
-	fn()
-	_ = w.Close()
-	os.Stdout = oldStdout
-	return <-done
+	return captureStdout(t, fn)
 }
 
 func TestRunTeamMembersListsMembersBeyondTheFirstPage(t *testing.T) {

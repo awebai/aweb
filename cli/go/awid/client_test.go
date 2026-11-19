@@ -12,12 +12,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/internal/testcapture"
 )
 
 type stubIdentityResolver struct {
@@ -2350,32 +2351,11 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 	}
 }
 
-// captureStderrForTest redirects process stderr during fn. Its temporary file
-// lets synchronous writers complete without waiting for a pipe reader.
+// captureStderrForTest delegates complete stderr capture to the shared owner.
 // Callers must run serially because os.Stderr belongs to the whole process.
 func captureStderrForTest(t *testing.T, fn func()) string {
 	t.Helper()
-	captured, err := os.CreateTemp(t.TempDir(), "stderr-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	old := os.Stderr
-	os.Stderr = captured
-	defer func() {
-		os.Stderr = old
-		if err := captured.Close(); err != nil {
-			t.Errorf("close captured stderr: %v", err)
-		}
-	}()
-	fn()
-	if _, err := captured.Seek(0, io.SeekStart); err != nil {
-		t.Fatal(err)
-	}
-	data, err := io.ReadAll(captured)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
+	return testcapture.Stderr(t, fn)
 }
 
 func TestNewWithIdentitySetsFields(t *testing.T) {
