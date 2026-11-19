@@ -93,6 +93,7 @@ class StoredMessageState(Enum):
     MISSING = auto()
     EXACT = auto()
     CONFLICT = auto()
+    PARTICIPANTS_CHANGED = auto()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -101,6 +102,10 @@ class StoredMessageLookup:
     message: dict | None = None
 
     def refuse_conflicting_message_id(self) -> None:
+        if self.state is StoredMessageState.PARTICIPANTS_CHANGED:
+            raise ConflictError(
+                "The stored chat participants differ from the resolved recipients. Retry the original conversation and recipient identities unchanged."
+            )
         if self.state is StoredMessageState.CONFLICT:
             raise ConflictError(
                 "message_id already exists for a different signed message. Choose a new message_id and retry."
@@ -194,7 +199,7 @@ async def read_stored_message(db, *, claim: StoredMessageClaim) -> StoredMessage
             row["session_id"],
         )
         if {party["did"] for party in participants} != claim.chat_participant_dids:
-            return StoredMessageLookup(state=StoredMessageState.CONFLICT)
+            return StoredMessageLookup(state=StoredMessageState.PARTICIPANTS_CHANGED)
     return StoredMessageLookup(state=StoredMessageState.EXACT, message=dict(row))
 
 

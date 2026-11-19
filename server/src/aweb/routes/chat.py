@@ -4,13 +4,11 @@ from aweb.messaging.kinds import ContentMode
 
 from aweb.messaging.chat_models import CreateSessionRequest as CreateSessionRequest
 from aweb.messaging.chat_models import SendMessageRequest as SendMessageRequest
-from aweb.message_vocabulary import MessageInputSource, observe_message_vocabulary
 from aweb.client_address import request_client_address
 from aweb.agent_wake import agent_wake_publisher
 
 from aweb.attachment_service import (
     prepare_attachment_send,
-    attachment_retry,
     attachment_references_by_message,
 )
 
@@ -1257,21 +1255,6 @@ async def send_message(
     )
     if attachment_context is not None:
         with attachment_context:
-            existing = await attachment_retry(db, payload, "chat")
-            if existing:
-                binding, row = existing
-                # This accepted attachment retry bypasses the common send entry.
-                observe_message_vocabulary(
-                    source=MessageInputSource.CHAT_SEND,
-                    content_mode=payload.content_mode,
-                )
-                if binding.conversation_id != session_id:
-                    raise HTTPException(409, detail={"code": "attachment_conflict"})
-                return SendMessageResponse(
-                    message_id=binding.message_id,
-                    conversation_id=binding.conversation_id,
-                    delivered=True,
-                )
             return await send_message(request, session_id, payload, db=db, auth=auth)
     runtime = messaging_runtime(request.app.state)
     sender = replace(

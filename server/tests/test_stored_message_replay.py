@@ -355,7 +355,7 @@ async def test_optional_signed_recipient_claim_cannot_move_a_stored_chat_to_othe
             ),
         ),
     )
-    assert changed.state is StoredMessageState.CONFLICT
+    assert changed.state is StoredMessageState.PARTICIPANTS_CHANGED
 
 
 def test_attachment_retry_conflict_keeps_its_code_and_explains_the_next_action():
