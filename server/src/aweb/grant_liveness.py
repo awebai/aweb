@@ -4,6 +4,7 @@ from typing import Any
 from datetime import datetime, timedelta, timezone
 
 from .auth_context import GrantContext
+from .member_team_key import grant_issuer_current_sql
 
 DEFAULT_GRANT_LIVENESS_TTL_SECONDS = 1800
 
@@ -46,18 +47,20 @@ async def valid_grant_liveness_by_workspace(
 
     Liveness rows are only trusted when their backing grant is still active,
     unrevoked, unexpired, bound to the same session did:key and subject, and the
-    subject agent is still active. Stale rows are ignored even before cleanup.
+    subject agent is still active under its current team key and issuing
+    certificate. Reacceptance cannot revive a previous delegation. Stale rows
+    are ignored even before cleanup.
     """
     if not workspace_ids:
         return {}
     rows = await db.fetch_all(
-        """
+        f"""
         SELECT DISTINCT ON (l.workspace_id)
                l.workspace_id, l.grant_id, l.subject_agent_id, l.alias,
                l.session_did_key, l.last_seen_at, l.expires_at
-        FROM {{tables.identity_grant_liveness}} l
-        JOIN {{tables.identity_session_grants}} g ON g.grant_id = l.grant_id
-        JOIN {{tables.agents}} a ON a.agent_id = l.subject_agent_id
+        FROM {{{{tables.identity_grant_liveness}}}} l
+        JOIN {{{{tables.identity_session_grants}}}} g ON g.grant_id = l.grant_id
+        JOIN {{{{tables.agents}}}} a ON a.agent_id = l.subject_agent_id
         WHERE l.workspace_id = ANY($1::uuid[])
           AND l.last_seen_at >= NOW() - ($2::int * INTERVAL '1 second')
           AND (g.expires_at >= g.issued_at + INTERVAL '99 years' OR (l.expires_at > NOW() AND g.expires_at > NOW()))
@@ -69,6 +72,7 @@ async def valid_grant_liveness_by_workspace(
           AND a.agent_id = l.subject_agent_id
           AND a.status = 'active'
           AND a.deleted_at IS NULL
+          AND {grant_issuer_current_sql(agent="a", grant="g")}
         ORDER BY l.workspace_id, l.last_seen_at DESC, l.grant_id
         """,
         workspace_ids,

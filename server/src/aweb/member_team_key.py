@@ -385,3 +385,19 @@ def grant_issuer_current(row) -> bool:
     issuer = str(row.get("issued_by_certificate_id") or "").strip()
     current = str(row.get("certificate_id") or "").strip()
     return not issuer or not current or issuer == current
+
+
+def grant_issuer_current_sql(*, agent: str, grant: str) -> str:
+    """The SQL form of grant_issuer_current for joined presence readers.
+
+    docs/identity.md:775-779 retains exact issuing-certificate equality after
+    reacceptance. Legacy issuer-ID-less grants keep their existing lifetime.
+    Both aliases are source-code identifiers, never request values.
+    """
+    for alias in (agent, grant):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", alias):
+            raise ValueError("Invalid grant eligibility SQL alias")
+    current_key = member_key_current_sql(agent)
+    issuer = f"NULLIF(BTRIM({grant}.issued_by_certificate_id), '')"
+    current = f"NULLIF(BTRIM({agent}.certificate_id), '')"
+    return f"({current_key} AND ({issuer} IS NULL OR {current} IS NULL OR {issuer}={current}))"
