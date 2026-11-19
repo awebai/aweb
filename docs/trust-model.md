@@ -555,6 +555,18 @@ A sender already pinned stays verified by its pin while the registry cannot be
 reached. A later registry answer that names another key for a pinned address is
 an `identity_mismatch`, and the pin is kept.
 
+A cached registry answer is not the registry's answer. When a sender's cached
+address binding (its `did:aw`) or cached current key disagrees with the signed
+message, the client asks the registry once more, past every cache, and decides
+on that fresh answer: the same disagreement is an `identity_mismatch`, an answer
+that agrees verifies, and a failed request is `verification_stale`. The refetch
+is bounded: a client forces at most one such read per sender every 30 seconds.
+Between reads it decides on the answer the last one gave, and a sender whose
+last read failed stays `verification_stale` until the next. A run of
+disagreeing messages so costs at most one registry read per sender per
+interval. Go and TypeScript clients both pass
+`test-vectors/trust/registry-refetch-v1.json`.
+
 For a sender shown only by a display alias, with no address, `verified` means
 the message was signed by the key shown; there is no identity claim behind the
 alias, so this rule has nothing to confirm. A local team sender is still
