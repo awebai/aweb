@@ -10,7 +10,7 @@ from aweb_key_holder.keys import Refused
 
 @pytest.mark.asyncio
 async def test_unknown_library_refusal_is_an_internal_failure_instead_of_bad_credentials(
-    tmp_path, caplog
+    registry_client, tmp_path, caplog
 ):
     import json
 
@@ -20,7 +20,7 @@ async def test_unknown_library_refusal_is_an_internal_failure_instead_of_bad_cre
 
     holder = Holder(
         KeyStore.create(tmp_path / "private", organisation="example.test"),
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
     )
     error = ApprovalRefused("unexpected_new_library_code")
@@ -38,7 +38,9 @@ async def test_unknown_library_refusal_is_an_internal_failure_instead_of_bad_cre
     assert "unexpected_new_library_code" in caplog.text
 
 
-def test_pending_enrollment_cannot_activate_before_its_artifacts_are_saved(tmp_path):
+def test_pending_enrollment_cannot_activate_before_its_artifacts_are_saved(
+    registry_client, tmp_path
+):
     from approval_service.grading import EnrollmentGrading
     from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 
@@ -47,7 +49,7 @@ def test_pending_enrollment_cannot_activate_before_its_artifacts_are_saved(tmp_p
 
     holder = Holder(
         KeyStore.create(tmp_path / "private", organisation="example.test"),
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         approval_origin="https://approval.example",
         rp_id="approval.example",
@@ -98,7 +100,9 @@ def test_holder_failures_have_named_semantics_and_never_default_to_unauthorized(
 
 
 @pytest.mark.asyncio
-async def test_signed_nonobject_json_is_input_failure_before_any_effect(tmp_path):
+async def test_signed_nonobject_json_is_input_failure_before_any_effect(
+    registry_client, tmp_path
+):
     import base64
     import hashlib
     from datetime import UTC, datetime
@@ -113,7 +117,7 @@ async def test_signed_nonobject_json_is_input_failure_before_any_effect(tmp_path
 
     holder = Holder(
         KeyStore.create(tmp_path / "private", organisation="example.test"),
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
     )
     seed, public = generate_keypair()
@@ -183,7 +187,7 @@ async def test_signed_nonobject_json_is_input_failure_before_any_effect(tmp_path
     ],
 )
 async def test_person_facing_refusal_response_includes_its_exact_next_step(
-    tmp_path, code, status, message
+    registry_client, tmp_path, code, status, message
 ):
     import json
 
@@ -194,7 +198,7 @@ async def test_person_facing_refusal_response_includes_its_exact_next_step(
 
     holder = Holder(
         KeyStore.create(tmp_path / "private", organisation="example.test"),
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
     )
     response = await create_app(holder).exception_handlers[Refused](

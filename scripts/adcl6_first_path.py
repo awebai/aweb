@@ -713,7 +713,8 @@ class BindingRefreshState(StrEnum):
 async def refresh_enrolled_person(*, subject: Person, work: Path) -> None:
     """Exercise aw's live-B carrier and preserve every historical artifact byte.
 
-    The component's registry test covers actual controller continuity. This
+    approval-service/integration/test_binding_refresh_registry.py covers actual
+    registry controller continuity as a separate service component test. This
     product-command neighbor exercises re-signing under unchanged valid custody
     and then the journey approves its next act with that saved live binding.
     """

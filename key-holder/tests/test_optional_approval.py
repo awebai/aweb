@@ -22,13 +22,15 @@ def target():
     return stable_id_from_did_key(key), key
 
 
-def test_absent_policy_is_off_and_operator_can_issue_without_awsign(tmp_path):
+def test_absent_policy_is_off_and_operator_can_issue_without_awsign(
+    registry_client, tmp_path
+):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     with store.connection() as db:
         assert "human_issuance" not in {
             row[1] for row in db.execute("PRAGMA table_info(configuration)")
         }
-    holder = Holder(store, registry=None, origin="https://holder.example")
+    holder = Holder(store, registry=registry_client, origin="https://holder.example")
     person, key = target()
     result = holder.issue_person_certificate(person, key)
     assert set(result) == {"state", "person", "identity_key", "certificate"}
@@ -44,13 +46,14 @@ def test_absent_policy_is_off_and_operator_can_issue_without_awsign(tmp_path):
 
 
 def test_configured_gate_requires_the_enrollment_site_and_private_issuance_cannot_bypass(
+    registry_client,
     tmp_path,
 ):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     policy = policy_file(tmp_path / "human-approval.json", store.descriptor().domain)
     derived = Holder(
         store,
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         human_approval_config=policy,
     )
@@ -58,7 +61,7 @@ def test_configured_gate_requires_the_enrollment_site_and_private_issuance_canno
     assert derived.rp_id == "approval.example"
     holder = Holder(
         store,
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         human_approval_config=policy,
         approval_origin="https://approval.example",
@@ -72,11 +75,12 @@ def test_configured_gate_requires_the_enrollment_site_and_private_issuance_canno
 
 @pytest.mark.asyncio
 async def test_unconfigured_enrollment_and_operator_public_issue_are_clear_refusals(
+    registry_client,
     tmp_path,
 ):
     holder = Holder(
         KeyStore.create(tmp_path / "private", organisation="example.test"),
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
     )
     person, _ = target()
@@ -135,7 +139,7 @@ def test_existing_store_migrates_with_keys_and_audit_unchanged(tmp_path):
     assert reopened.audit() == []
 
 
-def test_applied_policy_changes_are_audited_atomically(tmp_path):
+def test_applied_policy_changes_are_audited_atomically(registry_client, tmp_path):
     import base64
     import sqlite3
 
@@ -145,7 +149,7 @@ def test_applied_policy_changes_are_audited_atomically(tmp_path):
     path = policy_file(tmp_path / "human-approval.json", "example.test", None)
     holder = Holder(
         store,
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         human_approval_config=path,
         approval_origin="https://approval.example",
@@ -185,13 +189,13 @@ def test_applied_policy_changes_are_audited_atomically(tmp_path):
     "origin", ["http://holder.example", "https://holder.example/path"]
 )
 def test_approval_configured_holder_refuses_an_origin_the_service_would_refuse(
-    tmp_path, origin
+    registry_client, tmp_path, origin
 ):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     with pytest.raises(Refused, match="enforcer_origin_invalid"):
         Holder(
             store,
-            registry=None,
+            registry=registry_client,
             origin=origin,
             approval_origin="https://approval.example",
             rp_id="approval.example",
@@ -199,7 +203,7 @@ def test_approval_configured_holder_refuses_an_origin_the_service_would_refuse(
         )
     # No approval service: the existing HTTP operator/routine lane stays valid.
     if origin.startswith("http:"):
-        Holder(store, registry=None, origin=origin)
+        Holder(store, registry=registry_client, origin=origin)
 
 
 @pytest.mark.parametrize(

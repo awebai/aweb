@@ -7,7 +7,6 @@ import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from approval_service.canonical import canonical
@@ -17,14 +16,11 @@ from approval_service.wire import domain, validate
 from awid.controller_signing import ControllerDescriptor
 
 from .auth import Caller
+from .keys import HolderOperation
 from .refusals import Refusal, Refused
 
 if TYPE_CHECKING:
     from .enrollment import Holder, WireObject
-
-
-class HolderOperation(StrEnum):
-    BINDING_REFRESH = "binding_refresh"
 
 
 def check_active_enrollment(
@@ -93,7 +89,10 @@ class HolderBindingRefresher:
             if (
                 binding_body["origin"] != holder.approval_origin
                 or binding_body["rp_id"] != holder.rp_id
-                or binding_body["person"] != person
+            ):
+                raise Refused(Refusal.BINDING_REFRESH_SITE_CHANGED)
+            if (
+                binding_body["person"] != person
                 or binding_body["identity_key"] != caller.key
                 or binding_body["organisation"] != current.domain
             ):

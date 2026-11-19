@@ -6,7 +6,7 @@ import httpx
 import pytest
 from approval_service.canonical import parse
 from approval_service.encoding import decode
-from awid.id_certificates import sign_id_certificate
+from awid.id_certificates import id_certificate_id, sign_id_certificate
 from test_native_holder import (
     call,
     commit_identity,
@@ -21,8 +21,9 @@ from aweb_key_holder.http import create_app
 
 
 @pytest.mark.asyncio
-async def test_human_parented_person_enrolls_and_approves_at_namespace_holder(
+async def test_human_parented_person_enrolls_approves_and_refreshes_a_reissued_certificate(
     native_holder,
+    tmp_path,
 ):
     holder, registry = native_holder.holder, native_holder.registry
     parent, _, _, _ = await first_person(native_holder, activate=True)
@@ -104,3 +105,60 @@ async def test_human_parented_person_enrolls_and_approves_at_namespace_holder(
         )
         assert response.status_code == 200, response.text
         assert response.json()["intent"]["intent"]["person"] == target
+
+    # The operator reissues a real namespace-parented certificate for the same
+    # ID/key, using the normal private certificate effect and explicit off policy.
+    from approval_service.seams import commitment
+    from policy_inputs import policy_file
+
+    from aweb_key_holder.enrollment import Holder
+
+    operator = Holder(
+        holder.store,
+        registry=registry,
+        origin=holder.origin,
+        approval_origin=holder.approval_origin,
+        rp_id=holder.rp_id,
+        grading=holder.grading,
+        human_approval_config=policy_file(
+            tmp_path / "operator-policy.json", holder.store.descriptor().domain, None
+        ),
+    )
+    issued = operator.issue_person_certificate(person, key)["certificate"]
+    assert id_certificate_id(issued["certificate"]) != id_certificate_id(
+        certificate["certificate"]
+    )
+    await registry.register_id_certificate(
+        {"v": 1, "type": "aweb.id-chain", "certificates": [issued]},
+        signer=lambda payload: (key, signature(seed, payload)),
+        expected_head=id_certificate_id(certificate["certificate"]),
+        invitation_id=None,
+    )
+    original = holder.active_person(person)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(operator)),
+        base_url=operator.origin,
+    ) as client:
+        response = await call(
+            client,
+            f"/v1/enrollments/{person}/refresh-binding",
+            {
+                "previous_binding_commitment": commitment(
+                    "binding_commitment", activation["binding"]
+                )
+            },
+            **{**own, "chain": [issued]},
+        )
+    assert response.status_code == 200, response.text
+    refreshed = response.json()["binding"]
+    assert refreshed["binding"]["certificate"] == id_certificate_id(
+        issued["certificate"]
+    )
+    assert commitment("binding_commitment", refreshed) != commitment(
+        "binding_commitment", activation["binding"]
+    )
+    assert (
+        refreshed["binding"]["credentials"]
+        == activation["binding"]["binding"]["credentials"]
+    )
+    assert holder.active_person(person) == original

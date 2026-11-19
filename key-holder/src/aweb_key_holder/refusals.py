@@ -66,6 +66,11 @@ class Refusal(StrEnum):
         HTTPStatus.BAD_REQUEST,
         "Use the current live binding commitment saved by the person's approval client.",
     )
+    BINDING_REFRESH_SITE_CHANGED = (
+        "binding_refresh_site_changed",
+        HTTPStatus.CONFLICT,
+        "Restore the holder's original approval-service origin and RP-ID before retrying. Moving this enrollment to another site is not implemented; ask the operator about a new ID and enrollment if a move is required.",
+    )
     BOOTSTRAP_CLOSED = (
         "bootstrap_closed",
         HTTPStatus.FORBIDDEN,

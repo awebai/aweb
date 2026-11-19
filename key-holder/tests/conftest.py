@@ -118,3 +118,13 @@ async def native_holder(tmp_path, test_db_factory):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+@pytest_asyncio.fixture
+async def registry_client():
+    """Real pinned transport for local-only holder tests; no authority is fabricated."""
+    client = RegistryClient("https://registry.example")
+    try:
+        yield client
+    finally:
+        await client.aclose()

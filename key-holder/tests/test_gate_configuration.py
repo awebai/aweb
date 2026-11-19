@@ -10,7 +10,7 @@ from aweb_key_holder.keys import KeyStore, Refused
 @pytest.mark.parametrize("configured", [False, True])
 @pytest.mark.parametrize("mode", ["operator", "approved"])
 def test_legacy_holder_refuses_start_with_replacement_instruction(
-    tmp_path, configured, mode
+    registry_client, tmp_path, configured, mode
 ):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     # The actual persisted setting used by the previous version, not a mocked
@@ -31,7 +31,9 @@ def test_legacy_holder_refuses_start_with_replacement_instruction(
         else {}
     )
     with pytest.raises(Refused, match="human_approval"):
-        Holder(store, registry=None, origin="https://holder.example", **values)
+        Holder(
+            store, registry=registry_client, origin="https://holder.example", **values
+        )
 
 
 def test_approved_database_requires_explicit_configured_migration(tmp_path):
@@ -68,7 +70,7 @@ def test_approved_database_requires_explicit_configured_migration(tmp_path):
 
 
 @pytest.mark.parametrize("level", ["email", "unrecognised"])
-def test_rendered_but_unsupported_level_refuses_start(tmp_path, level):
+def test_rendered_but_unsupported_level_refuses_start(registry_client, tmp_path, level):
     import json
 
     from approval_service.verify import Refused as ApprovalRefused
@@ -89,13 +91,15 @@ def test_rendered_but_unsupported_level_refuses_start(tmp_path, level):
     with pytest.raises(ApprovalRefused, match="human_approval_invalid"):
         Holder(
             store,
-            registry=None,
+            registry=registry_client,
             origin="https://holder.example",
             human_approval_config=path,
         )
 
 
-def test_unknown_action_and_unreadable_source_never_enable_off(tmp_path):
+def test_unknown_action_and_unreadable_source_never_enable_off(
+    registry_client, tmp_path
+):
     import json
 
     from approval_service.verify import Refused as ApprovalRefused
@@ -105,7 +109,7 @@ def test_unknown_action_and_unreadable_source_never_enable_off(tmp_path):
     path = policy_file(tmp_path / "policy.json", "example.test", None)
     holder = Holder(
         store,
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         human_approval_config=path,
     )
@@ -126,7 +130,7 @@ def test_unknown_action_and_unreadable_source_never_enable_off(tmp_path):
     with pytest.raises(ApprovalRefused, match="human_approval_invalid"):
         Holder(
             store,
-            registry=None,
+            registry=registry_client,
             origin="https://holder.example",
             human_approval_config=path,
         )
@@ -164,7 +168,9 @@ def test_actual_legacy_cli_names_the_replacement_section(tmp_path):
     assert "--human-approval-config FILE migrate" in result.stderr
 
 
-def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tmp_path):
+def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(
+    registry_client, tmp_path
+):
     import base64
 
     from approval_service.canonical import parse
@@ -187,12 +193,12 @@ def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tm
     )
     before = store.audit()
     with pytest.raises(Refused, match="human_approval_source_required"):
-        Holder(store, registry=None, origin="https://holder.example")
+        Holder(store, registry=registry_client, origin="https://holder.example")
     assert store.audit() == before
     path = policy_file(tmp_path / "policy.json", "example.test", None)
     holder = Holder(
         store,
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         human_approval_config=path,
     )
@@ -204,22 +210,23 @@ def test_migrated_approved_holder_requires_source_until_explicit_empty_policy(tm
     assert change["from"]["require"] == {"organisation.human.add": "passkey"}
     assert change["to"]["require"] == {}
     # Once the operator explicitly turned it off, omission is no downgrade.
-    Holder(store, registry=None, origin="https://holder.example")
+    Holder(store, registry=registry_client, origin="https://holder.example")
     assert store.audit() == rows
 
 
 def test_effect_in_older_source_less_process_cannot_disable_applied_requirement(
+    registry_client,
     tmp_path,
 ):
     from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
     from policy_inputs import policy_file
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
-    old = Holder(store, registry=None, origin="https://holder.example")
+    old = Holder(store, registry=registry_client, origin="https://holder.example")
     path = policy_file(tmp_path / "policy.json", "example.test")
     Holder(
         store,
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         human_approval_config=path,
     )
@@ -233,7 +240,7 @@ def test_effect_in_older_source_less_process_cannot_disable_applied_requirement(
 
 @pytest.mark.parametrize("explicit_passkey", [False, True])
 def test_hardware_requirement_refuses_passkey_only_grading_before_start(
-    tmp_path, explicit_passkey
+    registry_client, tmp_path, explicit_passkey
 ):
     from policy_inputs import policy_file
 
@@ -245,7 +252,7 @@ def test_hardware_requirement_refuses_passkey_only_grading_before_start(
     with pytest.raises(Refused, match="human_approval_hardware_grading_required"):
         Holder(
             store,
-            registry=None,
+            registry=registry_client,
             origin="https://holder.example",
             human_approval_config=path,
             **grading,
@@ -253,14 +260,16 @@ def test_hardware_requirement_refuses_passkey_only_grading_before_start(
     assert store.audit() == []
 
 
-def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(tmp_path):
+def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(
+    registry_client, tmp_path
+):
     from policy_inputs import policy_file
 
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     path = policy_file(tmp_path / "policy.json", "example.test")
     holder = Holder(
         store,
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         human_approval_config=path,
     )
@@ -271,7 +280,7 @@ def test_hardware_grading_is_accepted_and_live_impossible_requirement_refuses(tm
     assert store.audit() == before
     hardware = Holder(
         store,
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         human_approval_config=path,
         grading=EnrollmentGrading("hardware", None),

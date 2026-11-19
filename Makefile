@@ -372,6 +372,7 @@ test-awid:
 	cd awid && PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 test-key-holder:
+	uv sync --frozen --project key-holder
 	PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) $(MAKE) -C key-holder test
 
 # awid's database session tests through a real transaction-mode PgBouncer.

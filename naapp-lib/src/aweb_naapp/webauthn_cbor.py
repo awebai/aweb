@@ -9,8 +9,9 @@ import io
 
 import cbor2
 
-# Approval protocol.md:337-345 and format-v1.json x-cbor-limits.
-# One bounded, tag-free profile for the original authenticator extension bytes.
+# approval-service's frozen format-v1.json x-cbor-limits owns these values;
+# its conformance test ties this runtime mapping to the same schema read by Go.
+# All Python registration/assertion consumers use this bounded, tag-free reader.
 LIMITS = {"max_depth": 8, "max_map_pairs": 16, "max_array_elements": 16}
 
 

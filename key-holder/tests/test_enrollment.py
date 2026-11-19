@@ -24,13 +24,13 @@ from aweb_key_holder.refusals import Refusal
 
 
 @pytest.fixture
-def holder(tmp_path):
+def holder(registry_client, tmp_path):
     store = KeyStore.create(tmp_path / "private", organisation="example.test")
     policy = policy_file(tmp_path / "human-approval.json", store.descriptor().domain)
     return Holder(
         store,
         human_approval_config=policy,
-        registry=None,
+        registry=registry_client,
         origin="https://holder.example",
         approval_origin="https://approval.example",
         rp_id="approval.example",

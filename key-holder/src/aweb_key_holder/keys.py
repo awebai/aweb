@@ -14,7 +14,7 @@ import stat
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from enum import Enum
+from enum import Enum, StrEnum
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self, TypedDict
@@ -65,6 +65,12 @@ ROUTINE: frozenset[ControllerOperation] = frozenset(
         "namespace_id_issue",
     }
 )
+
+
+class HolderOperation(StrEnum):
+    BINDING_REFRESH = "binding_refresh"
+    HUMAN_APPROVAL_CHANGE = "human_approval_change"
+    RETIRE_PERSON = "retire_person"
 
 
 class StorageKind(Enum):
@@ -253,7 +259,8 @@ class KeyStore:
         """
         section = policy.as_section()
         previous = db.execute(
-            "SELECT payload FROM signatures WHERE operation='human_approval_change' ORDER BY sequence DESC LIMIT 1"
+            "SELECT payload FROM signatures WHERE operation=? ORDER BY sequence DESC LIMIT 1",
+            (HolderOperation.HUMAN_APPROVAL_CHANGE,),
         ).fetchone()
         prefix = b"aweb.key-holder.human-approval/1\n"
         before: dict[str, Any] = {"require": {}}
@@ -273,7 +280,7 @@ class KeyStore:
             db,
             self.descriptor_in_transaction(db),
             payload,
-            operation="human_approval_change",
+            operation=HolderOperation.HUMAN_APPROVAL_CHANGE,
             actor="operator",
         )
 
@@ -478,7 +485,7 @@ class KeyStore:
                     db,
                     self.descriptor_in_transaction(db),
                     b"aweb.key-holder.retire/1\n" + canonical({"person": person}),
-                    operation="retire_person",
+                    operation=HolderOperation.RETIRE_PERSON,
                     actor="operator",
                 )
                 db.execute(

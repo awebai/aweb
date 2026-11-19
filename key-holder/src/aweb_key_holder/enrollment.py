@@ -33,7 +33,7 @@ from approval_service.seams import (
     check_creation_proof,
     commitment,
 )
-from approval_service.verify import Trust
+from approval_service.verify import CredentialGrade, Trust
 from approval_service.wire import domain, validate, validate_site
 from awid.controller_signing import (
     ControllerDescriptor,
@@ -139,7 +139,7 @@ class Holder:
         self,
         store: KeyStore,
         *,
-        registry: RegistryClient | None,
+        registry: RegistryClient,
         origin: str,
         approval_origin: str | None = None,
         rp_id: str | None = None,
@@ -201,7 +201,7 @@ class Holder:
             if policy.service != self.approval_origin:
                 raise Refused(Refusal.HUMAN_APPROVAL_INVALID)
             if (
-                policy.grade("organisation.human.add") == "certified_hardware"
+                policy.grade("organisation.human.add") == CredentialGrade.HARDWARE
                 and grading.mode != "hardware"
             ):
                 raise Refused(Refusal.HUMAN_APPROVAL_HARDWARE_GRADING_REQUIRED)
@@ -577,8 +577,6 @@ class Holder:
     async def _new_identity(self, person: str, identity_key: str) -> None:
         self._certificate(self.store.descriptor(), person, identity_key, now())
         try:
-            if self.registry is None:
-                raise Refused(Refusal.STATUS_UNAVAILABLE)
             current = await self.registry.resolve_key_fresh(person)
         except DIDKeyNotFoundError as error:
             enrollment = error.id_tree
@@ -864,8 +862,8 @@ class Holder:
             }:
                 raise Refused(Refusal.ENFORCER_MISMATCH)
             if (
-                request["act"]["operation"] != "human.add"
-                or request["purpose"] != "act_approval"
+                request["act"]["operation"] != HUMAN_ADD
+                or request["purpose"] != ACT_APPROVAL
             ):
                 raise Refused(Refusal.OPERATION_INVALID)
             if request["requester"] != caller.descriptor:
