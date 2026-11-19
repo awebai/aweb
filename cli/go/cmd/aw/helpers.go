@@ -120,18 +120,9 @@ func resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (
 }
 
 func resolveSelectionAtIdentityHome(workingDir, teamIDOverride string, identityHome awconfig.IdentityHome) (*awconfig.Selection, error) {
-	sel, err := awconfig.ResolveWorkspace(awconfig.ResolveOptions{
-		ServerName:           serverFlag,
-		TeamIDOverride:       strings.TrimSpace(teamIDOverride),
-		WorkingDir:           workingDir,
-		IdentityHome:         identityHome.Root,
-		ExternalIdentityHome: identityHome.External(),
-		AllowEnvOverrides:    true,
+	return selectClientWorkspace(clientRequest{
+		WorkingDir: workingDir, Home: identityHome, TeamID: teamIDOverride, ServerName: serverFlag,
 	})
-	if err != nil {
-		return nil, err
-	}
-	return sel, nil
 }
 
 func resolveIdentity() (*awconfig.ResolvedIdentity, error) {
@@ -332,36 +323,27 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 }
 
 func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (*aweb.Client, *awconfig.Selection, error) {
-	c, sel, err := buildClientSelectionForDir(context.Background(), workingDir, teamIDOverride, resolveAuthenticatedBaseURLContext)
+	home, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return nil, nil, err
 	}
-	lastClient = c
-	return c, sel, nil
+	return newClient(context.Background(), clientRequest{
+		WorkingDir: workingDir, Home: home, TeamID: teamIDOverride, ServerName: serverFlag,
+		BaseURL: resolveAuthenticatedBaseURLContext, Record: clientForCommand,
+	})
 }
 
-// buildClientSelectionForDir resolves the identity home for workingDir and
-// builds its client, grant-authenticated or certificate-authenticated. It
-// does not record the client as the command's last client, so it is safe off
-// the command's goroutine. baseURL chooses the API base from the stored server
-// URL; probes it makes run within ctx.
+// buildClientSelectionForDir captures the command's selection inputs, but leaves
+// lastClient unchanged so a reload can build a client off the command goroutine.
 func buildClientSelectionForDir(ctx context.Context, workingDir, teamIDOverride string, baseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
-	identityHome, err := identityHomeForDir(workingDir)
+	home, err := identityHomeForDir(workingDir)
 	if err != nil {
 		return nil, nil, err
 	}
-	if awconfig.IsGrantHome(identityHome.Root) {
-		return buildGrantClientSelectionForTeam(ctx, workingDir, identityHome, teamIDOverride, baseURL)
-	}
-	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
-	if err != nil {
-		return nil, nil, err
-	}
-	selectedHome := ""
-	if sel != nil {
-		selectedHome = strings.TrimSpace(sel.IdentityHome)
-	}
-	return buildClientForSelectionAtIdentityHome(ctx, workingDir, selectedHome, sel, baseURL)
+	return newClient(ctx, clientRequest{
+		WorkingDir: workingDir, Home: home, TeamID: teamIDOverride, ServerName: serverFlag,
+		BaseURL: baseURL, Record: clientDetached,
+	})
 }
 
 func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
@@ -369,71 +351,30 @@ func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconf
 }
 
 func resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamIDOverride string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
-	if awconfig.IsGrantHome(identityHome.Root) {
-		return resolveGrantClientSelectionForTeam(workingDir, identityHome, teamIDOverride)
-	}
-	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
-	if err != nil {
-		return nil, nil, err
-	}
-	return resolveClientForSelectionAtIdentityHome(workingDir, externalIdentityHomeRoot(identityHome), sel)
+	return newClient(context.Background(), clientRequest{
+		WorkingDir: workingDir, Home: identityHome, TeamID: teamIDOverride, ServerName: serverFlag,
+		BaseURL: resolveAuthenticatedBaseURLContext, Record: clientForCommand,
+	})
 }
 
 func resolveClientForSelection(workingDir string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
-	identityHome := ""
+	home := awconfig.IdentityHome{}
 	if sel != nil {
-		identityHome = strings.TrimSpace(sel.IdentityHome)
+		home.Root = strings.TrimSpace(sel.IdentityHome)
 	}
-	return resolveClientForSelectionAtIdentityHome(workingDir, identityHome, sel)
-}
-
-func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
-	c, sel, err := buildClientForSelectionAtIdentityHome(context.Background(), workingDir, identityHome, sel, resolveAuthenticatedBaseURLContext)
-	if err != nil {
-		return nil, nil, err
-	}
-	lastClient = c
-	return c, sel, nil
-}
-
-// buildClientForSelectionAtIdentityHome builds the selection's
-// certificate-authenticated client for the API base resolveBaseURL chooses
-// from the stored server URL. A probe it makes runs within ctx.
-func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, identityHome string, sel *awconfig.Selection, resolveBaseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
-	if sel != nil && strings.TrimSpace(sel.WorkspacePath) == "" {
-		if recovery, ok := workspaceConnectRecoveryCommand(workingDir, identityHome); ok {
-			return nil, nil, usageError("current identity is not connected to an aweb workspace; run `%s`", recovery)
-		}
-	}
-	if err := checkIdentityMismatchAtIdentityHome(workingDir, identityHome, sel); err != nil {
-		return nil, nil, err
-	}
-
-	baseURL, err := resolveBaseURL(ctx, sel.BaseURL)
-	if err != nil {
-		return nil, nil, err
-	}
-	sel.BaseURL = baseURL
-
-	c, err := resolveCertificateClient(sel, baseURL)
-	if err != nil {
-		return nil, nil, err
-	}
-	if c == nil {
-		return nil, nil, errors.New("current workspace is not certificate-authenticated; accept a team invite and run `aw init` here")
-	}
-	if err := configureResolvedClient(c, sel, baseURL); err != nil {
-		return nil, nil, err
-	}
-	home := strings.TrimSpace(sel.IdentityHome)
-	if home == "" {
-		home = filepath.Dir(sel.SigningKey)
-	}
-	selected := *sel
-	c.SetTeamCertificateRefresh(func(ctx context.Context) (string, error) {
-		return refreshOwnTeamCertificate(ctx, &selected, home)
+	return newClient(context.Background(), clientRequest{
+		WorkingDir: workingDir, Home: home, Selection: sel,
+		BaseURL: resolveAuthenticatedBaseURLContext, Record: clientForCommand,
 	})
-	return c, sel, nil
+}
+
+// buildClientForSelectionAtIdentityHome adapts an already selected principal to
+// the shared constructor without changing the command's last client.
+func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, identityHome string, sel *awconfig.Selection, resolveBaseURL baseURLResolver) (*aweb.Client, *awconfig.Selection, error) {
+	return newClient(ctx, clientRequest{
+		WorkingDir: workingDir, Home: awconfig.IdentityHome{Root: identityHome}, Selection: sel,
+		BaseURL: resolveBaseURL, Record: clientDetached,
+	})
 }
 
 func resolveIdentityMessagingClientSelection() (*aweb.Client, *awconfig.Selection, error) {

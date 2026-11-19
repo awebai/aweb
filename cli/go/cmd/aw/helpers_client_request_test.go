@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 func TestGrantClientUsesRequestedTeamInsteadOfAmbientFlag(t *testing.T) {
@@ -40,7 +41,7 @@ func TestClientRequestKeepsExplicitHomeTeamAndRecordingPolicy(t *testing.T) {
 	request := clientRequest{
 		WorkingDir: workingDir, Home: home, TeamID: grant.TeamID,
 		BaseURL: func(_ context.Context, value string) (string, error) { return value, nil },
-		Record: clientDetached,
+		Record:  clientDetached,
 	}
 	client, selected, err := newClient(context.Background(), request)
 	if err != nil {
@@ -63,5 +64,44 @@ func TestClientRequestKeepsExplicitHomeTeamAndRecordingPolicy(t *testing.T) {
 	}
 	if lastClient != client {
 		t.Fatal("failed construction replaced the last successful command client")
+	}
+}
+
+func TestClientRequestUsesSelectedCertificateAndBaseResolver(t *testing.T) {
+	workingDir := t.TempDir()
+	t.Setenv("HOME", t.TempDir())
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, workingDir, testSelectionFixture{
+		AwebURL: "https://stored.example.test", TeamID: "backend:acme.com", Alias: "alice",
+		DID: awid.ComputeDIDKey(pub), Custody: awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal, SigningKey: key,
+	})
+	request := clientRequest{
+		WorkingDir: workingDir,
+		Home:       awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir)},
+		TeamID:     "backend:acme.com", Record: clientDetached,
+		BaseURL: func(_ context.Context, raw string) (string, error) {
+			if raw != "https://stored.example.test" {
+				t.Fatalf("resolver input=%q", raw)
+			}
+			return "https://selected.example.test", nil
+		},
+	}
+	client, selected, err := newClient(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !client.HasTeamCertificateAuth() || client.DID() != awid.ComputeDIDKey(pub) || selected.BaseURL != "https://selected.example.test" {
+		t.Fatalf("wrong client/selection: %+v", selected)
+	}
+	request.Selection = selected
+	request.TeamID = "ignored:already-selected.test"
+	request.BaseURL = func(_ context.Context, raw string) (string, error) { return raw, nil }
+	client, reused, err := newClient(context.Background(), request)
+	if err != nil || reused != selected || !client.HasTeamCertificateAuth() {
+		t.Fatalf("preselected certificate replaced: %+v %v", reused, err)
 	}
 }
