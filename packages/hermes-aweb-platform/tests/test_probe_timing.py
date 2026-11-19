@@ -20,7 +20,7 @@ class ProbeCommandTests(unittest.IsolatedAsyncioTestCase):
         exec(compile(ast.Module(body=functions, type_ignores=[]), str(path), "exec"), namespace)  # noqa: S102 - Only the named command helper AST from this repository.
         return namespace["command"]
 
-    async def check_child_cleanup(self, *, cancel):
+    async def check_child_cleanup(self, *, interruption):
         command = self.command()
         original = asyncio.create_subprocess_exec
         ready = asyncio.Event()
@@ -40,9 +40,9 @@ class ProbeCommandTests(unittest.IsolatedAsyncioTestCase):
                     sys.executable, "-c", "import time; print('READY', flush=True); time.sleep(60)",
                 ], timeout=1))
                 await asyncio.wait_for(ready.wait(), 5)
-                if cancel:
+                if interruption is asyncio.CancelledError:
                     operation.cancel()
-                with self.assertRaises(asyncio.CancelledError if cancel else TimeoutError):
+                with self.assertRaises(interruption):
                     await operation
             self.assertIsNotNone(children[0].returncode, "interrupted command left its child running")
         finally:
@@ -58,10 +58,10 @@ class ProbeCommandTests(unittest.IsolatedAsyncioTestCase):
                     await child.communicate()
 
     async def test_cancellation_joins_the_actual_child(self):
-        await self.check_child_cleanup(cancel=True)
+        await self.check_child_cleanup(interruption=asyncio.CancelledError)
 
     async def test_timeout_joins_the_actual_child(self):
-        await self.check_child_cleanup(cancel=False)
+        await self.check_child_cleanup(interruption=TimeoutError)
 
     async def test_actual_child_output_and_failure_are_preserved(self):
         command = self.command()

@@ -581,6 +581,9 @@ async def main():
             await until(lambda: len(replies) >= 2, "ordinary mail replies missing", 12)
             assert [r["input"] for r in replies] == ids, replies
             assert_content(ids)
+            assert [(row["subject"], row["body"]) for row in turns] == [
+                ("Live delivery probe", "/fixturehold"), ("Live delivery probe", "/stop"),
+            ], turns
             assert all(row["chat_id"] == chat_id and row["user_id"] == "hermes-acft1.test/alice"
                        for row in turns), turns
 
