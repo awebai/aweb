@@ -10,11 +10,13 @@ from fastapi import HTTPException
 from awid.federation_errors import FederationAuthorityError
 from aweb.messaging.refusals import DeliveryRefusal
 from aweb.service_errors import ServiceError, IdentityBindingError
+from aweb.service_errors import (
+    INTERNAL_SERVICE_ERROR_MESSAGE as INTERNAL_DELIVERY_ERROR,
+)
 from aweb.application_state import RegistryClientUnavailable
 
 logger = logging.getLogger(__name__)
 P = ParamSpec("P")
-INTERNAL_DELIVERY_ERROR = "The server could not complete this request. Try again; if it keeps failing, contact the server operator."
 
 
 def messaging_tool(fn: Callable[P, Awaitable[str]]) -> Callable[P, Awaitable[str]]:

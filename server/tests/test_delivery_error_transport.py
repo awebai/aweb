@@ -147,3 +147,34 @@ def test_mcp_federation_codes_keep_a_recovery_sentence_without_host_context(reas
     answer = json.loads(send_refusal(FederationAuthorityError(reason)))
     assert answer["error"] == reason
     assert answer["message"].endswith("retry.")
+
+
+@pytest.mark.asyncio
+async def test_http_internal_failure_has_an_action_without_exception_content(caplog):
+    from aweb.error_responses import install_service_error_handlers
+
+    app = FastAPI()
+    install_service_error_handlers(app)
+
+    @app.get("/failed")
+    async def failed():
+        raise ServiceError("private internal field")
+
+    with caplog.at_level(logging.ERROR, logger="aweb.error_responses"):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            response = await client.get("/failed")
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Internal server error",
+        "message": INTERNAL_DELIVERY_ERROR,
+    }
+    assert "failure_type=ServiceError" in caplog.text
+    assert "private internal field" not in caplog.text
+
+
+def test_unexpected_refusal_input_never_exposes_exception_content():
+    assert json.loads(send_refusal(RuntimeError("private internal field"))) == {
+        "error": INTERNAL_DELIVERY_ERROR,
+    }

@@ -4,7 +4,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from aweb.messaging.refusals import DeliveryRefusal
-from aweb.service_errors import ServiceError
+from aweb.service_errors import ServiceError, INTERNAL_SERVICE_ERROR_MESSAGE
 from aweb.auth_error_transport import install_auth_error_handlers
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,11 @@ async def service_error_handler(request: Request, exc: ServiceError) -> JSONResp
     if exc.status_code >= 500 and not isinstance(exc, DeliveryRefusal):
         logger.error("Unhandled service error failure_type=%s", type(exc).__name__)
         return JSONResponse(
-            status_code=500, content={"detail": "Internal server error"}
+            status_code=500,
+            content={
+                "detail": "Internal server error",
+                "message": INTERNAL_SERVICE_ERROR_MESSAGE,
+            },
         )
     if exc.status_code >= 500:
         logger.warning(
