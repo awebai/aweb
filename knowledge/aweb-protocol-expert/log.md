@@ -1,5 +1,9 @@
 # Knowledge log
 
+## 2026-11-18
+* **Harvest**: OKF proposal from seat aweb-protocol-expert-chat-verify with one backing note.
+* **Update**: [shared vectors prove only what they pin](/aweb-protocol-expert/lessons/shared-vectors-prove-only-what-they-pin.md) says the skip-one-check mutation must not throw, because a wrapper that maps exceptions to "failed" makes a broken mutation look like an unpinned case (noble's zero-point `toRawBytes()`), and has the reference verifier predict which single case each mutation flips.
+
 ## 2026-11-06
 * **Fix**: review of the db-access proposal on npm gitHead, PubSub release and stream checkouts: hosted specifics in [stream bodies leave the request connection scope](/aweb-protocol-expert/lessons/stream-bodies-leave-the-request-connection-scope.md) and [an npm tarball publish records no gitHead](/aweb-protocol-expert/lessons/npm-tarball-publish-records-no-githead.md) are stated generically or dropped, as the OSS and Cloud boundary requires.
 * **Update**: [SSE cleanup is cancelled on client disconnect](/aweb-protocol-expert/lessons/sse-cleanup-is-cancelled-on-disconnect.md) and [a PubSub release survives any cancellation](/aweb-protocol-expert/decisions/pubsub-release-survives-any-cancellation.md) link each other: the AnyIO shield covers Starlette's disconnect, not native task cancellation.
