@@ -19,8 +19,10 @@ from httpx import ASGITransport, AsyncClient
 
 import aweb.routes.apps as apps_routes
 import aweb.routes.hook_bindings as hook_routes
+from aweb.internal_auth import ProxyVerificationConfig
 from aweb.routes.hook_bindings import router as hook_bindings_router
 from tests.test_app_registry_http import _DbShim
+from tests import test_hook_binding_activation as binding_fixtures
 from tests.test_hook_binding_activation import (  # noqa: F401
     AUDIENCE,
     OTHER_TEAM,
@@ -29,10 +31,12 @@ from tests.test_hook_binding_activation import (  # noqa: F401
     _bindings,
     _hook_keys,
     _install,
-    env,
 )
 from aweb.audit import AuditActor, set_verified_audit_actor
 from aweb.team_auth_deps import TeamIdentity
+
+
+env = binding_fixtures.env
 
 
 def _identity(team_id: str):
@@ -53,6 +57,7 @@ def _identity(team_id: str):
 
 def _app(env, registry_client) -> FastAPI:
     app = FastAPI()
+    ProxyVerificationConfig.capture().install(app)
     app.include_router(hook_bindings_router)
     app.state.db = _DbShim(env.db)
     app.state.public_origin = AUDIENCE

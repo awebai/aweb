@@ -34,6 +34,7 @@ from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from .federation.errors import authority_error_body
 from .install_admins import install_admin_setup_message
+from .internal_auth import ProxyVerificationConfig
 from .mcp.server import NormalizeMountedMCPPathMiddleware
 from .messaging.chat_policy import HumanChatRefused
 from .outbox_recovery import OutboxRecoveryStarter
@@ -291,10 +292,12 @@ def create_app(
     awid_transport: httpx.AsyncBaseTransport | None = None,
     domain_verifier: DomainVerifier | None = None,
     host_runs_outbox_recovery: bool = False,
+    proxy_verification: ProxyVerificationConfig | None = None,
 ) -> FastAPI:
     """Create the aweb coordination FastAPI application.
 
     Args:
+        proxy_verification: App-owned proxy trust/secret; omitted captures environment once.
         db_infra: External DatabaseInfra instance (library mode).
                   If None, creates own connections (standalone mode).
         redis: External async Redis client (library mode).
@@ -344,6 +347,7 @@ def create_app(
                 main_app.mount("/coordination", coordination_app)
                 # Serve main_app while this context remains open.
     """
+    proxy_configuration = ProxyVerificationConfig.capture(proxy_verification)
     # Validate mode consistency
     if (db_infra is None) != (redis is None):
         raise ValueError(
@@ -372,6 +376,7 @@ def create_app(
     from aweb.attachment_service import router as attachment_router
 
     app = RequestDecompressionFastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
+    proxy_configuration.install(app)
     app.state.attachment_backend = attachment_backend
     # DNS names the namespace controller whose act may move a pinned team key
     # (aweb.team_key_pins); an embedding host may replace the resolver.

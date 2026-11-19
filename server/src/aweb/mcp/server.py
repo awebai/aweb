@@ -21,6 +21,7 @@ from redis.asyncio import Redis
 from aweb.config import get_awid_registry_url
 from aweb.db import DatabaseInfra
 from aweb.federation.transport import delivery_transport
+from aweb.internal_auth import ProxyVerificationConfig
 from aweb.mcp.auth import MCPAuthMiddleware
 from aweb.mcp.compatibility import observe_compatibility_tool_call
 from aweb.mcp.notifications import append_pending_nudge
@@ -205,6 +206,7 @@ def create_mcp_app(
     federation_chat_transport=None,
     public_origin: str | None = None,
     streamable_http_path: str = "/",
+    proxy_verification: ProxyVerificationConfig | None = None,
 ) -> Any:
     """Create an MCP ASGI app for aweb tools.
 
@@ -216,6 +218,7 @@ def create_mcp_app(
     When mounted at ``/mcp`` with the default ``streamable_http_path="/"``,
     the external MCP endpoint is ``/mcp/``.
     """
+    proxy_configuration = ProxyVerificationConfig.capture(proxy_verification)
     normalized_path = streamable_http_path.strip() or "/"
     if not normalized_path.startswith("/"):
         normalized_path = f"/{normalized_path}"
@@ -254,4 +257,4 @@ def create_mcp_app(
     # mounted sub-applications do not receive lifespan events from FastAPI.
     # Wrap the app so the parent can start/stop the session manager explicitly.
     inner = mcp.streamable_http_app()
-    return ManagedMCPApp(MCPAuthMiddleware(inner, db_infra), mcp.session_manager)
+    return ManagedMCPApp(MCPAuthMiddleware(inner, db_infra, proxy_verification=proxy_configuration), mcp.session_manager)

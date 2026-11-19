@@ -317,7 +317,7 @@ not additional clients or startup owners.
 
 `start_native_resources` writes seven direct slots beside `native_resources`;
 the shared wake starter writes the publisher/hub pair. `create_app` separately
-initializes `public_origin` and `attachment_backend`: native origin/signature
+initializes `proxy_verification`, `public_origin` and `attachment_backend`: native origin/signature
 checks and participant attachment reads still require them. The source census at `0c2924fc5c` has native dependency
 references in `deps.py:19`, `db.py:130`,
 `team_key_pins.py:121`, `hooks.py:61`, `messaging/runtime.py:46`,
@@ -406,3 +406,37 @@ named presence configuration failure after attempting recovery. It never
 selects a shadow registry or marks presence healthy. Hosts with configured
 resources pass their selected client. Resource ownership, borrowed connections
 and cleanup remain with the existing lifecycle.
+
+## Application-scoped proxy verification
+
+`aweb.internal_auth.ProxyVerificationConfig` is a frozen keyword-only value:
+`trust=ProxyHeaderTrust.DISABLED` or `SHARED_SECRET`, and
+`shared_secret: str | None` (excluded from repr). Pass it as
+`proxy_verification=` to `create_app`, `embedded_aweb`, `create_mcp_app`, or
+`MCPAuthMiddleware`. `EmbeddedResources.proxy_verification` is the identical
+object; an extended host MCP factory forwards it to the native middleware.
+A host's signer/verifier must use that same captured secret. Cloud-specific
+principal/selector authorization stays with its adapter; native MAC bytes and
+native HTTP/MCP parsing remain shared.
+
+Omitted configuration captures `AWEB_TRUST_PROXY_HEADERS` and
+`AWEB_INTERNAL_AUTH_SECRET` once during construction. Enabled trust without a
+nonempty secret raises `ProxyVerificationConfigurationError` with an action
+sentence before serving. Configuration errors never include supplied values.
+Request parsing does not consult environment, so later process changes and
+another app's construction cannot change an existing app's verifier.
+
+`parse_internal_auth_context(request)` selects the app's resource config before
+any wrapper shadow; invalid resource configuration cannot fall through to a
+host value. The native MCP middleware captures its explicit config at
+construction, including when it is mounted under another app. Custom hosts
+mounting only native routers can construct a config with
+`ProxyVerificationConfig.capture()` and call its `install(app)` during app
+construction, before exposing it. They do not write undocumented State fields.
+An unconfigured custom router host has proxy trust disabled.
+
+This changes no MAC preimage, accepted principal/actor fields or member check.
+Hosts do not mutate/restore process environment to configure native serving.
+Two independently configured native apps must reject each other's signed proxy
+material; a failed third startup leaves both existing apps and process
+configuration unchanged.

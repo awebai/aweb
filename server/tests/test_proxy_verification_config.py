@@ -55,3 +55,65 @@ def test_enabled_without_secret_refuses_construction_without_process_changes(mon
     with pytest.raises(ValueError, match="Configure a nonempty shared secret or disable proxy header trust before constructing the application"):
         create_app()
     assert dict(os.environ) == before
+
+
+def test_explicit_disabled_and_enabled_apps_ignore_later_environment(monkeypatch):
+    from dataclasses import FrozenInstanceError
+    from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig
+
+    config = ProxyVerificationConfig(trust=ProxyHeaderTrust.SHARED_SECRET, shared_secret="explicit-private-value")
+    enabled = create_app(proxy_verification=config)
+    disabled = create_app(proxy_verification=ProxyVerificationConfig(trust=ProxyHeaderTrust.DISABLED))
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "1")
+    monkeypatch.setenv("AWEB_INTERNAL_AUTH_SECRET", "other-private-value")
+    assert enabled.state.proxy_verification is config
+    assert parse_internal_auth_context(proxy_request(enabled, "explicit-private-value"))["actor_id"] == ACTOR
+    assert parse_internal_auth_context(proxy_request(disabled, "other-private-value")) is None
+    assert "explicit-private-value" not in repr(config)
+    with pytest.raises(FrozenInstanceError):
+        config.shared_secret = "replacement"
+
+
+@pytest.mark.asyncio
+async def test_public_mcp_middleware_captures_its_exact_configuration(monkeypatch):
+    from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig
+    from aweb.mcp.auth import MCPAuthMiddleware
+
+    config = ProxyVerificationConfig(trust=ProxyHeaderTrust.SHARED_SECRET, shared_secret="middleware-private-value")
+    app = create_app(proxy_verification=config)
+    middleware = MCPAuthMiddleware(app, None, proxy_verification=config)
+    assert middleware.proxy_verification is config
+    monkeypatch.setenv("AWEB_TRUST_PROXY_HEADERS", "0")
+    monkeypatch.delenv("AWEB_INTERNAL_AUTH_SECRET", raising=False)
+    with pytest.raises(HTTPException) as refused:
+        await middleware._resolve_auth(proxy_request(app, "another-private-value"))
+    assert refused.value.status_code == 401
+    assert refused.value.detail == "Authentication required"
+
+
+def test_resource_configuration_wins_and_missing_resource_never_uses_shadow():
+    from types import SimpleNamespace
+    from aweb.internal_auth import ProxyHeaderTrust, ProxyVerificationConfig, ProxyVerificationConfigurationError
+
+    native = ProxyVerificationConfig(trust=ProxyHeaderTrust.SHARED_SECRET, shared_secret="native-private-value")
+    shadow = ProxyVerificationConfig(trust=ProxyHeaderTrust.SHARED_SECRET, shared_secret="shadow-private-value")
+    app = create_app(proxy_verification=shadow)
+    app.state.native_resources = SimpleNamespace(proxy_verification=native)
+    assert parse_internal_auth_context(proxy_request(app, "native-private-value"))["actor_id"] == ACTOR
+    with pytest.raises(HTTPException) as refused:
+        parse_internal_auth_context(proxy_request(app, "shadow-private-value"))
+    assert refused.value.status_code == 401
+    app.state.native_resources = SimpleNamespace(proxy_verification=None)
+    with pytest.raises(ProxyVerificationConfigurationError) as unavailable:
+        parse_internal_auth_context(proxy_request(app, "shadow-private-value"))
+    assert str(unavailable.value) == "Configure proxy verification through the application constructor before serving requests."
+
+
+@pytest.mark.parametrize("trust,secret", [("injected-private-value", "hidden-private-value"), (None, "hidden-private-value")])
+def test_configuration_diagnostic_never_discloses_values(trust, secret, caplog):
+    from aweb.internal_auth import ProxyVerificationConfig, ProxyVerificationConfigurationError
+
+    with pytest.raises(ProxyVerificationConfigurationError) as refused:
+        ProxyVerificationConfig(trust=trust, shared_secret=secret)
+    assert str(refused.value) == "Choose ProxyHeaderTrust.DISABLED or SHARED_SECRET before constructing the application."
+    assert "private-value" not in str(refused.value) + caplog.text

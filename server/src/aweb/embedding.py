@@ -25,6 +25,7 @@ from aweb.federation.activation import (
     build_federation_authority_activation,
 )
 from aweb.hooks import MutationCallback
+from aweb.internal_auth import ProxyVerificationConfig, application_proxy_verification
 from aweb.mcp.server import ManagedMCPApp, create_mcp_app
 from aweb.migrations import pending_native_migrations
 from aweb.mutation_hooks import create_mutation_handler
@@ -103,6 +104,7 @@ class EmbeddedResources:
     public_origin: str
     outbox_recovery: OutboxRecoveryOwnership
     on_mutation: MutationCallback
+    proxy_verification: ProxyVerificationConfig
     federation_authority: FederationAuthorityActivation | None = None
     agent_wake_publisher: AgentWakePublisher | None = None
     agent_wake_hub: AgentWakeHub | None = None
@@ -155,6 +157,7 @@ def default_mcp_factory(resources: EmbeddedResources) -> ManagedMCPApp:
         db_infra=resources.db_infra, redis=resources.redis,
         registry_client=resources.registry_client, federation_authority=resources.federation_authority,
         public_origin=resources.public_origin, streamable_http_path="/",
+        proxy_verification=resources.proxy_verification,
     )
 
 
@@ -178,6 +181,7 @@ async def start_native_resources(
     resources = EmbeddedResources(
         api_app, db_infra, redis, registry_client, api_app.state.public_origin, outbox_recovery,
         create_mutation_handler(redis, db_infra) if on_mutation is None else on_mutation,
+        proxy_verification=application_proxy_verification(api_app.state),
     )
     api_app.state.native_resources = resources
     yielded = False
@@ -239,6 +243,7 @@ async def embedded_aweb(
     on_mutation: MutationCallback | None = None,
     rate_limiter: ServingRateLimiter | None = None,
     attachment_backend: AttachmentBackend | None = None,
+    proxy_verification: ProxyVerificationConfig | None = None,
 ) -> AsyncIterator[EmbeddedResources]:
     """Create/start native API and the actual host-supplied extended MCP app.
 
@@ -254,7 +259,7 @@ async def embedded_aweb(
         api_app = create_app(
             db_infra=db_infra, redis=redis, public_origin=public_origin,
             host_runs_outbox_recovery=outbox_recovery is OutboxRecoveryOwnership.HOST,
-            attachment_backend=attachment_backend,
+            attachment_backend=attachment_backend, proxy_verification=proxy_verification,
         )
     except Exception as exc:
         logger.exception("Native application construction failed")

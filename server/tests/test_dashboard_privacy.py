@@ -55,13 +55,13 @@ _TEAM_SIGNING_KEY, _, _TEAM_DID_KEY = _make_keypair()
 
 
 @pytest_asyncio.fixture
-async def privacy_app(shared_test_pool, monkeypatch):
-    async with privacy_stack(shared_test_pool, monkeypatch) as env:
+async def privacy_app(shared_test_pool, monkeypatch, request):
+    async with privacy_stack(shared_test_pool, monkeypatch, proxy_verification=getattr(request, "param", None)) as env:
         yield env
 
 
 @asynccontextmanager
-async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
+async def privacy_stack(shared_test_pool, monkeypatch, tls=None, *, proxy_verification=None):
     """The real apps behind one HTTP server; tls is (host, Certificates covering
     host) to serve over TLS, so the server's public origin is https."""
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
@@ -91,7 +91,7 @@ async def privacy_stack(shared_test_pool, monkeypatch, tls=None):
                 transport=httpx.ASGITransport(app=registry_app),
                 service_token=service_token,
             )
-            app = create_app()
+            app = create_app(proxy_verification=proxy_verification)
             # Externally provisioned resources, exactly as an embedding host
             # supplies them; lifecycle startup would create different ones.
             app.state.db = db
