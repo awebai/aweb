@@ -249,7 +249,7 @@ func TestClientRequestCompressionPreservesSendRetryPolicy(t *testing.T) {
 func TestOnboardingRequestCompression(t *testing.T) {
 	pub, key, _ := ed25519.GenerateKey(nil)
 	did := ComputeDIDKey(pub)
-	for _, kind := range []string{"claim", "redeem", "signup"} {
+	for _, kind := range []string{"claim", "signup"} {
 		t.Run(kind, func(t *testing.T) {
 			var writes atomic.Int32
 			srv := newCompressionTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,8 +275,6 @@ func TestOnboardingRequestCompression(t *testing.T) {
 			switch kind {
 			case "claim":
 				_, err = c.ClaimHuman(context.Background(), &ClaimHumanRequest{Username: "test", Email: "test@example.test", DIDKey: did})
-			case "redeem":
-				_, err = c.BootstrapRedeem(context.Background(), &BootstrapRedeemRequest{Token: "token", DIDKey: did})
 			case "signup":
 				err = postJSONWithHeaders(context.Background(), srv.URL+"/api", "/api/v1/onboarding/cli-signup", []byte(`{"did_key":"`+did+`"}`), nil, nil)
 			}

@@ -61,7 +61,6 @@ HOSTED_ENDPOINT_BASELINE = {
     "/api/v1/cli-auth/status",
     "/api/v1/claim-human",
     "/api/v1/discovery",
-    "/api/v1/onboarding/bootstrap-redeem",
     "/api/v1/onboarding/check-username",
     "/api/v1/onboarding/cli-signup",
     "/api/v1/spawn/accept-invite",
