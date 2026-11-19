@@ -2,15 +2,15 @@
 
 import httpx
 import pytest
-
+from aweb.certificate_evidence import EvidenceMode
+from aweb.team_registry import request_revoked_certificates
 from awid.registry import RegistryClient
-from aweb.team_auth_deps import _get_revoked_certificates
 from tests.test_awid_auth_dependency_fail_closed import _request_with_registry
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fresh", [False, True])
-async def test_selected_membership_still_fetches_only_the_complete_crl(fresh):
+@pytest.mark.parametrize("evidence", list(EvidenceMode))
+async def test_selected_membership_still_fetches_only_the_complete_crl(evidence):
     requests = []
 
     def registry(request):
@@ -29,11 +29,11 @@ async def test_selected_membership_still_fetches_only_the_complete_crl(fresh):
 
     client = RegistryClient("http://registry.test", transport=httpx.MockTransport(registry))
     try:
-        assert await _get_revoked_certificates(
+        assert await request_revoked_certificates(
             _request_with_registry(client),
             "backend:acme.com",
             certificate_ids=["revoked-a", "active"],
-            fresh=fresh,
+            evidence=evidence,
         ) == {"revoked-a"}
         assert len(requests) == 1
         assert await client.get_team_revocations("acme.com", "backend") == {

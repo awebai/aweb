@@ -10,23 +10,25 @@ from __future__ import annotations
 import logging
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
+from awid.registry import CachedRegistryClient
 from awid.signing import verify_did_key_signature
 from awid.team_certificate import TeamCertificateError, decode_team_certificate
 from awid.team_ids import parse_team_id
 from fastapi import Depends, HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
+from aweb.application_state import application_registry_client
 from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
-from aweb.request_body import request_body_sha256
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, TeamIdentity
 from aweb.auth_metrics import count_legacy_request_auth
-from aweb.config import require_registered_certificates
+from aweb.certificate_evidence import EvidenceMode
 from aweb.certificate_registration import (
     CertificateRegistrationObservation,
     configured_registration_mode,
     read_certificate_registration,
     record_certificate_registration,
 )
+from aweb.config import require_registered_certificates
 from aweb.deps import get_db
 from aweb.id_chain_auth import authenticate_id_chain
 from aweb.identity_binding import (
@@ -39,19 +41,30 @@ from aweb.member_team_key import (
     MemberProjection,
     read_member_projection,
 )
+from aweb.request_body import request_body_sha256
 from aweb.team_auth import certificate_refusal, parse_and_verify_certificate
-from aweb.team_key_pins import pinned_team_key_for_request
 from aweb.team_auth_envelope import team_auth_signature_payload
-
-
+from aweb.team_key_pins import pinned_team_key_for_request
 from aweb.team_registry import (
     native_database_manager as _aweb_db,
-    request_auth_audiences as _team_auth_allowed_audiences,
-    resolve_team_key as _resolve_team_key,
-    request_revoked_certificates as _get_revoked_certificates,
-    revoked_certificates as revoked_certificates,
-    request_registered_certificates as _get_registered_certificates,
+)
+from aweb.team_registry import (
     registered_certificates as registered_certificates,
+)
+from aweb.team_registry import (
+    request_auth_audiences as _team_auth_allowed_audiences,
+)
+from aweb.team_registry import (
+    request_registered_certificates as _get_registered_certificates,
+)
+from aweb.team_registry import (
+    request_revoked_certificates as _get_revoked_certificates,
+)
+from aweb.team_registry import (
+    resolve_team_key as _resolve_team_key,
+)
+from aweb.team_registry import (
+    revoked_certificates as revoked_certificates,
 )
 
 logger = logging.getLogger(__name__)
@@ -310,7 +323,9 @@ async def _verify_admitting_certificate(
             registered_certificate_ids=registered_certs,
         )
 
-    async def check_with_registration(team_key: str, *, refresh_revocations: bool = False):
+    async def check_with_registration(
+        team_key: str, *, revocation_evidence: EvidenceMode = EvidenceMode.CACHED
+    ):
         nonlocal registered_certs, revoked_certs
         try:
             result = check_certificate(team_key)
@@ -319,17 +334,17 @@ async def _verify_admitting_certificate(
                 raise
             # Unregistered already establishes a valid signature. Rotation
             # additionally requires current revocations before a list retry.
-            if refresh_revocations:
+            if revocation_evidence is EvidenceMode.FRESH:
                 revoked_certs = await _get_revoked_certificates(
                     request,
                     cert_team_id,
                     certificate_ids=selected_certificate_ids,
-                    fresh=True,
+                    evidence=EvidenceMode.FRESH,
                 )
                 if cert_data["certificate_id"] in revoked_certs:
                     raise TeamCertificateError("revoked") from None
-            registry = getattr(request.app.state, "awid_registry_client", None)
-            if not callable(getattr(registry, "refresh_team_certificates_after_miss", None)):
+            registry = application_registry_client(request.app.state)
+            if not isinstance(registry, CachedRegistryClient):
                 # An uncached registry client's initial list was already live.
                 raise
             registered_certs = await registered_certificates(
@@ -339,12 +354,12 @@ async def _verify_admitting_certificate(
             )
             result = check_certificate(team_key)
         else:
-            if refresh_revocations:
+            if revocation_evidence is EvidenceMode.FRESH:
                 revoked_certs = await _get_revoked_certificates(
                     request,
                     cert_team_id,
                     certificate_ids=selected_certificate_ids,
-                    fresh=True,
+                    evidence=EvidenceMode.FRESH,
                 )
                 if result["certificate_id"] in revoked_certs:
                     raise TeamCertificateError("revoked") from None
@@ -358,19 +373,22 @@ async def _verify_admitting_certificate(
                 raise
             # Only a certificate signature failure may spend the separate
             # bounded team-key refresh budget.
-            registry = getattr(request.app.state, "awid_registry_client", None)
-            refresh = getattr(registry, "refresh_team_key_after_signature_failure", None)
+            registry = application_registry_client(request.app.state)
             refreshed_key = None
-            if refresh is not None:
+            if isinstance(registry, CachedRegistryClient):
                 domain, team_name = parse_team_id(cert_team_id)
-                refreshed_key = await refresh(domain, team_name, rejected_key=team_did_key)
+                refreshed_key = await registry.refresh_team_key_after_signature_failure(
+                    domain, team_name, rejected_key=team_did_key
+                )
             if not refreshed_key or refreshed_key == team_did_key:
                 raise
             refreshed_key = await pinned_team_key_for_request(
                 request, cert_team_id, refreshed_key, db=_aweb_db(db)
             )
             team_did_key = refreshed_key
-            cert_info = await check_with_registration(team_did_key, refresh_revocations=True)
+            cert_info = await check_with_registration(
+                team_did_key, revocation_evidence=EvidenceMode.FRESH
+            )
     except TeamCertificateError as e:
         if (
             e.reason == "bad_signature"
@@ -395,7 +413,7 @@ async def _verify_admitting_certificate(
 
     if registered_certs is None:
         cert_info["registration_decision"] = await read_certificate_registration(
-            registry_client=getattr(request.app.state, "awid_registry_client", None),
+            registry_client=application_registry_client(request.app.state),
             team_id=cert_team_id,
             certificate_id=cert_info["certificate_id"],
             mode=configured_registration_mode(),

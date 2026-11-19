@@ -112,7 +112,7 @@ async def request_revoked_certificates(
     team_id: str,
     *,
     certificate_ids: list[str] | None = None,
-    fresh: bool = False,
+    evidence: EvidenceMode = EvidenceMode.CACHED,
 ) -> set[str]:
     """Get the set of revoked certificate IDs from awid.
 
@@ -122,7 +122,7 @@ async def request_revoked_certificates(
         application_registry_client(request.app.state),
         team_id,
         certificate_ids=certificate_ids,
-        fresh=fresh,
+        evidence=evidence,
     )
 
 
@@ -131,22 +131,25 @@ async def revoked_certificates(
     team_id: str,
     *,
     certificate_ids: list[str] | None = None,
-    fresh: bool = False,
+    evidence: EvidenceMode = EvidenceMode.CACHED,
 ) -> set[str]:
     """The revoked certificate IDs of a team, read through this registry client.
 
     Raises HTTPException(503) if awid is unreachable.
     """
+    if not isinstance(evidence, EvidenceMode):
+        raise TypeError("Use a named EvidenceMode for revocation evidence")
     domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
         raise awid_registry_not_configured_exception(operation="AWID team revocation check")
 
     try:
-        select = getattr(registry_client, "get_team_revocations_for_certificates", None)
-        if certificate_ids is not None and callable(select):
-            return await select(domain, team_name, certificate_ids, fresh=fresh)
-        if fresh:
+        if certificate_ids is not None:
+            return await registry_client.get_team_revocations_for_certificates(
+                domain, team_name, certificate_ids, fresh=evidence is EvidenceMode.FRESH
+            )
+        if evidence is EvidenceMode.FRESH:
             return await registry_client.get_team_revocations_fresh(domain, team_name)
         return await registry_client.get_team_revocations(domain, team_name)
     except AWID_DEPENDENCY_ERRORS as exc:
