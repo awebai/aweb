@@ -149,3 +149,33 @@ async def test_the_registry_without_redis_is_live_and_not_ready(database_url) ->
         "redis": "error", "database": "ok", "schema": "awid", "rate_limiter": "NoOpRateLimiter",
     }
     assert (live.status_code, live.json()) == (200, {"status": "ok"})
+
+
+@pytest.mark.asyncio
+async def test_fixture_namespace_custody_cannot_silently_change(database_url):
+    async with running_registry(database_url) as registry:
+        original = SigningKey.generate()
+        assert (
+            await registry.ensure_namespace(domain="example.com", controller=original) is original
+        )
+        assert await registry.ensure_namespace(domain="example.com") is original
+        with pytest.raises(ValueError) as refused:
+            await registry.ensure_namespace(domain="example.com", controller=SigningKey.generate())
+        assert str(refused.value).endswith("Pass its current signing key as controller=.")
+        namespace = await RegistryClient(
+            registry_url=REGISTRY_URL, transport=registry.transport
+        ).get_namespace("example.com")
+        assert namespace.controller_did == _did_key(original)
+
+
+
+@pytest.mark.asyncio
+async def test_fixture_dns_requires_a_published_namespace_authority(database_url):
+    from awid.dns_verify import DnsVerificationError
+
+    async with running_registry(database_url) as registry:
+        with pytest.raises(DnsVerificationError) as refused:
+            await registry.namespace_authority("missing.example")
+        assert str(refused.value).endswith("Register the namespace through ensure_namespace first.")
+        assert not registry.transport.calls
+
