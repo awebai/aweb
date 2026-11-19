@@ -3,6 +3,7 @@
 
 from aweb.event_types import MutationEventType
 from aweb.hook_contexts import TaskCommentAddedContext, TaskCreatedContext, TaskStatusChangedContext
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -27,7 +28,7 @@ async def create_app_request(request: Request, db: DatabaseInfra = Depends(get_d
     try:
         raw = await request.body()
         prepared = await prepare_app_task(request, body=strict_json_bytes(raw))
-        outcome = {}
+        outcome: dict[str, Any] = {}
         async with db.get_manager("aweb").transaction() as tx:
             credential, installation = await app_request_transport_on(request, tx)
             receipt, created = await create_app_task_on(tx, credential=credential,
@@ -69,7 +70,7 @@ async def cancel_app_request(request: Request, external_request_id: str, origina
             )
             if not row:
                 raise NotFoundError("resource_not_found")
-            outcome = {}
+            outcome: dict[str, Any] = {}
             await cancel_app_task_on(tx, team_id=credential.team_id, task_id=row["task_id"],
                 external_request_id=external_request_id, reason="requested", outcome=outcome)
             result = await read_app_request_on(tx, credential=credential, installation=installation,

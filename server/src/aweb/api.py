@@ -2,7 +2,7 @@ import hashlib
 import logging
 import os
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Optional
+from typing import Optional, TypedDict
 from uuid import uuid4
 
 import httpx
@@ -185,6 +185,14 @@ async def _mount_mcp_app(
 
 
 
+class _RegistryClientOptions(TypedDict):
+    registry_url: str
+    service_token: str | None
+    member_signing_keys: dict[str, bytes]
+    transport: httpx.AsyncBaseTransport | None
+    domain_verifier: DomainVerifier | None
+
+
 def _build_awid_registry_client(
     app: FastAPI,
     redis: Redis | None,
@@ -194,8 +202,7 @@ def _build_awid_registry_client(
     settings = get_settings()
     registry_url = settings.awid_registry_url
     service_token = settings.awid_service_token
-    client_class = CachedRegistryClient if redis is not None else RegistryClient
-    client_kwargs = {
+    client_kwargs: _RegistryClientOptions = {
         "registry_url": registry_url,
         "service_token": service_token,
         "member_signing_keys": settings.awid_member_signing_keys,
@@ -203,8 +210,8 @@ def _build_awid_registry_client(
         "domain_verifier": domain_verifier,
     }
     if redis is not None:
-        return client_class(redis_client=redis, **client_kwargs)
-    return client_class(**client_kwargs)
+        return CachedRegistryClient(redis_client=redis, **client_kwargs)
+    return RegistryClient(**client_kwargs)
 
 
 

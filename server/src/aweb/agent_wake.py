@@ -350,11 +350,11 @@ class AgentWakeHub:
                 waiter.cancel()
             released = []
             for channel in channels:
-                holders = self._subscriptions.get(channel)
-                if holders is None:
+                remaining_subscriptions = self._subscriptions.get(channel)
+                if remaining_subscriptions is None:
                     continue
-                holders.discard(subscription)
-                if not holders:
+                remaining_subscriptions.discard(subscription)
+                if not remaining_subscriptions:
                     del self._subscriptions[channel]
                     released.append(channel)
             if released:

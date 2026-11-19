@@ -37,7 +37,7 @@ class ValidationError(ServiceError):
 class ConflictError(ServiceError):
     status_code: int = 409
 
-    def __init__(self, detail: str = "Conflict") -> None:
+    def __init__(self, detail: str | dict = "Conflict") -> None:
         super().__init__(detail)
 
 

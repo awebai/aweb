@@ -20,7 +20,7 @@ from aweb.identity_auth_deps import (
 from aweb.agent_wake import agent_wake_publisher
 from aweb.identity_binding import refresh_projection_binding, verify_identity_binding
 from aweb.identity_address import AddressResolution
-from aweb.internal_auth import ProxyVerificationConfig, parse_internal_auth_context, resolve_internal_actor
+from aweb.internal_auth import InternalAuthContext, ProxyVerificationConfig, parse_internal_auth_context, resolve_internal_actor
 from aweb.mcp.mutations import (
     mutation_callback_from_scope,
     reset_mutation_callback,
@@ -147,27 +147,27 @@ class MCPAuthMiddleware:
 
         cert_header = request.headers.get("x-awid-team-certificate", "")
         if not cert_header:
-            identity = await resolve_identity_auth(request)
+            identity_auth = await resolve_identity_auth(request)
             row = await lookup_identity_agent_context(
                 self.db_infra,
-                did_key=identity.did_key,
-                did_aw=identity.did_aw,
+                did_key=identity_auth.did_key,
+                did_aw=identity_auth.did_aw,
                 request=request,
             )
             # Same enforcement as the HTTP identity-only path (aweb-abfn): a
             # projection whose admitting certificate is revoked must not grant
             # team context here either.
             row = await _enforce_current_membership(request, row)
-            outcome = getattr(request.state, "identity_address_resolution", identity.address_resolution)
+            outcome = getattr(request.state, "identity_address_resolution", identity_auth.address_resolution)
             return AuthContext(
                 team_id=(row or {}).get("team_id") or None,
                 agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
                 workspace_id=None,
                 alias=(row or {}).get("alias") or None,
-                did_key=identity.did_key,
-                did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
+                did_key=identity_auth.did_key,
+                did_aw=identity_auth.did_aw or ((row or {}).get("did_aw") or None),
                 address=(outcome.stored_address if outcome.state == "unknown"
-                         else identity.address or ((row or {}).get("address") or None)),
+                         else identity_auth.address or ((row or {}).get("address") or None)),
                 identity_scope=(row or {}).get("identity_scope") or None,
                 address_resolution=outcome,
             )
@@ -210,7 +210,7 @@ class MCPAuthMiddleware:
             certificate_id=identity.certificate_id,
         )
 
-    async def _resolve_proxy_auth(self, internal: dict[str, str], *, request: Request) -> AuthContext:
+    async def _resolve_proxy_auth(self, internal: InternalAuthContext, *, request: Request) -> AuthContext:
         aweb_db = _aweb_db(self.db_infra)
         team_id = internal["team_id"]
         row = await resolve_internal_actor(aweb_db, internal)

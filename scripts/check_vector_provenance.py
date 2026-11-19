@@ -1092,11 +1092,11 @@ def check(
             source = read(path).decode("utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        referenced_names = sorted(name for name in public_vectors if name in source)
-        if referenced_names:
+        unclassified_vector_names = sorted(name for name in public_vectors if name in source)
+        if unclassified_vector_names:
             failures.append(
                 f"unclassified public-vector code reference in {path}: "
-                f"{', '.join(referenced_names)}"
+                f"{', '.join(unclassified_vector_names)}"
             )
 
     for reference_guard, markers in NON_CONSUMING_CODE_REFERENCES.items():

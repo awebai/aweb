@@ -191,7 +191,7 @@ async def answer_task_route(
         answer_comment_projection(body_md=payload.body_md, answer_sha256=payload.answer_sha256)
         await verify_answer_actor(request, identity)
         task_id = await resolve_task_ref(db_infra, team_id=identity.team_id, ref=ref)
-        outcome = {}
+        outcome: dict[str, Any] = {}
         async with db_infra.get_manager("aweb").transaction() as tx:
             receipt = await answer_task_on(tx, team_id=identity.team_id, task_id=task_id,
                 actor=identity, outcome=outcome, **payload.model_dump())

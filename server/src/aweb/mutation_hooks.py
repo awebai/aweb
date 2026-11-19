@@ -8,7 +8,7 @@ Event dataclasses to Redis pub/sub for the SSE event stream.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -588,7 +588,7 @@ def _workspace_reservation_renewed(ctx: dict) -> Event | None:
     return ReservationRenewedEvent(workspace_id=ctx.get('holder_workspace_id', ''), paths=[ctx['resource_key']] if ctx.get('resource_key') else [], ttl_seconds=ctx.get('ttl_seconds', 0))
 
 
-_WORKSPACE_BUILDERS = {
+_WORKSPACE_BUILDERS: dict[str, Callable[[dict], Event | None]] = {
     MutationEventType.MAIL_SENT: _workspace_mail_sent,
     MutationEventType.MAIL_ACKNOWLEDGED: _workspace_mail_acknowledged,
     MutationEventType.CHAT_MESSAGE_SENT: _workspace_chat_message_sent,
@@ -682,7 +682,7 @@ def _team_reservation_renewed(ctx: dict) -> TeamEvent | None:
     return TeamReservationRenewedEvent(team_id=team_id, alias=str(ctx.get('alias', '') or ctx.get('holder_alias', '')).strip(), paths=_paths_from_context(ctx))
 
 
-_TEAM_BUILDERS = {
+_TEAM_BUILDERS: dict[str, Callable[[dict], TeamEvent | None]] = {
     MutationEventType.AGENT_STATUS: _team_agent_status,
     MutationEventType.TASK_CREATED: _team_task_created,
     MutationEventType.TASK_STATUS_CHANGED: _team_task_status_changed,

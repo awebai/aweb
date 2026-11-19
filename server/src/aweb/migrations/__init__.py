@@ -101,7 +101,7 @@ async def apply_native_migrations(db: AsyncDatabaseManager) -> AppliedNativeMigr
     unchanged. A failure can leave earlier migrations committed; retry applies
     only those still pending. This operation does not own the host's pool.
     """
-    applied = []
+    applied: list[NativeMigration] = []
     for module in native_migration_modules():
         try:
             result = await _manager(db, module).apply_pending_migrations()
@@ -119,7 +119,7 @@ async def pending_native_migrations(db: AsyncDatabaseManager) -> PendingNativeMi
     unreadable ledger or modified applied file raises NativeMigrationError;
     neither is represented as a successful readiness result.
     """
-    pending = []
+    pending: list[NativeMigration] = []
     for module in native_migration_modules():
         try:
             manager = _manager(db, module)

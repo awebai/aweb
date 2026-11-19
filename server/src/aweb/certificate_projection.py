@@ -157,11 +157,11 @@ async def replace_member_certificate(
             verified.get("did_aw") or "",
             verified.get("address") or "",
         )
-        if binding_changed and identity_binding is None:
-            raise CertificateProjectionConflict(
-                CertificateProjectionConflictReason.BINDING
-            )
         if binding_changed:
+            if identity_binding is None:
+                raise CertificateProjectionConflict(
+                    CertificateProjectionConflictReason.BINDING
+                )
             await refresh_projection_binding(
                 tx, agent_id=agent_id, did_key=member_did_key, binding=identity_binding
             )

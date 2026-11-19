@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 import asyncpg
@@ -47,7 +47,7 @@ from aweb.inbound_modes import (
     normalize_inbound_mode,
     set_identity_inbound_mode,
 )
-from aweb.member_team_key import current_member, read_member_projection
+from aweb.member_team_key import MemberProjection, current_member, read_member_projection
 from aweb.role_name_compat import (
     normalize_optional_role_name,
     resolve_role_name_aliases,
@@ -784,7 +784,7 @@ async def publish_encryption_key(
             },
         )
     aweb_db = db
-    row = None
+    row: MemberProjection | dict[str, Any] | None = None
     if generation is not None:
         if (
             not isinstance(generation, VerifiedCertificateGeneration)
