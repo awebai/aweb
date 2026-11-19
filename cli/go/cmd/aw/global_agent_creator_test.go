@@ -107,8 +107,29 @@ func TestTeamAdminGlobalAgentGetsRegisteredCreatorsChain(t *testing.T) {
 			}
 			seed, _ := hex.DecodeString(actor.SeedHex)
 			actorKey := ed25519.NewKeyFromSeed(seed)
+			connectCalls, publishCalls := 0, 0
 			service := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/connect" {
+					connectCalls++
+					cert, err := awid.DecodeTeamCertificateHeader(r.Header.Get(awid.HeaderTeamCertificate))
+					if err != nil {
+						t.Error(err)
+						http.Error(w, "invalid membership", http.StatusUnauthorized)
+						return
+					}
+					if cert.MemberDIDKey != target.DIDKey || cert.Team != "backend:example.com" || cert.Alias != "child" {
+						t.Error("connect did not use the newly issued member certificate")
+					}
+					if err := json.NewEncoder(w).Encode(map[string]any{"team_id": cert.Team, "alias": cert.Alias, "agent_id": "child", "workspace_id": "workspace-child", "team_did_key": cert.TeamDIDKey}); err != nil {
+						t.Error(err)
+					}
+					return
+				}
 				if strings.HasSuffix(r.URL.Path, "/encryption-key") {
+					publishCalls++
+					if connectCalls != 1 {
+						t.Error("encryption publication preceded normal member admission")
+					}
 					writePublishEncryptionKeyResponseForTest(t, w, "child", "backend:example.com", "child")
 					return
 				}
@@ -143,9 +164,12 @@ func TestTeamAdminGlobalAgentGetsRegisteredCreatorsChain(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			accepted, err := createAndAcceptTeamInviteForEmptyAgent(root, child, "child", true)
+			accepted, err := createProvisionedTeamMember(teamMemberCreation{SourceDir: root, HomeDir: child, Name: "child", Scope: awid.IdentityScopeGlobal})
 			if err != nil {
 				t.Fatalf("global creator provisioning (%d ID writes/%d membership writes): %v", idWrites, teamWrites, err)
+			}
+			if connectCalls != 1 || publishCalls == 0 {
+				t.Fatalf("provisioning completed without connect/publication: %d/%d", connectCalls, publishCalls)
 			}
 			if !chained && creatorKeyReads != 1 {
 				t.Fatalf("chainless creator key reads=%d; want one authoritative absence check", creatorKeyReads)

@@ -1484,7 +1484,7 @@ func resolveOrCreateTeamMemberIdentity(input teamAgentMembershipPreparation) (*a
 	if input.Authority.Mode == creationAuthorityAPI {
 		return bootstrapTeamHumanAddAgentWithAPIKey(plan.HomeDir, plan, input.APIKey)
 	}
-	return createAndAcceptTeamInviteForEmptyAgent(input.SourceDir, plan.HomeDir, plan.Name, plan.Scope == awid.IdentityModeGlobal)
+	return createProvisionedTeamMember(teamMemberCreation{SourceDir: input.SourceDir, HomeDir: plan.HomeDir, Name: plan.Name, Scope: awid.IdentityScope(plan.Scope)})
 }
 
 type teamIDAssertionSource string

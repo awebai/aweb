@@ -9,7 +9,21 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
-func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, global bool) (*acceptedTeamInvite, error) {
+type teamMemberCreation struct {
+	SourceDir string
+	HomeDir   string
+	Name      string
+	Scope     awid.IdentityScope
+}
+
+// createProvisionedTeamMember uses the selected creator and the shared mint and
+// membership-record owners. Normal admission completes before encryption-key
+// publication (docs/identity.md §Provisioned members and encryption discovery).
+func createProvisionedTeamMember(input teamMemberCreation) (*acceptedTeamInvite, error) {
+	if input.Scope != awid.IdentityScopeLocal && input.Scope != awid.IdentityScopeGlobal {
+		return nil, errors.New("team member creation scope is unknown")
+	}
+	anchorDir, homeDir, alias := input.SourceDir, input.HomeDir, input.Name
 	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(anchorDir)
 	if err != nil {
 		// resolveTeamInviteTarget is shared with `aw id team invite`, whose error
@@ -25,7 +39,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		return nil, err
 	}
 	parentHome := ""
-	if global {
+	if input.Scope == awid.IdentityScopeGlobal {
 		chain, err := awconfig.LoadInstalledIDChain(actorHome.Root)
 		if err != nil {
 			return nil, err
@@ -51,7 +65,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		}
 	}
 	memberAddress := ""
-	if global {
+	if input.Scope == awid.IdentityScopeGlobal {
 		identityExists, err := teamCreateHasIdentityMaterial(homeDir)
 		if err != nil {
 			return nil, err
@@ -73,7 +87,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		return nil, err
 	}
 	scope := inviteMemberLocal
-	if global {
+	if input.Scope == awid.IdentityScopeGlobal {
 		scope = inviteMemberGlobal
 	}
 	created, err := mintPlannedTeamInvite(teamInviteMintRequest{Plan: plan, Scope: scope})
@@ -81,7 +95,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		return nil, err
 	}
 	token := created.Token
-	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress, ParentHome: parentHome}
+	acceptOpts := teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: string(input.Scope), Address: memberAddress, ParentHome: parentHome}
 	accepted, err := acceptProvisionedTeamInvite(anchorDir, actorHome.Root, homeDir, token, acceptOpts)
 	if err != nil {
 		return nil, err

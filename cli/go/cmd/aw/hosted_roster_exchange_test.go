@@ -335,7 +335,7 @@ func TestHostedRosterRunsNativeChildExchange(t *testing.T) {
 				}
 			}
 			if scenario == "global provision chained actor" {
-				_, err := createAndAcceptTeamInviteForEmptyAgent(root, childDir, "child", true)
+				_, err := createProvisionedTeamMember(teamMemberCreation{SourceDir: root, HomeDir: childDir, Name: "child", Scope: awid.IdentityScopeGlobal})
 				if err == nil || !strings.Contains(err.Error(), "aw id team add-member") || !strings.Contains(err.Error(), "parent") {
 					t.Fatalf("global creation should refuse before effects: %v", err)
 				}
