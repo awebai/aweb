@@ -134,9 +134,12 @@ class FederationAuthorityActivation:
                     ttl_seconds=5,
                 )
                 await self.work.release_lease(lease)
-            except Exception:
+            except Exception as exc:
+                # Cleanup preserves the original authority refusal; publication
+                # failure is reported without copying dependency contents.
                 logger.warning(
-                    "federation_authority_failure_publication_failed", exc_info=True
+                    "federation_authority_failure_publication_failed failure_type=%s",
+                    type(exc).__name__,
                 )
 
     async def _contact_from_result(
