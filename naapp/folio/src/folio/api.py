@@ -2,8 +2,7 @@ from pathlib import Path
 from typing import Annotated
 
 from aweb_naapp.identity_assets import identity_asset
-from aweb_naapp.runtime.app import NaappRuntime, mount_naapp_routes
-from aweb_naapp.runtime.authorization import Authorization
+from aweb_naapp.runtime.app import InstalledMember, NaappRuntime, mount_naapp_routes
 from aweb_naapp.runtime.installation import InstallationRefused, apply_installation_migrations
 from aweb_naapp.runtime.team_auth import Principal
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -88,26 +87,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def member_policy(request, member, tool):
         return True
 
-    member_authorized = runtime.authorized(
-        grants=runtime.installation_grants(), policy=member_policy
-    )
+    installed_member = runtime.installed_member(policy=member_policy)
 
     async def principal(
-        request: Request, authorization: Annotated[Authorization, Depends(member_authorized)]
+        request: Request, installed: Annotated[InstalledMember, Depends(installed_member)]
     ) -> Principal:
-        try:
-            permit = await runtime.installation_fence().permit(authorization.principal.team_id)
-            if (authorization.grant.installation_id, authorization.grant.generation) != (
-                permit.admitted.installation_id,
-                permit.admitted.generation,
-            ):
-                raise InstallationRefused(
-                    "generation_superseded", 409, "Installation changed during admission"
-                )
-        except InstallationRefused as error:
-            raise HTTPException(error.status, detail={"code": error.code}) from None
-        request.state.folio_installation = permit
-        return authorization.principal
+        request.state.folio_installation = installed.permit
+        return installed.principal
 
     async def landing() -> str:
         return render_landing_page(public_origin=resolved.public_origin)
