@@ -15,9 +15,7 @@ LEGACY_IDENTITY_SCOPE_ALIASES = {
 }
 
 
-def normalize_identity_scope(
-    value: str | None, *, default: str = "local"
-) -> IdentityScope:
+def normalize_identity_scope(value: str | None, *, default: str = "local") -> IdentityScope:
     scope = (value or default).strip().lower() or default
     scope = LEGACY_IDENTITY_SCOPE_ALIASES.get(scope, scope)
     if scope not in {"global", "local"}:
