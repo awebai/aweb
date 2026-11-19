@@ -71,7 +71,7 @@ async def test_mcp_local_only_targets_keep_not_routable_action_and_reason(
 
 
 @pytest.mark.asyncio
-async def test_http_local_agent_id_refusal_keeps_published_404(mail_server):
+async def test_http_local_agent_id_keeps_team_scoped_404_and_member_neighbor(mail_server):
     env = mail_server
     bob = await admitted_local_recipient(env)
     body = json.dumps({"to_agent_id": bob.id, "body": "refused mail"}).encode()
@@ -81,11 +81,17 @@ async def test_http_local_agent_id_refusal_keeps_published_404(mail_server):
                  "X-Team-ID": bob.team, "Content-Type": "application/json"},
     )
     assert refused.status_code == 404, refused.text
-    assert refused.json()["reason"] == "local_recipient_route_missing"
-    assert refused.json()["retryable"] is False
-    assert refused.json()["correlation_id"]
-    assert "reachable only from inside its own team" in refused.json()["detail"]
+    assert refused.json() == {
+        "detail": "Recipient agent not found. Check the recipient or ask them to reconnect, then retry."
+    }
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 0
+    accepted = await env.client.post(
+        "/v1/messages", content=body,
+        headers={**_signed_identity_headers(bob.sk, bob.did, "", body),
+                 "X-Team-ID": bob.team, "Content-Type": "application/json"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.messages}}") == 1
 
 
 @pytest.mark.asyncio

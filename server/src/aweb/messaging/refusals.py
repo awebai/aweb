@@ -21,7 +21,7 @@ class DeliveryRefusalCode(StrEnum):
     RECIPIENT_POLICY_REJECTED = "recipient_policy_rejected"
     CONTACT_IDENTITY_BINDING_REQUIRED = "contact_identity_binding_required"
     CONVERSATION_EXISTS = "conversation_exists"
-    RECIPIENT_ADDRESS_NOT_FOUND = "recipient_address_not_found"
+    RECIPIENT_IDENTITY_NOT_FOUND = "recipient_identity_not_found"
 
 
 CONTACT_REBIND_ACTION = "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending."
@@ -61,11 +61,13 @@ class DeliveryRefusal(ServiceError):
 class RecipientAddressNotFound(DeliveryRefusal):
     """A recipient address has no usable route under the address binding rule."""
 
+    code: DeliveryRefusalCode
+
     def __init__(self, *, address: str) -> None:
         super().__init__(
             status_code=HTTPStatus.NOT_FOUND,
             detail=f"Recipient address not found: {address}. Check the address and try again.",
-            code=DeliveryRefusalCode.RECIPIENT_ADDRESS_NOT_FOUND,
+            code=DeliveryRefusalCode.RECIPIENT_IDENTITY_NOT_FOUND,
         )
 
 

@@ -4,7 +4,7 @@ import logging
 from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from aweb.messaging.refusals import DeliveryRefusal, DeliveryRefusalCode
+from aweb.messaging.refusals import DeliveryRefusal, DeliveryRefusalCode, RecipientAddressNotFound
 from aweb.federation.errors import FederationPolicyRefused, authority_error_body
 from aweb.messaging.delivery_policy import DeliveryPolicyRefused
 from aweb.service_errors import ServiceError, INTERNAL_SERVICE_ERROR_MESSAGE
@@ -55,7 +55,7 @@ async def service_error_handler(request: Request, exc: Exception) -> JSONRespons
             headers=exc.headers,
         )
     content = {"detail": exc.detail}
-    if isinstance(exc, DeliveryPolicyRefused):
+    if isinstance(exc, (DeliveryPolicyRefused, RecipientAddressNotFound)):
         content["reason"] = exc.code.value
     if exc.recovery_action is not None:
         content["recovery_action"] = exc.recovery_action
