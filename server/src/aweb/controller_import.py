@@ -66,9 +66,10 @@ class VerifiedControllerImport:
     """One immutable owner-acquired snapshot for planning and live admission.
 
     certificates retains revoked rows for existing planning/counts. members
-    contains only nonrevoked admission inputs; none is a request certificate
-    or generation proof. The original signed selectors/dry_run/time remain in
-    request; a dry run authorizes no writes in the host effect owner.
+    contains nonrevoked admission inputs only for an apply request; preview
+    members is empty so its signature cannot authorize native admission. None
+    is a request certificate or generation proof. Original signed selectors,
+    dry_run and time remain in request.
     """
 
     request: TeamImportRequest
@@ -172,7 +173,7 @@ async def verify_controller_import(
                 request=request, verified_team_did_key=key, certificate=certificate
             )
             for certificate in certificates
-            if certificate.revoked_at is None
+            if certificate.revoked_at is None and not request.dry_run
         ),
     )
     result.require_freshness()

@@ -51,7 +51,9 @@ async def registered_import_team(stack):
             "import",
             team_controller_signing_key=controller,
             certificate_id=certificate_id,
-            member_did_key=did_key_from_signing_key(member),
+            member_did_key=did_key_from_signing_key(
+                member if alias == "live" else bytes([84]) * 32
+            ),
             member_did_aw=None,
             member_address=None,
             alias=alias,
@@ -105,7 +107,11 @@ async def test_owner_snapshot_retains_revoked_planning_but_only_live_admission(
         "live-certificate",
         "revoked-certificate",
     }
-    assert len(proof.members) == 1
+    assert len(proof.members) == (0 if dry_run else 1)
+    if dry_run:
+        # Planning reads the snapshot; a preview signature supplies no native
+        # admission result that could accidentally be applied.
+        return
     admitted = proof.members[0]
     assert isinstance(admitted, VerifiedControllerImportMember)
     assert admitted.team_id == "import:local"
