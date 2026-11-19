@@ -176,22 +176,21 @@ async def serve_commands(zone: DnsServer, registry: FastAPI) -> None:
         print(json.dumps(apply_command(zone, registry, line)), flush=True)
 
 
-async def main() -> None:
-    # The isolated runner owns these services. Never fall back to a host DB.
-    host, redis_url = os.environ["PGHOST"], os.environ["REDIS_URL"]
+async def main(services: dict[str, str]) -> None:
+    host, redis_url = services["PGHOST"], services["REDIS_URL"]
     database = "aw_command_" + uuid4().hex
     user, password = (
-        os.environ.get("PGUSER", "postgres"),
-        os.environ.get("PGPASSWORD", "postgres"),
+        services.get("PGUSER", "postgres"),
+        services.get("PGPASSWORD", "postgres"),
     )
-    port = int(os.environ.get("PGPORT", "5432"))
+    port = int(services.get("PGPORT", "5432"))
     async with AsyncExitStack() as resources:
         admin = await asyncpg.connect(
             host=host,
             port=port,
             user=user,
             password=password,
-            database=os.environ.get("PGDATABASE", "postgres"),
+            database=services.get("PGDATABASE", "postgres"),
         )
         resources.push_async_callback(admin.close)
         await admin.execute(f'CREATE DATABASE "{database}"')
@@ -254,5 +253,20 @@ async def main() -> None:
         await serve_commands(zone, registry.app)
 
 
+def run_with_services() -> None:
+    """Run on the suite's PG/Redis when it supplies them, otherwise on
+    disposable containers this process owns; never on a host database it was
+    not given."""
+    if os.environ.get("PGHOST"):
+        asyncio.run(main(dict(os.environ)))
+        return
+    # -P keeps this directory off the path; only this sibling is wanted.
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from disposable_services import disposable_postgres_and_redis
+
+    with disposable_postgres_and_redis() as services:
+        asyncio.run(main(services))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    run_with_services()

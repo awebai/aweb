@@ -1,8 +1,15 @@
-"""Exercise the AWID fixture's removal of the disposable containers it owns."""
+"""Exercise the disposable services the AWID and command-stack fixtures own."""
 import subprocess
 import unittest
 
-from awid_fixture import remove_owned_containers, run
+from disposable_services import (
+    disposable_postgres_and_redis,
+    remove_owned_containers,
+    run,
+    start_container,
+    verify_postgres_on_tmpfs,
+    wait_for_postgres,
+)
 
 
 def anonymous_volume(container):
@@ -37,6 +44,37 @@ class OwnedContainerRemoval(unittest.TestCase):
         self.assertFalse(volume_exists(owned_volume), owned_volume)
         self.assertEqual(run('docker', 'inspect', bystander, '--format', '{{.State.Running}}'), 'true')
         self.assertTrue(volume_exists(bystander_volume), bystander_volume)
+
+
+def container_on_host_port(port):
+    """The running container whose published port is 127.0.0.1:port."""
+    for line in run('docker', 'ps', '--format', '{{.ID}} {{.Ports}}').splitlines():
+        container, _, ports = line.partition(' ')
+        if f'127.0.0.1:{port}->' in ports:
+            return container
+    raise AssertionError(f'no container publishes 127.0.0.1:{port}')
+
+
+class DisposablePostgresAndRedis(unittest.TestCase):
+    def test_services_answer_on_tmpfs_and_are_removed(self):
+        with disposable_postgres_and_redis() as services:
+            postgres = container_on_host_port(services['PGPORT'])
+            redis = container_on_host_port(services['REDIS_URL'].rsplit(':', 1)[1].split('/')[0])
+            mounts = run('docker', 'exec', postgres, 'cat', '/proc/mounts')
+            self.assertIn(' /var/lib/postgresql/data tmpfs ', mounts)
+            self.assertEqual(run('docker', 'exec', postgres, 'psql', '-h', '127.0.0.1', '-U', 'postgres',
+                                 '-tAc', 'SELECT 1'), '1')
+            self.assertEqual(run('docker', 'exec', redis, 'redis-cli', 'ping'), 'PONG')
+        self.assertEqual(run('docker', 'ps', '-aq', '--filter', 'id=' + postgres), '')
+        self.assertEqual(run('docker', 'ps', '-aq', '--filter', 'id=' + redis), '')
+
+    def test_postgres_on_the_container_filesystem_is_refused(self):
+        owned = []
+        self.addCleanup(remove_owned_containers, owned)
+        postgres, _ = start_container(owned, 'postgres:17', 5432, '-e', 'POSTGRES_PASSWORD=postgres')
+        wait_for_postgres(postgres)
+        with self.assertRaisesRegex(RuntimeError, 'is not on tmpfs'):
+            verify_postgres_on_tmpfs(postgres)
 
 
 if __name__ == '__main__':

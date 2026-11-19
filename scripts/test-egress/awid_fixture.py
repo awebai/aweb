@@ -30,10 +30,6 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run(*args):
-    return subprocess.check_output(args, text=True).strip()
-
-
 def fixture_app():
     """Real service with an optional exact DNS dependency for CLI journeys."""
     from awid_service.main import app
@@ -55,29 +51,24 @@ def fixture_app():
 
 
 def main():
-    owned = []
+    # Imported here: the AWID child loads this file through runpy, without
+    # this directory on its path, for fixture_app alone.
+    from disposable_services import disposable_postgres_and_redis
+
+    if os.environ.get('PGHOST'):
+        serve(dict(os.environ), owns_services=False)
+        return
+    with disposable_postgres_and_redis() as services:
+        serve({**os.environ, **services}, owns_services=True)
+
+
+def serve(env, *, owns_services):
+    """Serve AWID on env's PG/Redis until stdin closes. Storage this fixture
+    does not own is cleaned by dropping its schema."""
     process = None
     listener = None
-    env = dict(os.environ)
     schema = 'test_cli_' + uuid.uuid4().hex
     try:
-        if not env.get('PGHOST'):
-            for image, port, extra in [
-                ('postgres:17', 5432, ['-e', 'POSTGRES_PASSWORD=postgres']),
-                ('redis:7', 6379, []),
-            ]:
-                container = run('docker', 'run', '-d', '--rm', '--cpus', '1', '--memory', '512m',
-                                '-p', f'127.0.0.1::{port}', *extra, image)
-                owned.append(container)
-                mapped = run('docker', 'port', container, str(port)).rsplit(':', 1)[1]
-                if port == 5432:
-                    env.update(PGHOST='127.0.0.1', PGPORT=mapped, PGUSER='postgres', PGPASSWORD='postgres')
-                else:
-                    env['REDIS_URL'] = f'redis://127.0.0.1:{mapped}/0'
-            for _ in range(60):
-                if subprocess.run(['docker', 'exec', owned[0], 'pg_isready', '-U', 'postgres'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-                    break
-                time.sleep(.25)
         listener = socket.socket()
         listener.bind(('127.0.0.1', 0))
         listener.listen()
@@ -145,7 +136,7 @@ def main():
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
-            if not owned:
+            if not owns_services:
                 cleanup = """import asyncio, asyncpg, os
 async def clean():
     conn = await asyncpg.connect(os.environ['AWID_DATABASE_URL'])
@@ -156,14 +147,6 @@ async def clean():
 asyncio.run(clean())
 """
                 subprocess.run(['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'), 'python', '-c', cleanup], env=env, check=True)
-        remove_owned_containers(owned)
-
-
-def remove_owned_containers(owned):
-    # --rm removes anonymous volumes only when Docker itself removes the
-    # container; an explicit removal must name -v to remove them.
-    for container in reversed(owned):
-        subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=sys.stderr, check=True)
 
 
 if __name__ == '__main__':
