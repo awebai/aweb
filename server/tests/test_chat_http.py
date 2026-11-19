@@ -3700,7 +3700,7 @@ async def test_create_chat_session_to_external_did_first_contact_fails_closed(
 
 @pytest.mark.asyncio
 async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db):
-    _, _, alice_did_key = _make_keypair()
+    alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -3755,7 +3755,7 @@ async def test_create_chat_session_resolves_tilde_alias_cross_team(aweb_cloud_db
         "to_aliases": ["eng~bob"],
         "message": "hello eng",
         "from_did": alice_did_key,
-        "signature": _raw_b64(bytes(64)),
+        "signature": sign_message(alice_sk, signed_payload.encode()),
         "message_id": message_id,
         "timestamp": timestamp,
         "signed_payload": signed_payload,
