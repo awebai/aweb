@@ -2,6 +2,7 @@
 
 import pytest
 from approval_service.verify import Trust
+
 from aweb_key_holder.auth import Caller
 from aweb_key_holder.binding_refresh import check_active_enrollment
 from aweb_key_holder.keys import Refused
@@ -34,8 +35,6 @@ def test_binding_refresh_does_not_replace_person_keys_or_retired_enrollment():
 def test_rotated_identity_key_has_enrollment_recovery_advice_not_wrong_caller():
     from dataclasses import replace
 
-    from aweb_key_holder.binding_refresh import REFRESH_ADVICE
-
     caller = Caller(
         identity="did:aw:person", key="did:key:new", timestamp="1", body=b"{}"
     )
@@ -57,8 +56,8 @@ def test_rotated_identity_key_has_enrollment_recovery_advice_not_wrong_caller():
     with pytest.raises(Refused) as refused:
         check_active_enrollment(row, caller=caller, trust=trust)
     assert refused.value.code == "binding_refresh_identity_key_changed"
-    assert "enrolment or recovery" in REFRESH_ADVICE[refused.value.code]
-    assert "operator" in REFRESH_ADVICE[refused.value.code]
+    assert "enrolment or recovery" in refused.value.reason.advice
+    assert "operator" in refused.value.reason.advice
     with pytest.raises(Refused) as refused:
         check_active_enrollment(
             row, caller=replace(caller, identity="did:aw:other"), trust=trust

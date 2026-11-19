@@ -206,3 +206,6 @@ wire code. Malformed input is 400; missing authentication is 401; an ineligible
 caller is 403; conflicting enrollment state is 409; unavailable storage or
 public authority is 503. A previously unknown approval-library failure is 500
 and is logged, rather than being reported as invalid caller credentials.
+
+For a source checkout, `make -C key-holder check` runs the pinned formatter,
+linter and type checker against the holder's public and internal boundaries.

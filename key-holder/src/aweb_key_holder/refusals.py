@@ -5,6 +5,7 @@ conflicting state and unavailable infrastructure. A new unmapped library code is
 an internal failure, never an accusation of invalid caller credentials.
 """
 
+from dataclasses import dataclass
 from enum import StrEnum
 from http import HTTPStatus
 from typing import Self
@@ -16,11 +17,13 @@ class Refusal(StrEnum):
     """Closed holder wire codes with their HTTP meanings beside their names."""
 
     http_status: HTTPStatus
+    advice: str | None
 
-    def __new__(cls, code: str, status: HTTPStatus) -> Self:
+    def __new__(cls, code: str, status: HTTPStatus, advice: str | None = None) -> Self:
         member = str.__new__(cls, code)
         member._value_ = code
         member.http_status = status
+        member.advice = advice
         return member
 
     ALREADY_INITIALIZED = ("already_initialized", HTTPStatus.CONFLICT)
@@ -30,18 +33,22 @@ class Refusal(StrEnum):
     BINDING_REFRESH_ENROLLMENT_CHANGED = (
         "binding_refresh_enrollment_changed",
         HTTPStatus.CONFLICT,
+        "Refresh only this person's active enrollment with the same identity key. Replacing a lost enrolled key is not implemented; ask the operator to issue a new ID and revoke the old one.",
     )
     BINDING_REFRESH_IDENTITY_KEY_CHANGED = (
         "binding_refresh_identity_key_changed",
         HTTPStatus.CONFLICT,
+        "The person's identity key changed. Binding refresh cannot replace it; ask the operator for enrolment or recovery. In this release the operator must revoke the old ID, issue a new ID and enrol again.",
     )
     BINDING_REFRESH_PERSON_REQUIRED = (
         "binding_refresh_person_required",
         HTTPStatus.FORBIDDEN,
+        "Run binding refresh with this person's own current identity key.",
     )
     BINDING_REFRESH_REQUEST_INVALID = (
         "binding_refresh_request_invalid",
         HTTPStatus.BAD_REQUEST,
+        "Use the current live binding commitment saved by the person's approval client.",
     )
     BOOTSTRAP_CLOSED = ("bootstrap_closed", HTTPStatus.FORBIDDEN)
     CALLER_REQUIRED = ("caller_required", HTTPStatus.UNAUTHORIZED)
@@ -49,7 +56,11 @@ class Refusal(StrEnum):
     CONTROLLER_MISMATCH = ("controller_mismatch", HTTPStatus.FORBIDDEN)
     CREATION_CHANGED = ("creation_changed", HTTPStatus.CONFLICT)
     CREATION_MISMATCH = ("creation_mismatch", HTTPStatus.BAD_REQUEST)
-    CREATION_REQUIRED = ("creation_required", HTTPStatus.CONFLICT)
+    CREATION_REQUIRED = (
+        "creation_required",
+        HTTPStatus.CONFLICT,
+        "Finish the person's existing enrollment in the approval client before retrying activation.",
+    )
     CREDENTIAL_DUPLICATE = ("credential_duplicate", HTTPStatus.BAD_REQUEST)
     ENFORCER_MISMATCH = ("enforcer_mismatch", HTTPStatus.BAD_REQUEST)
     ENFORCER_ORIGIN_INVALID = (
@@ -65,28 +76,41 @@ class Refusal(StrEnum):
     ENROLLMENT_REPLACEMENT_UNAVAILABLE = (
         "enrollment_replacement_unavailable",
         HTTPStatus.CONFLICT,
+        "Replacing a lost enrolled key is not implemented. Ask the operator to revoke the old ID, issue a new ID and enrol again. Enrol two keys.",
     )
     ENROLLMENT_UNKNOWN = ("enrollment_unknown", HTTPStatus.NOT_FOUND)
     FRESH_ENROLLMENT_REQUIRED = ("fresh_enrollment_required", HTTPStatus.CONFLICT)
     HUMAN_APPROVAL_HARDWARE_GRADING_REQUIRED = (
         "human_approval_hardware_grading_required",
         HTTPStatus.SERVICE_UNAVAILABLE,
+        "The hardware requirement needs --grading hardware and --mds-cache DIR. Passkey-only grading cannot satisfy it.",
     )
     HUMAN_APPROVAL_INVALID = ("human_approval_invalid", HTTPStatus.SERVICE_UNAVAILABLE)
     HUMAN_APPROVAL_REQUIRED = ("human_approval_required", HTTPStatus.FORBIDDEN)
     HUMAN_APPROVAL_SOURCE_REQUIRED = (
         "human_approval_source_required",
         HTTPStatus.SERVICE_UNAVAILABLE,
+        "The last applied policy required approval. Pass the rendered file with --human-approval-config FILE or HUMAN_APPROVAL_CONFIG_FILE. To turn approval off, explicitly render an empty human_approval section.",
     )
     IDENTITY_CHAIN_REQUIRED = ("identity_chain_required", HTTPStatus.UNAUTHORIZED)
     IDENTITY_KEY_MISMATCH = ("identity_key_mismatch", HTTPStatus.BAD_REQUEST)
-    IDENTITY_UNAVAILABLE = ("identity_unavailable", HTTPStatus.SERVICE_UNAVAILABLE)
+    IDENTITY_UNAVAILABLE = (
+        "identity_unavailable",
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "Check the person's registry status and this holder's current namespace authority, then retry refresh.",
+    )
+    INTERNAL_ERROR = (
+        "internal_error",
+        HTTPStatus.INTERNAL_SERVER_ERROR,
+        "Ask the operator to inspect the holder error log, then retry.",
+    )
     ISSUER_CHANGED = ("issuer_changed", HTTPStatus.CONFLICT)
     KEY_ALREADY_EXISTS = ("key_already_exists", HTTPStatus.CONFLICT)
     KEY_UNAVAILABLE = ("key_unavailable", HTTPStatus.SERVICE_UNAVAILABLE)
-    LEGACY_HUMAN_ISSUANCE_WRITE_HUMAN_APPROVAL = (
+    POLICY_MIGRATION_REQUIRED = (
         "legacy_human_issuance_write_human_approval",
         HTTPStatus.SERVICE_UNAVAILABLE,
+        "human_issuance is retired. For an old approved store, write the human_approval section in deployment.yaml, render it, then run aweb-key-holder --state DIR --human-approval-config FILE migrate. The old approved setting cannot be silently disabled. An old operator store can run migrate without a requirement.",
     )
     NONCE_CONFLICT = ("nonce_conflict", HTTPStatus.CONFLICT)
     OPERATION_INVALID = ("operation_invalid", HTTPStatus.BAD_REQUEST)
@@ -99,13 +123,21 @@ class Refusal(StrEnum):
         "registration_count_mismatch",
         HTTPStatus.BAD_REQUEST,
     )
-    REQUEST_INVALID = ("request_invalid", HTTPStatus.BAD_REQUEST)
+    REQUEST_INVALID = (
+        "request_invalid",
+        HTTPStatus.BAD_REQUEST,
+        "Submit the documented JSON object using the person's approval client, then retry.",
+    )
     REQUESTER_MISMATCH = ("requester_mismatch", HTTPStatus.FORBIDDEN)
     SCHEMA_UNAVAILABLE = ("schema_unavailable", HTTPStatus.SERVICE_UNAVAILABLE)
     STATE_CHANGED = ("state_changed", HTTPStatus.CONFLICT)
     STATUS_UNAVAILABLE = ("status_unavailable", HTTPStatus.SERVICE_UNAVAILABLE)
     STORAGE_PERMISSIONS = ("storage_permissions", HTTPStatus.SERVICE_UNAVAILABLE)
-    STORAGE_UNAVAILABLE = ("storage_unavailable", HTTPStatus.SERVICE_UNAVAILABLE)
+    STORAGE_UNAVAILABLE = (
+        "storage_unavailable",
+        HTTPStatus.SERVICE_UNAVAILABLE,
+        "Ask the operator to check this holder's private storage and schema, then retry the command.",
+    )
     TARGET_IS_APPROVER = ("target_is_approver", HTTPStatus.FORBIDDEN)
 
 
@@ -148,12 +180,11 @@ _APPROVAL_STATUSES: dict[str, HTTPStatus] = {
     "credential_limit": HTTPStatus.UNAUTHORIZED,
     "credential_not_enrolled": HTTPStatus.UNAUTHORIZED,
     "credentials_invalid": HTTPStatus.UNAUTHORIZED,
-    "csrf_invalid": HTTPStatus.UNAUTHORIZED,
     "deadline_invalid": HTTPStatus.UNAUTHORIZED,
     "deadline_mismatch": HTTPStatus.UNAUTHORIZED,
     "definition_invalid": HTTPStatus.UNAUTHORIZED,
     "definition_mismatch": HTTPStatus.UNAUTHORIZED,
-    "definition_unavailable": HTTPStatus.UNAUTHORIZED,
+    "definition_unavailable": HTTPStatus.SERVICE_UNAVAILABLE,
     "discoverable_credential_required": HTTPStatus.UNAUTHORIZED,
     "duplicate_credential": HTTPStatus.UNAUTHORIZED,
     "enrollment_already_confirming": HTTPStatus.UNAUTHORIZED,
@@ -202,7 +233,6 @@ _APPROVAL_STATUSES: dict[str, HTTPStatus] = {
     "issuer_signature_invalid": HTTPStatus.UNAUTHORIZED,
     "issuer_unavailable": HTTPStatus.SERVICE_UNAVAILABLE,
     "locator_mismatch": HTTPStatus.UNAUTHORIZED,
-    "login_assertion_invalid": HTTPStatus.UNAUTHORIZED,
     "namespace_authority_unavailable": HTTPStatus.SERVICE_UNAVAILABLE,
     "needs_human_invalid": HTTPStatus.UNAUTHORIZED,
     "nonce_invalid": HTTPStatus.UNAUTHORIZED,
@@ -236,30 +266,13 @@ _APPROVAL_STATUSES: dict[str, HTTPStatus] = {
     "requester_pending_invalid": HTTPStatus.UNAUTHORIZED,
     "requester_status_mismatch": HTTPStatus.UNAUTHORIZED,
     "requester_status_unavailable": HTTPStatus.SERVICE_UNAVAILABLE,
-    "root_act_invalid": HTTPStatus.UNAUTHORIZED,
-    "root_enforcer_invalid": HTTPStatus.UNAUTHORIZED,
-    "root_enforcer_mismatch": HTTPStatus.UNAUTHORIZED,
-    "root_history_unavailable": HTTPStatus.UNAUTHORIZED,
-    "root_identity_mismatch": HTTPStatus.UNAUTHORIZED,
-    "root_key_discontinuous": HTTPStatus.UNAUTHORIZED,
-    "root_key_mismatch": HTTPStatus.UNAUTHORIZED,
-    "root_person_mismatch": HTTPStatus.UNAUTHORIZED,
-    "root_proof_invalid": HTTPStatus.UNAUTHORIZED,
-    "root_proof_unsupported": HTTPStatus.UNAUTHORIZED,
-    "root_revision_mismatch": HTTPStatus.UNAUTHORIZED,
-    "root_team_not_owned": HTTPStatus.UNAUTHORIZED,
-    "root_team_organisation_mismatch": HTTPStatus.UNAUTHORIZED,
-    "root_teams_not_supported": HTTPStatus.UNAUTHORIZED,
     "selection_conflict": HTTPStatus.UNAUTHORIZED,
     "service_response_invalid": HTTPStatus.UNAUTHORIZED,
-    "session_expired": HTTPStatus.UNAUTHORIZED,
-    "session_invalid": HTTPStatus.UNAUTHORIZED,
-    "session_token_invalid": HTTPStatus.UNAUTHORIZED,
     "signature_invalid": HTTPStatus.UNAUTHORIZED,
-    "snapshot_expired": HTTPStatus.UNAUTHORIZED,
-    "snapshot_invalid": HTTPStatus.UNAUTHORIZED,
-    "snapshot_unavailable": HTTPStatus.UNAUTHORIZED,
-    "snapshot_validation_expired": HTTPStatus.UNAUTHORIZED,
+    "snapshot_expired": HTTPStatus.SERVICE_UNAVAILABLE,
+    "snapshot_invalid": HTTPStatus.SERVICE_UNAVAILABLE,
+    "snapshot_unavailable": HTTPStatus.SERVICE_UNAVAILABLE,
+    "snapshot_validation_expired": HTTPStatus.SERVICE_UNAVAILABLE,
     "statement_unavailable": HTTPStatus.UNAUTHORIZED,
     "transition_approver_mismatch": HTTPStatus.UNAUTHORIZED,
     "transition_before_mismatch": HTTPStatus.UNAUTHORIZED,
@@ -271,12 +284,34 @@ _APPROVAL_STATUSES: dict[str, HTTPStatus] = {
 }
 
 
-def refusal_status(error: ApprovalRefused) -> HTTPStatus:
-    """Project known failures; an unreviewed code is visible as a server error."""
-    if isinstance(error, Refused):
-        return error.reason.http_status
-    try:
-        reason = Refusal(error.code)
-    except ValueError:
-        return _APPROVAL_STATUSES.get(error.code, HTTPStatus.INTERNAL_SERVER_ERROR)
-    return reason.http_status
+@dataclass(frozen=True, kw_only=True)
+class RefusalDescription:
+    """The holder projection of one failure; no custody or eligibility grant."""
+
+    code: str
+    status: HTTPStatus
+    advice: str | None = None
+
+
+def describe_refusal(error: ApprovalRefused) -> RefusalDescription:
+    """README refusal status: classify known failures and expose unknown ones."""
+    code = error.code
+    if not isinstance(code, str):
+        return RefusalDescription(
+            code=Refusal.INTERNAL_ERROR.value,
+            status=Refusal.INTERNAL_ERROR.http_status,
+            advice=Refusal.INTERNAL_ERROR.advice,
+        )
+    for reason in Refusal:
+        if reason.value == code:
+            return RefusalDescription(
+                code=code, status=reason.http_status, advice=reason.advice
+            )
+    status = _APPROVAL_STATUSES.get(code, HTTPStatus.INTERNAL_SERVER_ERROR)
+    return RefusalDescription(
+        code=code,
+        status=status,
+        advice=Refusal.INTERNAL_ERROR.advice
+        if status >= HTTPStatus.INTERNAL_SERVER_ERROR
+        else None,
+    )

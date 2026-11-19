@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -13,28 +14,22 @@ from approval_service.canonical import canonical
 from approval_service.encoding import encode
 from approval_service.verify import Trust
 from approval_service.wire import domain, validate
+from awid.controller_signing import ControllerDescriptor
 
 from .auth import Caller
 from .refusals import Refusal, Refused
 
 if TYPE_CHECKING:
-    from .enrollment import Holder
+    from .enrollment import Holder, WireObject
 
 
 class HolderOperation(StrEnum):
     BINDING_REFRESH = "binding_refresh"
 
 
-REFRESH_ADVICE = {
-    Refusal.BINDING_REFRESH_REQUEST_INVALID: "Use the current live binding commitment saved by the person's approval client.",
-    Refusal.BINDING_REFRESH_ENROLLMENT_CHANGED: "Refresh only this person's active enrollment with the same identity key. Replacing a lost enrolled key is not implemented; ask the operator to issue a new ID and revoke the old one.",
-    Refusal.BINDING_REFRESH_IDENTITY_KEY_CHANGED: "The person's identity key changed. Binding refresh cannot replace it; ask the operator for enrolment or recovery. In this release the operator must revoke the old ID, issue a new ID and enrol again.",
-    Refusal.BINDING_REFRESH_PERSON_REQUIRED: "Run binding refresh with this person's own current identity key.",
-    Refusal.IDENTITY_UNAVAILABLE: "Check the person's registry status and this holder's current namespace authority, then retry refresh.",
-}
-
-
-def check_active_enrollment(row: dict, *, caller: Caller, trust: Trust) -> None:
+def check_active_enrollment(
+    row: Mapping[str, object], *, caller: Caller, trust: Trust
+) -> None:
     """README.md: refresh preserves the enrolled person and identity key."""
     if caller.identity != trust.person or caller.key != trust.identity_key:
         raise Refused(Refusal.BINDING_REFRESH_PERSON_REQUIRED)
@@ -53,8 +48,8 @@ class HolderBindingRefresher:
     holder: Holder
 
     async def packet(
-        self, *, person: str, caller: Caller, body: dict, chain: list
-    ) -> dict:
+        self, *, person: str, caller: Caller, body: WireObject, chain: list[WireObject]
+    ) -> WireObject:
         """README.md:148-155: re-sign the same registered keys, never re-enrol.
 
         The service owns the active-binding compare-and-swap. The holder retains
@@ -125,7 +120,9 @@ class HolderBindingRefresher:
             }
 
     @staticmethod
-    def _check_authority(*, caller: Caller, trust: Trust, root) -> None:
+    def _check_authority(
+        *, caller: Caller, trust: Trust, root: ControllerDescriptor
+    ) -> None:
         caller.check_time()
         if (
             trust.namespace_issuer != root.did_key

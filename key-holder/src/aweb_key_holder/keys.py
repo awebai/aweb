@@ -4,6 +4,8 @@ Deploy this directory only into the holder process. The calling application
 must receive public descriptors/results and no mount or database role here.
 """
 
+from __future__ import annotations
+
 import base64
 import os
 import secrets
@@ -12,11 +14,14 @@ import stat
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from enum import Enum
 from importlib.resources import files
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Literal, Self, TypedDict
 from uuid import uuid4
 
 from approval_service.canonical import canonical, parse
+from approval_service.gate import Policy
 from awid.controller_signing import (
     ControllerDescriptor,
     ControllerObjectRequest,
@@ -27,25 +32,15 @@ from awid.did import did_from_public_key, did_key_from_signing_key, generate_key
 from awid.signing import sign_message
 from nacl.public import PublicKey, SealedBox
 
-from .refusals import Refusal
-from .refusals import Refused as Refused
+from .refusals import Refusal, Refused
 
-HUMAN_APPROVAL_MESSAGES = {
-    "human_approval_source_required": (
-        "The last applied policy required approval. Pass the rendered file "
-        "with --human-approval-config FILE or HUMAN_APPROVAL_CONFIG_FILE. "
-        "To turn approval off, explicitly render an empty human_approval section."
-    ),
-    "human_approval_hardware_grading_required": (
-        "The hardware requirement needs --grading hardware and --mds-cache DIR. "
-        "Passkey-only grading cannot satisfy it."
-    ),
-}
+if TYPE_CHECKING:
+    from awid.controller_signing import ControllerOperation
 
 
 # Explicit holder rules, not an automatic import of every future SDK operation.
 # Destructive key changes and human issuance have separate authority paths.
-ROUTINE = frozenset(
+ROUTINE: frozenset[ControllerOperation] = frozenset(
     {
         "namespace_register",
         "namespace_update",
@@ -72,22 +67,61 @@ ROUTINE = frozenset(
 )
 
 
-def _private(path, mode, *, directory=False):
+class StorageKind(Enum):
+    FILE = "file"
+    DIRECTORY = "directory"
+
+
+class PolicySource(Enum):
+    ABSENT = "absent"
+    EXPLICIT = "explicit"
+
+
+class PriorApproval(Enum):
+    UNRECORDED = "unrecorded"
+    REQUIRED = "required"
+
+
+class RetiredPerson(TypedDict):
+    person: str
+    state: Literal["retired"]
+
+
+class AuditEntry(TypedDict):
+    sequence: int
+    operation: str
+    actor: str
+    approval: str | None
+    key: str
+    generation: int
+    payload: str
+    signature: str
+    at: int
+
+
+def _private(path: Path, mode: int, *, kind: StorageKind = StorageKind.FILE) -> None:
     try:
         info = path.lstat()
     except OSError as error:
         raise Refused(Refusal.STORAGE_UNAVAILABLE) from error
-    kind_ok = stat.S_ISDIR(info.st_mode) if directory else stat.S_ISREG(info.st_mode)
+    kind_ok = (
+        stat.S_ISDIR(info.st_mode)
+        if kind is StorageKind.DIRECTORY
+        else stat.S_ISREG(info.st_mode)
+    )
     if not kind_ok or stat.S_IMODE(info.st_mode) != mode or info.st_uid != os.getuid():
         raise Refused(Refusal.STORAGE_PERMISSIONS)
 
 
 class KeyStore:
-    def __init__(self, directory):
+    """Private custody, explicit migrations and an append-only signature audit."""
+
+    def __init__(self, directory: str | Path) -> None:
         self.directory = Path(directory).absolute()
 
     @classmethod
-    def create(cls, directory, *, organisation):
+    def create(cls, directory: str | Path, *, organisation: str) -> Self:
+        """Create a private namespace key store and its ordered current schema."""
         seed, public_key = generate_keypair()
         descriptor = ControllerDescriptor(
             "namespace",
@@ -101,7 +135,7 @@ class KeyStore:
             store.directory.mkdir(mode=0o700)
         except FileExistsError as error:
             raise Refused(Refusal.ALREADY_INITIALIZED) from error
-        _private(store.directory, 0o700, directory=True)
+        _private(store.directory, 0o700, kind=StorageKind.DIRECTORY)
         database = store.directory / "holder.sqlite"
         fd = os.open(database, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         os.close(fd)
@@ -128,17 +162,19 @@ class KeyStore:
         return store
 
     @classmethod
-    def open(cls, directory):
+    def open(cls, directory: str | Path) -> Self:
+        """Open an initialized, current store without applying migrations."""
         store = cls(directory)
         with store.connection() as db:
-            store._refuse_legacy_configuration(db)
+            store.require_current_configuration(db)
             if db.execute("PRAGMA user_version").fetchone()[0] != 5:
                 raise Refused(Refusal.SCHEMA_UNAVAILABLE)
             if db.execute("SELECT count(*) FROM configuration").fetchone()[0] != 1:
                 raise Refused(Refusal.STORAGE_UNAVAILABLE)
         return store
 
-    def migrate(self, *, policy=None):
+    def migrate(self, *, policy: Policy | None = None) -> None:
+        """Apply ordered private-schema migrations under an explicit policy."""
         with self.connection() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version == 1:
@@ -176,7 +212,7 @@ class KeyStore:
                 if approved and (
                     policy is None or policy.grade("organisation.human.add") is None
                 ):
-                    raise Refused(Refusal.LEGACY_HUMAN_ISSUANCE_WRITE_HUMAN_APPROVAL)
+                    raise Refused(Refusal.POLICY_MIGRATION_REQUIRED)
                 db.executescript(
                     "BEGIN IMMEDIATE;\n"
                     + files(__package__)
@@ -184,20 +220,32 @@ class KeyStore:
                     .read_text()
                 )
                 if policy is not None:
-                    self.observe_policy(db, policy, legacy_approved=approved)
+                    self.observe_policy(
+                        db,
+                        policy,
+                        prior=PriorApproval.REQUIRED
+                        if approved
+                        else PriorApproval.UNRECORDED,
+                    )
                 db.execute("COMMIT")
             elif version != 5:
                 raise Refused(Refusal.SCHEMA_UNAVAILABLE)
 
     @staticmethod
-    def _refuse_legacy_configuration(db):
+    def require_current_configuration(db: sqlite3.Connection) -> None:
+        """Reject a retired policy column instead of silently treating it as off."""
         columns = {row[1] for row in db.execute("PRAGMA table_info(configuration)")}
         if "human_issuance" in columns:
-            raise Refused(Refusal.LEGACY_HUMAN_ISSUANCE_WRITE_HUMAN_APPROVAL)
+            raise Refused(Refusal.POLICY_MIGRATION_REQUIRED)
 
     def observe_policy(
-        self, db, policy, *, legacy_approved=False, source_configured=True
-    ):
+        self,
+        db: sqlite3.Connection,
+        policy: Policy,
+        *,
+        prior: PriorApproval = PriorApproval.UNRECORDED,
+        source: PolicySource = PolicySource.EXPLICIT,
+    ) -> None:
         """Audit configuration and refuse an implicit downgrade from its absence.
 
         The record supplies no approval policy. A previous requirement only
@@ -208,15 +256,15 @@ class KeyStore:
             "SELECT payload FROM signatures WHERE operation='human_approval_change' ORDER BY sequence DESC LIMIT 1"
         ).fetchone()
         prefix = b"aweb.key-holder.human-approval/1\n"
-        before = {"require": {}}
+        before: dict[str, Any] = {"require": {}}
         if previous:
             raw = base64.b64decode(previous["payload"], validate=True)
             if not raw.startswith(prefix):
                 raise Refused(Refusal.STORAGE_UNAVAILABLE)
             before = parse(raw[len(prefix) :])["to"]
-        elif legacy_approved:
+        elif prior is PriorApproval.REQUIRED:
             before = {"legacy_human_issuance": "approved"}
-        if not source_configured and before.get("require"):
+        if source is PolicySource.ABSENT and before.get("require"):
             raise Refused(Refusal.HUMAN_APPROVAL_SOURCE_REQUIRED)
         if before == section:
             return
@@ -232,7 +280,7 @@ class KeyStore:
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         """Open the private store without creating or migrating a database."""
-        _private(self.directory, 0o700, directory=True)
+        _private(self.directory, 0o700, kind=StorageKind.DIRECTORY)
         database = self.directory / "holder.sqlite"
         _private(database, 0o600)
         # Refuse missing files rather than creating an empty replacement store.
@@ -267,11 +315,13 @@ class KeyStore:
             team=team,
         )
 
-    def descriptor(self, *, team=None):
+    def descriptor(self, *, team: str | None = None) -> ControllerDescriptor:
+        """Read the current namespace controller, or the named team controller."""
         with self.connection() as db:
             return self.descriptor_in_transaction(db, team=team)
 
-    def create_team_key(self, name):
+    def create_team_key(self, name: str) -> ControllerDescriptor:
+        """Generate a new named team key without publishing registry authority."""
         # The descriptor validates the actual registry team-name profile.
         root = self.descriptor()
         seed, public_key = generate_keypair()
@@ -302,7 +352,9 @@ class KeyStore:
             )
         return descriptor
 
-    def sign_controller(self, context, *, actor):
+    def sign_controller(
+        self, context: ControllerSigningContext, *, actor: str
+    ) -> tuple[str, bytes]:
         """Internal SDK callback after the operation's caller authorization.
 
         It signs only a real typed SDK context and the current owned key. Human
@@ -372,8 +424,16 @@ class KeyStore:
         return signature
 
     def _audit(
-        self, db, descriptor, payload, signature, *, operation, actor, approval=None
-    ):
+        self,
+        db: sqlite3.Connection,
+        descriptor: ControllerDescriptor,
+        payload: bytes,
+        signature: bytes,
+        *,
+        operation: str,
+        actor: str,
+        approval: str | None = None,
+    ) -> None:
         db.execute(
             "INSERT INTO signatures(operation,actor,approval,key,generation,payload,signature,at) VALUES (?,?,?,?,?,?,?,?)",
             (
@@ -389,20 +449,22 @@ class KeyStore:
         )
 
     @staticmethod
-    def person_revision(db, person):
+    def person_revision(db: sqlite3.Connection, person: str) -> int:
+        """Read the per-person optimistic concurrency fence."""
         row = db.execute(
             "SELECT value FROM person_revisions WHERE person=?", (person,)
         ).fetchone()
         return row[0] if row else 0
 
     @staticmethod
-    def advance_person(db, person):
+    def advance_person(db: sqlite3.Connection, person: str) -> None:
+        """Advance only the affected person's concurrency fence."""
         db.execute(
             "INSERT INTO person_revisions VALUES (?,1) ON CONFLICT(person) DO UPDATE SET value=value+1",
             (person,),
         )
 
-    def retire_person(self, person):
+    def retire_person(self, person: str) -> RetiredPerson:
         """Withdraw local approval eligibility; keep proofs, nonce and audit history."""
         with self.connection() as db, db:
             db.execute("BEGIN IMMEDIATE")
@@ -426,19 +488,30 @@ class KeyStore:
                 self.advance_person(db, person)
             return {"person": person, "state": "retired"}
 
-    def audit(self, *, after=0, limit=1000):
+    def audit(self, *, after: int = 0, limit: int = 1000) -> list[AuditEntry]:
+        """Page committed signature records after the given sequence."""
         if after < 0 or not 1 <= limit <= 1000:
             raise Refused(Refusal.AUDIT_PAGE_INVALID)
         with self.connection() as db:
             return [
-                dict(row)
+                AuditEntry(
+                    sequence=row["sequence"],
+                    operation=row["operation"],
+                    actor=row["actor"],
+                    approval=row["approval"],
+                    key=row["key"],
+                    generation=row["generation"],
+                    payload=row["payload"],
+                    signature=row["signature"],
+                    at=row["at"],
+                )
                 for row in db.execute(
                     "SELECT * FROM signatures WHERE sequence>? ORDER BY sequence LIMIT ?",
                     (after, limit),
                 )
             ]
 
-    def encrypted_backup(self, offline_public_key):
+    def encrypted_backup(self, offline_public_key: bytes) -> bytes:
         """Operator command: only ciphertext may leave the holder's storage."""
         public_key = PublicKey(offline_public_key)
         with self.connection() as db, db:

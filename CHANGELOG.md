@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The optional key holder reports invalid input, ineligible callers, stale
+  enrollment and unavailable storage with distinct HTTP statuses. Unknown
+  shared-library failures are logged as server errors. Refusals carry one
+  controlled next step across the operator command and HTTP boundary.
+
 - `aw id human refresh-binding` carries an own-person binding refresh after an
   issuer or controller change. The checked live binding is saved separately;
   original enrollment and historical evidence are preserved. The refresh profile

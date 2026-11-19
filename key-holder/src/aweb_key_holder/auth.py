@@ -18,14 +18,17 @@ class Caller:
     body: bytes
 
     @property
-    def descriptor(self):
+    def descriptor(self) -> dict[str, str]:
+        """Return the identity descriptor covered by the request signature."""
         return {"kind": "identity", "id": self.identity, "key": self.key}
 
-    def check_time(self):
+    def check_time(self) -> None:
+        """Refuse the original request timestamp outside its admission window."""
         enforce_timestamp_skew(self.timestamp)
 
 
 async def authenticate(request: Request, *, origin: str) -> Caller:
+    """Verify aw's covering signature; possession alone grants no standing."""
     key, signature = parse_didkey_auth(request.headers.get("Authorization"))
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
