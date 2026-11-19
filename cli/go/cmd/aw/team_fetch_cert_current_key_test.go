@@ -1,13 +1,11 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -18,42 +16,10 @@ import (
 // certificate id asked for is not evidence that it is still current.
 func TestTeamFetchCertRefusesTheHeldCertificateOnceTheTeamKeyChanged(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
-	registryURL := realAWIDFixture(t)
-	t.Setenv("AWID_REGISTRY_URL", registryURL)
-	registry := awid.NewAWIDRegistryClient(nil, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	const domain = "fetch-current.example"
-
-	controllerPub, controllerKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := registry.RegisterNamespaceAt(ctx, registryURL, domain, awid.ComputeDIDKey(controllerPub), controllerKey); err != nil {
-		t.Fatalf("register namespace: %v", err)
-	}
-	teamPub, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := registry.CreateTeam(ctx, registryURL, domain, "ops", "Ops", awid.ComputeDIDKey(teamPub), controllerKey); err != nil {
-		t.Fatalf("create team: %v", err)
-	}
-	memberPub, memberKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	teamID := awid.BuildTeamID(domain, "ops")
-	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team: teamID, MemberDIDKey: awid.ComputeDIDKey(memberPub), Alias: "alice", IdentityScope: awid.IdentityModeLocal,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.RegisterCertificate(ctx, registryURL, domain, "ops", cert, teamKey); err != nil {
-		t.Fatalf("register certificate: %v", err)
-	}
+	world := newRealCommandWorld(t)
+	ctx, registryURL, domain, teamID := world.Context, world.Stack.RegistryURL, world.Domain, world.TeamID
+	memberKey := newKey(t)
+	cert := world.registerMemberCertificate(t, awid.TeamCertificateFields{MemberDIDKey: didOf(memberKey), Alias: "alice", IdentityScope: awid.IdentityModeLocal})
 
 	tmp := t.TempDir()
 	home := filepath.Join(tmp, ".aw")
@@ -66,18 +32,14 @@ func TestTeamFetchCertRefusesTheHeldCertificateOnceTheTeamKeyChanged(t *testing.
 	if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(home, teamID, cert); err != nil {
 		t.Fatal(err)
 	}
-	nextPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := registry.RotateTeamKey(ctx, registryURL, domain, "ops", awid.ComputeDIDKey(nextPub), nil, controllerKey); err != nil {
+	if _, err := world.Registry.RotateTeamKey(ctx, registryURL, domain, "backend", didOf(newKey(t)), nil, world.NamespaceKey); err != nil {
 		t.Fatalf("rotate team key: %v", err)
 	}
 
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	run := exec.CommandContext(ctx, bin, "id", "team", "fetch-cert",
-		"--team", "ops", "--namespace", domain, "--cert-id", cert.CertificateID, "--json")
+		"--team", "backend", "--namespace", domain, "--cert-id", cert.CertificateID, "--json")
 	run.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+registryURL)
 	run.Dir = tmp
 	out, err := run.Output()

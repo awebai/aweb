@@ -16,38 +16,24 @@ type teamServerFixture struct {
 	registry    *awid.RegistryClient
 	domain      string
 	team        string
+	teamID      string
 	teamKey     ed25519.PrivateKey
 	teamDID     string
 }
 
-func newTeamServerFixture(t *testing.T, domain string) teamServerFixture {
+// newTeamServerFixture is a real world seen from its team controller's machine.
+func newTeamServerFixture(t *testing.T) teamServerFixture {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("AWID_SKIP_DNS_VERIFY", "1")
-	registryURL := realAWIDFixture(t)
-	t.Setenv("AWID_REGISTRY_URL", registryURL)
-	registry := awid.NewAWIDRegistryClient(nil, nil)
-	ctx := context.Background()
-
-	controllerPub, controllerKey, err := awid.GenerateKeypair()
-	if err != nil {
+	world := newRealCommandWorld(t)
+	t.Setenv("AWID_REGISTRY_URL", world.Stack.RegistryURL)
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.RegisterNamespaceAt(ctx, registryURL, domain, awid.ComputeDIDKey(controllerPub), controllerKey); err != nil {
-		t.Fatalf("register namespace: %v", err)
+	return teamServerFixture{
+		registryURL: world.Stack.RegistryURL, registry: world.Registry, domain: world.Domain,
+		team: "backend", teamID: world.TeamID, teamKey: world.TeamKey, teamDID: didOf(world.TeamKey),
 	}
-	teamPub, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	teamDID := awid.ComputeDIDKey(teamPub)
-	if _, err := registry.CreateTeam(ctx, registryURL, domain, "ops", "Ops", teamDID, controllerKey); err != nil {
-		t.Fatalf("create team: %v", err)
-	}
-	if err := awconfig.SaveTeamKey(domain, "ops", teamKey); err != nil {
-		t.Fatal(err)
-	}
-	return teamServerFixture{registryURL: registryURL, registry: registry, domain: domain, team: "ops", teamKey: teamKey, teamDID: teamDID}
 }
 
 func (f teamServerFixture) options(serverURL string, now time.Time) teamServerOptions {
@@ -61,7 +47,7 @@ func (f teamServerFixture) options(serverURL string, now time.Time) teamServerOp
 }
 
 func TestTeamSetServerPublishesARecordShowServerVerifies(t *testing.T) {
-	f := newTeamServerFixture(t, "set-server.example")
+	f := newTeamServerFixture(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -80,20 +66,20 @@ func TestTeamSetServerPublishesARecordShowServerVerifies(t *testing.T) {
 	if shown.ServerURL != "https://coord.set-server.example/api" || shown.Audience != "https://coord.set-server.example" {
 		t.Fatalf("shown = %+v", shown)
 	}
-	if shown.TeamDIDKey != f.teamDID || shown.TeamID != "ops:set-server.example" {
+	if shown.TeamDIDKey != f.teamDID || shown.TeamID != f.teamID {
 		t.Fatalf("shown = %+v", shown)
 	}
 	stored, err := f.registry.GetTeamServerRecord(ctx, f.registryURL, f.domain, f.team)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := awid.VerifyTeamServerRecord(stored.Record, stored.Signature, "ops:set-server.example", f.teamDID, now); err != nil {
+	if _, err := awid.VerifyTeamServerRecord(stored.Record, stored.Signature, f.teamID, f.teamDID, now); err != nil {
 		t.Fatalf("stored record does not verify: %v", err)
 	}
 }
 
 func TestTeamSetServerRepublishingTheSameSecondIsAccepted(t *testing.T) {
-	f := newTeamServerFixture(t, "republish-server.example")
+	f := newTeamServerFixture(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -106,7 +92,7 @@ func TestTeamSetServerRepublishingTheSameSecondIsAccepted(t *testing.T) {
 }
 
 func TestTeamSetServerSurfacesAWIDRefusals(t *testing.T) {
-	f := newTeamServerFixture(t, "refused-server.example")
+	f := newTeamServerFixture(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -125,7 +111,7 @@ func TestTeamSetServerSurfacesAWIDRefusals(t *testing.T) {
 }
 
 func TestTeamSetServerRefusesALocalKeyThatIsNotTheTeamKey(t *testing.T) {
-	f := newTeamServerFixture(t, "stale-server.example")
+	f := newTeamServerFixture(t)
 	ctx := context.Background()
 	_, staleKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -147,13 +133,13 @@ func TestTeamSetServerRefusesALocalKeyThatIsNotTheTeamKey(t *testing.T) {
 }
 
 func TestAWIDAnswersARecordSignedByAnotherKeyLikeAnUnknownTeam(t *testing.T) {
-	f := newTeamServerFixture(t, "stranger-server.example")
+	f := newTeamServerFixture(t)
 	ctx := context.Background()
 	strangerPub, strangerKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
-	record := awid.NewTeamServerRecord("ops:stranger-server.example", awid.ComputeDIDKey(strangerPub), "https://coord.stranger-server.example", time.Now().UTC())
+	record := awid.NewTeamServerRecord(f.teamID, awid.ComputeDIDKey(strangerPub), "https://coord.stranger-server.example", time.Now().UTC())
 	signature, err := awid.SignTeamServerRecord(strangerKey, record)
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +159,7 @@ func TestAWIDAnswersARecordSignedByAnotherKeyLikeAnUnknownTeam(t *testing.T) {
 }
 
 func TestShowServerRefusesWhenNothingIsPublished(t *testing.T) {
-	f := newTeamServerFixture(t, "unpublished-server.example")
+	f := newTeamServerFixture(t)
 
 	_, err := executeTeamShowServer(context.Background(), f.options("", time.Now().UTC()))
 
