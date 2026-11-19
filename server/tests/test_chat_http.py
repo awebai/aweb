@@ -2952,7 +2952,9 @@ async def test_encrypted_group_chat_excludes_left_participant_from_future_wraps(
 
 @pytest.mark.asyncio
 async def test_create_chat_session_accepts_cross_team_to_address(shared_test_pool, monkeypatch):
-    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from messaging_actor_support import (
+        admit_messaging_actor, register_messaging_team, record_registry_requests,
+    )
     from test_dashboard_privacy import privacy_stack
 
     async with privacy_stack(shared_test_pool, monkeypatch) as env:
@@ -2966,14 +2968,16 @@ async def test_create_chat_session_accepts_cross_team_to_address(shared_test_poo
         )
 
         raw = json.dumps({"to_addresses": [bob.address], "message": "hello bob"}).encode()
-        response = await env.client.post(
-            "/v1/chat/sessions",
-            content=raw,
-            headers={
-                **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
-                "Content-Type": "application/json",
-            },
-        )
+        with record_registry_requests(env) as reads:
+            response = await env.client.post(
+                "/v1/chat/sessions",
+                content=raw,
+                headers={
+                    **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                    "Content-Type": "application/json",
+                },
+            )
+        assert reads.count(("GET", "/v1/namespaces/otherco.com/addresses/bob")) == 1, reads
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["session_id"]
@@ -2997,7 +3001,9 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_from_resolved
     shared_test_pool,
     monkeypatch,
 ):
-    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from messaging_actor_support import (
+        admit_messaging_actor, register_messaging_team, record_registry_requests,
+    )
     from test_dashboard_privacy import privacy_stack
 
     async with privacy_stack(shared_test_pool, monkeypatch) as env:
@@ -3041,14 +3047,16 @@ async def test_cross_team_same_registry_chat_creates_bound_contact_from_resolved
                 "signature": sign_message(alice.signing_key, signed_payload.encode()),
             }
         ).encode()
-        response = await env.client.post(
-            "/v1/chat/sessions",
-            content=raw,
-            headers={
-                **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
-                "Content-Type": "application/json",
-            },
-        )
+        with record_registry_requests(env) as reads:
+            response = await env.client.post(
+                "/v1/chat/sessions",
+                content=raw,
+                headers={
+                    **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                    "Content-Type": "application/json",
+                },
+            )
+        assert reads.count(("GET", "/v1/namespaces/otherco.com/addresses/bob")) == 0, reads
         assert response.status_code == 200, response.text
         contact = dict(
             await env.db.fetch_one(
@@ -3119,7 +3127,9 @@ async def test_create_chat_session_external_address_without_delivery_origin_fail
 async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_closed(
     shared_test_pool, monkeypatch
 ):
-    from messaging_actor_support import admit_messaging_actor, register_messaging_team
+    from messaging_actor_support import (
+        admit_messaging_actor, register_messaging_team, record_registry_requests,
+    )
     from test_dashboard_privacy import privacy_stack
 
     async with privacy_stack(shared_test_pool, monkeypatch) as env:
@@ -3138,14 +3148,16 @@ async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_c
         resolved = await registry.resolve_address_fresh(*"jane.aweb.ai/c3po".split("/", 1))
         assert resolved.delivery is None or not resolved.delivery.origin
         raw = json.dumps({"to_aliases": ["@jane/c3po"], "message": "no remote route"}).encode()
-        response = await env.client.post(
-            "/v1/chat/sessions",
-            content=raw,
-            headers={
-                **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
-                "Content-Type": "application/json",
-            },
-        )
+        with record_registry_requests(env) as reads:
+            response = await env.client.post(
+                "/v1/chat/sessions",
+                content=raw,
+                headers={
+                    **_signed_identity_headers(alice.signing_key, alice.did_key, alice.stable_id, raw),
+                    "Content-Type": "application/json",
+                },
+            )
+        assert reads.count(("GET", "/v1/namespaces/jane.aweb.ai/addresses/c3po")) == 1, reads
         assert response.status_code == 424, response.text
         assert "no federated delivery origin" in response.json()["detail"]
         assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 0
@@ -3304,6 +3316,7 @@ async def test_create_chat_session_to_external_did_first_contact_fails_closed(
             await registry.resolve_key_fresh(target.did_aw)
             assert ("GET", key_path) in observed
             observed.clear()
+            env.app.state.identity_binding_cache.clear()
             raw = json.dumps({"to_dids": [target.did_aw], "message": "raw did"}).encode()
             response = await env.client.post(
                 "/v1/chat/sessions",
@@ -3317,11 +3330,11 @@ async def test_create_chat_session_to_external_did_first_contact_fails_closed(
             )
             assert response.status_code == 422, response.text
             assert "Bare did:aw first-contact is unsupported" in response.json()["detail"]
-            assert ("GET", key_path) not in observed
-            address_reads = {
+            assert observed.count(("GET", key_path)) == 0
+            address_reads = [
                 path for method, path in observed if method == "GET" and "/addresses/" in path
-            }
-            assert address_reads <= {"/v1/namespaces/acme.com/addresses/alice"}
+            ]
+            assert address_reads == ["/v1/namespaces/acme.com/addresses/alice"], observed
             assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_sessions}}") == 0
             assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == 0
         finally:
