@@ -7,9 +7,6 @@ scope, dependency errors and the admitted team-key rule; it creates no cache.
 from __future__ import annotations
 import logging
 from typing import Any
-from awid.registry import RegistryClient
-from awid.external_authority import TXTOutcomeResolver
-from pgdbm import AsyncDatabaseManager
 from awid.team_ids import build_team_id, parse_team_id
 from fastapi import HTTPException, Request
 from aweb.awid_error_handling import (
@@ -21,8 +18,8 @@ from aweb.awid_error_handling import (
     team_not_served_exception,
 )
 from aweb.team_scope import member_team_scope
+from aweb.team_key_reader import read_team_key as read_team_key
 from aweb.team_key_pins import (
-    pinned_team_key,
     team_key_unverified_exception,
     txt_resolver_for,
 )
@@ -69,41 +66,6 @@ def _team_read_failure(
         "AWID registry dependency failed for %s: %s", reading, team_id, exc_info=True
     )
     return awid_dependency_http_exception(exc, operation=operation, team_id=team_id)
-
-
-async def read_team_key(
-    *,
-    db: AsyncDatabaseManager,
-    registry_client: RegistryClient,
-    txt_resolver: TXTOutcomeResolver,
-    team_id: str,
-    evidence: EvidenceMode,
-    pin_memo: TeamKeyMemo | None = None,
-) -> str:
-    """Read SDK controller evidence and admit it through the single pin owner.
-
-    team-auth-envelope-v2.md:60-70 requires the current team key. The SDK
-    retains cached age/grace or performs fresh acquisition; this function
-    neither constructs a client nor reads a registration list. Generation
-    callers retain raw SDK/pin failures for their own policy adapter.
-    """
-    domain, name = member_team_scope(team_id)
-    if not isinstance(evidence, EvidenceMode):
-        raise TypeError("Team key reads require a named EvidenceMode")
-    if evidence is EvidenceMode.FRESH:
-        key = await registry_client.get_team_public_key_fresh(domain, name)
-    else:
-        key = await registry_client.get_team_public_key(domain, name)
-    if not key:
-        return ""
-    return await pinned_team_key(
-        db=db,
-        registry_client=registry_client,
-        txt_resolver=txt_resolver,
-        team_id=team_id,
-        served_key=key,
-        pin_memo=pin_memo,
-    )
 
 
 async def resolve_team_key(request: Request, team_id: str, *, db: Any = None) -> str:
