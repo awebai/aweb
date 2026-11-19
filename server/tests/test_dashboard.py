@@ -798,7 +798,8 @@ async def test_private_team_jwt_read_does_not_require_public_visibility_lookup(
         unused.bind(("127.0.0.1", 0))
         port = unused.getsockname()[1]
     original = env.app.state.awid_registry_client
-    async with RegistryClient(registry_url=f"http://127.0.0.1:{port}") as unavailable:
+    unavailable = RegistryClient(registry_url=f"http://127.0.0.1:{port}")
+    try:
         env.app.state.awid_registry_client = unavailable
         try:
             anonymous = await env.client.get(f"/v1/teams/{TEAM}/agents")
@@ -814,3 +815,5 @@ async def test_private_team_jwt_read_does_not_require_public_visibility_lookup(
             )
         finally:
             env.app.state.awid_registry_client = original
+    finally:
+        await unavailable.aclose()

@@ -64,6 +64,7 @@ from aweb.config import get_presence_ttl_seconds
 from aweb.workspace_activity import (
     PresenceStatus,
     workspace_activity_by_id,
+    latest_workspace_activity,
 )
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -503,29 +504,15 @@ async def list_agents(
         request=request,
         failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
     )
-    context_by_agent = {}
-    for workspace in workspace_rows:
-        agent_id = str(workspace["agent_id"])
-        candidate = activity_by_id.get(str(workspace["workspace_id"]))
-        prior = context_by_agent.get(agent_id)
-        previous = activity_by_id.get(str(prior["workspace_id"])) if prior else None
-        if prior is None or (
-            candidate
-            and candidate.last_seen_at
-            and (
-                previous is None
-                or previous.last_seen_at is None
-                or candidate.last_seen_at > previous.last_seen_at
-            )
-        ):
-            context_by_agent[agent_id] = workspace
+    context_by_agent = latest_workspace_activity(workspace_rows, activity_by_id)
     now = datetime.now(timezone.utc)
 
     agents: list[AgentView] = []
     for r in rows:
         agent_id = str(r["agent_id"])
-        ctx = context_by_agent.get(agent_id)
-        activity = activity_by_id.get(str(ctx["workspace_id"])) if ctx else None
+        selected = context_by_agent.get(agent_id)
+        ctx = selected.workspace if selected else None
+        activity = selected.activity if selected else None
         presence = activity.presence if activity else None
         online = activity is not None and activity.is_online(now=now)
         status = PresenceStatus.OFFLINE

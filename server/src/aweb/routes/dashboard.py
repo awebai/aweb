@@ -37,6 +37,7 @@ from aweb.events import (
 from aweb.application_state import application_registry_client
 from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
 from aweb.presence_transitions import team_online_aliases
+from aweb.workspace_activity import latest_workspace_activity, workspace_activity_by_id
 from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
@@ -364,22 +365,29 @@ async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -
     rows = await aweb_db.fetch_all(
         f"""
         SELECT a.agent_id, a.alias, a.did_key, a.human_name, CASE WHEN a.did_aw_verified_key = a.did_key THEN a.address END AS address, a.agent_type, a.human_verified_key,
-               a.role, a.status, a.identity_scope, a.created_at,
-               w.last_seen_at, w.workspace_path
+               a.role, a.status, a.identity_scope, a.created_at
         FROM {{{{tables.agents}}}} a
-        LEFT JOIN LATERAL (
-            SELECT last_seen_at, workspace_path
-            FROM {{{{tables.workspaces}}}}
-            WHERE agent_id = a.agent_id AND team_id = a.team_id AND deleted_at IS NULL
-            ORDER BY last_seen_at DESC NULLS LAST, updated_at DESC NULLS LAST, created_at DESC
-            LIMIT 1
-        ) w ON TRUE
         WHERE a.team_id = $1 AND a.deleted_at IS NULL
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
         """,
         team_id,
     )
+    workspace_rows = await aweb_db.fetch_all(
+        """SELECT workspace_id, agent_id, workspace_path FROM {{tables.workspaces}}
+           WHERE team_id=$1 AND deleted_at IS NULL
+           ORDER BY last_seen_at DESC NULLS LAST, created_at DESC, workspace_id""",
+        team_id,
+    )
+    activity = await workspace_activity_by_id(
+        aweb_db,
+        _state_redis(request),
+        workspace_ids=[str(row["workspace_id"]) for row in workspace_rows],
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
+    selected = latest_workspace_activity(workspace_rows, activity)
     health = await agent_health(
         aweb_db,
         _state_redis(request),
@@ -403,9 +411,15 @@ async def list_team_agents(request: Request, team_id: str, db=Depends(get_db)) -
                 status=r["status"],
                 identity_scope=r["identity_scope"],
                 last_seen=(
-                    r["last_seen_at"].isoformat() if r["last_seen_at"] else None
+                    selected[str(r["agent_id"])].activity.last_seen_at.isoformat()
+                    if str(r["agent_id"]) in selected
+                    and selected[str(r["agent_id"])].activity
+                    and selected[str(r["agent_id"])].activity.last_seen_at
+                    else None
                 ),
-                workspace_path=r["workspace_path"],
+                workspace_path=selected[str(r["agent_id"])].workspace["workspace_path"]
+                if str(r["agent_id"]) in selected
+                else None,
                 created_at=r["created_at"].isoformat(),
                 health=health[str(r["agent_id"])],
             ).model_dump()
