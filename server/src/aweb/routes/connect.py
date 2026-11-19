@@ -19,6 +19,7 @@ from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field
 
 from aweb.certificate_auth import VerifiedCertificateGeneration
+from aweb.controller_import import VerifiedControllerImportMember
 from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db
 from aweb.human_kind import IdentityKindObservation
@@ -58,6 +59,11 @@ class ConnectResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+class _ProfileUpdate(StrEnum):
+    RECONNECT = "reconnect"
+    IMPORT = "import"
+
 
 class WorkspaceProfile(StrEnum):
     """Host-requested kinds for an admitted workspace without a repository."""
@@ -107,6 +113,8 @@ class ConnectIdentityRefusalReason(StrEnum):
     KIND_MISMATCH = "identity_kind_mismatch"
     GENERATION_MISMATCH = "certificate_generation_mismatch"
     GENERATION_STALE = "certificate_generation_stale"
+    IMPORT_MISMATCH = "controller_import_mismatch"
+    IMPORT_STALE = "controller_import_stale"
 
 
 class ConnectIdentityRefusal(ValueError):
@@ -126,7 +134,43 @@ class ConnectIdentityRefusal(ValueError):
         messages[ConnectIdentityRefusalReason.GENERATION_STALE] = (
             "Verify the retained certificate under the team's current controller key, then retry connecting."
         )
+        messages[ConnectIdentityRefusalReason.IMPORT_MISMATCH] = (
+            "Use the checked import's exact live member and controller fields, then retry importing."
+        )
+        messages[ConnectIdentityRefusalReason.IMPORT_STALE] = (
+            "Read and verify the import again under the team's current controller, then retry importing."
+        )
         self.message = messages[reason]
+
+
+def _require_matching_admission_fields(
+    *,
+    supplied: dict[str, str] | None,
+    supplied_team_key: str | None,
+    checked: dict[str, str],
+    reason: ConnectIdentityRefusalReason,
+) -> None:
+    """Accompanying fields constrain a checked proof; they cannot replace it."""
+    if supplied_team_key is not None and supplied_team_key != checked["team_did_key"]:
+        raise ConnectIdentityRefusal(reason)
+    if supplied is None:
+        return
+    for field in (
+        "team_id", "team_did_key", "alias", "did_key", "member_did_key",
+        "certificate_id", "member_did_aw", "member_address",
+    ):
+        if field not in supplied:
+            continue
+        value, expected = supplied[field], checked.get(field, "")
+        if field in ("member_did_aw", "member_address"):
+            value, expected = value or "", expected or ""
+        if value != expected:
+            raise ConnectIdentityRefusal(reason)
+    if "identity_scope" in supplied or "lifetime" in supplied:
+        scope = normalize_identity_scope(supplied.get("identity_scope") or supplied.get("lifetime"))
+        expected = normalize_identity_scope(checked.get("identity_scope") or checked.get("lifetime"))
+        if scope != expected:
+            raise ConnectIdentityRefusal(reason)
 
 
 class AliasConflictError(ValueError):
@@ -157,6 +201,8 @@ async def _ensure_agent(
     human_verified_key: str | None,
     accepted_team_did_key: str,
     planned_agent_id: uuid.UUID | None = None,
+    profile_update: _ProfileUpdate = _ProfileUpdate.RECONNECT,
+    identity_kind: IdentityKindObservation | None = None,
 ) -> str:
     """Find or create the agent row. Returns agent_id as string.
 
@@ -172,6 +218,16 @@ async def _ensure_agent(
                 f"cert claims alias {alias!r} but did_key is already bound to alias {existing_alias!r} in team {team_id}",
                 code="alias_mismatch",
             )
+        if profile_update is _ProfileUpdate.IMPORT:
+            effective_name, effective_role = existing_agent["human_name"], existing_agent["role"]
+            if identity_kind is None:
+                effective_type = existing_agent["agent_type"]
+                effective_human_key = existing_agent["human_verified_key"]
+            else:
+                effective_type, effective_human_key = agent_type, human_verified_key
+        else:
+            effective_name, effective_role = human_name, role
+            effective_type, effective_human_key = agent_type, human_verified_key
         await db.execute(
             """
             UPDATE {{tables.agents}}
@@ -183,21 +239,21 @@ async def _ensure_agent(
             did_aw or None,
             address or None,
             identity_scope,
-            human_name,
-            agent_type,
-            role,
+            effective_name,
+            effective_type,
+            effective_role,
             existing_agent["agent_id"],
             (certificate_id or "").strip() or None,
             did_key if did_aw else None,
-            human_verified_key,
+            effective_human_key,
             accepted_team_did_key,
         )
         return str(existing_agent["agent_id"])
 
     existing_agent = await db.fetch_one(
         """
-        SELECT agent_id, alias FROM {{tables.agents}}
-        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
+        SELECT agent_id, alias, human_name, role, agent_type, human_verified_key FROM {{tables.agents}}
+        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL FOR UPDATE
         """,
         team_id,
         did_key,
@@ -255,8 +311,8 @@ async def _ensure_agent(
             raise
         existing_agent = await db.fetch_one(
             """
-            SELECT agent_id, alias FROM {{tables.agents}}
-            WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
+            SELECT agent_id, alias, human_name, role, agent_type, human_verified_key FROM {{tables.agents}}
+            WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL FOR UPDATE
             """,
             team_id,
             did_key,
@@ -285,8 +341,8 @@ async def _ensure_agent(
 
     row = await db.fetch_one(
         """
-        SELECT agent_id, alias FROM {{tables.agents}}
-        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
+        SELECT agent_id, alias, human_name, role, agent_type, human_verified_key FROM {{tables.agents}}
+        WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL FOR UPDATE
         """,
         team_id,
         did_key,
@@ -329,6 +385,7 @@ async def _ensure_workspace(
     human_name: str,
     planned_workspace_id: uuid.UUID | None = None,
     workspace_profile: WorkspaceProfile | None = None,
+    profile_update: _ProfileUpdate = _ProfileUpdate.RECONNECT,
 ) -> _ConnectedWorkspace:
     """Find or create a workspace row. Returns workspace_id as string.
 
@@ -352,6 +409,8 @@ async def _ensure_workspace(
     async def _update_existing_workspace(existing) -> _ConnectedWorkspace:
         workspace_id = existing["workspace_id"]
         _require_planned_id(workspace_id, planned_workspace_id)
+        if profile_update is _ProfileUpdate.IMPORT:
+            return _ConnectedWorkspace(str(workspace_id), existing["workspace_type"])
         if repo_id is not None or existing["repo_id"] is not None:
             workspace_type = "agent"
         elif workspace_profile is not None:
@@ -461,6 +520,7 @@ async def connect_agent(
     identity_kind: IdentityKindObservation | None = None,
     planned_ids: PlannedIdentityIds | None = None,
     generation: VerifiedCertificateGeneration | None = None,
+    controller_import: VerifiedControllerImportMember | None = None,
     workspace_profile: WorkspaceProfile | None = None,
 ) -> dict[str, Any]:
     """Auto-provision team + agent + workspace from certificate info.
@@ -482,6 +542,9 @@ async def connect_agent(
         planned_ids: Retained creation IDs; existing projections must match both exactly.
         workspace_profile: Explicit non-repository kind; an existing repository
             always keeps agent kind. Omission preserves an existing workspace kind.
+        controller_import: Actual live APPLY member from verify_controller_import.
+            It is separate from generation/request proof, needs independent global
+            binding/kind observations and preserves existing profiles on reuse.
         generation: Actual current-controller proof from verify_certificate_generation.
             Its immutable claims and verified key replace issuer-supplied mint fields.
             Registration status remains separate. Acquire this proof before locks;
@@ -495,6 +558,36 @@ async def connect_agent(
             "code": "workspace_profile_invalid",
             "message": "Choose WorkspaceProfile.MANUAL or WorkspaceProfile.HOSTED_MCP, then retry.",
         })
+    if generation is not None and controller_import is not None:
+        raise TypeError("Choose exactly one generation or checked controller-import input.")
+    if controller_import is not None:
+        if not isinstance(controller_import, VerifiedControllerImportMember):
+            raise TypeError("Pass a checked controller-import member from verify_controller_import.")
+        controller_import.require_freshness()
+        certificate = controller_import.certificate
+        if certificate.revoked_at is not None or controller_import.request.dry_run:
+            raise ConnectIdentityRefusal(ConnectIdentityRefusalReason.IMPORT_MISMATCH)
+        imported = {
+            "team_id": controller_import.team_id,
+            "team_did_key": controller_import.verified_team_did_key,
+            "did_key": certificate.member_did_key,
+            "member_did_key": certificate.member_did_key,
+            "certificate_id": certificate.certificate_id,
+            "alias": certificate.alias,
+            "identity_scope": certificate.identity_scope,
+            "member_did_aw": certificate.member_did_aw or "",
+            "member_address": certificate.member_address or "",
+        }
+        _require_matching_admission_fields(
+            supplied=cert_info, supplied_team_key=team_did_key, checked=imported,
+            reason=ConnectIdentityRefusalReason.IMPORT_MISMATCH,
+        )
+        cert_info = imported
+        team_did_key = controller_import.verified_team_did_key
+        # Ordinary self-custodial import supplies no runtime/worktree profile.
+        # Existing workspaces retain their complete profile; new ones are manual.
+        hostname, workspace_path, repo_origin = "", "", ""
+        workspace_profile = WorkspaceProfile.MANUAL
     if generation is not None:
         if not isinstance(generation, VerifiedCertificateGeneration):
             raise TypeError("Pass the result of verify_certificate_generation for generation admission.")
@@ -502,27 +595,14 @@ async def connect_agent(
         verified = dict(claims)
         verified["did_key"] = claims["member_did_key"]
         verified["team_did_key"] = generation.verified_team_did_key
-        if team_did_key is not None and team_did_key != generation.verified_team_did_key:
-            raise ConnectIdentityRefusal(ConnectIdentityRefusalReason.GENERATION_MISMATCH)
-        if cert_info is not None:
-            for field in ("team_id", "team_did_key", "alias", "did_key", "member_did_key", "certificate_id",
-                          "member_did_aw", "member_address"):
-                if field not in cert_info:
-                    continue
-                supplied, checked = cert_info[field], verified.get(field, "")
-                if field in ("member_did_aw", "member_address"):
-                    supplied, checked = supplied or "", checked or ""
-                if supplied != checked:
-                    raise ConnectIdentityRefusal(ConnectIdentityRefusalReason.GENERATION_MISMATCH)
-            if "identity_scope" in cert_info or "lifetime" in cert_info:
-                supplied_scope = normalize_identity_scope(cert_info.get("identity_scope") or cert_info.get("lifetime"))
-                checked_scope = normalize_identity_scope(verified.get("identity_scope") or verified.get("lifetime"))
-                if supplied_scope != checked_scope:
-                    raise ConnectIdentityRefusal(ConnectIdentityRefusalReason.GENERATION_MISMATCH)
+        _require_matching_admission_fields(
+            supplied=cert_info, supplied_team_key=team_did_key, checked=verified,
+            reason=ConnectIdentityRefusalReason.GENERATION_MISMATCH,
+        )
         cert_info = verified
         team_did_key = generation.verified_team_did_key
     if cert_info is None or team_did_key is None:
-        raise TypeError("Pass verified request certificate fields and team key, or a verified generation.")
+        raise TypeError("Pass verified request fields and team key, a verified generation, or a checked controller-import member.")
     if planned_ids is not None and not isinstance(planned_ids, PlannedIdentityIds):
         raise TypeError("Pass PlannedIdentityIds for retained creation resources.")
     team_id = cert_info["team_id"]
@@ -558,7 +638,7 @@ async def connect_agent(
 
     async with db.transaction() as tx:
         await admit_team(db=tx, team_id=team_id, team_did_key=team_did_key)
-        if generation is not None:
+        if generation is not None or controller_import is not None:
             # Lock the admitted pin before any member/workspace write. A proof
             # obtained before a concurrent controller move cannot restore the
             # old accepted key; the factory must verify it again outside locks.
@@ -566,10 +646,20 @@ async def connect_agent(
                 "SELECT team_did_key FROM {{tables.teams}} WHERE team_id=$1 FOR SHARE",
                 team_id,
             )
-            if current_key != generation.verified_team_did_key:
-                raise ConnectIdentityRefusal(ConnectIdentityRefusalReason.GENERATION_STALE)
+            if current_key != team_did_key:
+                reason = (
+                    ConnectIdentityRefusalReason.IMPORT_STALE
+                    if controller_import is not None
+                    else ConnectIdentityRefusalReason.GENERATION_STALE
+                )
+                raise ConnectIdentityRefusal(reason)
 
         await _lock_reconnecting_workspace(tx, team_id=team_id, alias=alias)
+        if controller_import is not None:
+            controller_import.require_freshness()
+        profile_update = (
+            _ProfileUpdate.IMPORT if controller_import is not None else _ProfileUpdate.RECONNECT
+        )
 
         agent_id = await _ensure_agent(
             tx,
@@ -586,8 +676,12 @@ async def connect_agent(
             human_verified_key=human_verified_key,
             accepted_team_did_key=team_did_key,
             planned_agent_id=planned_ids.agent_id if planned_ids is not None else None,
+            profile_update=profile_update,
+            identity_kind=identity_kind,
         )
 
+        if controller_import is not None:
+            controller_import.require_freshness()
         if identity_binding is not None:
             await refresh_projection_binding(
                 tx, agent_id=agent_id, did_key=did_key, binding=identity_binding,
@@ -605,7 +699,15 @@ async def connect_agent(
             human_name=human_name,
             planned_workspace_id=planned_ids.workspace_id if planned_ids is not None else None,
             workspace_profile=workspace_profile,
+            profile_update=profile_update,
         )
+        if controller_import is not None:
+            controller_import.require_freshness()
+            effective_profile = await tx.fetch_one(
+                "SELECT role, agent_type FROM {{tables.agents}} WHERE agent_id=$1",
+                uuid.UUID(agent_id),
+            )
+            role, agent_type = effective_profile["role"], effective_profile["agent_type"]
 
     return {
         "team_id": team_id,

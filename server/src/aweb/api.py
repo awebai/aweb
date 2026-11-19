@@ -23,6 +23,7 @@ from starlette.routing import Mount
 from .application_state import RegistryClientUnavailable
 from .attachments import AttachmentBackend
 from .certificate_error_transport import install_certificate_error_handlers
+from .team_control_error_transport import install_team_control_error_handlers
 from .config import get_public_origin, get_settings
 from .connection_scope import ConnectionScopeMiddleware
 from .coordination.routes.repos import router as repos_router
@@ -440,6 +441,7 @@ def create_app(
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
     install_certificate_error_handlers(app)
+    install_team_control_error_handlers(app)
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
