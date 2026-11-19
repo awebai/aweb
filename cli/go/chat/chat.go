@@ -673,25 +673,36 @@ func sessionActivity(session awid.ChatSessionItem) string {
 //  1. smallest participant count
 //  2. most recent LastActivity, falling back to CreatedAt (tiebreaker)
 func findSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
-	return findSessionWithOptions(ctx, client, targetAlias, true)
+	return findSessionWithOptions(ctx, client, targetAlias, waitingSessionFirst)
 }
 
 func findLatestSession(ctx context.Context, client *awid.Client, targetAlias string) (sessionID string, senderWaiting bool, err error) {
-	return findSessionWithOptions(ctx, client, targetAlias, false)
+	return findSessionWithOptions(ctx, client, targetAlias, latestSession)
 }
 
 // lookupSession is the one session lookup every chat command uses
 // (IDENTITY_RULES.md): a DID the caller confirmed for target is a strong
 // identity and selects alone; otherwise target is matched as given, a bare
 // alias only when it names exactly one participant.
-func lookupSession(ctx context.Context, client *awid.Client, target, confirmedDID string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
+func lookupSession(ctx context.Context, client *awid.Client, target, confirmedDID string, choice sessionChoice) (sessionID string, senderWaiting bool, err error) {
 	if did := strings.TrimSpace(confirmedDID); did != "" {
-		return findSessionByConfirmedDID(ctx, client, did, preferWaiting)
+		return findSessionByConfirmedDID(ctx, client, did, choice)
 	}
-	return findSessionWithOptions(ctx, client, target, preferWaiting)
+	return findSessionWithOptions(ctx, client, target, choice)
 }
 
-func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
+// sessionChoice is how a lookup chooses among sessions that match its target.
+type sessionChoice int
+
+const (
+	// latestSession picks the most recently active matching session.
+	latestSession sessionChoice = iota
+	// waitingSessionFirst prefers a session whose other party is waiting.
+	waitingSessionFirst
+)
+
+func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlias string, choice sessionChoice) (sessionID string, senderWaiting bool, err error) {
+	preferWaiting := choice == waitingSessionFirst
 	rawTarget := strings.TrimSpace(targetAlias)
 	targetAlias = normalizeSessionTarget(ctx, client, rawTarget)
 	bareAliasTarget := rawTarget != "" &&
@@ -943,7 +954,8 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 // identity is available, so only strong identities match (IDENTITY_RULES.md):
 // did, the identity's other DID and its address, as resolved for did. A bare
 // alias, which any participant may hold, is no fallback here.
-func findSessionByConfirmedDID(ctx context.Context, client *awid.Client, did string, preferWaiting bool) (sessionID string, senderWaiting bool, err error) {
+func findSessionByConfirmedDID(ctx context.Context, client *awid.Client, did string, choice sessionChoice) (sessionID string, senderWaiting bool, err error) {
+	preferWaiting := choice == waitingSessionFirst
 	dids := []string{did}
 	address := ""
 	// Resolution only widens the match to the same identity's other DID and
@@ -1120,12 +1132,23 @@ func clientStreamOpener(client *awid.Client) streamOpener {
 // minStreamReopenInterval paces reopening a stream that ended early.
 const minStreamReopenInterval = time.Second
 
-// messageAcceptor decides how to handle a received message event during the wait loop.
-//
-//	accept=true:  treat as the awaited reply
-//	skip=true:    silently ignore (e.g., replayed own message)
-//	both false:   unrelated message, continue waiting
-type messageAcceptor func(ev Event) (accept, skip bool)
+// eventDisposition is what a wait does with one received message event.
+type eventDisposition int
+
+const (
+	// skipEvent drops the event silently, such as the replay of the
+	// sender's own message.
+	skipEvent eventDisposition = iota
+	// collectEvent keeps the event among those the wait presents and goes on
+	// waiting.
+	collectEvent
+	// acceptEvent keeps the event as the awaited reply.
+	acceptEvent
+)
+
+// messageAcceptor decides the disposition of a received message event
+// during the wait loop.
+type messageAcceptor func(ev Event) eventDisposition
 
 // waitForMessage opens an SSE stream and waits for a message matching the acceptor.
 // Handles read receipts, extend-wait messages, and wait extensions.
@@ -1296,14 +1319,14 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			}
 
 			if chatEvent.Type == "message" {
-				accepted, skip := accept(chatEvent)
-				if skip {
+				disposition := accept(chatEvent)
+				if disposition == skipEvent {
 					continue
 				}
 
 				result.Events = append(result.Events, chatEvent)
 
-				if !accepted {
+				if disposition != acceptEvent {
 					continue
 				}
 
@@ -1380,7 +1403,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		req.WaitSeconds = &waitSeconds
 	}
 	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
-		if sessionID, _, findErr := lookupSession(ctx, client, targets[0], opts.RecipientDID, false); findErr == nil && sessionID != "" {
+		if sessionID, _, findErr := lookupSession(ctx, client, targets[0], opts.RecipientDID, latestSession); findErr == nil && sessionID != "" {
 			encrypt, err := ContinuationEncrypted(ctx, client, sessionID, opts.E2EE, callback)
 			if err != nil {
 				return nil, err
@@ -1499,23 +1522,23 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 	// didn't return a message ID (sentMessageID==""), the gate starts open.
 	sentMessageID := resp.MessageID
 	seenSentMessage := sentMessageID == ""
-	acceptor := func(ev Event) (accept, skip bool) {
+	acceptor := func(ev Event) eventDisposition {
 		if !seenSentMessage {
 			if ev.MessageID == sentMessageID {
 				seenSentMessage = true
 			}
-			return false, true
+			return skipEvent
 		}
 		if !eventMayBeTargetReply(ev, opts) {
-			return false, false
+			return collectEvent
 		}
 		eventNames := normalizedChatEventNames(ev, resp.Participants)
 		for _, targetNames := range targetStatusNames {
 			if chatTargetNameListsOverlap(targetNames, eventNames) {
-				return true, false
+				return acceptEvent
 			}
 		}
-		return false, false
+		return collectEvent
 	}
 
 	waitResult, err := waitForMessage(ctx, client, openStream, resp.SessionID, resp.Participants, myAlias, resolvedWait, after, callback, acceptor)
@@ -1566,12 +1589,12 @@ func Listen(ctx context.Context, client *awid.Client, targetAlias string, waitSe
 // ListenConfirmed is Listen in the session selected by confirmedDID, the DID
 // the caller confirmed for targetAlias, when one is given (lookupSession).
 func ListenConfirmed(ctx context.Context, client *awid.Client, targetAlias string, waitSeconds int, callback StatusCallback, confirmedDID string) (*SendResult, error) {
-	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, true)
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, waitingSessionFirst)
 	if err != nil {
 		return nil, err
 	}
 
-	acceptAll := func(ev Event) (bool, bool) { return true, false }
+	acceptAll := func(ev Event) eventDisposition { return acceptEvent }
 
 	result, err := waitForMessage(ctx, client, clientStreamOpener(client), sessionID, nil, "", waitSeconds, nil, callback, acceptAll)
 	if err != nil {
@@ -1592,7 +1615,7 @@ func Open(ctx context.Context, client *awid.Client, targetAlias string) (*OpenRe
 // OpenConfirmed is Open in the session selected by confirmedDID, the DID the
 // caller confirmed for targetAlias, when one is given (lookupSession).
 func OpenConfirmed(ctx context.Context, client *awid.Client, targetAlias string, confirmedDID string) (*OpenResult, error) {
-	sessionID, senderWaiting, err := lookupSession(ctx, client, targetAlias, confirmedDID, true)
+	sessionID, senderWaiting, err := lookupSession(ctx, client, targetAlias, confirmedDID, waitingSessionFirst)
 	if err != nil {
 		return nil, err
 	}
@@ -1662,7 +1685,7 @@ func HistoryWithOptions(ctx context.Context, client *awid.Client, targetAlias st
 // confirmedDID, the DID the caller confirmed for targetAlias, when one is
 // given (lookupSession).
 func HistoryConfirmed(ctx context.Context, client *awid.Client, targetAlias string, unreadOnly bool, limit int, confirmedDID string) (*HistoryResult, error) {
-	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, false)
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, latestSession)
 	if err != nil {
 		return nil, err
 	}
@@ -1779,7 +1802,7 @@ func ContinuationEncrypted(ctx context.Context, client *awid.Client, sessionID s
 }
 
 func ExtendWaitWithOptions(ctx context.Context, client *awid.Client, targetAlias string, message string, opts ExtendWaitOptions) (*ExtendWaitResult, error) {
-	sessionID, _, err := lookupSession(ctx, client, targetAlias, opts.RecipientDID, true)
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, opts.RecipientDID, waitingSessionFirst)
 	if err != nil {
 		return nil, err
 	}
@@ -1814,7 +1837,7 @@ func ShowPending(ctx context.Context, client *awid.Client, targetAlias string) (
 // confirmedDID, the DID the caller confirmed for targetAlias, when one is
 // given (lookupSession).
 func ShowPendingConfirmed(ctx context.Context, client *awid.Client, targetAlias string, confirmedDID string) (*SendResult, error) {
-	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, true)
+	sessionID, _, err := lookupSession(ctx, client, targetAlias, confirmedDID, waitingSessionFirst)
 	if err != nil {
 		return nil, err
 	}

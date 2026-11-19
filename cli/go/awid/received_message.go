@@ -190,7 +190,7 @@ func (r *receivedMessage) applySignedMetadata() {
 
 func (r *receivedMessage) signatureStatus() VerificationStatus {
 	if r.signedPayload != "" {
-		status, _ := VerifySignedPayload(r.signedPayload, r.signature, r.fromDID, r.signingKeyID)
+		status := signatureVerdict(VerifySignedPayload(r.signedPayload, r.signature, r.fromDID, r.signingKeyID))
 		if status == Verified {
 			status = SignedPayloadConversationStatus(r.signedPayload, r.conversationID)
 		}
@@ -221,10 +221,10 @@ func (r *receivedMessage) signatureStatus() VerificationStatus {
 		Signature:      r.signature,
 		SigningKeyID:   r.signingKeyID,
 	}
-	status, _ := VerifyMessage(env)
+	status := signatureVerdict(VerifyMessage(env))
 	if status == Failed && r.conversationID != "" {
 		env.ConversationID = ""
-		if legacyStatus, _ := VerifyMessage(env); legacyStatus == Verified {
+		if signatureVerdict(VerifyMessage(env)) == Verified {
 			status = VerifiedLegacy
 		}
 	}
@@ -253,4 +253,14 @@ func (c *Client) bindAndNormaliseReceived(ctx context.Context, r *receivedMessag
 			IsContact: r.isContact, Binding: &binding,
 		})
 	}
+}
+
+// signatureVerdict is the status a signature check concludes. Its error is
+// the reason a signature does not verify, so any error is Failed, whatever
+// status came with it.
+func signatureVerdict(status VerificationStatus, err error) VerificationStatus {
+	if err != nil {
+		return Failed
+	}
+	return status
 }

@@ -4487,7 +4487,7 @@ func TestWaitForMessageTreatsInitialEOFAsTimeout(t *testing.T) {
 		1,
 		nil,
 		nil,
-		func(Event) (bool, bool) { return false, false },
+		func(Event) eventDisposition { return collectEvent },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -4519,7 +4519,7 @@ func TestWaitForMessageTreatsWrappedEOFAsTimeout(t *testing.T) {
 		1,
 		nil,
 		nil,
-		func(Event) (bool, bool) { return false, false },
+		func(Event) eventDisposition { return collectEvent },
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -4550,7 +4550,7 @@ func TestWaitForMessagePropagatesContextCancellationOnOpen(t *testing.T) {
 		1,
 		nil,
 		nil,
-		func(Event) (bool, bool) { return false, false },
+		func(Event) eventDisposition { return collectEvent },
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err=%v, want context.Canceled", err)
@@ -4575,7 +4575,7 @@ func TestWaitForMessageDoesNotTreatUnexpectedEOFAsTimeout(t *testing.T) {
 		1,
 		nil,
 		nil,
-		func(Event) (bool, bool) { return false, false },
+		func(Event) eventDisposition { return collectEvent },
 	)
 	if err == nil {
 		t.Fatal("expected error")
