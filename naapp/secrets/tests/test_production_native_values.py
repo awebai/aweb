@@ -80,6 +80,7 @@ async def production_console(root, console_listener, console_tls, upstream):
 class ConsoleDraftState(StrEnum):
     PENDING = "pending"
     APPLIED = "applied"
+    UNCERTAIN = "uncertain"
 
 
 async def confirm_from_mail(page: Page, *, smtp, message_start_index: int) -> None:
@@ -395,7 +396,9 @@ async def test_lost_native_draft_response_recovers_from_the_actual_approval_emai
         mail_before = len(smtp.received)
         button = page.get_by_role("button", name="Save the value and draft")
         await button.click()
-        await expect(page.locator("#form-status")).to_have_attribute("data-state", "uncertain")
+        await expect(page.locator("#form-status")).to_have_attribute(
+            "data-state", ConsoleDraftState.UNCERTAIN
+        )
         await expect(page.locator("#form-status")).to_contain_text("approval email")
         await expect(button).to_be_disabled()
         await assert_native_inputs_cleared(page)
