@@ -78,3 +78,50 @@ func TestLaterEnrollmentReportsApprovalSinceWithoutChangingCreation(t *testing.T
 		}
 	}
 }
+
+// The signed public corpus is checked first; each refusal changes one input
+// on the actual shared verifier path without replacing its proof policy.
+func TestLaterEnrollmentKeepsUnsupportedAndInvalidEvidenceDistinct(t *testing.T) {
+	vector := find(t, cases(t, "later-enrollment"), func(value map[string]any) bool {
+		return value["id"] == "existing-person-activates"
+	})
+	trustInput := vector["trust"].(map[string]any)
+	trust := &proof.Trust{
+		Person: trustInput["person"].(string), Organisation: trustInput["organisation"].(string),
+		IdentityKey: trustInput["identity_key"].(string), Certificate: trustInput["certificate"].(string),
+		Issuer: trustInput["issuer"].(string), IssuerPublicKey: decoded(t, trustInput["issuer_public_key"].(string)),
+		NamespaceIssuer: trustInput["namespace_issuer"].(string), ObservedAt: num(trustInput["observed_at"]),
+	}
+	link := Link{ID: trust.Person, Certificate: trust.Certificate, Key: trust.IdentityKey}
+	activation := vector["activation"].(map[string]any)
+	statement := activation["evidence"].(map[string]any)
+	valid := CheckHumanEvidence(link, statement, nil, trust, trust, trust.ObservedAt)
+	if valid.Statement != (Check{Status: "valid", Reason: "checked"}) || valid.IssuerAuthenticatedGrade == nil {
+		t.Fatalf("signed valid neighbor: %+v", valid)
+	}
+	raw, err := proof.Canonical(statement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		edit func(map[string]any)
+		want Check
+	}{
+		{"unsupported_version", func(e map[string]any) { e["evidence"].(map[string]any)["version"] = json.Number("2") }, Check{"unsupported", "enrollment_evidence_unsupported"}},
+		{"invalid_body", func(e map[string]any) { delete(e["evidence"].(map[string]any), "enrollment") }, Check{"invalid", "enrollment_evidence_invalid"}},
+		{"invalid_signature", func(e map[string]any) { e["signature"] = "AA" }, Check{"invalid", "signature_invalid"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			changed, err := proof.Parse(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.edit(changed)
+			report := CheckHumanEvidence(link, changed, nil, trust, trust, trust.ObservedAt)
+			if report.Statement != test.want || report.IssuerAuthenticatedGrade != nil || report.ApprovalSince != nil || report.Continuity != "unknown" || report.Proof != (Check{"not_evaluated", "statement_unverified"}) {
+				t.Fatalf("evidence refusal: %+v, want %+v without authenticated facts", report, test.want)
+			}
+		})
+	}
+}
