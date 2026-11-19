@@ -25,7 +25,7 @@ func TestSetupClaudeHooksCreatesNew(t *testing.T) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		t.Fatal(err)
 	}
-	if !hookExists(settings) {
+	if !hookExists(t, settings) {
 		t.Fatal("expected hook in file")
 	}
 }
@@ -93,7 +93,10 @@ func TestSetupClaudeHooksMigratesLegacyHook(t *testing.T) {
 			},
 		},
 	}
-	data, _ := json.Marshal(settings)
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(path, "settings.json"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -114,25 +117,32 @@ func TestSetupClaudeHooksMigratesLegacyHook(t *testing.T) {
 	if err := json.Unmarshal(updatedData, &updated); err != nil {
 		t.Fatal(err)
 	}
-	if !hookExists(updated) {
+	if !hookExists(t, updated) {
 		t.Fatal("expected aw notify hook")
 	}
-	if findNotifyHook(updated, legacyNotifyHookCommand) {
+	if findNotifyHook(t, updated, legacyNotifyHookCommand) {
 		t.Fatal("legacy hook should be migrated")
 	}
 }
 
 // Read-only assertion for real-file install/cleanup tests, using the production predicate.
-func hookExists(settings map[string]any) bool { return findNotifyHook(settings, notifyHookCommand) }
-func findNotifyHook(settings map[string]any, command string) bool {
-	data, _ := json.Marshal(settings)
+func hookExists(t *testing.T, settings map[string]any) bool {
+	t.Helper()
+	return findNotifyHook(t, settings, notifyHookCommand)
+}
+func findNotifyHook(t *testing.T, settings map[string]any, command string) bool {
+	t.Helper()
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
 	root, err := parseHookJSON(data)
 	if err != nil {
-		return false
+		t.Fatal(err)
 	}
 	handlers, err := notifyHandlers(root)
 	if err != nil {
-		return false
+		t.Fatal(err)
 	}
 	for _, handler := range handlers {
 		if notifyHookMatches(handler, command) {

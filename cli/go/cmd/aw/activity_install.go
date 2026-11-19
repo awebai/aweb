@@ -111,37 +111,59 @@ const (
 
 func changeCodexActivityHooks(dir string, operation activityHookOperation) (bool, error) {
 	path := filepath.Join(dir, "hooks.json")
-	if err := pathpreflight.PreflightFile(path, "Codex hook config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+	plan, err := planCodexActivityFileEdit(path, operation)
+	if err != nil || !plan.Changed {
 		return false, err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return false, err
+	}
+	changed := false
+	err = withHookSettingsLock(path, func() error {
+		current, err := planCodexActivityFileEdit(path, operation)
+		if err != nil || !current.Changed {
+			return err
+		}
+		if err := atomicfile.Write(path, current.Data, current.Mode); err != nil {
+			return err
+		}
+		changed = true
+		return nil
+	})
+	return changed, err
+}
+
+type codexActivityFileEdit struct {
+	Data    []byte
+	Mode    os.FileMode
+	Changed bool
+}
+
+func planCodexActivityFileEdit(path string, operation activityHookOperation) (codexActivityFileEdit, error) {
+	if err := pathpreflight.PreflightFile(path, "Codex hook config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		return codexActivityFileEdit{}, err
 	}
 	data, err := os.ReadFile(path)
 	mode := os.FileMode(0o600)
 	if os.IsNotExist(err) {
 		if operation == removeActivityHook {
-			return false, nil
+			return codexActivityFileEdit{}, nil
 		}
 		data = []byte("{}\n")
 	} else if err != nil {
-		return false, err
+		return codexActivityFileEdit{}, err
 	} else {
 		info, statErr := os.Stat(path)
 		if statErr != nil {
-			return false, statErr
+			return codexActivityFileEdit{}, statErr
 		}
 		mode = info.Mode().Perm()
 	}
 	updated, changed, err := editCodexActivityHooks(data, operation)
 	if err != nil {
-		return false, hookSettingsParseError(path, err)
+		return codexActivityFileEdit{}, hookSettingsParseError(path, err)
 	}
-	if !changed {
-		return false, nil
-	}
-
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return false, err
-	}
-	return true, atomicfile.Write(path, updated, mode)
+	return codexActivityFileEdit{Data: updated, Mode: mode, Changed: changed}, nil
 }
 
 // editCodexActivityHooks implements docs/runtime-hook-configuration.md:3-7 for the

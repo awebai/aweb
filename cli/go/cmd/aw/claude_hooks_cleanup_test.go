@@ -58,7 +58,7 @@ func TestCleanupClaudeNotifyHookInstalledByOldPath(t *testing.T) {
 	if err := json.Unmarshal(after, &settings); err != nil {
 		t.Fatal(err)
 	}
-	if hookExists(settings) || settings["other"] != "kept" {
+	if hookExists(t, settings) || settings["other"] != "kept" {
 		t.Fatalf("settings=%s", after)
 	}
 	info, _ := os.Stat(path)

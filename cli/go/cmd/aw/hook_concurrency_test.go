@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awconfig"
 )
 
 func TestHookConfirmationProcess(t *testing.T) {
@@ -46,8 +49,11 @@ func TestHookInstallationPreservesSettingsEditedDuringConfirmation(t *testing.T)
 	t.Cleanup(func() {
 		cancel()
 		if child.ProcessState == nil {
-			if err := child.Wait(); err != nil && ctx.Err() == nil {
-				t.Errorf("waiting for hook confirmation: %v", err)
+			if err := child.Wait(); err != nil {
+				var exited *exec.ExitError
+				if !errors.As(err, &exited) {
+					t.Errorf("waiting for hook confirmation: %v", err)
+				}
 			}
 		}
 	})
@@ -81,5 +87,54 @@ func TestHookInstallationPreservesSettingsEditedDuringConfirmation(t *testing.T)
 	}
 	if got := readInstallFile(t, path); string(got) != edited {
 		t.Fatalf("concurrent user edit was lost: %s", got)
+	}
+}
+
+func TestHookSettingsLockExcludesAnotherWriterAndReleasesAfterFailure(t *testing.T) {
+	root := t.TempDir()
+	path := writeNotifySettings(t, root, `{"hooks":{}}`)
+	lockPath := hookSettingsLockPath(path)
+	failure := errors.New("editor refused the replacement")
+	err := withHookSettingsLock(path, func() error {
+		other, err := awconfig.TryLockExclusive(lockPath)
+		if other != nil {
+			if closeErr := other.Close(); closeErr != nil {
+				t.Error(closeErr)
+			}
+		}
+		if !errors.Is(err, awconfig.ErrLockUnavailable) {
+			t.Fatalf("a second writer entered the transaction: %v", err)
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("lost editor failure: %v", err)
+	}
+	other, err := awconfig.TryLockExclusive(lockPath)
+	if err != nil {
+		t.Fatalf("failed transaction left its lock held: %v", err)
+	}
+	if err := other.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHookSettingsLockRefusalNamesSettingsAndRecovery(t *testing.T) {
+	root := t.TempDir()
+	const original = `{"hooks":{}}`
+	path := writeNotifySettings(t, root, original)
+	if err := os.Mkdir(hookSettingsLockPath(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err := withHookSettingsLock(path, func() error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "retry the command") {
+		t.Fatalf("missing settings path or recovery instruction: %v", err)
+	}
+	if called || string(readInstallFile(t, path)) != original {
+		t.Fatal("refused lock still allowed the settings editor to run")
 	}
 }

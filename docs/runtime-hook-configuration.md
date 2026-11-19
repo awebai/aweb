@@ -18,3 +18,9 @@ legacy unscoped entries, preserving custom matchers and making a backup.
 JSON refusals name the settings file and the specific syntax, duplicate-key or
 object-shape repair. Init continues its other actions and reports the hook as
 not installed. Install/remove round trips preserve user bytes, including whitespace.
+
+Aw hook editors serialize their read/edit/replace operation with a stable sidecar
+lock in the settings directory. The settings snapshot is read under that lock;
+installation reads it again after any confirmation prompt. Editors outside aw
+do not share this lock. Explicit cleanup also checks its snapshot before writing
+and keeps the original backup when that check refuses a concurrent edit.

@@ -37,6 +37,27 @@ func CleanupClaudeNotifyHook(repoRoot string) *claudeNotifyCleanupResult {
 var beforeClaudeNotifyCleanupRecheck func(string)
 
 func cleanupClaudeNotifyFile(result *claudeNotifyCleanupResult) error {
+	if err := pathpreflight.PreflightFile(result.FilePath, "Claude hook config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(result.FilePath); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	original, err := os.ReadFile(result.FilePath)
+	if err != nil {
+		return err
+	}
+	if _, removed, err := removeNotifyHookBytes(original); err != nil {
+		return hookSettingsParseError(result.FilePath, err)
+	} else if removed == 0 {
+		return nil
+	}
+	return withHookSettingsLock(result.FilePath, func() error { return cleanupClaudeNotifySnapshot(result) })
+}
+
+func cleanupClaudeNotifySnapshot(result *claudeNotifyCleanupResult) error {
 	path := result.FilePath
 	preflight := func() error {
 		return pathpreflight.PreflightFile(path, "Claude hook config", pathpreflight.AllowTempAmbientSymlinkPrefix())

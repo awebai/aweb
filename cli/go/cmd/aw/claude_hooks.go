@@ -60,7 +60,7 @@ func SetupClaudeHooks(repoRoot string, confirmation hookConfirmation) *claudeHoo
 	if len(input) == 0 {
 		input = []byte("{}\n")
 	}
-	data, exists, err := installNotifyHookBytes(input)
+	_, exists, err := installNotifyHookBytes(input)
 	if err != nil {
 		result.Error = hookSettingsParseError(result.FilePath, err)
 		result.Skipped = true
@@ -83,16 +83,6 @@ func SetupClaudeHooks(repoRoot string, confirmation hookConfirmation) *claudeHoo
 			return result
 		}
 	}
-	mode := os.FileMode(0o644)
-	info, statErr := os.Stat(result.FilePath)
-	if statErr == nil {
-		mode = info.Mode().Perm()
-	} else if !os.IsNotExist(statErr) {
-		result.Error = statErr
-		result.Skipped = true
-		return result
-	}
-
 	settingsDir := filepath.Dir(result.FilePath)
 	if err := pathpreflight.PreflightDir(settingsDir, "Claude hook config directory", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
 		result.Error = err
@@ -110,23 +100,52 @@ func SetupClaudeHooks(repoRoot string, confirmation hookConfirmation) *claudeHoo
 		return result
 	}
 
-	if err := pathpreflight.PreflightFile(result.FilePath, "Claude hook config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+	if err := withHookSettingsLock(result.FilePath, func() error { return installClaudeNotifyFile(result) }); err != nil {
 		result.Error = err
 		result.Skipped = true
 		return result
 	}
-	if err := atomicfile.Write(result.FilePath, data, mode); err != nil {
-		result.Error = fmt.Errorf("writing %s: %w", result.FilePath, err)
-		result.Skipped = true
-		return result
-	}
+	return result
+}
 
+// installClaudeNotifyFile reads after confirmation, while the settings lock is
+// held, so an edit made during the prompt remains part of the replacement.
+func installClaudeNotifyFile(result *claudeHooksResult) error {
+	if err := pathpreflight.PreflightFile(result.FilePath, "Claude hook config", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+		return err
+	}
+	content, err := os.ReadFile(result.FilePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("reading %s: %w", result.FilePath, err)
+	}
+	input := content
+	if len(input) == 0 {
+		input = []byte("{}\n")
+	}
+	data, exists, err := installNotifyHookBytes(input)
+	if err != nil {
+		return hookSettingsParseError(result.FilePath, err)
+	}
+	if exists {
+		result.AlreadyExists = true
+		return nil
+	}
+	mode := os.FileMode(0o644)
+	info, statErr := os.Stat(result.FilePath)
+	if statErr == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	if err := atomicfile.Write(result.FilePath, data, mode); err != nil {
+		return fmt.Errorf("writing %s: %w", result.FilePath, err)
+	}
 	if len(content) == 0 {
 		result.Created = true
 	} else {
 		result.Updated = true
 	}
-	return result
+	return nil
 }
 
 func printClaudeHooksResult(result *claudeHooksResult) {
