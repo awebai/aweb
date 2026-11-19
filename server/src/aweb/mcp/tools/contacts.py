@@ -5,17 +5,17 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
+from fastapi import HTTPException
+
 from awid.federation_errors import FederationAuthorityError
 from aweb.identity_auth_deps import participant_dids
 from aweb.mcp.auth import get_auth, primary_auth_did
 from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
+from aweb.mcp.tools.refusals import send_refusal
 from aweb.mcp.tools.chat import chat_send
-from aweb.mcp.tools.federation import registry_delivery_origin
+from aweb.mcp.tools.federation import mcp_messaging_auth, mcp_messaging_runtime
+from aweb.messaging.address_targets import resolve_address_target
 from aweb.mcp.tools.mail import mcp_mail_message_from_row, send_mail
-from aweb.messaging.alias_targets import (
-    AmbiguousLocalAddressError,
-    get_agent_by_namespace_alias,
-)
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.chat import find_session_between
 from aweb.messaging.contacts import (
@@ -145,7 +145,10 @@ async def send_message_to_contact(
         )
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
+    except HTTPException as exc:
+        return send_refusal(exc, address=contact.get("contact_address") or "")
 
+    expected_recipient_did = target.get("did_aw") or target.get("did_key") or ""
     # Pending is receiver-side policy state, not sender-side send authority:
     # sending to a pending contact is the bilateral invite/first-contact flow.
     if normalized_channel == "mail":
@@ -158,6 +161,7 @@ async def send_message_to_contact(
             federation_transport=federation_mail_transport,
             public_origin=public_origin,
             to=target["address"],
+            expected_recipient_did=expected_recipient_did,
             subject=subject,
             body=message,
             priority=priority,
@@ -178,6 +182,7 @@ async def send_message_to_contact(
             federation_transport=federation_chat_transport,
             public_origin=public_origin,
             session_id=existing["conversation_id"],
+            expected_recipient_did=expected_recipient_did,
             message=message,
             wait=wait,
             wait_seconds=wait_seconds,
@@ -192,6 +197,7 @@ async def send_message_to_contact(
         federation_transport=federation_chat_transport,
         public_origin=public_origin,
         to_address=target["address"],
+        expected_recipient_did=expected_recipient_did,
         message=message,
         wait=wait,
         wait_seconds=wait_seconds,
@@ -349,46 +355,18 @@ async def _resolve_contact_target(
     bound_did_aw = str(contact.get("contact_did_aw") or "").strip()
     if not bound_did_aw.startswith("did:aw:"):
         raise ValidationError("contact_identity_binding_required")
-    domain, name = address.split("/", 1)
+    auth = get_auth()
     try:
-        target = await get_agent_by_namespace_alias(
-            db_infra, namespace=domain, alias=name
+        target = await resolve_address_target(
+            db_infra,
+            runtime=mcp_messaging_runtime(
+                auth, registry_client=registry_client, federation_authority=federation_authority,
+            ),
+            auth=mcp_messaging_auth(auth), address=address,
+            message_type="mail",
         )
-    except AmbiguousLocalAddressError as exc:
-        raise ServiceError(str(exc)) from exc
-    if target is None:
-        resolved = None
-        if federation_authority is not None:
-            try:
-                auth = get_auth()
-                resolved = await federation_authority.resolve_contact(
-                    address,
-                    source_ip="mcp:"
-                    + str(auth.did_key or auth.did_aw or "unknown"),
-                )
-            except FederationAuthorityError as exc:
-                if exc.reason != "recipient_identity_not_found":
-                    raise ServiceError(exc.reason) from exc
-        elif registry_client is not None:
-            resolved = await registry_client.resolve_address(
-                domain, name, did_key=(get_auth().did_key or None)
-            )
-        if resolved is not None and resolved.did_aw:
-            target = {
-                "agent_id": None,
-                "team_id": None,
-                "alias": name,
-                "address": address,
-                "did_aw": resolved.did_aw.strip(),
-                "did_key": (
-                    getattr(resolved, "current_did_key", "") or ""
-                ).strip(),
-                "delivery_origin": registry_delivery_origin(resolved),
-                "authority_controller_did": str(
-                    getattr(resolved, "controller_did", "") or ""
-                ).strip(),
-                "external": True,
-            }
+    except FederationAuthorityError as exc:
+        raise ServiceError(exc.reason) from exc
     if target is None or str(target.get("did_aw") or "").strip() != bound_did_aw:
         raise ValidationError("contact_identity_binding_required")
     copied = dict(target)

@@ -8891,13 +8891,12 @@ async def test_send_message_to_address_does_not_fall_back_to_local_persistent_ag
 
 @pytest.mark.parametrize("recipient_identity_scope", ["global", "local"])
 @pytest.mark.asyncio
-async def test_send_message_to_address_uses_same_team_local_recipient_when_awid_misses(
+async def test_send_message_to_address_rejects_global_claim_when_awid_misses(
     aweb_cloud_db,
     recipient_identity_scope,
 ):
-    # The persistent branch is guarded by requires_registry_address_binding();
-    # the ephemeral branch bypasses that predicate. Keep these as twins so
-    # address routing cannot be accidentally covered with only one identity_scope.
+    # A did:aw/address claim cannot become a local label on registry absence,
+    # regardless of the row's identity_scope label.
     _, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -8933,14 +8932,10 @@ async def test_send_message_to_address_uses_same_team_local_recipient_when_awid_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", json=payload)
 
-    assert resp.status_code == 200, resp.text
-    registry.resolve_address.assert_not_awaited()
-    row = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT to_did, to_alias FROM {{tables.messages}} WHERE subject = $1",
-        subject,
-    )
-    assert row["to_did"] == "did:aw:bob"
-    assert row["to_alias"] == "bob"
+    assert resp.status_code == 404, resp.text
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob")
+    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT count(*) FROM {{tables.messages}}") == 0
+    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT count(*) FROM {{tables.chat_messages}}") == 0
 
 
 @pytest.mark.asyncio

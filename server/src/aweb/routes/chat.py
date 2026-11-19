@@ -362,7 +362,6 @@ async def create_or_send(
     sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
     target = await resolve_chat_targets(
         db, sender, payload, runtime,
-        source=str(request.client.host if request.client else "unknown"),
     )
     target_dids = sorted({_target_did(row) for row in target.recipients if _target_did(row)})
     sent = await send_chat(db, sender, target, payload, runtime)
@@ -1218,7 +1217,6 @@ async def send_message(
     sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
     target = await resolve_chat_targets(
         db, sender, session_id, runtime,
-        source=str(request.client.host if request.client else "unknown"),
     )
     sent = await send_chat(db, sender, target, payload, runtime)
     return SendMessageResponse(

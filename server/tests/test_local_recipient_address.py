@@ -1,6 +1,6 @@
 """Local-address refusals through real aweb/AWID apps, PostgreSQL and HTTP.
 
-The ordinary unit run forbids DNS. Set AWEB_LOCAL_ADDRESS_COREDNS=host:port
+The unit run uses an isolated UDP DNS responder. Set AWEB_LOCAL_ADDRESS_COREDNS=host:port
 for the real-CoreDNS journey, with a server answering SERVFAIL and no forwarder.
 """
 import asyncio
@@ -10,11 +10,12 @@ import os
 from types import SimpleNamespace
 
 import dns.asyncresolver
+import dns.message
+import dns.rcode
 import pytest
 import pytest_asyncio
 
 from aweb.federation.activation import build_federation_authority_activation
-from awid.external_authority import SystemTXTOutcomeResolver
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import privacy_app  # noqa: F401
@@ -22,7 +23,7 @@ from test_messages_http import _signed_team_headers, _make_certificate, _encode_
 
 
 @pytest_asyncio.fixture
-async def local_mail(privacy_app, monkeypatch):
+async def local_mail(privacy_app, monkeypatch):  # noqa: F811 -- imported fixture
     env = privacy_app
     actors = {}
     for domain, names in (("local", ("alice", "bob")), ("company.test", ("carol",))):
@@ -54,23 +55,32 @@ async def local_mail(privacy_app, monkeypatch):
             actors[name] = (actor, team, certificate)
     activation = build_federation_authority_activation(env.infra, public_origin=env.app.state.public_origin)
     queries = []
+    transport = None
     coredns = os.environ.get("AWEB_LOCAL_ADDRESS_COREDNS")
     if coredns:
         host, port = coredns.rsplit(":", 1)
-        resolver = dns.asyncresolver.Resolver(configure=False)
-        resolver.nameservers = [host]
-        resolver.port = int(port)
-        resolver.timeout = resolver.lifetime = 1
-        monkeypatch.setattr(dns.asyncresolver, "default_resolver", resolver)
+    else:
+        class TemporaryDNSFailure(asyncio.DatagramProtocol):
+            def connection_made(self, udp):
+                self.udp = udp
 
-    class RecordedDNS(SystemTXTOutcomeResolver):
-        async def lookup_txt(self, name):
-            queries.append(name)
-            if not coredns:
-                raise RuntimeError("external DNS is forbidden in the unit test")
-            return await super().lookup_txt(name)
+            def datagram_received(self, data, peer):
+                request = dns.message.from_wire(data)
+                queries.append(str(request.question[0].name).rstrip("."))
+                response = dns.message.make_response(request)
+                response.set_rcode(dns.rcode.SERVFAIL)
+                self.udp.sendto(response.to_wire(), peer)
 
-    activation.txt_resolver = RecordedDNS()
+        transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+            TemporaryDNSFailure, local_addr=("127.0.0.1", 0),
+        )
+        host, port = transport.get_extra_info("sockname")
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = [host]
+    resolver.port = int(port)
+    resolver.timeout = resolver.lifetime = 1
+    monkeypatch.setattr(dns.asyncresolver, "default_resolver", resolver)
+
     env.app.state.federation_authority = activation
     responses = []
     stack = env.app.middleware_stack or env.app.build_middleware_stack()
@@ -109,6 +119,8 @@ async def local_mail(privacy_app, monkeypatch):
     finally:
         env.app.middleware_stack = stack
         await activation.aclose()
+        if transport is not None:
+            transport.close()
 
 
 @pytest.mark.asyncio
@@ -142,7 +154,6 @@ async def test_cross_team_local_address_without_route_refuses_definitely(local_m
     assert response.status_code == 404, response.text
     assert response.json()["reason"] == "local_recipient_route_missing"
     assert response.json()["retryable"] is False
-    assert local_mail.queries == []
     assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
     assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == 0
     assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_sessions}}") == 0
@@ -151,56 +162,41 @@ async def test_cross_team_local_address_without_route_refuses_definitely(local_m
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("channel", ["mail", "chat"])
-async def test_foreign_discovery_failure_remains_retryable(local_mail, channel):
+async def test_foreign_dns_outage_uses_configured_registry_absence(local_mail, channel):
     response = await local_mail.send("alice", "foreign.example/nobody", channel)
-    assert response.status_code == 503, response.text
-    assert response.json()["reason"] == "sender_registry_discovery_failed"
-    assert response.json()["retryable"] is True
-    assert local_mail.queries == ["_awid.foreign.example"]
+    assert response.status_code == 404, response.text
+    detail = "Recipient address not found" if channel == "mail" else "Recipient address not found: foreign.example/nobody"
+    assert response.json()["detail"] == detail
+    if not os.environ.get("AWEB_LOCAL_ADDRESS_COREDNS"):
+        assert local_mail.queries == ["_awid.foreign.example"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("channel", ["mail", "chat"])
-async def test_unverified_home_namespace_does_not_supply_authority(local_mail, channel):
+async def test_own_registry_pin_does_not_require_public_namespace_proof(local_mail, channel):
     await local_mail.env.registry_db.execute(
         "UPDATE {{tables.dns_namespaces}} SET verification_status = 'unverified' WHERE domain = 'local'",
     )
     response = await local_mail.send("alice", "local/bbo", channel)
-    assert response.status_code == 503, response.text
-    assert response.json()["reason"] == "sender_registry_discovery_failed"
-    assert local_mail.queries == ["_awid.local"]
+    assert response.status_code == 404, response.text
+    assert response.json()["reason"] == "recipient_identity_not_found"
+    assert local_mail.queries == []
 
 
 @pytest.mark.asyncio
 async def test_home_registry_outage_remains_retryable(local_mail):
-    from aweb.messaging.address_auth import namespace_uses_home_registry
-    from awid.federation_errors import FederationAuthorityError
-
     registry = RegistryClient(registry_url="http://127.0.0.1:1")
+    original = local_mail.env.app.state.awid_registry_client
+    local_mail.env.app.state.awid_registry_client = registry
     try:
-        with pytest.raises(FederationAuthorityError) as refused:
-            await namespace_uses_home_registry(local_mail.env.infra, registry, "local")
-        assert refused.value.reason == "sender_registry_unavailable"
-        assert refused.value.http_status == 503
-        assert refused.value.retryable is True
+        response = await local_mail.send("alice", "local/bob")
+        assert response.status_code == 503, response.text
+        assert response.json()["reason"] == "sender_registry_unavailable"
+        assert response.json()["retryable"] is True
         assert local_mail.queries == []
         assert await local_mail.env.db.fetch_value("SELECT COUNT(*) FROM {{tables.messages}}") == 0
     finally:
-        await registry.aclose()
-
-
-@pytest.mark.asyncio
-async def test_selected_foreign_origin_does_not_use_home_namespace(local_mail):
-    from aweb.messaging.address_auth import namespace_uses_home_registry
-
-    async def foreign_registry(domain):
-        assert domain == "local"
-        return "http://127.0.0.1:1"
-
-    registry = RegistryClient(registry_url="http://127.0.0.1:2", domain_registry_resolver=foreign_registry)
-    try:
-        assert not await namespace_uses_home_registry(local_mail.env.infra, registry, "local")
-    finally:
+        local_mail.env.app.state.awid_registry_client = original
         await registry.aclose()
 
 

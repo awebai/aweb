@@ -1,6 +1,7 @@
 """Mail threading parity through the real MCP/HTTP apps and PostgreSQL."""
 
 from identity_binding_support import seed_verified_bindings
+from federation_activation_support import OutboundRegistryFixture
 
 from team_facts_fixtures import LegacyTeamFacts
 
@@ -36,7 +37,7 @@ from test_messages_http import (
 REGISTRY_ORIGIN = "https://registry.test"
 
 
-class _AddressRegistry(LegacyTeamFacts):
+class _AddressRegistry(LegacyTeamFacts, OutboundRegistryFixture):
     """The AWID registry at its boundary: the home registry of every namespace, holding the bound addresses."""
 
     registry_url = REGISTRY_ORIGIN

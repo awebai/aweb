@@ -288,6 +288,11 @@ class Address:
     )
 
 
+@dataclass(frozen=True, kw_only=True)
+class OutboundAddress(Address):
+    controller_did: str
+
+
 @dataclass(frozen=True)
 class Team:
     team_id: str
@@ -1323,6 +1328,71 @@ class RegistryClient:
                 return None
             raise
         return _address_from_json(data)
+
+    async def resolve_outbound_address(
+        self, domain: str, name: str, *, own_domain: str | None = None,
+    ) -> OutboundAddress | None:
+        """Resolve first contact under outbound DNS policy, at one selected registry.
+
+        The selected origin is fixed across the address and current-key reads.
+        No cache or inbound authority reader can substitute a different route.
+        """
+        from awid.did import validate_did, validate_stable_id
+        from awid.external_authority import (
+            SystemTXTOutcomeResolver, discover_outbound_registry_authority,
+        )
+        from awid.federation_errors import FederationAuthorityError
+
+        authority = await discover_outbound_registry_authority(
+            domain, SystemTXTOutcomeResolver(), configured_origin=self.registry_url,
+            own_domain=own_domain, origin_context=self.registry_origin_context,
+        )
+        origin = authority.registry_origin
+        try:
+            data = await self._request_json(
+                "GET", f"/v1/namespaces/{domain}/addresses/{address_segment(name)}",
+                registry_url=origin,
+            )
+        except RegistryError as exc:
+            if is_address_not_found(exc.status_code, exc.body):
+                return None
+            raise
+        try:
+            address = _address_from_json(data)
+            validate_stable_id(address.did_aw)
+            if (address.domain != domain or address.name != name
+                    or not validate_did(address.current_did_key)):
+                raise ValueError("Address binding mismatch")
+            if address.delivery.origin:
+                canonical_server_origin(address.delivery.origin)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FederationAuthorityError("sender_registry_protocol_invalid") from exc
+        key_data = await self._request_json(
+            "GET", f"/v1/did/{quote(address.did_aw, safe=':')}/key", registry_url=origin,
+        )
+        try:
+            key = _key_resolution_from_json(key_data)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise FederationAuthorityError("sender_registry_protocol_invalid") from exc
+        if key.did_aw != address.did_aw or key.current_did_key != address.current_did_key:
+            raise FederationAuthorityError("sender_address_did_mismatch")
+        namespace = await self._request_json("GET", f"/v1/namespaces/{domain}", registry_url=origin)
+        from awid.id_certificates import namespace_authority_valid
+        controller = namespace.get("controller_did") if isinstance(namespace, dict) else None
+        if not isinstance(controller, str) or not validate_did(controller) or namespace.get("domain") != domain:
+            raise FederationAuthorityError("sender_registry_protocol_invalid")
+        if authority.selection == "dns" and controller != authority.controller_did:
+            if not authority.inherited or not namespace_authority_valid(
+                domain, {"domain": domain, "dns_name": authority.authority_name,
+                         "inherited": authority.inherited, "controller_key": authority.controller_did},
+                controller, namespace.get("delegation"),
+            ):
+                raise FederationAuthorityError("sender_address_did_mismatch")
+        return OutboundAddress(
+            address_id=address.address_id, domain=address.domain, name=address.name,
+            did_aw=address.did_aw, current_did_key=address.current_did_key,
+            created_at=address.created_at, delivery=address.delivery, controller_did=controller,
+        )
 
     async def resolve_address_fresh(
         self,

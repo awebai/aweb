@@ -438,7 +438,6 @@ async def send_message(
     sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
     target = await resolve_mail_target(
         db, sender, payload, runtime,
-        source=str(request.client.host if request.client else "unknown"),
     )
     return _send_response(await send_mail(db, sender, target, payload, runtime))
 

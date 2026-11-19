@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 import dns.asyncresolver
 import dns.exception
+import dns.rcode
 import dns.resolver
 from publicsuffix2 import get_sld
 
@@ -50,10 +51,21 @@ class SystemTXTOutcomeResolver:
             return DNSLookup("nodata")
         except dns.exception.Timeout:
             return DNSLookup("timeout")
-        except dns.resolver.NoNameservers:
+        except dns.resolver.NoNameservers as exc:
+            # dnspython groups refused, malformed and temporary responses here.
+            # Keep them distinct for outbound policy; strict inbound rejects all.
+            for _server, _tcp, _port, error, response in exc.kwargs.get("errors", ()):
+                if response is not None and response.rcode() == dns.rcode.REFUSED:
+                    return DNSLookup("refused")
+                if isinstance(error, dns.exception.FormError) or (
+                    response is not None and response.rcode() != dns.rcode.SERVFAIL
+                ):
+                    return DNSLookup("malformed")
             return DNSLookup("servfail")
+        except OSError:
+            return DNSLookup("unreachable")
         except Exception:
-            return DNSLookup("servfail")
+            return DNSLookup("malformed")
         records: list[str] = []
         try:
             for answer in answers:
@@ -129,11 +141,20 @@ def canonical_protocol_domain(value: str) -> str:
     return address.split("/", 1)[0]
 
 
-def _candidate_domains(domain: str, registered_domain: str | None) -> list[str]:
-    domain = canonical_protocol_domain(domain)
+def _outbound_domain(value: str) -> str:
+    # Registry namespaces and released handle contacts permit underscores.
+    # Inbound federation still uses canonical_protocol_domain unchanged.
+    domain = value.strip().lower().removesuffix(".")
+    canonical_protocol_domain(domain.replace("_", "a"))
+    return domain
+
+
+def _candidate_domains(domain: str, registered_domain: str | None, *, outbound: bool = False) -> list[str]:
+    normalize = _outbound_domain if outbound else canonical_protocol_domain
+    domain = normalize(domain)
     if registered_domain is None:
         registered_domain = get_sld(domain, strict=True) or domain
-    registered_domain = canonical_protocol_domain(registered_domain)
+    registered_domain = normalize(registered_domain)
     if domain != registered_domain and not domain.endswith("." + registered_domain):
         raise FederationAuthorityError("sender_registry_discovery_failed")
     labels = domain.split(".")
@@ -175,9 +196,40 @@ async def discover_registry_authority(
     registered_domain: str | None = None,
     origin_context: OriginContext | None = None,
 ) -> RegistryAuthority:
-    canonical = canonical_protocol_domain(domain)
+    return await _discover_registry_authority(
+        domain, resolver, registered_domain=registered_domain,
+        origin_context=origin_context,
+    )
+
+
+async def discover_outbound_registry_authority(
+    domain: str, resolver: TXTOutcomeResolver, *, configured_origin: str,
+    own_domain: str | None = None, origin_context: OriginContext | None = None,
+) -> RegistryAuthority:
+    """IMC outbound selection; never used by inbound or administrative reads."""
+    from awid.log import canonical_server_origin
+
+    fallback = RegistryAuthority(
+        selection="configured", authority_name="", controller_did=None,
+        inherited=False, registry_explicit=False,
+        registry_origin=canonical_server_origin(configured_origin),
+    )
+    if own_domain and _outbound_domain(domain) == _outbound_domain(own_domain):
+        return fallback
+    return await _discover_registry_authority(
+        domain, resolver, registered_domain=None, origin_context=origin_context,
+        outbound_fallback=fallback,
+    )
+
+
+async def _discover_registry_authority(
+    domain: str, resolver: TXTOutcomeResolver, *, registered_domain: str | None,
+    origin_context: OriginContext | None, outbound_fallback: RegistryAuthority | None = None,
+) -> RegistryAuthority:
+    outbound = outbound_fallback is not None
+    canonical = _outbound_domain(domain) if outbound else canonical_protocol_domain(domain)
     context = origin_context or OriginContext()
-    for candidate in _candidate_domains(canonical, registered_domain):
+    for candidate in _candidate_domains(canonical, registered_domain, outbound=outbound):
         qname = f"_awid.{candidate}"
         try:
             result = await resolver.lookup_txt(qname)
@@ -185,6 +237,8 @@ async def discover_registry_authority(
             raise FederationAuthorityError("sender_registry_discovery_failed") from exc
         if result.outcome in {"nxdomain", "nodata", "no_awid_record"}:
             continue
+        if outbound_fallback is not None and result.outcome in {"timeout", "servfail", "unreachable"}:
+            return outbound_fallback
         if result.outcome != "record":
             raise FederationAuthorityError("sender_registry_discovery_failed")
         records = tuple(record.strip() for record in result.records if record.strip().startswith("awid="))
@@ -199,6 +253,8 @@ async def discover_registry_authority(
             registry_explicit=authority.registry_explicit,
             registry_origin=authority.registry_origin,
         )
+    if outbound_fallback is not None:
+        return outbound_fallback
     return RegistryAuthority(
         selection="public_default",
         authority_name="",

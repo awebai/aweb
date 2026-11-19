@@ -191,6 +191,7 @@ async def send_mail(
     hosted_encryptor: HostedMessageEncryptor | None = None,
     to: str = "",
     conversation_id: str = "",
+    expected_recipient_did: str = "",
     subject: str = "",
     body: str = "",
     priority: str = "normal",
@@ -245,7 +246,6 @@ async def send_mail(
     try:
         target = await mail_send.resolve_mail_target(
             db_infra, sender, selector, runtime,
-            source="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
         )
         if target.continuation is not None:
             recipient_participant = target.continuation.recipient_participant
@@ -288,6 +288,11 @@ async def send_mail(
             signed_to_stable_id = (recipient.get("did_aw") or "").strip()
     except (HTTPException, FederationAuthorityError, ServiceError) as exc:
         return send_refusal(exc, address=address_ref)
+
+    if expected_recipient_did and expected_recipient_did not in {
+        recipient.get("did_aw"), recipient.get("did_key"), recipient.get("did"),
+    }:
+        return json.dumps({"error": "contact_identity_binding_required"})
 
     signed_fields = _signed_mail_fields(
         auth,

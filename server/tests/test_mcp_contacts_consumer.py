@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 from types import SimpleNamespace
 
 import pytest
+from awid.registry import OutboundAddress
 
 from aweb.mcp.auth import AuthContext
 from aweb.mcp import server as mcp_server
@@ -14,6 +15,20 @@ from aweb.mcp.server import register_tools
 from aweb.mcp.tools import chat as chat_tools
 from aweb.mcp.tools import contacts as contacts_tools
 from aweb.mcp.tools import mail as mail_tools
+
+
+def _outbound_registry(db):
+    """Caller tests supply a checked SDK result; wire tests cover its authority."""
+    async def resolve(domain, name, *, own_domain=None):
+        row = await db.fetch_one(
+            "SELECT did_aw, did_key FROM {{tables.agents}} WHERE address=$1", f"{domain}/{name}",
+        )
+        if row is None:
+            return None
+        return OutboundAddress(address_id="caller-fixture", domain=domain, name=name,
+                               did_aw=row["did_aw"], current_did_key=row["did_key"],
+                               created_at="2026-01-01T00:00:00Z", controller_did="did:key:controller")
+    return SimpleNamespace(resolve_outbound_address=AsyncMock(side_effect=resolve))
 
 
 class DBInfra:
@@ -499,7 +514,7 @@ async def test_mcp_mail_send_to_hosted_handle_uses_canonical_address(aweb_cloud_
     result = json.loads(
         await mail_tools.send_mail(
             DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=None,
+            registry_client=_outbound_registry(aweb_cloud_db.aweb_db),
             to="@jane/c3po",
             subject="hosted handle",
             body="hello",
@@ -530,7 +545,7 @@ async def test_mcp_chat_send_to_hosted_handle_uses_canonical_address(aweb_cloud_
         await chat_tools.chat_send(
             DBInfra(aweb_cloud_db.aweb_db),
             redis=None,
-            registry_client=None,
+            registry_client=_outbound_registry(aweb_cloud_db.aweb_db),
             to_alias="@jane/c3po",
             message="hello",
         )
@@ -590,14 +605,10 @@ async def test_consumer_mcp_send_message_to_identity_contact_starts_new_mail_con
         bob_agent_id,
     )
 
-    class NoRegistry:
-        async def resolve_address(self, *_args, **_kwargs):
-            raise AssertionError("same-team contact send must not rediscover")
-
     result = json.loads(
         await contacts_tools.send_message_to_contact(
             DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=NoRegistry(),
+            registry_client=_outbound_registry(aweb_cloud_db.aweb_db),
             contact_id=str(contact["contact_id"]),
             message="hello again",
             subject="Re",
@@ -663,7 +674,7 @@ async def test_consumer_mcp_send_message_to_handle_contact_uses_recent_active_ag
     result = json.loads(
         await contacts_tools.send_message_to_contact(
             DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=None,
+            registry_client=_outbound_registry(aweb_cloud_db.aweb_db),
             contact_id=str(contact["contact_id"]),
             message="hello handle",
             channel="mail",
@@ -694,7 +705,7 @@ async def test_consumer_mcp_send_message_to_identity_pending_contact_is_sendable
     result = json.loads(
         await contacts_tools.send_message_to_contact(
             DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=None,
+            registry_client=_outbound_registry(aweb_cloud_db.aweb_db),
             contact_id=str(contact["contact_id"]),
             message="hello pending identity",
             channel="mail",
@@ -729,7 +740,7 @@ async def test_consumer_mcp_identity_contact_rejects_local_address_reassignment(
     result = json.loads(
         await contacts_tools.send_message_to_contact(
             DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=None,
+            registry_client=_outbound_registry(aweb_cloud_db.aweb_db),
             contact_id=str(contact["contact_id"]),
             message="must not transfer",
             channel="mail",
@@ -785,7 +796,7 @@ async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_mail_co
     result = json.loads(
         await contacts_tools.send_message_to_contact(
             DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=None,
+            registry_client=_outbound_registry(aweb_cloud_db.aweb_db),
             contact_id=str(contact["contact_id"]),
             message="must not transfer through mail conversation",
             channel="mail",
@@ -840,7 +851,7 @@ async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_chat_se
     result = json.loads(
         await contacts_tools.send_message_to_contact(
             DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=None,
+            registry_client=_outbound_registry(aweb_cloud_db.aweb_db),
             contact_id=str(contact["contact_id"]),
             message="must not transfer through chat session",
             channel="chat",
@@ -854,7 +865,7 @@ async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_chat_se
 
 
 @pytest.mark.asyncio
-async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session_without_rediscovery(
+async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session_after_address_check(
     aweb_cloud_db,
     monkeypatch,
 ):
@@ -891,14 +902,10 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
         bob_agent_id,
     )
 
-    class NoRegistry:
-        async def resolve_address(self, *_args, **_kwargs):
-            raise AssertionError("existing chat continuation must not rediscover")
-
     result = json.loads(
         await contacts_tools.send_message_to_contact(
             DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=NoRegistry(),
+            registry_client=_outbound_registry(aweb_cloud_db.aweb_db),
             contact_id=str(contact["contact_id"]),
             message="hello chat",
             channel="chat",

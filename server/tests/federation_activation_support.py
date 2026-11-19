@@ -1,13 +1,34 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from functools import partial
+from unittest.mock import Mock
 
 from awid.federation_errors import FederationAuthorityError
-from awid.registry import Address, IDTreeEnrollment, KeyResolution
+from awid.registry import Address, IDTreeEnrollment, KeyResolution, OutboundAddress
 from types import SimpleNamespace
 from aweb.federation.activation import AuthorizedFederationSender, ResolvedContactIdentity
 from aweb.federation.authority_state import AuthoritySecurityToken
 from did_key_fixtures import named_did_key
+
+
+class OutboundRegistryFixture:
+    """Caller-unit fixtures supply the SDK's already-checked outbound result.
+
+    DNS and registry validation are exercised by the real-registry/UDP tests.
+    This preserves each caller test's configured address result and failures.
+    """
+
+    async def resolve_outbound_address(self, domain, name, *, own_domain=None):
+        resolution = await self.resolve_address(domain, name)
+        if resolution is None:
+            return None
+        return OutboundAddress(
+            address_id=resolution.address_id, domain=domain, name=name,
+            did_aw=resolution.did_aw, current_did_key=resolution.current_did_key,
+            created_at=resolution.created_at, delivery=resolution.delivery,
+            controller_did=named_did_key("z6Mktestcontroller"),
+        )
 
 
 class TestFederationAuthority:
@@ -18,6 +39,10 @@ class TestFederationAuthority:
     def __init__(self, manager, registry) -> None:
         self.manager = manager
         self.registry = registry
+        if isinstance(registry, Mock):
+            registry.resolve_outbound_address = partial(
+                OutboundRegistryFixture.resolve_outbound_address, registry,
+            )
 
     @asynccontextmanager
     async def received_registry_client(self, token, did_key, redis):

@@ -31,22 +31,23 @@ ADDRESS = "example.test/bob"
 
 
 @pytest_asyncio.fixture
-async def address_collision(privacy_app, monkeypatch):  # noqa: F811 -- imported pytest fixture
+async def address_collision(privacy_app, monkeypatch, request):  # noqa: F811 -- imported pytest fixture
     env = privacy_app
+    address = getattr(request, "param", ADDRESS)
     # Alice's teammate has the display alias bob but no global address.
     # The registry's bob is a DIFFERENT identity, whose team alias is carol.
     target = env.actors["carol"]
-    stable_id = await register_global_identity(env, target, ADDRESS)
+    stable_id = await register_global_identity(env, target, address)
     await env.db.execute(
         """UPDATE {{tables.agents}}
            SET did_aw=$1, address=$2, identity_scope='global', did_aw_verified_key=did_key
            WHERE agent_id=$3""",
-        stable_id, ADDRESS, target.id,
+        stable_id, address, target.id,
     )
     # Confirm the actual AWID response before observing sends. This is not a
     # resolver stub or a local row pretending to be registry evidence.
     registry = env.app.state.awid_registry_client
-    binding = await registry.resolve_address_fresh("example.test", "bob")
+    binding = await registry.resolve_address_fresh(*address.split("/", 1))
     assert binding.did_aw == stable_id
     assert binding.current_did_key == target.did
 
@@ -140,7 +141,7 @@ async def address_collision(privacy_app, monkeypatch):  # noqa: F811 -- imported
         return result
 
     try:
-        yield SimpleNamespace(env=env, stable_id=stable_id, send=send, request=request, signing_calls=signing_calls)
+        yield SimpleNamespace(env=env, address=address, stable_id=stable_id, send=send, request=request, signing_calls=signing_calls)
     finally:
         await mcp.shutdown()
 
@@ -333,7 +334,8 @@ async def test_absent_address_never_selects_a_global_alias(address_collision, su
         assert "error" in result and "message_id" not in result, result
     else:
         assert response.status_code == 404, response.text
-        assert "recipient_identity_not_found" in response.text
+        detail = "Recipient address not found" if surface == "mail" else f"Recipient address not found: {ADDRESS}"
+        assert response.json()["detail"] == detail
     for table in ("messages", "chat_sessions"):
         row = await env.db.fetch_one("SELECT count(*) AS n FROM {{tables." + table + "}}")
         assert row["n"] == 0
@@ -514,8 +516,7 @@ async def test_unrecorded_self_hosted_namespace_keeps_teammate_label(privacy_app
     """Post-release regression: a real private team has no public AWID record.
 
     Real UDP DNS returns NXDOMAIN; the configured AWID and application are
-    real. No authority/read result is replaced. The current strict-discovery
-    choice refuses this send; retain the expected released teammate delivery.
+    real. Outbound resolution preserves the configured registry for this team.
     """
     import asyncio
 
@@ -523,12 +524,10 @@ async def test_unrecorded_self_hosted_namespace_keeps_teammate_label(privacy_app
     import dns.message
     import dns.rcode
     from aweb.federation.activation import build_federation_authority_activation
-    from aweb.messaging.address_auth import namespace_uses_home_registry
 
     env = privacy_app
     registry = env.app.state.awid_registry_client
     assert await registry.get_namespace_fresh("example.test") is None
-    assert not await namespace_uses_home_registry(env.infra, registry, "example.test")
     queries = []
 
     class NoPublicRecord(asyncio.DatagramProtocol):
@@ -567,3 +566,76 @@ async def test_unrecorded_self_hosted_namespace_keeps_teammate_label(privacy_app
     finally:
         await activation.aclose()
         transport.close()
+
+
+@pytest_asyncio.fixture
+async def outbound_dns(monkeypatch):
+    import asyncio
+
+    import dns.asyncresolver
+    import dns.message
+    import dns.rcode
+    import dns.rrset
+
+    state = {"malformed": False, "queries": []}
+
+    class DNS(asyncio.DatagramProtocol):
+        def connection_made(self, transport):
+            self.transport = transport
+
+        def datagram_received(self, data, peer):
+            request = dns.message.from_wire(data)
+            state["queries"].append(str(request.question[0].name))
+            response = dns.message.make_response(request)
+            if state["malformed"]:
+                response.answer.append(dns.rrset.from_text(
+                    request.question[0].name, 0, "IN", "TXT", '"awid=v1; controller=invalid;"',
+                ))
+            else:
+                response.set_rcode(dns.rcode.NXDOMAIN)
+            self.transport.sendto(response.to_wire(), peer)
+
+    transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+        DNS, local_addr=("127.0.0.1", 0),
+    )
+    resolver = dns.asyncresolver.Resolver(configure=False)
+    resolver.nameservers = ["127.0.0.1"]
+    resolver.port = transport.get_extra_info("sockname")[1]
+    resolver.timeout = resolver.lifetime = 1
+    monkeypatch.setattr(dns.asyncresolver, "default_resolver", resolver)
+    try:
+        yield state
+    finally:
+        transport.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("address_collision", ["customer.test/bob"], indirect=True)
+@pytest.mark.parametrize("surface", ["mail", "chat", "mcp_mail", "hosted_mcp_mail"])
+@pytest.mark.parametrize("malformed", [False, True], ids=["no-public-record", "malformed-record"])
+async def test_self_hosted_first_contact_uses_outbound_policy(address_collision, outbound_dns, surface, malformed):
+    fixture = address_collision
+    outbound_dns["malformed"] = malformed
+    if malformed:
+        response = await fixture.request(surface, fixture.address)
+        if surface in {"mail", "chat"}:
+            assert response.status_code == 503, response.text
+            assert response.json()["reason"] == "sender_registry_discovery_failed"
+        else:
+            assert "sender_registry_discovery_failed" in response.text
+        assert await fixture.env.db.fetch_val("SELECT count(*) FROM {{tables.messages}}") == 0
+        assert await fixture.env.db.fetch_val("SELECT count(*) FROM {{tables.chat_messages}}") == 0
+        assert fixture.signing_calls == []
+    else:
+        result = await fixture.send(surface, fixture.address)
+        if surface == "chat":
+            participants = await fixture.env.db.fetch_all(
+                "SELECT did FROM {{tables.chat_participants}} WHERE session_id=$1", UUID(result["session_id"]),
+            )
+            assert {row["did"] for row in participants} == {fixture.env.actors["alice"].did, fixture.stable_id}
+        else:
+            row = await fixture.env.db.fetch_one(
+                "SELECT to_did FROM {{tables.messages}} WHERE message_id=$1", UUID(result["message_id"]),
+            )
+            assert row["to_did"] == fixture.stable_id
+    assert outbound_dns["queries"]

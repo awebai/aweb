@@ -5,6 +5,10 @@ from __future__ import annotations
 import logging
 
 from awid.federation_errors import FederationAuthorityError
+from awid.team_ids import parse_team_id
+from fastapi import HTTPException
+
+from aweb.messaging.alias_targets import namespace_exists
 
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
@@ -13,7 +17,6 @@ from aweb.awid_error_handling import (
 from aweb.messaging.address_auth import (
     identity_recipient,
     local_recipient_for_address_binding,
-    namespace_uses_home_registry,
     refuse_same_origin_nonresident,
     verified_signed_payload_json,
 )
@@ -54,13 +57,13 @@ def _matches_signed_binding(signed: dict | None, row: dict, *, address: str, mes
 
 
 async def resolve_address_target(
-    db, *, runtime: MessagingRuntime, auth, address: str, source: str,
+    db, *, runtime: MessagingRuntime, auth, address: str,
     message_type: str, signed_payload: str | None = None, signature: str | None = None,
 ) -> dict:
     """Use a verified signed binding offline, otherwise resolve the address.
 
-    The SDK reader classifies address absence. The strict reader's not-found
-    keeps its existing fallback meaning; it is not proof of coded absence.
+    The outbound SDK reader selects the registry and classifies address absence.
+    Strict inbound discovery is never used to select an outbound recipient.
     Signed selection may cross teams, but delivery admission still decides.
     This function does not grant delivery admission or contact authority.
     """
@@ -76,44 +79,33 @@ async def resolve_address_target(
             return recipient
 
     registry = runtime.registry_client
-    authority = runtime.federation_authority
-    # Keep the existing registry-selection rule: a team label alone does not
-    # authorize the configured registry. Foreign authority remains strict.
-    home_namespace = await namespace_uses_home_registry(db, registry, domain)
+    if registry is None:
+        raise awid_registry_not_configured_exception(operation="AWID recipient address lookup")
+    # The authenticated team supplies this local identity's own domain, not
+    # authority over the target. Foreign targets follow outbound DNS policy.
+    own_domain = (
+        auth.address.split("/", 1)[0] if auth.address
+        else parse_team_id(auth.team_id)[0] if auth.team_id else None
+    )
     try:
-        if registry is not None and (home_namespace or authority is None):
-            resolution = await registry.resolve_address(domain, name, did_key=auth.did_key)
-        elif authority is not None:
-            try:
-                resolution = await authority.resolve_contact(address, source_ip=source)
-            except FederationAuthorityError as exc:
-                # Preserve main's strict-reader not-found, without claiming
-                # it distinguishes address absence from every other HTTP 404.
-                if exc.reason != "recipient_identity_not_found":
-                    raise
-                resolution = None
-        else:
-            raise awid_registry_not_configured_exception(operation="AWID recipient address lookup")
+        resolution = await registry.resolve_outbound_address(domain, name, own_domain=own_domain)
     except AWID_DEPENDENCY_ERRORS as exc:
-        logging.getLogger(__name__).warning("Recipient address lookup unavailable for %s", address, exc_info=True)
+        logging.getLogger(__name__).warning("Recipient address lookup unavailable", exc_info=True)
         raise FederationAuthorityError("sender_registry_unavailable") from exc
 
     if resolution is not None:
-        if not getattr(resolution, "did_aw", None):
-            raise FederationAuthorityError("sender_registry_protocol_invalid")
         recipient = await local_recipient_for_address_binding(db, resolution, address)
         if recipient is None:
-            delivery = getattr(resolution, "delivery", None)
-            origin = str(getattr(resolution, "delivery_origin", None) or getattr(delivery, "origin", "") or "").strip()
+            origin = (resolution.delivery.origin or "").strip()
             refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
             recipient = {
                 "agent_id": None, "team_id": None, "alias": name, "address": address,
                 "did_aw": resolution.did_aw.strip(),
-                "did_key": str(getattr(resolution, "current_did_key", "") or "").strip(),
+                "did_key": resolution.current_did_key,
                 "delivery_origin": origin, "external": True,
-                "_authority_route_current": home_namespace or authority is not None,
+                "_authority_route_current": True,
             }
-        recipient["authority_controller_did"] = str(getattr(resolution, "controller_did", "") or "").strip()
+        recipient["authority_controller_did"] = resolution.controller_did
         return recipient
 
     # Unsigned label selection is team-scoped. Other teams cannot contribute
@@ -130,4 +122,7 @@ async def resolve_address_target(
             return recipient
     if local_candidates:
         raise FederationAuthorityError("local_recipient_route_missing")
-    raise FederationAuthorityError("recipient_identity_not_found")
+    if not candidates and await namespace_exists(db, domain):
+        raise FederationAuthorityError("recipient_identity_not_found")
+    detail = "Recipient address not found" if message_type == "mail" else f"Recipient address not found: {address}"
+    raise HTTPException(status_code=404, detail=detail)

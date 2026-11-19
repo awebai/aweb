@@ -630,10 +630,8 @@ async def _resolve_remote_chat_route(
     db,
     *,
     runtime: MessagingRuntime,
-    source: str,
     registry_client,
     recipient: dict[str, Any],
-    requester_did_key: str | None = None,
 ) -> dict[str, Any]:
     address = str(recipient.get("address") or "").strip()
     if recipient.get("_authority_route_current"):
@@ -653,20 +651,7 @@ async def _resolve_remote_chat_route(
     try:
         if "/" in address:
             domain, name = address.split("/", 1)
-            strict_authority = runtime.federation_authority
-            if strict_authority is not None:
-                resolution = await strict_authority.resolve_contact(
-                    address,
-                    source_ip=source,
-                )
-            elif requester_did_key:
-                resolution = await registry_client.resolve_address(
-                    domain,
-                    name,
-                    did_key=requester_did_key,
-                )
-            else:
-                resolution = await registry_client.resolve_address(domain, name)
+            resolution = await registry_client.resolve_outbound_address(domain, name)
         else:
             raise HTTPException(
                 status_code=424,
@@ -682,18 +667,13 @@ async def _resolve_remote_chat_route(
         raise awid_dependency_http_exception(exc, operation="AWID remote chat route resolution") from exc
     if resolution is None:
         raise HTTPException(status_code=404, detail=f"Recipient route not found: {address}")
-    target_stable_id = str(getattr(resolution, "did_aw", "") or "").strip()
-    target_current_did = str(getattr(resolution, "current_did_key", "") or "").strip()
+    target_stable_id = resolution.did_aw.strip()
+    target_current_did = resolution.current_did_key.strip()
     recipient_stable_id = str(recipient.get("did_aw") or "").strip()
     recipient_did = str(recipient.get("did") or "").strip()
     if target_stable_id not in {recipient_stable_id, recipient_did}:
         raise HTTPException(status_code=422, detail="Remote chat recipient identity changed")
-    delivery = getattr(resolution, "delivery", None)
-    resolved_origin = str(
-        getattr(resolution, "delivery_origin", None)
-        or getattr(delivery, "origin", "")
-        or ""
-    ).strip()
+    resolved_origin = (resolution.delivery.origin or "").strip()
     delivery_origin = resolved_origin or _target_delivery_origin(recipient)
     if not delivery_origin:
         raise HTTPException(status_code=424, detail="Recipient address has no federated delivery origin")
@@ -859,7 +839,6 @@ async def _resolve_named_recipients(
     db,
     *,
     runtime: MessagingRuntime,
-    source: str,
     registry_client,
     auth: MessagingAuth,
     to_aliases: list[str],
@@ -914,7 +893,7 @@ async def _resolve_named_recipients(
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_addresses entries must be domain/name")
         row = await resolve_address_target(
-            db, runtime=runtime, auth=auth, address=address, source=source, message_type="chat",
+            db, runtime=runtime, auth=auth, address=address, message_type="chat",
             signed_payload=signed_payload, signature=signature,
         )
         target_did = str(row.get("did_aw") or row.get("did_key") or "").strip()
@@ -1015,8 +994,7 @@ class ChatTarget:
     """Whom a chat send reaches: the recipients a new send names, or the session it continues.
 
     ``session_id`` and ``actor_did``, the sender's participant DID in that
-    session, are set for a continuation. ``source`` keys the federation
-    authority's rate bucket for the route lookups the send makes.
+    session, are set for a continuation.
 
     ``reuse_or_create`` marks a send to one recipient that goes to the session
     the two share, or to one the send creates when they share none;
@@ -1025,7 +1003,6 @@ class ChatTarget:
     """
 
     recipients: list[dict[str, Any]]
-    source: str
     session_id: UUID | None = None
     actor_did: str = ""
     reuse_or_create: bool = False
@@ -1051,15 +1028,14 @@ class SentChat:
 
 
 async def resolve_chat_targets(
-    db, auth: MessagingAuth, selector: CreateSessionRequest | str, runtime: MessagingRuntime, source: str,
+    db, auth: MessagingAuth, selector: CreateSessionRequest | str, runtime: MessagingRuntime,
     *, reuse_or_create: bool = False,
 ) -> ChatTarget:
     """Resolve whom a send reaches, before any of it is stored.
 
     A ``CreateSessionRequest`` supplies the recipient fields, the session id it
     proposes and any signature the sender made over the recipient binding. A
-    session id selects the other participants of that session. ``source`` keys
-    the federation authority's rate bucket for this caller.
+    session id selects the other participants of that session.
 
     With ``reuse_or_create`` the request names one recipient and no session:
     the target carries the session the two share, which the sender signs, or
@@ -1070,7 +1046,7 @@ async def resolve_chat_targets(
     if not actor_did:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
     if isinstance(selector, str):
-        return await _resolve_session_target(db, auth, selector, runtime, source, actor_dids=actor_dids)
+        return await _resolve_session_target(db, auth, selector, runtime, actor_dids=actor_dids)
 
     requested_session_id = UUID(selector.session_id) if selector.session_id is not None else None
     if requested_session_id is not None:
@@ -1081,7 +1057,6 @@ async def resolve_chat_targets(
     target_rows = await _resolve_named_recipients(
         db,
         runtime=runtime,
-        source=source,
         registry_client=runtime.registry_client,
         auth=auth,
         to_aliases=selector.to_aliases,
@@ -1091,7 +1066,7 @@ async def resolve_chat_targets(
         signature=selector.signature,
     )
     if not reuse_or_create:
-        return ChatTarget(recipients=target_rows, source=source)
+        return ChatTarget(recipients=target_rows)
     if len(target_rows) != 1:
         raise HTTPException(status_code=422, detail="A send that reuses the pair's session names one recipient")
     try:
@@ -1099,12 +1074,12 @@ async def resolve_chat_targets(
     except ConflictError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return ChatTarget(
-        recipients=target_rows, source=source, reuse_or_create=True, shared_session_id=shared_session_id,
+        recipients=target_rows, reuse_or_create=True, shared_session_id=shared_session_id,
     )
 
 
 async def _resolve_session_target(
-    db, auth: MessagingAuth, session_id: str, runtime: MessagingRuntime, source: str, *, actor_dids: list[str],
+    db, auth: MessagingAuth, session_id: str, runtime: MessagingRuntime, *, actor_dids: list[str],
 ) -> ChatTarget:
     sender_address = _sender_address(auth)
 
@@ -1183,7 +1158,7 @@ async def _resolve_session_target(
                 )
     except (ValidationError, NotFoundError, ForbiddenError) as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    return ChatTarget(recipients=recipient_rows, source=source, session_id=session_uuid, actor_did=actor_did)
+    return ChatTarget(recipients=recipient_rows, session_id=session_uuid, actor_did=actor_did)
 
 
 async def send_chat(
@@ -1353,10 +1328,8 @@ async def _send_to_named_recipients(
         route = await _resolve_remote_chat_route(
             db,
             runtime=runtime,
-            source=target.source,
             registry_client=registry_client,
             recipient=external_targets[0],
-            requester_did_key=auth.did_key,
         )
         _apply_remote_chat_route(participant_rows, external_targets[0], route)
 
@@ -1653,10 +1626,8 @@ async def _send_in_continued_session(
             refreshed_route = await _resolve_remote_chat_route(
                 db,
                 runtime=runtime,
-                source=target.source,
                 registry_client=registry_client,
                 recipient=route,
-                requester_did_key=auth.did_key,
             )
             if refreshed_route["delivery_origin"] == _target_delivery_origin(route):
                 raise exc

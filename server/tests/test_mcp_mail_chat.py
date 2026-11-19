@@ -35,6 +35,7 @@ from aweb.mcp.tools import mail as mail_tools
 from did_key_fixtures import named_did_key, named_signing_key
 from test_messages_http import _encrypted_mail_envelope
 from team_facts_fixtures import legacy_registry
+from federation_activation_support import OutboundRegistryFixture
 
 
 class DBInfra:
@@ -849,7 +850,7 @@ async def test_mcp_send_mail_continues_conversation_without_recipient_rediscover
             signing_key_id=alice_did_key,
         )
 
-    class _NoRediscoveryRegistry:
+    class _NoRediscoveryRegistry(OutboundRegistryFixture):
         async def resolve_address(self, *_args, **_kwargs):
             raise AssertionError("continuation must not rediscover the recipient address")
 
@@ -1213,9 +1214,9 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
         ),
     )
 
-    class _Registry:
+    class _Registry(OutboundRegistryFixture):
         async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
-            assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
+            assert (domain, name) == ("otherco.com", "bob")
             return Address(
                 address_id="addr-2",
                 domain="otherco.com",
@@ -1294,7 +1295,7 @@ async def test_mcp_send_mail_accepts_external_to_address_without_local_agent(awe
 
 
 @pytest.mark.asyncio
-async def test_mcp_send_mail_uses_same_team_local_persistent_when_awid_misses(aweb_cloud_db, monkeypatch):
+async def test_mcp_send_mail_rejects_global_claim_when_awid_misses(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     bob_agent_id = uuid4()
@@ -1325,9 +1326,9 @@ async def test_mcp_send_mail_uses_same_team_local_persistent_when_awid_misses(aw
         ),
     )
 
-    class _Registry:
+    class _Registry(OutboundRegistryFixture):
         async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
-            assert (domain, name, did_key) == ("acme.com", "bob", alice_did)
+            assert (domain, name) == ("acme.com", "bob")
             return None
 
     result = json.loads(
@@ -1341,8 +1342,8 @@ async def test_mcp_send_mail_uses_same_team_local_persistent_when_awid_misses(aw
         )
     )
 
-    assert result["status"] == "delivered"
-    assert result["to"] == "bob"
+    assert "error" in result and "message_id" not in result
+    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT count(*) FROM {{tables.messages}}") == 0
 
 
 @pytest.mark.asyncio
@@ -1391,7 +1392,7 @@ async def test_mcp_send_mail_requires_current_local_address_authority(
         ),
     )
 
-    class _Registry:
+    class _Registry(OutboundRegistryFixture):
         registry_url = "https://registry.test"
 
         async def registry_audience(self, domain: str):
@@ -1937,9 +1938,9 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
         ),
     )
 
-    class _Registry:
+    class _Registry(OutboundRegistryFixture):
         async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
-            assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
+            assert (domain, name) == ("otherco.com", "bob")
             return Address(
                 address_id="addr-2",
                 domain="otherco.com",
@@ -2019,7 +2020,7 @@ async def test_mcp_chat_send_accepts_external_to_address_without_local_agent(awe
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_uses_same_team_local_persistent_when_awid_misses(aweb_cloud_db, monkeypatch):
+async def test_mcp_chat_send_rejects_global_claim_when_awid_misses(aweb_cloud_db, monkeypatch):
     team_id = "ops:acme.com"
     alice_agent_id = uuid4()
     bob_agent_id = uuid4()
@@ -2050,9 +2051,9 @@ async def test_mcp_chat_send_uses_same_team_local_persistent_when_awid_misses(aw
         ),
     )
 
-    class _Registry:
+    class _Registry(OutboundRegistryFixture):
         async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
-            assert (domain, name, did_key) == ("acme.com", "bob", alice_did)
+            assert (domain, name) == ("acme.com", "bob")
             return None
 
     result = json.loads(
@@ -2066,7 +2067,9 @@ async def test_mcp_chat_send_uses_same_team_local_persistent_when_awid_misses(aw
         )
     )
 
-    assert result["delivered"] is True
+    assert "error" in result and "session_id" not in result
+    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT count(*) FROM {{tables.chat_messages}}") == 0
+    assert await aweb_cloud_db.aweb_db.fetch_val("SELECT count(*) FROM {{tables.chat_sessions}}") == 0
 
 
 @pytest.mark.asyncio
@@ -2115,7 +2118,7 @@ async def test_mcp_chat_send_requires_current_local_address_authority(
         ),
     )
 
-    class _Registry:
+    class _Registry(OutboundRegistryFixture):
         registry_url = "https://registry.test"
 
         async def registry_audience(self, domain: str):
@@ -3049,7 +3052,7 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
             signing_key_id=alice_did_key,
         )
 
-    class _NoRediscoveryRegistry:
+    class _NoRediscoveryRegistry(OutboundRegistryFixture):
         async def resolve_address(self, *_args, **_kwargs):
             raise AssertionError("continuation must not rediscover the recipient address")
 
@@ -3271,7 +3274,7 @@ async def test_mcp_full_address_to_another_teams_local_identity_is_refused_witho
         ),
     )
 
-    class _Registry:
+    class _Registry(OutboundRegistryFixture):
         registry_url = "https://registry.test"
 
         async def registry_audience(self, domain: str):

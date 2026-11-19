@@ -5,23 +5,13 @@ import logging
 from typing import Any, Mapping
 from types import SimpleNamespace
 
-from awid.federation_errors import FederationAuthorityError
 from awid.registry import RegistryError
 from fastapi import HTTPException
-from awid.log import canonical_server_origin
 from awid.signing import verify_did_key_signature
 from aweb.identity_binding import observe_current_identity_binding
-from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
 from aweb.federation.errors import RecipientNotResidentError
 from aweb.federation.origins import is_own_origin
-from aweb.messaging.alias_targets import namespace_exists
 from aweb.messaging.runtime import MessagingRuntime
-
-
-def local_recipient_visible_to_auth(row: Mapping[str, Any] | None, auth: Any) -> bool:
-    row_team_id = str((row or {}).get("team_id") or "").strip()
-    auth_team_id = str(getattr(auth, "team_id", None) or "").strip()
-    return bool(row_team_id and auth_team_id and row_team_id == auth_team_id)
 
 
 def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> dict:
@@ -59,10 +49,6 @@ async def local_recipient_for_address_binding(db, resolution: Any, address: str)
     recipient = identity_recipient(row, address)
     recipient["did_key"] = resolution.current_did_key
     return recipient
-
-
-def requires_registry_address_binding(row: Mapping[str, Any] | None) -> bool:
-    return str((row or {}).get("identity_scope") or "").strip().lower() == "global"
 
 
 def refuse_same_origin_nonresident(delivery_origin: str, *, origins: set[str]) -> None:
@@ -148,21 +134,3 @@ def verified_signed_payload_json(
     except Exception:
         return None
     return payload if isinstance(payload, dict) else None
-
-
-async def namespace_uses_home_registry(db, registry_client, domain: str) -> bool:
-    # A local team label alone is not authority. Use the configured registry
-    # only when it is the selected origin and actually serves this namespace.
-    if registry_client is None or not await namespace_exists(db, domain):
-        return False
-    try:
-        if await registry_client.registry_audience(domain) != canonical_server_origin(registry_client.registry_url):
-            return False
-        namespace = await registry_client.get_namespace_fresh(domain)
-    except AWID_DEPENDENCY_ERRORS as exc:
-        logging.getLogger(__name__).warning("Messaging home namespace lookup unavailable for %s", domain, exc_info=True)
-        raise FederationAuthorityError("sender_registry_unavailable") from exc
-    return bool(
-        namespace and namespace.domain == domain
-        and namespace.verification_status == "verified" and namespace.controller_did
-    )

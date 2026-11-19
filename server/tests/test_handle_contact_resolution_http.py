@@ -14,13 +14,14 @@ from aweb.mcp.server import create_mcp_app
 from identity_binding_support import register_global_identity
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _signed_team_headers
+from test_registry_address_precedence import outbound_dns  # noqa: F401
 
 NAMESPACE = "contact_team.test"
 LOOKALIKE = "contactXteam.test"
 
 
 @pytest_asyncio.fixture
-async def handle_app(privacy_app):  # noqa: F811 -- imported fixture
+async def handle_app(privacy_app, outbound_dns):  # noqa: F811 -- imported fixture
     env = privacy_app
     identities = {}
 
@@ -150,3 +151,22 @@ async def test_handle_activity_selection_characterization(handle_app, channel, n
     # the same saved bare contact chooses a different DID on the second send.
     assert first == bob
     assert second == (bob if named else carol)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("channel", ["mail", "chat"])
+async def test_handle_selected_identity_cannot_be_replaced_by_address_resolution(handle_app, channel):
+    f = handle_app
+    await f.register("bob", NAMESPACE)
+    carol = await f.register("carol", NAMESPACE)
+    contact_id = await f.contact("@" + NAMESPACE + "/bob")
+    # The namespace controller reassigns the address. The local handle row
+    # still names Bob; the send must not silently transfer to Carol.
+    registry = f.env.app.state.awid_registry_client
+    changed = await registry.reassign_address(NAMESPACE, "bob", carol, f.env.team_sk)
+    assert changed.did_aw == carol
+    result = await f.send(contact_id, channel)
+    assert result == {"error": "contact_identity_binding_required"}
+    assert await f.env.db.fetch_val("SELECT count(*) FROM {{tables.messages}}") == 0
+    assert await f.env.db.fetch_val("SELECT count(*) FROM {{tables.chat_messages}}") == 0
+    assert await f.env.db.fetch_val("SELECT count(*) FROM {{tables.chat_sessions}}") == 0

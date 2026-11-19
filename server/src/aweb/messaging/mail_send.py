@@ -1000,13 +1000,12 @@ class MailTarget:
 
 
 async def resolve_mail_target(
-    db, auth: MessagingAuth, payload: SendMessageRequest, runtime: MessagingRuntime, source: str,
+    db, auth: MessagingAuth, payload: SendMessageRequest, runtime: MessagingRuntime,
 ) -> MailTarget:
     """Resolve whom a send names, before any of it is stored.
 
     ``payload`` supplies the recipient fields, the conversation id and any
-    signature the sender made over the recipient binding. ``source`` keys the
-    federation authority's rate bucket for this caller.
+    signature the sender made over the recipient binding.
     """
     registry_client = runtime.registry_client
     sender_did = (auth.did_aw or auth.did_key or "").strip()
@@ -1131,7 +1130,7 @@ async def resolve_mail_target(
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         recipient = await resolve_address_target(
-            db, runtime=runtime, auth=auth, address=address, source=source, message_type="mail",
+            db, runtime=runtime, auth=auth, address=address, message_type="mail",
             signed_payload=payload.signed_payload, signature=payload.signature,
         )
         recipient_did = str(recipient.get("did_aw") or recipient.get("did_key") or "").strip()

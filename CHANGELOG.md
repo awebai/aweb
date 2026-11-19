@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Room posts emit one `chat.message_sent` mutation with `message_kind=room`
+  after a new committed post, so hosted send metering can count them. Replays
+  and refused posts emit none; rooms do not produce chat-session wake events.
+- Handle contact namespaces match literally, including underscores. Bare
+  handles keep the existing activity-based recipient selection.
+
 - For an explicit address sent without a signed recipient binding, the registered
   identity takes precedence over a teammate's label. An unreachable registry
   refuses that unsigned explicit-address send. Other teams' aliases do not make

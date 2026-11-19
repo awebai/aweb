@@ -211,7 +211,7 @@ that unsigned explicit-address send. Other teams' aliases do not make an address
 ambiguous.
 
 A client identity's configured registry is an explicit pin for its own address
-domain. For a foreign first-contact address, the CLI and channel runtimes use
+domain. For a foreign first-contact address, the CLI, channel runtimes and server outbound resolver use
 that domain's valid `_awid` record (including bounded parent inheritance) when
 present; absence of a record, a DNS timeout, a temporary server failure, an
 unreachable resolver, or connection-refused transport falls back to the

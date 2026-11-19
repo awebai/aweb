@@ -365,7 +365,7 @@ async def test_two_interleaved_sends_that_reuse_or_create_share_one_session_and_
 
     async def resolve():
         return await resolve_chat_targets(
-            server.infra, pilot, CreateSessionRequest(to_aliases=["bob"], message=""), server.runtime, "test",
+            server.infra, pilot, CreateSessionRequest(to_aliases=["bob"], message=""), server.runtime,
             reuse_or_create=True,
         )
 

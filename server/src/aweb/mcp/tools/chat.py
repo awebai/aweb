@@ -324,6 +324,7 @@ async def chat_send(
     to_did: str = "",
     to_address: str = "",
     session_id: str = "",
+    expected_recipient_did: str = "",
     wait: bool = False,
     wait_seconds: int = 120,
     leaving: bool = False,
@@ -362,7 +363,6 @@ async def chat_send(
         auth, public_origin=public_origin, registry_client=registry_client,
         federation_authority=federation_authority, chat_transport=federation_transport,
     )
-    source = "mcp:" + str(auth.did_key or auth.did_aw or "unknown")
     address_ref = to_address.strip()
     named_alias = ""
     selector = None
@@ -394,14 +394,18 @@ async def chat_send(
         try:
             if selector is not None:
                 target = await resolve_chat_targets(
-                    db_infra, sender, selector, runtime, source, reuse_or_create=True,
+                    db_infra, sender, selector, runtime, reuse_or_create=True,
                 )
             else:
-                target = await resolve_chat_targets(db_infra, sender, session_id, runtime, source)
+                target = await resolve_chat_targets(db_infra, sender, session_id, runtime)
         except (HTTPException, FederationAuthorityError, ServiceError) as exc:
             return _send_refusal(exc, address=address_ref)
 
         recipient_rows = target.recipients
+        if expected_recipient_did and (len(recipient_rows) != 1 or expected_recipient_did not in {
+            recipient_rows[0].get("did_aw"), recipient_rows[0].get("did_key"), recipient_rows[0].get("did"),
+        }):
+            return json.dumps({"error": "contact_identity_binding_required"})
         continues_session = target.session_id is not None
         federated = any(row.get("external") or row.get("delivery_origin") for row in recipient_rows)
         sid = target.session_id or target.shared_session_id or uuid_mod.uuid4()
