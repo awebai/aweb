@@ -1,23 +1,106 @@
-"""Real stream handlers with simulated time and DB/registry/Redis boundaries."""
+"""Stream cadence with actual grant authority and simulated clock/frame/Redis boundaries."""
 
+import asyncio
+import base64
+import json
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from uuid import uuid4
-from team_facts_fixtures import legacy_team
 
 import httpx
 import pytest
-from fastapi import HTTPException
+import pytest_asyncio
+from fastapi import HTTPException, Request
 
 from aweb import grant_streams
-from aweb.auth_context import GrantContext
 from aweb.routes import chat, events, status
-from aweb.team_auth_deps import TeamIdentity
+from aweb.team_auth_deps import team_identity_with_grant_scope
+from test_dashboard_privacy import TEAM, privacy_app as privacy_app
+from test_identity_grants import _grant_headers, _session_keypair
+from test_messages_http import _signed_team_headers
 
 
-@pytest.fixture
-def harness(monkeypatch):
+async def authenticated_grant_member(env):
+    """Capture the real verifier result after signed registration, connect and mint."""
+    actor = env.actors["alice"]
+    sdk = env.app.state.awid_registry_client
+    certificate = json.loads(base64.b64decode(actor.certificate))
+    name, domain = TEAM.split(":", 1)
+    await sdk.register_team_certificate(
+        domain,
+        name,
+        team_controller_signing_key=env.team_sk,
+        certificate_id=certificate["certificate_id"],
+        member_did_key=actor.did,
+        member_did_aw=None,
+        member_address=None,
+        alias="alice",
+        identity_scope="local",
+        certificate=actor.certificate,
+    )
+    body = b"{}"
+    connected = await env.client.post(
+        "/v1/connect",
+        content=body,
+        headers={
+            **_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert connected.status_code == 200, connected.text
+    key, did = _session_keypair()
+    body = json.dumps(
+        {
+            "grant_did_key": did,
+            "scopes": ["events.read", "chat.read", "mail.read"],
+            "ttl_seconds": 600,
+        }
+    ).encode()
+    minted = await env.client.post(
+        "/v1/identity-grants",
+        content=body,
+        headers={
+            **_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, body),
+            "Content-Type": "application/json",
+        },
+    )
+    assert minted.status_code == 200, minted.text
+    headers = _grant_headers(
+        signing_key=key,
+        did_key=did,
+        grant_id=minted.json()["grant_id"],
+        method="GET",
+        path="/v1/events/stream",
+        aud=env.app.state.public_origin,
+    )
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "app": env.app,
+            "method": "GET",
+            "path": "/v1/events/stream",
+            "query_string": b"",
+            "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        },
+        receive=receive,
+    )
+    identity = await team_identity_with_grant_scope("events.read")(request, env.infra)
+    assert identity.did_key == actor.did
+    assert identity.grant.grant_id == minted.json()["grant_id"]
+    assert identity.grant.issuing_certificate_id == certificate["certificate_id"]
+    return identity, certificate
+
+
+@pytest_asyncio.fixture
+async def harness(privacy_app, monkeypatch):
+    env = privacy_app
+    identity, certificate = await authenticated_grant_member(env)
+
     start = datetime.now(timezone.utc)
     clock = SimpleNamespace(seconds=0.0)
 
@@ -26,55 +109,29 @@ def harness(monkeypatch):
         def now(cls, tz=None):
             return start + timedelta(seconds=clock.seconds)
 
-    async def sleep(seconds):
-        clock.seconds += seconds
+    controls = SimpleNamespace(calls=[], fail_at=None, revoke_at=None, revoked=False)
+    sdk = env.app.state.awid_registry_client
+    read_revocations = type(sdk).get_team_revocations_for_certificates
 
-    for module in (chat, events, status, grant_streams):
-        monkeypatch.setattr(module, "datetime", Clock)
-    monkeypatch.setattr(chat, "time", SimpleNamespace(monotonic=lambda: clock.seconds))
-    monkeypatch.setattr(events.asyncio, "sleep", sleep)
-    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "0")
-    identity = TeamIdentity(
-        team_id="default:example.com",
-        alias="alice",
-        did_key="did:key:alice",
-        did_aw="",
-        address="example.com/alice",
-        agent_id=str(uuid4()),
-        identity_scope="local",
-        certificate_id="",
-        grant=GrantContext(
-            str(uuid4()),
-            "did:key:session",
-            "cert",
-            ("events.read", "chat.read", "mail.read"),
-            start + timedelta(seconds=600),
-        ),
-    )
-
-    class Registry:
-        calls = None
-        fail_at = None
-        revoke_at = None
-
-        def __init__(self):
-            self.calls = []
-
-        async def get_team_fresh(self, domain, name):
-            return legacy_team(domain, name)
-
-        async def list_team_certificates(self, domain, name, *, active_only):
-            return [SimpleNamespace(certificate_id="cert")]
-
-        async def get_team_revocations(self, *_):
-            self.calls.append(clock.seconds)
-            if self.fail_at is not None and clock.seconds >= self.fail_at:
-                raise httpx.ConnectError("registry unavailable")
-            return (
-                {"cert"}
-                if self.revoke_at is not None and clock.seconds >= self.revoke_at
-                else set()
+    async def observed_revocations(client, domain, name, certificate_ids, *, fresh=False):
+        if client is not sdk:
+            return await read_revocations(client, domain, name, certificate_ids, fresh=fresh)
+        controls.calls.append(clock.seconds)
+        if controls.fail_at is not None and clock.seconds >= controls.fail_at:
+            raise httpx.ConnectError("registry unavailable")
+        if (
+            controls.revoke_at is not None
+            and clock.seconds >= controls.revoke_at
+            and not controls.revoked
+        ):
+            await sdk.revoke_team_certificate(
+                domain,
+                name,
+                team_controller_signing_key=env.team_sk,
+                certificate_id=certificate["certificate_id"],
             )
+            controls.revoked = True
+        return await read_revocations(client, domain, name, certificate_ids, fresh=fresh)
 
     class DB:
         grant_reads = 0
@@ -88,20 +145,7 @@ def harness(monkeypatch):
         async def fetch_one(self, sql, *args):
             if "identity_session_grants" in sql:
                 self.grant_reads += 1
-                return dict(
-                    team_id=identity.team_id,
-                    grant_did_key=identity.grant.session_did_key,
-                    expires_at=identity.grant.expires_at,
-                    revoked_at=None,
-                    issued_by_certificate_id="cert",
-                    agent_id=identity.agent_id,
-                    subject_status="active",
-                    subject_deleted_at=None,
-                    # The subject is a member under its team's current key.
-                    certificate_id="cert",
-                    accepted_team_did_key="did:key:zTeam",
-                    current_team_did_key="did:key:zTeam",
-                )
+                return await env.db.fetch_one(sql, *args)
             if "chat_participants" in sql:
                 return {"did": identity.did_key}
             return {"did_key": identity.did_key, "did_aw": ""}
@@ -142,7 +186,7 @@ def harness(monkeypatch):
             clock.seconds += 1
             return {"type": "message", "data": '{"type":"chat.message"}'}
 
-    registry, db, redis = Registry(), DB(), Redis()
+    db, redis = DB(), Redis()
 
     async def disconnected():
         return False
@@ -150,7 +194,7 @@ def harness(monkeypatch):
     request = SimpleNamespace(
         headers={},
         state=SimpleNamespace(),
-        app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry)),
+        app=env.app,
         is_disconnected=disconnected,
     )
 
@@ -188,7 +232,27 @@ def harness(monkeypatch):
             identity=auth,
         )
 
-    return SimpleNamespace(clock=clock, registry=registry, db=db, redis=redis, open=open_stream)
+    # Restore the event loop's real sleep before the serving fixture closes.
+    real_sleep = asyncio.sleep
+
+    async def advancing_sleep(seconds):
+        clock.seconds += seconds
+        await real_sleep(0)
+
+    class StreamLoop:
+        sleep = staticmethod(advancing_sleep)
+
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+    with monkeypatch.context() as scoped:
+        for module in (chat, events, status, grant_streams):
+            scoped.setattr(module, "datetime", Clock)
+        scoped.setattr(chat, "time", SimpleNamespace(monotonic=lambda: clock.seconds))
+        for module in (chat, events):
+            scoped.setattr(module, "asyncio", StreamLoop())
+        scoped.setattr(type(sdk), "get_team_revocations_for_certificates", observed_revocations)
+        yield SimpleNamespace(clock=clock, registry=controls, db=db, redis=redis, open=open_stream)
 
 
 async def collect(response):
