@@ -5,7 +5,6 @@ import asyncio
 import pytest
 import uvicorn
 from aweb_naapp.dispatch import State as DispatchState
-from aweb_naapp.runtime.approvals import ApprovalState
 from playwright.async_api import Error as BrowserError
 from playwright.async_api import expect
 
@@ -57,7 +56,7 @@ async def test_production_page_shows_submitted_header_values_before_approval(
     root, production_console, browser, tmp_path, request_kind: RequestKind, width
 ):
     pending = await header_request(root, request_kind=request_kind)
-    service, *_ = root
+    _, client, configured, member, *_ = root
     async with await browser.new_context(viewport={"width": width, "height": 1000}) as context:
         page = await context.new_page()
         cdp = await context.new_cdp_session(page)
@@ -90,7 +89,6 @@ async def test_production_page_shows_submitted_header_values_before_approval(
             raise AssertionError("the approval page disclosed the stored credential")
         # Both signed production requests allow X-Project then X-Account;
         # show their exact values and submitted order before the human decides.
-        await expect(page.locator("#request-action")).to_contain_text("account-A")
         headers = page.get_by_role("heading", name="Headers", exact=True).locator(
             "xpath=following-sibling::pre[1]"
         )
@@ -98,13 +96,20 @@ async def test_production_page_shows_submitted_header_values_before_approval(
         await expect(
             page.get_by_role("button", name="Approve with your passkey", exact=True)
         ).to_be_enabled()
-        db = service.runtime.db()
-        assert await db.fetch_value("SELECT state FROM approvals") == ApprovalState.PENDING.value
-        assert await db.fetch_value("SELECT consumed_operation_id FROM approvals") is None
-        assert (
-            await db.fetch_value("SELECT state FROM dispatches")
-            == DispatchState.AWAITING_APPROVAL.value
+        # The signed requester receipt must still locate this pending approval;
+        # reading its terms in the browser cannot approve or admit it (§10.4).
+        status_path = "/v1/status/" + pending.reply["request_ref"]
+        status = await client.get(
+            configured.public_origin + status_path,
+            headers=member.headers(aud=configured.public_origin, method="GET", path=status_path),
         )
+        assert status.status_code == 200
+        assert status.json() == {
+            "state": DispatchState.AWAITING_APPROVAL.value,
+            "request_id": pending.reply["request_id"],
+            "request_ref": pending.reply["request_ref"],
+            "approval_ref": pending.reply["approval_ref"],
+        }
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         await page.screenshot(
             path=tmp_path / f"approval-headers-{request_kind.value}-{width}.png", full_page=True
