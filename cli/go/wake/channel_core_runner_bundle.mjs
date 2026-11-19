@@ -4117,8 +4117,20 @@ function hydrateAddressesFromSignedPayload2(msg) {
 }
 var CHAT_MARK_READ_BATCH_SIZE = 1e3;
 var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-function isClientError(error) {
-  return error instanceof APIError && error.statusCode >= 400 && error.statusCode < 500;
+function isOlderServerWatermarkAnswer(error) {
+  if (!(error instanceof APIError) || error.statusCode !== 422) return false;
+  let refusal2;
+  try {
+    refusal2 = JSON.parse(error.body);
+  } catch {
+    return false;
+  }
+  const detail = refusal2?.detail;
+  if (!Array.isArray(detail)) return false;
+  return detail.some((entry) => {
+    const item = entry;
+    return item?.type === "missing" && Array.isArray(item.loc) && item.loc.length === 2 && item.loc[0] === "body" && item.loc[1] === "up_to_message_id";
+  });
 }
 function hasWellFormedMessageIDs(messageIds) {
   return messageIds.every((messageId) => UUID_PATTERN.test(messageId));
@@ -4134,7 +4146,7 @@ async function markRead(client, sessionId, messageIds) {
       try {
         await client.post(path, { message_ids: chunk });
       } catch (error) {
-        if (!isClientError(error) || !hasWellFormedMessageIDs(chunk)) throw error;
+        if (!isOlderServerWatermarkAnswer(error) || !hasWellFormedMessageIDs(chunk)) throw error;
         try {
           await client.post(path, { up_to_message_id: chunk[chunk.length - 1] });
         } catch {
@@ -8307,6 +8319,10 @@ var DEFAULT_AWID_REGISTRY_URL = "https://api.awid.ai";
 var REGISTRY_DISCOVERY_TTL_MS = 15 * 60 * 1e3;
 var REGISTRY_ADDRESS_TTL_MS = 5 * 60 * 1e3;
 var REGISTRY_KEY_TTL_MS = 15 * 60 * 1e3;
+var REGISTRY_FORCED_READ_INTERVAL_MS = 30 * 1e3;
+function headCacheKey(registryURL, stableID) {
+  return `${registryURL.trim().replace(/\/+$/, "")}|${stableID.trim()}`;
+}
 function pathSafeSegment(value) {
   return encodeURIComponent(value).replace(/%3A/gi, ":");
 }
@@ -8336,9 +8352,11 @@ var RegistryResolver = class _RegistryResolver {
   keyCache = /* @__PURE__ */ new Map();
   headCache = /* @__PURE__ */ new Map();
   receivedRegistries = /* @__PURE__ */ new Map();
+  /** The last read a disagreeing cached answer forced, per sender address or key. */
+  forcedReads = /* @__PURE__ */ new Map();
   fallbackRegistryURL;
   identityDomain;
-  async verifyStableIdentity(address, stableID, expectedCurrentDidKey = "") {
+  async verifyStableIdentity(address, stableID, expectedCurrentDidKey = "", checkpointFor) {
     const split2 = splitRegistryAddress(address);
     if (!split2 || !stableID.trim()) {
       return { outcome: "OK_DEGRADED" };
@@ -8350,9 +8368,47 @@ var RegistryResolver = class _RegistryResolver {
       return { outcome: "OK_DEGRADED", error: String(error) };
     }
     if (resolvedAddress.response.did_aw !== stableID) {
-      return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      const readKey = `address:${split2.domain}/${split2.name}`;
+      const claim = this.claimForcedRead(readKey);
+      if (!claim.allowed && claim.lastFailed) {
+        return { outcome: "STALE_CACHE", error: "registry address could not be read again in this interval" };
+      }
+      if (claim.allowed) {
+        try {
+          resolvedAddress = await this.resolveAddress(split2.domain, split2.name, true);
+          this.recordForcedRead(readKey, false);
+        } catch (error) {
+          this.recordForcedRead(readKey, true);
+          return { outcome: "STALE_CACHE", error: String(error) };
+        }
+      }
+      if (resolvedAddress.response.did_aw !== stableID) {
+        return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
+      }
     }
-    return this.verifyStableIdentityAtRegistry(resolvedAddress.registryURL, stableID, expectedCurrentDidKey);
+    const checkpoint = checkpointFor?.(resolvedAddress.registryURL);
+    if (checkpoint) this.seedVerifiedHead(resolvedAddress.registryURL, stableID, checkpoint);
+    const result = await this.verifyStableIdentityAtRegistry(resolvedAddress.registryURL, stableID, expectedCurrentDidKey);
+    return { ...result, registryURL: resolvedAddress.registryURL, newCheckpoint: !checkpoint };
+  }
+  /**
+   * Whether a cached answer that disagrees with a signed message may be read
+   * again from the registry now: once per REGISTRY_FORCED_READ_INTERVAL_MS for
+   * that sender. When it may not, lastFailed says whether the read that used
+   * the interval failed; the cache then still holds the older answer.
+   */
+  claimForcedRead(key) {
+    const now = this.now();
+    const last = this.forcedReads.get(key);
+    if (last && now - last.at < REGISTRY_FORCED_READ_INTERVAL_MS) {
+      return { allowed: false, lastFailed: last.failed };
+    }
+    this.forcedReads.set(key, { at: now, failed: false });
+    return { allowed: true, lastFailed: false };
+  }
+  recordForcedRead(key, failed) {
+    const read = this.forcedReads.get(key);
+    if (read) this.forcedReads.set(key, { ...read, failed });
   }
   /** Addressless receive authority comes only from the selected delivery team.
    * Each registry has independent key/log caches; no address is manufactured. */
@@ -8367,7 +8423,7 @@ var RegistryResolver = class _RegistryResolver {
         this.receivedRegistries.set(registryURL, scoped);
       }
       const checkpoint = checkpointFor?.(registryURL);
-      if (checkpoint) scoped.seedVerifiedHead(stableID, checkpoint);
+      if (checkpoint) scoped.seedVerifiedHead(registryURL, stableID, checkpoint);
       return { registryURL, result: await scoped.verifyStableIdentityAtRegistry(registryURL, stableID, did, true) };
     } catch (error) {
       return { registryURL: "", result: { outcome: "OK_DEGRADED", error: String(error) } };
@@ -8397,20 +8453,41 @@ var RegistryResolver = class _RegistryResolver {
       return { outcome: "OK_DEGRADED", error: String(error) };
     }
     const expectedKey = expectedCurrentDidKey.trim();
+    if (expectedKey && resolution.current_did_key !== expectedKey && !fresh) {
+      const readKey = `key:${registryURL}|${stableID}`;
+      const claim = this.claimForcedRead(readKey);
+      if (!claim.allowed && claim.lastFailed) {
+        return {
+          outcome: "STALE_CACHE",
+          currentDidKey: resolution.current_did_key,
+          error: "registry key could not be read again in this interval"
+        };
+      }
+      if (claim.allowed) {
+        const staleKey = resolution.current_did_key;
+        try {
+          resolution = await this.resolveDidKey(registryURL, stableID, true);
+          this.recordForcedRead(readKey, false);
+        } catch (error) {
+          this.recordForcedRead(readKey, true);
+          return { outcome: "STALE_CACHE", currentDidKey: staleKey, error: String(error) };
+        }
+      }
+    }
     if (expectedKey && resolution.current_did_key !== expectedKey) {
       return {
-        outcome: fresh ? "HARD_ERROR" : "STALE_CACHE",
+        outcome: "HARD_ERROR",
         currentDidKey: resolution.current_did_key,
-        error: "registry key cache does not match the signed current key"
+        error: "registry key does not match the signed current key"
       };
     }
     if (resolution.did_aw !== stableID) {
       return { outcome: "HARD_ERROR", error: "registry key did:aw mismatch" };
     }
-    const cached = this.headCache.get(stableID);
+    const cached = this.headCache.get(headCacheKey(registryURL, stableID));
     const verification = verifyDidKeyResolution(resolution, cached, this.now());
     if (verification.outcome === "OK_VERIFIED" && verification.nextHead) {
-      this.headCache.set(stableID, verification.nextHead);
+      this.headCache.set(headCacheKey(registryURL, stableID), verification.nextHead);
     }
     if (verification.outcome === "OK_DEGRADED" && !verification.error) {
       return this.verifyStableIdentityViaFullLog(
@@ -8428,17 +8505,19 @@ var RegistryResolver = class _RegistryResolver {
   }
   /**
    * Install a previously verified log head as the anti-rollback anchor for
-   * stableID. Callers restore it from the checkpoint persisted with the pin so a
-   * restart does not forget which sequence was already verified — without it a
-   * registry can serve a valid truncated prefix and roll a rotated identity back
-   * to a retired key (default-aajc.8). Seeding never moves the anchor backwards.
+   * stableID at registryURL. Callers restore it from the persisted checkpoint
+   * so a restart does not forget which sequence was already verified — without
+   * it a registry can serve a valid truncated prefix and roll a rotated identity
+   * back to a retired key (default-aajc.8). Seeding never moves the anchor
+   * backwards.
    */
-  seedVerifiedHead(stableID, head) {
+  seedVerifiedHead(registryURL, stableID, head) {
     const id = stableID.trim();
     if (!id || !head || !isValidDidLogSequence(head.seq) || !isLowerHex(head.entryHash.trim())) return;
-    const existing = this.headCache.get(id);
+    const key = headCacheKey(registryURL, id);
+    const existing = this.headCache.get(key);
     if (existing && existing.seq >= head.seq) return;
-    this.headCache.set(id, head);
+    this.headCache.set(key, head);
   }
   async verifyStableIdentityViaFullLog(registryURL, stableID, currentDidKey) {
     let entries;
@@ -8457,7 +8536,7 @@ var RegistryResolver = class _RegistryResolver {
     if (head.currentDidKey.trim() !== currentDidKey.trim()) {
       return { outcome: "HARD_ERROR", currentDidKey, error: "audit log current did:key mismatch" };
     }
-    const checkpoint = this.headCache.get(stableID);
+    const checkpoint = this.headCache.get(headCacheKey(registryURL, stableID));
     if (checkpoint) {
       if (head.seq < checkpoint.seq) {
         return { outcome: "HARD_ERROR", currentDidKey, error: "audit log behind verified checkpoint" };
@@ -8470,7 +8549,7 @@ var RegistryResolver = class _RegistryResolver {
         };
       }
     }
-    this.headCache.set(stableID, head);
+    this.headCache.set(headCacheKey(registryURL, stableID), head);
     return { outcome: "OK_VERIFIED", currentDidKey, verifiedHead: head };
   }
   async fetchDidLog(registryURL, stableID) {
@@ -8500,14 +8579,14 @@ var RegistryResolver = class _RegistryResolver {
     }
     const verification = verifyDidKeyResolution(
       resolution,
-      this.headCache.get(resolvedAddress.response.did_aw),
+      this.headCache.get(headCacheKey(resolvedAddress.registryURL, resolvedAddress.response.did_aw)),
       this.now()
     );
     if (verification.outcome === "HARD_ERROR") {
       throw new Error(verification.error || "invalid log head");
     }
     if (verification.outcome === "OK_VERIFIED" && verification.nextHead) {
-      this.headCache.set(resolvedAddress.response.did_aw, verification.nextHead);
+      this.headCache.set(headCacheKey(resolvedAddress.registryURL, resolvedAddress.response.did_aw), verification.nextHead);
     }
     return {
       did: resolution.current_did_key,
@@ -8554,16 +8633,17 @@ var RegistryResolver = class _RegistryResolver {
     });
     return resolvedAuthority;
   }
-  async resolveAddress(domain, name) {
+  async resolveAddress(domain, name, fresh = false) {
     const key = `${domain}/${name}`;
     const cached = this.addressCache.get(key);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!fresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const registryURL = await this.discoverRegistry(domain);
     const response = await this.getJSON(
       registryURL,
-      `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`
+      `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`,
+      fresh
     );
     const value = { registryURL, response };
     this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
@@ -9142,6 +9222,31 @@ var PinStore = class _PinStore {
     }
     return removed;
   }
+  /**
+   * Moves the pin bound to address to retiredKey, an address no lookup
+   * reaches, keeping its record and anti-rollback anchor; address is then
+   * free. Returns true when a pin was moved.
+   */
+  retireAddress(address, retiredKey) {
+    let moved = false;
+    const pinKey = this.addresses.get(address);
+    if (pinKey !== void 0) {
+      this.addresses.delete(address);
+      const pin = this.mutablePins.get(pinKey);
+      if (pin?.address === address) {
+        pin.address = retiredKey;
+        this.addresses.set(retiredKey, pinKey);
+      }
+      moved = true;
+    }
+    for (const [key, pin] of this.mutablePins) {
+      if (pin.address !== address) continue;
+      pin.address = retiredKey;
+      this.addresses.set(retiredKey, key);
+      moved = true;
+    }
+    return moved;
+  }
   removeAddresses(addresses) {
     let removed = false;
     for (const address of addresses) {
@@ -9180,12 +9285,22 @@ var PinStore = class _PinStore {
     const recorded = this.recordVerifiedIdentity(pinKey, address, stableID, didKey);
     return removed || recorded;
   }
-  advanceLogCheckpoint(stableID, seq2, entryHash) {
+  /**
+   * Clears the anchor an earlier client kept on the pin, once a checkpoint in
+   * the per-registry map carries it. Returns whether the pin changed.
+   */
+  clearPinLogAnchor(stableID) {
     const pin = this.mutablePins.get(stableID);
-    if (!pin || seq2 <= (pin.log_seq ?? 0)) return false;
-    pin.log_seq = seq2;
-    pin.log_entry_hash = entryHash;
+    if (!pin || pin.log_seq === void 0 && pin.log_entry_hash === void 0) return false;
+    delete pin.log_seq;
+    delete pin.log_entry_hash;
     return true;
+  }
+  /** The registries holding a checkpoint for stableID. */
+  identityCheckpointRegistries(stableID) {
+    const heads = this.unknownRootFields.get("received_identity_heads");
+    if (!heads || typeof heads !== "object" || Array.isArray(heads)) return [];
+    return Object.entries(heads).filter(([, identities]) => !!identities && typeof identities === "object" && identities[stableID] !== void 0).map(([registryURL]) => registryURL);
   }
   // Keep a trust decision and its commit in one per-process critical section.
   // A CAS conflict can then replace stale in-memory state without racing another
@@ -9680,7 +9795,7 @@ var SenderTrustManager = class {
       const local = resolved.receivedLocalSender;
       if (!acceptedInput || recipientBindingMismatch) return { status: status2, stored: false };
       if (local.did !== fromDID || fromStableID) return { status: "verification_stale", stored: false };
-      return { status: local.status, stored: local.status === "verified" && rawAddress.includes("/") ? store.removeAddresses([rawAddress]) : false };
+      return { status: local.status, stored: local.status === "verified" ? releaseTeamNamePin(store, rawAddress, rawAddress, this.now()) : false };
     }
     if (resolved?.receivedSender) {
       const received = resolved.receivedSender;
@@ -9713,6 +9828,9 @@ var SenderTrustManager = class {
       if (meta.resolutionError === "unavailable" && this.pinnedToKey(store, trustAddress, fromDID, fromStableID)) {
         return { status: status2, stored: false };
       }
+      if (meta.resolutionError === "not_found" && this.pinnedToKey(store, trustAddress, fromDID, fromStableID)) {
+        return { status: "verification_stale", stored: false };
+      }
       return this.unresolvedMetadataResult(meta);
     }
     if (this.teamRosterAliasReference(rawAddress.trim()) !== void 0 && fromDID) {
@@ -9739,13 +9857,19 @@ var SenderTrustManager = class {
       rotationAnnouncement,
       replacementAnnouncement,
       meta,
-      registryCheck.confirmedCurrentKey
+      registryCheck
     );
-    const checkpointAdvanced = this.persistVerifiedHeadCheckpoint(
-      store,
-      fromStableID,
-      registryCheck.verifiedHead
-    );
+    const persisted = this.persistIdentityCheckpoint(store, {
+      registryURL: registryCheck.registryURL,
+      stableID: fromStableID,
+      head: registryCheck.verifiedHead,
+      carriesPinAnchor: registryCheck.carriesPinAnchor
+    });
+    if (persisted === "refused") {
+      const verified = pinResult.status === "verified" || pinResult.status === "verified_custodial";
+      return { status: verified ? "verification_stale" : pinResult.status, stored: pinResult.stored };
+    }
+    const checkpointAdvanced = persisted;
     if (pinResult.status === "identity_mismatch" && fromDID && this.teamRosterAliasReference(rawAddress.trim()) !== void 0 && !fromStableID?.startsWith("did:aw:")) {
       const localResult = this.verifyLocalSenderAgainstResolvedMetadata(
         store,
@@ -9863,36 +9987,63 @@ var SenderTrustManager = class {
   }
   async prepareStableIdentityRegistry(store, status2, trustAddress, fromDID, fromStableID) {
     if (!this.requiresStableIdentityCheck(status2, fromDID, fromStableID)) return void 0;
-    const checkpoint = this.pinCheckpoint(store, fromStableID);
-    this.seedVerifiedHeadFromPin(store, fromStableID);
+    let seed;
+    const result = await this.registry.verifyStableIdentity(trustAddress, fromStableID, fromDID, (registryURL) => {
+      const held = this.heldCheckpoint(store, registryURL, fromStableID);
+      seed = { registryURL, checkpoint: held?.checkpoint, fromPin: held?.fromPin ?? false };
+      return held?.head;
+    });
+    return { seed, result };
+  }
+  /**
+   * The checkpoint held for stableID at registryURL; without one, the anchor an
+   * earlier client kept on the pin, offered as the seed it is carried from. An
+   * unreadable checkpoint seeds nothing: verification then runs from the log.
+   */
+  heldCheckpoint(store, registryURL, stableID) {
+    let mapped;
+    try {
+      mapped = store.receivedIdentityCheckpoint(registryURL, stableID);
+    } catch {
+      mapped = void 0;
+    }
+    if (mapped) return { head: mapped, checkpoint: { seq: mapped.seq, entryHash: mapped.entryHash }, fromPin: false };
+    const anchor = this.pinCheckpoint(store, stableID);
+    if (!anchor) return void 0;
     return {
-      checkpoint,
-      result: await this.registry.verifyStableIdentity(trustAddress, fromStableID, fromDID)
+      head: {
+        seq: anchor.seq,
+        entryHash: anchor.entryHash,
+        stateHash: "",
+        currentDidKey: store.pins.get(stableID)?.did_key ?? "",
+        fetchedAt: 0
+      },
+      checkpoint: anchor,
+      fromPin: true
     };
   }
   applyPreparedStableIdentityRegistry(store, status2, fromDID, fromStableID, prepared) {
-    if (!this.requiresStableIdentityCheck(status2, fromDID, fromStableID)) {
-      return { status: status2, confirmedCurrentKey: false };
-    }
-    if (!prepared) return { status: "verification_stale", confirmedCurrentKey: false };
-    const currentCheckpoint = this.pinCheckpoint(store, fromStableID);
-    if (!this.sameCheckpoint(currentCheckpoint, prepared.checkpoint)) {
-      return { status: "verification_stale", confirmedCurrentKey: false };
+    const none = (result) => ({ status: result, confirmedCurrentKey: false, movedRegistry: false, carriesPinAnchor: false });
+    if (!this.requiresStableIdentityCheck(status2, fromDID, fromStableID)) return none(status2);
+    if (!prepared) return none("verification_stale");
+    if (prepared.seed) {
+      const held = this.heldCheckpoint(store, prepared.seed.registryURL, fromStableID);
+      if (!this.sameCheckpoint(held?.checkpoint, prepared.seed.checkpoint)) return none("verification_stale");
     }
     const registryResult = prepared.result;
-    if (registryResult.outcome === "STALE_CACHE") {
-      return { status: "verification_stale", confirmedCurrentKey: false };
-    }
-    if (registryResult.outcome === "HARD_ERROR") {
-      return { status: "identity_mismatch", confirmedCurrentKey: false };
-    }
+    if (registryResult.outcome === "STALE_CACHE") return none("verification_stale");
+    if (registryResult.outcome === "HARD_ERROR") return none("identity_mismatch");
     if (registryResult.outcome === "OK_VERIFIED" && registryResult.currentDidKey && registryResult.currentDidKey !== fromDID) {
-      return { status: "identity_mismatch", confirmedCurrentKey: false };
+      return none("identity_mismatch");
     }
+    const registryURL = registryResult.registryURL;
     return {
       status: status2,
       confirmedCurrentKey: registryResult.outcome === "OK_VERIFIED" && registryResult.currentDidKey === fromDID,
-      verifiedHead: registryResult.verifiedHead
+      movedRegistry: !!registryResult.newCheckpoint && !!registryURL && store.identityCheckpointRegistries(fromStableID).some((registry) => registry !== registryURL),
+      verifiedHead: registryResult.verifiedHead,
+      registryURL,
+      carriesPinAnchor: prepared.seed?.fromPin ?? false
     };
   }
   pinCheckpoint(store, stableID) {
@@ -9904,39 +10055,30 @@ var SenderTrustManager = class {
     if (!left || !right) return left === right;
     return left.seq === right.seq && left.entryHash === right.entryHash;
   }
-  seedVerifiedHeadFromPin(store, stableID) {
-    const seed = this.registry.seedVerifiedHead;
-    if (typeof seed !== "function") return;
-    const checkpoint = this.pinCheckpoint(store, stableID);
-    if (!checkpoint) return;
-    const pin = store.pins.get(stableID);
-    seed.call(this.registry, stableID, {
-      seq: checkpoint.seq,
-      entryHash: checkpoint.entryHash,
-      stateHash: "",
-      currentDidKey: pin.did_key ?? "",
-      fetchedAt: 0
-    });
-  }
   /**
-   * Record the verified head with the pin so the anchor survives a restart. Only
-   * ever advances, so a stale response cannot weaken the checkpoint. Called
-   * after the pin check because on first contact the pin does not exist until
-   * that check runs.
+   * Record a verified head as the checkpoint for (registry, stable ID). Only
+   * ever advances; a rollback or fork is refused, and the message is then
+   * stale. A head carried from the anchor kept on the pin clears the pin's copy.
    */
-  persistVerifiedHeadCheckpoint(store, stableID, head) {
-    if (!stableID || !head || !isValidDidLogSequence(head.seq) || !head.entryHash.trim()) return false;
-    return store.advanceLogCheckpoint(stableID, head.seq, head.entryHash);
+  persistIdentityCheckpoint(store, write) {
+    const { registryURL, stableID, head } = write;
+    if (!registryURL || !stableID || !head || !isValidDidLogSequence(head.seq) || !head.entryHash.trim()) return false;
+    let advanced;
+    try {
+      advanced = store.advanceReceivedIdentityCheckpoint(registryURL, stableID, head);
+    } catch {
+      return "refused";
+    }
+    const cleared = write.carriesPinAnchor ? store.clearPinLogAnchor(stableID) : false;
+    return advanced || cleared;
   }
-  checkTOFUPinWithMeta(store, status2, rawAddress, trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registryConfirmedCurrentKey) {
+  checkTOFUPinWithMeta(store, status2, rawAddress, trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registry) {
+    const registryConfirmedCurrentKey = registry.confirmedCurrentKey;
     if (!status2 || status2 !== "verified" && status2 !== "verified_custodial" || !fromDID || !trustAddress || !meta.resolved) {
       return { status: status2, stored: false };
     }
     if (meta.identityScope === "local") {
-      return {
-        status: status2,
-        stored: store.removeAddresses([trustAddress, rawAddress !== trustAddress ? rawAddress : ""])
-      };
+      return { status: status2, stored: releaseTeamNamePin(store, rawAddress, trustAddress, this.now()) };
     }
     if (meta.custody === "custodial" && status2 === "verified") {
       status2 = "verified_custodial";
@@ -9974,7 +10116,7 @@ var SenderTrustManager = class {
         if (fromStableID) {
           const pin = store.pins.get(pinKey);
           if (pin?.did_key && pin.did_key !== fromDID) {
-            if (registryConfirmedCurrentKey) {
+            if (registryConfirmedCurrentKey && !registry.movedRegistry) {
               store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
               return { status: status2, stored: true };
             }
@@ -10288,6 +10430,25 @@ function escapeJSON3(s) {
     }
   }
   return result;
+}
+function releaseTeamNamePin(store, rawAddress, trustAddress, now) {
+  if (!isTeamScopedName(rawAddress)) return false;
+  const retiredAt = new Date(now).toISOString().replace(/\.\d{3}Z$/, "Z");
+  let moved = false;
+  for (const key of /* @__PURE__ */ new Set([trustAddress, rawAddress.trim()])) {
+    if (key) moved = store.retireAddress(key, `retired:${key}@${retiredAt}`) || moved;
+  }
+  return moved;
+}
+function isTeamScopedName(reference) {
+  const value = reference.trim();
+  if (!value) return false;
+  if (!value.includes("/") && !value.includes("~")) return true;
+  const slash = value.indexOf("/");
+  const team = value.slice(0, slash);
+  const name = value.slice(slash + 1).trim();
+  const colon = team.indexOf(":");
+  return colon > 0 && colon === team.lastIndexOf(":") && colon < team.length - 1 && name !== "" && !name.includes("/");
 }
 
 // channel-core/src/channel.ts
@@ -11220,7 +11381,7 @@ function isTrustedVerificationStatus(status2) {
 function trustWarningLine(status2) {
   if (isTrustedVerificationStatus(status2)) return "";
   if (status2 === "verification_stale") {
-    return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
+    return "WARNING: sender signature verified, but the sender's current registry binding could not be confirmed (it could not be refreshed, or the registry no longer has the sender's address). This is not an identity-mismatch finding; retry verification or confirm the sender another way before sensitive work.";
   }
   if (status2 === "pin_conflict") {
     return "WARNING: two pin records conflict for this sender. Stable-identity migration was refused to avoid discarding trust state; inspect and repair the pin store before trusting the sender.";
