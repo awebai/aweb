@@ -30,7 +30,9 @@ from aweb.service_errors import IdentityBindingCode, IdentityBindingError, Servi
         ),
     ],
 )
-async def test_binding_handler_preserves_reason_status_retry_and_action(code, status, message):
+async def test_binding_handler_preserves_reason_status_retry_and_action(
+    code, status, message
+):
     app = FastAPI()
 
     @app.exception_handler(ServiceError)
