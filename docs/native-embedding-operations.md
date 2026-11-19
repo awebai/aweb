@@ -297,6 +297,36 @@ registration remains pending. Registration completion is a separate outcome;
 replay retains the exact signed artifact rather than minting another one.
 These are the two outcomes ruled by Antares `0ffc3028` and `5cb50151`.
 
+## Ordinary controller import
+
+The same keyword-only `connect_agent(..., controller_import=member,
+planned_ids=...)` accepts an actual
+`aweb.controller_import.VerifiedControllerImportMember` from the fresh
+`verify_controller_import` owner. See [checked team-control admission](team-control-admission.md)
+for the shared signed selectors and owner-read snapshot. A batch or roster row
+is not a constructor proof. Preview yields no member inputs; revoked rows are
+planning data only. Unknown evidence raises a typed refusal and imports nothing.
+
+This input is exclusive with generation. The constructor derives the exact
+team/member/alias/scope/certificate and controller fields from the checked
+member and refuses contradictory accompanying fields with
+`controller_import_mismatch` and an action sentence. It rechecks original
+request freshness after lock waits and compares the admitted controller under
+the team lock before taking workspace locks and writing the member. A moved
+key raises `controller_import_stale`; neither outcome commits projection
+changes. Fresh global binding and kind observations retain their separate
+owners. The checked import is never accepted as a request or generation proof.
+
+Ordinary import always ensures a workspace. New resources use distinct planned
+agent/workspace UUIDs and a manual workspace with empty host/path and no
+repository. Reuse preserves the exact IDs, member name/role and workspace
+profile/repository/kind/host/path. Without a new actual kind observation,
+existing verified kind is preserved; an actual observation still governs its
+projection. The Python result reports effective role, agent type and workspace
+type. Host account/target authorization and operation completion remain in the
+host's transaction. Import supplies no member artifact, fingerprint or new API
+credential. Pending custodial activation still uses verified generation.
+
 ## Native application slots and the host resource reference
 
 Hosts consume `native_resources(app)`. The native API still has initialized

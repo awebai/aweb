@@ -12,6 +12,7 @@ from awid.team_certificate import issue_team_certificate
 from aweb.certificate_auth import verify_certificate_generation
 from aweb.controller_import import verify_controller_import
 from aweb.identity_binding import observe_identity_binding
+from aweb.team_admission import admit_team
 from aweb.routes.connect import (
     ConnectIdentityRefusal,
     ConnectIdentityRefusalReason,
@@ -234,6 +235,13 @@ async def test_controller_move_after_import_snapshot_refuses_old_projection(
 ):
     monkeypatch.setenv("AWEB_ENFORCE_TEAM_KEY_PINS", "false")
     proof, namespace, _, _ = await checked_member(real_stack)
+    # Establish the existing admission before moving its pin through the real
+    # registry/key owner, exactly as the supported rotation path does.
+    await admit_team(
+        db=real_stack.aweb_db,
+        team_id=proof.team_id,
+        team_did_key=proof.verified_team_did_key,
+    )
     next_controller = bytes([85]) * 32
     async with aclosing(
         RegistryClient(
