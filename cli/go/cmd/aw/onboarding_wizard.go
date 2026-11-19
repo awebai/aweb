@@ -151,16 +151,17 @@ func executeHostedPath(req guidedOnboardingRequest) (*guidedOnboardingResult, er
 			}
 			return nil, err
 		}
-		if err := persistGuidedHostedState(
-			req.WorkingDir,
-			provisioned.RegistryURL,
-			provisioned.SigningKey,
-			provisioned.Certificate,
-			provisioned.DIDKey,
-			provisioned.DIDAW,
-			provisioned.MemberAddress,
-			req.Global,
-		); err != nil {
+		scope := localHostedIdentity
+		if req.Global {
+			scope = globalHostedIdentity
+		}
+		if err := persistHostedIdentityState(hostedStatePersistence{
+			WorkingDir:   req.WorkingDir,
+			IdentityHome: awconfig.IdentityHome{Root: filepath.Join(filepath.Clean(req.WorkingDir), ".aw"), Source: awconfig.IdentityHomeDefault},
+			RegistryURL:  provisioned.RegistryURL, SigningKey: provisioned.SigningKey,
+			Certificate: provisioned.Certificate, DIDKey: provisioned.DIDKey,
+			DIDAW: provisioned.DIDAW, MemberAddress: provisioned.MemberAddress, Scope: scope,
+		}); err != nil {
 			return nil, err
 		}
 		break
@@ -791,40 +792,6 @@ func validateHostedSignupResponse(
 		return nil, fmt.Errorf("hosted signup certificate team %q does not match response team_id %q", cert.Team, resp.TeamID)
 	}
 	return cert, nil
-}
-
-func persistGuidedHostedState(
-	workingDir, registryURL string,
-	signingKey ed25519.PrivateKey,
-	cert *awid.TeamCertificate,
-	didKey, didAW, memberAddress string,
-	global bool,
-	identityHomes ...string,
-) error {
-	identityHome := filepath.Join(filepath.Clean(workingDir), ".aw")
-	if len(identityHomes) > 0 && strings.TrimSpace(identityHomes[0]) != "" {
-		identityHome = filepath.Clean(identityHomes[0])
-	}
-	if err := persistLocalSigningKeyAndCertificateAt(workingDir, identityHome, signingKey, cert); err != nil {
-		return err
-	}
-	if !global {
-		return nil
-	}
-	identityPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "identity.yaml")
-	if err != nil {
-		return err
-	}
-	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
-		DID:            didKey,
-		StableID:       didAW,
-		Address:        memberAddress,
-		Custody:        awid.CustodySelf,
-		IdentityScope:  awid.IdentityModeGlobal,
-		RegistryURL:    strings.TrimSpace(registryURL),
-		RegistryStatus: "registered",
-		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
-	})
 }
 
 func promptHostedClaimHuman(req guidedOnboardingRequest, onboardingURL string) error {

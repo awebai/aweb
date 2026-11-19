@@ -37,7 +37,7 @@ func newOnboardingPersistenceFixture(t *testing.T) onboardingPersistenceFixture 
 
 func TestHostedPersistenceRequiresExplicitIdentityHomeBeforeWriting(t *testing.T) {
 	fixture := newOnboardingPersistenceFixture(t)
-	err := persistGuidedHostedState(fixture.WorkingDir, "https://registry.example", fixture.SigningKey, fixture.Certificate, fixture.DIDKey, fixture.DIDAW, "example.test/probe", false, "")
+	err := persistHostedIdentityState(hostedStatePersistence{WorkingDir: fixture.WorkingDir, SigningKey: fixture.SigningKey, Certificate: fixture.Certificate, Scope: localHostedIdentity})
 	if err == nil || !strings.Contains(err.Error(), "Select an identity home and retry") {
 		t.Fatalf("missing required-home refusal: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestHostedPersistenceRequiresExplicitIdentityHomeBeforeWriting(t *testing.T
 
 func TestHostedPersistenceWritesOnlyExplicitLocalHome(t *testing.T) {
 	fixture := newOnboardingPersistenceFixture(t)
-	if err := persistGuidedHostedState(fixture.WorkingDir, "https://registry.example", fixture.SigningKey, fixture.Certificate, fixture.DIDKey, fixture.DIDAW, "example.test/probe", false, fixture.Home.Root); err != nil {
+	if err := persistHostedIdentityState(hostedStatePersistence{WorkingDir: fixture.WorkingDir, IdentityHome: fixture.Home, RegistryURL: "https://registry.example", SigningKey: fixture.SigningKey, Certificate: fixture.Certificate, DIDKey: fixture.DIDKey, DIDAW: fixture.DIDAW, MemberAddress: "example.test/probe", Scope: localHostedIdentity}); err != nil {
 		t.Fatal(err)
 	}
 	key, err := awid.LoadSigningKey(filepath.Join(fixture.Home.Root, "signing.key"))
@@ -72,5 +72,37 @@ func TestHostedPersistenceWritesOnlyExplicitLocalHome(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(fixture.Home.Root, "identity.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("local persistence wrote global identity state: %v", err)
+	}
+}
+
+func TestHostedPersistenceGlobalStateUsesTheSameExplicitHome(t *testing.T) {
+	fixture := newOnboardingPersistenceFixture(t)
+	certificate, err := awid.SignTeamCertificate(fixture.SigningKey, awid.TeamCertificateFields{Team: "default:example.test", MemberDIDKey: fixture.DIDKey, MemberDIDAW: fixture.DIDAW, MemberAddress: "example.test/probe", Alias: "probe", IdentityScope: awid.IdentityModeGlobal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistHostedIdentityState(hostedStatePersistence{WorkingDir: fixture.WorkingDir, IdentityHome: fixture.Home, RegistryURL: "https://registry.example", SigningKey: fixture.SigningKey, Certificate: certificate, DIDKey: fixture.DIDKey, DIDAW: fixture.DIDAW, MemberAddress: "example.test/probe", Scope: globalHostedIdentity}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(fixture.Home.Root, "identity.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.DID != fixture.DIDKey || state.StableID != fixture.DIDAW || state.Address != "example.test/probe" || state.IdentityScope != awid.IdentityModeGlobal {
+		t.Fatalf("incorrect global identity state: %+v", state)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.WorkingDir, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("wrote implicit home: %v", err)
+	}
+}
+
+func TestHostedPersistenceRejectsMissingScopeBeforeWriting(t *testing.T) {
+	fixture := newOnboardingPersistenceFixture(t)
+	err := persistHostedIdentityState(hostedStatePersistence{WorkingDir: fixture.WorkingDir, IdentityHome: fixture.Home, SigningKey: fixture.SigningKey, Certificate: fixture.Certificate})
+	if err == nil || !strings.Contains(err.Error(), "Select local or global identity scope and retry") {
+		t.Fatalf("missing scope refusal: %v", err)
+	}
+	if _, err := os.Stat(fixture.Home.Root); !os.IsNotExist(err) {
+		t.Fatalf("wrote credentials before validating scope: %v", err)
 	}
 }
