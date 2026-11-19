@@ -21,15 +21,9 @@ from awid.team_ids import build_team_id, parse_team_id
 from pgdbm import AsyncDatabaseManager
 
 from aweb.awid_error_handling import AWID_DEPENDENCY_ERRORS
+from aweb.certificate_evidence import EvidenceMode
 from aweb.service_errors import ServiceError
 from aweb.team_key_pins import pinned_team_key
-
-
-class EvidenceMode(StrEnum):
-    """The two acquisition strengths allowed by the certificate contract."""
-
-    CACHED = "cached"
-    FRESH = "fresh"
 
 
 class CertificateVerificationReason(StrEnum):
