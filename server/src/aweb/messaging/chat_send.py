@@ -1270,6 +1270,12 @@ class ChatSessionSelection(Enum):
     REUSE_PAIR = auto()
 
 
+def _require_chat_session_selection(value: ChatSessionSelection) -> None:
+    """Keep the internal session branch named before resolution performs reads."""
+    if not isinstance(value, ChatSessionSelection):
+        raise TypeError("Pass a named ChatSessionSelection value.")
+
+
 @dataclass(frozen=True, init=False)
 class ChatTarget:
     """Whom a chat send reaches: the recipients a new send names, or the session it continues.
@@ -1301,8 +1307,7 @@ class ChatTarget:
         session_selection: ChatSessionSelection = ChatSessionSelection.REQUEST_DEFAULT,
         shared_session_id: UUID | None = None,
     ) -> None:
-        if not isinstance(session_selection, ChatSessionSelection):
-            raise TypeError("Chat targets require a named ChatSessionSelection")
+        _require_chat_session_selection(session_selection)
         object.__setattr__(
             self,
             "recipients",
@@ -1354,6 +1359,7 @@ async def resolve_chat_targets(
     the target carries the session the two share, which the sender signs, or
     none, for which the sender proposes an id.
     """
+    _require_chat_session_selection(session_selection)
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
