@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -15,6 +16,9 @@ from awid.registry import RegistryClient
 from .config import get_presence_ttl_seconds
 from .grant_liveness import valid_grant_liveness_by_workspace
 from .presence import list_agent_presences_by_workspace_ids
+
+if TYPE_CHECKING:
+    from .grant_liveness import GrantLivenessFailurePolicy
 
 
 class PresenceStatus(StrEnum):
@@ -62,6 +66,7 @@ async def workspace_activity_by_id(
     *,
     workspace_ids: list[str],
     registry_client: RegistryClient,
+    failure_policy: GrantLivenessFailurePolicy,
     request: Request | None = None,
 ) -> dict[str, WorkspaceActivity]:
     """Combine the timestamps written by root, MCP and valid grant heartbeats.
@@ -87,6 +92,7 @@ async def workspace_activity_by_id(
         db,
         workspace_ids,
         registry_client=registry_client,
+        failure_policy=failure_policy,
         request=request,
         ttl_seconds=get_presence_ttl_seconds(),
     )
