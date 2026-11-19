@@ -64,7 +64,14 @@ func TestAResultSignsTheHandoffIDUnderItsOwnAuth(t *testing.T) {
 }
 
 func TestEveryRequestHasAFreshNonce(t *testing.T) {
-	a, b := newNonce(), newNonce()
+	a, err := newNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := newNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(a) != 32 || a == b || a != string(bytes.ToLower([]byte(a))) {
 		t.Fatalf("nonces %q %q", a, b)
 	}
