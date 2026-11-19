@@ -21,6 +21,12 @@ relative to the selected package. Use one suite when selecting a package-specifi
 file. Existing `PYTEST_ADDOPTS` is preserved; worker options must instead use
 `LOCAL_TEST_WORKERS`.
 
+Before a server suite, the target runs `make prepare-server-node`: the existing
+`make test-node-deps` installs the three committed npm lockfiles, then builds
+channel-core, channel and pi-extension in that order. A preparation failure
+stops before pytest; fix the reported error with `make prepare-server-node`
+and rerun the local target. Registry-only runs do not need this preparation.
+
 ## Guards and cleanup
 
 An inherited database URL or host/port that names a non-loopback host or port
