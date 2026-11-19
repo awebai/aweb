@@ -6,10 +6,10 @@ process. DNS is a loopback authoritative server, not an overridden verifier.
 
 import asyncio
 import os
-from pathlib import Path
 import socket
 import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 import dns.asyncresolver
 import dns.flags
@@ -18,8 +18,6 @@ import dns.rcode
 import dns.rrset
 import httpx
 import pytest
-from nacl.signing import SigningKey
-
 from awid.controller_signing import (
     ControllerDescriptor,
     parse_controller_object,
@@ -29,6 +27,7 @@ from awid.controller_signing import (
 from awid.did import did_key_from_signing_key, stable_id_from_did_key
 from awid.id_certificates import verify_id_chain
 from awid.registry import RegistryClient, RegistryError
+from nacl.signing import SigningKey
 
 pytestmark = pytest.mark.asyncio
 ROOT = Path(__file__).resolve().parents[2]
@@ -122,7 +121,7 @@ async def test_controller_continuity_and_explicit_reset_preserve_distinct_semant
             process = await asyncio.create_subprocess_exec(
                 "uv",
                 "run",
-                "--locked",
+                "--frozen",
                 "--project",
                 str(project),
                 "python",

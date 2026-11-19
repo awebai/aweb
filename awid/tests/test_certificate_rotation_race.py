@@ -88,4 +88,5 @@ async def test_registration_with_no_rotation_meanwhile_is_registered(controller_
         "team_id": "base:local",
         "team_did_key": env.team[1],
         "status": "active",
+        "revoked_at": None,
     }
