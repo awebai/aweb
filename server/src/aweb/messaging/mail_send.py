@@ -1044,7 +1044,7 @@ async def _commit_mail_continuation(
             to_agent_id=message.recipient.agent_id,
             sender_did=sender.did,
             sender_address=sender.address,
-            team_id=message.sender.team_id,
+            team_id=message.local_team_id,
             sender_verified_team_id=None,
             sender_verified_dids=sender.verified_dids,
             stored_route_continuation=True,
