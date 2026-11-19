@@ -27,6 +27,11 @@ export function signBytes(input: SigningInput): Uint8Array {
   return ed.sign(input.message, input.seed);
 }
 
+/** Derive the public half of the signing seed without changing its wire bytes. */
+export function publicKeyFromSeed(seed: Uint8Array): Uint8Array {
+  return ed.getPublicKey(seed);
+}
+
 function littleEndian(bytes: Uint8Array): bigint {
   let value = 0n;
   for (let index = bytes.length - 1; index >= 0; index -= 1) {

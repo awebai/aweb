@@ -5,13 +5,10 @@ import { IdStatusClient } from "./id_status.js";
 import * as dns from "node:dns/promises";
 import { isIP } from "node:net";
 import { sha256 } from "@noble/hashes/sha2.js";
-import * as ed from "@noble/ed25519";
 import { getDomain } from "tldts";
 import { computeStableID, extractPublicKey } from "./did.js";
 import { decodeRawStdBase64 } from "./base64.js";
 import { readBoundedJSON, readSafeErrorExcerpt } from "../api/response.js";
-
-
 
 export const DEFAULT_AWID_REGISTRY_URL = "https://api.awid.ai";
 
@@ -860,8 +857,6 @@ function b64Decode(value: string): Uint8Array {
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-
-
 
 /**
  * Whether the served log carries the exact entry we previously verified at seq,

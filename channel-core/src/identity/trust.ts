@@ -1,6 +1,5 @@
 import { verifyBytes } from "./signature_wire.js";
 import { readReceivedIdChain, type ReceivedIdChain } from "./received_id_chain.js";
-import * as ed from "@noble/ed25519";
 import type { APIClient } from "../api/client.js";
 import type { VerificationStatus } from "./signing.js";
 import { extractPublicKey } from "./did.js";
@@ -13,8 +12,6 @@ import {
 import { PinStore, type IdentityScope } from "./pinstore.js";
 import { decodeRawStdBase64 } from "./base64.js";
 import { canonicalStringObject } from "./canonical.js";
-
-
 
 const ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const AGENT_META_CACHE_TTL_MS = 60 * 60 * 1000;
@@ -1143,7 +1140,7 @@ function isTimestampFresh(value: string): boolean {
 }
 
 export function canonicalRotationJSON(oldDID: string, newDID: string, timestamp: string): string {
-  return canonicalObject([
+  return canonicalStringObject([
     ["new_did", newDID],
     ["old_did", oldDID],
     ["timestamp", timestamp],
@@ -1157,7 +1154,7 @@ export function canonicalReplacementJSON(
   newDID: string,
   timestamp: string,
 ): string {
-  return canonicalObject([
+  return canonicalStringObject([
     ["address", address],
     ["controller_did", controllerDID],
     ["new_did", newDID],
@@ -1165,8 +1162,6 @@ export function canonicalReplacementJSON(
     ["timestamp", timestamp],
   ]);
 }
-
-function canonicalObject(fields: Array<[string,string]>): string { return canonicalStringObject(fields); }
 
 function b64Decode(value: string): Uint8Array {
   // Rotation and replacement announcements are remote signed data. Throw on

@@ -225,10 +225,6 @@
         "reason": "Existing reusable real-service test support signs synthetic fixture identities."
       },
       {
-        "file": "channel-core/src/api/client.ts",
-        "reason": "Released client signing/key custody; ID-certificate verification uses the shared verifier."
-      },
-      {
         "file": "channel-core/src/config.ts",
         "reason": "Released local key configuration and SHA-512 wiring for existing message signatures."
       },

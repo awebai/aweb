@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { primeSubgroupPoint as sharedPrimeSubgroupPoint } from "./signature_wire.js";
+import { primeSubgroupPoint } from "./signature_wire.js";
+export { primeSubgroupPoint } from "./signature_wire.js";
 import bs58 from "bs58";
 
 const DID_KEY_PREFIX = "did:key:z";
@@ -11,11 +12,6 @@ export function computeDIDKey(publicKey: Uint8Array): string {
   buf.set(ED25519_MULTICODEC);
   buf.set(publicKey, 2);
   return DID_KEY_PREFIX + bs58.encode(buf);
-}
-
-/** A canonical, nonidentity point of the prime-order subgroup, or undefined. */
-export function primeSubgroupPoint(encoded: Uint8Array): ReturnType<typeof sharedPrimeSubgroupPoint> {
- return sharedPrimeSubgroupPoint(encoded);
 }
 
 /**

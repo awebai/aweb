@@ -2124,6 +2124,117 @@ import { createInterface } from "node:readline";
 // channel-core/src/api/client.ts
 import { createHash as createHash2 } from "node:crypto";
 
+// channel-core/src/api/response.ts
+var MAX_HTTP_RESPONSE_BYTES = 10 * 1024 * 1024;
+var MAX_HTTP_ERROR_BYTES = 64 * 1024;
+async function readBoundedResponse(response, maxBytes = MAX_HTTP_RESPONSE_BYTES) {
+  const declaredLength = Number(response.headers.get("Content-Length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body?.cancel().catch(() => {
+    });
+    throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {
+        });
+        throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(body);
+}
+async function readSafeErrorExcerpt(response) {
+  const text2 = await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES);
+  return text2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+}
+async function readBoundedJSON(response) {
+  return JSON.parse(await readBoundedResponse(response));
+}
+
+// channel-core/src/identity/canonical.ts
+function compareByCodePoint(a, b) {
+  for (let i = 0; i < a.length && i < b.length; ) {
+    const x = a.codePointAt(i);
+    const y = b.codePointAt(i);
+    if (x !== y) return x < y ? -1 : 1;
+    i += x > 65535 ? 2 : 1;
+  }
+  return a.length - b.length;
+}
+function canonicalJSONValue(value, unsupported) {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const obj = value;
+    return `{${Object.keys(obj).sort(compareByCodePoint).map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
+  }
+  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
+  throw new Error(unsupported);
+}
+function escapeJSONString(s) {
+  let result = "";
+  for (const ch of s) {
+    const code = ch.codePointAt(0);
+    switch (ch) {
+      case '"':
+        result += '\\"';
+        break;
+      case "\\":
+        result += "\\\\";
+        break;
+      case "\n":
+        result += "\\n";
+        break;
+      case "\r":
+        result += "\\r";
+        break;
+      case "	":
+        result += "\\t";
+        break;
+      case "\b":
+        result += "\\b";
+        break;
+      case "\f":
+        result += "\\f";
+        break;
+      default:
+        if (code < 32) {
+          result += "\\u" + code.toString(16).padStart(4, "0");
+        } else {
+          result += ch;
+        }
+    }
+  }
+  return result;
+}
+function canonicalStringObject(fields) {
+  const sorted = [...fields].sort(([left], [right]) => compareByCodePoint(left, right));
+  const members = sorted.map(
+    ([key, value]) => `"${escapeJSONString(key)}":"${escapeJSONString(value)}"`
+  );
+  return `{${members.join(",")}}`;
+}
+
+// channel-core/src/identity/did.ts
+import { createHash } from "node:crypto";
+
 // channel-core/node_modules/@noble/ed25519/index.js
 var ed25519_CURVE = {
   p: 0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffedn,
@@ -3142,116 +3253,14 @@ var sha512 = /* @__PURE__ */ createHasher(
   /* @__PURE__ */ oidNist(3)
 );
 
-// channel-core/src/api/response.ts
-var MAX_HTTP_RESPONSE_BYTES = 10 * 1024 * 1024;
-var MAX_HTTP_ERROR_BYTES = 64 * 1024;
-async function readBoundedResponse(response, maxBytes = MAX_HTTP_RESPONSE_BYTES) {
-  const declaredLength = Number(response.headers.get("Content-Length"));
-  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-    await response.body?.cancel().catch(() => {
-    });
-    throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
-  }
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const chunks = [];
-  let total = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        await reader.cancel().catch(() => {
-        });
-        throw new Error(`HTTP response exceeds maximum size of ${maxBytes} bytes`);
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const body = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder("utf-8", { fatal: true }).decode(body);
-}
-async function readSafeErrorExcerpt(response) {
-  const text2 = await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES);
-  return text2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
-}
-async function readBoundedJSON(response) {
-  return JSON.parse(await readBoundedResponse(response));
-}
-
-// channel-core/src/identity/canonical.ts
-function compareByCodePoint(a, b) {
-  for (let i = 0; i < a.length && i < b.length; ) {
-    const x = a.codePointAt(i);
-    const y = b.codePointAt(i);
-    if (x !== y) return x < y ? -1 : 1;
-    i += x > 65535 ? 2 : 1;
-  }
-  return a.length - b.length;
-}
-function canonicalJSONValue(value, unsupported) {
-  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = value;
-    return `{${Object.keys(obj).sort(compareByCodePoint).map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
-  }
-  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
-  throw new Error(unsupported);
-}
-function escapeJSONString(s) {
-  let result = "";
-  for (const ch of s) {
-    const code = ch.codePointAt(0);
-    switch (ch) {
-      case '"':
-        result += '\\"';
-        break;
-      case "\\":
-        result += "\\\\";
-        break;
-      case "\n":
-        result += "\\n";
-        break;
-      case "\r":
-        result += "\\r";
-        break;
-      case "	":
-        result += "\\t";
-        break;
-      case "\b":
-        result += "\\b";
-        break;
-      case "\f":
-        result += "\\f";
-        break;
-      default:
-        if (code < 32) {
-          result += "\\u" + code.toString(16).padStart(4, "0");
-        } else {
-          result += ch;
-        }
-    }
-  }
-  return result;
-}
-function canonicalStringObject(fields) {
-  const sorted = [...fields].sort(([a], [b]) => compareByCodePoint(a, b));
-  return `{${sorted.map(([key, value]) => `"${escapeJSONString(key)}":"${escapeJSONString(value)}"`).join(",")}}`;
-}
-
-// channel-core/src/identity/did.ts
-import { createHash } from "node:crypto";
-
 // channel-core/src/identity/signature_wire.ts
 etc.sha512Sync = (...messages) => sha512(etc.concatBytes(...messages));
+function signBytes(input) {
+  return sign(input.message, input.seed);
+}
+function publicKeyFromSeed(seed) {
+  return getPublicKey(seed);
+}
 function littleEndian(bytes) {
   let value = 0n;
   for (let index = bytes.length - 1; index >= 0; index -= 1) {
@@ -3435,9 +3444,6 @@ function computeDIDKey(publicKey) {
   buf.set(publicKey, 2);
   return DID_KEY_PREFIX + esm_default2.encode(buf);
 }
-function primeSubgroupPoint2(encoded) {
-  return primeSubgroupPoint(encoded);
-}
 function extractPublicKey(did) {
   if (!did.startsWith(DID_KEY_PREFIX)) {
     throw new Error(`invalid did:key: missing prefix "${DID_KEY_PREFIX}"`);
@@ -3454,7 +3460,7 @@ function extractPublicKey(did) {
     );
   }
   const publicKey = decoded.slice(2);
-  if (!primeSubgroupPoint2(publicKey)) {
+  if (!primeSubgroupPoint(publicKey)) {
     throw new Error("invalid did:key: not a canonical prime-order Ed25519 public key");
   }
   return publicKey;
@@ -3465,7 +3471,6 @@ function computeStableID(publicKey) {
 }
 
 // channel-core/src/api/client.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 function canonicalTimestamp() {
   return (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -3481,8 +3486,8 @@ function signedTarget(baseURL, path, method, bodyText) {
 function signCanonical(payload, signingKey) {
   const canonicalPayload = canonicalJSONValue(payload, "unsupported request signing value");
   return {
-    did: computeDIDKey(getPublicKey(signingKey)),
-    signature: Buffer.from(sign(new TextEncoder().encode(canonicalPayload), signingKey)).toString("base64").replace(/=+$/, ""),
+    did: computeDIDKey(publicKeyFromSeed(signingKey)),
+    signature: Buffer.from(signBytes({ message: new TextEncoder().encode(canonicalPayload), seed: signingKey })).toString("base64").replace(/=+$/, ""),
     canonicalPayload,
     signedPayload: Buffer.from(canonicalPayload, "utf-8").toString("base64url")
   };
@@ -7782,7 +7787,7 @@ function signatureRefusal(signed) {
   return result.accepted ? void 0 : "invalid_signature";
 }
 function idEd25519Verify(publicKey, message, signature) {
-  if (!primeSubgroupPoint2(publicKey)) return { accepted: false, reason: "invalid_shape" };
+  if (!primeSubgroupPoint(publicKey)) return { accepted: false, reason: "invalid_shape" };
   return verifyBytes({ signature, message, publicKey, profile: 1 /* IdentityCertificate */ }) ? { accepted: true, reason: null } : { accepted: false, reason: "invalid_signature" };
 }
 function decodeBase64URL(value) {
@@ -7799,7 +7804,7 @@ function isCanonicalDomain(domain) {
 function isCanonicalDidKey(value) {
   try {
     const publicKey = extractPublicKey(value);
-    return computeDIDKey(publicKey) === value && primeSubgroupPoint2(publicKey) !== void 0;
+    return computeDIDKey(publicKey) === value && primeSubgroupPoint(publicKey) !== void 0;
   } catch {
     return false;
   }
@@ -10160,23 +10165,20 @@ function isTimestampFresh(value) {
   return Math.abs(Date.now() - time) <= ANNOUNCEMENT_MAX_AGE_MS;
 }
 function canonicalRotationJSON(oldDID, newDID, timestamp2) {
-  return canonicalObject([
+  return canonicalStringObject([
     ["new_did", newDID],
     ["old_did", oldDID],
     ["timestamp", timestamp2]
   ]);
 }
 function canonicalReplacementJSON(address, controllerDID, oldDID, newDID, timestamp2) {
-  return canonicalObject([
+  return canonicalStringObject([
     ["address", address],
     ["controller_did", controllerDID],
     ["new_did", newDID],
     ["old_did", oldDID],
     ["timestamp", timestamp2]
   ]);
-}
-function canonicalObject(fields) {
-  return canonicalStringObject(fields);
 }
 function b64Decode3(value) {
   return decodeRawStdBase64(value);

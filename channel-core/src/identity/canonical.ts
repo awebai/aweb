@@ -28,7 +28,6 @@ export function canonicalJSONValue(value: unknown, unsupported: string): string 
   throw new Error(unsupported);
 }
 
-
 /** Legacy wire strings retain replacement/escaping behavior separately from strict JSON. */
 export function escapeJSONString(s: string): string {
   let result = "";
@@ -68,6 +67,9 @@ export function escapeJSONString(s: string): string {
 }
 
 export function canonicalStringObject(fields: Array<[string, string]>): string {
- const sorted=[...fields].sort(([a],[b])=>compareByCodePoint(a,b));
- return `{${sorted.map(([key,value])=>`"${escapeJSONString(key)}":"${escapeJSONString(value)}"`).join(",")}}`;
+  const sorted = [...fields].sort(([left], [right]) => compareByCodePoint(left, right));
+  const members = sorted.map(([key, value]) =>
+    `"${escapeJSONString(key)}":"${escapeJSONString(value)}"`,
+  );
+  return `{${members.join(",")}}`;
 }
