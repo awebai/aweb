@@ -2213,7 +2213,7 @@ func TestTeamHumanCreateRejectsVersionedLibraryProfileBeforeIdentity(t *testing.
 	}
 }
 
-func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T) {
+func TestTeamHumanAddProfileFailureRetainsAdmittedHome(t *testing.T) {
 	resetTeamHumanCreateGlobals(t)
 	root := t.TempDir()
 	home := t.TempDir()
@@ -2230,7 +2230,7 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 		t.Fatal(err)
 	}
 	teamDID := awid.ComputeDIDKey(teamPub)
-	var certCalls int
+	var certCalls, connectCalls int
 	var registeredCertID string
 	var revokedCertID string
 	var server *httptest.Server
@@ -2258,7 +2258,12 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 				t.Fatal(err)
 			}
 			revokedCertID, _ = body["certificate_id"].(string)
-			_ = json.NewEncoder(w).Encode(map[string]any{"certificate_id": revokedCertID})
+			http.Error(w, "revocation outcome unavailable", 503)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			connectCalls++
+			if err := json.NewEncoder(w).Encode(map[string]any{"team_id": "eng:local", "alias": "developer", "workspace_id": "ws-developer", "agent_id": "developer", "team_did_key": teamDID}); err != nil {
+				t.Fatal(err)
+			}
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
 			writePublishEncryptionKeyResponseForTest(t, w, "developer", "eng:local", "developer")
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
@@ -2289,12 +2294,23 @@ func TestTeamHumanAddProfileMaterializeFailureRollsBackCreatedHome(t *testing.T)
 	if registeredCertID == "" {
 		t.Fatal("registered certificate id was not captured")
 	}
-	if revokedCertID != registeredCertID {
-		t.Fatalf("revoked certificate_id=%q want just-created %q", revokedCertID, registeredCertID)
+	if connectCalls != 1 {
+		t.Fatalf("profile failure must follow admission, connects=%d", connectCalls)
+	}
+	if revokedCertID != "" {
+		t.Fatalf("setup failure attempted registry-only retirement: %s", revokedCertID)
 	}
 	agentHome := filepath.Join(root, "agents", "instances", "developer")
-	if _, statErr := os.Lstat(agentHome); !os.IsNotExist(statErr) {
-		t.Fatalf("failed profile add left agent home state at %s: %v", agentHome, statErr)
+	if _, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(agentHome)); err != nil {
+		t.Fatalf("setup failure discarded admitted key: %v", err)
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeam(agentHome, "eng:local")
+	if err != nil || cert.CertificateID != registeredCertID {
+		t.Fatalf("setup failure discarded issued certificate: %v", err)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(agentHome, ".aw", "workspace.yaml"))
+	if err != nil || workspace.Membership("eng:local") == nil || workspace.Membership("eng:local").WorkspaceID != "ws-developer" {
+		t.Fatalf("setup failure lost coordination recovery: %v", err)
 	}
 }
 
