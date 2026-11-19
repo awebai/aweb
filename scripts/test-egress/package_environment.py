@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 
 FORWARDED = (
+    "AWEB_TEST_SERVICES",
     "TEST_DB_HOST",
     "TEST_DB_PORT",
     "TEST_DB_USER",

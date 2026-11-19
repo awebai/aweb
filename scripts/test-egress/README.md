@@ -213,6 +213,11 @@ The package entry is for callers that own Compose services: it uses the
 single-tenant VM's loopback and Docker socket, UID1000, bounded resources and a
 private image HOME, with no host identity or credential-directory mount. The
 ordinary isolated runner retains its internal network and has no Docker socket.
+The socket-bearing package command may run only on a dedicated ephemeral VM
+holding no credential, no ledger that survives the run, and no other run's
+evidence. Image preparation alone may also prepare development leases; those
+leases must not use this socket-bearing package command. Source/lock read-back
+does not attest that code with the VM's Docker socket left evidence untouched.
 Package commands retain their actual exit, JUnit when selected, and source/lock
 read-back before container removal. A batch owns its preparation binding and
 removes that binding's unique image tag at the end, including failed phases.

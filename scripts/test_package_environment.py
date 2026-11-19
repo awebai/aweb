@@ -300,7 +300,11 @@ class SourceImagePreparation(unittest.TestCase):
             patch.object(runner.Path, "stat") as stat,
             patch.dict(
                 os.environ,
-                {"TEST_DB_PORT": "1234", "HCLOUD_TOKEN": "private-fixture"},
+                {
+                    "TEST_DB_PORT": "1234",
+                    "AWEB_TEST_SERVICES": "1",
+                    "HCLOUD_TOKEN": "private-fixture",
+                },
                 clear=True,
             ),
         ):
@@ -313,6 +317,7 @@ class SourceImagePreparation(unittest.TestCase):
                 True,
             )
         self.assertIn("TEST_DB_PORT", args)
+        self.assertIn("AWEB_TEST_SERVICES", args)
         self.assertNotIn("HCLOUD_TOKEN", args)
         self.assertNotIn("private-fixture", args)
         self.assertIn("1000:1000", args)
