@@ -547,6 +547,8 @@ def main():
                         "/identities/kernel-wake",
                         "--seat",
                         f"/identities/{probe_lane}/g1",
+                        "--fixture-home",
+                        f"/identities/{probe_lane}/home",
                         "--sender",
                         f"/identities/{probe_lane}/t1",
                         "--team",

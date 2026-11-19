@@ -5,7 +5,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
@@ -19,10 +20,10 @@ const PROVIDER = "/opt/user-paths/oats-aweb/oats-package/capabilities/oats-aweb"
 const PIN = JSON.parse(readFileSync(join(STAGED, "provider.json"), "utf8"));
 const { values } = parseArgs({ options: {
   aw: { type: "string" }, root: { type: "string" }, seat: { type: "string" },
-  sender: { type: "string" }, team: { type: "string" }, output: { type: "string" },
+  "fixture-home": { type: "string" }, sender: { type: "string" }, team: { type: "string" }, output: { type: "string" },
   "source-commit": { type: "string" },
 } });
-for (const option of ["aw", "root", "seat", "sender", "team", "output", "source-commit"]) {
+for (const option of ["aw", "root", "seat", "sender", "team", "output", "source-commit", "fixture-home"]) {
   assert.ok(values[option], `--${option} is required`);
 }
 const root = resolve(values.root);
@@ -76,6 +77,30 @@ function executionPermissions(status) {
   assert.ok(entries.every((entry) => entry.uid === process.geteuid()), "execution snapshot belongs to runtime UID");
   return entries;
 }
+// The ordinary user-path lane owns this disposable team's key. Copy only that
+// key into the probe HOME, and prove mint authority before diagnosing wake.
+function prepareMintAuthority({ seat, fixtureHome, team }) {
+  const match = /^([a-z0-9-]+):([a-z0-9.-]+\.test)$/.exec(team);
+  assert.ok(match, "mint preflight requires the disposable fixture team");
+  assert.equal(resolve(fixtureHome), join(dirname(resolve(seat)), "home"));
+  const workspace = createRequire(KERNEL)("yaml").parse(readFileSync(join(seat, ".aw/workspace.yaml"), "utf8"));
+  assert.equal(workspace?.aweb_url, env.AWEB_URL, "seat records the local service independently of ambient routing");
+  const relativeKey = join(".awid/team-keys", match[2], `${match[1]}.key`);
+  const targetKey = join(home, relativeKey);
+  mkdirSync(dirname(targetKey), { recursive: true, mode: 0o700 });
+  copyFileSync(join(fixtureHome, relativeKey), targetKey);
+  chmodSync(targetKey, 0o600);
+  const invite = parseObject(aw({ identity: seat, args: ["id", "team", "invite", "--namespace", match[2], "--team", match[1], "--registry", env.AWID_REGISTRY_URL, "--json"] }));
+  assert.ok(typeof invite.token === "string" && invite.token, "mint preflight must create a disposable invite; its token is not retained");
+  return { team, service: workspace.aweb_url, mint_authority: ProbeOutcome.Passed };
+}
+function activeKernelStatus() {
+  const status = parseObject(oats("status", "--json"));
+  assert.ok(Array.isArray(status.agents), "kernel status must list agents");
+  const rows = status.agents.flatMap((agent) => { assert.ok(Array.isArray(agent.instances)); return agent.instances; });
+  assert.ok(rows.some((row) => row.home === instanceHome && row.instance === instance && row.running === true), "kernel must report the probe instance active");
+  return status;
+}
 function permission(path) {
   const stat = statSync(path);
   return { path, uid: stat.uid, gid: stat.gid, mode: (stat.mode & 0o7777).toString(8) };
@@ -102,6 +127,7 @@ try {
     command({ argv: ["git", "-C", source, "-c", "user.name=Wake probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args] });
   }
   writeFileSync(join(deployment, "oats-local.yaml"), `schemaVersion: 2\nworkspace: ${ref}\nteams:\n  default: { team: ${JSON.stringify(values.team)} }\ndefaultTeam: default\nsettings:\n  oats.aweb:\n    delivery: session\n    root: ${JSON.stringify(resolve(values.seat))}\nlaunch-configs:\n  passive:\n    harness: claude\n    executable: ${JSON.stringify(join(bin, "passive-session"))}\nsouls:\n  launch:\n    '*': passive\n`);
+  evidence.mint_preflight = prepareMintAuthority({ seat: values.seat, fixtureHome: values["fixture-home"], team: values.team });
   // Capture bounded public failure text; credentials remain in the owned volume.
   const startOwnedBroker = () => {
     const child = spawn(join(bin, "aw"), ["wake", "run"], { cwd: home, env, stdio: ["ignore", "ignore", "pipe"] });
@@ -116,7 +142,7 @@ try {
   assert.equal(spawned.ok, true);
   ({ instance, home: instanceHome } = spawned.result);
   assert.ok(instance && instanceHome, "kernel spawn must return its instance and home");
-  evidence.kernel_status_before = parseObject(oats("status", "--json"));
+  evidence.kernel_status_before = activeKernelStatus();
   const runnerReady = (status) => status.daemon_running === true && status.daemon_pid === broker.pid && wakeInstances(status).some((row) => row.home === instanceHome && row.channel_core?.running === true);
   const fresh = await until({ read: wakeStatus, ready: runnerReady, label: "kernel-registered wake runner" });
   evidence.wake_fresh = fresh;
@@ -131,6 +157,7 @@ try {
   broker = startOwnedBroker();
   const before = await until({ read: wakeStatus, ready: runnerReady, label: "runner restart with group-widened data cache" });
   evidence.wake_before = before;
+  evidence.kernel_status_after_group_widening = activeKernelStatus();
   evidence.private_execution_after_group_widening = executionPermissions(before);
   evidence.permissions_before = [join(home, ".config/aw"), state, cache, join(cache, "runner.mjs")].map(permission);
   const address = parseObject(aw({ identity: instanceHome, args: ["whoami", "--json"] }));
@@ -149,7 +176,7 @@ try {
   evidence.presented_wake = await until({ read: capture, ready: (text) => text.includes(sent.message_id) && text.includes(subject), label: "fresh wake in the isolated kernel session" });
   evidence.permissions_after = [join(home, ".config/aw"), state, cache].map(permission);
   evidence.kernel_events = oats("instance", "events", instance, "--json");
-  evidence.kernel_status_after = parseObject(oats("status", "--json"));
+  evidence.kernel_status_after = activeKernelStatus();
   evidence.result = ProbeOutcome.Passed;
 } catch (error) {
   evidence.result = ProbeOutcome.Failed;
