@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from aweb.identity_binding import verified_key_sql
 
+from aweb.messaging.kinds import ContentMode
+
+from aweb.messaging.chat_models import CreateSessionRequest as CreateSessionRequest
+from aweb.messaging.chat_models import SendMessageRequest as SendMessageRequest
+from aweb.client_address import request_client_address
 from aweb.agent_wake import agent_wake_publisher
 
 from aweb.attachment_service import (
     prepare_attachment_send,
-    attachment_retry,
     attachment_references_by_message,
 )
 
@@ -30,7 +34,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -40,33 +43,13 @@ from redis.exceptions import RedisError
 
 from aweb.deps import get_db, get_redis
 from aweb.events import chat_session_channel_name
-from aweb.grant_streams import (
-    GRANT_STREAM_RECHECK_SECONDS,
-    clamp_deadline_to_grant,
-    grant_expiry_reason,
-    grant_terminal_reason,
-    grant_terminal_sse,
-    require_valid_stream_grant,
-)
-from aweb.id_chain_auth import stored_id_chain
-from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth, participant_dids
+from aweb.reconnect import ReconnectBackoff
+from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.identity_metadata import (
     lookup_identity_metadata_by_did,
     routable_chat_address,
 )
-from aweb.messaging.activity_stream import SessionActivity
-from aweb.messaging.alias_targets import (
-    validate_alias_selector,
-)
-from aweb.messaging.chat import (
-    HANG_ON_EXTENSION_SECONDS,
-    MAX_CHAT_MARK_READ_IDS,
-    get_message_history,
-    get_pending_conversations,
-    resolve_session_actor_did,
-    wake_chat_session_participants,
-)
-from aweb.messaging.chat_read import mark_chat_read
+from aweb.id_chain_auth import stored_id_chain
 from aweb.messaging.chat_send import (
     _address_from_alias,
     _left_dids_by_session,
@@ -76,13 +59,24 @@ from aweb.messaging.chat_send import (
     resolve_chat_targets,
     send_chat,
 )
+from aweb.messaging.runtime import messaging_runtime
+from aweb.identity_auth_deps import participant_dids
+from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+from aweb.messaging.chat import (
+    HANG_ON_EXTENSION_SECONDS,
+    MAX_CHAT_MARK_READ_IDS,
+    get_message_history,
+    get_pending_conversations,
+    resolve_session_actor_did,
+    wake_chat_session_participants,
+)
+from aweb.messaging.chat_read import mark_chat_read
+from aweb.messaging.activity_stream import SessionActivity
 from aweb.messaging.contacts import (
     get_contact_addresses,
     is_address_in_contacts,
 )
-from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import utc_iso as _utc_iso
-from aweb.messaging.runtime import messaging_runtime
 from aweb.messaging.verification import verified_signed_recipient_fields
 from aweb.messaging.waiting import (
     get_waiting_agents,
@@ -90,8 +84,14 @@ from aweb.messaging.waiting import (
     register_waiting,
     unregister_waiting,
 )
-from aweb.reconnect import ReconnectBackoff
-from aweb.redis_subscriptions import open_subscription, release_subscription
+from aweb.grant_streams import (
+    GRANT_STREAM_RECHECK_SECONDS,
+    clamp_deadline_to_grant,
+    grant_expiry_reason,
+    grant_terminal_reason,
+    grant_terminal_sse,
+    require_valid_stream_grant,
+)
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 
 logger = logging.getLogger(__name__)
@@ -107,8 +107,8 @@ CHAT_STREAM_KEEPALIVE_SECONDS = 30.0
 def _parse_uuid(value: str, *, field: str) -> str:
     try:
         return str(UUID(str(value).strip()))
-    except Exception:
-        raise ValueError(f"Invalid {field} format")
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field} format") from exc
 
 
 def _parse_deadline(value: str) -> datetime:
@@ -177,117 +177,6 @@ async def _targets_left(db, *, session_id: UUID, target_dids: list[str]) -> list
     return [row["alias"] for row in part_rows]
 
 
-class CreateSessionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    session_id: str | None = None
-    to_aliases: list[str] = Field(default_factory=list)
-    to_dids: list[str] = Field(default_factory=list)
-    to_addresses: list[str] = Field(default_factory=list)
-    message: str
-    content_mode: str = "legacy_plaintext_v1"
-    message_version: int = 1
-    encrypted_envelope: dict[str, Any] | None = None
-    leaving: bool = False
-    hang_on: bool = False
-    wait_seconds: int | None = None
-    message_id: str | None = None
-    reply_to: str | None = None
-    timestamp: str | None = None
-    from_did: str | None = Field(default=None, max_length=256)
-    signature: str | None = Field(default=None, max_length=512)
-    signed_payload: str | None = None
-    attachments: object = None
-    attachment_refs: object = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_hosted_handle_targets(cls, data):
-        if not isinstance(data, dict):
-            return data
-        normalized = dict(data)
-        aliases: list[str] = []
-        promoted_addresses: list[str] = []
-        for value in normalized.get("to_aliases") or []:
-            text = str(value or "").strip()
-            address = normalize_hosted_handle_reference(text, require_agent=True)
-            if text.startswith("@") and address != text and "/" in address:
-                promoted_addresses.append(address)
-            else:
-                aliases.append(text)
-        if promoted_addresses:
-            normalized["to_aliases"] = aliases
-            normalized["to_addresses"] = (
-                list(normalized.get("to_addresses") or []) + promoted_addresses
-            )
-        if normalized.get("to_addresses"):
-            normalized["to_addresses"] = [
-                normalize_hosted_handle_reference(str(value), require_agent=True)
-                for value in normalized.get("to_addresses") or []
-            ]
-        return normalized
-
-    @field_validator("to_aliases", "to_dids", "to_addresses")
-    @classmethod
-    def _clean_targets(cls, values: list[str]) -> list[str]:
-        cleaned: list[str] = []
-        for value in values or []:
-            value = (value or "").strip()
-            if value:
-                cleaned.append(value)
-        return cleaned
-
-    @field_validator("to_aliases")
-    @classmethod
-    def _validate_aliases(cls, values: list[str]) -> list[str]:
-        return [validate_alias_selector(value, field="to_aliases") for value in values]
-
-    @field_validator("to_addresses")
-    @classmethod
-    def _validate_addresses(cls, values: list[str]) -> list[str]:
-        for value in values:
-            if value.startswith("@"):
-                raise ValueError("Invalid to_addresses format")
-        return values
-
-    @model_validator(mode="after")
-    def _validate_targets(self) -> "CreateSessionRequest":
-        if not self.to_aliases and not self.to_dids and not self.to_addresses:
-            raise ValueError("Must provide to_aliases, to_dids, or to_addresses")
-        if len(self.to_aliases) != len(set(self.to_aliases)):
-            raise ValueError("to_aliases contains duplicates")
-        if len(self.to_dids) != len(set(self.to_dids)):
-            raise ValueError("to_dids contains duplicates")
-        if len(self.to_addresses) != len(set(self.to_addresses)):
-            raise ValueError("to_addresses contains duplicates")
-        return self
-
-    @model_validator(mode="after")
-    def _validate_content_mode(self) -> "CreateSessionRequest":
-        encrypted = (
-            self.content_mode == "encrypted_v2"
-            or self.message_version == 2
-            or self.encrypted_envelope is not None
-        )
-        if encrypted:
-            if self.content_mode != "encrypted_v2":
-                raise ValueError("content_mode must be encrypted_v2 for encrypted chat")
-            if self.message_version != 2:
-                raise ValueError("message_version must be 2 for encrypted chat")
-            if self.encrypted_envelope is None:
-                raise ValueError("encrypted_envelope is required for encrypted chat")
-        elif self.content_mode != "legacy_plaintext_v1" or self.message_version != 1:
-            raise ValueError("unsupported chat content mode")
-        return self
-
-    @field_validator("session_id", "message_id", "reply_to")
-    @classmethod
-    def _validate_message_id(cls, v: str | None, info: ValidationInfo) -> str | None:
-        if v is None:
-            return None
-        return _parse_uuid(v, field=str(info.field_name or "message_id"))
-
-
 class CreateSessionParticipant(BaseModel):
     participant_ref: dict[str, str] | None = None
     did: str
@@ -336,9 +225,7 @@ async def _create_session_response(
         [(row.get("did") or "").strip() for row in participants_rows],
     )
 
-    targets_left = await _targets_left(
-        db, session_id=session_id, target_dids=target_dids
-    )
+    targets_left = await _targets_left(db, session_id=session_id, target_dids=target_dids)
     waiting_dids = await get_waiting_agents(redis, str(session_id), target_dids)
     waiting_set = set(waiting_dids)
     targets_connected = [
@@ -378,7 +265,6 @@ async def create_or_send(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
-    """Create or continue a chat through the shared native send service."""
     attachment_context = prepare_attachment_send(
         getattr(request.app.state, "attachment_backend", None),
         payload,
@@ -388,19 +274,15 @@ async def create_or_send(
         with attachment_context:
             return await create_or_send(request, payload, db=db, redis=redis, auth=auth)
     runtime = messaging_runtime(request.app.state)
-    sender = replace(
-        auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None)
-    )
+    sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
     target = await resolve_chat_targets(
         db,
         sender,
         payload,
         runtime,
-        source=str(request.client.host if request.client else "unknown"),
+        source=request_client_address(request),
     )
-    target_dids = sorted(
-        {_target_did(row) for row in target.recipients if _target_did(row)}
-    )
+    target_dids = sorted({_target_did(row) for row in target.recipients if _target_did(row)})
     sent = await send_chat(db, sender, target, payload, runtime)
     if sent.federated:
         return CreateSessionResponse(
@@ -442,7 +324,6 @@ async def pending(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> PendingResponse:
-    """Read pending chat notifications for the authenticated participant."""
     del request
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
@@ -451,9 +332,7 @@ async def pending(
             status_code=401, detail="Authenticated identity is missing a routing DID"
         )
     actor_agent = await resolve_actor_agent(db, actor_dids)
-    actor_agent_id = auth.agent_id or (
-        str(actor_agent["agent_id"]) if actor_agent else None
-    )
+    actor_agent_id = auth.agent_id or (str(actor_agent["agent_id"]) if actor_agent else None)
 
     conversations_by_session: dict[str, dict[str, Any]] = {}
     for participant_did in actor_dids:
@@ -507,9 +386,7 @@ async def pending(
         redis,
         {
             item["session_id"]: [
-                did
-                for did in item.get("participant_dids", [])
-                if did not in set(actor_dids)
+                did for did in item.get("participant_dids", []) if did not in set(actor_dids)
             ]
             for item in conversations
         },
@@ -541,11 +418,7 @@ async def pending(
                 0,
                 int(item["wait_seconds"] or 0)
                 + int(item["extended_wait_seconds"] or 0)
-                - int(
-                    (
-                        datetime.now(timezone.utc) - item["wait_started_at"]
-                    ).total_seconds()
-                ),
+                - int((datetime.now(timezone.utc) - item["wait_started_at"]).total_seconds()),
             )
             if item.get("wait_seconds") is not None
             and item.get("wait_started_at") is not None
@@ -568,7 +441,7 @@ async def pending(
                 "participant_addresses": participant_addresses,
                 "last_message": item["last_message"],
                 "last_message_content_mode": item.get("last_message_content_mode")
-                or "legacy_plaintext_v1",
+                or ContentMode.PLAINTEXT,
                 "last_message_version": item.get("last_message_version") or 1,
                 "last_encrypted_envelope": item.get("last_encrypted_envelope"),
                 "last_from": item["last_from"],
@@ -583,17 +456,13 @@ async def pending(
                     item["last_from"],
                 ),
                 "unread_count": item["unread_count"],
-                "last_activity": _utc_iso(item["last_activity"])
-                if item["last_activity"]
-                else "",
+                "last_activity": _utc_iso(item["last_activity"]) if item["last_activity"] else "",
                 "sender_waiting": len(waiting) > 0,
                 "time_remaining_seconds": time_remaining_seconds,
             }
         )
 
-    return PendingResponse(
-        pending=pending_items, messages_waiting=int(mail_unread or 0)
-    )
+    return PendingResponse(pending=pending_items, messages_waiting=int(mail_unread or 0))
 
 
 class HistoryResponse(BaseModel):
@@ -610,7 +479,6 @@ async def history(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> HistoryResponse:
-    """Read chat history within the authenticated participant visibility scope."""
     actor_dids = _actor_dids(auth)
     owner_dids = _actor_dids(auth)
     if not owner_dids:
@@ -631,9 +499,7 @@ async def history(
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    actor_did = await resolve_session_actor_did(
-        db, session_id=session_uuid, actor_dids=actor_dids
-    )
+    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
@@ -687,7 +553,7 @@ async def history(
                 "from_agent": msg["from_alias"],
                 "from_address": from_address,
                 "body": msg["body"],
-                "content_mode": msg.get("content_mode") or "legacy_plaintext_v1",
+                "content_mode": msg.get("content_mode") or ContentMode.PLAINTEXT,
                 "message_version": msg.get("message_version") or 1,
                 "encrypted_envelope": msg.get("encrypted_envelope"),
                 "timestamp": _utc_iso(msg["created_at"]),
@@ -695,14 +561,11 @@ async def history(
                 "reply_to": msg.get("reply_to"),
                 "to_address": _chat_to_address(participant_rows, from_did=from_did),
                 "from_did": from_did or None,
-                "from_stable_id": identity_map.get(from_did, {}).get("stable_id")
-                or None,
+                "from_stable_id": identity_map.get(from_did, {}).get("stable_id") or None,
                 "signature": msg.get("signature"),
                 "signed_payload": msg.get("signed_payload"),
                 "id_chain": stored_id_chain(msg.get("id_chain")),
-                **verified_signed_recipient_fields(
-                    {**msg, "conversation_id": str(session_uuid)}
-                ),
+                **verified_signed_recipient_fields({**msg, "conversation_id": str(session_uuid)}),
                 "is_contact": is_address_in_contacts(from_address, contact_addrs),
             }
         )
@@ -721,9 +584,7 @@ class MarkReadRequest(BaseModel):
     @field_validator("up_to_message_id")
     @classmethod
     def _validate_watermark_message_id(cls, value: str | None) -> str | None:
-        return (
-            _parse_uuid(value, field="up_to_message_id") if value is not None else None
-        )
+        return _parse_uuid(value, field="up_to_message_id") if value is not None else None
 
     @field_validator("message_ids")
     @classmethod
@@ -748,13 +609,18 @@ async def mark_read(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> dict[str, Any]:
-    """Advance the authenticated participant read position for a chat session."""
     actor_dids = _actor_dids(auth)
     if not actor_dids:
         raise HTTPException(
             status_code=401, detail="Authenticated identity is missing a routing DID"
         )
-    session_uuid = UUID(session_id.strip())
+    try:
+        session_uuid = UUID(_parse_uuid(session_id, field="session_id"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{exc}. Choose a session_id from aw chat pending and retry.",
+        ) from exc
 
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one(
@@ -1129,7 +995,7 @@ async def _sse_events(
                             or None,
                             "body": row["body"],
                             "content_mode": row.get("content_mode")
-                            or "legacy_plaintext_v1",
+                            or ContentMode.PLAINTEXT,
                             "message_version": row.get("message_version") or 1,
                             "encrypted_envelope": row.get("encrypted_envelope"),
                             "sender_leaving": bool(row["sender_leaving"]),
@@ -1233,7 +1099,6 @@ async def stream(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
-    """Stream participant chat updates with persisted-state reconciliation and reconnects."""
     actor_dids = _actor_dids(auth)
     owner_dids = _actor_dids(auth)
     if not owner_dids:
@@ -1254,24 +1119,18 @@ async def stream(
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    actor_did = await resolve_session_actor_did(
-        db, session_id=session_uuid, actor_dids=actor_dids
-    )
+    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     deadline_dt = _parse_deadline(deadline)
-    max_deadline = datetime.now(timezone.utc) + timedelta(
-        seconds=MAX_CHAT_STREAM_DURATION
-    )
+    max_deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_CHAT_STREAM_DURATION)
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
     deadline_dt = clamp_deadline_to_grant(deadline_dt, auth)
 
     if after is not None and after_seq is not None:
-        raise HTTPException(
-            status_code=422, detail="Provide after or after_seq, not both"
-        )
+        raise HTTPException(status_code=422, detail="Provide after or after_seq, not both")
     after_dt = _parse_timestamp(after, "after") if after is not None else None
     await require_valid_stream_grant(request, db, auth)
     replay_cursor = after_seq
@@ -1321,54 +1180,6 @@ async def stream(
     )
 
 
-class SendMessageRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    body: str = ""
-    content_mode: str = "legacy_plaintext_v1"
-    message_version: int = 1
-    encrypted_envelope: dict[str, Any] | None = None
-    leaving: bool = False
-    hang_on: bool = False
-    wait_seconds: int | None = Field(default=None, ge=0, le=600)
-    reply_to: str | None = None
-    message_id: str | None = None
-    timestamp: str | None = None
-    from_did: str | None = Field(default=None, max_length=256)
-    signature: str | None = Field(default=None, max_length=512)
-    signed_payload: str | None = None
-    attachments: object = None
-    attachment_refs: object = None
-
-    @model_validator(mode="after")
-    def _validate_content_mode(self) -> "SendMessageRequest":
-        encrypted = (
-            self.content_mode == "encrypted_v2"
-            or self.message_version == 2
-            or self.encrypted_envelope is not None
-        )
-        if encrypted:
-            if self.content_mode != "encrypted_v2":
-                raise ValueError("content_mode must be encrypted_v2 for encrypted chat")
-            if self.message_version != 2:
-                raise ValueError("message_version must be 2 for encrypted chat")
-            if self.encrypted_envelope is None:
-                raise ValueError("encrypted_envelope is required for encrypted chat")
-            return self
-        if self.content_mode != "legacy_plaintext_v1" or self.message_version != 1:
-            raise ValueError("unsupported chat content mode")
-        if not self.body:
-            raise ValueError("body is required")
-        return self
-
-    @field_validator("message_id", "reply_to")
-    @classmethod
-    def _validate_message_id(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        return _parse_uuid(v, field="message_id")
-
-
 class SendMessageResponse(BaseModel):
     message_id: str
     conversation_id: str
@@ -1384,7 +1195,6 @@ async def send_message(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
-    """Send a message to an authorized existing chat session."""
     attachment_context = prepare_attachment_send(
         getattr(request.app.state, "attachment_backend", None),
         payload,
@@ -1392,27 +1202,15 @@ async def send_message(
     )
     if attachment_context is not None:
         with attachment_context:
-            existing = await attachment_retry(db, payload, "chat")
-            if existing:
-                binding, row = existing
-                if binding.conversation_id != session_id:
-                    raise HTTPException(409, detail={"code": "attachment_conflict"})
-                return SendMessageResponse(
-                    message_id=binding.message_id,
-                    conversation_id=binding.conversation_id,
-                    delivered=True,
-                )
             return await send_message(request, session_id, payload, db=db, auth=auth)
     runtime = messaging_runtime(request.app.state)
-    sender = replace(
-        auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None)
-    )
+    sender = replace(auth, id_chain=getattr(getattr(request, "state", None), "id_chain", None))
     target = await resolve_chat_targets(
         db,
         sender,
         session_id,
         runtime,
-        source=str(request.client.host if request.client else "unknown"),
+        source=request_client_address(request),
     )
     sent = await send_chat(db, sender, target, payload, runtime)
     return SendMessageResponse(
@@ -1451,7 +1249,6 @@ async def list_sessions(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SessionListResponse:
-    """List chat sessions visible to the authenticated participant."""
     del request
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
@@ -1520,9 +1317,7 @@ async def list_sessions(
         redis,
         {
             str(row["session_id"]): [
-                did
-                for did in (row["participant_dids"] or [])
-                if did not in set(actor_dids)
+                did for did in (row["participant_dids"] or []) if did not in set(actor_dids)
             ]
             for row in rows
         },
@@ -1531,9 +1326,7 @@ async def list_sessions(
     sessions = []
     for row in rows:
         session_participants = participants_by_session.get(str(row["session_id"]), [])
-        hidden_dids = set(actor_dids) | left_dids_by_session.get(
-            str(row["session_id"]), set()
-        )
+        hidden_dids = set(actor_dids) | left_dids_by_session.get(str(row["session_id"]), set())
         waiting = waiting_by_session.get(str(row["session_id"]), [])
         sessions.append(
             SessionListItem(

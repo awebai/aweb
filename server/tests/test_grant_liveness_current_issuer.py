@@ -9,7 +9,8 @@ from enum import StrEnum
 
 import pytest
 from aweb.grant_liveness import valid_grant_liveness_by_workspace
-from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_dashboard_privacy import TEAM
+from test_dashboard_privacy import privacy_app as privacy_app
 from test_identity_grants import _grant_headers, _session_keypair
 from test_member_team_key import _certificate, _change_key, _connect, _new_member, _row
 from test_messages_http import _signed_team_headers

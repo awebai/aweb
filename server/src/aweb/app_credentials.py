@@ -161,6 +161,7 @@ async def verify_app_credential(
     enforce_timestamp_skew(timestamp)
 
     body_sha256 = request_body_sha256(request)
+
     try:
         canonical = decode_signed_payload_header(
             str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()

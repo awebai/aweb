@@ -18,6 +18,9 @@ from aweb.federation.envelope import (
     FederationEnvelopeError,
     enforce_message_timestamp_skew,
 )
+from aweb.event_types import MutationEventType
+from aweb.hooks import MutationCallback, fire_mutation_callback
+from aweb.message_events import RoomMessageSentContext
 from aweb.id_chain_auth import stored_id_chain
 from aweb.identity_address import require_address_evidence
 from aweb.member_team_key import CURRENT_MEMBERSHIP_REQUIRED_DETAIL, current_member_sql
@@ -103,6 +106,7 @@ async def _ensure_room(tx, team_id):
 
 
 async def room_metadata(db, actor):
+    """Return the current team's shared room identity and visibility metadata."""
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
         room = await _ensure_room(tx, actor.team_id)
@@ -201,6 +205,7 @@ def _after(cursor, room_id, team_id):
 
 
 async def read_room(db, actor, *, after=None, limit=50):
+    """Read retained team room posts and clear only notices for the returned page."""
     if not 1 <= limit <= 200:
         raise ValidationError("Room limit must be between 1 and 200")
     async with db.get_manager("aweb").transaction() as tx:
@@ -234,6 +239,7 @@ async def read_room(db, actor, *, after=None, limit=50):
 
 
 async def exact_room_message(db, actor, message_id):
+    """Read one retained room post without clearing its notice."""
     message_uuid = _uuid(message_id)
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
@@ -251,7 +257,15 @@ async def exact_room_message(db, actor, message_id):
         return _post_dict(row, actor.team_id)
 
 
-async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
+async def post_room_message(
+    db,
+    actor,
+    post: RoomPost,
+    *,
+    id_chain=None,
+    on_mutation: MutationCallback | None = None,
+):
+    """Verify and commit a signed team room post, emitting one callback only for a new commit."""
     require_address_evidence(actor)
     if post.e2ee:
         raise ValidationError("room_e2ee_unsupported")
@@ -284,6 +298,16 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
     ):
         logger.warning("Room post signed sender or target binding mismatch")
         raise ValidationError("Signed room post binding mismatch")
+    # docs/aw-hooks-sot.md:92: build metadata before commit; emit only a new post.
+    context = RoomMessageSentContext(
+        team_id=actor.team_id,
+        room_id=str(post.room_id),
+        message_id=str(message_id),
+        from_agent_id=actor.agent_id,
+        from_did=actor.did_key,
+        from_did_aw=actor.did_aw,
+        from_alias=actor.alias or actor.did_key,
+    ).to_context()
     async with db.get_manager("aweb").transaction() as tx:
         await _active_member(tx, actor)
         # Serializing room appends makes sequence order also commit order;
@@ -348,4 +372,8 @@ async def post_room_message(db, actor, post: RoomPost, *, id_chain=None):
             UUID(actor.agent_id),
         )
         record_agent_wake(team_room_wake_key(actor.team_id), "room")
-        return _post_dict(row, actor.team_id)
+        output = _post_dict(row, actor.team_id)
+    await fire_mutation_callback(
+        on_mutation, MutationEventType.ROOM_MESSAGE_SENT.value, context
+    )
+    return output

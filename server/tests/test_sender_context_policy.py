@@ -38,7 +38,7 @@ def test_empty_keys_never_verify_a_stored_global_claim():
 @pytest.mark.parametrize(
     "code,action",
     [
-        ("identity_binding_mismatch", "current credentials"),
+        ("identity_binding_mismatch", "current public-key binding"),
         ("identity_binding_unavailable", "Retry"),
     ],
 )

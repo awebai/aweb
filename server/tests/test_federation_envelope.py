@@ -18,7 +18,10 @@ from did_key_fixtures import named_did_key
 
 def _timestamp(offset_seconds: int = 0) -> str:
     return (
-        (datetime.now(timezone.utc).replace(microsecond=0) + timedelta(seconds=offset_seconds))
+        (
+            datetime.now(timezone.utc).replace(microsecond=0)
+            + timedelta(seconds=offset_seconds)
+        )
         .isoformat()
         .replace("+00:00", "Z")
     )
@@ -377,7 +380,9 @@ def test_verify_federation_envelope_rejects_invalid_signature():
     envelope = _envelope(sender_did_key)
     signature = _sign(envelope, other_key)
 
-    with pytest.raises(FederationEnvelopeError, match="Invalid federation message signature"):
+    with pytest.raises(
+        FederationEnvelopeError, match="Invalid federation message signature"
+    ):
         verify_federation_envelope(envelope, signature)
 
 
@@ -386,9 +391,13 @@ def test_message_timestamp_skew_window_is_exactly_300_seconds():
 
     enforce_message_timestamp_skew(now - timedelta(seconds=300), now=now)
     enforce_message_timestamp_skew(now + timedelta(seconds=300), now=now)
-    with pytest.raises(FederationEnvelopeError, match="timestamp outside accepted skew"):
+    with pytest.raises(
+        FederationEnvelopeError, match="timestamp outside accepted skew"
+    ):
         enforce_message_timestamp_skew(now - timedelta(seconds=301), now=now)
-    with pytest.raises(FederationEnvelopeError, match="timestamp outside accepted skew"):
+    with pytest.raises(
+        FederationEnvelopeError, match="timestamp outside accepted skew"
+    ):
         enforce_message_timestamp_skew(now + timedelta(seconds=301), now=now)
 
 
@@ -398,5 +407,84 @@ def test_verify_federation_envelope_rejects_stale_timestamp():
     envelope = _envelope(sender_did_key) | {"timestamp": _timestamp(-600)}
     signature = _sign(envelope, signing_key)
 
-    with pytest.raises(FederationEnvelopeError, match="timestamp outside accepted skew"):
+    with pytest.raises(
+        FederationEnvelopeError, match="timestamp outside accepted skew"
+    ):
         verify_federation_envelope(envelope, signature)
+
+
+@pytest.mark.parametrize("offset", [-301, 301])
+def test_plaintext_integrity_proof_does_not_claim_a_fresh_attestation(offset):
+    from aweb.federation.envelope import (
+        require_fresh_federation_envelope,
+        verify_federation_envelope_integrity,
+    )
+
+    signing_key, public_key = generate_keypair()
+    envelope = _envelope(did_from_public_key(public_key))
+    signature = _sign(envelope, signing_key)
+    accepted_at = datetime.fromisoformat(envelope["timestamp"].replace("Z", "+00:00"))
+    later = accepted_at + timedelta(seconds=offset)
+    verified = verify_federation_envelope_integrity(envelope, signature, now=later)
+    assert verified.signed_payload == envelope["signed_payload"]
+    assert verified.sender_current_did_key == did_from_public_key(public_key)
+    with pytest.raises(FederationEnvelopeError, match="outside accepted skew"):
+        require_fresh_federation_envelope(verified, now=later)
+    assert verify_federation_envelope(envelope, signature, now=accepted_at) == verified
+
+
+@pytest.mark.parametrize("tamper", ["body", "signature"])
+def test_stale_plaintext_integrity_still_checks_the_actual_signed_artifact(tamper):
+    from aweb.federation.envelope import verify_federation_envelope_integrity
+
+    signing_key, public_key = generate_keypair()
+    envelope = _envelope(did_from_public_key(public_key))
+    signature = _sign(envelope, signing_key)
+    later = datetime.fromisoformat(
+        envelope["timestamp"].replace("Z", "+00:00")
+    ) + timedelta(seconds=301)
+    if tamper == "body":
+        envelope["body"] = "not the signed body"
+        expected = "signed_payload body does not match"
+    else:
+        other_key, _ = generate_keypair()
+        signature = _sign(envelope, other_key)
+        expected = "Invalid federation message signature"
+    with pytest.raises(FederationEnvelopeError, match=expected):
+        verify_federation_envelope_integrity(envelope, signature, now=later)
+
+
+def test_integrity_proof_keeps_the_encrypted_ingestion_window():
+    from aweb.federation.envelope import verify_federation_envelope_integrity
+    from test_e2ee_messages import _signed_test_envelope
+
+    encrypted, sender_did, sender_stable, recipient_did, recipient_stable = (
+        _signed_test_envelope()
+    )
+    envelope = dict(
+        type="mail",
+        sender_did_aw=sender_stable,
+        sender_current_did_key=sender_did,
+        sender_address="example.com/alice",
+        target_address="example.com/bob",
+        target_did_aw=recipient_stable,
+        target_current_did_key=recipient_did,
+        target_delivery_origin="https://receiver.example",
+        body="",
+        subject="",
+        message_id=encrypted["message_id"],
+        conversation_id=encrypted["conversation_id"],
+        timestamp=encrypted["created_at"],
+        content_mode="encrypted_v2",
+        message_version=2,
+        encrypted_envelope=encrypted,
+    )
+    accepted_at = datetime.fromisoformat(encrypted["created_at"].replace("Z", "+00:00"))
+    verified = verify_federation_envelope_integrity(
+        envelope, encrypted["signature"], now=accepted_at
+    )
+    assert verified.encrypted_envelope == encrypted
+    with pytest.raises(FederationEnvelopeError, match="outside accepted skew"):
+        verify_federation_envelope_integrity(
+            envelope, encrypted["signature"], now=accepted_at + timedelta(seconds=301)
+        )

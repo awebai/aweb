@@ -6,6 +6,8 @@ from aweb.identity_binding import verified_key_sql
 
 import json
 import logging
+from collections.abc import Mapping, Sequence
+from typing import Any
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -53,7 +55,7 @@ async def _verified_hosted_key(db, *, agent_id, did, stable_id, key_id, invalid_
 async def require_non_custodial_recipients(
     db,
     envelope: dict,
-    recipients: list[dict],
+    recipients: Sequence[Mapping[str, Any]],
     *,
     sender: MessagingAuth,
 ) -> None:
@@ -90,7 +92,8 @@ async def require_non_custodial_recipients(
     for recipient in recipients:
         did = str(recipient.get("did_key") or recipient.get("current_did_key") or "").strip()
         reference = next(
-            (item for item in references if isinstance(item, dict) and item.get("did") == did), None
+            (item for item in references if isinstance(item, dict) and item.get("did") == did),
+            None,
         )
         if not reference:
             continue

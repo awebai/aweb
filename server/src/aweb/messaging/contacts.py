@@ -4,14 +4,15 @@ from aweb.identity_binding import verified_key_sql
 
 import logging
 import re
+from enum import Enum, auto
+from uuid import UUID
 from collections.abc import Sequence
 from dataclasses import dataclass
-from uuid import UUID
 
 import asyncpg
 from pgdbm.errors import QueryError
-
 from aweb.db import TransactionInfra
+
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.service_errors import ConflictError, ValidationError
 
@@ -24,8 +25,9 @@ CONTACT_STATUSES = {"pending", "active"}
 logger = logging.getLogger(__name__)
 
 
-def normalize_owner_dids(*, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[str]:
-    """Normalize the explicit owner identity set without adding inferred predecessors."""
+def normalize_owner_dids(
+    *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> list[str]:
     values: list[str] = []
     if owner_did is not None:
         values.append(owner_did)
@@ -95,113 +97,6 @@ async def add_contact(
     return _contact_row_to_dict(row)
 
 
-async def ensure_identity_contact(
-    *, db, owner_did: str, contact_address: str, contact_did_aw: str,
-    binding_controller_did: str, label: str = "",
-) -> dict:
-    """Accept a fresh resolved contact, or return an unchanged accepted identity.
-
-    The host supplies independently resolved DID/controller facts and explicit
-    owner acceptance. An existing legacy or differently bound row requires the
-    existing exact-old bind operation; retries never activate or overwrite it.
-    ``db`` is a native manager or the host's open transaction.
-    """
-    async with db.transaction() as tx:
-        try:
-            return await add_contact(
-                TransactionInfra(None, tx), owner_did=owner_did,
-                contact_address=contact_address, contact_did_aw=contact_did_aw,
-                binding_controller_did=binding_controller_did, label=label,
-            )
-        except ConflictError:
-            row = await tx.fetch_one(
-                "SELECT * FROM {{tables.contacts}} "
-                "WHERE owner_did=$1 AND contact_address=$2 AND reference_type='identity' FOR UPDATE",
-                owner_did, normalize_hosted_handle_reference(contact_address),
-            )
-            if row is not None and row.get("contact_did_aw") == contact_did_aw.strip():
-                # Key/controller rotation for an unchanged stable identity is
-                # not a replacement of the owner's accepted relationship.
-                return _contact_row_to_dict(row)
-            reason = (
-                "This contact has no accepted identity binding. "
-                if row is not None and not row.get("contact_did_aw")
-                else "This contact is bound to a different identity. "
-            )
-            raise ConflictError({
-                "code": "contact_identity_binding_required",
-                "message": reason + "Use the contact's explicit bind operation before retrying.",
-            }) from None
-
-
-@dataclass(frozen=True)
-class ContactTransferResult:
-    moved: int
-    merged: int
-
-
-async def transfer_contacts(
-    *, db, old_owner_dids: Sequence[str], target_owner_did: str,
-) -> ContactTransferResult:
-    """Transfer host-selected owners' contacts without accepting new bindings.
-
-    Prefer a bound row, then an existing target row, then the lowest contact
-    UUID. Keep every survivor field except its owner. Check every group's
-    positive bindings before deleting duplicates; all effects share the host's
-    transaction (a savepoint when one is already open).
-    """
-    target = str(target_owner_did or "").strip()
-    if not target:
-        raise ValidationError("A target contact owner is required. Select the target identity before retrying.")
-    owners = normalize_owner_dids(owner_did=target, owner_dids=list(old_owner_dids))
-    try:
-        async with db.transaction() as tx:
-            rows = await tx.fetch_all(
-                "SELECT * FROM {{tables.contacts}} WHERE owner_did=ANY($1::text[]) "
-                "ORDER BY contact_id FOR UPDATE", owners,
-            )
-            groups: dict[tuple, list] = {}
-            for row in rows:
-                reference = row["reference_type"]
-                key = (
-                    (reference, row["contact_address"]) if reference == "identity"
-                    else (reference, row["handle_namespace"], row["target_agent_name"] or "")
-                )
-                groups.setdefault(key, []).append(row)
-
-            survivors, duplicates = [], []
-            for group in groups.values():
-                bindings = {row["contact_did_aw"] for row in group if row.get("contact_did_aw")}
-                if len(bindings) > 1:
-                    raise ConflictError({
-                        "code": "contact_transfer_binding_conflict",
-                        "message": "These owners accepted different identities for the same contact. "
-                        "Resolve the conflicting contact bindings explicitly before retrying the transfer.",
-                    })
-                chosen = min(group, key=lambda row: (
-                    not bool(row.get("contact_did_aw")), row["owner_did"] != target, str(row["contact_id"]),
-                ))
-                survivors.append(chosen)
-                duplicates.extend(row["contact_id"] for row in group if row["contact_id"] != chosen["contact_id"])
-
-            if duplicates:
-                await tx.execute("DELETE FROM {{tables.contacts}} WHERE contact_id=ANY($1::uuid[])", duplicates)
-            moving = [row["contact_id"] for row in survivors if row["owner_did"] != target]
-            if moving:
-                await tx.execute(
-                    "UPDATE {{tables.contacts}} SET owner_did=$2 WHERE contact_id=ANY($1::uuid[])", moving, target,
-                )
-            return ContactTransferResult(moved=len(moving), merged=len(duplicates))
-    except (QueryError, asyncpg.UniqueViolationError) as exc:
-        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
-            raise
-        logger.warning("Contacts changed during owner transfer", exc_info=True)
-        raise ConflictError({
-            "code": "contact_transfer_changed",
-            "message": "Contacts changed during the transfer. Retry the transfer with the current contacts.",
-        }) from exc
-
-
 async def add_handle_contact(
     db,
     *,
@@ -240,7 +135,9 @@ async def add_handle_contact(
     return _contact_row_to_dict(row)
 
 
-async def list_contacts(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> list[dict]:
+async def list_contacts(
+    db, *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> list[dict]:
     """List all contacts for an identity."""
     aweb_db = db.get_manager("aweb")
     owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
@@ -265,7 +162,9 @@ async def list_contacts(db, *, owner_did: str | None = None, owner_dids: list[st
     return [_contact_row_to_dict(r) for r in rows]
 
 
-async def get_contact_addresses(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None) -> set[str]:
+async def get_contact_addresses(
+    db, *, owner_did: str | None = None, owner_dids: list[str] | None = None
+) -> set[str]:
     """Return all contact_address values for an identity."""
     aweb_db = db.get_manager("aweb")
     owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
@@ -285,6 +184,47 @@ async def get_contact_addresses(db, *, owner_did: str | None = None, owner_dids:
     return {r["contact_address"] for r in rows}
 
 
+class IdentityContactMatch(Enum):
+    MATCHED = auto()
+    NEEDS_BINDING = auto()
+    NOT_FOUND = auto()
+
+
+async def identity_contact_match(
+    db,
+    *,
+    owner_dids: list[str],
+    address: str | None,
+    sender_did: str,
+) -> IdentityContactMatch:
+    """Read exact active identity bindings, retaining locks in a caller transaction.
+
+    docs/identity-messaging-contract.md:85-91 excludes pending/handle/domain
+    matches. A legacy address without an identity needs explicit rebinding.
+    """
+    owner_keys = normalize_owner_dids(owner_dids=owner_dids)
+    addr = normalize_hosted_handle_reference(address or "")
+    bound_did = sender_did.strip()
+    if not owner_keys or not addr or not bound_did:
+        return IdentityContactMatch.NOT_FOUND
+    rows = await db.get_manager("aweb").fetch_all(
+        """
+        SELECT contact_did_aw FROM {{tables.contacts}}
+        WHERE owner_did = ANY($1::text[])
+          AND reference_type = 'identity' AND status = 'active'
+          AND contact_address = $2
+        ORDER BY contact_id FOR UPDATE
+        """,
+        owner_keys,
+        addr,
+    )
+    if any(row["contact_did_aw"] == bound_did for row in rows):
+        return IdentityContactMatch.MATCHED
+    if any(row["contact_did_aw"] is None for row in rows):
+        return IdentityContactMatch.NEEDS_BINDING
+    return IdentityContactMatch.NOT_FOUND
+
+
 async def has_exact_active_identity_contact(
     db,
     *,
@@ -293,34 +233,16 @@ async def has_exact_active_identity_contact(
     contact_address: str | None,
     contact_did_aw: str | None = None,
 ) -> bool:
-    """Return whether owner has an exact active identity contact.
-
-    This helper is intentionally narrower than ``is_address_in_contacts``: it
-    does not allow domain-level matching, pending rows, handle rows, labels, or
-    display names to authorize delivery.
-    """
-    owner_keys = normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids)
-    addr = normalize_hosted_handle_reference(contact_address or "")
-    bound_did = str(contact_did_aw or "").strip()
-    if not owner_keys or not addr or not bound_did:
-        return False
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT 1
-        FROM {{tables.contacts}}
-        WHERE owner_did = ANY($1::text[])
-          AND reference_type = 'identity'
-          AND status = 'active'
-          AND contact_address = $2
-          AND contact_did_aw = $3
-        LIMIT 1
-        """,
-        owner_keys,
-        addr,
-        bound_did,
+    """Compatibility query delegating to the exact identity-contact owner."""
+    return (
+        await identity_contact_match(
+            db,
+            owner_dids=normalize_owner_dids(owner_did=owner_did, owner_dids=owner_dids),
+            address=contact_address,
+            sender_did=contact_did_aw or "",
+        )
+        is IdentityContactMatch.MATCHED
     )
-    return row is not None
 
 
 async def resolve_local_namespace_controller_did(
@@ -354,8 +276,7 @@ async def resolve_local_namespace_controller_did(
         return None
     if (
         resolved is None
-        or str(getattr(resolved, "did_aw", "") or "").strip()
-        != str(contact_did_aw or "").strip()
+        or str(getattr(resolved, "did_aw", "") or "").strip() != str(contact_did_aw or "").strip()
         or str(getattr(resolved, "current_did_key", "") or "").strip()
         != str(contact_current_did_key or "").strip()
         or namespace is None
@@ -424,7 +345,6 @@ async def bind_contact_identity(
     controller_did: str,
     replacement_accepted: bool,
 ) -> dict:
-    """Accept a contact binding only when its stored identity matches the exact expected old value."""
     owner_keys = normalize_owner_dids(owner_dids=owner_dids)
     try:
         contact_uuid = UUID(str(contact_id).strip())
@@ -577,7 +497,13 @@ def is_address_in_contacts(address: str, contact_addresses: set[str]) -> bool:
     return False
 
 
-async def remove_contact(db, *, owner_did: str | None = None, owner_dids: list[str] | None = None, contact_id: str) -> None:
+async def remove_contact(
+    db,
+    *,
+    owner_did: str | None = None,
+    owner_dids: list[str] | None = None,
+    contact_id: str,
+) -> None:
     """Remove a contact by ID. Idempotent (no error if not found).
 
     Raises ValidationError on invalid contact_id format.
@@ -632,9 +558,7 @@ def _contact_row_to_dict(row) -> dict:
         "contact_did_aw": row.get("contact_did_aw"),
         "binding_controller_did": row.get("binding_controller_did"),
         "binding_accepted_at": (
-            row["binding_accepted_at"].isoformat()
-            if row.get("binding_accepted_at")
-            else None
+            row["binding_accepted_at"].isoformat() if row.get("binding_accepted_at") else None
         ),
         "label": row["label"],
         "created_at": row["created_at"].isoformat(),
@@ -643,3 +567,110 @@ def _contact_row_to_dict(row) -> dict:
         "handle_namespace": row["handle_namespace"],
         "target_agent_name": row["target_agent_name"],
     }
+
+
+async def ensure_identity_contact(
+    *, db, owner_did: str, contact_address: str, contact_did_aw: str,
+    binding_controller_did: str, label: str = "",
+) -> dict:
+    """Accept a fresh resolved contact, or return an unchanged accepted identity.
+
+    The host supplies independently resolved DID/controller facts and explicit
+    owner acceptance. An existing legacy or differently bound row requires the
+    existing exact-old bind operation; retries never activate or overwrite it.
+    ``db`` is a native manager or the host's open transaction.
+    """
+    async with db.transaction() as tx:
+        try:
+            return await add_contact(
+                TransactionInfra(None, tx), owner_did=owner_did,
+                contact_address=contact_address, contact_did_aw=contact_did_aw,
+                binding_controller_did=binding_controller_did, label=label,
+            )
+        except ConflictError:
+            row = await tx.fetch_one(
+                "SELECT * FROM {{tables.contacts}} "
+                "WHERE owner_did=$1 AND contact_address=$2 AND reference_type='identity' FOR UPDATE",
+                owner_did, normalize_hosted_handle_reference(contact_address),
+            )
+            if row is not None and row.get("contact_did_aw") == contact_did_aw.strip():
+                # Key/controller rotation for an unchanged stable identity is
+                # not a replacement of the owner's accepted relationship.
+                return _contact_row_to_dict(row)
+            reason = (
+                "This contact has no accepted identity binding. "
+                if row is not None and not row.get("contact_did_aw")
+                else "This contact is bound to a different identity. "
+            )
+            raise ConflictError({
+                "code": "contact_identity_binding_required",
+                "message": reason + "Use the contact's explicit bind operation before retrying.",
+            }) from None
+
+
+@dataclass(frozen=True)
+class ContactTransferResult:
+    moved: int
+    merged: int
+
+
+async def transfer_contacts(
+    *, db, old_owner_dids: Sequence[str], target_owner_did: str,
+) -> ContactTransferResult:
+    """Transfer host-selected owners' contacts without accepting new bindings.
+
+    Prefer a bound row, then an existing target row, then the lowest contact
+    UUID. Keep every survivor field except its owner. Check every group's
+    positive bindings before deleting duplicates; all effects share the host's
+    transaction (a savepoint when one is already open).
+    """
+    target = str(target_owner_did or "").strip()
+    if not target:
+        raise ValidationError("A target contact owner is required. Select the target identity before retrying.")
+    owners = normalize_owner_dids(owner_did=target, owner_dids=list(old_owner_dids))
+    try:
+        async with db.transaction() as tx:
+            rows = await tx.fetch_all(
+                "SELECT * FROM {{tables.contacts}} WHERE owner_did=ANY($1::text[]) "
+                "ORDER BY contact_id FOR UPDATE", owners,
+            )
+            groups: dict[tuple, list] = {}
+            for row in rows:
+                reference = row["reference_type"]
+                key = (
+                    (reference, row["contact_address"]) if reference == "identity"
+                    else (reference, row["handle_namespace"], row["target_agent_name"] or "")
+                )
+                groups.setdefault(key, []).append(row)
+
+            survivors, duplicates = [], []
+            for group in groups.values():
+                bindings = {row["contact_did_aw"] for row in group if row.get("contact_did_aw")}
+                if len(bindings) > 1:
+                    raise ConflictError({
+                        "code": "contact_transfer_binding_conflict",
+                        "message": "These owners accepted different identities for the same contact. "
+                        "Resolve the conflicting contact bindings explicitly before retrying the transfer.",
+                    })
+                chosen = min(group, key=lambda row: (
+                    not bool(row.get("contact_did_aw")), row["owner_did"] != target, str(row["contact_id"]),
+                ))
+                survivors.append(chosen)
+                duplicates.extend(row["contact_id"] for row in group if row["contact_id"] != chosen["contact_id"])
+
+            if duplicates:
+                await tx.execute("DELETE FROM {{tables.contacts}} WHERE contact_id=ANY($1::uuid[])", duplicates)
+            moving = [row["contact_id"] for row in survivors if row["owner_did"] != target]
+            if moving:
+                await tx.execute(
+                    "UPDATE {{tables.contacts}} SET owner_did=$2 WHERE contact_id=ANY($1::uuid[])", moving, target,
+                )
+            return ContactTransferResult(moved=len(moving), merged=len(duplicates))
+    except (QueryError, asyncpg.UniqueViolationError) as exc:
+        if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.UniqueViolationError):
+            raise
+        logger.warning("Contacts changed during owner transfer", exc_info=True)
+        raise ConflictError({
+            "code": "contact_transfer_changed",
+            "message": "Contacts changed during the transfer. Retry the transfer with the current contacts.",
+        }) from exc

@@ -17,6 +17,7 @@ from aweb.application_state import application_registry_client
 from aweb.identity_binding import verify_identity_binding
 from aweb.mcp.auth import current_agent_wake_publisher, get_auth
 from aweb.mcp.signing import sign_hosted_message
+from aweb.mcp.mutations import current_mutation_callback
 from aweb.mcp.tools._common import team_identity
 from aweb.member_team_key import (
     CURRENT_MEMBERSHIP_REQUIRED_DETAIL,
@@ -44,21 +45,21 @@ async def _room_actor(db):
         or not (auth.certificate_id or auth.trusted_proxy)
     ):
         raise HTTPException(403, "Room requires authenticated team context")
-    row = await read_member_projection(
+    projection = await read_member_projection(
         db.get_manager("aweb"),
         agent_id=auth.agent_id,
         team_id=auth.team_id,
     )
     if (
-        not row
-        or not row["certificate_id"]
-        or row["did_key"] != auth.did_key
-        or not current_member(row)
+        not projection
+        or not projection["certificate_id"]
+        or projection["did_key"] != auth.did_key
+        or not current_member(projection)
     ):
         raise HTTPException(403, CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
     row = await current_membership(
         application_registry_client(auth.request.app.state),
-        dict(row),
+        dict(projection),
         request=auth.request,
     )
     if not row or row["team_id"] != auth.team_id:
@@ -136,6 +137,10 @@ async def room_post(db, *, hosted_signer=None, subject="", body="", e2ee=False, 
         )
     with agent_wake_scope(current_agent_wake_publisher()):
         output = await post_room_message(
-            db, actor, payload, id_chain=getattr(auth.request.state, "id_chain", None)
+            db,
+            actor,
+            payload,
+            id_chain=getattr(auth.request.state, "id_chain", None),
+            on_mutation=current_mutation_callback(),
         )
     return json.dumps(await present_room(db, auth.request, output))

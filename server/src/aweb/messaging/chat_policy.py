@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from typing import Any
+
 from aweb.identity_binding import verified_key_sql
 
 from aweb.human_kind import human_predicate_sql
@@ -36,7 +39,8 @@ class HumanChatRefused(ValidationError):
         )
 
 
-def recipient_label(row: dict) -> str:
+def recipient_label(row: Mapping[str, Any]) -> str:
+    """Choose an actionable recipient label without treating it as identity authority."""
     return str(
         row.get("address")
         or row.get("alias")
@@ -47,13 +51,11 @@ def recipient_label(row: dict) -> str:
     )
 
 
-async def require_agent_chat(db, recipients: list[dict], *, registry_client=None) -> None:
+async def require_agent_chat(db, recipients: Sequence[Mapping[str, Any]]) -> None:
     """Refuse verified-human projections; unknown kind remains allowed.
 
-    docs/mail-and-chat.md:12-15: "Chat is between agents: aweb reaches people
-    by mail". Recipient kind is independent of current team membership.
-    This policy preflight deliberately performs no registry I/O. The retained
-    registry_client keyword is source compatibility only. Strict federation
+    docs/mail-and-chat.md:12-15 keeps recipient kind independent of membership.
+    This policy preflight deliberately performs no registry I/O. Strict federation
     resolution remains the sole outbound authority path; receivers apply their
     own verified-human refusal. Local projections come from verified connect
     and the required cutover revalidation, never a fresh per-send ancestry claim.

@@ -106,17 +106,20 @@ handler branch does not establish that a producer emits that event.
 - `MailSentContext` for local and outbound mail;
 - `ChatMessageSentContext` for native chat sends;
 - `FederatedMessageSentContext` for the shared inbound outbox shape;
-- `MessageAcknowledgedContext` for incoming mail acknowledgements.
+- `MessageAcknowledgedContext` for incoming mail acknowledgements;
+- `RoomMessageSentContext` for a committed team room post.
 
 Each supplies `event_type` and `to_context() -> dict[str, object]`. Construct
 them from validated producer data. Event names, message kind and transport use
 the server's named enums. Received `content_mode` and priority instead use
 `ContentModeValue` and `MessagePriorityValue` from `aweb.messaging.kinds`: a
-named standard value or the original string, optionally absent. Exact named
-values become `ContentMode`/`MessagePriority` constants; other accepted strings
-retain every character, including case and whitespace. No context performs
-validator narrowing or changes a signed priority. Constructors cannot newly
-fail on accepted metadata, so callback timing remains unchanged.
+named standard value or the original string. As before typed contexts, an absent
+or empty mode emits `legacy_plaintext_v1`, and an absent or empty priority emits
+`normal`. Exact named values become `ContentMode`/`MessagePriority` constants;
+other accepted nonempty strings retain every character, including case and
+whitespace. These are callback defaults only: request and signed payload bytes
+are unchanged. No context performs validator narrowing. Constructors cannot
+newly fail on accepted metadata, so callback timing remains unchanged.
 
 Mail send, chat send, mail acknowledgement and inbound federation producers
 use these contexts before passing dictionaries to the existing callback or
@@ -124,6 +127,16 @@ durable outbox. They pass the accepted mode and priority to the context without
 adding defaults; absent and empty metadata remain distinct. The inbound
 context keeps its shared mail/chat shape rather than acquiring native chat's
 preview or recipient-alias list.
+
+`aweb.message_vocabulary.observe_message_vocabulary` measures unnamed accepted
+metadata once at the mail/chat send entry, native preparation after its
+signed envelope validation, or after federation signature
+verification, before replay exits. The Prometheus counter
+`aweb_unnamed_message_vocabulary_total` has only bounded `source` and `field`
+labels. One log line names the source and unnamed fields; neither counter nor
+log contains the received values, identifiers or message content. A counter
+failure is logged and leaves the send working. Contexts and hook translation
+do not observe again. This is measurement only; validators remain unchanged.
 
 Native chat recipients accept the existing list or a tuple; the context takes
 an immutable snapshot and returns a fresh list in the callback dictionary.
@@ -182,6 +195,7 @@ MCP `send_chat` tool call, and an acknowledgement fires from
 
 | HTTP route | Event | When called |
 |---|---|---|
+| `POST /v1/room/messages` | `room.message_sent` | After a new room post commits. Exact retries emit nothing. |
 | `POST /v1/messages` | `message.sent` | After a successful local, stored-route, or federated outbound mail send. Helper branches converge on the same event. |
 | `POST /v1/messages/{message_id}/ack` | `message.acknowledged` | Only when the ack changes the stored row. |
 | `POST /v1/chat/sessions` | `chat.message_sent` | After the initial chat message is stored/sent, including federated first contact. |
@@ -210,6 +224,7 @@ table fires the hook.
 
 | MCP tool | Event | When called |
 |---|---|---|
+| `room_post` | `room.message_sent` | After a new room post commits, as `POST /v1/room/messages`. |
 | `send_mail` (and `send_message_to_contact` for mail) | `message.sent` | After a successful local, stored-route, or federated send, as `POST /v1/messages`. |
 | `check_mail` | `message.acknowledged` | Once for each unread message the call marks read; already-read mail does not fire again. |
 | `send_chat` (and `send_message_to_contact` for chat) | `chat.message_sent` | After a new-session or continuation message is stored/sent, including federated delivery. |
@@ -244,6 +259,25 @@ Keys can be absent or null on paths that do not have that projection. Consumers
 must tolerate additive keys and missing optional identity/workspace data.
 
 ### Messaging
+
+`room.message_sent` uses only metadata:
+
+```text
+team_id, room_id, message_id, from_agent_id, from_did, from_did_aw, from_alias
+```
+
+Both HTTP and MCP room sends call one producer. It builds this context before
+committing and calls the best-effort host callback after commit. An exact
+retry returns the stored post without emitting or counting another send.
+No room body or recipient list is included.
+
+A host's pre-post quota admission uses the public dependency
+`aweb.routes.room.room_post_identity`, the same `chat.send` scoped team
+identity dependency used by the room route. A host may bind a wrapper which
+calls it once, checks its authenticated actor, and returns that exact actor.
+The post-commit callback counts a committed post and cannot refuse it at a
+limit. Authentication, current membership and the room signature remain
+native decisions.
 
 `message.sent` route contexts use:
 
@@ -351,45 +385,3 @@ HTTP/SSE protocols such as [`receiving-events.md`](receiving-events.md) or the
 experimental installed-app event contract in [`app-events.md`](app-events.md).
 Do not build against a private named-hook specification or describe it as
 shipped aweb authority.
-
-### Coordination contexts and stream translation
-
-Native task, reservation and status producers use frozen keyword-only contexts
-from `aweb.hook_contexts`. `to_context()` preserves an omitted projection key
-separately from an explicit `None`; constructors add no validation of accepted
-producer values. These types are producer conveniences. Received host callbacks
-remain the open `(str, dict)` interface, including custom names and extra keys.
-
-The native translator uses `MutationEventType` and explicit workspace/team
-builder maps. `INTENTIONALLY_UNPUBLISHED_EVENTS` names mutations that have no
-native SSE representation; hosts still receive those callbacks. Agent/task
-deletions retain their separate coordination cascades. Room mutation production
-and the canonical message contexts belong to the shared message event owner.
-MCP registers the same public tools by operation family through a single set of
-serving dependencies; the generated tool reference remains the surface inventory.
-
-### Callback outcomes
-
-`fire_mutation_callback` and `fire_mutation_hook` return the frozen
-`MutationDeliveryOutcome` from `aweb.hooks`. `MutationDeliveryStatus` distinguishes
-`DELIVERED`, `DEFERRED`, `NOT_CONFIGURED` and `FAILED`. An existing host callback returning
-`None` remains a completed callback; a callback exception is logged and becomes
-a failed outcome, without raising from these best-effort helpers. A composed
-host callback forwards the native outcome if its caller needs cleanup evidence.
-
-The native translator reports `MutationDeliveryStage` values. In particular,
-`TASK_CLAIM_RELEASE` differs from subsequent `PUBLICATION` failure, so a deletion
-consumer can report and retry post-commit cleanup without pretending that the
-deletion rolled back. Existing sends may ignore the result. A durable federation
-outbox consumer calls `require_delivery()` on a returned native outcome and
-keeps an incomplete row pending; callbacks returning `None` retain their
-existing successful-delivery meaning. No second queue or callback parser is
-introduced.
-
-
-`HeldMutationEvents.record` returns `DEFERRED`: the callback has been recorded
-for the caller's outer commit and has not executed. A transaction-owning host
-fires the held batch only after commit, as above. A deletion consumer preserves
-that deferred result instead of verifying post-commit cleanup inside the open
-transaction. `require_delivery()` accepts only `DELIVERED`, so a durable outbox
-cannot mark deferred callback work complete. No additional queue is introduced.

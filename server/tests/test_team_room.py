@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from awid.signing import canonical_json_bytes, sign_message
-from test_dashboard_privacy import privacy_app, TEAM  # noqa: F401
+from test_dashboard_privacy import privacy_app as privacy_app, TEAM
 from test_messages_http import (
     _signed_team_headers,
     _make_keypair,
@@ -106,7 +106,19 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
     assert exact.json() == item
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.messages}}") == 0
     assert await env.db.fetch_val("SELECT count(*) FROM {{tables.chat_messages}}") == 0
-    assert env.dispatched == []  # Room notices use no legacy mutation fan-out.
+    assert len(env.dispatched) == 1
+    event, context = env.dispatched[0]
+    assert type(event) is str
+    assert event == "room.message_sent"
+    assert context["team_id"] == TEAM
+    assert context["from_agent_id"] == str(env.actors["alice"].id)
+    assert context["message_id"] == item["message_id"]
+    assert context["room_id"] == room["room_id"]
+    # Retrying the same post does not charge or notify a second send.
+    retried = await post(env, room, payload=payload)
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["message_id"] == item["message_id"]
+    assert len(env.dispatched) == 1
 
 
 @pytest.mark.asyncio
@@ -126,7 +138,15 @@ async def test_room_is_shared_and_history_includes_posts_before_join(privacy_app
             ),
         ),
     ],
-    ids=['recipient', 'conversation', 'from-did', 'from-stable-id', 'type', 'recipient-did', 'expired-time'],
+    ids=[
+        "recipient",
+        "conversation",
+        "from-did",
+        "from-stable-id",
+        "type",
+        "recipient-did",
+        "expired-time",
+    ],
 )
 async def test_room_refuses_wrong_signed_bindings(privacy_app, field, value):
     room = await metadata(privacy_app)
@@ -533,6 +553,14 @@ async def test_hosted_mcp_room_signs_as_actor_and_reads_shared_history(
         assert stored_post["from_did"] == actor.did
         assert stored_post["body"] == "MCP announcement"
         assert stored_post["confidentiality"] == "server_readable"
+        assert len(env.dispatched) == 1
+        event, context = env.dispatched[0]
+        assert type(event) is str
+        assert event == "room.message_sent"
+        assert context["message_id"] == stored_post["message_id"]
+        assert context["from_agent_id"] == str(actor.id)
+        assert context["team_id"] == TEAM
+        assert "body" not in context
         assert len(calls) == 1
         room = await metadata(env)
         assert (
@@ -635,7 +663,6 @@ async def test_real_cli_room_post_read_and_who(
         command_env,
         _,
     ):
-
         if grant:
             await env.db.execute(
                 "UPDATE {{tables.identity_session_grants}} SET scopes=ARRAY['chat.read','chat.send']"
@@ -660,8 +687,7 @@ async def test_real_cli_room_post_read_and_who(
 
         empty, notice = await raw("room", "read")
         assert empty == (
-            "The team room is empty. Post with: "
-            "aw room post --subject ... --body-file ...\n"
+            "The team room is empty. Post with: aw room post --subject ... --body-file ...\n"
         )
         assert notice == ""
 

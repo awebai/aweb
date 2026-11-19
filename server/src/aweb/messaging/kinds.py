@@ -39,17 +39,17 @@ _CONTENT_MODES = {mode.value: mode for mode in ContentMode}
 _PRIORITIES = {priority.value: priority for priority in MessagePriority}
 
 
-def accepted_content_mode(value: ContentModeValue | None) -> ContentModeValue | None:
-    """Name exact standard values, retaining every other string verbatim."""
-    if value is None:
-        return None
+def accepted_content_mode(value: ContentModeValue | None) -> ContentModeValue:
+    """Keep host defaults for absent modes; retain other accepted strings verbatim."""
+    if value is None or value == "":
+        return ContentMode.PLAINTEXT
     return _CONTENT_MODES.get(value, value)
 
 
 def accepted_message_priority(
     value: MessagePriorityValue | None,
-) -> MessagePriorityValue | None:
-    """Keep signed priority text intact, including unnamed or absent values."""
-    if value is None:
-        return None
+) -> MessagePriorityValue:
+    """Keep the host's normal default without narrowing received priority text."""
+    if value is None or value == "":
+        return MessagePriority.NORMAL
     return _PRIORITIES.get(value, value)

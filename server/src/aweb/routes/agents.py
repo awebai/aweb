@@ -807,14 +807,14 @@ async def publish_encryption_key(
                 },
             )
         claims = generation.certificate.claims
-        row = await read_member_projection(
+        projection = await read_member_projection(
             db, team_id=claims["team_id"], agent_id=agent_id
         )
-        if row is None or not current_member(row) or any(
+        if projection is None or not current_member(projection) or any(
             (
-                row["did_key"] != claims["member_did_key"],
-                row["certificate_id"] != claims["certificate_id"],
-                row["accepted_team_did_key"] != generation.verified_team_did_key,
+                projection["did_key"] != claims["member_did_key"],
+                projection["certificate_id"] != claims["certificate_id"],
+                projection["accepted_team_did_key"] != generation.verified_team_did_key,
             )
         ):
             raise HTTPException(
@@ -824,7 +824,8 @@ async def publish_encryption_key(
                     "message": "The generation does not match the current admitted member. Complete admission with the current certificate and retry in that transaction.",
                 },
             )
-        principal = row.verified_identity()
+        row = projection.verified_identity()
+        principal = row
         member_key = principal["did_key"]
         member_id = principal["agent_id"]
         team_id = principal["team_id"]

@@ -82,10 +82,10 @@ async def lock_native_actors(
     by_id = {row["agent_id"]: row for row in rows}
     facts = []
     for subject, actor_id in zip(subjects, actor_ids):
-        row = by_id.get(actor_id)
-        if not current_member(row):
+        projection = by_id.get(actor_id)
+        if projection is None or not current_member(projection):
             raise ContractError("forbidden", CURRENT_MEMBERSHIP_REQUIRED_DETAIL)
-        row = row.verified_identity()
+        row = projection.verified_identity()
         current = NativeMessagingSubject(
             row["did_aw"] or row["did_key"], row["did_key"], str(row["agent_id"]), row["team_id"]
         )

@@ -178,12 +178,12 @@ async def lookup_identity_agent_context(
     )
     if not rows:
         return None
-    outcome = getattr(request.state, "identity_address_resolution", None)
-    if outcome is not None and outcome.state is AddressResolutionState.UNKNOWN:
+    prior_resolution = getattr(request.state, "identity_address_resolution", None)
+    if prior_resolution is not None and prior_resolution.state is AddressResolutionState.UNKNOWN:
         # Key possession/current DID binding was authenticated above. During an
         # address outage, retain previously verified projections, including
         # verified-empty; never mint a marker from a key-only observation.
-        request.state.identity_address_resolution = outcome.with_stored_bindings(
+        request.state.identity_address_resolution = prior_resolution.with_stored_bindings(
             rows,
             did_key=did_key,
             did_aw=did_aw_value,

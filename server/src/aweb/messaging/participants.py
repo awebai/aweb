@@ -26,8 +26,8 @@ async def messaging_participants_by_aliases(
         return []
     rows = await current_member_projections(db, team_id=team_id, aliases=aliases)
     result = []
-    for row in rows:
-        row = messaging_identity_projection(row)
+    for projection in rows:
+        row = messaging_identity_projection(projection)
         if is_verified_human(row):
             if team_id != selected_team_id:
                 continue

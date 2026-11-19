@@ -21,6 +21,7 @@ from aweb.application_state import RegistryClientUnavailable
 from aweb.auth_error_transport import mcp_auth_error_response
 from aweb.internal_auth import (
     ProxyVerificationConfig,
+    InternalAuthContext,
     parse_internal_auth_context,
     read_internal_actor_projection,
 )
@@ -195,7 +196,7 @@ class MCPAuthMiddleware:
         )
 
     async def _resolve_proxy_auth(
-        self, internal: dict[str, str], *, request: Request
+        self, internal: InternalAuthContext, *, request: Request
     ) -> AuthContext:
         aweb_db = native_database_manager(self.db_infra)
         team_id = internal["team_id"]

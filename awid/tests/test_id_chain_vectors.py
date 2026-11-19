@@ -3,6 +3,7 @@
 import copy
 import json
 from pathlib import Path
+from typing import Any
 import pytest
 from awid.id_certificates import (
     IDChainEvidence,
@@ -22,14 +23,14 @@ V = json.loads(
 def inputs(case):
     status = copy.deepcopy(V["status_fixtures"][case["status"]])
     subject = dict(case["subject"], **case.get("subject_patch", {}))
-    bundle = {
+    bundle: dict[str, object] | None = {
         "v": 1,
         "type": "aweb.id-chain",
         "certificates": [copy.deepcopy(V["certificates"][n]["signed"]) for n in case["chain"]],
     }
     if not case["chain"] or case.get("presented_chain") is False:
         bundle = None
-    epoch = next(
+    epoch: dict[str, Any] = next(
         (e for e in reversed(status["namespace"]["epochs"]) if e["retired_at"] is None), {}
     )
     authority = case.get(
@@ -120,7 +121,14 @@ def test_ancestry_does_not_reuse_decode_time_claimed_issuer_verdict():
 
 @pytest.mark.parametrize(
     "mutation",
-    ["extra", "duplicate", "missing", "wrong-domain", "over-limit", "revocation-after-witness"],
+    [
+        "extra",
+        "duplicate",
+        "missing",
+        "wrong-domain",
+        "over-limit",
+        "revocation-after-witness",
+    ],
 )
 def test_invalid_status_never_confers_authority(mutation):
     bundle, subject, evidence, domain = inputs(V["verification_cases"][0])
