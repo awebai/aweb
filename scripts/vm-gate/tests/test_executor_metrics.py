@@ -41,6 +41,12 @@ class ObservationTransport:
                     stdout="",
                     stderr="IsADirectoryError: metrics output\n",
                 )
+        if command == "cat /var/log/vm-gate/supervisor-receipt.json":
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"raw_exit": self.primary, "grace_expired": False}),
+                stderr="",
+            )
         if command.startswith("cat "):
             return SimpleNamespace(returncode=0, stdout="7\n", stderr="")
         if command.startswith("sha256sum "):

@@ -1,11 +1,11 @@
 """One run's saga. Resource deletion never depends on receiving evidence."""
 
-from decimal import Decimal, ROUND_CEILING
 import json
 import math
-from pathlib import Path
-import time
 import sys
+import time
+from decimal import Decimal
+from pathlib import Path
 
 from .errors import Infrastructure, Refused
 from .reaping import reap_and_settle
@@ -129,7 +129,7 @@ def run_session(
         summary.update(evidence)
         # Evidence may add stages/memory, never change verdict identity.
         summary.update(exit=result, infrastructure=None, sha=sha, run_id=run_id)
-    except BaseException as exc:
+    except BaseException as exc:  # noqa: BLE001 -- retain failure and finish bounded cleanup
         if isinstance(exc, (Refused, Infrastructure)):
             summary.update(
                 exit=int(exc.exit_code),
@@ -153,11 +153,20 @@ def run_session(
     finally:
         with handling(cleanup=True):
             if prepared and not pull_attempted:
+                # A first stop unwinds the SSH call. Let the owned remote group
+                # finalize before pulling, but never spend the pull/cleanup reserve.
+                try:
+                    summary["remote_stop"] = remote.stop(
+                        server, timeout=budget.require("grace", now=clock())
+                    )
+                except BaseException as exc:  # noqa: BLE001 -- stop failure must not prevent collection or deletion
+                    summary["remote_stop"] = {"finalized": False, "error": str(exc)}
                 try:
                     partial = remote.collect(
                         server, timeout=budget.require("pull", now=clock())
                     )
                     for field in [
+                        "supervision",
                         "stages",
                         "gate_summaries",
                         "memory",
@@ -167,7 +176,7 @@ def run_session(
                         if field in partial:
                             summary[field] = partial[field]
                     summary["partial_evidence"] = True
-                except BaseException as exc:
+                except BaseException as exc:  # noqa: BLE001 -- retain failure and finish bounded cleanup
                     summary["evidence_error"] = type(exc).__name__
 
             try:
@@ -175,7 +184,7 @@ def run_session(
                     run_id, recorded=summary["resources"]
                 )
                 cleanup_ok = True
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: BLE001 -- retain failure and finish bounded cleanup
                 summary.update(
                     exit=70,
                     infrastructure="infrastructure",
@@ -197,7 +206,7 @@ def run_session(
                     store.settle(run_id, str(actual), now=clock())
                     summary["cost_eur"] = str(actual)
                     summary["spend"] = store.totals(now=clock())
-                except BaseException as exc:
+                except BaseException as exc:  # noqa: BLE001 -- retain failure and finish bounded cleanup
                     summary.update(
                         exit=70,
                         infrastructure="infrastructure",

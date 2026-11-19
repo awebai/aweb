@@ -191,7 +191,7 @@ if [[ -z "$pending" ]]; then
   exit 0
 fi
 
-run_candidate() (
+run_candidate() {
 set -euo pipefail
 command -v docker >/dev/null || refuse "docker is unavailable"
 wait_for_disk
@@ -483,8 +483,10 @@ docker run --rm --init \
   -w "$checkout" \
   "$IMAGE" \
   bash scripts/candidate-suite.sh "$pending" \
-  2>&1 | tee "$LOG_DIR/gate.log"
-status="${PIPESTATUS[0]}"
+  2>&1 | (trap '' INT TERM; exec tee "$LOG_DIR/gate.log") &
+runner_job=$!
+wait "$runner_job"
+status=$?
 set -e
 
 if [[ "$status" -ne 0 ]]; then
@@ -494,46 +496,32 @@ fi
 printf 'candidate gate PASSED at %s; logs: %s\n' \
   "$SOURCE_SHA" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"
 
-)
+}
 
-# The child owns Docker cleanup. A stage is recorded only after it exits, and
-# only from this invocation's logs; stale logs cannot supply a missing result.
+# The child owns Docker cleanup. Its output reader survives group signals;
+# the lock holder records completed proof, then waits for real child cleanup.
+source "$ROOT/scripts/candidate-record.sh"
 started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
+mkdir -p "$LOG_DIR"
+output_pipe="$LOG_DIR/output.pipe"
+mkfifo "$output_pipe"
+if [[ -n "${AWEB_GATE_RUN_REGISTRY:-}" ]]; then
+  printf '%s\t%s\n' "$run_id" "$LOG_DIR" >> "$AWEB_GATE_RUN_REGISTRY"
+fi
+trap 'candidate_interrupted 130 INT' INT
+trap 'candidate_interrupted 143 TERM' TERM
+(trap '' INT TERM; exec tee "$run_log") < "$output_pipe" &
+candidate_writer=$!
+run_candidate > "$output_pipe" 2>&1 &
+candidate_job=$!
 set +e
-run_candidate 2>&1 | tee "$run_log"
-status="${PIPESTATUS[0]}"
-set -e
-finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-[[ "$status" != 130 && "$status" != 143 ]] || exit "$status"
-if [[ ! -f "$LOG_DIR/run-id" || "$(cat "$LOG_DIR/run-id")" != "$run_id" ]]; then
-  printf 'gate: stopped before allocation; nothing recorded\n' >&2
-  exit "$status"
-fi
-record() {
-  local stage="$1" result="$2" source="$3" log note=""
-  log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log"
-  cp "$source" "$log"
-  [[ -z "${GATE_RERUN_REASON:-}" ]] || note="rerun after $GATE_RERUN_REASON"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$KEY" "$stage" "$result" "$SOURCE_SHA" "" "$log" "$OWNER" "$started" "$finished" "$note" >>"$LEDGER"
-}
-for stage in $pending; do
-  if [[ -f "$LOG_DIR/summary.tsv" ]] && grep -q "^$stage"$'\tPASSED\t' "$LOG_DIR/summary.tsv"; then
-    record "$stage" passed "$LOG_DIR/$stage.log"
-  elif [[ -f "$LOG_DIR/$stage.log" ]]; then
-    record "$stage" failed "$LOG_DIR/$stage.log"
-    status=1
-    break
-  else
-    record setup failed "$run_log"
-    status=1
-    break
-  fi
-done
-if [[ ! -f "$LOG_DIR/wrapper-verdict.log" ]] \
-   || ! grep -q '^candidate gate cleanup PASSED$' "$LOG_DIR/wrapper-verdict.log"; then
-  record cleanup failed "$run_log"
-  status=1
-fi
+wait "$candidate_job"
+status=$?
+candidate_child_status=$status
+trap '' INT TERM
+finish_candidate_output
+if [[ "$status" == 0 && "$candidate_writer_status" != 0 ]]; then status=1; fi
+finalize_candidate "$status"
+status=$?
 exit "$status"

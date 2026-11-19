@@ -103,6 +103,22 @@ This is the accepted single-tenant VM trade-off. See the
 [cloud-init SSH schema](https://docs.cloud-init.io/en/latest/reference/modules.html#ssh). The gate user belongs to the Docker group; UID admission
 is not a privilege-separation claim.
 
+The executor starts a detached, HUP-resistant `runuser` session. GNU timeout
+runs inside that UID-1000 session and signals a small supervisor; the supervisor
+forwards to the command's separate process group. It permits 120 seconds for
+finalization, then kills that owned group. GNU timeout has a 130-second fallback,
+and SSH/completion budgeting reserves 150 seconds. Actual command return codes,
+forwarded signals, escalation times and completion receipts are retained.
+A controller stop requests that same supervisor before collecting evidence.
+A completed process group alone does not attest gate cleanup: on interruption,
+`finalized` also requires registered current-run gate cleanup receipts, with
+matching run IDs, successful wrapper verdicts and completed log writers.
+The gate records completed stages first, forwards the signal to its direct
+child, waits for child cleanup and its signal-resistant log writer, then records
+that observed cleanup outcome in `interruption.tsv`.
+Missing/late completion is inconclusive: bounded stop failure never prevents
+the subsequent partial-evidence pull or provider cleanup.
+
 Expiry includes setup, full command timeout, TERM/KILL grace, evidence pull,
 cleanup and margin. No phase starts if its remaining budget cannot fit.
 Deletion runs independently of log transfer, ignores repeated termination
@@ -122,7 +138,28 @@ Focused commands may have no stages. Full logs, raw archive, source manifest,
 bundle, provider events, summary.tsv files and immutable before/after gate
 ledger copies remain beside it. Nested prerequisite evidence is retained, but
 its unrelated SHA does not become the selected gate's stage result. Sampling
-gaps/removal races remain explicit. Raw archives stay local/operator-only.
+gaps and failed reads remain explicit; a persistent read failure is not assumed
+to be a removal race. Each failed cgroup read retains the known PID, cgroup,
+failing filename and error type; unavailable context remains null. Other fields
+successfully read for that container are retained. Each sample reports the
+listed container count, readable `memory.current` count and complete-row count.
+The concurrent current-memory figure is labelled **lower bound, N of M containers
+read**, with its sample index and completeness, rather than a complete-container
+peak or a sum of independent high-water values. Without a listed count, coverage
+is inferred from recorded row/error IDs and labelled as such; missing inventory is unknown,
+not zero. An incomplete final JSON line is an explicit sample error and cannot
+discard completed gate stages. Old errors lacking path context cannot establish
+which file failed or why. Raw archives stay local/operator-only.
+The UID-1000 candidate can write LOGS, including exit/supervisor receipts; these
+are operator observations, not an attestation against malicious candidate code.
+Root stop validates the live PID/start-time/UID/command before sending a signal.
+
+The complete native caller packet is `scripts/vm-gate/native_proof.py`, with
+`--source-sha` set to the reviewed commit and a fresh `--evidence` directory.
+It performs no allocation. Only the coordinator-authorized Linux VM run executes
+it: real GNU timeout, PID-bound operator-stop ordering, real gate Docker cleanup
+and absence before VM deletion, plus a memory receipt while an owned container
+is live. Local unit/process/filesystem controls do not claim that native proof.
 
 [errors.py](vm_gate/errors.py) is the single exit-code authority. Normal gate
 exits pass through; refusal and infrastructure errors have separate classes.
@@ -137,6 +174,19 @@ parallel. New rows append under a writer lock; the original prefix and all
 failure rows survive. Remote gate logs are copied to the same absolute canonical
 paths. Existing source failed-tree/reuse rules apply equally to VM and Mac rows.
 A run never clears a failure row to retry it.
+
+On TERM/INT the gate records only completed PASS rows with this invocation's
+matching run-id, summary entry and nonempty stage log. It retains exit 143/130
+and appends a `run INTERRUPTED` summary entry; an unfinished stage gets no
+invented pass or code-failure verdict. Cleanup receipts remain separate.
+An `artifacts` PASS certifies that the artifact build/validation targets passed
+for the ledger's tree and effective inputs. It does **not** promise retained
+wheels, archives, images or node modules in a later disposable runner.
+`candidate-suite.sh` prepares node dependencies and the CLI build before a
+resumed integration stage, even when artifacts is reused. The OSS journey
+(including its controller-key mutation) builds its CLI and Compose images;
+the exact-publish self-tests construct their own fixture outputs. Publication
+of particular staged bytes still requires those bytes and their own receipts.
 
 SQLite `registry.sqlite3` serializes registry/spend changes. Reservations count
 historical seed, settled charges and all outstanding runs. They use live EUR
