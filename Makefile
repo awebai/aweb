@@ -158,6 +158,14 @@ test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-ide
 test-scripts:
 	PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen --project server python -m unittest discover -s scripts -p 'test_*.py' -v
 
+# Package configurations own rules; the root owner compares raw findings once.
+.PHONY: check-python-static test-python-static
+check-python-static:
+	uv run --offline --frozen --project server python scripts/python_static.py
+
+test-python-static:
+	uv run --offline --frozen --project server python -m unittest discover -s scripts -p test_python_static.py -v
+
 test-shipping: test-scripts
 	$(MAKE) test-vm-gate
 
