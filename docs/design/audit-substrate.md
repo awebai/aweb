@@ -55,7 +55,9 @@ deployment" (§2, §B4, §A9).
   owner-designated humans with passkeys can read the log. It has no edit or delete API, and
   retention and erasure purge content while the chain still verifies.
   Ingest and the chain are on main. **In flight (aweb-acgh.16.22):** the
-  owner-gated reads (§B5). **Open (aweb-acgh.16.23):** retention and erasure.
+  owner-gated reads (§B5). Retention, erasure and legal hold are applied on
+  main (§B6). **Open (aweb-acgh.16.23):** delivery of their owner acts, and
+  deletion.
 - **Self-hosting means activating a different logs installation as the target.**
 
 ## 1. Starting point on main
@@ -868,8 +870,8 @@ manifest v2 and registered key. Its tools and their contexts:
 | Tool | Contexts | Authority |
 | --- | --- | --- |
 | `ingest` | `hook` only | Hook delivery (§B2) |
-| `query`, `tail`, `verify`, `checkpoint`, `export` | `surface` on logs' own origin; CLI for owner acts | Owner or designated reader (§B5). **In flight (aweb-acgh.16.22):** session-gated `query`, `tail` and `verify` are on main (§B5). **Open (aweb-acgh.16.22, aweb-acgh.16.23):** on-demand `checkpoint` and `export`. |
-| `readers`, `retention`, `erase` | owner acts | Owner only. Reader designation and revocation are on main (§B5). **Open (aweb-acgh.16.23):** `retention` and `erase`. |
+| `query`, `tail`, `verify`, `checkpoint`, `export` | `surface` on logs' own origin; CLI for owner acts | Owner or designated reader (§B5). **In flight (aweb-acgh.16.22):** session-gated `query`, `tail` and `verify` are on main (§B5). `export` is on main (§B6). **Open (aweb-acgh.16.22):** on-demand `checkpoint`. |
+| `readers`, `retention`, `erase` | owner acts | Owner only. Reader designation and revocation are on main (§B5), and so is applying `retention` and `erase` (§B6). **Open (aweb-acgh.16.23):** a route that delivers the `retention` and `erase` acts. |
 
 The manifest on main (`naapp/logs/src/aweb_logs/aweb-app.json`) declares only
 `ingest`. Its manifest registers `ingest` on all five v1 hooks (`post-secret-use-hook`, `post-governance-hook`, `post-manifest-command-hook`, `post-mutation-hook`, `post-command-hook`). Omitting `post-governance-hook` would make every widening governance act refuse (§A7). It never subscribes to
@@ -1069,7 +1071,7 @@ an MCP agent: both are custodial members signed through the host (§1). So
   their credentials and sessions are destroyed. `query`, `tail`, `verify` and
   `export` all run in a short-lived acgh.4 session on that origin, never with
   a per-request controller signature. There is no hosted session.
-- **CLI. Open (aweb-acgh.16.24).** `aw logs query | tail | verify | export`
+- **CLI. Open (aweb-acgh.16.24).** `aw audit query | tail | export`
   starts a `session` handoff on logs' app origin, signed with team-auth as
   the reader, and the reader approves it with their passkey on logs' console
   origin ([the handoff](human-confirmation-from-aw.md#the-handoff)). Reads then
@@ -1098,9 +1100,12 @@ an MCP agent: both are custodial members signed through the host (§1). So
 
 ### B6. Append-only, retention and erasure
 
-**Open (aweb-acgh.16.23):** retention, erasure, legal hold, export and
-deletion. On main the owner-act verifier knows the four logs acts below, and
-`verify` reports purged ranges with their act (`aweb_logs.verify`).
+On main, logs verifies and applies the four logs acts below
+(`aweb_logs.governance`, `aweb_logs.retention`), serves the export, and
+reapplies purge tombstones to a restored database before it serves. `verify`
+reports purged ranges with their act and the legal holds the chain discloses
+(`aweb_logs.verify`). **Open (aweb-acgh.16.23):** a route that delivers these
+owner acts, and deletion as D1's durable job.
 
 There is no edit or delete API. Logs' own closed owner-act list is
 `logs.retention.set`, `logs.erase`, `logs.legal-hold.set`,

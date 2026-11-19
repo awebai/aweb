@@ -7,7 +7,7 @@ logs commits to and signs. Its vector is `docs/vectors/logs-chain-v1.json`. The
 Python implementation in `naapp/logs/src/aweb_logs/chain.py` and `verify.py`
 regenerates it byte for byte, and `naapp/logs/src/aweb_logs/ledger.py` stores
 the chain. The Go verifier in `cli/go/logschain`, which `aw audit verify
---bundle` runs, passes it. **In flight (aweb-acgh.16.24):** `aw logs query`,
+--bundle` runs, passes it. **In flight (aweb-acgh.16.24):** `aw audit query`,
 `tail` and `export`. The design and its rationale are in
 [the audit substrate design](design/audit-substrate.md), §B3 and §B6.
 
@@ -226,7 +226,7 @@ their governance entries, which no purge reaches, are read through their own
 index before the head lock is taken. **In flight (aweb-acgh.16.24):** the Go
 verifier and `logs-chain-v1.json` do not report holds yet. An export bundle
 will carry the earlier epochs' logs governance entries this report needs, so
-that `aw logs verify --bundle` reports the same holds offline.
+that `aw audit verify --bundle` reports the same holds offline.
 
 `delivery.scope` is always `observed_internal_only`. Its `gaps` are inclusive
 missing sequence ranges between retained authenticated observations in the
