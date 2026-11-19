@@ -26,11 +26,11 @@ from test_team_key_pinning import (  # noqa: F401
 SERVICE = "https://aweb.example.test"
 
 
-async def _register(env, team_sk, *, team_id=TEAM):
+async def _register(env, team_sk, *, team_id=TEAM, dry_run=False):
     body = {
         "awid_team_id": team_id,
         "service_url": SERVICE,
-        "dry_run": False,
+        "dry_run": dry_run,
         "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
     body["controller_signature"] = sign_message(team_sk, canonical_json_bytes({
@@ -114,6 +114,21 @@ async def test_repeated_registration_returns_synced_without_duplicate(registerin
         "SELECT count(*) FROM {{tables.teams}} WHERE team_id=$1 AND team_did_key=$2",
         team_id, team_did,
     ) == 1
+
+
+@pytest.mark.asyncio
+async def test_dry_run_does_not_admit_a_new_team(registering):
+    env = registering
+    team_id, team_sk, _ = await _new_registry_team(env)
+
+    response = await _register(env, team_sk, team_id=team_id, dry_run=True)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "dry-run"
+    assert response.json()["team_id"] is None
+    assert await env.db.fetch_value(
+        "SELECT count(*) FROM {{tables.teams}} WHERE team_id=$1", team_id,
+    ) == 0
 
 
 @pytest.mark.asyncio

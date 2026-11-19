@@ -21,8 +21,8 @@ async def _thread(db, viewer, *, key=None):
     other = _auth()
     result = await create_conversation(
         TransactionInfra(None, db), conversation_type="mail", created_by_did=viewer.did_aw,
-        initiator=ConversationParticipant(did=viewer.did_aw, current_did_key=key),
-        recipients=[ConversationParticipant(did=other.did_aw)],
+        initiator=ConversationParticipant(did=viewer.did_aw, current_did_key=key, transport_hint="local"),
+        recipients=[ConversationParticipant(did=other.did_aw, transport_hint="local")],
     )
     return UUID(result["conversation_id"]), other
 

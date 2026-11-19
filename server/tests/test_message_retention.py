@@ -41,7 +41,8 @@ async def _pair(db):
     infra = TransactionInfra(None, db)
     conversation = await create_conversation(
         infra, conversation_type="mail", created_by_did=left,
-        initiator=ConversationParticipant(left), recipients=[ConversationParticipant(right)], team_id=teams[0],
+        initiator=ConversationParticipant(left, transport_hint="local"),
+        recipients=[ConversationParticipant(right, transport_hint="local")], team_id=teams[0],
     )
     session = await ensure_session(
         infra, team_id=teams[0], created_by=left,
@@ -150,7 +151,10 @@ async def test_new_history_party_after_preview_blocks_deletion(retained_pair, cl
     assert preview.mail_would_delete == 1
     cid = await db.fetch_value("SELECT conversation_id FROM {{tables.messages}} WHERE message_id=$1", references[0].message_id)
     new_party = _did()
-    await db.execute("INSERT INTO {{tables.conversation_participants}} (conversation_id,did,alias) VALUES ($1,$2,'new')", cid, new_party)
+    await db.execute(
+        "INSERT INTO {{tables.conversation_participants}} (conversation_id,did,alias,transport_hint) "
+        "VALUES ($1,$2,'new','local')", cid, new_party,
+    )
     if classify_new:
         await record_message_retention_owners(db, message=references[0], party_did=new_party, owner_team_ids=frozenset([teams[1]]))
     result = await apply_team_message_retention(db, preview=preview)
