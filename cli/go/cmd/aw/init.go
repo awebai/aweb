@@ -367,20 +367,44 @@ func printInitWorkspaceDiscoveryChoices(out io.Writer) {
 	fmt.Fprintln(out, guidance)
 }
 
-func runPromptedExplicitInitOutcome(cmd *cobra.Command) (bool, error) {
+type initDispatchResult uint8
+
+const (
+	initDispatchDeferred initDispatchResult = iota
+	initDispatchComplete
+)
+
+func dispatchExplicitInitOutcome(cmd *cobra.Command) (initDispatchResult, error) {
 	if strings.TrimSpace(initInvite) != "" {
-		return true, runInitIndependentInvite(cmd)
+		return initDispatchComplete, runInitIndependentInvite(cmd)
 	}
 	if initWorkspaceTeam {
-		return true, runInitWorkspaceTeam(cmd)
+		return initDispatchComplete, runInitWorkspaceTeam(cmd)
 	}
 	if strings.TrimSpace(initJoinFrom) != "" {
-		return true, runInitJoinFrom(cmd)
+		return initDispatchComplete, runInitJoinFrom(cmd)
 	}
 	if strings.TrimSpace(initAdmissionTeamID) != "" {
-		return true, runInitAdmissionTeamID(cmd)
+		return initDispatchComplete, runInitAdmissionTeamID(cmd)
 	}
-	return false, nil
+	return initDispatchDeferred, nil
+}
+
+type initIdentityInput struct {
+	Role      string
+	HumanName string
+	AgentType string
+}
+
+// initConnectIdentity normalizes requested display/runtime hints. A runtime
+// label never establishes human kind (docs/identity.md); therefore both fresh
+// creation and reconnect keep only an explicitly supplied human display name.
+func initConnectIdentity(input initIdentityInput) certificateConnectOptions {
+	return certificateConnectOptions{
+		Role:      resolveRequestedRole(strings.TrimSpace(input.Role)),
+		HumanName: strings.TrimSpace(input.HumanName),
+		AgentType: resolveAgentTypeValue(strings.TrimSpace(input.AgentType)),
+	}
 }
 
 func runInitWorkspaceTeam(cmd *cobra.Command) error {
@@ -494,6 +518,7 @@ func initInviteIdentityScope() string {
 }
 
 func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferredAwebURL string, parentHome ...string) error {
+	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	parent := ""
 	if len(parentHome) > 0 {
 		parent = parentHome[0]
@@ -513,9 +538,9 @@ func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferred
 		return usageError("accepted invite did not include an aweb URL; rerun aw init with --aweb-url")
 	}
 	result, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
-		Role:      resolveRequestedRole(strings.TrimSpace(initRole)),
-		HumanName: resolveHumanNameValue(initHumanName, resolveAgentType()),
-		AgentType: resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+		Role:      identity.Role,
+		HumanName: identity.HumanName,
+		AgentType: identity.AgentType,
 	})
 	if err != nil {
 		return err
@@ -576,6 +601,7 @@ func filepathAbs(path string) (string, error) {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	if activeHuman != nil {
 		return runHumanConnect(cmd)
 	}
@@ -603,23 +629,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err := validateInitOutcomeFlags(); err != nil {
 		return err
 	}
-	if initWorkspaceTeam {
-		return runInitWorkspaceTeam(cmd)
-	}
-	if strings.TrimSpace(initInvite) != "" {
-		return runInitIndependentInvite(cmd)
-	}
-	if strings.TrimSpace(initJoinFrom) != "" {
-		return runInitJoinFrom(cmd)
-	}
-	if strings.TrimSpace(initAdmissionTeamID) != "" {
-		return runInitAdmissionTeamID(cmd)
+	if dispatched, err := dispatchExplicitInitOutcome(cmd); dispatched == initDispatchComplete || err != nil {
+		return err
 	}
 
 	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
 	// operate on the existing workspace without running the full init flow.
 	if (initInjectDocs || initSetupHooks || initSetupChannel) && !initNeedsFullInitForAddonOnly() {
-		wd, _ := os.Getwd()
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
 		repoRoot := resolveRepoRoot(wd)
 		if initInjectDocs {
 			printInjectDocsResult(InjectAgentDocs(repoRoot))
@@ -693,11 +713,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return runInitFromAPIKey(cmd, initAPIKeySelection{WorkingDir: creationDir, APIKey: apiKey, SelectedTeam: apiSelected})
 	}
 
-	if connected, err := runInitFromExistingCertificate(cmd); connected || err != nil {
+	if connected, err := runInitFromExistingCertificate(cmd); connected == initDispatchComplete || err != nil {
 		return err
 	}
 
-	wd, _ := os.Getwd()
+	wd := creationDir
 	workspaceMissing, err := initWorkspaceMissing(wd)
 	if err != nil {
 		return err
@@ -723,7 +743,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if err := requireOrPromptInitOutcome(canPrompt, "create a new self-hosted team", "--new-team"); err != nil {
 					return err
 				}
-				if handled, err := runPromptedExplicitInitOutcome(cmd); handled || err != nil {
+				if dispatched, err := dispatchExplicitInitOutcome(cmd); dispatched == initDispatchComplete || err != nil {
 					return err
 				}
 			}
@@ -733,9 +753,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 				RegistryURL: registryURL,
 				Alias:       resolveAliasValue(resolveInitLocalName()),
 				TeamName:    strings.TrimSpace(initTeam),
-				Role:        resolveRequestedRole(strings.TrimSpace(initRole)),
-				HumanName:   resolveHumanNameValue(initHumanName, resolveAgentType()),
-				AgentType:   resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+				Role:        identity.Role,
+				HumanName:   identity.HumanName,
+				AgentType:   identity.AgentType,
 			})
 			if err != nil {
 				if isRegistryUnavailableError(err) {
@@ -755,7 +775,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 				if err := requireOrPromptInitOutcome(canPrompt, "create a new BYOD team", "--new-team"); err != nil {
 					return err
 				}
-				if handled, err := runPromptedExplicitInitOutcome(cmd); handled || err != nil {
+				if dispatched, err := dispatchExplicitInitOutcome(cmd); dispatched == initDispatchComplete || err != nil {
 					return err
 				}
 			}
@@ -763,7 +783,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			if err := requireOrPromptInitOutcome(canPrompt, "create a new hosted account", "--new-account"); err != nil {
 				return err
 			}
-			if handled, err := runPromptedExplicitInitOutcome(cmd); handled || err != nil {
+			if dispatched, err := dispatchExplicitInitOutcome(cmd); dispatched == initDispatchComplete || err != nil {
 				return err
 			}
 		}
@@ -785,9 +805,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 				return resolveAliasValue(resolveInitLocalName())
 			}(),
 			Name:               resolveInitGlobalName(initGlobal),
-			HumanName:          resolveHumanNameValue(initHumanName, resolveAgentType()),
-			AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-			Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
+			HumanName:          identity.HumanName,
+			AgentType:          identity.AgentType,
+			Role:               identity.Role,
 			Global:             initGlobal,
 			InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
 			InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
@@ -813,6 +833,7 @@ type initAPIKeySelection struct {
 }
 
 func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
+	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
 	creationDir, apiKey, apiSelected := selected.WorkingDir, selected.APIKey, selected.SelectedTeam
 	wd := creationDir
 	awebURL, err := resolveAPIKeyInitAwebURL()
@@ -843,9 +864,9 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 		APIKey:       apiKey,
 		Name:         resolveInitGlobalName(initGlobal),
 		Alias:        requestedAlias,
-		Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
-		HumanName:    resolveHumanNameValue(initHumanName, resolveAgentType()),
-		AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+		Role:         identity.Role,
+		HumanName:    identity.HumanName,
+		AgentType:    identity.AgentType,
 		Global:       initGlobal,
 		InboundMode:  canonicalInitInboundModeForWire(initInboundMode),
 	})
@@ -863,8 +884,12 @@ func runInitFromAPIKey(cmd *cobra.Command, selected initAPIKeySelection) error {
 	return printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
 }
 
-func runInitFromExistingCertificate(cmd *cobra.Command) (bool, error) {
-	wd, _ := os.Getwd()
+func runInitFromExistingCertificate(cmd *cobra.Command) (initDispatchResult, error) {
+	identity := initConnectIdentity(initIdentityInput{Role: initRole, HumanName: initHumanName, AgentType: initAgentType})
+	wd, err := os.Getwd()
+	if err != nil {
+		return initDispatchComplete, err
+	}
 	if hasCertificateForInit(wd) {
 		path := initPathReconnect
 		if firstConnect, err := initWorkspaceMissing(wd); err == nil && firstConnect {
@@ -872,19 +897,19 @@ func runInitFromExistingCertificate(cmd *cobra.Command) (bool, error) {
 		}
 		awebURL, err := resolveExplicitInitAwebURL()
 		if err != nil {
-			return true, err
+			return initDispatchComplete, err
 		}
 		serviceURLs, err := resolveOnboardingServiceURLs(awebURL)
 		if err != nil {
-			return true, err
+			return initDispatchComplete, err
 		}
 		result, err := initCertificateConnectWithOptions(wd, serviceURLs.AwebURL, certificateConnectOptions{
-			Role:      resolveRequestedRole(strings.TrimSpace(initRole)),
-			HumanName: strings.TrimSpace(initHumanName),
-			AgentType: resolveAgentType(),
+			Role:      identity.Role,
+			HumanName: identity.HumanName,
+			AgentType: identity.AgentType,
 		})
 		if err != nil {
-			return true, err
+			return initDispatchComplete, err
 		}
 		resultInit := &initResult{
 			ServerName:    hostFromBaseURL(serviceURLs.AwebURL),
@@ -892,9 +917,9 @@ func runInitFromExistingCertificate(cmd *cobra.Command) (bool, error) {
 			Alias:         strings.TrimSpace(result.Alias),
 			Path:          path,
 		}
-		return true, printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
+		return initDispatchComplete, printInitOutcome(result, resultInit, wd, initDefaultSetup(resultInit, wd))
 	}
-	return false, nil
+	return initDispatchDeferred, nil
 }
 
 func initHasExplicitOnboardingArgs() bool {
