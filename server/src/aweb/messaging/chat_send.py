@@ -1637,8 +1637,6 @@ async def _send_to_named_recipients(
     payload: CreateSessionRequest,
     runtime: MessagingRuntime,
 ) -> SentChat:
-    registry_client = runtime.registry_client
-    id_chain = auth.id_chain
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0]
     actor_agent = await resolve_actor_agent(db, actor_dids)
@@ -1770,157 +1768,24 @@ async def _send_to_named_recipients(
         if row.get("external") or _target_delivery_origin(row)
     ]
     if external_targets:
-        if len(target_rows) != 1 or len(external_targets) != 1:
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                detail="Federated chat currently requires exactly one remote address recipient",
-            )
-        if not _target_delivery_origin(external_targets[0]):
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.FAILED_DEPENDENCY,
-                detail="Recipient address has no federated delivery origin",
-            )
-        if requested_session_id is None:
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                detail="Federated chat delivery requires session_id",
-            )
-        encrypted_metadata = validate_encrypted_chat_payload(
-            payload,
-            auth=auth,
-            actor_did=actor_did,
-            session_id=str(requested_session_id),
-            recipient_rows=target_rows,
-        )
-        if encrypted_metadata is None:
-            _require_remote_chat_signature(
-                payload, session_id=str(requested_session_id)
-            )
-            from_did = str(payload.from_did or "").strip()
-            if from_did not in set(auth_dids(auth)):
-                raise DeliveryRefusal(
-                    status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
-                    detail="from_did must match the authenticated sender",
-                )
-            _validate_signed_chat_payload(
-                signer_did_key=auth.did_key,
-                signature=str(payload.signature),
-                signed_payload=payload.signed_payload,
-                recipient_rows=target_rows,
-                requested_to_aliases=payload.to_aliases,
-                from_alias=auth.alias,
-                from_address=sender_address,
-                from_stable_id=auth.did_aw,
-                body=payload.message,
-                from_did=from_did,
-                message_id=str(payload.message_id),
-                timestamp=str(payload.timestamp),
-                wait_seconds=payload.wait_seconds,
-                reply_to=payload.reply_to,
-                conversation_id=str(requested_session_id),
-                sender_leaving=payload.leaving,
-                hang_on=payload.hang_on,
-            )
-        # payload.timestamp is sender attestation retained in signed_payload or
-        # encrypted_envelope; send_in_session assigns independent server receipt
-        # time for ordering, so the two values may disagree.
-        _parse_signed_timestamp(str(payload.timestamp))
-        pre_message_id = uuid_mod.UUID(str(payload.message_id))
-        route = await _resolve_remote_chat_route(
+        return await _send_to_remote_named_chat(
             db,
+            auth=auth,
+            target=target,
+            payload=payload,
             runtime=runtime,
-            source=target.source,
-            registry_client=registry_client,
-            recipient=external_targets[0],
-            requester_did_key=auth.did_key,
-        )
-        original = external_targets[0]
-        routed = _apply_remote_chat_route(participant_rows, original, route)
-        target_rows = [routed if row is original else row for row in target_rows]
-        external_targets[0] = routed
-
-        remote = await deliver_federated_chat(
-            runtime,
-            payload,
-            db=db,
-            auth=auth,
-            sender_address=sender_address,
-            id_chain=id_chain,
-            route=route,
-            session_id=str(requested_session_id),
-        )
-        remote_session_id = str(
-            remote.get("session_id") or remote.get("conversation_id") or ""
-        ).strip()
-        remote_message_id = str(remote.get("message_id") or "").strip()
-        if remote_session_id != str(requested_session_id):
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.BAD_GATEWAY,
-                detail="Federated chat response session_id mismatch",
-            )
-        if remote_message_id != str(pre_message_id):
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.BAD_GATEWAY,
-                detail="Federated chat response message_id mismatch",
-            )
-
-        session_id = await ensure_session(
-            db,
-            team_id=auth.team_id,
+            author=_ChatAuthor(
+                did=actor_did,
+                agent_id=actor_agent_id,
+                alias=actor_alias,
+                address=sender_address,
+            ),
             participant_rows=participant_rows,
-            created_by=actor_alias,
-            session_id=requested_session_id,
-        )
-        with agent_wake_scope(runtime.agent_wake_publisher):
-            msg_row = await send_in_session(
-                db,
-                id_chain=id_chain,
-                session_id=session_id,
-                sender_did=actor_did,
-                sender_agent_id=actor_agent_id,
-                sender_address=sender_address,
-                body=payload.message,
-                reply_to=uuid_mod.UUID(payload.reply_to)
-                if payload.reply_to is not None
-                else None,
-                leaving=payload.leaving,
-                hang_on=payload.hang_on,
-                signature=payload.signature,
-                signed_payload=payload.signed_payload,
-                content_mode=payload.content_mode,
-                message_version=payload.message_version,
-                encrypted_envelope=payload.encrypted_envelope,
-                encrypted_metadata=encrypted_metadata,
-                message_id=pre_message_id,
-            )
-        if msg_row is None:
-            raise DeliveryRefusal(
-                status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
-            )
-        await _record_successful_chat_contacts(
-            db,
-            owner_did=(auth.did_aw or actor_did).strip(),
-            sender_team_id=auth.team_id,
-            recipients=[{**external_targets[0], **route}],
-            registry_client=registry_client,
-        )
-        await _fire_chat_message_sent(
-            runtime,
-            auth,
-            session_id=session_id,
-            message_id=msg_row["message_id"],
-            from_agent_id=actor_agent_id,
-            from_did=actor_did,
-            to_aliases=[row["alias"] for row in target_rows],
-            preview="" if encrypted_metadata is not None else payload.message[:80],
-            content_mode=payload.content_mode,
-            federated=True,
-        )
-        return SentChat(
-            session_id=session_id,
-            message=msg_row,
-            participants=participant_rows,
-            federated=True,
+            plan=_ChatSessionPlan(
+                requested_session_id=requested_session_id,
+                validation_conversation_id=validation_conversation_id,
+            ),
+            external_targets=external_targets,
         )
     return await _send_to_local_named_chat(
         db,
@@ -1939,6 +1804,179 @@ async def _send_to_named_recipients(
             requested_session_id=requested_session_id,
             validation_conversation_id=validation_conversation_id,
         ),
+    )
+
+
+async def _send_to_remote_named_chat(
+    db,
+    *,
+    auth: MessagingAuth,
+    target: ChatTarget,
+    payload: CreateSessionRequest,
+    runtime: MessagingRuntime,
+    author: _ChatAuthor,
+    participant_rows: list[dict[str, Any]],
+    plan: _ChatSessionPlan,
+    external_targets: list[Recipient],
+) -> SentChat:
+    """Deliver one resolved remote target and retain the accepted chat locally."""
+    registry_client = runtime.registry_client
+    id_chain = auth.id_chain
+    actor_did = author.did
+    actor_agent_id = author.agent_id
+    actor_alias = author.alias
+    sender_address = author.address
+    requested_session_id = plan.requested_session_id
+    target_rows = list(target.recipients)
+    if len(target_rows) != 1 or len(external_targets) != 1:
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="Federated chat currently requires exactly one remote address recipient",
+        )
+    if not _target_delivery_origin(external_targets[0]):
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.FAILED_DEPENDENCY,
+            detail="Recipient address has no federated delivery origin",
+        )
+    if requested_session_id is None:
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+            detail="Federated chat delivery requires session_id",
+        )
+    encrypted_metadata = validate_encrypted_chat_payload(
+        payload,
+        auth=auth,
+        actor_did=actor_did,
+        session_id=str(requested_session_id),
+        recipient_rows=target_rows,
+    )
+    if encrypted_metadata is None:
+        _require_remote_chat_signature(payload, session_id=str(requested_session_id))
+        from_did = str(payload.from_did or "").strip()
+        if from_did not in set(auth_dids(auth)):
+            raise DeliveryRefusal(
+                status_code=HTTPStatus.UNPROCESSABLE_ENTITY,
+                detail="from_did must match the authenticated sender",
+            )
+        _validate_signed_chat_payload(
+            signer_did_key=auth.did_key,
+            signature=str(payload.signature),
+            signed_payload=payload.signed_payload,
+            recipient_rows=target_rows,
+            requested_to_aliases=payload.to_aliases,
+            from_alias=auth.alias,
+            from_address=sender_address,
+            from_stable_id=auth.did_aw,
+            body=payload.message,
+            from_did=from_did,
+            message_id=str(payload.message_id),
+            timestamp=str(payload.timestamp),
+            wait_seconds=payload.wait_seconds,
+            reply_to=payload.reply_to,
+            conversation_id=str(requested_session_id),
+            sender_leaving=payload.leaving,
+            hang_on=payload.hang_on,
+        )
+    # payload.timestamp is sender attestation retained in signed_payload or
+    # encrypted_envelope; send_in_session assigns independent server receipt
+    # time for ordering, so the two values may disagree.
+    _parse_signed_timestamp(str(payload.timestamp))
+    pre_message_id = uuid_mod.UUID(str(payload.message_id))
+    route = await _resolve_remote_chat_route(
+        db,
+        runtime=runtime,
+        source=target.source,
+        registry_client=registry_client,
+        recipient=external_targets[0],
+        requester_did_key=auth.did_key,
+    )
+    original = external_targets[0]
+    routed = _apply_remote_chat_route(participant_rows, original, route)
+    target_rows = [routed if row is original else row for row in target_rows]
+    external_targets[0] = routed
+
+    remote = await deliver_federated_chat(
+        runtime,
+        payload,
+        db=db,
+        auth=auth,
+        sender_address=sender_address,
+        id_chain=id_chain,
+        route=route,
+        session_id=str(requested_session_id),
+    )
+    remote_session_id = str(
+        remote.get("session_id") or remote.get("conversation_id") or ""
+    ).strip()
+    remote_message_id = str(remote.get("message_id") or "").strip()
+    if remote_session_id != str(requested_session_id):
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.BAD_GATEWAY,
+            detail="Federated chat response session_id mismatch",
+        )
+    if remote_message_id != str(pre_message_id):
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.BAD_GATEWAY,
+            detail="Federated chat response message_id mismatch",
+        )
+
+    session_id = await ensure_session(
+        db,
+        team_id=auth.team_id,
+        participant_rows=participant_rows,
+        created_by=actor_alias,
+        session_id=requested_session_id,
+    )
+    with agent_wake_scope(runtime.agent_wake_publisher):
+        msg_row = await send_in_session(
+            db,
+            id_chain=id_chain,
+            session_id=session_id,
+            sender_did=actor_did,
+            sender_agent_id=actor_agent_id,
+            sender_address=sender_address,
+            body=payload.message,
+            reply_to=uuid_mod.UUID(payload.reply_to)
+            if payload.reply_to is not None
+            else None,
+            leaving=payload.leaving,
+            hang_on=payload.hang_on,
+            signature=payload.signature,
+            signed_payload=payload.signed_payload,
+            content_mode=payload.content_mode,
+            message_version=payload.message_version,
+            encrypted_envelope=payload.encrypted_envelope,
+            encrypted_metadata=encrypted_metadata,
+            message_id=pre_message_id,
+        )
+    if msg_row is None:
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.NOT_FOUND, detail=SENDER_NOT_IN_SESSION
+        )
+    await _record_successful_chat_contacts(
+        db,
+        owner_did=(auth.did_aw or actor_did).strip(),
+        sender_team_id=auth.team_id,
+        recipients=[{**external_targets[0], **route}],
+        registry_client=registry_client,
+    )
+    await _fire_chat_message_sent(
+        runtime,
+        auth,
+        session_id=session_id,
+        message_id=msg_row["message_id"],
+        from_agent_id=actor_agent_id,
+        from_did=actor_did,
+        to_aliases=[row["alias"] for row in target_rows],
+        preview="" if encrypted_metadata is not None else payload.message[:80],
+        content_mode=payload.content_mode,
+        federated=True,
+    )
+    return SentChat(
+        session_id=session_id,
+        message=msg_row,
+        participants=participant_rows,
+        federated=True,
     )
 
 
