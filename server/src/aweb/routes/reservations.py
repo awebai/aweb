@@ -106,7 +106,9 @@ def _reservation_reason(metadata: dict[str, Any]) -> Optional[str]:
     return reason or None
 
 
-def _reservation_conflict_response(*, holder_agent_id: str, holder_alias: str, expires_at: str) -> JSONResponse:
+def _reservation_conflict_response(
+    *, holder_agent_id: str, holder_alias: str, expires_at: str
+) -> JSONResponse:
     return JSONResponse(
         status_code=409,
         content={
@@ -162,9 +164,7 @@ async def list_reservations(
         *params,
     )
 
-    return ReservationListResponse(
-        reservations=[_reservation_view(row, now=now) for row in rows]
-    )
+    return ReservationListResponse(reservations=[_reservation_view(row, now=now) for row in rows])
 
 
 @router.post(
@@ -355,7 +355,11 @@ async def release_reservation(
             payload.resource_key,
         )
 
-        if row is not None and row["expires_at"] > now and str(row["holder_agent_id"]) != identity.agent_id:
+        if (
+            row is not None
+            and row["expires_at"] > now
+            and str(row["holder_agent_id"]) != identity.agent_id
+        ):
             return _reservation_conflict_response(
                 holder_agent_id=str(row["holder_agent_id"]),
                 holder_alias=row["holder_alias"],
@@ -406,7 +410,7 @@ async def revoke_reservations(
     rows = await aweb_db.fetch_all(
         f"""
         DELETE FROM {{{{tables.reservations}}}}
-        WHERE {' AND '.join(where)}
+        WHERE {" AND ".join(where)}
         RETURNING resource_key
         """,
         *params,

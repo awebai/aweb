@@ -122,9 +122,7 @@ def _request(
 
 @pytest.mark.asyncio
 async def test_lifecycle_plan_reports_claims_without_mutating(aweb_cloud_db):
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
-        aweb_cloud_db.aweb_db
-    )
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(aweb_cloud_db.aweb_db)
 
     result = await plan_lifecycle_cascade(
         aweb_cloud_db.aweb_db,
@@ -160,9 +158,7 @@ async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(
 ):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
-    session_id, did = await _seed_waiting_chat(
-        db, team_id=team_id, agent_id=agent_id
-    )
+    session_id, did = await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
     published: list[tuple[str, str]] = []
     presence_clears: list[tuple[str, ...]] = []
     waiting_clears: list[tuple[str, str]] = []
@@ -266,20 +262,24 @@ async def test_lifecycle_outer_transaction_rollback_emits_no_side_effects(
     )
     assert replay.pending_count == 0
     assert observed == []
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
-        workspace_id,
-    ) == 1
-    assert await db.fetch_value(
-        "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
-        workspace_id,
-    ) is None
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
+            workspace_id,
+        )
+        == 1
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
+            workspace_id,
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_plain_handle_still_publishes_side_effects(
-    aweb_cloud_db, monkeypatch
-):
+async def test_lifecycle_plain_handle_still_publishes_side_effects(aweb_cloud_db, monkeypatch):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
     await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
@@ -320,9 +320,7 @@ async def test_lifecycle_plain_handle_still_publishes_side_effects(
 
 
 @pytest.mark.asyncio
-async def test_lifecycle_committed_outbox_replays_after_process_death(
-    aweb_cloud_db, monkeypatch
-):
+async def test_lifecycle_committed_outbox_replays_after_process_death(aweb_cloud_db, monkeypatch):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
     await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
@@ -363,17 +361,23 @@ async def test_lifecycle_committed_outbox_replays_after_process_death(
         assert result.post_commit_status == "pending"
 
     assert observed == []
-    assert await db.fetch_value(
-        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
-        workspace_id,
-    ) == 0
-    assert await db.fetch_value(
-        """
+    assert (
+        await db.fetch_value(
+            "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
+            workspace_id,
+        )
+        == 0
+    )
+    assert (
+        await db.fetch_value(
+            """
         SELECT COUNT(*)
         FROM {{tables.lifecycle_side_effect_outbox}}
         WHERE delivered_at IS NULL
         """
-    ) == 4
+        )
+        == 4
+    )
 
     assert result.outbox_operation_id is not None
     replay = await lifecycle.replay_lifecycle_side_effects(
@@ -491,9 +495,7 @@ async def test_lifecycle_duplicate_replay_does_not_redeliver_completed_rows(
 
 
 @pytest.mark.asyncio
-async def test_chat_waiting_failure_stays_pending_then_replays(
-    aweb_cloud_db, monkeypatch
-):
+async def test_chat_waiting_failure_stays_pending_then_replays(aweb_cloud_db, monkeypatch):
     db = aweb_cloud_db.aweb_db
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
     await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
@@ -517,16 +519,19 @@ async def test_chat_waiting_failure_stays_pending_then_replays(
 
     assert result.post_commit_status == "failed"
     assert result.chat_waiting_cleanup_status == "failed"
-    assert await db.fetch_value(
-        """
+    assert (
+        await db.fetch_value(
+            """
         SELECT COUNT(*)
         FROM {{tables.lifecycle_side_effect_outbox}}
         WHERE operation_id = $1
           AND effect_kind = 'chat_waiting_clear'
           AND delivered_at IS NULL
         """,
-        UUID(result.outbox_operation_id),
-    ) == 1
+            UUID(result.outbox_operation_id),
+        )
+        == 1
+    )
 
     redis.fail_zrem = False
     replay = await lifecycle.replay_lifecycle_side_effects(
@@ -541,9 +546,7 @@ async def test_chat_waiting_failure_stays_pending_then_replays(
 
 
 @pytest.mark.asyncio
-async def test_global_replay_advances_past_a_full_failed_batch(
-    aweb_cloud_db, monkeypatch
-):
+async def test_global_replay_advances_past_a_full_failed_batch(aweb_cloud_db, monkeypatch):
     db = aweb_cloud_db.aweb_db
     await db.execute(
         """
@@ -614,9 +617,7 @@ async def test_global_replay_advances_past_a_full_failed_batch(
 
 @pytest.mark.asyncio
 async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db, monkeypatch):
-    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
-        aweb_cloud_db.aweb_db
-    )
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(aweb_cloud_db.aweb_db)
     cleared_workspaces: list[list[str]] = []
 
     async def _fail_workspace_event(_redis, _event):
@@ -659,13 +660,16 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db,
     )
     assert claim_count == 0
     assert workspace_deleted_at is not None
-    assert await aweb_cloud_db.aweb_db.fetch_value(
-        """
+    assert (
+        await aweb_cloud_db.aweb_db.fetch_value(
+            """
         SELECT COUNT(*)
         FROM {{tables.lifecycle_side_effect_outbox}}
         WHERE delivered_at IS NULL
         """
-    ) == 1
+        )
+        == 1
+    )
 
     retried: list[str] = []
 
@@ -971,9 +975,7 @@ async def test_lifecycle_archive_global_agent_rejects_non_global_target(
         ),
     )
 
-    assert "lifecycle_identity_scope_precondition_failed" in {
-        error.code for error in result.errors
-    }
+    assert "lifecycle_identity_scope_precondition_failed" in {error.code for error in result.errors}
     agent = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT status, deleted_at FROM {{tables.agents}} WHERE agent_id = $1",
         agent_id,
