@@ -22,7 +22,7 @@ func TestStandaloneCreationReadFailureKeepsItsRecoveryHome(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			prepared, err := loadStandaloneCreateRecovery(identityPath, filepath.Join(home, "signing.key"), filepath.Join(home, "workspace.yaml"), "retained", "example.com", idCreateOptions{})
+			prepared, err := loadStandaloneCreateRecovery(standaloneCreateResume{IdentityPath: identityPath, SigningKeyPath: filepath.Join(home, "signing.key"), WorkspacePath: filepath.Join(home, "workspace.yaml"), Name: "retained", Domain: "example.com"})
 			if condition == "absent" {
 				if err != nil || prepared != nil {
 					t.Fatalf("absent attempt was treated as retained: %v", err)

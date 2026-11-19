@@ -395,7 +395,7 @@ func prepareIDCreatePlan(workingDir string, opts idCreateOptions) (*preparedIDCr
 			return nil, err
 		}
 	}
-	retained, err := loadStandaloneCreateRecovery(identityPath, signingKeyPath, workspacePath, name, domain, opts)
+	retained, err := loadStandaloneCreateRecovery(standaloneCreateResume{IdentityPath: identityPath, SigningKeyPath: signingKeyPath, WorkspacePath: workspacePath, Name: name, Domain: domain, Options: opts})
 	if err != nil {
 		return nil, err
 	}

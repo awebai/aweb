@@ -35,12 +35,31 @@ func standaloneRegistryEnvironment(opts idCreateOptions) string {
 	return strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
 }
 
-func loadStandaloneCreateRecovery(identityPath, keyPath, workspacePath, name, domain string, opts idCreateOptions) (*preparedIDCreate, error) {
+type standaloneCreateResume struct {
+	IdentityPath   string
+	SigningKeyPath string
+	WorkspacePath  string
+	Name           string
+	Domain         string
+	Options        idCreateOptions
+}
+
+// loadStandaloneCreateRecovery distinguishes absent state from an unreadable
+// retained operation. Only the saved exact selection permits key reuse; read
+// failures keep its home for reconciliation (docs/identity.md §Key material and local files).
+func loadStandaloneCreateRecovery(input standaloneCreateResume) (result *preparedIDCreate, resultErr error) {
+	identityPath, keyPath, workspacePath := input.IdentityPath, input.SigningKeyPath, input.WorkspacePath
+	name, domain, opts := input.Name, input.Domain, input.Options
 	path := standaloneCreateRecoveryPath(identityPath)
 	raw, err := (awconfig.RecoveryFile{Home: awconfig.IdentityHome{Root: filepath.Dir(path)}, Name: filepath.Base(path)}).ReadBounded(maxResponseBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
+	defer func() {
+		if resultErr != nil {
+			resultErr = retainIdentityForRecovery(resultErr)
+		}
+	}()
 	if err != nil {
 		return nil, err
 	}
