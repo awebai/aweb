@@ -1,16 +1,16 @@
 package main
 
 import (
-	"crypto/ed25519"
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -52,237 +52,54 @@ func resetTeamReissueCertGlobals(t *testing.T) {
 	jsonFlag = false
 }
 
-type fakeReissueRegistryCert struct {
-	CertificateID string
-	MemberDIDKey  string
-	MemberDIDAW   string
-	MemberAddress string
-	Alias         string
-	IdentityScope string
-	IssuedAt      string
-	Revoked       bool
-}
-
-// fakeReissueRegistry is a stateful fake of the AWID registry's team
-// certificate routes. Like the real registry, it enforces one UNREVOKED
-// certificate per (team, alias) - a register that would violate it answers
-// 409 alias_active ("Alias already active in team"), the real partial-index
-// conflict.
-type fakeReissueRegistry struct {
-	t                *testing.T
-	mu               sync.Mutex
-	calls            []string
-	certs            []*fakeReissueRegistryCert
-	failNextRegister bool
-}
-
-func (f *fakeReissueRegistry) activeByAliasLocked(alias string) *fakeReissueRegistryCert {
-	for _, cert := range f.certs {
-		if !cert.Revoked && cert.Alias == alias {
-			return cert
-		}
-	}
-	return nil
-}
-
-func (f *fakeReissueRegistry) findLocked(certificateID string) *fakeReissueRegistryCert {
-	for _, cert := range f.certs {
-		if cert.CertificateID == certificateID {
-			return cert
-		}
-	}
-	return nil
-}
-
-func (f *fakeReissueRegistry) snapshotCalls() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.calls...)
-}
-
-func (f *fakeReissueRegistry) snapshotCerts() []fakeReissueRegistryCert {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]fakeReissueRegistryCert, 0, len(f.certs))
-	for _, cert := range f.certs {
-		out = append(out, *cert)
-	}
-	return out
-}
-
-func (f *fakeReissueRegistry) activeCertForAlias(alias string) *fakeReissueRegistryCert {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if cert := f.activeByAliasLocked(alias); cert != nil {
-		copied := *cert
-		return &copied
-	}
-	return nil
-}
-
-func (f *fakeReissueRegistry) handler() http.Handler {
-	const base = "/v1/namespaces/acme.com/teams/backend"
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == base:
-			f.calls = append(f.calls, "get-team")
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id": "backend:acme.com", "domain": "acme.com", "name": "backend",
-				"team_did_key": "did:key:team", "visibility": "private", "created_at": "2026-08-01T00:00:00Z",
-			})
-		case r.Method == http.MethodGet && r.URL.Path == base+"/certificates":
-			f.calls = append(f.calls, "list-certificates")
-			activeOnly := r.URL.Query().Get("active_only") == "true"
-			certificates := make([]map[string]any, 0, len(f.certs))
-			for _, cert := range f.certs {
-				if activeOnly && cert.Revoked {
-					continue
-				}
-				revokedAt := ""
-				if cert.Revoked {
-					revokedAt = "2026-08-02T00:00:00Z"
-				}
-				certificates = append(certificates, map[string]any{
-					"team_id": "backend:acme.com", "certificate_id": cert.CertificateID,
-					"member_did_key": cert.MemberDIDKey, "member_did_aw": cert.MemberDIDAW,
-					"member_address": cert.MemberAddress, "alias": cert.Alias,
-					"identity_scope": cert.IdentityScope, "issued_at": cert.IssuedAt,
-					"revoked_at": revokedAt,
-				})
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"certificates": certificates, "has_more": false,
-			})
-		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, base+"/members/"):
-			alias := strings.TrimPrefix(r.URL.Path, base+"/members/")
-			f.calls = append(f.calls, "resolve:"+alias)
-			active := f.activeByAliasLocked(alias)
-			if active == nil {
-				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Member not found"})
-				return
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"team_id": "backend:acme.com", "certificate_id": active.CertificateID,
-				"member_did_key": active.MemberDIDKey, "member_did_aw": active.MemberDIDAW,
-				"member_address": active.MemberAddress, "alias": active.Alias,
-				"identity_scope": active.IdentityScope, "issued_at": active.IssuedAt,
-			})
-		case r.Method == http.MethodPost && r.URL.Path == base+"/certificates/revoke":
-			f.calls = append(f.calls, "revoke")
-			var body struct {
-				CertificateID string `json:"certificate_id"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			cert := f.findLocked(body.CertificateID)
-			if cert == nil {
-				w.WriteHeader(http.StatusNotFound)
-				_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Certificate not found"})
-				return
-			}
-			if cert.Revoked {
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{"detail": "Certificate already revoked"})
-				return
-			}
-			cert.Revoked = true
-			_ = json.NewEncoder(w).Encode(map[string]any{"revoked": true})
-		case r.Method == http.MethodPost && r.URL.Path == base+"/certificates":
-			f.calls = append(f.calls, "register")
-			if f.failNextRegister {
-				f.failNextRegister = false
-				w.WriteHeader(http.StatusInternalServerError)
-				_ = json.NewEncoder(w).Encode(map[string]any{"detail": "simulated crash before registration"})
-				return
-			}
-			var body struct {
-				CertificateID string `json:"certificate_id"`
-				MemberDIDKey  string `json:"member_did_key"`
-				MemberDIDAW   string `json:"member_did_aw"`
-				MemberAddress string `json:"member_address"`
-				Alias         string `json:"alias"`
-				IdentityScope string `json:"identity_scope"`
-				Certificate   string `json:"certificate"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				f.t.Errorf("register body decode: %v", err)
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			if f.findLocked(body.CertificateID) != nil {
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]any{
-					"code": "certificate_already_registered", "message": "Certificate already registered",
-				}})
-				return
-			}
-			if f.activeByAliasLocked(body.Alias) != nil {
-				// The unique active-alias partial index: one unrevoked
-				// certificate per (team, alias).
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{"detail": map[string]any{"code": "alias_active", "message": "Alias already active in team"}})
-				return
-			}
-			f.certs = append(f.certs, &fakeReissueRegistryCert{
-				CertificateID: body.CertificateID, MemberDIDKey: body.MemberDIDKey,
-				MemberDIDAW: body.MemberDIDAW, MemberAddress: body.MemberAddress,
-				Alias: body.Alias, IdentityScope: body.IdentityScope,
-				IssuedAt: time.Now().UTC().Format(time.RFC3339),
-			})
-			w.WriteHeader(http.StatusCreated)
-		default:
-			f.t.Errorf("unexpected registry request %s %s", r.Method, r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-			_ = json.NewEncoder(w).Encode(map[string]any{"detail": "unexpected route"})
-		}
-	})
-}
-
-// seedReissueCertController seeds a controller machine that holds the
-// backend:acme.com team key, points the command at the fake registry, and
-// returns the team key.
-func seedReissueCertController(t *testing.T, registryURL string) ed25519.PrivateKey {
+// reissueCertWorld is a real world seen from its controller's machine: the
+// team key is installed where aw team admin reissue-cert loads it.
+func reissueCertWorld(t *testing.T) *realCommandWorld {
 	t.Helper()
 	resetTeamReissueCertGlobals(t)
-	root := t.TempDir()
 	t.Setenv("HOME", t.TempDir())
-	t.Chdir(root)
-	_, teamKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := awconfig.SaveTeamKey("acme.com", "backend", teamKey); err != nil {
+	t.Chdir(t.TempDir())
+	world := newRealCommandWorld(t)
+	if err := awconfig.SaveTeamKey(world.Domain, "backend", world.TeamKey); err != nil {
 		t.Fatal(err)
 	}
 	teamReissueCertTeam = "backend"
-	teamReissueCertNamespace = "acme.com"
-	teamReissueCertRegistryURL = registryURL
-	return teamKey
+	teamReissueCertNamespace = world.Domain
+	teamReissueCertRegistryURL = world.Stack.RegistryURL
+	return world
 }
 
-func newReissueCertFakeRegistry(t *testing.T) (*fakeReissueRegistry, *httptest.Server) {
-	t.Helper()
-	fake := &fakeReissueRegistry{t: t}
-	server := httptest.NewServer(fake.handler())
-	t.Cleanup(server.Close)
-	return fake, server
+// failFirstCertificateRegister answers the first certificate registration with
+// a 500, as a crash between the old certificate's revocation and the fresh
+// one's registration would leave it.
+func failFirstCertificateRegister(world *realCommandWorld) registryFault {
+	var failed atomic.Bool
+	path := "/v1/namespaces/" + world.Domain + "/teams/backend/certificates"
+	return registryFault{Answer: func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodPost || r.URL.Path != path || !failed.CompareAndSwap(false, true) {
+			return false
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"detail":"simulated crash before registration"}`))
+		return true
+	}}
+}
+
+func activeCertificates(certificates []awid.RegistryCertificate) []awid.RegistryCertificate {
+	var active []awid.RegistryCertificate
+	for _, certificate := range certificates {
+		if certificate.RevokedAt == "" {
+			active = append(active, certificate)
+		}
+	}
+	return active
 }
 
 func TestTeamReissueCertRevokesRegisteredOldThenRegistersFresh(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	seedReissueCertController(t, server.URL)
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID := awid.ComputeDIDKey(memberPub)
-	fake.certs = append(fake.certs, &fakeReissueRegistryCert{
-		CertificateID: "cert-old-1", MemberDIDKey: memberDID, Alias: "alice",
-		IdentityScope: awid.IdentityModeLocal, IssuedAt: "2026-08-01T00:00:00Z",
-	})
+	world := reissueCertWorld(t)
+	memberDID := didOf(newKey(t))
+	old := world.registerMemberCertificate(t, awid.TeamCertificateFields{MemberDIDKey: memberDID, Alias: "alice", IdentityScope: awid.IdentityModeLocal})
 	teamReissueCertDID = memberDID
 
 	var runErr error
@@ -292,20 +109,19 @@ func TestTeamReissueCertRevokesRegisteredOldThenRegistersFresh(t *testing.T) {
 	if runErr != nil {
 		t.Fatalf("runTeamReissueCert: %v", runErr)
 	}
-	if got := strings.Join(fake.snapshotCalls(), ","); got != "resolve:alice,revoke,register" {
-		t.Fatalf("registry call order=%q; the old registration must be revoked before the fresh one is registered", got)
-	}
-	certs := fake.snapshotCerts()
-	if len(certs) != 2 || !certs[0].Revoked || certs[0].CertificateID != "cert-old-1" {
+	// The registry allows one active certificate per alias, so a fresh one
+	// registered before the old one's revocation would have been refused.
+	certs := world.aliasCertificates(t, "alice")
+	active := activeCertificates(certs)
+	if len(certs) != 2 || len(active) != 1 {
 		t.Fatalf("certificates=%+v", certs)
 	}
-	fresh := certs[1]
-	if fresh.Revoked || fresh.CertificateID == "cert-old-1" || fresh.MemberDIDKey != memberDID ||
-		fresh.Alias != "alice" || fresh.IdentityScope != awid.IdentityModeLocal {
+	fresh := active[0]
+	if fresh.CertificateID == old.CertificateID || fresh.MemberDIDKey != memberDID || fresh.IdentityScope != awid.IdentityModeLocal {
 		t.Fatalf("fresh certificate=%+v", fresh)
 	}
 	for _, want := range []string{
-		"old certificate cert-old-1 revoked",
+		"old certificate " + old.CertificateID + " revoked",
 		"Grants issued under the old certificate are no longer valid",
 		"expect the member to reconnect",
 		"member did:key: " + memberDID + " (unchanged)",
@@ -318,13 +134,8 @@ func TestTeamReissueCertRevokesRegisteredOldThenRegistersFresh(t *testing.T) {
 }
 
 func TestTeamReissueCertNeverRegisteredRegistersWithoutRevoke(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	seedReissueCertController(t, server.URL)
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID := awid.ComputeDIDKey(memberPub)
+	world := reissueCertWorld(t)
+	memberDID := didOf(newKey(t))
 	teamReissueCertDID = memberDID
 
 	var runErr error
@@ -334,11 +145,8 @@ func TestTeamReissueCertNeverRegisteredRegistersWithoutRevoke(t *testing.T) {
 	if runErr != nil {
 		t.Fatalf("runTeamReissueCert: %v", runErr)
 	}
-	if got := strings.Join(fake.snapshotCalls(), ","); got != "resolve:alice,get-team,list-certificates,register" {
-		t.Fatalf("registry calls=%q; a never-registered alias must register without any revoke", got)
-	}
-	certs := fake.snapshotCerts()
-	if len(certs) != 1 || certs[0].Revoked || certs[0].MemberDIDKey != memberDID || certs[0].Alias != "alice" {
+	certs := world.aliasCertificates(t, "alice")
+	if len(certs) != 1 || certs[0].RevokedAt != "" || certs[0].MemberDIDKey != memberDID {
 		t.Fatalf("certificates=%+v", certs)
 	}
 	for _, want := range []string{
@@ -352,21 +160,13 @@ func TestTeamReissueCertNeverRegisteredRegistersWithoutRevoke(t *testing.T) {
 }
 
 func TestTeamReissueCertRerunAfterCrashBetweenRevokeAndRegister(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	seedReissueCertController(t, server.URL)
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID := awid.ComputeDIDKey(memberPub)
-	fake.certs = append(fake.certs, &fakeReissueRegistryCert{
-		CertificateID: "cert-old-1", MemberDIDKey: memberDID, Alias: "alice",
-		IdentityScope: awid.IdentityModeLocal, IssuedAt: "2026-08-01T00:00:00Z",
-	})
-	fake.failNextRegister = true
+	world := reissueCertWorld(t)
+	memberDID := didOf(newKey(t))
+	old := world.registerMemberCertificate(t, awid.TeamCertificateFields{MemberDIDKey: memberDID, Alias: "alice", IdentityScope: awid.IdentityModeLocal})
+	teamReissueCertRegistryURL = world.frontRegistry(t, failFirstCertificateRegister(world))
 	teamReissueCertDID = memberDID
 
-	err = runTeamReissueCert(nil, []string{"alice"})
+	err := runTeamReissueCert(nil, []string{"alice"})
 	if err == nil {
 		t.Fatal("expected the simulated crash between revoke and register to surface")
 	}
@@ -375,94 +175,96 @@ func TestTeamReissueCertRerunAfterCrashBetweenRevokeAndRegister(t *testing.T) {
 			t.Fatalf("error missing %q: %v", want, err)
 		}
 	}
-	if fake.activeCertForAlias("alice") != nil {
-		t.Fatal("crash window must leave no active certificate for the alias")
+	if active := activeCertificates(world.aliasCertificates(t, "alice")); len(active) != 0 {
+		t.Fatalf("crash window must leave no active certificate for the alias: %+v", active)
 	}
 
 	if err := runTeamReissueCert(nil, []string{"alice"}); err != nil {
 		t.Fatalf("re-run after crash: %v", err)
 	}
-	fresh := fake.activeCertForAlias("alice")
-	if fresh == nil || fresh.MemberDIDKey != memberDID || fresh.CertificateID == "cert-old-1" {
-		t.Fatalf("fresh certificate after re-run=%+v", fresh)
-	}
-	revokes := 0
-	for _, call := range fake.snapshotCalls() {
-		if call == "revoke" {
-			revokes++
-		}
-	}
-	if revokes != 1 {
-		t.Fatalf("revoke calls=%d; the re-run must find no active certificate and register only", revokes)
+	// One revoked (the original) and one active: the re-run registered only.
+	certs := world.aliasCertificates(t, "alice")
+	active := activeCertificates(certs)
+	if len(certs) != 2 || len(active) != 1 || active[0].CertificateID == old.CertificateID || active[0].MemberDIDKey != memberDID {
+		t.Fatalf("certificates after re-run=%+v", certs)
 	}
 }
 
 func TestTeamReissueCertGlobalRerunRecoversFactsAfterRevokeAndRegisterFailure(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	seedReissueCertController(t, server.URL)
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID := awid.ComputeDIDKey(memberPub)
-	fake.certs = append(fake.certs, &fakeReissueRegistryCert{
-		CertificateID: "cert-old-global", MemberDIDKey: memberDID,
-		MemberDIDAW: "did:aw:alice", MemberAddress: "acme.com/alice",
+	world := reissueCertWorld(t)
+	member := world.registerGlobalMember(t, "alice")
+	world.registerMemberCertificate(t, awid.TeamCertificateFields{
+		MemberDIDKey: member.DIDKey, MemberDIDAW: member.DIDAW, MemberAddress: member.Address,
 		Alias: "alice", IdentityScope: awid.IdentityModeGlobal,
-		IssuedAt: "2026-08-01T00:00:00Z",
 	})
-	fake.failNextRegister = true
-	teamReissueCertDID = memberDID
+	teamReissueCertRegistryURL = world.frontRegistry(t, failFirstCertificateRegister(world))
+	teamReissueCertDID = member.DIDKey
 
 	if err := runTeamReissueCert(nil, []string{"alice"}); err == nil {
 		t.Fatal("expected the simulated failure after revocation")
 	}
-	if fake.activeCertForAlias("alice") != nil {
-		t.Fatal("failed first run must leave no active certificate")
+	if active := activeCertificates(world.aliasCertificates(t, "alice")); len(active) != 0 {
+		t.Fatalf("failed first run must leave no active certificate: %+v", active)
 	}
 
 	if err := runTeamReissueCert(nil, []string{"alice"}); err != nil {
 		t.Fatalf("re-run after partial global reissue: %v", err)
 	}
-	fresh := fake.activeCertForAlias("alice")
-	if fresh == nil || fresh.IdentityScope != awid.IdentityModeGlobal ||
-		fresh.MemberDIDAW != "did:aw:alice" || fresh.MemberAddress != "acme.com/alice" {
-		t.Fatalf("re-run must preserve the revoked global certificate facts: %+v", fresh)
+	active := activeCertificates(world.aliasCertificates(t, "alice"))
+	if len(active) != 1 || active[0].IdentityScope != awid.IdentityModeGlobal ||
+		active[0].MemberDIDAW != member.DIDAW || active[0].MemberAddress != member.Address {
+		t.Fatalf("re-run must preserve the revoked global certificate facts: %+v", active)
 	}
 }
 
 func TestTeamReissueCertRefusesAmbiguousNewestRevokedMemberFacts(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	seedReissueCertController(t, server.URL)
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID := awid.ComputeDIDKey(memberPub)
-	for _, cert := range []*fakeReissueRegistryCert{
-		{
-			CertificateID: "cert-global", MemberDIDKey: memberDID,
-			MemberDIDAW: "did:aw:alice", MemberAddress: "acme.com/alice",
-			Alias: "alice", IdentityScope: awid.IdentityModeGlobal,
-			IssuedAt: "2026-08-01T00:00:00Z", Revoked: true,
-		},
-		{
-			CertificateID: "cert-local", MemberDIDKey: memberDID,
-			Alias: "alice", IdentityScope: awid.IdentityModeLocal,
-			IssuedAt: "2026-08-01T00:00:00Z", Revoked: true,
-		},
+	world := reissueCertWorld(t)
+	member := world.registerGlobalMember(t, "alice")
+	for _, fields := range []awid.TeamCertificateFields{
+		{MemberDIDKey: member.DIDKey, MemberDIDAW: member.DIDAW, MemberAddress: member.Address, Alias: "alice", IdentityScope: awid.IdentityModeGlobal},
+		{MemberDIDKey: member.DIDKey, Alias: "alice", IdentityScope: awid.IdentityModeLocal},
 	} {
-		fake.certs = append(fake.certs, cert)
+		certificate := world.registerMemberCertificate(t, fields)
+		if err := world.Registry.RevokeCertificate(world.Context, world.Stack.RegistryURL, world.Domain, "backend", certificate.CertificateID, world.TeamKey); err != nil {
+			t.Fatal(err)
+		}
 	}
-	teamReissueCertDID = memberDID
+	// The registry stamps each registration with its own time, so two of its
+	// records never tie; another registry's history can, which is what the
+	// command must refuse to guess between.
+	teamReissueCertRegistryURL = world.frontRegistry(t, registryFault{Rewrite: func(response *http.Response) error {
+		if response.Request.Method != http.MethodGet || !strings.HasSuffix(response.Request.URL.Path, "/teams/backend/certificates") {
+			return nil
+		}
+		var page map[string]any
+		if err := json.NewDecoder(response.Body).Decode(&page); err != nil {
+			return err
+		}
+		_ = response.Body.Close()
+		certificates, _ := page["certificates"].([]any)
+		for _, item := range certificates {
+			if certificate, ok := item.(map[string]any); ok && certificate["alias"] == "alice" {
+				certificate["issued_at"] = "2026-08-01T00:00:00Z"
+			}
+		}
+		body, err := json.Marshal(page)
+		if err != nil {
+			return err
+		}
+		response.Body = io.NopCloser(bytes.NewReader(body))
+		response.ContentLength = int64(len(body))
+		response.Header.Set("Content-Length", strconv.Itoa(len(body)))
+		return nil
+	}})
+	teamReissueCertDID = member.DIDKey
 
-	err = runTeamReissueCert(nil, []string{"alice"})
+	err := runTeamReissueCert(nil, []string{"alice"})
 	if err == nil || !strings.Contains(err.Error(), "certificate history") ||
 		!strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("expected ambiguous history refusal, got %v", err)
 	}
-	if fake.activeCertForAlias("alice") != nil {
-		t.Fatal("ambiguous history must not register a replacement")
+	if active := activeCertificates(world.aliasCertificates(t, "alice")); len(active) != 0 {
+		t.Fatalf("ambiguous history must not register a replacement: %+v", active)
 	}
 }
 
@@ -470,113 +272,56 @@ func TestTeamReissueCertRefusesAmbiguousNewestRevokedMemberFacts(t *testing.T) {
 // mint-and-swap again. The registry ends with exactly one active certificate
 // for the alias either way, and no run can 409 against the active-alias index.
 func TestTeamReissueCertSecondRunSwapsAgain(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	seedReissueCertController(t, server.URL)
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID := awid.ComputeDIDKey(memberPub)
-	teamReissueCertDID = memberDID
+	world := reissueCertWorld(t)
+	teamReissueCertDID = didOf(newKey(t))
 
 	if err := runTeamReissueCert(nil, []string{"alice"}); err != nil {
 		t.Fatal(err)
 	}
-	first := fake.activeCertForAlias("alice")
-	if first == nil {
-		t.Fatal("first run registered nothing")
+	first := activeCertificates(world.aliasCertificates(t, "alice"))
+	if len(first) != 1 {
+		t.Fatalf("first run active certificates=%+v", first)
 	}
 	if err := runTeamReissueCert(nil, []string{"alice"}); err != nil {
 		t.Fatalf("second run: %v", err)
 	}
-	second := fake.activeCertForAlias("alice")
-	if second == nil || second.CertificateID == first.CertificateID {
+	second := activeCertificates(world.aliasCertificates(t, "alice"))
+	if len(second) != 1 || second[0].CertificateID == first[0].CertificateID {
 		t.Fatalf("second run must swap in a fresh certificate: first=%+v second=%+v", first, second)
-	}
-	active := 0
-	for _, cert := range fake.snapshotCerts() {
-		if !cert.Revoked {
-			active++
-		}
-	}
-	if active != 1 {
-		t.Fatalf("active certificates=%d, want exactly one per alias", active)
 	}
 }
 
 func TestTeamReissueCertInstallsFreshBlobIntoReachableHome(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	teamKey := seedReissueCertController(t, server.URL)
-
-	memberPub, memberKey, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID := awid.ComputeDIDKey(memberPub)
-	fake.certs = append(fake.certs, &fakeReissueRegistryCert{
-		CertificateID: "cert-old-1", MemberDIDKey: memberDID, Alias: "alice",
-		IdentityScope: awid.IdentityModeLocal, IssuedAt: "2026-08-01T00:00:00Z",
-	})
-
+	world := reissueCertWorld(t)
+	member := world.addLocalMember(t, "alice")
+	agentHome := filepath.Dir(member.Home)
 	// A provisioned member home whose certificate blob is lost: membership
 	// state and signing key are intact, the blob is absent.
-	agentHome := filepath.Join(t.TempDir(), "alice")
-	if err := os.MkdirAll(filepath.Join(agentHome, ".aw"), 0o755); err != nil {
+	if err := os.Remove(awconfig.TeamCertificatePath(agentHome, world.TeamID)); err != nil {
 		t.Fatal(err)
-	}
-	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(agentHome), memberKey); err != nil {
-		t.Fatal(err)
-	}
-	certPath := awconfig.TeamCertificateRelativePath("backend:acme.com")
-	joinedAt := time.Now().UTC().Format(time.RFC3339)
-	if err := awconfig.SaveTeamState(agentHome, &awconfig.TeamState{
-		ActiveTeam: "backend:acme.com",
-		Memberships: []awconfig.TeamMembership{{
-			TeamID: "backend:acme.com", Alias: "alice", CertPath: certPath,
-			JoinedAt: joinedAt, RegistryURL: server.URL,
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(agentHome, awconfig.DefaultWorktreeWorkspaceRelativePath()), &awconfig.WorktreeWorkspace{
-		AwebURL: server.URL, WorkspacePath: agentHome,
-		Memberships: []awconfig.WorktreeMembership{{
-			TeamID: "backend:acme.com", Alias: "alice", CertPath: certPath,
-			JoinedAt: joinedAt, WorkspaceID: "workspace-alice",
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := awconfig.LoadTeamCertificateForTeam(agentHome, "backend:acme.com"); !os.IsNotExist(err) {
-		t.Fatalf("precondition: certificate blob must be absent, got %v", err)
 	}
 	teamReissueCertHome = agentHome
 
 	if err := runTeamReissueCert(nil, []string{"alice"}); err != nil {
 		t.Fatalf("runTeamReissueCert: %v", err)
 	}
-	installed, err := awconfig.LoadTeamCertificateForTeam(agentHome, "backend:acme.com")
+	installed, err := awconfig.LoadTeamCertificateForTeam(agentHome, world.TeamID)
 	if err != nil {
 		t.Fatalf("fresh blob not installed: %v", err)
 	}
-	fresh := fake.activeCertForAlias("alice")
-	if fresh == nil || installed.CertificateID != fresh.CertificateID || installed.MemberDIDKey != memberDID {
-		t.Fatalf("installed=%+v registered=%+v", installed, fresh)
+	active := activeCertificates(world.aliasCertificates(t, "alice"))
+	if len(active) != 1 || installed.CertificateID != active[0].CertificateID ||
+		installed.CertificateID == member.Certificate.CertificateID || installed.MemberDIDKey != member.Certificate.MemberDIDKey {
+		t.Fatalf("installed=%+v registered=%+v", installed, active)
 	}
-	teamPub := teamKey.Public().(ed25519.PublicKey)
-	if err := awid.CheckDecodedTeamCertificate(installed, awid.ComputeDIDKey(teamPub)); err != nil {
+	if err := awid.CheckDecodedTeamCertificate(installed, didOf(world.TeamKey)); err != nil {
 		t.Fatalf("installed certificate does not verify against the team key: %v", err)
 	}
 }
 
 func TestTeamReissueCertWithoutHomePrintsPlacementMaterial(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	seedReissueCertController(t, server.URL)
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID := awid.ComputeDIDKey(memberPub)
+	world := reissueCertWorld(t)
+	memberDID := didOf(newKey(t))
 	teamReissueCertDID = memberDID
 	jsonFlag = true
 
@@ -600,9 +345,9 @@ func TestTeamReissueCertWithoutHomePrintsPlacementMaterial(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode printed material: %v", err)
 	}
-	fresh := fake.activeCertForAlias("alice")
-	if fresh == nil || cert.CertificateID != fresh.CertificateID || cert.MemberDIDKey != memberDID {
-		t.Fatalf("printed certificate=%+v registered=%+v", cert, fresh)
+	active := activeCertificates(world.aliasCertificates(t, "alice"))
+	if len(active) != 1 || cert.CertificateID != active[0].CertificateID || cert.MemberDIDKey != memberDID {
+		t.Fatalf("printed certificate=%+v registered=%+v", cert, active)
 	}
 	if output["old_certificate_action"] != certificateNoneRegistered {
 		t.Fatalf("old_certificate_action=%v", output["old_certificate_action"])
@@ -610,48 +355,30 @@ func TestTeamReissueCertWithoutHomePrintsPlacementMaterial(t *testing.T) {
 }
 
 func TestTeamReissueCertKeepsGlobalMemberFactsFromRegisteredCertificate(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	seedReissueCertController(t, server.URL)
-	memberPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	memberDID := awid.ComputeDIDKey(memberPub)
-	fake.certs = append(fake.certs, &fakeReissueRegistryCert{
-		CertificateID: "cert-old-1", MemberDIDKey: memberDID, MemberDIDAW: "did:aw:alice",
-		MemberAddress: "acme.com/alice", Alias: "alice",
-		IdentityScope: awid.IdentityModeGlobal, IssuedAt: "2026-08-01T00:00:00Z",
+	world := reissueCertWorld(t)
+	member := world.registerGlobalMember(t, "alice")
+	world.registerMemberCertificate(t, awid.TeamCertificateFields{
+		MemberDIDKey: member.DIDKey, MemberDIDAW: member.DIDAW, MemberAddress: member.Address,
+		Alias: "alice", IdentityScope: awid.IdentityModeGlobal,
 	})
-	teamReissueCertDID = memberDID
+	teamReissueCertDID = member.DIDKey
 
 	if err := runTeamReissueCert(nil, []string{"alice"}); err != nil {
 		t.Fatalf("runTeamReissueCert: %v", err)
 	}
-	fresh := fake.activeCertForAlias("alice")
-	if fresh == nil || fresh.IdentityScope != awid.IdentityModeGlobal ||
-		fresh.MemberDIDAW != "did:aw:alice" || fresh.MemberAddress != "acme.com/alice" {
-		t.Fatalf("fresh certificate must keep the registered global member facts: %+v", fresh)
+	active := activeCertificates(world.aliasCertificates(t, "alice"))
+	if len(active) != 1 || active[0].IdentityScope != awid.IdentityModeGlobal ||
+		active[0].MemberDIDAW != member.DIDAW || active[0].MemberAddress != member.Address {
+		t.Fatalf("fresh certificate must keep the registered global member facts: %+v", active)
 	}
 }
 
 func TestTeamReissueCertRefusesRegisteredKeyMismatchPointsToReplaceKey(t *testing.T) {
-	fake, server := newReissueCertFakeRegistry(t)
-	seedReissueCertController(t, server.URL)
-	registeredPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	attestedPub, _, err := awid.GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	fake.certs = append(fake.certs, &fakeReissueRegistryCert{
-		CertificateID: "cert-old-1", MemberDIDKey: awid.ComputeDIDKey(registeredPub), Alias: "alice",
-		IdentityScope: awid.IdentityModeLocal, IssuedAt: "2026-08-01T00:00:00Z",
-	})
-	teamReissueCertDID = awid.ComputeDIDKey(attestedPub)
+	world := reissueCertWorld(t)
+	registered := world.registerMemberCertificate(t, awid.TeamCertificateFields{MemberDIDKey: didOf(newKey(t)), Alias: "alice", IdentityScope: awid.IdentityModeLocal})
+	teamReissueCertDID = didOf(newKey(t))
 
-	err = runTeamReissueCert(nil, []string{"alice"})
+	err := runTeamReissueCert(nil, []string{"alice"})
 	if err == nil {
 		t.Fatal("expected key-mismatch refusal")
 	}
@@ -660,13 +387,9 @@ func TestTeamReissueCertRefusesRegisteredKeyMismatchPointsToReplaceKey(t *testin
 			t.Fatalf("error missing %q: %v", want, err)
 		}
 	}
-	for _, call := range fake.snapshotCalls() {
-		if call == "revoke" || call == "register" {
-			t.Fatalf("registry was mutated after refusal: calls=%v", fake.snapshotCalls())
-		}
-	}
-	if got := fake.activeCertForAlias("alice"); got == nil || got.Revoked {
-		t.Fatalf("registered certificate must be untouched: %+v", got)
+	// Nothing revoked and nothing registered.
+	if certs := world.aliasCertificates(t, "alice"); len(certs) != 1 || certs[0].CertificateID != registered.CertificateID || certs[0].RevokedAt != "" {
+		t.Fatalf("registered certificate must be untouched: %+v", certs)
 	}
 }
 
