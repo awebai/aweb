@@ -1153,15 +1153,12 @@ def test_mcp_chat_codes_keep_their_code_and_add_a_recovery_action():
     }
 
 
-def test_a_person_named_as_a_chat_recipient_is_refused_with_the_mail_direction():
+@pytest.mark.parametrize("mode", list(SendRefusalMode))
+def test_a_person_named_as_a_chat_recipient_is_refused_with_the_mail_direction(mode):
     from aweb.mcp.tools.chat import _send_refusal
 
     refused = HumanChatRefused("juan")
-    answer = json.loads(
-        _send_refusal(
-            refused, address="acme.com/juan", mode=SendRefusalMode.HOSTED_ENVELOPE
-        )
-    )
+    answer = json.loads(_send_refusal(refused, address="acme.com/juan", mode=mode))
 
     assert (
         answer["error"]
