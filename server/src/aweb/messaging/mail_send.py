@@ -463,57 +463,32 @@ async def record_successful_contact_side_effect(
     )
 
 
-async def deliver_remote_mail_and_project_locally(
+@dataclass(frozen=True, kw_only=True)
+class _PreparedRemoteMail:
+    envelope: FederationEnvelope
+    signature: str
+    sender_routing_did: str
+    sender_current_did: str
+    target_current_did: str
+    target_address: str
+
+
+def _prepare_remote_mail_envelope(
+    *,
     runtime: MessagingRuntime,
     payload: SendMessageRequest,
-    db,
-    *,
     auth: MessagingAuth,
-    registry_client,
-    sender_address: str | None,
-    sender_did: str,
-    id_chain: dict | None,
-    recipient: dict,
+    recipient: Recipient,
     recipient_did: str,
-    to_agent_id: str | None,
-    to_alias: str | None,
-    msg_uuid: UUID | None,
-) -> SentMail:
-    refuse_remote_attachments()
-    delivery_origin = _remote_delivery_origin(recipient)
-    if not delivery_origin:
-        raise DeliveryRefusal(
-            status_code=HTTPStatus.FAILED_DEPENDENCY,
-            detail="Recipient address has no federated delivery origin",
-        )
-    local = await local_recipient_for_own_route(db, recipient, runtime)
-    if local is not None:
-        return await send_mail_conversation_continuation(
-            runtime,
-            payload,
-            db,
-            auth=auth,
-            registry_client=registry_client,
-            sender_address=sender_address,
-            sender_did=sender_did,
-            id_chain=id_chain,
-            conversation_id=payload.conversation_id,
-            local_recipient=local,
-        )
-    encrypted_metadata = _validate_encrypted_payload(
-        payload,
-        auth=auth,
-        sender_did=sender_did,
-        recipient=recipient,
-        recipient_did=recipient_did,
-    )
-    if encrypted_metadata is not None:
-        await require_non_custodial_recipients(
-            db,
-            payload.encrypted_envelope or {},
-            [recipient] if recipient else [],
-            sender=auth,
-        )
+    sender_did: str,
+    sender_address: str | None,
+    delivery_origin: str,
+) -> _PreparedRemoteMail:
+    """Bind the outbound envelope to the preserved sender signature and target.
+
+    docs/identity-messaging-contract.md:334-343 separates the protected artifact
+    from transport routing and persistence. This preparation performs no send.
+    """
     is_encrypted = payload.content_mode == ContentMode.ENCRYPTED
     if not is_encrypted:
         _require_remote_mail_signature(payload)
@@ -593,6 +568,84 @@ async def deliver_remote_mail_and_project_locally(
         raise DeliveryRefusal(
             status_code=HTTPStatus.UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+    return _PreparedRemoteMail(
+        envelope=envelope,
+        signature=federation_signature,
+        sender_routing_did=sender_routing_did,
+        sender_current_did=sender_current_did,
+        target_current_did=target_current_did,
+        target_address=target_address,
+    )
+
+
+async def deliver_remote_mail_and_project_locally(
+    runtime: MessagingRuntime,
+    payload: SendMessageRequest,
+    db,
+    *,
+    auth: MessagingAuth,
+    registry_client,
+    sender_address: str | None,
+    sender_did: str,
+    id_chain: dict | None,
+    recipient: dict,
+    recipient_did: str,
+    to_agent_id: str | None,
+    to_alias: str | None,
+    msg_uuid: UUID | None,
+) -> SentMail:
+    refuse_remote_attachments()
+    delivery_origin = _remote_delivery_origin(recipient)
+    if not delivery_origin:
+        raise DeliveryRefusal(
+            status_code=HTTPStatus.FAILED_DEPENDENCY,
+            detail="Recipient address has no federated delivery origin",
+        )
+    local = await local_recipient_for_own_route(db, recipient, runtime)
+    if local is not None:
+        return await send_mail_conversation_continuation(
+            runtime,
+            payload,
+            db,
+            auth=auth,
+            registry_client=registry_client,
+            sender_address=sender_address,
+            sender_did=sender_did,
+            id_chain=id_chain,
+            conversation_id=payload.conversation_id,
+            local_recipient=local,
+        )
+    encrypted_metadata = _validate_encrypted_payload(
+        payload,
+        auth=auth,
+        sender_did=sender_did,
+        recipient=recipient,
+        recipient_did=recipient_did,
+    )
+    if encrypted_metadata is not None:
+        await require_non_custodial_recipients(
+            db,
+            payload.encrypted_envelope or {},
+            [recipient] if recipient else [],
+            sender=auth,
+        )
+    prepared = _prepare_remote_mail_envelope(
+        runtime=runtime,
+        payload=payload,
+        auth=auth,
+        recipient=recipient,
+        recipient_did=recipient_did,
+        sender_did=sender_did,
+        sender_address=sender_address,
+        delivery_origin=delivery_origin,
+    )
+    envelope = prepared.envelope
+    federation_signature = prepared.signature
+    sender_routing_did = prepared.sender_routing_did
+    sender_current_did = prepared.sender_current_did
+    target_current_did = prepared.target_current_did
+    target_address = prepared.target_address
+    is_encrypted = payload.content_mode == ContentMode.ENCRYPTED
 
     try:
         remote = await deliver_federated_message(
