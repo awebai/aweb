@@ -300,8 +300,6 @@ def mount_presentation_routes(
         image_url = presented_image_url(token)
         if isinstance(theme, dict) and theme.get("logo_asset_id") is not None:
             theme["logo_url"] = image_url(theme["logo_asset_id"])
-        if bool(presented.get("editable")):
-            raise edit_sessions.unavailable()
         nonce = secrets.token_urlsafe(16)
         mode = sanitize_layout_tokens(theme.get("tokens") if isinstance(theme, dict) else None)[
             "mode"
