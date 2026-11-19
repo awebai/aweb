@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -22,22 +23,32 @@ import (
 )
 
 type mailHTTPOptions struct {
-	Auth            authConfig
-	MaxConcurrent   int
-	TargetReference string
-	Disabled        bool
+	Auth              authConfig
+	MaxConcurrent     int
+	TargetReference   string
+	Disabled          bool
+	QuestionReplies   bool
+	UnverifiedReplies bool
+	PollTimeout       time.Duration
 }
 
 type mailHTTPFixture struct {
-	server      *httptest.Server
-	configPath  string
-	auditPath   string
-	gateway     *a2agw.Gateway
-	mu          sync.Mutex
-	mailTasks   map[string]string
-	notices     atomic.Int32
-	failNotice  atomic.Bool
-	resolutions atomic.Int32
+	server       *httptest.Server
+	configPath   string
+	auditPath    string
+	gateway      *a2agw.Gateway
+	mu           sync.Mutex
+	mailTasks    map[string]string
+	taskMessages map[string]string
+	inbox        map[string][]awid.InboxMessage
+	corrections  []awid.SendMessageRequest
+	targetKey    ed25519.PrivateKey
+	targetDID    string
+	targetStable string
+	gatewayDID   string
+	notices      atomic.Int32
+	failNotice   atomic.Bool
+	resolutions  atomic.Int32
 }
 
 type httpRPCResult struct {
@@ -45,8 +56,9 @@ type httpRPCResult struct {
 	Error  *struct {
 		Message string `json:"message"`
 		Data    struct {
-			Code   string `json:"code"`
-			Detail string `json:"detail"`
+			Code   string      `json:"code"`
+			Detail string      `json:"detail"`
+			Task   *a2agw.Task `json:"task"`
 		} `json:"data"`
 	} `json:"error"`
 }
@@ -64,12 +76,13 @@ type httpRPCInput struct {
 // remains separate evidence for registry/server interoperability.
 func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture {
 	t.Helper()
-	f := &mailHTTPFixture{mailTasks: map[string]string{}}
-	pub, _, err := awid.GenerateKeypair()
+	f := &mailHTTPFixture{mailTasks: map[string]string{}, taskMessages: map[string]string{}, inbox: map[string][]awid.InboxMessage{}}
+	pub, targetKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
 	targetDID, targetStable := awid.ComputeDIDKey(pub), awid.ComputeStableID(pub)
+	f.targetKey, f.targetDID, f.targetStable = targetKey, targetDID, targetStable
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		write := func(value any) {
 			if err := json.NewEncoder(w).Encode(value); err != nil {
@@ -86,7 +99,11 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 		case r.URL.Path == "/v1/did/"+targetStable+"/key":
 			write(map[string]string{"did_aw": targetStable, "current_did_key": targetDID})
 		case strings.HasPrefix(r.URL.Path, "/v1/messages/conversations/"):
-			write(awid.InboxResponse{Messages: []awid.InboxMessage{}})
+			conversation := strings.TrimPrefix(r.URL.Path, "/v1/messages/conversations/")
+			f.mu.Lock()
+			messages := append([]awid.InboxMessage(nil), f.inbox[conversation]...)
+			f.mu.Unlock()
+			write(awid.InboxResponse{Messages: messages})
 		case r.URL.Path == "/v1/messages" && r.Method == http.MethodPost:
 			var mail awid.SendMessageRequest
 			if err := json.NewDecoder(r.Body).Decode(&mail); err != nil {
@@ -101,7 +118,7 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 				return
 			}
 			status, err := awid.VerifySignedPayload(mail.SignedPayload, mail.Signature, mail.FromDID, mail.FromDID)
-			if err != nil || status != awid.Verified || mail.ToDID != targetDID || envelope.ToDID != mail.ToDID || envelope.ToStableID != mail.ToStableID || r.Header.Get("X-AWID-Team-Certificate") == "" {
+			if err != nil || status != awid.Verified || mail.ToDID != targetDID || envelope.ConversationID != mail.ConversationID || envelope.MessageID != mail.MessageID || envelope.Body != mail.Body || envelope.ToDID != mail.ToDID || envelope.ToStableID != mail.ToStableID || r.Header.Get("X-AWID-Team-Certificate") == "" {
 				t.Errorf("production mail lacked its signed recipient/certificate: status=%s err=%v", status, err)
 				http.Error(w, "invalid signed mail", 403)
 				return
@@ -120,10 +137,16 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 					http.Error(w, "cancellation notice refused", 403)
 					return
 				}
+			} else if mail.Subject == "A2A reply needs binding" {
+				f.mu.Lock()
+				f.corrections = append(f.corrections, mail)
+				f.mu.Unlock()
 			} else {
 				id := strings.TrimPrefix(mail.Subject, "A2A task ")
 				f.mu.Lock()
 				f.mailTasks[id] = mail.ConversationID
+				f.taskMessages[id] = envelope.Body
+				f.gatewayDID = mail.FromDID
 				f.mu.Unlock()
 			}
 			write(awid.SendMessageResponse{MessageID: mail.MessageID, ConversationID: mail.ConversationID, Status: "delivered"})
@@ -148,6 +171,15 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 	otherRoute.RouteID = "r_other"
 	cfg.Routes = append(cfg.Routes, otherRoute)
 	cfg.PollInterval, cfg.PollTimeout = "10ms", "30ms"
+	if options.PollTimeout > 0 {
+		cfg.PollTimeout = options.PollTimeout.String()
+	}
+	cfg.AllowQuestionReply = options.QuestionReplies
+	if options.UnverifiedReplies {
+		require := false
+		cfg.RequireVerifiedReplies = &require
+		cfg.AllowUnverifiedLocalReply = true
+	}
 	f.auditPath = filepath.Join(root, "audit.jsonl")
 	cfg.Audit.JSONL = f.auditPath
 	data, err := yaml.Marshal(cfg)

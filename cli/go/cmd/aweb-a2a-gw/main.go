@@ -180,7 +180,7 @@ func runManagedGateway(base fileConfig, listen string) error {
 	return server.ListenAndServe()
 }
 
-// gatewayHTTPServer bounds request lifetimes (docs/a2a.md:992-993).
+// gatewayHTTPServer bounds request lifetimes (docs/a2a.md:1017-1018).
 func gatewayHTTPServer(listen string, handler http.Handler) *http.Server {
 	return &http.Server{Addr: listen, Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute}
 }
@@ -1120,6 +1120,7 @@ func buildGatewayWithRuntime(cfg fileConfig, runtime *gatewayRuntime, previous *
 		}
 		runtime.bridge, err = a2agw.NewMailBridge(a2agw.MailBridgeConfig{
 			Client:                    client,
+			ProviderName:              cfg.ManagedConfig.ConfigURL,
 			GatewayIdentity:           gatewayIdentity,
 			UseIdentityAuth:           useIdentityAuth,
 			PollInterval:              pollInterval,

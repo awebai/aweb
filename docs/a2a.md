@@ -964,12 +964,37 @@ error names the provider and the upgrade needed. Explicitly setting
 preserves an unverified route on such a provider. The explicit requirement wins
 when both settings are true.
 
+A provider declaring `recipient_identity_v1` must supply the recipient in its
+send receipt. An omitted recipient is a provider fault: the gateway audits the
+reason, marks the task failed, and returns its failed task and recovery detail
+in the RPC error data. It does not poll an unbound task or blame the target for
+replying from the wrong identity. The provider must repair the response before
+retrying. A provider without the capability is refused before durable send on
+verified routes; the refusal names the provider and needed upgrade. Every
+failed bridge task send is audited.
+
 Reply messages pass through aw mail's signature, display-binding, and sender
 verification code, including messages fetched through a managed provider.
-Verified replies must come from the identity recorded at creation, in the
-recorded conversation and task context. Explicit unverified routes report
+Every task-changing verified reply must come from the identity recorded at
+creation and use one signed `a2a-reply` fence naming its `task_id` and required
+`context_id`. A question uses `state: input_required` and its question text in
+`text` or a text artifact, exactly as a final answer uses `state: completed`.
+A signed conversation alone cannot identify a task when the provider reuses a
+conversation. A plain `QUESTION:` therefore cannot update a verified task,
+even with a conversation-bound signature or only one live task.
+
+The initial task message teaches the exact task-bearing question form. A
+refused plain question leaves all tasks unchanged, records the reason, and
+sends the known target correction instructions in the original conversation.
+Those instructions show the exact fenced question form and say to use aw
+1.19.0 or later. A task-bearing signed legacy fence remains accepted.
+`allow_question_reply` keeps its plain `QUESTION:` compatibility behavior only
+on routes explicitly configured as unverified. With verified replies required,
+questions are allowed in the fenced form; the flag never relaxes verification.
+The combination is valid and requires no configuration refusal. Explicit
+unverified routes report
 `metadata.reply_verification: "unverified"`; the CLI displays that label.
-Only a complete standalone `a2a-reply` fence counts as a reply. Quoted fences,
+On verified routes, only a complete standalone `a2a-reply` fence counts as a reply. Quoted fences,
 fences nested inside another code block, and ambiguous multiple reply blocks
 cannot supply the answer.
 

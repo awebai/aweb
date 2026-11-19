@@ -129,27 +129,6 @@ func TestMailBridgeReplyStatesAndMalformedBlocks(t *testing.T) {
 	}
 }
 
-func TestMailBridgeQuestionCompatibilityRequiresTrackedConversation(t *testing.T) {
-	transport := &fakeMailTransport{}
-	bridge, err := NewMailBridge(MailBridgeConfig{Client: transport, GatewayIdentity: "did:aw:gateway", AllowQuestionReply: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	gw := newTestGateway(t, Config{Host: "team.aweb.ai", Bridge: bridge, Routes: []Route{supportRoute("r_support")}})
-	bridge.SetReplyApplier(gw)
-	taskID, _ := sendTestA2ATaskWithToken(t, gw)
-	task, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{FromDID: "did:key:target", FromStableID: "did:aw:target", MessageID: "question", ConversationID: "conv-1", Body: "QUESTION: Which email is the order under?", VerificationStatus: awid.Verified})
-	if err != nil || !ok {
-		t.Fatalf("question ingest: ok=%t err=%v", ok, err)
-	}
-	if task.ID != taskID || task.Status.State != TaskStateInputRequired {
-		t.Fatalf("question task/state=%s/%s", task.ID, task.Status.State)
-	}
-	if _, ok, err := bridge.IngestInboxMessage(context.Background(), awid.InboxMessage{FromDID: "did:key:target", FromStableID: "did:aw:target", MessageID: "question-unknown", ConversationID: "conv-missing", Body: "QUESTION: no route", VerificationStatus: awid.Verified}); err != nil || ok {
-		t.Fatalf("unknown conversation question should not route: ok=%t err=%v", ok, err)
-	}
-}
-
 func TestMailBridgeRejectsUnverifiedAndMismatchedConversationReplies(t *testing.T) {
 	transport := &fakeMailTransport{}
 	bridge := newTestMailBridge(t, transport, nil)

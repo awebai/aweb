@@ -47,7 +47,7 @@ func TestA2AGatewayBuildsFromWorkspaceConfigServesCardAndSendsTask(t *testing.T)
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
 		case "/v1/namespaces/a2a.aweb.ai/addresses/personal":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"address_id":      "addr-personal",
@@ -169,7 +169,7 @@ func TestA2AGatewayBuildsFromManagedRuntimeConfig(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
 		case "/runtime/bridge/gw-test/conversations/conv-1":
 			pollMu.Lock()
 			pollPath = r.URL.String()
@@ -492,7 +492,7 @@ func TestManagedBridgePreservesRouteAddressBinding(t *testing.T) {
 			t.Fatal(err)
 		}
 		gotRouteID, _ = payload["route_id"].(string)
-		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent"})
+		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
 	}))
 	defer server.Close()
 	cfg := fileConfig{
@@ -524,7 +524,7 @@ func TestManagedBridgeCapturedOldGenerationFailsClosedAfterRouteRevision(t *test
 				mu.Lock()
 				emittedRoutes = append(emittedRoutes, payload["route_id"].(string))
 				mu.Unlock()
-				_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent"})
+				_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
 			}))
 			defer server.Close()
 
@@ -580,7 +580,7 @@ func TestManagedGatewayCapturedGenerationFailsClosedAcrossRefresh(t *testing.T) 
 		mu.Lock()
 		emittedRoutes = append(emittedRoutes, payload["route_id"].(string))
 		mu.Unlock()
-		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent"})
+		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "m-1", ConversationID: "c-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
 	}))
 	defer server.Close()
 
@@ -937,7 +937,7 @@ func TestA2AGatewayManagedRefreshExtendsAcceptWindowForStableRevision(t *testing
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
+			_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
 		case "/runtime/bridge/a2a-gateway/conversations/conv-1":
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{}})
 		default:
@@ -1031,7 +1031,7 @@ func TestA2AGatewayManagedRefreshSwapsUnderLoad(t *testing.T) {
 			t.Errorf("unexpected managed request %s %s", r.Method, r.URL.Path)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent"})
+		_ = json.NewEncoder(w).Encode(awid.SendMessageResponse{MessageID: "msg-1", ConversationID: "conv-1", Status: "sent", RecipientDID: "did:key:target", RecipientStableID: "did:aw:target"})
 	}))
 	defer managedServer.Close()
 

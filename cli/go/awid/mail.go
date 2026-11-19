@@ -204,7 +204,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 
 // VerifyInboxResponse uses the mail reader's verification and display-binding
 // owner for a conversation fetched through an authenticated provider transport
-// (docs/a2a.md:953-954).
+// (docs/a2a.md:976-977).
 func (c *Client) VerifyInboxResponse(ctx context.Context, out *InboxResponse) (*InboxResponse, error) {
 	return c.normalizeInboxResponse(ctx, out)
 }

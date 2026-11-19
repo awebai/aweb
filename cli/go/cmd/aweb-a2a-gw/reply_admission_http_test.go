@@ -1,0 +1,447 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/awebai/aw/a2agw"
+	"github.com/awebai/aw/awid"
+)
+
+type replySignatureBinding int
+
+const (
+	conversationSigned replySignatureBinding = iota
+	conversationUnsigned
+)
+
+type signedHTTPReply struct {
+	Task    a2agw.Task
+	Body    string
+	Binding replySignatureBinding
+}
+
+// injectSignedReply models the peer replaying authentic signed mail; verification
+// still runs through the production awid conversation reader and MailBridge.
+func (f *mailHTTPFixture) injectSignedReply(t *testing.T, input signedHTTPReply) {
+	t.Helper()
+	f.mu.Lock()
+	conversation, gatewayDID := f.mailTasks[input.Task.ID], f.gatewayDID
+	f.mu.Unlock()
+	messageID, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := &awid.MessageEnvelope{From: "a2a.aweb.ai/personal", FromDID: f.targetDID, FromStableID: f.targetStable, To: gatewayDID, ToDID: gatewayDID, Type: "mail", MessageID: messageID, ConversationID: conversation, Subject: "A2A answer", Body: input.Body, Timestamp: time.Now().UTC().Format(time.RFC3339)}
+	if input.Binding == conversationUnsigned {
+		envelope.ConversationID = ""
+	}
+	signature, err := awid.SignMessage(f.targetKey, envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := awid.InboxMessage{MessageID: messageID, ConversationID: conversation, FromDID: f.targetDID, FromStableID: f.targetStable, FromAddress: "a2a.aweb.ai/personal", ToDID: gatewayDID, Subject: envelope.Subject, Body: input.Body, CreatedAt: envelope.Timestamp, SignedPayload: awid.CanonicalJSON(envelope), Signature: signature}
+	f.mu.Lock()
+	f.inbox[conversation] = append(f.inbox[conversation], message)
+	f.mu.Unlock()
+}
+
+func (f *mailHTTPFixture) readTask(t *testing.T, task a2agw.Task) a2agw.Task {
+	t.Helper()
+	response := f.callOK(t, httpRPCInput{Method: "GetTask", Params: map[string]string{"id": task.ID}, Headers: tokenHeaders(t, task)})
+	if response.Error != nil {
+		t.Fatalf("read task: %#v", response.Error)
+	}
+	var out a2agw.Task
+	if err := json.Unmarshal(response.Result, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func (f *mailHTTPFixture) waitForTaskReply(t *testing.T, task a2agw.Task) a2agw.Task {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got := f.readTask(t, task)
+		if got.Status.State != a2agw.TaskStateWorking {
+			return got
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("signed reply did not update task through production reader")
+	return a2agw.Task{}
+}
+
+func (f *mailHTTPFixture) auditEvent(t *testing.T, code string) (a2agw.AuditEvent, bool) {
+	t.Helper()
+	data, err := os.ReadFile(f.auditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	for {
+		var event a2agw.AuditEvent
+		err := decoder.Decode(&event)
+		if err == io.EOF {
+			return event, false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if event.Code == code {
+			return event, true
+		}
+	}
+}
+
+func TestHTTPMailBridgePlainQuestionRequiresSignedTaskBody(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{QuestionReplies: true, PollTimeout: 3 * time.Second})
+	task := sentHTTPTask(t, f.callOK(t, sendHTTPInput("legacy-question")))
+	f.injectSignedReply(t, signedHTTPReply{Task: task, Body: "QUESTION: Which order?", Binding: conversationUnsigned})
+	f.waitForBindingCorrection(t, task)
+
+	if event, found := f.auditEvent(t, "reply_task_binding_required"); !found || event.Outcome != string(a2agw.AuditDenied) {
+		t.Fatalf("missing refusal audit: %#v", event)
+	}
+	f.injectSignedReply(t, signedHTTPReply{Task: task, Body: f.questionForm(t, task), Binding: conversationSigned})
+	got := f.waitForTaskReply(t, task)
+	if got.Status.State != a2agw.TaskStateInputRequired || got.Metadata["reply_verification"] != string(awid.Verified) {
+		t.Fatalf("task-bearing question form refused: %#v", got)
+	}
+	assertQuestionText(t, got)
+}
+
+func TestHTTPMailBridgeLegacyFencedReplyKeepsAcceptance(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{QuestionReplies: true, PollTimeout: 3 * time.Second})
+	task := sentHTTPTask(t, f.callOK(t, sendHTTPInput("legacy-fence")))
+	body := fmt.Sprintf("```a2a-reply\n{\"task_id\":%q,\"context_id\":%q,\"state\":\"completed\",\"text\":\"answer\"}\n```", task.ID, task.ContextID)
+	f.injectSignedReply(t, signedHTTPReply{Task: task, Body: body, Binding: conversationUnsigned})
+	got := f.waitForTaskReply(t, task)
+	if got.Status.State != a2agw.TaskStateCompleted || got.Metadata["reply_verification"] != string(awid.VerifiedLegacy) {
+		t.Fatalf("signed task-body neighbor refused: %#v", got)
+	}
+}
+
+func TestHTTPMailBridgeExplicitUnverifiedLegacyQuestionIsLabeled(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{QuestionReplies: true, UnverifiedReplies: true, PollTimeout: 3 * time.Second})
+	task := sentHTTPTask(t, f.callOK(t, sendHTTPInput("unverified-question")))
+	f.injectSignedReply(t, signedHTTPReply{Task: task, Body: "QUESTION: Which order?", Binding: conversationUnsigned})
+	got := f.waitForTaskReply(t, task)
+	if got.Status.State != a2agw.TaskStateInputRequired || got.Metadata["reply_verification"] != string(awid.Unverified) {
+		t.Fatalf("explicit unverified policy changed: %#v", got)
+	}
+}
+
+func TestHTTPMailBridgeAuditsTargetResolutionFailure(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{TargetReference: "default:a2a.aweb.ai/private"})
+	got := f.callOK(t, sendHTTPInput("refused-target"))
+	if got.Error == nil {
+		t.Fatal("local target was not refused")
+	}
+	event, found := f.auditEvent(t, "target_identity_unavailable")
+	if !found || event.Stage != "bridge_send" || event.Outcome != string(a2agw.AuditError) || event.TargetAddressHash == "" || event.RequestID == "" {
+		t.Fatalf("failed SendTask lacks complete audit: %#v", event)
+	}
+}
+
+type managedReceiptIdentity int
+
+const (
+	completeRecipient managedReceiptIdentity = iota
+	missingRecipient
+)
+
+type managedHTTPReplyOptions struct {
+	Receipt            managedReceiptIdentity
+	ReusedConversation string
+}
+
+// The generic managed transport talks to a controlled provider over HTTP. Its
+// declared capability and malformed response run through the actual config,
+// transport, MailBridge and RPC owners, with no replaced bridge methods.
+func newManagedHTTPReplyFixture(t *testing.T, options managedHTTPReplyOptions) *mailHTTPFixture {
+	t.Helper()
+	f := newMailHTTPFixture(t, mailHTTPOptions{PollTimeout: 3 * time.Second})
+	f.server.Close()
+	pub, gatewayKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gatewayDID = awid.ComputeDIDKey(pub)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		write := func(value any) {
+			if err := json.NewEncoder(w).Encode(value); err != nil {
+				t.Error(err)
+			}
+		}
+		switch {
+		case r.URL.Path == "/runtime/config/gw":
+			write(map[string]any{"gateway_id": "gw", "gateway_identity": awid.ComputeStableID(pub), "gateway_identity_status": "active", "capabilities": []string{"recipient_identity_v1"}, "config_revision": "1", "expires_at": "2099-01-01T00:00:00Z", "routes": []map[string]any{{"route_id": "r_personal", "host": "a2a.aweb.ai", "address": "a2a.aweb.ai/personal", "mode": "mail", "card": map[string]any{"name": "Agent", "description": "Agent", "provider": map[string]string{"organization": "Aweb", "url": "https://aweb.ai"}, "skills": []map[string]string{{"id": "reply", "name": "Reply", "description": "Reply"}}}}}})
+		case r.URL.Path == "/runtime/bridge/gw/messages":
+			var request awid.SendMessageRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+				http.Error(w, "bad request", 400)
+				return
+			}
+			id, err := awid.GenerateUUID4()
+			if err != nil {
+				t.Error(err)
+				http.Error(w, "id unavailable", 500)
+				return
+			}
+			conversation := request.ConversationID
+			if conversation == "" {
+				conversation = options.ReusedConversation
+			}
+			if conversation == "" {
+				conversation = id
+			}
+			var echo *awid.InboxMessage
+			if request.Subject == "A2A reply needs binding" {
+				envelope := &awid.MessageEnvelope{From: "a2a.aweb.ai/gateway", FromDID: awid.ComputeDIDKey(pub), FromStableID: awid.ComputeStableID(pub), ToDID: f.targetDID, Type: "mail", MessageID: id, ConversationID: conversation, Subject: request.Subject, Body: request.Body, Timestamp: time.Now().UTC().Format(time.RFC3339)}
+				signature, err := awid.SignMessage(gatewayKey, envelope)
+				if err != nil {
+					t.Error(err)
+					http.Error(w, "signing unavailable", 500)
+					return
+				}
+				echo = &awid.InboxMessage{MessageID: id, ConversationID: conversation, FromDID: envelope.FromDID, FromStableID: envelope.FromStableID, FromAddress: envelope.From, ToDID: f.targetDID, Subject: envelope.Subject, Body: envelope.Body, CreatedAt: envelope.Timestamp, SignedPayload: awid.CanonicalJSON(envelope), Signature: signature}
+			}
+			f.mu.Lock()
+			if echo != nil {
+				f.inbox[conversation] = append(f.inbox[conversation], *echo)
+				f.corrections = append(f.corrections, request)
+			} else if strings.HasPrefix(request.Subject, "A2A task ") {
+				id := strings.TrimPrefix(request.Subject, "A2A task ")
+				f.mailTasks[id], f.taskMessages[id] = conversation, request.Body
+			}
+			f.mu.Unlock()
+
+			response := awid.SendMessageResponse{MessageID: id, ConversationID: conversation, Status: "delivered"}
+			if options.Receipt == completeRecipient {
+				response.RecipientDID, response.RecipientStableID = f.targetDID, f.targetStable
+			}
+			write(response)
+		case strings.HasPrefix(r.URL.Path, "/runtime/bridge/gw/conversations/"):
+			conversation := strings.TrimPrefix(r.URL.Path, "/runtime/bridge/gw/conversations/")
+			f.mu.Lock()
+			messages := append([]awid.InboxMessage(nil), f.inbox[conversation]...)
+			f.mu.Unlock()
+			write(awid.InboxResponse{Messages: messages})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(provider.Close)
+	cfg := mustLoadConfig(t, f.configPath)
+	cfg.ManagedConfig = managedConfigForTest(provider.URL, "gw", "provider-token")
+	cfg.AllowQuestionReply = true
+	if err := applyManagedRuntimeConfig(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := buildGateway(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gateway = gateway
+	f.server = httptest.NewServer(gateway)
+	t.Cleanup(f.server.Close)
+	return f
+}
+
+func TestHTTPManagedProviderMissingRecipientFailsTask(t *testing.T) {
+	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{Receipt: missingRecipient})
+	got := f.callOK(t, sendHTTPInput("provider-fault"))
+	if got.Error == nil || got.Error.Data.Code != "missing_recipient_identity" || !strings.Contains(got.Error.Data.Detail, "provider") || !strings.Contains(got.Error.Data.Detail, "Repair") {
+		t.Fatalf("missing recipient was not an actionable provider fault: %#v", got)
+	}
+	task := got.Error.Data.Task
+	if task == nil || task.Status.State != a2agw.TaskStateFailed {
+		t.Fatalf("provider fault did not return its failed task: %#v", task)
+	}
+	if task.Status.Message == nil || len(task.Status.Message.Parts) == 0 || !strings.Contains(task.Status.Message.Parts[0].Text, "recipient identity") {
+		t.Fatal("failed task message misstates provider fault")
+	}
+	event, found := f.auditEvent(t, "missing_recipient_identity")
+	if !found || event.Outcome != string(a2agw.AuditError) || event.Stage != "bridge_send" {
+		t.Fatalf("provider fault not audited: %#v", event)
+	}
+	read := f.readTask(t, *task)
+	if read.Status.State != a2agw.TaskStateFailed {
+		t.Fatal("provider fault stranded task without readable failure")
+	}
+}
+
+func TestHTTPManagedVerifiedQuestionRequiresTaskBodyInSharedConversation(t *testing.T) {
+	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{ReusedConversation: "shared-native-conversation"})
+	first := sentHTTPTask(t, f.callOK(t, sendHTTPInput("first-task")))
+	second := sentHTTPTask(t, f.callOK(t, sendHTTPInput("second-task")))
+	f.injectSignedReply(t, signedHTTPReply{Task: first, Body: "QUESTION: Which order?", Binding: conversationSigned})
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, task := range []a2agw.Task{first, second} {
+			if got := f.readTask(t, task); got.Status.State != a2agw.TaskStateWorking {
+				t.Fatalf("ambiguous QUESTION chose a task: %#v", got)
+			}
+		}
+		f.mu.Lock()
+		notices := len(f.corrections)
+		f.mu.Unlock()
+		if notices > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ambiguous QUESTION was silently dropped")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if event, found := f.auditEvent(t, "reply_task_binding_required"); !found || event.Outcome != string(a2agw.AuditDenied) {
+		t.Fatalf("ambiguous reply not audited: %#v", event)
+	}
+	// A task-naming body remains valid in the same shared conversation.
+	body := fmt.Sprintf("```a2a-reply\n{\"task_id\":%q,\"context_id\":%q,\"state\":\"completed\",\"text\":\"answer\"}\n```", second.ID, second.ContextID)
+	f.injectSignedReply(t, signedHTTPReply{Task: second, Body: body, Binding: conversationSigned})
+	if got := f.waitForTaskReply(t, second); got.Status.State != a2agw.TaskStateCompleted {
+		t.Fatalf("explicit task body refused: %#v", got)
+	}
+	if event, found := f.auditEvent(t, "malformed_reply"); found {
+		t.Fatalf("gateway parsed its own correction as a malformed target reply: %#v", event)
+	}
+
+	if got := f.readTask(t, first); got.Status.State != a2agw.TaskStateWorking {
+		t.Fatal("reply also mutated another task")
+	}
+	f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": first.ID}, Headers: tokenHeaders(t, first)})
+}
+
+func TestHTTPManagedReusedConversationDoesNotReplayEarlierQuestion(t *testing.T) {
+	f := newManagedHTTPReplyFixture(t, managedHTTPReplyOptions{ReusedConversation: "shared-native-conversation"})
+	first := sentHTTPTask(t, f.callOK(t, sendHTTPInput("earlier-task")))
+	f.injectSignedReply(t, signedHTTPReply{Task: first, Body: f.questionForm(t, first), Binding: conversationSigned})
+	if got := f.waitForTaskReply(t, first); got.Status.State != a2agw.TaskStateInputRequired {
+		t.Fatalf("first bound question failed: %#v", got)
+	}
+	f.injectSignedReply(t, signedHTTPReply{Task: first, Body: "QUESTION: Earlier question", Binding: conversationSigned})
+	second := sentHTTPTask(t, f.callOK(t, sendHTTPInput("later-task")))
+	// The provider's conversation response retains authentic earlier mail.
+	// It must not become the answer to a different task in that conversation.
+	time.Sleep(100 * time.Millisecond)
+	if got := f.readTask(t, second); got.Status.State != a2agw.TaskStateWorking {
+		t.Fatalf("earlier conversation-bound QUESTION replayed into new task: %#v", got.Status)
+	}
+	f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": second.ID}, Headers: tokenHeaders(t, second)})
+}
+
+func (f *mailHTTPFixture) questionForm(t *testing.T, task a2agw.Task) string {
+	t.Helper()
+	f.mu.Lock()
+	body := f.taskMessages[task.ID]
+	f.mu.Unlock()
+	start := strings.Index(body, "```a2a-reply\n")
+	if start < 0 {
+		t.Fatal("task did not teach the exact question form")
+	}
+	tail := body[start+len("```a2a-reply\n"):]
+	end := strings.Index(tail, "\n```")
+	if end < 0 {
+		t.Fatal("task question form is unfinished")
+	}
+	form := "```a2a-reply\n" + tail[:end] + "\n```"
+	if !strings.Contains(form, "input_required") || !strings.Contains(form, task.ID) {
+		t.Fatal("task instructions did not carry the question state and task")
+	}
+	return strings.ReplaceAll(form, "Your question here", "Which order?")
+}
+
+func (f *mailHTTPFixture) waitForBindingCorrection(t *testing.T, task a2agw.Task) awid.SendMessageRequest {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got := f.readTask(t, task)
+		if got.Status.State != a2agw.TaskStateWorking {
+			t.Fatalf("legacy replay changed task: %#v", got.Status)
+		}
+		f.mu.Lock()
+		notices := append([]awid.SendMessageRequest(nil), f.corrections...)
+		f.mu.Unlock()
+		if len(notices) > 0 {
+			notice := notices[0]
+			if !strings.Contains(notice.Body, "aw 1.19.0 or later") || !strings.Contains(notice.Body, "a2a-reply") || !strings.Contains(notice.Body, "task_id") {
+				t.Fatalf("target received no binding recovery: %s", notice.Body)
+			}
+			f.mu.Lock()
+			conversation := f.mailTasks[task.ID]
+			f.mu.Unlock()
+			if notice.ConversationID != conversation || notice.ToDID != f.targetDID {
+				t.Fatal("correction notice lost original conversation/recipient")
+			}
+			return notice
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("legacy QUESTION was silently dropped without target correction")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestHTTPMailBridgeCurrentPlainQuestionAlsoRequiresTaskBody(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{PollTimeout: 3 * time.Second})
+	task := sentHTTPTask(t, f.callOK(t, sendHTTPInput("current-question")))
+	f.injectSignedReply(t, signedHTTPReply{Task: task, Body: "QUESTION: Which order?", Binding: conversationSigned})
+	f.waitForBindingCorrection(t, task)
+	f.injectSignedReply(t, signedHTTPReply{Task: task, Body: f.questionForm(t, task), Binding: conversationSigned})
+	if got := f.waitForTaskReply(t, task); got.Status.State != a2agw.TaskStateInputRequired || got.Metadata["reply_verification"] != string(awid.Verified) {
+		t.Fatalf("task-bound current question failed: %#v", got)
+	}
+}
+
+func TestHTTPManagedCapabilityRefusalNamesProviderBeforeSend(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{})
+	f.server.Close()
+	var requests atomic.Int32
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1); http.Error(w, "unexpected send", 500) }))
+	t.Cleanup(provider.Close)
+	cfg := mustLoadConfig(t, f.configPath)
+	cfg.ManagedConfig = managedConfigForTest(provider.URL, "gw", "provider-token")
+	cfg.ManagedConfig.ConfigURL += "?operator_secret=must-not-escape"
+	cfg.ManagedRuntime.ExpiresAt = time.Now().Add(time.Hour).Format(time.RFC3339)
+	// Exercise the library/embedding construction boundary; normal managed
+	// startup also enforces the declared runtime capability before listening.
+	gateway, err := buildGateway(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.server = httptest.NewServer(gateway)
+	t.Cleanup(f.server.Close)
+	got := f.callOK(t, sendHTTPInput("incapable-provider"))
+	if got.Error == nil || !strings.Contains(got.Error.Data.Detail, provider.URL) || !strings.Contains(got.Error.Data.Detail, "Upgrade") || !strings.Contains(got.Error.Data.Detail, "recipient_identity_v1") {
+		t.Fatalf("capability refusal does not name provider/recovery: %#v", got.Error)
+	}
+	if strings.Contains(got.Error.Data.Detail, "must-not-escape") {
+		t.Fatal("provider fault exposed a private configuration URL query")
+	}
+
+	if requests.Load() != 0 {
+		t.Fatal("unsupported provider received durable mail")
+	}
+	if event, found := f.auditEvent(t, "target_identity_unavailable"); !found || event.Outcome != string(a2agw.AuditError) {
+		t.Fatalf("capability SendTask failure not audited: %#v", event)
+	}
+}
+
+func assertQuestionText(t *testing.T, task a2agw.Task) {
+	t.Helper()
+	if task.Status.Message == nil || len(task.Status.Message.Parts) == 0 || task.Status.Message.Parts[0].Text != "Which order?" {
+		t.Fatalf("fenced input_required did not carry the question text: %#v", task.Status)
+	}
+}

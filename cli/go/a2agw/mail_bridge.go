@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -42,7 +43,9 @@ type ReplyApplier interface {
 }
 
 type MailBridgeConfig struct {
-	Client                    MailTransport
+	Client MailTransport
+	// ProviderName is a public label; a supplied URL is reduced to its origin.
+	ProviderName              string
 	GatewayIdentity           string
 	UseIdentityAuth           bool
 	PollInterval              time.Duration
@@ -61,6 +64,7 @@ func (config MailBridgeConfig) RequiresVerifiedReplies() bool {
 
 type MailBridge struct {
 	client                 MailTransport
+	providerName           string
 	gatewayIdentity        string
 	useIdentityAuth        bool
 	pollInterval           time.Duration
@@ -126,6 +130,7 @@ func NewMailBridge(config MailBridgeConfig) (*MailBridge, error) {
 	}
 	return &MailBridge{
 		client:                 config.Client,
+		providerName:           safeProviderName(config.ProviderName),
 		gatewayIdentity:        strings.TrimSpace(config.GatewayIdentity),
 		useIdentityAuth:        config.UseIdentityAuth,
 		pollInterval:           pollInterval,
@@ -155,6 +160,30 @@ func (b *MailBridge) gatewayIdentitySnapshot() string {
 	return b.gatewayIdentity
 }
 
+// safeProviderName exposes the provider origin without private URL paths,
+// userinfo or query credentials in a public task failure.
+func safeProviderName(name string) string {
+	name = strings.TrimSpace(name)
+	endpoint, err := url.Parse(name)
+	if err != nil {
+		if strings.Contains(name, "://") {
+			return "configured mail provider"
+		}
+		return name
+	}
+	if endpoint.IsAbs() && endpoint.Host != "" {
+		return endpoint.Scheme + "://" + endpoint.Host
+	}
+	return name
+}
+
+func (b *MailBridge) providerDisplayName() string {
+	if b.providerName != "" {
+		return b.providerName
+	}
+	return fmt.Sprintf("%T", b.client)
+}
+
 // ValidateTarget shares the pre-send rule with startup validation. Managed
 // providers enforce target addressability in their own configuration authority.
 func (b *MailBridge) ValidateTarget(ctx context.Context, address string) error {
@@ -182,7 +211,7 @@ func (b *MailBridge) resolveTargetIdentity(ctx context.Context, address string) 
 	if b.requireVerifiedReplies {
 		provider, ok := b.client.(recipientIdentityProvider)
 		if !ok || !provider.ProvidesRecipientIdentity() {
-			return recipientIdentity{}, errors.New("A2A provider cannot bind the reply identity. Upgrade the provider to support recipient_identity_v1 before sending.")
+			return recipientIdentity{}, fmt.Errorf("A2A provider %s cannot bind the reply identity. Upgrade the provider to support recipient_identity_v1 before sending.", b.providerDisplayName())
 		}
 	}
 	return recipientIdentity{}, nil
@@ -224,6 +253,7 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 	}
 	recipient, err := b.resolveTargetIdentity(ctx, task.Address)
 	if err != nil {
+		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: string(AuditError), Code: "target_identity_unavailable", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		return err
 	}
 	req.ToDID, req.ToStableID = recipient.DID, recipient.StableID
@@ -232,7 +262,13 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "send_failed", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
 		return err
 	}
-	recipient = recipientFromSend(req, resp)
+	validatedRecipient, fault := b.validateSendReceipt(req, resp)
+	if fault != nil {
+		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: string(AuditError), Code: string(fault.Fault), LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
+		return fault
+	}
+	recipient = validatedRecipient
+
 	thread := &mailBridgeThread{
 		TaskID:         task.TaskID,
 		ContextID:      task.ContextID,
@@ -248,10 +284,7 @@ func (b *MailBridge) SendTask(ctx context.Context, task BridgeTask) error {
 		CreatedAt:      time.Now(),
 		ReplyDeadline:  replyDeadline(time.Now(), task.TaskTTL, b.pollTimeout),
 	}
-	if thread.ConversationID == "" {
-		b.recordAudit(AuditEvent{Stage: "bridge_send", RequestID: task.RequestID, RouteID: task.RouteID, TaskID: task.TaskID, CallerScopeClass: callerScopeClass(task.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(task.Address), Outcome: "error", Code: "missing_conversation_id", LatencyMS: latencyMS(start), VerificationTier: "unsigned"})
-		return errors.New("mail bridge send response missing conversation_id")
-	}
+
 	thread.RetentionContext, thread.StopRetention = context.WithDeadline(context.Background(), replyDeadline(thread.CreatedAt, task.TaskTTL, 0))
 	thread.PollContext, thread.StopPolling = context.WithDeadline(thread.RetentionContext, thread.ReplyDeadline)
 	b.mu.Lock()
@@ -295,22 +328,25 @@ func (b *MailBridge) CancelTask(ctx context.Context, cancel BridgeCancel) error 
 }
 
 func (b *MailBridge) IngestInboxMessage(ctx context.Context, msg awid.InboxMessage) (Task, bool, error) {
+	if b.seenConversationMessage(msg) {
+		return Task{}, false, nil
+	}
 	gatewayIdentity := b.gatewayIdentitySnapshot()
-	reply, found, err := ParseA2AReplyWithOptions(ReplyParseInput{Body: msg.Body, AllowQuestionReply: b.allowQuestionReply})
+	reply, found, err := ParseA2AReplyWithOptions(ReplyParseInput{Body: msg.Body, AllowQuestionReply: b.allowQuestionReply || b.requireVerifiedReplies})
 	if err != nil || !found {
 		if err != nil {
 			b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: "", TaskID: reply.TaskID, Outcome: "error", Code: "malformed_reply", VerificationTier: string(msg.VerificationStatus)})
 		}
 		return Task{}, false, err
 	}
-	thread := b.thread(reply.TaskID)
-	if thread == nil && reply.TaskID == "" && msg.ConversationID != "" {
-		thread = b.threadByConversation(msg.ConversationID)
-		if thread != nil {
-			reply.TaskID = thread.TaskID
-			reply.ContextID = thread.ContextID
-		}
+	if reply.TaskID == "" && msg.ConversationID == "" {
+		err := errors.New("A QUESTION reply has no recorded conversation. Reply in the original conversation with a fenced a2a-reply block naming the task_id and context_id.")
+		b.recordAudit(AuditEvent{Stage: "reply_ingest", Outcome: string(AuditDenied), Code: "missing_reply_conversation", VerificationTier: string(msg.VerificationStatus)})
+		return Task{}, false, err
 	}
+	attachment := b.attachReply(msg, reply)
+	thread, reply := attachment.Thread, attachment.Reply
+
 	if thread == nil {
 		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: "", TaskID: reply.TaskID, Outcome: "ignored", Code: "unknown_task", VerificationTier: string(msg.VerificationStatus)})
 		return Task{}, false, nil
@@ -331,9 +367,13 @@ func (b *MailBridge) IngestInboxMessage(ctx context.Context, msg awid.InboxMessa
 		return Task{}, false, err
 	}
 	if b.requireVerifiedReplies && !thread.matchesSender(msg) {
-		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, Outcome: string(AuditIgnored), Code: "target_identity_mismatch", VerificationTier: string(msg.VerificationStatus)})
+		b.recordAudit(AuditEvent{Stage: "reply_ingest", RequestID: thread.RequestID, RouteID: thread.RouteID, TaskID: thread.TaskID, CallerScopeClass: callerScopeClass(thread.CallerScope), GatewayIdentityHash: auditHash(gatewayIdentity), TargetAddressHash: auditHash(thread.TargetAddress), Outcome: string(AuditIgnored), Code: "target_identity_mismatch", VerificationTier: string(msg.VerificationStatus)})
 		return Task{}, false, errors.New("A2A reply is not from the target identity bound at task creation. Have the configured target agent reply in the original conversation.")
 	}
+	if refusal := b.conversationReplyRefusal(attachment); refusal != nil {
+		return Task{}, false, b.refuseConversationReply(ctx, replyCorrection{Attachment: attachment, Message: msg, Refusal: refusal})
+	}
+
 	reply.Verification = awid.Unverified
 	if b.requireVerifiedReplies {
 		reply.Verification = msg.VerificationStatus
@@ -401,26 +441,6 @@ func (b *MailBridge) thread(taskID string) *mailBridgeThread {
 		copy.SeenMessages[k] = v
 	}
 	return &copy
-}
-
-func (b *MailBridge) threadByConversation(conversationID string) *mailBridgeThread {
-	conversationID = strings.TrimSpace(conversationID)
-	if conversationID == "" {
-		return nil
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for _, thread := range b.threads {
-		if thread.ConversationID == conversationID {
-			copy := *thread
-			copy.SeenMessages = make(map[string]bool, len(thread.SeenMessages))
-			for k, v := range thread.SeenMessages {
-				copy.SeenMessages[k] = v
-			}
-			return &copy
-		}
-	}
-	return nil
 }
 
 func (b *MailBridge) markSeenLocked(taskID, messageID string) {
@@ -546,7 +566,7 @@ func recipientFromSend(req *awid.SendMessageRequest, resp *awid.SendMessageRespo
 }
 
 // matchesSender applies the recorded target binding after mail verification
-// (docs/a2a.md:967-971).
+// (docs/a2a.md:978-984).
 func (thread *mailBridgeThread) matchesSender(msg awid.InboxMessage) bool {
 	if thread.TargetStableID != "" {
 		return msg.FromStableID == thread.TargetStableID
@@ -559,24 +579,15 @@ func FormatA2ATaskMessage(env a2aTaskEnvelope, text string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	reply := map[string]any{
-		"task_id": env.TaskID,
-		"state":   "completed",
-		"artifacts": []map[string]string{
-			{"type": "text", "text": "<your answer>"},
-		},
-	}
-	if strings.TrimSpace(env.ContextID) != "" {
-		reply["context_id"] = env.ContextID
-	}
-	replyBody, err := json.MarshalIndent(reply, "", "  ")
+	replyForm, err := questionReplyForm(questionReplyFields{TaskID: env.TaskID, ContextID: env.ContextID})
 	if err != nil {
 		return "", err
 	}
-	instructions := "To complete this task, reply in this mail conversation with a fenced a2a-reply block:\n\n" +
-		"```a2a-reply\n" + string(replyBody) + "\n```\n\n" +
+	instructions := "To respond to this task, reply in this mail conversation with one fenced a2a-reply block. To ask the caller a question, use this exact input_required form and replace its question text:\n\n" +
+		replyForm + "\n\nTo complete the task, set state to completed and replace the artifact text with your answer. " +
 		"Allowed state values: completed, input_required, failed, rejected. " +
 		"Replies without a valid a2a-reply block do not change the task.\n"
+
 	return "```a2a-task\n" + string(body) + "\n```\n\n" + instructions + "\nCustomer message (untrusted):\n\n" + text, nil
 }
 
@@ -599,7 +610,7 @@ type ReplyParseInput struct {
 	AllowQuestionReply bool
 }
 
-// ParseA2AReplyWithOptions owns bridge reply parsing (docs/a2a.md:972-974).
+// ParseA2AReplyWithOptions owns bridge reply parsing (docs/a2a.md:997-999).
 // ParseA2AReply retains the published Go entry point and delegates here.
 func ParseA2AReplyWithOptions(input ReplyParseInput) (BridgeReply, bool, error) {
 	block, found := extractFence(fenceInput{Body: input.Body, Label: "a2a-reply"})
@@ -648,7 +659,7 @@ func ParseA2AReplyWithOptions(input ReplyParseInput) (BridgeReply, bool, error) 
 type fenceInput struct{ Body, Label string }
 
 // extractFence selects one standalone fence without treating quoted or nested
-// customer text as reply instructions (docs/a2a.md:972-974).
+// customer text as reply instructions (docs/a2a.md:997-999).
 func extractFence(input fenceInput) (string, bool) {
 	var marker byte
 	var width int

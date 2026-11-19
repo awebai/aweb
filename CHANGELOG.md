@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- On verified A2A routes, a plain `QUESTION:` from the target is no longer
+  accepted as a verified task reply. Use the task-bearing fenced `a2a-reply`
+  form with `state: input_required` to ask a question (aw 1.19.0 or later).
+  Initial task instructions and refusal feedback show the exact form. Signed
+  task-bearing legacy fences remain accepted; explicitly unverified routes
+  keep their policy and label.
+- A managed provider that advertises recipient identity but omits it from a
+  send receipt now returns an actionable provider fault and a failed task,
+  rather than leaving the task waiting for replies it cannot bind.
+
 - A2A routes require an agent with a public address. Native gateway startup
   refuses local identities, including team aliases that resolve to one, before
   opening its listener. The same check runs before each native bridge send;

@@ -212,8 +212,21 @@ func (g *Gateway) rpcSendMessage(ctx context.Context, route runtimeRoute, raw js
 			return nil, jsonRPCError(-32000, "aweb bridge not configured", requestID, map[string]any{"code": "bridge_not_configured"})
 		}
 		log.Printf("aweb-a2a-gw: bridge send failed request=%s task=%s: %v", requestID, record.ID, err)
-		g.tasks.failTask(record.ID, "A2A gateway failed to send the durable bridge message.")
-		return nil, jsonRPCError(-32000, "bridge send failed", requestID, map[string]any{"detail": err.Error()})
+		failureText := "A2A gateway failed to send the durable bridge message."
+		var fault *providerReceiptError
+		providerFault := errors.As(err, &fault)
+		if providerFault {
+			failureText = fault.Error()
+		}
+		failed, retained := g.tasks.failTask(record.ID, failureText)
+		details := map[string]any{"detail": err.Error()}
+		if providerFault {
+			details["code"] = string(fault.Fault)
+			if retained {
+				details["task"] = failed.Task
+			}
+		}
+		return nil, jsonRPCError(-32000, "bridge send failed", requestID, details)
 	}
 	if updated, ok := g.tasks.updateWorking(record.ID); ok {
 		record = updated
