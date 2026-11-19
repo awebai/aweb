@@ -151,15 +151,7 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 			issuer := v.Keys[issuerName].DIDKey
 			dir := t.TempDir()
 			var releasedKey ed25519.PrivateKey
-			if scenario == "released fresh key" {
-				_, releasedKey, _ = awid.GenerateKeypair()
-				if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(dir), releasedKey); err != nil {
-					t.Fatal(err)
-				}
-				if err := writeHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(dir)); err != nil {
-					t.Fatal(err)
-				}
-			}
+
 			var available atomic.Bool
 			available.Store(scenario != "outage resume")
 			var statusReads, writes atomic.Int32
@@ -200,7 +192,20 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 					if scenario == "native issued later" {
 						mode = "self_custodial"
 					}
-					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:example.com", "identity_scope": "unknown", "server_url": origin, "status": "active", "for_human": required, "id_tree": map[string]any{"v": 1, "issuer_id": issuer, "domain": "example.com", "child_kind": "agent", "mode": mode}})
+					condition := required
+					if scenario == "released fresh key" {
+						var preview struct {
+							Token string `json:"token"`
+						}
+						if err := json.NewDecoder(r.Body).Decode(&preview); err != nil {
+							t.Error(err)
+							return
+						}
+						if preview.Token == "aw_inv_refused_fresh" {
+							condition = v.Keys["bob"].DIDAW
+						}
+					}
+					json.NewEncoder(w).Encode(map[string]any{"invite_id": "11111111-1111-4111-8111-111111111111", "canonical_team_id": "backend:example.com", "identity_scope": "unknown", "server_url": origin, "status": "active", "for_human": condition, "id_tree": map[string]any{"v": 1, "issuer_id": issuer, "domain": "example.com", "child_kind": "agent", "mode": mode}})
 				case "/api/v1/spawn/accept-invite":
 					accepts++
 					body, _ := io.ReadAll(r.Body)
@@ -211,6 +216,13 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 					expectedMode := "host_managed"
 					if scenario == "native issued later" {
 						expectedMode = "self_custodial"
+					}
+					if scenario == "released fresh key" && req.Token == "aw_inv_refused_fresh" {
+						w.WriteHeader(http.StatusConflict)
+						if err := json.NewEncoder(w).Encode(map[string]any{"detail": map[string]any{"code": "human_condition_mismatch"}}); err != nil {
+							t.Error(err)
+						}
+						return
 					}
 					if req.IDTree == nil || req.IDTree.Mode != expectedMode || req.IDTree.Parent["id"] != issuer || req.IDTree.Domain != "example.com" || !hostedIdentityTeamUUID.MatchString(req.IDTree.RequestID) {
 						t.Errorf("accept lost pinned selection: %+v", req.IDTree)
@@ -257,6 +269,9 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 			defer server.Close()
 			origin = server.URL
 			opts := teamAcceptInviteOptions{Name: "child", Scope: "local", AwebURL: origin, Registry: registry, TXTResolver: resolver}
+			if scenario == "released fresh key" {
+				releasedKey = refuseFirstHostedInviteForFreshKey(t, dir, opts)
+			}
 			accepted, err := acceptHostedTeamInviteWithDetails(dir, "aw_inv_typed_local", opts)
 			if scenario == "preview retry" {
 				if err == nil || accepts != 0 {
@@ -350,11 +365,35 @@ func TestHostedInviteLocalChainVerifiesAndResumesWithoutSecondAccept(t *testing.
 			if scenario == "preview retry" {
 				wantPreviews = 2
 			}
-			if accepts != 1 || previews != wantPreviews || writes.Load() != 0 {
+			wantAccepts := 1
+			if scenario == "released fresh key" {
+				wantAccepts, wantPreviews = 2, 2
+			}
+			if accepts != wantAccepts || previews != wantPreviews || writes.Load() != 0 {
 				t.Fatalf("previews=%d accepts=%d registry writes=%d", previews, accepts, writes.Load())
 			}
 		})
 	}
+}
+
+func refuseFirstHostedInviteForFreshKey(t *testing.T, dir string, opts teamAcceptInviteOptions) ed25519.PrivateKey {
+	t.Helper()
+	if _, err := acceptHostedTeamInviteWithDetails(dir, "aw_inv_refused_fresh", opts); err == nil || awid.RefusalCode(err) != "human_condition_mismatch" {
+		t.Fatalf("first invite did not reach the definitive condition refusal: %v", err)
+	}
+	home := awconfig.WorktreeIdentityHome(dir)
+	if _, err := os.Stat(filepath.Join(home, hostedInviteRecoveryFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("definitive refusal retained the operation: %v", err)
+	}
+	keyPath := awconfig.WorktreeSigningKeyPath(dir)
+	if err := statHostedAcceptPendingMarker(hostedAcceptPendingMarkerPath(dir), keyPath); err != nil {
+		t.Fatalf("definitive refusal discarded fresh-key provenance: %v", err)
+	}
+	key, err := awid.LoadSigningKey(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
 }
 
 func TestHostedInviteGlobalRegistrationRetainsPerChildInvitation(t *testing.T) {
