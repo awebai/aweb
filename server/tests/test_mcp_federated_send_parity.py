@@ -23,7 +23,7 @@ from aweb.mcp.server import create_mcp_app
 from aweb.mcp.signing import HostedMessageSigningResult, canonical_signed_payload
 from aweb.routes.chat import router as chat_router
 from identity_binding_support import seed_verified_bindings
-from test_mcp_mutation_hook_parity import _RecordingRedis
+from test_outbox_recovery import redis as redis
 from test_messages_http import (
     _build_test_app,
     _insert_agent,
@@ -49,7 +49,7 @@ class _RecordingWakePublisher:
 
 
 @pytest_asyncio.fixture
-async def server(aweb_cloud_db, monkeypatch):
+async def server(aweb_cloud_db, monkeypatch, redis):
     db = aweb_cloud_db.aweb_db
     await _insert_team(db, TEAM)
     keys = {}
@@ -132,7 +132,7 @@ async def server(aweb_cloud_db, monkeypatch):
     app.state.federation_chat_transport = transport
     app.state.agent_wake_publisher = wakes
     mcp = create_mcp_app(
-        db_infra=app.state.db, redis=_RecordingRedis(), registry_client=registry, hosted_signer=signer,
+        db_infra=app.state.db, redis=redis, registry_client=registry, hosted_signer=signer,
         federation_mail_transport=transport, federation_chat_transport=transport,
     )
     app.mount("/mcp", mcp)
