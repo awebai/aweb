@@ -425,7 +425,7 @@ func (s *custodyService) captureCredentials() (*custodyCapture, error) {
 // one this service started with.
 func (s *custodyService) checkPinLocked(capture *awconfig.CredentialCapture) error {
 	if s.identity == nil {
-		return nil
+		return errors.New("the resident signing identity is unavailable")
 	}
 	pinned := strings.TrimSpace(s.identity.DID)
 	var identity awconfig.WorktreeIdentity
@@ -435,14 +435,20 @@ func (s *custodyService) checkPinLocked(capture *awconfig.CredentialCapture) err
 	if did := strings.TrimSpace(identity.DID); did != "" && did != pinned {
 		return fmt.Errorf("the resident home now holds %s, not %s; restart the custody service", did, pinned)
 	}
-	if data, ok := capture.Files["signing.key"]; ok {
-		key, err := awid.ParseSigningKey(data)
-		if err != nil {
-			return fmt.Errorf("the resident home's signing key cannot be read: %w", err)
-		}
-		if did := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey)); did != pinned {
-			return fmt.Errorf("the resident home's signing key is %s, not %s; restart the custody service", did, pinned)
-		}
+	data, ok := capture.Files["signing.key"]
+	if !ok {
+		return errors.New("the resident home's signing key is missing")
+	}
+	key, err := awid.ParseSigningKey(data)
+	if err != nil {
+		return fmt.Errorf("the resident home's signing key cannot be read: %w", err)
+	}
+	publicKey, ok := key.Public().(ed25519.PublicKey)
+	if !ok {
+		return errors.New("the resident home's signing key has an unsupported public key")
+	}
+	if did := awid.ComputeDIDKey(publicKey); did != pinned {
+		return fmt.Errorf("the resident home's signing key is %s, not %s; restart the custody service", did, pinned)
 	}
 	return nil
 }
@@ -468,9 +474,15 @@ func (s *custodyService) buildSnapshot(ctx context.Context, capture *awconfig.Cr
 		return nil, err
 	}
 	built := &builtSnapshot{selection: sel, client: client}
-	built.teams, _ = awconfig.ListTeamCertificatesFromIdentityHome(dir)
+	built.teams, err = awconfig.ListTeamCertificatesFromIdentityHome(dir)
+	if err != nil {
+		return nil, fmt.Errorf("load captured team certificates: %w", err)
+	}
 	if sel != nil && strings.TrimSpace(sel.WorkspacePath) != "" {
-		built.certificate, _ = loadSelectedTeamCertificate(sel)
+		built.certificate, err = loadSelectedTeamCertificate(sel)
+		if err != nil {
+			return nil, fmt.Errorf("load captured selected team certificate: %w", err)
+		}
 	}
 	return built, nil
 }
@@ -688,13 +700,6 @@ func (s *custodyService) serve(ctx context.Context) error {
 		s.serviceID = id
 	}
 	if err := custodypath.Prepare(s.socketPath); err != nil {
-		return err
-	}
-	runDir := filepath.Dir(s.socketPath)
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(runDir, 0o700); err != nil {
 		return err
 	}
 	if _, err := os.Stat(s.socketPath); err == nil {
