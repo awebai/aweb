@@ -2428,15 +2428,11 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
         VALUES ('other:acme.com', 1, 1, 'a', 'other task', '', '', 2, 'task', '{}'::text[], 'other')
         """
     )
-    bob_workspace_id = uuid4()
+    bob_workspace_id = app.state.members["bob"].workspace
     await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}} (
-            workspace_id, team_id, agent_id, alias, human_name, role,
-            workspace_type, last_seen_at
-        )
-        VALUES ($1, $2, $3, 'bob', 'Bob', 'developer', 'manual', NOW() - INTERVAL '1 hour')
-        """,
+        "UPDATE {{tables.workspaces}} SET human_name='Bob', role='developer', "
+        "workspace_type='manual', last_seen_at=NOW()-INTERVAL '1 hour' "
+        "WHERE workspace_id=$1::uuid AND team_id=$2 AND agent_id=$3::uuid",
         bob_workspace_id,
         TEAM_ID,
         bob_id,
