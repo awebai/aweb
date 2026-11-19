@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import logging
 import socket
+from contextlib import aclosing
 
 import httpx
 import pytest
-from redis.asyncio import Redis
-from redis.backoff import NoBackoff
-from redis.retry import Retry
-
 from awid.did import did_from_public_key, generate_keypair
 from awid.ratelimit import RedisFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.main import create_app
+from redis.asyncio import Redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 
 
 @pytest.mark.asyncio
@@ -46,9 +46,11 @@ async def test_real_redis_connection_failure_keeps_bounded_reads_and_reports_deg
                     # positive reads retain the normal rate-limit headers.
                     seed, public_key = generate_keypair()
                     did_key = did_from_public_key(public_key)
-                    async with RegistryClient(
-                        registry_url="http://registry.test",
-                        transport=httpx.ASGITransport(app=app),
+                    async with aclosing(
+                        RegistryClient(
+                            registry_url="http://registry.test",
+                            transport=httpx.ASGITransport(app=app),
+                        )
                     ) as registry:
                         mapping = await registry.register_did(did_key, seed)
                     reset = None
