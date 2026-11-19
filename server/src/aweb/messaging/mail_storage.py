@@ -16,8 +16,13 @@ from uuid import UUID, uuid4
 
 from aweb.agent_wake import record_did_wakes
 from aweb.attachment_service import attachment_transaction
-from aweb.messaging.kinds import ContentMode, MessagePriorityValue
-from aweb.service_errors import ConflictError, ServiceError, ValidationError
+from aweb.messaging.kinds import ContentMode, MessagePriorityValue, MessageKind
+from aweb.messaging.message_replay import (
+    StoredMessageClaim,
+    read_stored_message,
+    replay_artifact,
+)
+from aweb.service_errors import ServiceError, ValidationError
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -137,28 +142,6 @@ def _optional_uuid(value: str | UUID | None, *, field: str) -> UUID | None:
         raise ValidationError(f"Invalid {field} format") from exc
 
 
-def _require_same_stored_mail(existing, *, message: MailStorageInput) -> StoredMail:
-    content = message.content
-    if isinstance(content, EncryptedMailContent):
-        same = (
-            existing["content_mode"] == ContentMode.ENCRYPTED
-            and str(existing["signed_envelope_hash"] or "").strip()
-            == str(content.metadata.get("signed_envelope_hash") or "").strip()
-        )
-        detail = "message_id already exists with a different encrypted envelope"
-    else:
-        same = (
-            existing["content_mode"] == ContentMode.PLAINTEXT
-            and existing["from_did"] == message.sender.did
-            and bool(message.attestation.signed_payload)
-            and existing["signed_payload"] == message.attestation.signed_payload
-        )
-        detail = "message_id already exists with a different sender or signed payload"
-    if not same:
-        raise ConflictError(detail)
-    return StoredMail(UUID(str(existing["message_id"])), existing["created_at"])
-
-
 @attachment_transaction("mail")
 async def store_mail(db, *, message: MailStorageInput) -> StoredMail:
     """Write one already admitted mail and retain its exact attestation.
@@ -166,6 +149,8 @@ async def store_mail(db, *, message: MailStorageInput) -> StoredMail:
     created_at records server receipt; the signed payload keeps sender time
     (docs/mail-and-chat.md:309-312). Idempotent storage never emits a new wake.
     """
+    if not isinstance(message.id_availability, MailIdAvailability):
+        raise TypeError("Choose a named MailIdAvailability before storing mail.")
     if not message.sender.did.strip():
         raise ValidationError("Missing from_did")
     if not message.recipient.did.strip():
@@ -177,14 +162,28 @@ async def store_mail(db, *, message: MailStorageInput) -> StoredMail:
         message.message_id is not None
         and message.id_availability is MailIdAvailability.UNDETERMINED
     ):
-        existing = await aweb_db.fetch_one(
-            """SELECT message_id, created_at, content_mode, signed_envelope_hash,
-                      from_did, signed_payload
-               FROM {{tables.messages}} WHERE message_id=$1""",
-            message_id,
+        existing = await read_stored_message(
+            db,
+            claim=StoredMessageClaim(
+                kind=MessageKind.MAIL,
+                message_id=message_id,
+                sender_did=message.sender.did,
+                conversation_id=_optional_uuid(
+                    message.conversation_id, field="conversation_id"
+                ),
+                artifact=replay_artifact(
+                    content_mode=message.content.mode,
+                    encrypted_envelope=message.content.envelope,
+                    signature=message.attestation.signature,
+                    signed_payload=message.attestation.signed_payload,
+                ),
+            ),
         )
-        if existing is not None:
-            return _require_same_stored_mail(existing, message=message)
+        existing.refuse_conflicting_message_id()
+        if existing.message is not None:
+            return StoredMail(
+                existing.message["message_id"], existing.message["created_at"]
+            )
     row = await aweb_db.fetch_one(
         """
         INSERT INTO {{tables.messages}}

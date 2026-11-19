@@ -20,6 +20,7 @@ from aweb.messaging.message_replay import (
     read_stored_message,
 )
 from aweb.service_errors import ConflictError
+from aweb.messaging.mail_storage import MailIdAvailability
 
 MESSAGE_ID = UUID("00000000-0000-0000-0000-000000000001")
 CONVERSATION_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -235,3 +236,54 @@ def test_legacy_partial_or_changed_receipts_never_supply_an_age_exemption(row_ch
             kind=MessageKind.MAIL,
         )
     assert refused.value.reason == "federation_message_replay_conflict"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("availability", [True, False, "confirmed-unused", None])
+async def test_unnamed_mail_id_availability_cannot_select_a_storage_path(availability):
+    from aweb.messaging.mail_storage import (
+        MailAttestation,
+        MailRecipient,
+        MailSender,
+        MailStorageInput,
+        PlaintextMailContent,
+        store_mail,
+    )
+
+    message = MailStorageInput(
+        sender=MailSender(did="did:key:accepted-sender"),
+        recipient=MailRecipient(did="did:key:accepted-recipient"),
+        content=PlaintextMailContent(subject="subject", body="body"),
+        priority="normal",
+        attestation=MailAttestation(),
+        id_availability=availability,
+    )
+    with pytest.raises(TypeError) as refused:
+        await store_mail(LookupTrap(), message=message)
+    assert (
+        str(refused.value) == "Choose a named MailIdAvailability before storing mail."
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("availability", list(MailIdAvailability))
+async def test_named_mail_id_availability_reaches_the_canonical_writer(availability):
+    from aweb.messaging.mail_storage import (
+        MailAttestation,
+        MailRecipient,
+        MailSender,
+        MailStorageInput,
+        PlaintextMailContent,
+        store_mail,
+    )
+
+    message = MailStorageInput(
+        sender=MailSender(did="did:key:accepted-sender"),
+        recipient=MailRecipient(did="did:key:accepted-recipient"),
+        content=PlaintextMailContent(subject="subject", body="body"),
+        priority="normal",
+        attestation=MailAttestation(),
+        id_availability=availability,
+    )
+    with pytest.raises(AssertionError, match="unnamed claim reached a database read"):
+        await store_mail(LookupTrap(), message=message)

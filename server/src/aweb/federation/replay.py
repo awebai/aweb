@@ -1,12 +1,17 @@
 """Exact signed plaintext projections, separate from current delivery authority."""
 
 from dataclasses import dataclass
-from enum import Enum, auto
-from aweb.service_errors import ConflictError
 from uuid import UUID
 
 from aweb.federation.envelope import FederationEnvelope
-from aweb.messaging.kinds import ContentMode, MessageKind
+from aweb.messaging.kinds import MessageKind
+from aweb.messaging.message_replay import (
+    StoredMessageClaim,
+    StoredMessageState,
+    StoredMessageLookup,
+    PlaintextReplayArtifact,
+    read_stored_message,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -33,58 +38,25 @@ class PlaintextProjectionClaim:
         )
 
 
-class PlaintextProjectionState(Enum):
-    MISSING = auto()
-    EXACT = auto()
-    CONFLICT = auto()
-
-
-@dataclass(frozen=True, kw_only=True)
-class PlaintextProjectionLookup:
-    state: PlaintextProjectionState
-    message: dict | None = None
-
-    def refuse_conflicting_message_id(self) -> None:
-        """Refuse a fresh conflicting claim before the remote send can write."""
-        if self.state is PlaintextProjectionState.CONFLICT:
-            raise ConflictError(
-                "message_id already exists for a different signed message. Choose a new message_id and retry."
-            )
+# Existing consumer ports retain the canonical result/enum identities.
+PlaintextProjectionState = StoredMessageState
+PlaintextProjectionLookup = StoredMessageLookup
 
 
 async def read_plaintext_projection(
     db, *, claim: PlaintextProjectionClaim
 ) -> PlaintextProjectionLookup:
-    """Classify a stored signed plaintext projection; this grants no authority.
-
-    docs/identity-messaging-contract.md:334-365 and Antares69b3a50a allow its
-    plaintext age exemption. Callers verify the signature/bindings and current
-    authority before this lookup. A changed or missing row supplies no exemption.
-    """
-    if not isinstance(claim.kind, MessageKind):
-        raise TypeError(
-            "Select a named MessageKind before reading an outbound projection."
-        )
-    table, conversation_field = (
-        ("messages", "conversation_id")
-        if claim.kind is MessageKind.MAIL
-        else ("chat_messages", "session_id")
-    )
-    row = await db.get_manager("aweb").fetch_one(
-        "SELECT * FROM {{tables." + table + "}} WHERE message_id=$1", claim.message_id
-    )
-    if row is None:
-        return PlaintextProjectionLookup(state=PlaintextProjectionState.MISSING)
-    if (
-        row["content_mode"] != ContentMode.PLAINTEXT
-        or row["from_did"] != claim.sender_did
-        or row[conversation_field] != claim.conversation_id
-        or not claim.signed_payload
-        or not claim.signature
-        or row["signed_payload"] != claim.signed_payload
-        or row["signature"] != claim.signature
-    ):
-        return PlaintextProjectionLookup(state=PlaintextProjectionState.CONFLICT)
-    return PlaintextProjectionLookup(
-        state=PlaintextProjectionState.EXACT, message=dict(row)
+    """Read an outbound plaintext artifact using the common stored-message rule."""
+    return await read_stored_message(
+        db,
+        claim=StoredMessageClaim(
+            kind=claim.kind,
+            message_id=claim.message_id,
+            sender_did=claim.sender_did,
+            conversation_id=claim.conversation_id,
+            artifact=PlaintextReplayArtifact(
+                signature=claim.signature,
+                signed_payload=claim.signed_payload,
+            ),
+        ),
     )
