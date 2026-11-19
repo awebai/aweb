@@ -10,6 +10,7 @@ import pytest_asyncio
 
 from aweb.events import team_events_channel_name
 from aweb.presence_transitions import PresenceReconciliationError, reconcile_presence
+from test_coordination_state_http import request_as
 from test_dashboard_privacy import TEAM
 from test_dashboard_privacy import privacy_app as privacy_app
 
@@ -20,6 +21,14 @@ async def owned_transition_snapshot(privacy_app):
     # this projection belongs to this test and must not cross those fixtures.
     key = "presence-transitions:" + hashlib.sha256(TEAM.encode()).hexdigest()
     await privacy_app.redis.delete(key)
+    for alias in privacy_app.actors:
+        heartbeat = await request_as(
+            privacy_app, alias=alias, method="POST", path="/v1/agents/heartbeat"
+        )
+        assert heartbeat.status_code == 200, heartbeat.text
+        await privacy_app.redis.delete(
+            f"presence:{privacy_app.actors[alias].workspace}"
+        )
     try:
         yield
     finally:

@@ -67,6 +67,11 @@ async def test_mcp_heartbeat_and_agent_list_use_the_workspace_and_team(
 @pytest.mark.asyncio
 async def test_route_heartbeat_and_online_list_keep_the_team_boundary(privacy_app):
     env = privacy_app
+    for alias in ("bob", "carol"):
+        seeded = await request_as(
+            env, alias=alias, method="POST", path="/v1/agents/heartbeat"
+        )
+        assert seeded.status_code == 200, seeded.text
     response = await request_as(
         env, alias="alice", method="POST", path="/v1/agents/heartbeat"
     )

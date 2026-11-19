@@ -36,6 +36,11 @@ async def request_as(env, *, alias, method, path, payload=None):
 @pytest_asyncio.fixture
 async def coordination_mcp(privacy_app):
     env = privacy_app
+    for alias in env.actors:
+        heartbeat = await request_as(
+            env, alias=alias, method="POST", path="/v1/agents/heartbeat"
+        )
+        assert heartbeat.status_code == 200, heartbeat.text
     mcp = create_mcp_app(
         db_infra=env.infra,
         redis=env.redis,
@@ -229,6 +234,10 @@ async def test_root_activity_without_a_redis_beat_is_visible_on_every_http_reade
 ):
     env = privacy_app
     for alias in env.actors:
+        heartbeat = await request_as(
+            env, alias=alias, method="POST", path="/v1/agents/heartbeat"
+        )
+        assert heartbeat.status_code == 200, heartbeat.text
         await env.redis.delete(f"presence:{env.actors[alias].workspace}")
     for path in (
         "/v1/agents",
