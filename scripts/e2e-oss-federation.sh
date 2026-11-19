@@ -63,11 +63,15 @@ candidate_wheels=0
 if [[ -z "${AWEB_FED_E2E_SERVER_MODE:-}" ]]; then
   source "$REPO_ROOT/scripts/prepare-release-wheels.sh"
   # Use the existing exact-wheel journey, with both sides on C1's server wheel.
-  eval "$(python3 - "$CANDIDATE_ARTIFACT_DIR" "$SERVER_DIR/uv.lock" <<'PYENV'
+  exports="$(python3 - "$CANDIDATE_ARTIFACT_DIR" "$SERVER_DIR/uv.lock" <<'PYENV'
 import json, pathlib, shlex, sys, tomllib
 root = pathlib.Path(sys.argv[1])
-manifest = json.loads((root / 'manifest.json').read_text())
-row = next(row for row in manifest['files'] if row['package'] == 'aweb' and row['path'].endswith('.whl'))
+try:
+ manifest = json.loads((root / 'manifest.json').read_text())
+ row = next(row for row in manifest['files'] if row['package'] == 'aweb' and row['path'].endswith('.whl'))
+except (OSError, ValueError, KeyError, TypeError, StopIteration) as error:
+ reason = str(error) or 'no aweb wheel entry in manifest.json'
+ sys.exit(f'cannot read candidate server wheel from CANDIDATE_ARTIFACT_DIR={root}: {reason}')
 for side in ('ALPHA', 'BETA'):
  for field, value in [('WHEEL', str(root / row['path'])), ('WHEEL_SHA256', row['sha256']), ('VERSION', row['version'])]:
   print('export AWEB_' + side + '_' + field + '=' + shlex.quote(value))
@@ -76,6 +80,7 @@ mcp = next(row['version'] for row in lock['package'] if row['name'] == 'mcp')
 print('export AWEB_FED_E2E_MCP_VERSION=' + shlex.quote(mcp))
 PYENV
 )"
+  eval "$exports"
   SERVER_MODE=wheel
   candidate_wheels=1
 else

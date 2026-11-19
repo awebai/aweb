@@ -79,6 +79,38 @@ class SourceAdmission(unittest.TestCase):
 
 
 
+class FederationManifestAdmission(unittest.TestCase):
+    def test_empty_manifest_refuses_with_its_directory_before_docker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            scripts = root / 'scripts'
+            scripts.mkdir()
+            for name in ('e2e-oss-federation.sh', 'journey-network.sh'):
+                shutil.copy2(ROOT / 'scripts' / name, scripts / name)
+            # Isolate the manifest consumer after preparation. This boundary
+            # stand-in supplies corrupt prepared output, not a product service.
+            (scripts / 'prepare-release-wheels.sh').write_text(':\n')
+            artifacts = root / 'artifacts'
+            artifacts.mkdir()
+            (artifacts / 'manifest.json').write_text('{"files": []}\n')
+            docker = root / 'docker'
+            docker.write_text('#!/bin/sh\ntouch "$DOCKER_RECEIPT"\nexit 99\n')
+            docker.chmod(0o755)
+            environment = {key: value for key, value in os.environ.items()
+                           if not key.startswith(('AWEB_FED_E2E_', 'AWEB_ALPHA_', 'AWEB_BETA_'))
+                           and key != 'CANDIDATE_RUNNER_NAME'}
+            environment.update(PATH=str(root) + os.pathsep + os.environ['PATH'],
+                               CANDIDATE_ARTIFACT_DIR=str(artifacts),
+                               AWEB_DOCKER_BIND_ROOT=str(root),
+                               DOCKER_RECEIPT=str(root / 'docker-called'))
+            result = subprocess.run(['bash', str(scripts / 'e2e-oss-federation.sh')],
+                                    env=environment, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('CANDIDATE_ARTIFACT_DIR=' + str(artifacts), result.stderr)
+            self.assertIn('cannot read candidate server wheel', result.stderr)
+            self.assertFalse((root / 'docker-called').exists(), result.stdout + result.stderr)
+
+
 class ContextCleanup(unittest.TestCase):
     def test_preparation_removes_each_context_and_preserves_exit_status(self):
         for status in (0, 17):
