@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
 """Real aweb/AWID command-test stack on disposable PostgreSQL and real Redis.
 
-The Go caller owns namespace and team keys and registers all state through
-the real HTTP routes. This process supplies sockets, storage and an
-authoritative DNS zone. One JSON line announces readiness; stdin EOF closes
-the services and drops only this fixture's database.
+One stack serves a whole test package. Each test owns its namespace and team
+keys and registers all state through the real HTTP routes. This process
+supplies sockets, storage and an authoritative DNS zone that starts empty.
+
+One JSON line on stdout announces readiness. Then each stdin line is one
+command, answered by one stdout line carrying the command's id:
+
+    {"id": 1, "zone": {"domain": "a.test", "controller": "did:key:z..."}}
+    {"id": 1, "ok": true}            or            {"id": 1, "error": "..."}
+
+A zone command publishes only the domain's _awid TXT record; namespaces, teams
+and certificates are written by the caller through the registry's routes.
+stdin EOF closes the services and drops only this fixture's database.
 """
 
 import asyncio
@@ -21,6 +30,9 @@ import dns.asyncresolver
 from aweb.config import enforce_team_key_pins, require_registered_certificates
 from aweb.testing import running_server
 from aweb_naapp_testing.network import DnsServer
+from awid.did import validate_did
+from awid.dns_verify import awid_txt_name, awid_txt_value
+from awid.external_authority import FederationAuthorityError, canonical_protocol_domain
 from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid_service.testing import REGISTRY_URL, SERVICE_TOKEN, running_registry
 from redis.asyncio import Redis
@@ -56,6 +68,44 @@ async def serve_fixture_app(
             await asyncio.sleep(0.01)
 
 
+def apply_command(zone: DnsServer, line: str) -> dict:
+    """Run one stdin command against the zone and return its acknowledgement."""
+    try:
+        command = json.loads(line)
+    except json.JSONDecodeError:
+        return {"error": "command is not JSON"}
+    if not isinstance(command, dict) or not isinstance(command.get("id"), int):
+        return {"error": "command needs an integer id"}
+    reply = {"id": command["id"]}
+    request = command.get("zone")
+    if set(command) != {"id", "zone"} or not isinstance(request, dict) or set(request) != {"domain", "controller"}:
+        reply["error"] = "the only command is zone with exactly domain and controller"
+        return reply
+    domain, controller = request["domain"], request["controller"]
+    try:
+        canonical = canonical_protocol_domain(domain) if isinstance(domain, str) else None
+    except FederationAuthorityError:
+        canonical = None
+    if canonical != domain:
+        reply["error"] = "zone domain is not a canonical DNS name"
+        return reply
+    if not isinstance(controller, str) or not controller.startswith("did:key:") or not validate_did(controller):
+        reply["error"] = "zone controller is not an Ed25519 did:key"
+        return reply
+    name = (awid_txt_name(domain), "TXT")
+    if name in zone.records:
+        reply["error"] = "zone domain is already published"
+        return reply
+    zone.records[name] = [f'"{awid_txt_value(controller)}"']
+    reply["ok"] = True
+    return reply
+
+
+async def serve_commands(zone: DnsServer) -> None:
+    while line := await asyncio.to_thread(sys.stdin.readline):
+        print(json.dumps(apply_command(zone, line)), flush=True)
+
+
 async def main() -> None:
     # The isolated runner owns these services. Never fall back to a host DB.
     host, redis_url = os.environ["PGHOST"], os.environ["REDIS_URL"]
@@ -83,14 +133,8 @@ async def main() -> None:
         resources.callback(registry_sock.close)
         server_sock, server_url = bind_loopback_listener()
         resources.callback(server_sock.close)
-        domain, controller = (
-            os.environ["AW_COMMAND_DOMAIN"],
-            os.environ["AW_COMMAND_CONTROLLER"],
-        )
         # Real DNS packets pass through the production domain verifier.
-        zone = DnsServer(
-            {("_awid." + domain, "TXT"): [f'"awid=v1; controller={controller};"']}
-        )
+        zone = DnsServer()
         await zone.start()
         resources.callback(zone.close)
         resolver = dns.asyncresolver.Resolver(configure=False)
@@ -137,7 +181,7 @@ async def main() -> None:
             json.dumps({"registry_url": registry_url, "server_url": server_url}),
             flush=True,
         )
-        await asyncio.to_thread(sys.stdin.read)
+        await serve_commands(zone)
 
 
 if __name__ == "__main__":
