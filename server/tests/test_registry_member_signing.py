@@ -191,7 +191,11 @@ async def test_revoked_reader_cannot_reuse_cache_after_refusal(real_stack, priva
     client = _build_awid_registry_client(create_app(), redis=redis, transport=real_stack.awid)
     try:
         read = getattr(client, method)
-        await read(DOMAIN, TEAM)
+        warm = await read(DOMAIN, TEAM)
+        # The cache is warm: the same answer, and no request reaches AWID.
+        origin_reads = len(real_stack.awid.calls)
+        assert await read(DOMAIN, TEAM) == warm
+        assert len(real_stack.awid.calls) == origin_reads
         if refusal == "revoked":
             await private_team.team.revoke(private_team.server_cert)
             status = 403
@@ -200,11 +204,13 @@ async def test_revoked_reader_cannot_reuse_cache_after_refusal(real_stack, priva
             real_stack.awid.fault = lambda request, response: httpx.Response(401, json={"detail": "invalid signature"})
             status = 401
         now[0] += 601 if method in ("get_team", "list_team_certificates") else 61
-        # A stale-while-revalidate read may return while its refresh runs.
+        # A stale-while-revalidate read returns the cached answer while its refresh runs, or is refused.
         try:
-            await read(DOMAIN, TEAM)
-        except RegistryError:
-            pass
+            stale = await read(DOMAIN, TEAM)
+        except RegistryError as refused:
+            assert refused.status_code == status
+        else:
+            assert stale == warm
         await asyncio.gather(*list(client._refresh_tasks.values()))
         with pytest.raises(RegistryError) as caught:
             await read(DOMAIN, TEAM)
