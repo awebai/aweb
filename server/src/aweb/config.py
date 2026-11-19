@@ -48,11 +48,7 @@ class AppInternalOrigins:
 
     @property
     def destinations(self) -> InternalDestinations:
-        return (
-            InternalDestinations.ALLOWED
-            if self.origins
-            else InternalDestinations.DISABLED
-        )
+        return InternalDestinations.ALLOWED if self.origins else InternalDestinations.DISABLED
 
 
 def get_app_internal_origins() -> AppInternalOrigins:
@@ -70,37 +66,23 @@ def get_app_internal_origins() -> AppInternalOrigins:
     if not raw_origins and not raw_cidr:
         return AppInternalOrigins()
     if not raw_origins or not raw_cidr:
-        raise ValueError(
-            "AWEB_APP_INTERNAL_ORIGINS and AWEB_APP_INTERNAL_CIDR must be supplied together"
-        )
+        raise ValueError("AWEB_APP_INTERNAL_ORIGINS and AWEB_APP_INTERNAL_CIDR must be supplied together")
     try:
         listed = json.loads(raw_origins)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            "AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins"
-        ) from exc
-    if (
-        not isinstance(listed, list)
-        or not listed
-        or not all(isinstance(entry, str) for entry in listed)
-    ):
-        raise ValueError(
-            "AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins"
-        )
+        raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins") from exc
+    if not isinstance(listed, list) or not listed or not all(isinstance(entry, str) for entry in listed):
+        raise ValueError("AWEB_APP_INTERNAL_ORIGINS must be a JSON list of exact HTTPS origins")
     origins = set()
     for entry in listed:
         try:
             origins.add(canonical_app_origin(entry))
         except (ServiceError, EgressRefused, ValueError) as exc:
-            raise ValueError(
-                f"AWEB_APP_INTERNAL_ORIGINS: {entry!r} is not an exact HTTPS origin"
-            ) from exc
+            raise ValueError(f"AWEB_APP_INTERNAL_ORIGINS: {entry!r} is not an exact HTTPS origin") from exc
     try:
         cidr = check_internal_cidr(ip_network(raw_cidr, strict=True))
     except (ValueError, EgressRefused) as exc:
-        raise ValueError(
-            "AWEB_APP_INTERNAL_CIDR must be an exact, permitted internal network"
-        ) from exc
+        raise ValueError("AWEB_APP_INTERNAL_CIDR must be an exact, permitted internal network") from exc
     return AppInternalOrigins(frozenset(origins), cidr)
 
 
@@ -155,9 +137,7 @@ def parse_federation_outbound(raw: str | None) -> FederationOutbound:
                 "set it to off, or to a comma-separated list of origins such as https://aweb.example.com"
             ) from None
     if not origins:
-        raise ValueError(
-            f"{FEDERATION_OUTBOUND_SETTING} lists no origin: leave it unset, set it to off, or list origins"
-        )
+        raise ValueError(f"{FEDERATION_OUTBOUND_SETTING} lists no origin: leave it unset, set it to off, or list origins")
     return FederationOutbound(origins=frozenset(origins))
 
 
@@ -170,10 +150,7 @@ def get_federation_outbound() -> FederationOutbound:
     try:
         return parse_federation_outbound(os.getenv(FEDERATION_OUTBOUND_SETTING))
     except ValueError:
-        return FederationOutbound(
-            origins=frozenset(),
-            refusal=f"{FEDERATION_OUTBOUND_SETTING} is not a valid setting",
-        )
+        return FederationOutbound(origins=frozenset(), refusal=f"{FEDERATION_OUTBOUND_SETTING} is not a valid setting")
 
 
 @dataclass
@@ -214,9 +191,7 @@ def get_awid_service_token() -> str | None:
     return normalize_service_token(os.getenv("AWID_SERVICE_TOKEN"))
 
 
-def load_member_signing_keys(
-    manifest: Path, *, allow_empty: bool = False
-) -> dict[str, bytes]:
+def load_member_signing_keys(manifest: Path, *, allow_empty: bool = False) -> dict[str, bytes]:
     """The member keys a team-to-key-file manifest names, by canonical team ID.
 
     The manifest is strict JSON and holds paths, never key material; a
@@ -258,9 +233,7 @@ def get_awid_member_signing_keys() -> dict[str, bytes]:
         return load_member_signing_keys(Path(filename))
     except (OSError, ValueError, TypeError):
         # Do not echo file contents or key-parser details into startup logs.
-        raise ValueError(
-            "AWID_MEMBER_KEYS_FILE must name a nonempty JSON map of canonical team IDs to readable Ed25519 PEM key files"
-        ) from None
+        raise ValueError("AWID_MEMBER_KEYS_FILE must name a nonempty JSON map of canonical team IDs to readable Ed25519 PEM key files") from None
 
 
 def require_registered_certificates() -> bool:
@@ -313,8 +286,7 @@ def enforce_team_key_pins() -> bool:
 def get_public_origin() -> str:
     """Resolve only the public endpoint, without loading infrastructure settings."""
     return canonical_server_origin(
-        os.getenv("AWEB_PUBLIC_ORIGIN")
-        or f"http://localhost:{int(os.getenv('AWEB_PORT', '8000'))}"
+        os.getenv("AWEB_PUBLIC_ORIGIN") or f"http://localhost:{int(os.getenv('AWEB_PORT', '8000'))}"
     )
 
 
@@ -329,13 +301,8 @@ def get_app_grant_max_age_seconds() -> int:
     hook activation pads with, so a value outside 1..60 is refused rather
     than clamped.
     """
-    value = os.getenv(
-        "AWEB_APP_GRANT_MAX_AGE_SECONDS", str(APP_GRANT_MAX_AGE_CEILING_SECONDS)
-    )
-    if (
-        not _POSITIVE_DECIMAL.fullmatch(value)
-        or int(value) > APP_GRANT_MAX_AGE_CEILING_SECONDS
-    ):
+    value = os.getenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", str(APP_GRANT_MAX_AGE_CEILING_SECONDS))
+    if not _POSITIVE_DECIMAL.fullmatch(value) or int(value) > APP_GRANT_MAX_AGE_CEILING_SECONDS:
         raise ValueError(
             f"AWEB_APP_GRANT_MAX_AGE_SECONDS must be a whole number of seconds from 1 to "
             f"{APP_GRANT_MAX_AGE_CEILING_SECONDS}, got {value!r}"
@@ -403,9 +370,7 @@ def _hook_producer_key(entry: object) -> HookProducerKey:
     starts = _key_time(kid, "valid_from", valid_from)
     if valid_until is not None and _key_time(kid, "valid_until", valid_until) <= starts:
         raise ValueError(f"AWEB_HOOK_PRODUCER_KEYS: kid {kid} ends before it starts")
-    return HookProducerKey(
-        kid=kid, did_key=did_key, valid_from=valid_from, valid_until=valid_until
-    )
+    return HookProducerKey(kid=kid, did_key=did_key, valid_from=valid_from, valid_until=valid_until)
 
 
 def _is_ed25519_did_key(value: str) -> bool:
@@ -424,9 +389,7 @@ def _key_time(kid: str, name: str, value: object) -> datetime:
         ) from exc
 
 
-def _url_from_environment_or_file(
-    variable: str, fallback: str, file_variable: str, what: str
-) -> str:
+def _url_from_environment_or_file(variable: str, fallback: str, file_variable: str, what: str) -> str:
     """The URL from its environment variable, or the whole content of the file
     the file variable names, read with the shared key-file checks. The file
     holds a password, so no error repeats its content."""
@@ -435,17 +398,13 @@ def _url_from_environment_or_file(
     if not path:
         return url
     if url:
-        raise ValueError(
-            f"{file_variable} is set together with {variable} or {fallback}; set one"
-        )
+        raise ValueError(f"{file_variable} is set together with {variable} or {fallback}; set one")
     try:
         url = read_key_file(Path(path)).decode("utf-8").strip()
     except (OSError, ValueError):
         url = ""
     if not url:
-        raise ValueError(
-            f"{file_variable} must name a readable file that holds the {what}"
-        )
+        raise ValueError(f"{file_variable} must name a readable file that holds the {what}")
     return url
 
 
@@ -483,9 +442,7 @@ def get_settings() -> Settings:
         )
 
     redis_url = (
-        _url_from_environment_or_file(
-            "AWEB_REDIS_URL", "REDIS_URL", "AWEB_REDIS_URL_FILE", "Redis URL"
-        )
+        _url_from_environment_or_file("AWEB_REDIS_URL", "REDIS_URL", "AWEB_REDIS_URL_FILE", "Redis URL")
         or "redis://localhost:6379/0"
     )
 
@@ -535,7 +492,5 @@ def get_settings() -> Settings:
         app_grant_max_age_seconds=get_app_grant_max_age_seconds(),
         hook_producer_keys=get_hook_producer_keys(),
         app_internal_origins=get_app_internal_origins(),
-        federation_outbound=parse_federation_outbound(
-            os.getenv(FEDERATION_OUTBOUND_SETTING)
-        ),
+        federation_outbound=parse_federation_outbound(os.getenv(FEDERATION_OUTBOUND_SETTING)),
     )
