@@ -292,13 +292,8 @@ func TestInitTTYMissingOutcomeUsesChooserConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer inR.Close()
-	defer outR.Close()
-	os.Stdin, os.Stderr = inR, outW
+	os.Stdin = inR
 	if _, err := inW.WriteString("new-account\n"); err != nil {
 		t.Fatal(err)
 	}
@@ -317,15 +312,17 @@ func TestInitTTYMissingOutcomeUsesChooserConfirmation(t *testing.T) {
 	cmd.Command.SetContext(context.Background())
 	cmd.Command.SetOut(io.Discard)
 	cmd.Command.SetErr(io.Discard)
-	if err := runInit(&cmd.Command, nil); err != nil {
-		t.Fatalf("runInit: %v", err)
+	var initErr error
+	promptBytes := captureStderr(t, func() {
+		initErr = runInit(&cmd.Command, nil)
+	})
+	if initErr != nil {
+		t.Fatalf("runInit: %v", initErr)
 	}
-	outW.Close()
-	promptBytes, _ := io.ReadAll(outR)
-	if !strings.Contains(string(promptBytes), "Confirmed: this will create a NEW ACCOUNT") {
+	if !strings.Contains(promptBytes, "Confirmed: this will create a NEW ACCOUNT") {
 		t.Fatalf("missing visible confirmation: %s", promptBytes)
 	}
-	if !strings.Contains(string(promptBytes), "Existing workspace discovery index") || !strings.Contains(string(promptBytes), discovered) || !strings.Contains(string(promptBytes), "aw init --join-from") {
+	if !strings.Contains(promptBytes, "Existing workspace discovery index") || !strings.Contains(promptBytes, discovered) || !strings.Contains(promptBytes, "aw init --join-from") {
 		t.Fatalf("missing discovery choices in prompt: %s", promptBytes)
 	}
 	if got.Username != "alice" || got.Name != "" || got.Alias != "alice" {
@@ -431,27 +428,24 @@ func TestRequireInitOutcomeTTYCanSelectDiscoveryEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer inR.Close()
-	defer outR.Close()
-	os.Stdin, os.Stderr = inR, outW
+	os.Stdin = inR
 	if _, err := inW.WriteString("1\n"); err != nil {
 		t.Fatal(err)
 	}
 	inW.Close()
 
-	if err := requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account"); err != nil {
-		t.Fatalf("prompt outcome: %v", err)
+	var promptErr error
+	promptBytes := captureStderr(t, func() {
+		promptErr = requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account")
+	})
+	if promptErr != nil {
+		t.Fatalf("prompt outcome: %v", promptErr)
 	}
-	outW.Close()
-	promptBytes, _ := io.ReadAll(outR)
 	if initJoinFrom != discovered || initJoinTeam != "backend:acme.com" {
 		t.Fatalf("selected join source=%q team=%q", initJoinFrom, initJoinTeam)
 	}
-	if !strings.Contains(string(promptBytes), "Confirmed: this will join team backend:acme.com") {
+	if !strings.Contains(promptBytes, "Confirmed: this will join team backend:acme.com") {
 		t.Fatalf("missing join confirmation: %s", promptBytes)
 	}
 }
@@ -474,21 +468,16 @@ func TestRequireInitOutcomeTTYUnavailableDiscoveryEntryReportsReason(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer inR.Close()
-	defer outR.Close()
-	os.Stdin, os.Stderr = inR, outW
+	os.Stdin = inR
 	if _, err := inW.WriteString("1\n"); err != nil {
 		t.Fatal(err)
 	}
 	inW.Close()
 
-	err = requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account")
-	outW.Close()
-	promptBytes, _ := io.ReadAll(outR)
+	promptBytes := captureStderr(t, func() {
+		err = requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account")
+	})
 	if err == nil || !strings.Contains(err.Error(), "workspace discovery entry 1 is unavailable") || !strings.Contains(err.Error(), "stat") {
 		t.Fatalf("expected unavailable-entry reason, got err=%v prompt=%s", err, promptBytes)
 	}
@@ -554,50 +543,30 @@ func TestRequireInitOutcomeTTYWorkspaceTeamPromptsIdentityHome(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			outR, outW, err := os.Pipe()
-			if err != nil {
-				t.Fatal(err)
-			}
 			defer inR.Close()
 			defer inW.Close()
-			defer outR.Close()
-			defer outW.Close()
-			type promptResult struct {
-				data []byte
-				err  error
-			}
-			promptRead := make(chan promptResult, 1)
-			// Drain while the prompt writes: discovery output can exceed a pipe's
-			// capacity, so waiting until the prompt returns would deadlock.
-			go func() {
-				data, err := io.ReadAll(outR)
-				promptRead <- promptResult{data, err}
-			}()
-			os.Stdin, os.Stderr = inR, outW
+			os.Stdin = inR
 			if _, err := inW.WriteString("workspace-team\n" + identityHome + "\noats/workspace/test\n"); err != nil {
 				t.Fatal(err)
 			}
 			inW.Close()
-			promptErr := requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account")
-			outW.Close()
-			result := <-promptRead
+			var promptErr error
+			promptBytes := captureStderr(t, func() {
+				promptErr = requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account")
+			})
 			if promptErr != nil {
 				t.Fatalf("prompt outcome: %v", promptErr)
 			}
-			if result.err != nil {
-				t.Fatal(result.err)
-			}
-			promptBytes := result.data
 			if !initWorkspaceTeam || initWorkspaceKey != "oats/workspace/test" || activeIdentityHome.Root != identityHome || activeIdentityHome.Source != awconfig.IdentityHomeFlag {
 				t.Fatalf("workspace-team selection workspace_team=%v key=%q home=%+v", initWorkspaceTeam, initWorkspaceKey, activeIdentityHome)
 			}
-			if !strings.Contains(string(promptBytes), "explicit identity home "+identityHome) {
+			if !strings.Contains(promptBytes, "explicit identity home "+identityHome) {
 				t.Fatalf("missing workspace-team confirmation: %s", promptBytes)
 			}
-			if tc.workspaces == 0 && strings.Contains(string(promptBytes), "Existing workspace discovery index") {
+			if tc.workspaces == 0 && strings.Contains(promptBytes, "Existing workspace discovery index") {
 				t.Fatal("empty fixture leaked discovery choices")
 			}
-			if tc.workspaces > 0 && !strings.Contains(string(promptBytes), "workspace-0511") {
+			if tc.workspaces > 0 && !strings.Contains(promptBytes, "workspace-0511") {
 				t.Fatal("large discovery output was truncated")
 			}
 		})

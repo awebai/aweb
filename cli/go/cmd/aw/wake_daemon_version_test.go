@@ -45,7 +45,7 @@ func runWakeStatusJSONForTest(t *testing.T, stateDir string) map[string]any {
 	wakeStateDirFlag, jsonFlag = "", true
 	t.Cleanup(func() { wakeStateDirFlag, jsonFlag = prevState, prevJSON })
 	var runErr error
-	out := captureIDCommandStdout(t, func() { runErr = wakeStatusCmd.RunE(wakeStatusCmd, nil) })
+	out := captureStdout(t, func() { runErr = wakeStatusCmd.RunE(wakeStatusCmd, nil) })
 	if runErr != nil {
 		t.Fatalf("wake status: %v", runErr)
 	}

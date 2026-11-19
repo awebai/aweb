@@ -3,10 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -350,24 +348,17 @@ func TestTeamAdmissionInviteTraceShowsEachCallAndItsStatusWithoutSecrets(t *test
 	defer server.Close()
 	saveTeamAdmissionLoginForTest(t, server.URL)
 
-	stderrR, stderrW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldStderr := os.Stderr
-	os.Stderr = stderrW
-	_, issueErr := issueTeamAdmissionInvite(t.Context(), teamID, "a8d857a5-7c44-45e7-8027-bf4996d5088b", "target")
-	os.Stderr = oldStderr
-	stderrW.Close()
-	trace, _ := io.ReadAll(stderrR)
-	stderrR.Close()
+	var issueErr error
+	trace := captureStderr(t, func() {
+		_, issueErr = issueTeamAdmissionInvite(t.Context(), teamID, "a8d857a5-7c44-45e7-8027-bf4996d5088b", "target")
+	})
 
 	if status, ok := cliAuthHTTPStatusCode(issueErr); !ok || status != http.StatusUnprocessableEntity {
 		t.Fatalf("err=%v, want the invite's 422", issueErr)
 	}
 	want := "AW TRACE call: GET /api/v1/cli-auth/status -> HTTP 200\n" +
 		"AW TRACE call: POST " + invitePath + " -> HTTP 422\n"
-	if string(trace) != want {
+	if trace != want {
 		t.Fatalf("trace=%q\nwant %q", trace, want)
 	}
 }

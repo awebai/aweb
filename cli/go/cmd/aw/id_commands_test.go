@@ -29,7 +29,7 @@ import (
 )
 
 func TestPrintJSONOnlyAddsNameCompatibility(t *testing.T) {
-	out := captureIDCommandStdout(t, func() {
+	out := captureStdout(t, func() {
 		printJSON(map[string]any{
 			"alias":    "alice",
 			"lifetime": "persistent",
@@ -56,25 +56,6 @@ func TestPrintJSONOnlyAddsNameCompatibility(t *testing.T) {
 	if _, ok := nested["identity_scope"]; ok {
 		t.Fatalf("generic nested output must not derive identity_scope from lifetime: %v", nested)
 	}
-}
-
-func captureIDCommandStdout(t *testing.T, fn func()) string {
-	t.Helper()
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stdout = w
-	defer func() { os.Stdout = oldStdout }()
-	fn()
-	_ = w.Close()
-	os.Stdout = oldStdout
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(out)
 }
 
 func TestFormatIDCreateUsesGlobalVocabulary(t *testing.T) {
