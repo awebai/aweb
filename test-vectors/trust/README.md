@@ -174,3 +174,37 @@ Vector fields:
 Stable `did:aw` recipient comparisons are case-insensitive to match Go's
 `strings.EqualFold`; current `did:key` fallback comparisons remain
 case-sensitive.
+
+## `registry-refetch-v1.json`
+
+Bounded registry refetch vectors (docs/trust-model.md, "A cached registry
+answer is not the registry's answer"). A cached address binding or current key
+that disagrees with the signed message is read again from the registry once,
+and the fresh answer decides; at most one forced read per sender per
+`refetch_interval_seconds`.
+
+Top-level fields:
+
+- `schema`: must be `aweb.trust.registry-refetch.v1`.
+- `description`: human-readable summary.
+- `start_time`: the client clock at the first step (RFC 3339).
+- `refetch_interval_seconds`: the bound, 30.
+- `vectors`: ordered list of cases.
+
+Vector fields:
+
+- `name`: stable test case identifier.
+- `address`: the sender address verified, `domain/name`.
+- `from_stable_id`: the sender's `did:aw`.
+- `responses`: registry answers per request path, served in order; the last
+  one repeats. Each has `status` and, for a 200, `body`.
+- `steps`: run in order on one client: `advance_seconds` moves its clock
+  first, `from_did` is the signed message key, and `expected_status` is the
+  status after the registry pass (`verified`, `identity_mismatch`,
+  `verification_stale`).
+- `expected_requests`: reads per address and key path after all steps. Log
+  reads are not counted.
+
+The file is built by `buildRegistryRefetchVector` in
+`cli/go/awid/registry_refetch_vector_test.go` from fixed seeds and times;
+re-freezing it (`AWEB_FREEZE_REGISTRY_REFETCH_VECTOR=1`) is a reviewed decision.
