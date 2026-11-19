@@ -96,7 +96,9 @@ async def workspace_activity_by_id(
         else []
     )
     presence_by_id = {
-        record["workspace_id"]: record for record in presences if record.get("workspace_id")
+        record["workspace_id"]: record
+        for record in presences
+        if record.get("workspace_id")
     }
     result = {}
     for row in rows:
