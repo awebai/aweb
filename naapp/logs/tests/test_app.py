@@ -73,6 +73,7 @@ def _deployment_on(
     tmp_path: Path, database: AsyncDatabaseManager, ledger: AsyncDatabaseManager
 ) -> LogsSettings:
     """A deployment on the test databases, in the schema the content database gives."""
+    assert database.config is not None and ledger.config is not None
     return _deployment(
         tmp_path,
         database.config.get_dsn(),
