@@ -172,16 +172,14 @@ async def test_claims_unauthorized_returns_403(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_claims_missing_token_returns_401(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/v1/teams/backend:acme.com/claims")
-
-    assert resp.status_code == 401
+async def test_claims_missing_token_returns_401(privacy_app):
+    env = privacy_app
+    await env.registry_db.execute(
+        "UPDATE {{tables.teams}} SET visibility='private' WHERE domain='example.test' AND name=$1",
+        TEAM.split(":", 1)[0],
+    )
+    response = await env.client.get(f"/v1/teams/{TEAM}/claims")
+    assert response.status_code == 401, response.text
 
 
 @pytest.mark.asyncio
@@ -454,16 +452,14 @@ async def test_tasks_cursor_pagination(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_events_stream_missing_token_returns_401(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-    await _seed(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/v1/teams/backend:acme.com/events/stream")
-
-    assert resp.status_code == 401
+async def test_events_stream_missing_token_returns_401(privacy_app):
+    env = privacy_app
+    await env.registry_db.execute(
+        "UPDATE {{tables.teams}} SET visibility='private' WHERE domain='example.test' AND name=$1",
+        TEAM.split(":", 1)[0],
+    )
+    response = await env.client.get(f"/v1/teams/{TEAM}/events/stream")
+    assert response.status_code == 401, response.text
 
 
 @pytest.mark.asyncio
@@ -500,15 +496,14 @@ async def test_unauthorized_team_returns_403(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_missing_token_returns_401(aweb_cloud_db):
-    app = _build_app(aweb_cloud_db.aweb_db)
-
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    ) as client:
-        resp = await client.get("/v1/teams/backend:acme.com/agents")
-
-    assert resp.status_code == 401
+async def test_missing_token_returns_401(privacy_app):
+    env = privacy_app
+    await env.registry_db.execute(
+        "UPDATE {{tables.teams}} SET visibility='private' WHERE domain='example.test' AND name=$1",
+        TEAM.split(":", 1)[0],
+    )
+    response = await env.client.get(f"/v1/teams/{TEAM}/agents")
+    assert response.status_code == 401, response.text
 
 
 @pytest.mark.asyncio
