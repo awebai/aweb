@@ -67,7 +67,7 @@ func (e *RecipientResolutionError) Error() string {
 	if code, ok := HTTPStatusCode(e.Err); ok && code == http.StatusNotFound && isRoutableAddressTarget(e.Target) {
 		return fmt.Sprintf("resolve recipient %q for signed %s: %s (%v)", e.Target, msgType, UnreachableAddressText(e.Target), e.Err)
 	}
-	return fmt.Sprintf("resolve recipient %q for signed %s: %v", e.Target, msgType, e.Err)
+	return fmt.Sprintf("resolve recipient %q for signed %s: %v. Nothing was sent: a %s is signed with its recipient's key, which could not be looked up; send it again when the registry answers", e.Target, msgType, e.Err, msgType)
 }
 
 // UnreachableAddressText says that an address has no registered identity and
@@ -127,22 +127,20 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 	globalStableTarget := strings.HasPrefix(strings.TrimSpace(env.ToStableID), "did:aw:")
 	storedRouteGlobalTarget := globalStableTarget && env.AllowStoredRouteGlobalBinding
 	bindingRequired := env.RequireRecipientBinding || (globalStableTarget && !env.AllowStoredRouteGlobalBinding)
+	// A resolver that cannot name the recipient's current key refuses the
+	// send for every sender: the signature must carry the recipient binding
+	// (docs/identity-messaging-contract.md:119-129).
 	if c.resolver != nil && env.ToDID == "" && bindingTarget != "" && !storedRouteGlobalTarget {
 		identity, err := c.resolver.Resolve(ctx, bindingTarget)
 		if err != nil {
-			if bindingRequired {
-				return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: err}
-			}
-			identity = nil
+			return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: err}
 		}
-		if identity != nil {
-			if strings.TrimSpace(identity.DID) == "" {
-				return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: errors.New("missing current did:key")}
-			}
-			env.ToDID = strings.TrimSpace(identity.DID)
-			if strings.TrimSpace(env.ToStableID) == "" && strings.TrimSpace(identity.StableID) != "" {
-				env.ToStableID = strings.TrimSpace(identity.StableID)
-			}
+		if identity == nil || strings.TrimSpace(identity.DID) == "" {
+			return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: errors.New("missing current did:key")}
+		}
+		env.ToDID = strings.TrimSpace(identity.DID)
+		if strings.TrimSpace(env.ToStableID) == "" && strings.TrimSpace(identity.StableID) != "" {
+			env.ToStableID = strings.TrimSpace(identity.StableID)
 		}
 	}
 	if bindingRequired && env.ToDID == "" && bindingTarget != "" {

@@ -23,7 +23,7 @@ import (
 // inbox read. Continuing is by --conversation-id (or aw mail reply), which
 // names no recipient and keeps the conversation's title.
 func TestAwMailSendToStartsANewThread(t *testing.T) {
-	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
+	t.Setenv("AWID_REGISTRY_URL", newRegistryWithoutAddressesForTest(t))
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), "aw")
