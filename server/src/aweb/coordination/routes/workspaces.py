@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from aweb.application_state import application_registry_client
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+from aweb.workspace_activity import WorkspaceActivity, workspace_activity_by_id
+
 from aweb.task_refs import TaskTitleFields, task_title_join
 
 import logging
@@ -31,9 +35,6 @@ from awid.pagination import encode_cursor, validate_pagination_params
 from ...grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness
 from ...presence import (
     clear_workspace_presence,
-    get_workspace_ids_by_team_id,
-    list_agent_presences,
-    list_agent_presences_by_workspace_ids,
     update_agent_presence,
 )
 from ...redis_client import get_redis
@@ -890,10 +891,8 @@ async def _fetch_extra_team_workspace(
 
 def _row_to_workspace_info(
     row,
-    presence: dict | None,
+    activity: WorkspaceActivity | None,
     workspace_claims: list[Claim],
-    *,
-    include_presence: bool,
 ) -> WorkspaceInfo:
     workspace_id = str(row["workspace_id"])
 
@@ -908,12 +907,14 @@ def _row_to_workspace_info(
     program = None
     model = None
 
-    if include_presence and presence:
+    presence = activity.presence if activity else None
+    if activity:
+        status = activity.display_status(now=datetime.now(timezone.utc))
+        last_seen = _to_iso(activity.last_seen_at)
+    if presence:
         program = presence.get("program")
         model = presence.get("model")
         role = presence.get("role") or role
-        status = presence.get("status") or "active"
-        last_seen = presence.get("last_seen") or last_seen
 
     return WorkspaceInfo(
         workspace_id=workspace_id,
@@ -942,13 +943,6 @@ def _row_to_workspace_info(
         deleted_at=_to_iso(row.get("deleted_at")),
         claims=workspace_claims,
     )
-
-
-async def _fetch_presence_map(
-    redis: Redis, workspace_id_strings: list[str]
-) -> Dict[str, dict]:
-    presences = await list_agent_presences_by_workspace_ids(redis, workspace_id_strings)
-    return {str(p["workspace_id"]): p for p in presences if p.get("workspace_id")}
 
 
 async def _fetch_claims_map(aweb_db, workspace_ids: list) -> Dict[str, List[Claim]]:
@@ -1142,9 +1136,16 @@ async def list_workspaces(
     workspace_ids = [row["workspace_id"] for row in rows]
     workspace_id_strings = [str(ws_id) for ws_id in workspace_ids]
 
-    presence_map: Dict[str, dict] = {}
+    activity_map: dict[str, WorkspaceActivity] = {}
     if include_presence and workspace_id_strings:
-        presence_map = await _fetch_presence_map(redis, workspace_id_strings)
+        activity_map = await workspace_activity_by_id(
+            aweb_db,
+            redis,
+            workspace_ids=workspace_id_strings,
+            registry_client=application_registry_client(request.app.state),
+            request=request,
+            failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+        )
 
     claims_map: Dict[str, List[Claim]] = {}
     if include_claims and workspace_ids:
@@ -1158,9 +1159,8 @@ async def list_workspaces(
         workspaces.append(
             _row_to_workspace_info(
                 row,
-                presence_map.get(str(row["workspace_id"])),
+                activity_map.get(str(row["workspace_id"])),
                 workspace_claims,
-                include_presence=include_presence,
             )
         )
 
@@ -1219,14 +1219,22 @@ async def list_team_workspaces(
 
     live_workspace_ids: list[UUID] = []
     if include_presence:
-        for workspace_id in await get_workspace_ids_by_team_id(redis, team_id):
-            try:
-                live_workspace_ids.append(UUID(workspace_id))
-            except ValueError:
-                logger.warning(
-                    "Ignoring invalid workspace ID in team presence index: %s",
-                    workspace_id,
-                )
+        candidates = await aweb_db.fetch_all(
+            "SELECT workspace_id FROM {{tables.workspaces}} WHERE team_id=$1 AND deleted_at IS NULL",
+            team_id,
+        )
+        activity = await workspace_activity_by_id(
+            aweb_db,
+            redis,
+            workspace_ids=[str(row["workspace_id"]) for row in candidates],
+            registry_client=application_registry_client(request.app.state),
+            request=request,
+            failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+        )
+        now = datetime.now(timezone.utc)
+        live_workspace_ids = [
+            UUID(key) for key, value in activity.items() if value.is_online(now=now)
+        ]
 
     params: list = [team_id]
     param_idx = 2
@@ -1313,9 +1321,16 @@ async def list_team_workspaces(
     workspace_ids = [row["workspace_id"] for row in rows]
     workspace_id_strings = [str(ws_id) for ws_id in workspace_ids]
 
-    presence_map: Dict[str, dict] = {}
+    activity_map: dict[str, WorkspaceActivity] = {}
     if include_presence and workspace_id_strings:
-        presence_map = await _fetch_presence_map(redis, workspace_id_strings)
+        activity_map = await workspace_activity_by_id(
+            aweb_db,
+            redis,
+            workspace_ids=workspace_id_strings,
+            registry_client=application_registry_client(request.app.state),
+            request=request,
+            failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+        )
 
     claims_map: Dict[str, List[Claim]] = {}
     if include_claims and workspace_ids:
@@ -1324,14 +1339,13 @@ async def list_team_workspaces(
     entries: List[tuple[WorkspaceInfo, int, float, float, int, int]] = []
     for row in rows:
         workspace_id = str(row["workspace_id"])
-        presence = presence_map.get(workspace_id) if include_presence else None
+        activity = activity_map.get(workspace_id)
         workspace_claims = claims_map.get(workspace_id, []) if include_claims else []
 
         workspace_info = _row_to_workspace_info(
             row,
-            presence,
+            activity,
             workspace_claims,
-            include_presence=include_presence,
         )
 
         claim_count = int(row["claim_count"] or 0)
@@ -1341,7 +1355,10 @@ async def list_team_workspaces(
                 1 if claim_count > 0 else 0,
                 _timestamp(workspace_info.last_seen),
                 _timestamp(row["last_claimed_at"]),
-                1 if presence is not None else 0,
+                1
+                if activity is not None
+                and activity.is_online(now=datetime.now(timezone.utc))
+                else 0,
                 claim_count,
             )
         )
@@ -1377,47 +1394,33 @@ async def list_online_workspaces(
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ListWorkspacesResponse:
-    """
-    List only currently online workspaces (active presence in Redis).
-
-    This is a filtered view showing workspaces with recent activity.
-    Presence expires after ~5 minutes of inactivity.
-
-    For all registered workspaces (including offline), use GET /v1/workspaces.
-    """
+    """List workspaces active within the configured root/Redis/valid-grant window."""
     team_id = identity.team_id
-
-    presences = await list_agent_presences(redis)
-
-    workspaces: List[WorkspaceInfo] = []
-    for presence in presences:
-        workspace_id = presence.get("workspace_id")
-        alias = presence.get("alias")
-        if not workspace_id or not alias:
-            continue
-
-        if presence.get("team_id") != team_id:
-            continue
-
-        if human_name and presence.get("human_name") != human_name:
-            continue
-
-        workspaces.append(
-            WorkspaceInfo(
-                workspace_id=workspace_id,
-                alias=alias,
-                human_name=presence.get("human_name"),
-                team_id=team_id,
-                program=presence.get("program"),
-                model=presence.get("model"),
-                repo=None,
-                role=presence.get("role") or None,
-                role_name=presence.get("role") or None,
-                status=presence.get("status") or "unknown",
-                last_seen=presence.get("last_seen") or "",
-            )
-        )
-
-    workspaces.sort(key=lambda w: w.last_seen or "", reverse=True)
-
+    aweb_db = db_infra.get_manager("aweb")
+    rows = await aweb_db.fetch_all(
+        """SELECT w.*, r.canonical_origin AS repo,
+                  NULL::text AS focus_task_title, NULL::text AS focus_task_type
+           FROM {{tables.workspaces}} w
+           LEFT JOIN {{tables.repos}} r ON r.id=w.repo_id AND r.deleted_at IS NULL
+           WHERE w.team_id=$1 AND w.deleted_at IS NULL
+             AND ($2::text IS NULL OR w.human_name=$2)""",
+        team_id,
+        human_name,
+    )
+    activity = await workspace_activity_by_id(
+        aweb_db,
+        redis,
+        workspace_ids=[str(row["workspace_id"]) for row in rows],
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
+    now = datetime.now(timezone.utc)
+    workspaces = [
+        _row_to_workspace_info(row, observed, [])
+        for row in rows
+        if (observed := activity.get(str(row["workspace_id"]))) is not None
+        and observed.is_online(now=now)
+    ]
+    workspaces.sort(key=lambda workspace: workspace.last_seen or "", reverse=True)
     return ListWorkspacesResponse(workspaces=workspaces, has_more=False)

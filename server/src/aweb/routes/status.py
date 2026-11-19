@@ -21,7 +21,9 @@ from aweb.internal_auth import INTERNAL_AUTH_HEADER
 from ..db import DatabaseInfra, get_db_infra
 from ..events import EventCategory, stream_events_multi
 from ._reservation_utils import reservation_metadata
-from ..grant_liveness import valid_grant_liveness_by_workspace
+from aweb.application_state import application_registry_client
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+from aweb.workspace_activity import workspace_activity_by_id
 from ..grant_streams import (
     allowed_status_categories,
     clamp_deadline_to_grant,
@@ -29,9 +31,6 @@ from ..grant_streams import (
     grant_terminal_sse,
     require_valid_stream_grant,
     status_event_allowed,
-)
-from ..presence import (
-    list_agent_presences_by_workspace_ids,
 )
 from ..redis_client import get_redis
 from ..input_validation import is_valid_canonical_origin
@@ -323,17 +322,13 @@ async def status(
             "timestamp": now.isoformat(),
         }
 
-    # Agent presences from Redis (filtered by workspace_ids from database).
-    all_presences: List[Dict[str, str]] = []
-    if redis and workspace_ids:
-        all_presences = await list_agent_presences_by_workspace_ids(
-            redis, workspace_ids
-        )
-    presence_by_workspace = {
-        p.get("workspace_id", ""): p for p in all_presences if p.get("workspace_id")
-    }
-    grant_liveness_by_workspace = await valid_grant_liveness_by_workspace(
-        aweb_db, workspace_ids
+    activity_by_id = await workspace_activity_by_id(
+        aweb_db,
+        redis,
+        workspace_ids=workspace_ids,
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
     )
 
     workspace_rows = await aweb_db.fetch_all(
@@ -478,8 +473,8 @@ async def status(
         row = workspace_rows_by_id.get(ws_id)
         if row is None:
             continue
-        presence = presence_by_workspace.get(ws_id, {})
-        grant_liveness = {} if presence else grant_liveness_by_workspace.get(ws_id, {})
+        activity = activity_by_id.get(ws_id)
+        presence = (activity.presence or {}) if activity else {}
         agent_role = presence.get("role") or row["role"] or None
         agent = {
             "workspace_id": ws_id,
@@ -487,8 +482,7 @@ async def status(
             "human_name": presence.get("human_name") or row["human_name"] or None,
             "role": agent_role,
             "role_name": agent_role,
-            "status": presence.get("status")
-            or ("active" if grant_liveness else "offline"),
+            "status": activity.display_status(now=now) if activity else "offline",
             "canonical_origin": presence.get("canonical_origin") or row["repo"] or None,
             "hostname": row["hostname"] or None,
             "workspace_path": row["workspace_path"] or None,
@@ -504,12 +498,9 @@ async def status(
             "apex_type": apex_by_workspace.get(ws_id, {}).get("apex_type"),
             "claims": claims_by_workspace.get(ws_id, []),
             "reservations": reservations_by_workspace.get(ws_id, []),
-            "last_seen": presence.get("last_seen")
-            or (
-                grant_liveness["last_seen_at"].astimezone(timezone.utc).isoformat()
-                if grant_liveness
-                else (row["last_seen_at"].isoformat() if row["last_seen_at"] else None)
-            ),
+            "last_seen": activity.last_seen_at.isoformat()
+            if activity and activity.last_seen_at
+            else None,
         }
         agents.append(agent)
 

@@ -32,15 +32,11 @@ from aweb.awid_error_handling import (
 from aweb.config import get_settings
 from aweb.deps import get_db, get_redis
 from aweb.events import (
-    TeamAgentOfflineEvent,
-    TeamAgentOnlineEvent,
-    publish_team_event,
     team_events_channel_name,
 )
-from aweb.presence import (
-    get_workspace_ids_by_team_id,
-    list_agent_presences_by_workspace_ids,
-)
+from aweb.application_state import application_registry_client
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+from aweb.presence_transitions import team_online_aliases
 from aweb.redis_subscriptions import open_subscription, release_subscription
 from aweb.service_errors import ValidationError
 from aweb.team_auth import verify_dashboard_token
@@ -49,7 +45,6 @@ router = APIRouter(tags=["dashboard"])
 logger = logging.getLogger(__name__)
 
 DASHBOARD_KEEPALIVE_SECONDS = 30.0
-DASHBOARD_PRESENCE_POLL_SECONDS = 5.0
 DASHBOARD_PUBSUB_POLL_SECONDS = 1.0
 
 
@@ -266,22 +261,17 @@ def _format_sse(event_name: str, payload: dict[str, Any]) -> str:
     return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
 
 
-async def _list_online_aliases(redis, *, team_id: str) -> list[str]:
-    workspace_ids = await get_workspace_ids_by_team_id(redis, team_id)
-    if not workspace_ids:
-        return []
-    presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
-    aliases = {
-        str(p.get("alias", "")).strip()
-        for p in presences
-        if str(p.get("alias", "")).strip()
-        and str(p.get("team_id", "")).strip() == team_id
-    }
-    return sorted(aliases)
-
-
-async def _build_dashboard_snapshot(db, redis, *, team_id: str) -> dict[str, Any]:
-    online_aliases = await _list_online_aliases(redis, team_id=team_id)
+async def _build_dashboard_snapshot(
+    db, redis, *, team_id: str, request: Request
+) -> dict[str, Any]:
+    online_aliases = await team_online_aliases(
+        db.get_manager("aweb"),
+        redis,
+        team_id=team_id,
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
     claim_rows = await list_active_claims(db, team_id=team_id, limit=200)
     snapshot = DashboardEventSnapshot(
         team_id=team_id,
@@ -310,13 +300,13 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
             {"type": "connected", "team_id": team_id, "timestamp": _utc_now_iso()},
         )
 
-        snapshot = await _build_dashboard_snapshot(db, redis, team_id=team_id)
+        snapshot = await _build_dashboard_snapshot(
+            db, redis, team_id=team_id, request=request
+        )
         yield _format_sse("snapshot", {"type": "snapshot", **snapshot})
 
-        previous_online_aliases = set(snapshot["online_aliases"])
         loop = asyncio.get_running_loop()
         last_keepalive = loop.time()
-        last_presence_poll = loop.time()
 
         while True:
             if await request.is_disconnected():
@@ -336,38 +326,23 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
             now = loop.time()
 
             if message and message.get("type") == "message":
-                raw_payload = message.get("data")
-                if isinstance(raw_payload, bytes):
-                    raw_payload = raw_payload.decode("utf-8")
-                payload = json.loads(raw_payload)
-                event_type = str(payload.get("type", "message"))
+                try:
+                    raw_payload = message.get("data")
+                    if isinstance(raw_payload, bytes):
+                        raw_payload = raw_payload.decode("utf-8")
+                    payload = json.loads(raw_payload)
+                    if not isinstance(payload, dict) or not isinstance(
+                        payload.get("type"), str
+                    ):
+                        raise ValueError("Expected an event object with a named type")
+                    event_type = payload["type"]
+                except (UnicodeDecodeError, ValueError, TypeError):
+                    logger.warning("Ignoring malformed dashboard team-event frame")
+                    continue
                 # Older/external publishers may still send sensitive messaging
                 # events. Team access never establishes message participation.
                 if not event_type.startswith(("message.", "chat.")):
                     yield _format_sse(event_type, payload)
-
-            if now - last_presence_poll >= DASHBOARD_PRESENCE_POLL_SECONDS:
-                current_online_aliases = set(
-                    await _list_online_aliases(redis, team_id=team_id)
-                )
-                for alias in sorted(current_online_aliases - previous_online_aliases):
-                    await publish_team_event(
-                        redis,
-                        TeamAgentOnlineEvent(
-                            team_id=team_id,
-                            alias=alias,
-                        ),
-                    )
-                for alias in sorted(previous_online_aliases - current_online_aliases):
-                    await publish_team_event(
-                        redis,
-                        TeamAgentOfflineEvent(
-                            team_id=team_id,
-                            alias=alias,
-                        ),
-                    )
-                previous_online_aliases = current_online_aliases
-                last_presence_poll = now
 
             if now - last_keepalive >= DASHBOARD_KEEPALIVE_SECONDS:
                 yield ": keepalive\n\n"
@@ -686,16 +661,14 @@ async def get_team_status(request: Request, team_id: str, db=Depends(get_db)) ->
     )
     agent_count = agent_count_row["cnt"] if agent_count_row else 0
 
-    # Online = workspaces with recent last_seen_at
-    online_rows = await aweb_db.fetch_all(
-        """
-        SELECT DISTINCT alias FROM {{tables.workspaces}}
-        WHERE team_id = $1 AND deleted_at IS NULL
-          AND last_seen_at > NOW() - INTERVAL '30 minutes'
-        """,
-        team_id,
+    online_agents = await team_online_aliases(
+        aweb_db,
+        _state_redis(request),
+        team_id=team_id,
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
     )
-    online_agents = [r["alias"] for r in online_rows]
 
     claim_rows = await list_active_claims(db, team_id=team_id)
 

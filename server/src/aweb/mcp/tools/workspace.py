@@ -6,19 +6,26 @@ from aweb.human_kind import agent_listing_predicate_sql
 from aweb.task_refs import task_title_join
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from aweb.application_state import RegistryClientUnavailable
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+from aweb.workspace_activity import workspace_activity_by_id
+from datetime import timezone
 
 from aweb.mcp.tools._common import require_team_context
-from aweb.presence import list_agent_presences_by_workspace_ids
 
 
-async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
+async def workspace_status(
+    db_infra, redis, *, registry_client=None, limit: int = 15
+) -> str:
     """Show self/team coordination status for the authenticated agent."""
     auth, error = require_team_context()
     if auth is None:
         return error or json.dumps(
             {"error": "This tool requires team context. Use a team certificate."}
         )
+    if registry_client is None:
+        raise RegistryClientUnavailable()
     aweb_db = db_infra.get_manager("aweb")
 
     workspaces = await aweb_db.fetch_all(
@@ -40,16 +47,15 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
         auth.team_id,
     )
     workspace_ids = [str(row["workspace_id"]) for row in workspaces]
-    presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
-    presence_map = {}
-    for presence in presences:
-        # Presence writes should already key by workspace_id. The agent_id fallback
-        # exists only to tolerate older payloads during the transition.
-        presence_id = (
-            presence.get("workspace_id") or presence.get("agent_id") or ""
-        ).strip()
-        if presence_id:
-            presence_map[presence_id] = presence
+    activity_by_id = await workspace_activity_by_id(
+        aweb_db,
+        redis,
+        workspace_ids=workspace_ids,
+        registry_client=registry_client,
+        request=auth.request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
+    )
+    now = datetime.now(UTC)
 
     claim_rows = await aweb_db.fetch_all(
         f"""
@@ -92,16 +98,18 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
 
     def _workspace_entry(row) -> dict:
         workspace_id = str(row["workspace_id"])
-        presence = presence_map.get(workspace_id) or {}
+        activity = activity_by_id.get(workspace_id)
+        presence = (activity.presence or {}) if activity else {}
         return {
             "workspace_id": workspace_id,
             "alias": row["alias"],
             "human_name": row.get("human_name") or None,
             "role": (presence.get("role") or row.get("role") or None),
             "role_name": (presence.get("role") or row.get("role") or None),
-            "status": presence.get("status")
-            or ("active" if workspace_id in presence_map else "offline"),
-            "last_seen": presence.get("last_seen") or None,
+            "status": activity.display_status(now=now) if activity else "offline",
+            "last_seen": activity.last_seen_at.isoformat()
+            if activity and activity.last_seen_at
+            else None,
             "current_branch": presence.get("current_branch") or None,
             "claims": claims_by_workspace.get(workspace_id, []),
         }

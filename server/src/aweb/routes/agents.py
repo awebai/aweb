@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from aweb.application_state import application_registry_client
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+
 import json
 import logging
 from datetime import datetime, timezone
@@ -61,7 +64,6 @@ from aweb.config import get_presence_ttl_seconds
 from aweb.workspace_activity import (
     PresenceStatus,
     workspace_activity_by_id,
-    workspace_stale_cutoff,
 )
 
 router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -451,13 +453,7 @@ async def list_agents(
                e.not_before_text AS encryption_key_not_before,
                e.expires_at_text AS encryption_key_expires_at,
                e.previous_encryption_key_id,
-               e.assertion_signature AS encryption_key_signature,
-               ctx.workspace_id,
-               ctx.workspace_type,
-               ctx.hostname,
-               ctx.workspace_path,
-               ctx.ws_role,
-               ctx.repo
+               e.assertion_signature AS encryption_key_signature
         FROM {{{{tables.agents}}}} a
         CROSS JOIN LATERAL (
             SELECT CASE WHEN a.did_aw_verified_key = a.did_key THEN a.did_aw END AS did_aw,
@@ -483,20 +479,6 @@ async def list_agents(
             ORDER BY assertion_created_at DESC, not_before_at DESC, encryption_key_id DESC
             LIMIT 1
         ) e ON TRUE
-        -- Workspace context: an agent's most recently seen live workspace.
-        LEFT JOIN LATERAL (
-            SELECT w.workspace_id,
-                   w.workspace_type,
-                   w.hostname,
-                   w.workspace_path,
-                   w.role AS ws_role,
-                   r.canonical_origin AS repo
-            FROM {{{{tables.workspaces}}}} w
-            LEFT JOIN {{{{tables.repos}}}} r ON w.repo_id = r.id AND r.deleted_at IS NULL
-            WHERE w.team_id = a.team_id AND w.agent_id = a.agent_id AND w.deleted_at IS NULL
-            ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id
-            LIMIT 1
-        ) ctx ON TRUE
         WHERE a.team_id = $1 AND a.deleted_at IS NULL
           AND {agent_listing_predicate_sql("a")}
         ORDER BY a.alias
@@ -504,16 +486,40 @@ async def list_agents(
         identity.team_id,
     )
 
-    context_by_agent = {
-        str(r["agent_id"]): r for r in rows if r["workspace_id"] is not None
-    }
-
+    workspace_rows = await aweb_db.fetch_all(
+        """SELECT w.workspace_id, w.agent_id, w.workspace_type, w.hostname,
+                  w.workspace_path, w.role AS ws_role, r.canonical_origin AS repo
+           FROM {{tables.workspaces}} w
+           LEFT JOIN {{tables.repos}} r ON r.id=w.repo_id AND r.deleted_at IS NULL
+           WHERE w.team_id=$1 AND w.deleted_at IS NULL
+           ORDER BY w.last_seen_at DESC NULLS LAST, w.created_at DESC, w.workspace_id""",
+        identity.team_id,
+    )
     activity_by_id = await workspace_activity_by_id(
         aweb_db,
         redis,
-        workspace_ids=[str(row["workspace_id"]) for row in context_by_agent.values()],
+        workspace_ids=[str(row["workspace_id"]) for row in workspace_rows],
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
     )
-    stale_cutoff = workspace_stale_cutoff(now=datetime.now(timezone.utc))
+    context_by_agent = {}
+    for workspace in workspace_rows:
+        agent_id = str(workspace["agent_id"])
+        candidate = activity_by_id.get(str(workspace["workspace_id"]))
+        prior = context_by_agent.get(agent_id)
+        previous = activity_by_id.get(str(prior["workspace_id"])) if prior else None
+        if prior is None or (
+            candidate
+            and candidate.last_seen_at
+            and (
+                previous is None
+                or previous.last_seen_at is None
+                or candidate.last_seen_at > previous.last_seen_at
+            )
+        ):
+            context_by_agent[agent_id] = workspace
+    now = datetime.now(timezone.utc)
 
     agents: list[AgentView] = []
     for r in rows:
@@ -521,7 +527,7 @@ async def list_agents(
         ctx = context_by_agent.get(agent_id)
         activity = activity_by_id.get(str(ctx["workspace_id"])) if ctx else None
         presence = activity.presence if activity else None
-        online = activity is not None and activity.is_newer_than(cutoff=stale_cutoff)
+        online = activity is not None and activity.is_online(now=now)
         status = PresenceStatus.OFFLINE
         last_seen = None
         role = (ctx.get("ws_role") if ctx else None) or (r.get("role") or None)

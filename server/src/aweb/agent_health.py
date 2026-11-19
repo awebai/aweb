@@ -16,7 +16,9 @@ from typing import Any
 from aweb.agent_status import stored_status_document
 from aweb.identity_grant_status import effective_grant_status
 from aweb.member_team_key import member_key_columns_sql
-from aweb.presence import list_agent_presences_by_workspace_ids
+from aweb.application_state import application_registry_client
+from aweb.grant_liveness_policy import GrantLivenessFailurePolicy
+from aweb.workspace_activity import workspace_activity_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -123,24 +125,6 @@ async def _listening_records(redis, agent_ids: list) -> list[str | None]:
         return [None] * len(agent_ids)
 
 
-async def _presence_last_seen(redis, workspace_ids: list) -> dict[str, datetime]:
-    """Newest Redis heartbeat presence per workspace."""
-    if redis is None or not workspace_ids:
-        return {}
-    try:
-        records = await list_agent_presences_by_workspace_ids(
-            redis, [str(w) for w in workspace_ids]
-        )
-    except Exception:
-        logger.warning("Failed to read heartbeat presence", exc_info=True)
-        return {}
-    return {
-        record["workspace_id"]: _parse(record["last_seen"])
-        for record in records
-        if record.get("workspace_id") and record.get("last_seen")
-    }
-
-
 async def _connections(
     db, request, *, team_id: str, agent_ids: list, now: datetime
 ) -> dict[str, str]:
@@ -189,8 +173,11 @@ def _observed(
     row, *, listening_raw, presence, connection, now: datetime
 ) -> dict[str, Any]:
     listening, listening_since = _listening(listening_raw, now=now)
-    seen = [row["workspace_last_seen_at"], row["grant_last_seen_at"]]
-    seen += [presence[str(w)] for w in row["workspace_ids"] or [] if str(w) in presence]
+    seen = [
+        presence[str(w)].last_seen_at
+        for w in row["workspace_ids"] or []
+        if str(w) in presence
+    ]
     seen = [value for value in seen if value is not None]
     return {
         "source": "aweb",
@@ -227,12 +214,9 @@ async def agent_health(
                    WHERE m.team_id = a.team_id AND m.did_key = h.host_did AND m.deleted_at IS NULL
                ) AS host_active,
                s.signed_payload, s.signature,
-               (SELECT max(w.last_seen_at) FROM {{tables.workspaces}} w
-                WHERE w.agent_id = a.agent_id AND w.deleted_at IS NULL) AS workspace_last_seen_at,
                (SELECT array_agg(w.workspace_id) FROM {{tables.workspaces}} w
-                WHERE w.agent_id = a.agent_id AND w.deleted_at IS NULL) AS workspace_ids,
-               (SELECT max(l.last_seen_at) FROM {{tables.identity_grant_liveness}} l
-                WHERE l.subject_agent_id = a.agent_id AND l.team_id = a.team_id) AS grant_last_seen_at
+                WHERE w.agent_id = a.agent_id AND w.team_id = a.team_id
+                  AND w.deleted_at IS NULL) AS workspace_ids
         FROM {{tables.agents}} a
         LEFT JOIN {{tables.agent_status_hosts}} h ON h.agent_id = a.agent_id
         LEFT JOIN {{tables.agent_status}} s ON s.agent_id = a.agent_id
@@ -249,9 +233,15 @@ async def agent_health(
             await _listening_records(redis, observed_ids),
         )
     )
-    presence = await _presence_last_seen(
+    presence = await workspace_activity_by_id(
+        db,
         redis,
-        [w for row in observed_rows for w in row["workspace_ids"] or []],
+        workspace_ids=[
+            str(w) for row in observed_rows for w in row["workspace_ids"] or []
+        ],
+        registry_client=application_registry_client(request.app.state),
+        request=request,
+        failure_policy=GrantLivenessFailurePolicy.OMIT_UNPROVEN,
     )
     connections = (
         await _connections(
