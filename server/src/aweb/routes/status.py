@@ -49,12 +49,14 @@ class _WorkspaceIDsCacheEntry:
     limit: int
 
 
-_WORKSPACE_IDS_CACHE: OrderedDict[
-    tuple[int, str], _WorkspaceIDsCacheEntry
-] = OrderedDict()
+_WORKSPACE_IDS_CACHE: OrderedDict[tuple[int, str], _WorkspaceIDsCacheEntry] = (
+    OrderedDict()
+)
 
 
-def _get_workspace_ids_cache_key(db_infra: DatabaseInfra, team_id: str) -> tuple[int, str]:
+def _get_workspace_ids_cache_key(
+    db_infra: DatabaseInfra, team_id: str
+) -> tuple[int, str]:
     # Scope cache to the DatabaseInfra instance to avoid cross-DB bleed.
     return (id(db_infra), team_id)
 
@@ -102,7 +104,9 @@ def _title_join(
     Matches task_ref (e.g. 'myteam-42') against team_id and task_ref_suffix
     by reconstructing the full ref from the team slug and suffix.
     """
-    select_expr = "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
+    select_expr = (
+        "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
+    )
 
     guard = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
 
@@ -350,11 +354,15 @@ async def status(
     # Agent presences from Redis (filtered by workspace_ids from database).
     all_presences: List[Dict[str, str]] = []
     if redis and workspace_ids:
-        all_presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
+        all_presences = await list_agent_presences_by_workspace_ids(
+            redis, workspace_ids
+        )
     presence_by_workspace = {
         p.get("workspace_id", ""): p for p in all_presences if p.get("workspace_id")
     }
-    grant_liveness_by_workspace = await valid_grant_liveness_by_workspace(aweb_db, workspace_ids)
+    grant_liveness_by_workspace = await valid_grant_liveness_by_workspace(
+        aweb_db, workspace_ids
+    )
 
     workspace_rows = await aweb_db.fetch_all(
         f"""
@@ -389,7 +397,9 @@ async def status(
     ] or [str(row["workspace_id"]) for row in workspace_rows]
     workspace_ids_by_agent: Dict[str, List[str]] = {}
     for row in workspace_rows:
-        workspace_ids_by_agent.setdefault(str(row["agent_id"]), []).append(str(row["workspace_id"]))
+        workspace_ids_by_agent.setdefault(str(row["agent_id"]), []).append(
+            str(row["workspace_id"])
+        )
     agent_ids = list(workspace_ids_by_agent)
 
     claim_rows = await aweb_db.fetch_all(
@@ -481,7 +491,9 @@ async def status(
             "holder_alias": row["holder_alias"],
             "acquired_at": row["acquired_at"].isoformat(),
             "expires_at": row["expires_at"].isoformat(),
-            "ttl_remaining_seconds": max(int((row["expires_at"] - now).total_seconds()), 0),
+            "ttl_remaining_seconds": max(
+                int((row["expires_at"] - now).total_seconds()), 0
+            ),
             "reason": reason,
             "metadata": metadata,
         }
@@ -503,7 +515,8 @@ async def status(
             "human_name": presence.get("human_name") or row["human_name"] or None,
             "role": agent_role,
             "role_name": agent_role,
-            "status": presence.get("status") or ("active" if grant_liveness else "offline"),
+            "status": presence.get("status")
+            or ("active" if grant_liveness else "offline"),
             "canonical_origin": presence.get("canonical_origin") or row["repo"] or None,
             "hostname": row["hostname"] or None,
             "workspace_path": row["workspace_path"] or None,
@@ -511,7 +524,9 @@ async def status(
             "focus_task_ref": row["focus_task_ref"],
             "focus_task_title": row["focus_task_title"],
             "focus_task_type": row["focus_task_type"],
-            "focus_updated_at": row["focus_updated_at"].isoformat() if row["focus_updated_at"] else None,
+            "focus_updated_at": row["focus_updated_at"].isoformat()
+            if row["focus_updated_at"]
+            else None,
             "apex_task_ref": apex_by_workspace.get(ws_id, {}).get("apex_task_ref"),
             "apex_title": apex_by_workspace.get(ws_id, {}).get("apex_title"),
             "apex_type": apex_by_workspace.get(ws_id, {}).get("apex_type"),
@@ -559,12 +574,16 @@ async def status(
     }
 
 
-async def _messaging_workspace_ids(request: Request, db_infra, identity: TeamIdentity) -> set[str]:
+async def _messaging_workspace_ids(
+    request: Request, db_infra, identity: TeamIdentity
+) -> set[str]:
     # An embedding host may authorize a public coordination reader. Its signed
     # internal principal must never acquire messaging visibility, even if an
     # attribution UUID happens to have workspace rows. This is deny-only: the
     # header cannot establish identity or grant access in standalone aweb.
-    if request.headers.get(INTERNAL_AUTH_HEADER, "").startswith(f"v2:{identity.team_id}:p:"):
+    if request.headers.get(INTERNAL_AUTH_HEADER, "").startswith(
+        f"v2:{identity.team_id}:p:"
+    ):
         return set()
     try:
         actor_id = UUID(identity.agent_id)
@@ -605,7 +624,8 @@ async def status_stream(
         description="Maximum workspaces to subscribe to (ignored when workspace_id is specified)",
     ),
     event_types: Optional[str] = Query(
-        None, description="Comma-separated event categories to filter (e.g., 'message,task')"
+        None,
+        description="Comma-separated event categories to filter (e.g., 'message,task')",
     ),
     redis: Redis = Depends(get_redis),
     db_infra: DatabaseInfra = Depends(get_db_infra),
@@ -713,7 +733,9 @@ async def status_stream(
                 detail=f"Invalid event types: {invalid}. Valid types: {sorted(VALID_SSE_EVENT_TYPES)}",
             )
 
-    messaging_workspace_ids = await _messaging_workspace_ids(request, db_infra, identity)
+    messaging_workspace_ids = await _messaging_workspace_ids(
+        request, db_infra, identity
+    )
 
     def event_visible(event: dict[str, Any]) -> bool:
         category = str(event.get("type", "")).split(".", 1)[0]
@@ -740,7 +762,9 @@ async def status_stream(
 
     allowed_grant_categories = allowed_status_categories(identity)
     if allowed_grant_categories is not None:
-        event_type_set = (event_type_set or set(VALID_SSE_EVENT_TYPES)) & allowed_grant_categories
+        event_type_set = (
+            event_type_set or set(VALID_SSE_EVENT_TYPES)
+        ) & allowed_grant_categories
 
     await require_valid_stream_grant(request, db_infra, identity)
     deadline = clamp_deadline_to_grant(
@@ -750,6 +774,7 @@ async def status_stream(
     async def _grant_guarded_status_stream():
         guard = NeverGrantStreamGuard(request, db_infra, identity)
         terminal = None
+
         async def _disconnected_or_deadline():
             nonlocal terminal
             terminal = await guard.reason()
@@ -763,15 +788,21 @@ async def status_stream(
         if reason:
             yield grant_terminal_sse(reason)
             return
-        async with aclosing(stream_events_multi(
-            redis,
-            workspace_ids,
-            event_type_set,
-            # Empty-workspace streams otherwise sleep 30s past a near expiry.
-            keepalive_seconds=30 if workspace_ids else 1,
-            check_disconnected=_disconnected_or_deadline,
-            event_filter=(lambda event: event_visible(event) and status_event_allowed(identity, event)),
-        )) as items:
+        async with aclosing(
+            stream_events_multi(
+                redis,
+                workspace_ids,
+                event_type_set,
+                # Empty-workspace streams otherwise sleep 30s past a near expiry.
+                keepalive_seconds=30 if workspace_ids else 1,
+                check_disconnected=_disconnected_or_deadline,
+                event_filter=(
+                    lambda event: (
+                        event_visible(event) and status_event_allowed(identity, event)
+                    )
+                ),
+            )
+        ) as items:
             async for item in items:
                 terminal = await guard.reason()
                 if terminal:

@@ -13,11 +13,19 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.asyncio import Redis
 
-from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    get_team_identity,
+    team_identity_with_grant_scope,
+)
 
 from ...config import get_settings
 from ...db import DatabaseInfra, get_db_infra
-from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_valid_human_name
+from ...input_validation import (
+    is_valid_alias,
+    is_valid_canonical_origin,
+    is_valid_human_name,
+)
 from awid.pagination import encode_cursor, validate_pagination_params
 from ...grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness
 from ...presence import (
@@ -111,16 +119,24 @@ class WorkspaceHeartbeatResponse(BaseModel):
     workspace_id: str
 
 
-def _require_workspace_owner(existing, identity: TeamIdentity, workspace_id: str, *, operation: str) -> None:
+def _require_workspace_owner(
+    existing, identity: TeamIdentity, workspace_id: str, *, operation: str
+) -> None:
     """Refuse a team-certificate caller acting on a workspace another agent owns."""
     if str(existing["agent_id"]) == identity.agent_id:
         return
     logger.warning(
         "Workspace %s refused: workspace belongs to another agent",
         operation,
-        extra={"workspace_id": workspace_id, "team_id": identity.team_id, "caller_agent_id": identity.agent_id},
+        extra={
+            "workspace_id": workspace_id,
+            "team_id": identity.team_id,
+            "caller_agent_id": identity.agent_id,
+        },
     )
-    raise HTTPException(status_code=403, detail=f"Workspace {workspace_id} belongs to another agent.")
+    raise HTTPException(
+        status_code=403, detail=f"Workspace {workspace_id} belongs to another agent."
+    )
 
 
 @router.post("/heartbeat", response_model=WorkspaceHeartbeatResponse)
@@ -175,13 +191,26 @@ async def heartbeat(
         raise HTTPException(status_code=404, detail=_WORKSPACE_NOT_FOUND_DETAIL)
 
     if identity.grant is None:
-        _require_workspace_owner(existing, identity, payload.workspace_id, operation="heartbeat")
+        _require_workspace_owner(
+            existing, identity, payload.workspace_id, operation="heartbeat"
+        )
 
     if identity.grant is not None:
-        if existing.get("agent_id") is not None and str(existing["agent_id"]) != identity.agent_id:
+        if (
+            existing.get("agent_id") is not None
+            and str(existing["agent_id"]) != identity.agent_id
+        ):
             raise HTTPException(status_code=403, detail="grant workspace mismatch")
-        if payload.role is not None or payload.hostname is not None or payload.workspace_path is not None or payload.human_name:
-            raise HTTPException(status_code=403, detail="grant workspace metadata is not shared presence")
+        if (
+            payload.role is not None
+            or payload.hostname is not None
+            or payload.workspace_path is not None
+            or payload.human_name
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="grant workspace metadata is not shared presence",
+            )
         await cleanup_expired_grant_liveness(aweb_db)
         await aweb_db.fetch_one(
             """
@@ -349,10 +378,14 @@ async def update_workspace(
     )
 
     if not existing:
-        raise HTTPException(status_code=404, detail=f"Workspace {workspace_id} not found")
+        raise HTTPException(
+            status_code=404, detail=f"Workspace {workspace_id} not found"
+        )
 
     if existing["deleted_at"] is not None:
-        raise HTTPException(status_code=410, detail=f"Workspace {workspace_id} is deleted")
+        raise HTTPException(
+            status_code=410, detail=f"Workspace {workspace_id} is deleted"
+        )
 
     if identity.grant is None:
         _require_workspace_owner(existing, identity, validated_id, operation="update")
@@ -362,10 +395,21 @@ async def update_workspace(
     idx = 2
 
     if identity.grant is not None:
-        if existing.get("agent_id") is not None and str(existing["agent_id"]) != identity.agent_id:
+        if (
+            existing.get("agent_id") is not None
+            and str(existing["agent_id"]) != identity.agent_id
+        ):
             raise HTTPException(status_code=403, detail="grant workspace mismatch")
-        if payload.role is not None or payload.hostname is not None or payload.workspace_path is not None or payload.human_name is not None:
-            raise HTTPException(status_code=403, detail="grant workspace metadata is not shared presence")
+        if (
+            payload.role is not None
+            or payload.hostname is not None
+            or payload.workspace_path is not None
+            or payload.human_name is not None
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="grant workspace metadata is not shared presence",
+            )
     else:
         if payload.role is not None:
             set_clauses.append(f"role = ${idx}")
@@ -399,7 +443,7 @@ async def update_workspace(
         await aweb_db.execute(
             f"""
             UPDATE {{{{tables.workspaces}}}}
-            SET {', '.join(set_clauses)}
+            SET {", ".join(set_clauses)}
             WHERE workspace_id = $1
             """,
             *params,
@@ -517,7 +561,9 @@ async def delete_workspace(
                     code="workspace_already_deleted",
                     workspace_id=validated_id,
                     identity_id=existing.get("agent_id"),
-                    identity_scope=str(existing.get("agent_identity_scope") or "").strip(),
+                    identity_scope=str(
+                        existing.get("agent_identity_scope") or ""
+                    ).strip(),
                     recommended_next_step="The workspace is deleted; its identity is not. Clean the identity before reporting the retirement complete.",
                 ),
             )
@@ -530,7 +576,9 @@ async def delete_workspace(
                 presence_ids.append(str(existing["agent_id"]))
             await clear_workspace_presence(redis, presence_ids)
         except Exception as exc:
-            logger.warning("Retry failed to clear deleted workspace presence", exc_info=exc)
+            logger.warning(
+                "Retry failed to clear deleted workspace presence", exc_info=exc
+            )
             raise HTTPException(
                 status_code=503,
                 detail=_workspace_delete_refusal_detail(
@@ -727,7 +775,9 @@ def _title_join(
     guard_col: str | None = None,
 ) -> str:
     """Lateral join resolving title (+ optional type) from tasks."""
-    select_expr = "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
+    select_expr = (
+        "t.title, t.task_type AS issue_type" if include_type else "t.title AS title"
+    )
 
     guard = f"\n                  AND {guard_col} IS NOT NULL" if guard_col else ""
 
@@ -925,7 +975,9 @@ def _row_to_workspace_info(
     )
 
 
-async def _fetch_presence_map(redis: Redis, workspace_id_strings: list[str]) -> Dict[str, dict]:
+async def _fetch_presence_map(
+    redis: Redis, workspace_id_strings: list[str]
+) -> Dict[str, dict]:
     presences = await list_agent_presences_by_workspace_ids(redis, workspace_id_strings)
     return {str(p["workspace_id"]): p for p in presences if p.get("workspace_id")}
 
@@ -963,17 +1015,27 @@ async def _fetch_claims_map(aweb_db, workspace_ids: list) -> Dict[str, List[Clai
 @router.get("", response_model=ListWorkspacesResponse)
 async def list_workspaces(
     request: Request,
-    human_name: Optional[str] = Query(None, description="Filter by workspace owner", max_length=64),
+    human_name: Optional[str] = Query(
+        None, description="Filter by workspace owner", max_length=64
+    ),
     repo: Optional[str] = Query(
         None, description="Filter by repo canonical origin", max_length=255
     ),
-    alias: Optional[str] = Query(None, description="Filter by workspace alias", max_length=64),
-    hostname: Optional[str] = Query(None, description="Filter by machine hostname", max_length=255),
+    alias: Optional[str] = Query(
+        None, description="Filter by workspace alias", max_length=64
+    ),
+    hostname: Optional[str] = Query(
+        None, description="Filter by machine hostname", max_length=255
+    ),
     include_deleted: bool = Query(False, description="Include soft-deleted workspaces"),
     include_claims: bool = Query(False, description="Include active task claims"),
     include_presence: bool = Query(True, description="Include Redis presence data"),
-    limit: Optional[int] = Query(None, description="Maximum items per page", ge=1, le=200),
-    cursor: Optional[str] = Query(None, description="Pagination cursor from previous response"),
+    limit: Optional[int] = Query(
+        None, description="Maximum items per page", ge=1, le=200
+    ),
+    cursor: Optional[str] = Query(
+        None, description="Pagination cursor from previous response"
+    ),
     db_infra: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
@@ -1091,7 +1153,9 @@ async def list_workspaces(
         try:
             cursor_timestamp = datetime.fromisoformat(cursor_data["updated_at"])
         except (ValueError, TypeError) as e:
-            raise HTTPException(status_code=422, detail=f"Invalid cursor timestamp: {e}")
+            raise HTTPException(
+                status_code=422, detail=f"Invalid cursor timestamp: {e}"
+            )
         query += f" AND w.updated_at < ${param_idx}"
         params.append(cursor_timestamp)
         param_idx += 1
@@ -1120,7 +1184,9 @@ async def list_workspaces(
 
     workspaces: List[WorkspaceInfo] = []
     for row in rows:
-        workspace_claims = claims_map.get(str(row["workspace_id"]), []) if include_claims else []
+        workspace_claims = (
+            claims_map.get(str(row["workspace_id"]), []) if include_claims else []
+        )
         workspaces.append(
             _row_to_workspace_info(
                 row,
@@ -1135,7 +1201,9 @@ async def list_workspaces(
         last_row = rows[-1]
         next_cursor = encode_cursor({"updated_at": last_row["updated_at"].isoformat()})
 
-    return ListWorkspacesResponse(workspaces=workspaces, has_more=has_more, next_cursor=next_cursor)
+    return ListWorkspacesResponse(
+        workspaces=workspaces, has_more=has_more, next_cursor=next_cursor
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1146,13 +1214,17 @@ async def list_workspaces(
 @router.get("/team", response_model=ListWorkspacesResponse)
 async def list_team_workspaces(
     request: Request,
-    human_name: Optional[str] = Query(None, description="Filter by workspace owner", max_length=64),
+    human_name: Optional[str] = Query(
+        None, description="Filter by workspace owner", max_length=64
+    ),
     repo: Optional[str] = Query(
         None, description="Filter by repo canonical origin", max_length=255
     ),
     include_claims: bool = Query(True, description="Include active task claims"),
     include_presence: bool = Query(True, description="Include Redis presence data"),
-    only_with_claims: bool = Query(True, description="Only return workspaces with active claims"),
+    only_with_claims: bool = Query(
+        True, description="Only return workspaces with active claims"
+    ),
     always_include_workspace_id: Optional[str] = Query(
         None,
         description="Ensure a workspace is included even if filtered out",
@@ -1183,7 +1255,10 @@ async def list_team_workspaces(
             try:
                 live_workspace_ids.append(UUID(workspace_id))
             except ValueError:
-                logger.warning("Ignoring invalid workspace ID in team presence index: %s", workspace_id)
+                logger.warning(
+                    "Ignoring invalid workspace ID in team presence index: %s",
+                    workspace_id,
+                )
 
     params: list = [team_id]
     param_idx = 2
@@ -1327,7 +1402,9 @@ async def list_team_workspaces(
 @router.get("/online", response_model=ListWorkspacesResponse)
 async def list_online_workspaces(
     request: Request,
-    human_name: Optional[str] = Query(None, description="Filter by workspace owner", max_length=64),
+    human_name: Optional[str] = Query(
+        None, description="Filter by workspace owner", max_length=64
+    ),
     redis: Redis = Depends(get_redis),
     db_infra: DatabaseInfra = Depends(get_db_infra),
     identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),

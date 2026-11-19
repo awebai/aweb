@@ -15,7 +15,9 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
     """Show self/team coordination status for the authenticated agent."""
     auth, error = require_team_context()
     if auth is None:
-        return error or json.dumps({"error": "This tool requires team context. Use a team certificate."})
+        return error or json.dumps(
+            {"error": "This tool requires team context. Use a team certificate."}
+        )
     aweb_db = db_infra.get_manager("aweb")
 
     workspaces = await aweb_db.fetch_all(
@@ -42,7 +44,9 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
     for presence in presences:
         # Presence writes should already key by workspace_id. The agent_id fallback
         # exists only to tolerate older payloads during the transition.
-        presence_id = (presence.get("workspace_id") or presence.get("agent_id") or "").strip()
+        presence_id = (
+            presence.get("workspace_id") or presence.get("agent_id") or ""
+        ).strip()
         if presence_id:
             presence_map[presence_id] = presence
 
@@ -97,14 +101,17 @@ async def workspace_status(db_infra, redis, *, limit: int = 15) -> str:
             "human_name": row.get("human_name") or None,
             "role": (presence.get("role") or row.get("role") or None),
             "role_name": (presence.get("role") or row.get("role") or None),
-            "status": presence.get("status") or ("active" if workspace_id in presence_map else "offline"),
+            "status": presence.get("status")
+            or ("active" if workspace_id in presence_map else "offline"),
             "last_seen": presence.get("last_seen") or None,
             "current_branch": presence.get("current_branch") or None,
             "claims": claims_by_workspace.get(workspace_id, []),
         }
 
     entries = [_workspace_entry(row) for row in workspaces]
-    self_entry = next((entry for entry in entries if entry["workspace_id"] == auth.workspace_id), None)
+    self_entry = next(
+        (entry for entry in entries if entry["workspace_id"] == auth.workspace_id), None
+    )
     if self_entry is None:
         self_entry = {
             "workspace_id": auth.workspace_id,

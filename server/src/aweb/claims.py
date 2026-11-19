@@ -163,7 +163,7 @@ async def _is_open_task_ref(
 ) -> bool:
     slug = team_slug(team_id)
     prefix = slug + "-"
-    ref_suffix = task_ref[len(prefix):] if task_ref.startswith(prefix) else task_ref
+    ref_suffix = task_ref[len(prefix) :] if task_ref.startswith(prefix) else task_ref
 
     row = await tx.fetch_one(
         """
@@ -276,10 +276,14 @@ async def release_task_claims(
     """
     aweb_db = db_infra.get_manager("aweb")
     async with aweb_db.transaction() as tx:
-        return await release_task_claims_on(tx, team_id=team_id, task_ref=task_ref, workspace_id=workspace_id)
+        return await release_task_claims_on(
+            tx, team_id=team_id, task_ref=task_ref, workspace_id=workspace_id
+        )
 
 
-async def release_task_claims_on(tx, *, team_id: str, task_ref: str, workspace_id: str | None = None) -> list[str]:
+async def release_task_claims_on(
+    tx, *, team_id: str, task_ref: str, workspace_id: str | None = None
+) -> list[str]:
     """Release task claims/focus in an existing lifecycle transaction."""
     released_focus_by_workspace: dict[str, str] = {}
     if workspace_id:
@@ -329,7 +333,9 @@ async def release_task_claims_on(tx, *, team_id: str, task_ref: str, workspace_i
         )
         next_focus = None
         if next_claim:
-            next_focus = claim_focus_task_ref(next_claim["task_ref"], next_claim["apex_task_ref"])
+            next_focus = claim_focus_task_ref(
+                next_claim["task_ref"], next_claim["apex_task_ref"]
+            )
         else:
             released_focus = released_focus_by_workspace.get(str(ws_id))
             if released_focus and await _is_open_task_ref(
