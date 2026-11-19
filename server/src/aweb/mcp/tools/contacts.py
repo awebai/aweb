@@ -47,7 +47,11 @@ async def list_contacts_tool(db_infra) -> str:
 
 
 async def contacts_add(
-    db_infra, *, contact_address: str, label: str = "", federation_authority=None,
+    db_infra,
+    *,
+    contact_address: str,
+    label: str = "",
+    federation_authority=None,
 ) -> str:
     """Add a contact for the authenticated identity."""
     auth = get_auth()
@@ -55,7 +59,9 @@ async def contacts_add(
     owner_did = owner_dids[0] if owner_dids else ""
     try:
         if federation_authority is None:
-            raise FederationAuthorityError("federation_authority_coordination_unavailable")
+            raise FederationAuthorityError(
+                "federation_authority_coordination_unavailable"
+            )
         resolved = await federation_authority.resolve_contact(
             normalize_hosted_handle_reference(contact_address),
             source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
@@ -109,7 +115,9 @@ async def add_contact_by_email(db_infra, *, email: str, label: str = "") -> str:
         _normalize_email(email)
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
-    return json.dumps({"error": "Email contact requests are not available on this server"})
+    return json.dumps(
+        {"error": "Email contact requests are not available on this server"}
+    )
 
 
 async def send_message_to_contact(
@@ -164,7 +172,8 @@ async def send_message_to_contact(
         )
 
     existing = await _find_existing_chat_session(
-        db_infra, target=target,
+        db_infra,
+        target=target,
     )
 
     if existing is not None:
@@ -217,9 +226,13 @@ async def read_messages_from_contact(
         return json.dumps({"error": detail or str(exc)})
 
     if normalized_channel == "mail":
-        messages = await _read_mail_messages_from_target(db_infra, target=target, limit=limit_value)
+        messages = await _read_mail_messages_from_target(
+            db_infra, target=target, limit=limit_value
+        )
     else:
-        messages = await _read_chat_messages_from_target(db_infra, target=target, limit=limit_value)
+        messages = await _read_chat_messages_from_target(
+            db_infra, target=target, limit=limit_value
+        )
     return json.dumps({"messages": messages})
 
 
@@ -363,8 +376,7 @@ async def _resolve_contact_target(
                 auth = get_auth()
                 resolved = await federation_authority.resolve_contact(
                     address,
-                    source_ip="mcp:"
-                    + str(auth.did_key or auth.did_aw or "unknown"),
+                    source_ip="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
                 )
             except FederationAuthorityError as exc:
                 if exc.reason != "recipient_identity_not_found":
@@ -380,9 +392,7 @@ async def _resolve_contact_target(
                 "alias": name,
                 "address": address,
                 "did_aw": resolved.did_aw.strip(),
-                "did_key": (
-                    getattr(resolved, "current_did_key", "") or ""
-                ).strip(),
+                "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
                 "delivery_origin": registry_delivery_origin(resolved),
                 "authority_controller_did": str(
                     getattr(resolved, "controller_did", "") or ""
@@ -424,7 +434,9 @@ def _target_refs(target: dict) -> tuple[list[str], list[str]]:
     return dids, addresses
 
 
-async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int) -> list[dict]:
+async def _read_mail_messages_from_target(
+    db_infra, *, target: dict, limit: int
+) -> list[dict]:
     auth = get_auth()
     actor_dids = participant_dids(auth)
     if not actor_dids:
@@ -465,7 +477,9 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
     return [mcp_mail_message_from_row(dict(row), include_bodies=True) for row in rows]
 
 
-async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int) -> list[dict]:
+async def _read_chat_messages_from_target(
+    db_infra, *, target: dict, limit: int
+) -> list[dict]:
     auth = get_auth()
     actor_dids = participant_dids(auth)
     if not actor_dids:
@@ -507,7 +521,9 @@ async def _read_chat_messages_from_target(db_infra, *, target: dict, limit: int)
             "from_did": row["from_did"],
             "signature": row.get("signature"),
             "signed_payload": row.get("signed_payload"),
-            **verified_signed_recipient_fields({**row, "conversation_id": str(row["session_id"])}),
+            **verified_signed_recipient_fields(
+                {**row, "conversation_id": str(row["session_id"])}
+            ),
             "from_alias": row["from_alias"],
             "from_address": row["from_address"],
             "body": row["body"],

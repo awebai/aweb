@@ -54,16 +54,25 @@ from aweb.messaging.mail_routing import (
 from aweb.routes.messages import SendMessageRequest
 from aweb.service_errors import ServiceError
 
+
 async def list_threads(
-    db, *, limit: int = 50, cursor: str = "", participant_did: str = "",
+    db,
+    *,
+    limit: int = 50,
+    cursor: str = "",
+    participant_did: str = "",
     participant_address: str = "",
 ) -> str:
     from aweb.routes.conversations import list_conversations_for_auth
 
     try:
         response = await list_conversations_for_auth(
-            db, mcp_messaging_auth(get_auth()), conversation_type="mail", limit=limit,
-            cursor=cursor or None, participant_did=participant_did or None,
+            db,
+            mcp_messaging_auth(get_auth()),
+            conversation_type="mail",
+            limit=limit,
+            cursor=cursor or None,
+            participant_did=participant_did or None,
             participant_address=participant_address or None,
         )
     except HTTPException as exc:
@@ -82,12 +91,18 @@ def mcp_mail_message_from_row(
 ) -> dict:
     content_mode = str(row.get("content_mode") or "legacy_plaintext_v1")
     encrypted = content_mode == "encrypted_v2"
-    decryptable = bool(getattr(hosted_plaintext, "decryptable", False)) if encrypted else True
+    decryptable = (
+        bool(getattr(hosted_plaintext, "decryptable", False)) if encrypted else True
+    )
     read_at = _utc_iso(row["read_at"]) if row.get("read_at") is not None else None
     msg: dict = {
         "message_id": str(row["message_id"]),
-        "conversation_id": str(row["conversation_id"]) if row.get("conversation_id") else None,
-        "from_agent_id": (str(row["from_agent_id"]) if row.get("from_agent_id") else None),
+        "conversation_id": str(row["conversation_id"])
+        if row.get("conversation_id")
+        else None,
+        "from_agent_id": (
+            str(row["from_agent_id"]) if row.get("from_agent_id") else None
+        ),
         "from_alias": row["from_alias"],
         "from_address": row["from_address"] or "",
         "to_alias": row["to_alias"],
@@ -206,7 +221,9 @@ async def send_mail(
         return send_refusal(exc)
     if priority not in VALID_PRIORITIES:
         return json.dumps(
-            {"error": f"Invalid priority. Must be one of: {', '.join(sorted(VALID_PRIORITIES))}"}
+            {
+                "error": f"Invalid priority. Must be one of: {', '.join(sorted(VALID_PRIORITIES))}"
+            }
         )
     if not body.strip():
         return json.dumps({"error": "body is required"})
@@ -218,15 +235,27 @@ async def send_mail(
     if not recipient_ref and not conversation_ref:
         return json.dumps({"error": "Recipient or conversation_id is required"})
 
-    if recipient_ref and not recipient_ref.startswith("did:") and "/" not in recipient_ref and not auth.team_id:
+    if (
+        recipient_ref
+        and not recipient_ref.startswith("did:")
+        and "/" not in recipient_ref
+        and not auth.team_id
+    ):
         return json.dumps({"error": "Alias delivery requires team context"})
 
     runtime = mcp_messaging_runtime(
-        auth, public_origin=public_origin, registry_client=registry_client,
-        federation_authority=federation_authority, mail_transport=federation_transport,
+        auth,
+        public_origin=public_origin,
+        registry_client=registry_client,
+        federation_authority=federation_authority,
+        mail_transport=federation_transport,
     )
     sender = mcp_messaging_auth(auth)
-    address_ref = recipient_ref if "/" in recipient_ref and not recipient_ref.startswith("did:") else ""
+    address_ref = (
+        recipient_ref
+        if "/" in recipient_ref and not recipient_ref.startswith("did:")
+        else ""
+    )
     # The tool's arguments are not an HTTP request body: they select the
     # recipient as given, without the request model's field validators.
     if conversation_ref:
@@ -244,7 +273,10 @@ async def send_mail(
     sender_attested_at = datetime.now(timezone.utc).replace(microsecond=0)
     try:
         target = await mail_send.resolve_mail_target(
-            db_infra, sender, selector, runtime,
+            db_infra,
+            sender,
+            selector,
+            runtime,
             source="mcp:" + str(auth.did_key or auth.did_aw or "unknown"),
         )
         if target.continuation is not None:
@@ -256,7 +288,9 @@ async def send_mail(
                     registry_client,
                     recipient_participant,
                 )
-                local = await local_recipient_for_own_route(db_infra, recipient, runtime)
+                local = await local_recipient_for_own_route(
+                    db_infra, recipient, runtime
+                )
                 if local is not None:
                     recipient["did_key"] = local["did_key"]
                 signed_from = sender_address or ""
@@ -282,8 +316,12 @@ async def send_mail(
             recipient = target.recipient
             signed_conversation_id = str(uuid_mod.uuid4())
             sent_to = target.to_alias or recipient_ref
-            signed_from = sender_address if recipient.get("external") and sender_address else ""
-            signed_to = _signed_recipient(recipient_ref, target.to_alias or recipient_ref)
+            signed_from = (
+                sender_address if recipient.get("external") and sender_address else ""
+            )
+            signed_to = _signed_recipient(
+                recipient_ref, target.to_alias or recipient_ref
+            )
             signed_to_did = (recipient.get("did_key") or "").strip()
             signed_to_stable_id = (recipient.get("did_aw") or "").strip()
     except (HTTPException, FederationAuthorityError, ServiceError) as exc:
@@ -291,7 +329,8 @@ async def send_mail(
 
     signed_fields = _signed_mail_fields(
         auth,
-        signed_from=signed_from or (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip(),
+        signed_from=signed_from
+        or (auth.alias or auth.address or auth.did_aw or auth.did_key or "").strip(),
         to=signed_to,
         to_did=signed_to_did,
         to_stable_id=signed_to_stable_id,
@@ -330,24 +369,32 @@ async def send_mail(
             signature = signed.signature
             signed_payload = signed.signed_payload
 
-    message = selector.model_copy(update=dict(
-        conversation_id=signed_conversation_id,
-        subject="" if encrypted is not None else subject,
-        body="" if encrypted is not None else body,
-        content_mode=encrypted.content_mode if encrypted is not None else None,
-        message_version=encrypted.message_version if encrypted is not None else None,
-        encrypted_envelope=encrypted.encrypted_envelope if encrypted is not None else None,
-        priority=cast(MessagePriority, priority),
-        message_id=str(message_id),
-        timestamp=_utc_iso(sender_attested_at),
-        from_did=auth.did_key,
-        signature=signature,
-        signed_payload=signed_payload,
-    ))
+    message = selector.model_copy(
+        update=dict(
+            conversation_id=signed_conversation_id,
+            subject="" if encrypted is not None else subject,
+            body="" if encrypted is not None else body,
+            content_mode=encrypted.content_mode if encrypted is not None else None,
+            message_version=encrypted.message_version
+            if encrypted is not None
+            else None,
+            encrypted_envelope=encrypted.encrypted_envelope
+            if encrypted is not None
+            else None,
+            priority=cast(MessagePriority, priority),
+            message_id=str(message_id),
+            timestamp=_utc_iso(sender_attested_at),
+            from_did=auth.did_key,
+            signature=signature,
+            signed_payload=signed_payload,
+        )
+    )
     try:
         sent = await mail_send.send_mail(db_infra, sender, target, message, runtime)
     except Exception as exc:
-        return send_refusal(exc, address=address_ref, hosted_envelope=encrypted is not None)
+        return send_refusal(
+            exc, address=address_ref, hosted_envelope=encrypted is not None
+        )
 
     return json.dumps(
         {
@@ -387,7 +434,7 @@ async def check_inbox(
                from_did, to_did, signature, signed_payload, content_mode, message_version,
                encrypted_envelope
         FROM {{{{tables.messages}}}} m
-        WHERE {incoming_mail_sql('$1')}
+        WHERE {incoming_mail_sql("$1")}
           AND ($2::bool IS FALSE OR read_at IS NULL)
         ORDER BY created_at DESC
         LIMIT $3
@@ -401,7 +448,9 @@ async def check_inbox(
     unread_message_ids = [r["message_id"] for r in rows if r["read_at"] is None]
     if unread_message_ids:
         await acknowledge_mail(
-            db_infra, mcp_messaging_auth(auth), unread_message_ids,
+            db_infra,
+            mcp_messaging_auth(auth),
+            unread_message_ids,
             read_at=datetime.now(timezone.utc),
             agent_wake_publisher=current_agent_wake_publisher(),
             on_mutation=current_mutation_callback(),

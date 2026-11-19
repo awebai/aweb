@@ -64,7 +64,9 @@ class ListContactsResponse(BaseModel):
 
 @router.post("", response_model=ContactView)
 async def create_contact(
-    request: Request, payload: CreateContactRequest, db=Depends(get_db),
+    request: Request,
+    payload: CreateContactRequest,
+    db=Depends(get_db),
     identity: MessagingAuth = Depends(get_messaging_auth),
 ) -> ContactView:
     owner_keys = _owner_dids(identity)
@@ -114,7 +116,9 @@ async def bind_contact_identity_route(
         payload.address,
         source_ip=str(request.client.host if request.client else "unknown"),
     )
-    replacement = bool(payload.expected_old_did_aw and payload.expected_old_did_aw != resolved.did_aw)
+    replacement = bool(
+        payload.expected_old_did_aw and payload.expected_old_did_aw != resolved.did_aw
+    )
     if replacement:
         if (
             payload.new_did_aw != resolved.did_aw
@@ -130,17 +134,18 @@ async def bind_contact_identity_route(
             )
             if announcement_time.tzinfo is None or announcement_time.microsecond != 0:
                 raise ValueError("replacement timestamp shape")
-            if abs(
-                (
-                    datetime.now(timezone.utc)
-                    - announcement_time.astimezone(timezone.utc)
-                ).total_seconds()
-            ) > 300:
+            if (
+                abs(
+                    (
+                        datetime.now(timezone.utc)
+                        - announcement_time.astimezone(timezone.utc)
+                    ).total_seconds()
+                )
+                > 300
+            ):
                 raise ValueError("replacement timestamp stale")
         except Exception as exc:
-            raise FederationAuthorityError(
-                "contact_identity_binding_required"
-            ) from exc
+            raise FederationAuthorityError("contact_identity_binding_required") from exc
         announcement = canonical_json_bytes(
             {
                 "address": resolved.canonical_address,
@@ -173,7 +178,8 @@ async def bind_contact_identity_route(
 
 @router.get("", response_model=ListContactsResponse)
 async def list_contacts_route(
-    request: Request, db=Depends(get_db),
+    request: Request,
+    db=Depends(get_db),
     identity: MessagingAuth = Depends(get_messaging_auth),
 ) -> ListContactsResponse:
     contacts = await list_contacts(db, owner_dids=_owner_dids(identity))
@@ -182,7 +188,9 @@ async def list_contacts_route(
 
 @router.delete("/{contact_id}")
 async def delete_contact(
-    request: Request, contact_id: str, db=Depends(get_db),
+    request: Request,
+    contact_id: str,
+    db=Depends(get_db),
     identity: MessagingAuth = Depends(get_messaging_auth),
 ) -> dict:
     await remove_contact(db, owner_dids=_owner_dids(identity), contact_id=contact_id)
