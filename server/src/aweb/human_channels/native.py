@@ -29,7 +29,11 @@ from aweb.identity_binding import verified_projection
 from aweb.identity_address import require_address_evidence
 from aweb.inbound_modes import effective_inbound_mode
 from aweb.messaging.chat import ensure_session, send_in_session
-from aweb.messaging.chat_policy import HumanChatRefused, recipient_label, require_agent_chat
+from aweb.messaging.chat_policy import (
+    HumanChatRefused,
+    recipient_label,
+    require_agent_chat,
+)
 from aweb.messaging.conversations import create_conversation, get_conversation
 from aweb.messaging.messages import authorize_message_delivery, deliver_message
 
@@ -177,7 +181,9 @@ class NativeMessagingService:
 
     async def _facts(self, auth, row):
         # Actor/team identify current admission context, never a thread participant.
-        row = await self._row(principal=row["did_aw"] or row["did_key"], team_id=auth.team_id)
+        row = await self._row(
+            principal=row["did_aw"] or row["did_key"], team_id=auth.team_id
+        )
         subject = NativeMessagingSubject(
             row["did_aw"] or row["did_key"],
             row["did_key"],
@@ -247,13 +253,8 @@ class NativeMessagingService:
         target_ref = requested_target.value["principal"]
         if target_ref["kind"] != "native":
             raise ContractError("unsupported", "native recipient")
-        recipient = await self._row(
-            principal=target_ref["did"], team_id=auth.team_id
-        )
-        if (
-            is_verified_human(recipient)
-            and recipient["team_id"] != auth.team_id
-        ):
+        recipient = await self._row(principal=target_ref["did"], team_id=auth.team_id)
+        if is_verified_human(recipient) and recipient["team_id"] != auth.team_id:
             raise ContractError("forbidden", "human selected team")
         if value["kind"] == "chat":
             await require_agent_chat(self.db, [recipient])
@@ -916,7 +917,10 @@ class NativeMessagingUnitOfWork:
                 cid = await ensure_session(
                     db,
                     team_id=self.auth.team_id,
-                    participant_rows=[dict(actor, agent_id=None), dict(recipient, agent_id=None)],
+                    participant_rows=[
+                        dict(actor, agent_id=None),
+                        dict(recipient, agent_id=None),
+                    ],
                     created_by=_principal(self.auth),
                     session_id=UUID(value["conversation_id"]),
                 )
