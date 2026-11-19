@@ -24,3 +24,7 @@ lock in the settings directory. The settings snapshot is read under that lock;
 installation reads it again after any confirmation prompt. Editors outside aw
 do not share this lock. Explicit cleanup also checks its snapshot before writing
 and keeps the original backup when that check refuses a concurrent edit.
+
+The lock serializes aw against aw; an external editor can still save between the
+reread and the atomic write, so the remaining window is the write operation,
+not the duration of the confirmation prompt.
