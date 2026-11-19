@@ -13,13 +13,24 @@ import (
 	"github.com/awebai/aw/awconfig"
 )
 
-func refreshBindingFixture(t *testing.T) (*humanParticipation, map[string]any) {
+func approvalServiceFixtureRoot(t *testing.T) string {
 	t.Helper()
+	if root := os.Getenv("AW_TEST_APPROVAL_MODULE_ROOT"); root != "" {
+		return root
+	}
 	root, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/awebai/approval-service").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(root)), "vectors", "binding-refresh-v1.json"))
+	if strings.TrimSpace(string(root)) == "" {
+		t.Fatal("approval-service module directory unavailable")
+	}
+	return strings.TrimSpace(string(root))
+}
+
+func refreshBindingFixture(t *testing.T) (*humanParticipation, map[string]any) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(approvalServiceFixtureRoot(t), "vectors", "binding-refresh-v1.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +71,12 @@ func refreshBindingFixture(t *testing.T) (*humanParticipation, map[string]any) {
 
 func refreshPacketFixture(t *testing.T, h *humanParticipation, binding map[string]any) []byte {
 	t.Helper()
-	previous, err := proof.Commitment("binding_commitment", binding)
+	return refreshPacketBetween(t, h, binding, binding)
+}
+
+func refreshPacketBetween(t *testing.T, h *humanParticipation, previousBinding, binding map[string]any) []byte {
+	t.Helper()
+	previous, err := proof.Commitment("binding_commitment", previousBinding)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,13 +89,14 @@ func refreshPacketFixture(t *testing.T, h *humanParticipation, binding map[strin
 
 func TestHumanBindingRefreshPreservesHistoricalEvidence(t *testing.T) {
 	h, binding := refreshBindingFixture(t)
+	previous, binding := changedRefreshFixtures(t, h, "https://approval.example.test")
 	historical := []string{"approval-binding.json", "approval-evidence.json", "enrollment-session.json"}
 	for _, name := range historical {
 		if err := os.WriteFile(filepath.Join(h.dir, name), []byte("original historical bytes\n"), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	packet, err := readHumanBindingRefreshPacket(refreshPacketFixture(t, h, binding), humanBindingRefreshInput{Human: h, Current: binding})
+	packet, err := readHumanBindingRefreshPacket(refreshPacketBetween(t, h, previous, binding), humanBindingRefreshInput{Human: h, Current: previous})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,6 +120,9 @@ func TestHumanBindingRefreshPreservesHistoricalEvidence(t *testing.T) {
 	loaded, err := loadHumanApprovalBinding(h.dir)
 	if err != nil || !sameEnrollmentValue(loaded, binding) {
 		t.Fatalf("live binding not saved: %v", err)
+	}
+	if sameEnrollmentValue(loaded, previous) {
+		t.Fatal("refresh kept the old issuer/certificate instead of the signed replacement")
 	}
 	mode, err := os.Stat(filepath.Join(h.dir, "approval-live-binding.json"))
 	if err != nil || mode.Mode().Perm() != 0600 {
