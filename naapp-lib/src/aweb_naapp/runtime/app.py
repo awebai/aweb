@@ -34,7 +34,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import aclosing, asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network, ip_address
@@ -47,7 +47,7 @@ import httpx
 from awid.dns_verify import DomainVerifier
 from awid.external_authority import TXTOutcomeResolver
 from awid.registry import RegistryClient
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.dependencies.models import Dependant
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.routing import APIRoute
@@ -102,7 +102,11 @@ from aweb_naapp.runtime.human_member import (
 from aweb_naapp.runtime.human_member import (
     check_human_member as observe_human_member,
 )
-from aweb_naapp.runtime.installation import InstallationFence
+from aweb_naapp.runtime.installation import (
+    InstallationFence,
+    InstallationPermit,
+    InstallationRefused,
+)
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -134,6 +138,19 @@ NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 # health routes' own bound on a check, and reports no figure.
 OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS = 2.0
 _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
+
+
+@dataclass(frozen=True)
+class InstalledMember:
+    """A member request admitted by its team's installation grant and by the
+    installation fence, both at the same installation and generation."""
+
+    authorization: Authorization
+    permit: InstallationPermit
+
+    @property
+    def principal(self) -> Principal:
+        return self.authorization.principal
 
 
 class NaappRuntime:
@@ -725,6 +742,34 @@ class NaappRuntime:
         self._guards[authorized_request] = action_kind
         return authorized_request
 
+    def installed_member(
+        self, *, policy: ActionPolicy
+    ) -> Callable[..., Awaitable[InstalledMember]]:
+        """A FastAPI dependency admitting a member of a team that installed this app.
+
+        The request is authorized against the team's installation grant
+        (:meth:`authorized`), then the installation fence admits the team at
+        the installation and generation that grant named
+        (docs/app-registry.md, ``generation_superseded``). A refusal carries a
+        code and a message.
+        """
+        member_authorized = self.authorized(grants=self.installation_grants(), policy=policy)
+
+        async def installed(
+            authorization: Authorization = Depends(member_authorized),
+        ) -> InstalledMember:
+            try:
+                permit = await self.installation_fence().permit(authorization.principal.team_id)
+                _require_the_granted_installation(authorization, permit)
+            except InstallationRefused as refused:
+                raise HTTPException(
+                    status_code=refused.status,
+                    detail={"code": refused.code, "message": str(refused)},
+                ) from None
+            return InstalledMember(authorization=authorization, permit=permit)
+
+        return installed
+
     async def record_manifest_command(
         self,
         tx: TransactionManager,
@@ -860,6 +905,22 @@ class NaappRuntime:
         return any(
             dependency.call in self._guards or self._is_guarded(dependency)
             for dependency in dependant.dependencies
+        )
+
+
+def _require_the_granted_installation(
+    authorization: Authorization, permit: InstallationPermit
+) -> None:
+    """The fence admitted the installation and generation the grant named; a
+    reinstall between the two reads refuses, and a retry reads both afresh."""
+    granted = (authorization.grant.installation_id, authorization.grant.generation)
+    admitted = (permit.admitted.installation_id, permit.admitted.generation)
+    if granted != admitted:
+        raise InstallationRefused(
+            "generation_superseded",
+            409,
+            "The team's installation of this app changed while the request was "
+            "admitted; retry the request",
         )
 
 
