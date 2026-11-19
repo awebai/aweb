@@ -132,16 +132,12 @@ class _FakeRedisPipeline:
         self.actions.append(("exists", key))
         return self
 
-    def delete(self, key):
-        self.actions.append(("delete", key))
-        return self
 
     def srem(self, key, member):
         self.actions.append(("srem", key, member))
         return self
 
     async def execute(self):
-        self.redis.pipeline_actions.extend(self.actions)
         results = []
         for action, key, *_ in self.actions:
             if action == "hgetall":
@@ -155,24 +151,13 @@ class _FakeRedisPipeline:
 
 class _FakeRedis:
     def __init__(self):
-        self.published = []
-        self.pipeline_actions = []
         self.presence = {}
-        self.cleaned_presence_ids = []
 
-    async def publish(self, channel, message):
-        self.published.append((channel, json.loads(message)))
-        return 1
 
     async def exists(self, key):
         return int(key in self.presence)
 
-    async def scan_iter(self, match):
-        if False:
-            yield match
 
-    async def sismember(self, key, member):
-        return False
 
     async def smembers(self, key):
         if key.startswith("idx:team_workspaces:"):
@@ -186,25 +171,10 @@ class _FakeRedis:
     async def get(self, key):
         return None
 
-    async def hset(self, key, mapping):
-        self.presence[key] = dict(mapping)
-        return len(mapping)
 
     def pipeline(self, transaction=True):
         return _FakeRedisPipeline(self)
 
-    async def eval(self, script, number_of_keys, *args):
-        assert number_of_keys == 2
-        primary_key, coordinates_key, workspace_id, all_index_key = args
-        self.cleaned_presence_ids.append(workspace_id)
-        self.presence.pop(primary_key, None)
-        self.presence.pop(coordinates_key, None)
-        self.pipeline_actions.extend([
-            ("srem", all_index_key, workspace_id),
-            ("delete", primary_key),
-            ("delete", coordinates_key),
-        ])
-        return 1
 
 
 @pytest.mark.asyncio
