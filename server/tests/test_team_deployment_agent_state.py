@@ -720,15 +720,24 @@ def test_the_ordinary_capture_still_round_trips_after_the_abandon_path(tmp_path)
     assert (tmp_path / "restored" / "seats/one/.aw/signing.key").read_text() == "key"
 
 
-def test_an_interrupt_as_the_archive_is_finalized_ends_a_non_reading_age_promptly(tmp_path, monkeypatch):
-    # A child that never reads: the interrupt arrives as close() begins, and
-    # the encrypt must end the child and remove the partial without first
-    # finishing the archive into its pipe.
+@pytest.mark.parametrize("signame", ["SIGINT", "SIGTERM"])
+def test_a_signal_inside_the_archive_close_ends_a_non_reading_age_promptly(tmp_path, monkeypatch, signame):
+    # The signal arrives inside the archive stream's own close, at its first
+    # trailer write and before that write reaches the sink, with the capture
+    # registered and the non-reading child's partial on disk. The handler's
+    # abandon alone must keep every later byte from the real sink; the child
+    # is reaped, the partial removed and the registry cleared, well within
+    # the age deadline.
     import signal
-    import time
 
-    root = state(tmp_path)
+    # A state whose members fit in the pipe before close: the child never
+    # reads, so a larger one would block the member output first.
+    root = tmp_path / "state"
+    (root / "seat").mkdir(parents=True)
+    (root / "seat" / "signing.key").write_text("key")
     partial = tmp_path / "state.tar.age.partial"
+    sent = getattr(signal, signame)
+    seen: dict = {"sent": False, "after": 0}
     children = []
     real_child = agent_state.Child
 
@@ -737,25 +746,60 @@ def test_an_interrupt_as_the_archive_is_finalized_ends_a_non_reading_age_promptl
             super().__init__(*args, **kwargs)
             children.append(self)
 
-    real_close = tarfile.TarFile.close
+    real_abandonable = agent_state.Abandonable
 
-    def interrupted_close(self):
-        os.kill(os.getpid(), signal.SIGINT)
+    class Counted:
+        """The real sink, counting what reaches it once the signal is sent."""
+
+        def __init__(self, sink):
+            self.sink = sink
+
+        def write(self, data):
+            if seen["sent"]:
+                seen["after"] += len(data)
+            return self.sink.write(data)
+
+    def abandonable(sink):
+        return real_abandonable(Counted(sink))
+
+    real_close = tarfile.TarFile.close
+    real_write = tarfile._Stream.write
+
+    def closing(self):
+        if isinstance(self.fileobj, tarfile._Stream):
+            self.fileobj.finalizing = True
         return real_close(self)
 
+    def trailer_write(self, data):
+        if getattr(self, "finalizing", False) and not seen["sent"]:
+            deadline = time.monotonic() + 10
+            while not partial.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            seen["registered"] = len(agent_state.WRITING)
+            seen["partial_before"] = partial.exists()
+            seen["sent"] = True
+            os.kill(os.getpid(), sent)
+        return real_write(self, data)
+
     monkeypatch.setattr(agent_state, "Child", Recorded)
-    monkeypatch.setattr(tarfile.TarFile, "close", interrupted_close)
+    monkeypatch.setattr(agent_state, "Abandonable", abandonable)
+    monkeypatch.setattr(tarfile.TarFile, "close", closing)
+    monkeypatch.setattr(tarfile._Stream, "write", trailer_write)
     command = child(tmp_path, "never-reads", f"open({str(partial)!r}, 'wb').write(b'x')\ntime.sleep(120)")
-    previous = signal.signal(signal.SIGINT, agent_state.interrupted)
+    previous = signal.signal(sent, agent_state.interrupted)
     began = time.monotonic()
     try:
-        with pytest.raises(KeyboardInterrupt):
+        with pytest.raises(KeyboardInterrupt if sent == signal.SIGINT else agent_state.Terminated):
             agent_state.encrypt(root, partial, command, 60, agent_state.DEFAULT_ENDPOINTS)
     finally:
-        signal.signal(signal.SIGINT, previous)
-    assert time.monotonic() - began < 15
+        signal.signal(sent, previous)
+    elapsed = time.monotonic() - began
+    assert seen["sent"] and seen["registered"] == 1 and seen["partial_before"]
+    assert seen["after"] == 0, f"{seen['after']} bytes reached the sink after the signal"
     assert children[0].process.returncode is not None
     assert not partial.exists()
+    assert agent_state.WRITING == set()
+    assert elapsed < 30
 
 
 def test_the_starter_unblocks_sigint_and_sigterm_only(tmp_path):
