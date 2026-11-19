@@ -77,7 +77,10 @@ from aweb.messaging.participant_succession import predecessor_target_for_mail
 from aweb.messaging.participants import messaging_participant_by_alias
 from aweb.messaging.recipient_bindings import signed_recipient_matches
 from aweb.messaging.kinds import MessageKind, MessageTransport
-from aweb.messaging.recipients import resolve_address_recipient
+from aweb.messaging.recipients import (
+    RecipientIdentityBinding,
+    resolve_address_recipient,
+)
 from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.refusals import DeliveryRefusalCode
 from aweb.messaging.sender_address import sender_address as _sender_address
@@ -1195,6 +1198,8 @@ async def resolve_mail_target(
     payload: SendMessageRequest,
     runtime: MessagingRuntime,
     source: str,
+    *,
+    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> MailTarget:
     """Resolve whom a send names, before any of it is stored.
 
@@ -1369,6 +1374,7 @@ async def resolve_mail_target(
             address=address,
             source=source,
             kind=MessageKind.MAIL,
+            binding=recipient_binding,
             signed_payload=payload.signed_payload,
             signature=payload.signature,
         )

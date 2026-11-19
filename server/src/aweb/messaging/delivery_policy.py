@@ -12,12 +12,11 @@ from aweb.inbound_modes import (
 )
 from aweb.member_team_key import current_member_team_ids_for_identity
 from aweb.messaging.contacts import IdentityContactMatch, identity_contact_match
-from aweb.messaging.refusals import DeliveryRefusalCode
+from aweb.messaging.refusals import CONTACT_REBIND_ACTION, DeliveryRefusalCode
 from aweb.service_errors import ForbiddenError
 
 logger = logging.getLogger(__name__)
 _POLICY_ACTION = "Ask the recipient to add your exact address as a contact or check their inbound policy."
-CONTACT_REBIND_ACTION = "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending."
 
 
 class DeliveryAttempt(Enum):
@@ -61,7 +60,7 @@ def is_global_recipient(recipient: Mapping) -> bool:
     return (
         recipient.get("identity_scope") == "global"
         or bool(recipient.get("has_global_claim"))
-        or bool(recipient.get("did_aw"))
+        or bool(str(recipient.get("did_aw") or "").strip())
     )
 
 

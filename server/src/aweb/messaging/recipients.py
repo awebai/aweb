@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from collections.abc import Mapping
 
 from fastapi import HTTPException
 from awid.federation_errors import FederationAuthorityError
@@ -30,6 +32,19 @@ from aweb.messaging.recipient_bindings import (
     RecipientBindingUse,
     signed_recipient_matches,
 )
+
+from aweb.messaging.refusals import ContactIdentityBindingRequired
+
+
+@dataclass(frozen=True, kw_only=True)
+class RecipientIdentityBinding:
+    """The identity a saved contact expects, never a routing authority."""
+
+    did: str
+
+    def matches(self, recipient: Mapping) -> bool:
+        return self.did in {recipient.get("did_aw"), recipient.get("did_key")}
+
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +75,39 @@ def _signature_binds_recipient_address(
 
 
 async def resolve_address_recipient(
+    db,
+    auth,
+    runtime,
+    *,
+    address: str,
+    source: str,
+    kind: MessageKind,
+    signed_payload: str | None = None,
+    signature: str | None = None,
+    binding: RecipientIdentityBinding | None = None,
+) -> dict:
+    """Resolve once, keeping any saved identity constraint through the send.
+
+    docs/identity-messaging-contract.md:122-145 requires an exact bound identity.
+    A saved constraint stays attached to the one admitted identity; a second
+    address resolution cannot silently replace it before signing or delivery.
+    """
+    recipient = await _resolve_address_identity(
+        db,
+        auth,
+        runtime,
+        address=address,
+        source=source,
+        kind=kind,
+        signed_payload=signed_payload,
+        signature=signature,
+    )
+    if binding is not None and not binding.matches(recipient):
+        raise ContactIdentityBindingRequired()
+    return recipient
+
+
+async def _resolve_address_identity(
     db,
     auth,
     runtime,

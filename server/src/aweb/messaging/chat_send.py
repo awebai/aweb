@@ -77,7 +77,10 @@ from aweb.messaging.participants import (
 )
 from aweb.messaging.recipient_bindings import signed_recipient_matches
 from aweb.messaging.kinds import MessageKind
-from aweb.messaging.recipients import resolve_address_recipient
+from aweb.messaging.recipients import (
+    RecipientIdentityBinding,
+    resolve_address_recipient,
+)
 from aweb.messaging.runtime import MessagingRuntime
 from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.signatures import (
@@ -1032,6 +1035,7 @@ async def _resolve_named_recipients(
     to_addresses: list[str],
     signed_payload: str | None = None,
     signature: str | None = None,
+    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> list[dict[str, Any]]:
     actor_dids = participant_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
@@ -1104,6 +1108,7 @@ async def _resolve_named_recipients(
             address=address,
             source=source,
             kind=MessageKind.CHAT,
+            binding=recipient_binding,
             signed_payload=signed_payload,
             signature=signature,
         )
@@ -1255,6 +1260,7 @@ async def resolve_chat_targets(
     source: str,
     *,
     reuse_or_create: bool = False,
+    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> ChatTarget:
     """Resolve whom a send reaches, before any of it is stored.
 
@@ -1299,6 +1305,7 @@ async def resolve_chat_targets(
         to_addresses=selector.to_addresses,
         signed_payload=selector.signed_payload,
         signature=selector.signature,
+        recipient_binding=recipient_binding,
     )
     if not reuse_or_create:
         return ChatTarget(recipients=target_rows, source=source)

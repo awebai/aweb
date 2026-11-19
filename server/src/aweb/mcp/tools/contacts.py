@@ -6,19 +6,18 @@ import json
 from uuid import UUID
 
 from awid.federation_errors import FederationAuthorityError
+from aweb.messaging.recipients import RecipientIdentityBinding
+from aweb.messaging.kinds import MessageKind
+from aweb.messaging.refusals import ContactIdentityBindingRequired
+from aweb.mcp.tools.refusals import send_refusal
+from fastapi import HTTPException
 from aweb.client_address import request_client_address
 from aweb.identity_auth_deps import participant_dids
-from aweb.mcp.auth import get_auth, primary_auth_did
+from aweb.mcp.auth import get_auth
 from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.chat import chat_send
-from aweb.mcp.tools.federation import registry_delivery_origin
 from aweb.mcp.tools.mail import mcp_mail_message_from_row, send_mail
-from aweb.messaging.alias_targets import (
-    AmbiguousLocalAddressError,
-    get_agent_by_namespace_alias,
-)
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
-from aweb.messaging.chat import find_session_between
 from aweb.messaging.contacts import (
     add_contact,
     add_handle_contact,
@@ -146,18 +145,20 @@ async def send_message_to_contact(
     try:
         normalized_channel = _normalize_channel(channel)
         contact = await _get_owned_contact(db_infra, contact_id=contact_id)
-        target = await _resolve_contact_target(
-            db_infra,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            contact=contact,
-        )
-    except ServiceError as exc:
-        return json.dumps({"error": exc.detail})
+        target = await _target_from_contact_reference(db_infra, contact=contact)
+        target_did = str(target.get("did_aw") or target.get("did_key") or "").strip()
+        if not target_did or (
+            contact["reference_type"] != "handle"
+            and not target_did.startswith("did:aw:")
+        ):
+            raise ContactIdentityBindingRequired()
+        binding = RecipientIdentityBinding(did=target_did)
+    except (ServiceError, HTTPException, FederationAuthorityError) as exc:
+        return send_refusal(exc)
 
     # Pending is receiver-side policy state, not sender-side send authority:
     # sending to a pending contact is the bilateral invite/first-contact flow.
-    if normalized_channel == "mail":
+    if normalized_channel is MessageKind.MAIL:
         return await send_mail(
             db_infra,
             registry_client=registry_client,
@@ -166,32 +167,13 @@ async def send_message_to_contact(
             hosted_encryptor=hosted_encryptor,
             federation_transport=federation_mail_transport,
             public_origin=public_origin,
+            recipient_binding=binding,
             to=target["address"],
             subject=subject,
             body=message,
             priority=priority,
         )
 
-    existing = await _find_existing_chat_session(
-        db_infra,
-        target=target,
-    )
-
-    if existing is not None:
-        return await chat_send(
-            db_infra,
-            redis,
-            registry_client=registry_client,
-            federation_authority=federation_authority,
-            hosted_signer=hosted_signer,
-            hosted_encryptor=hosted_encryptor,
-            federation_transport=federation_chat_transport,
-            public_origin=public_origin,
-            session_id=existing["conversation_id"],
-            message=message,
-            wait=wait,
-            wait_seconds=wait_seconds,
-        )
     return await chat_send(
         db_infra,
         redis,
@@ -201,6 +183,7 @@ async def send_message_to_contact(
         hosted_encryptor=hosted_encryptor,
         federation_transport=federation_chat_transport,
         public_origin=public_origin,
+        recipient_binding=binding,
         to_address=target["address"],
         message=message,
         wait=wait,
@@ -226,7 +209,7 @@ async def read_messages_from_contact(
         detail = getattr(exc, "detail", None)
         return json.dumps({"error": detail or str(exc)})
 
-    if normalized_channel == "mail":
+    if normalized_channel is MessageKind.MAIL:
         messages = await _read_mail_messages_from_target(
             db_infra, target=target, limit=limit_value
         )
@@ -281,11 +264,15 @@ def _normalize_email(email: str) -> str:
     return value
 
 
-def _normalize_channel(channel: str) -> str:
+def _normalize_channel(channel: str) -> MessageKind:
     value = (channel or "mail").strip().lower()
-    if value not in {"mail", "chat"}:
-        raise ValidationError("channel must be mail or chat")
-    return value
+    if value == MessageKind.MAIL:
+        return MessageKind.MAIL
+    if value == MessageKind.CHAT:
+        return MessageKind.CHAT
+    raise ValidationError(
+        "channel must be mail or chat. Choose mail or chat and try again."
+    )
 
 
 async def _get_owned_contact(db_infra, *, contact_id: str) -> dict:
@@ -338,84 +325,6 @@ async def _target_from_contact_reference(db_infra, *, contact: dict) -> dict:
         "did_key": "",
         "external": True,
     }
-
-
-async def _resolve_contact_target(
-    db_infra,
-    *,
-    registry_client,
-    federation_authority,
-    contact: dict,
-) -> dict:
-    if contact["reference_type"] == "handle":
-        target = await resolve_handle_contact_agent(
-            db_infra,
-            handle_namespace=contact["handle_namespace"],
-            target_agent_name=contact["target_agent_name"],
-        )
-        if target is None:
-            raise ValidationError("No active agent found for handle contact")
-        return target
-
-    address = (contact.get("contact_address") or "").strip()
-    if "/" not in address:
-        raise ValidationError("Contact address must be domain/name")
-    bound_did_aw = str(contact.get("contact_did_aw") or "").strip()
-    if not bound_did_aw.startswith("did:aw:"):
-        raise ValidationError("contact_identity_binding_required")
-    domain, name = address.split("/", 1)
-    try:
-        target = await get_agent_by_namespace_alias(
-            db_infra, namespace=domain, alias=name
-        )
-    except AmbiguousLocalAddressError as exc:
-        raise ServiceError(str(exc)) from exc
-    if target is None:
-        resolved = None
-        if federation_authority is not None:
-            try:
-                auth = get_auth()
-                resolved = await federation_authority.resolve_contact(
-                    address,
-                    source_ip=request_client_address(auth.request),
-                )
-            except FederationAuthorityError as exc:
-                if exc.reason != "recipient_identity_not_found":
-                    raise ServiceError(exc.reason) from exc
-        elif registry_client is not None:
-            resolved = await registry_client.resolve_address(
-                domain, name, did_key=(get_auth().did_key or None)
-            )
-        if resolved is not None and resolved.did_aw:
-            target = {
-                "agent_id": None,
-                "team_id": None,
-                "alias": name,
-                "address": address,
-                "did_aw": resolved.did_aw.strip(),
-                "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
-                "delivery_origin": registry_delivery_origin(resolved),
-                "authority_controller_did": str(
-                    getattr(resolved, "controller_did", "") or ""
-                ).strip(),
-                "external": True,
-            }
-    if target is None or str(target.get("did_aw") or "").strip() != bound_did_aw:
-        raise ValidationError("contact_identity_binding_required")
-    copied = dict(target)
-    copied["address"] = (copied.get("address") or "").strip() or address
-    return copied
-
-
-async def _find_existing_chat_session(db_infra, *, target: dict) -> dict | None:
-    auth = get_auth()
-    target_did = (target.get("did_aw") or target.get("did_key") or "").strip()
-    session_id = await find_session_between(
-        db_infra,
-        did_a=primary_auth_did(auth),
-        did_b=target_did,
-    )
-    return {"conversation_id": str(session_id)} if session_id is not None else None
 
 
 def _target_refs(target: dict) -> tuple[list[str], list[str]]:

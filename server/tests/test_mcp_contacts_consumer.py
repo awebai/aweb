@@ -737,7 +737,10 @@ async def test_consumer_mcp_send_message_to_identity_pending_contact_is_sendable
         )
     )
 
-    assert result == {"error": "contact_identity_binding_required"}
+    assert result == {
+        "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+        "reason": "contact_identity_binding_required",
+    }
     assert (
         await aweb_cloud_db.aweb_db.fetch_val(
             "SELECT COUNT(*) FROM {{tables.messages}}"
@@ -775,7 +778,10 @@ async def test_consumer_mcp_identity_contact_rejects_local_address_reassignment(
         )
     )
 
-    assert result == {"error": "contact_identity_binding_required"}
+    assert result == {
+        "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+        "reason": "contact_identity_binding_required",
+    }
     assert (
         await aweb_cloud_db.aweb_db.fetch_val(
             "SELECT COUNT(*) FROM {{tables.messages}}"
@@ -834,7 +840,10 @@ async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_mail_co
         )
     )
 
-    assert result == {"error": "contact_identity_binding_required"}
+    assert result == {
+        "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+        "reason": "contact_identity_binding_required",
+    }
     assert (
         await aweb_cloud_db.aweb_db.fetch_val(
             "SELECT COUNT(*) FROM {{tables.messages}}"
@@ -892,7 +901,10 @@ async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_chat_se
         )
     )
 
-    assert result == {"error": "contact_identity_binding_required"}
+    assert result == {
+        "error": "This address now belongs to a different identity. Check the contact and explicitly bind it again before sending.",
+        "reason": "contact_identity_binding_required",
+    }
     assert (
         await aweb_cloud_db.aweb_db.fetch_val(
             "SELECT COUNT(*) FROM {{tables.chat_messages}}"

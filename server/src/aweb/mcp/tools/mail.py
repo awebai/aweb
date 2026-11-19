@@ -1,6 +1,7 @@
 """MCP tools for async mail messaging."""
 
 from __future__ import annotations
+from aweb.messaging.recipients import RecipientIdentityBinding
 from aweb.client_address import request_client_address
 from aweb.messaging.mail_attribution import incoming_mail_sql
 
@@ -205,9 +206,17 @@ async def _resolve_mail_target_for_tool(
     selector: SendMessageRequest,
     runtime,
     source: str,
+    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> mail_send.MailTarget:
     """Translate tool selection into the shared mail target owner."""
-    return await mail_send.resolve_mail_target(db, sender, selector, runtime, source)
+    return await mail_send.resolve_mail_target(
+        db,
+        sender,
+        selector,
+        runtime,
+        source,
+        recipient_binding=recipient_binding,
+    )
 
 
 async def send_mail(
@@ -225,6 +234,7 @@ async def send_mail(
     plaintext: bool = False,
     federation_transport=None,
     public_origin: str | None = None,
+    recipient_binding: RecipientIdentityBinding | None = None,
 ) -> str:
     """Send an async message by alias, did:aw, or address."""
     auth = get_auth()
@@ -291,6 +301,7 @@ async def send_mail(
             selector=selector,
             runtime=runtime,
             source=request_client_address(auth.request),
+            recipient_binding=recipient_binding,
         )
         if target.continuation is not None:
             recipient_participant = target.continuation.recipient_participant
