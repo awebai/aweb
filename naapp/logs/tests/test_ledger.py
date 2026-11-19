@@ -28,9 +28,19 @@ from aweb_logs.ledger import (
     open_next_epoch,
     verify_epoch,
 )
+from aweb_logs.purge_ledger import PurgeLedger
+from aweb_logs.retention import purge
 from aweb_logs.verify import verify_chain
 
-from .fixtures import LOGS_KID, LOGS_ORIGIN, LOGS_SEED, TEAM_ID, did_key, signed_event
+from .fixtures import (
+    LOGS_KID,
+    LOGS_ORIGIN,
+    LOGS_SEED,
+    TEAM_ID,
+    blocked_on_a_lock,
+    did_key,
+    signed_event,
+)
 
 SIGNER = LogsSigner(logs_origin=LOGS_ORIGIN, kid=LOGS_KID, signing_key=SigningKey(LOGS_SEED))
 LOGS_KEYS = frozenset({did_key(LOGS_SEED)})
@@ -174,16 +184,22 @@ async def test_a_new_epoch_records_the_previous_ones_final_checkpoint(
     assert (await _verify(db, epoch=2, receipts=[appended.receipt])).intact
 
 
+async def _purge(db: AsyncDatabaseManager, purges: PurgeLedger, appended: Appended) -> None:
+    """Purge the appended event as an owner's erasure does."""
+    receipt = open_receipt(*appended.receipt)
+    async with db.transaction() as tx:
+        await purge(
+            tx, purges, TEAM_ID, [(receipt.chain_epoch, receipt.team_seq)], act="logs.erase:test"
+        )
+
+
 async def test_a_redelivery_of_a_purged_event_returns_its_receipt(
-    db: AsyncDatabaseManager,
+    db: AsyncDatabaseManager, purges: PurgeLedger
 ) -> None:
     event_id = str(uuid.uuid4())
     first = await _append(db, event_id=event_id)
-    await db.execute(
-        "UPDATE {{tables.chain_events}} SET salt = NULL, signing_bytes = NULL, signature = NULL,"
-        " purge_act = 'logs.erase:test' WHERE event_id = $1",
-        uuid.UUID(event_id),
-    )
+    assert isinstance(first, Appended)
+    await _purge(db, purges, first)
     again = await _append(db, event_id=event_id)
     assert isinstance(first, Appended) and isinstance(again, Appended)
     assert again.duplicate and again.receipt == first.receipt
@@ -238,15 +254,12 @@ async def test_a_new_epoch_can_move_to_another_origin(db: AsyncDatabaseManager) 
 
 
 async def test_a_purged_event_still_conflicts_on_what_its_skeleton_keeps(
-    db: AsyncDatabaseManager,
+    db: AsyncDatabaseManager, purges: PurgeLedger
 ) -> None:
     event_id = str(uuid.uuid4())
-    await _append(db, "core", event_id=event_id)
-    await db.execute(
-        "UPDATE {{tables.chain_events}} SET salt = NULL, signing_bytes = NULL, signature = NULL,"
-        " purge_act = 'logs.erase:test' WHERE event_id = $1",
-        uuid.UUID(event_id),
-    )
+    first = await _append(db, "core", event_id=event_id)
+    assert isinstance(first, Appended)
+    await _purge(db, purges, first)
     other_producer = await _append(db, "app", event_id=event_id)
     assert other_producer == Conflicted(event_id=uuid.UUID(event_id))
 
@@ -263,7 +276,7 @@ async def test_a_checkpoint_waiting_on_an_epoch_move_witnesses_the_new_epoch(
         waiting = asyncio.create_task(
             issue_checkpoint(db, SIGNER, TEAM_ID, issued_at=START + timedelta(minutes=2))
         )
-        await asyncio.sleep(0.3)
+        await blocked_on_a_lock(db)
         assert not waiting.done()
         genesis = Genesis(
             team_id=TEAM_ID,

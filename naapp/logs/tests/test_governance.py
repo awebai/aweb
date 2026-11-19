@@ -20,7 +20,7 @@ from aweb_logs.governance import GovernanceRefused
 from aweb_logs.ledger import append
 from aweb_logs.retention import apply_retention
 
-from .fixtures import _APP_EVENT, SECRETS_SEED
+from .fixtures import _APP_EVENT, SECRETS_SEED, blocked_on_a_lock
 from .reader_world import (
     LOGS,
     World,
@@ -350,7 +350,7 @@ async def test_an_erasure_and_an_append_overlapping_on_unprojected_history_both_
     erasing = asyncio.create_task(erase(world, **range_))
     await recording.wait()
     appending = asyncio.create_task(appended(world, secret_use(seq=2), age=timedelta(seconds=1)))
-    await asyncio.sleep(0.5)
+    await blocked_on_a_lock(world.db)
     proceed.set()
     assert await erasing == 1
     await appending

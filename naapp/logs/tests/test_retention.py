@@ -21,7 +21,7 @@ from aweb_logs.chain import format_time
 from aweb_logs.ledger import append, verify_epoch
 from aweb_logs.retention import EXPIRED, apply_retention, purge, set_retention
 
-from .fixtures import LOGS_ORIGIN, TEAM_ID
+from .fixtures import LOGS_ORIGIN, TEAM_ID, blocked_on_a_lock
 from .test_read_store import OTHER_TEAM, SIGNER, START, certificate_observed, secret_use
 
 NOW = START + timedelta(days=60)
@@ -239,14 +239,7 @@ async def test_a_purge_during_a_readers_catch_up_leaves_no_content_projected(db,
     async with db.transaction() as holding:
         await holding.execute("SELECT pg_advisory_xact_lock(4242)")
         catch_up = asyncio.create_task(read_store.project(db, TEAM_ID))
-        for _ in range(100):
-            waiting = await db.fetch_value(
-                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"
-            )
-            if waiting:
-                break
-            await asyncio.sleep(0.05)
-        assert waiting == 1
+        await blocked_on_a_lock(db)
         try:
             async with db.transaction() as purging:
                 await purging.execute("SET LOCAL lock_timeout = '200ms'")
