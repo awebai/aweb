@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from aweb import events as existing_transport
 from aweb.event_types import MutationEventType, TransportEventType
+from aweb.federation.envelope import verify_federation_envelope
 from aweb.hooks import fire_mutation_callback
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.message_events import (
@@ -28,12 +29,19 @@ from aweb.messaging.kinds import (
     MessageTransport,
 )
 from aweb.messaging.runtime import MessagingRuntime
+from aweb.routes.messages import SendMessageRequest
+from awid.did import did_from_public_key, generate_keypair
+from awid.signing import canonical_json_bytes
+from test_federation_envelope import _envelope, _sign
 
 
 @pytest.mark.parametrize("mode", list(ContentMode))
 @pytest.mark.parametrize("transport", list(MessageTransport))
+@pytest.mark.parametrize("alias_container", [list, tuple])
 @pytest.mark.asyncio
-async def test_chat_context_matches_the_existing_callback(mode, transport):
+async def test_chat_context_matches_the_existing_callback(
+    mode, transport, alias_container
+):
     captured = []
 
     async def receive(event_type, context):
@@ -65,6 +73,7 @@ async def test_chat_context_matches_the_existing_callback(mode, transport):
         content_mode=mode.value,
         federated=transport is MessageTransport.FEDERATED,
     )
+    aliases = alias_container(["recipient"])
     dto = ChatMessageSentContext(
         team_id=None,
         session_id=str(session_id),
@@ -73,7 +82,7 @@ async def test_chat_context_matches_the_existing_callback(mode, transport):
         from_alias="",
         from_did=auth.did_key,
         from_did_aw=None,
-        to_aliases=("recipient",),
+        to_aliases=aliases,
         preview="",
         content_mode=mode,
         transport=transport,
@@ -82,6 +91,9 @@ async def test_chat_context_matches_the_existing_callback(mode, transport):
     changed_context = dto.to_context()
     changed_context["to_aliases"].append("someone else")
     assert dto.to_aliases == ("recipient",)
+    if isinstance(aliases, list):
+        aliases.append("later source mutation")
+        assert dto.to_aliases == ("recipient",)
 
 
 @pytest.mark.parametrize("mode", list(ContentMode))
@@ -248,3 +260,83 @@ async def test_known_event_constants_do_not_close_the_host_callback_vocabulary()
     context = {"host_projection": None, "additive_metadata": {"value": 1}}
     await fire_mutation_callback(receive, "host.custom_event", context)
     assert seen == [("host.custom_event", context)]
+
+
+@pytest.mark.parametrize(
+    "mode", ["legacy_plaintext_v1", "operator-plaintext", "", " Mixed/Mode ", None]
+)
+def test_mail_context_preserves_content_mode_accepted_by_the_real_request_model(mode):
+    request = SendMessageRequest.model_validate(
+        {"to_alias": "recipient", "body": "accepted body", "content_mode": mode}
+    )
+    dto = MailSentContext(
+        team_id=None,
+        from_agent_id=None,
+        from_did="did:key:sender",
+        from_did_aw=None,
+        to_agent_id=None,
+        from_alias="sender",
+        message_id="message",
+        conversation_id=None,
+        to_alias="recipient",
+        subject=request.subject,
+        priority=MessagePriority.NORMAL,
+        content_mode=request.content_mode,
+    )
+    assert dto.to_context()["content_mode"] == mode
+    if mode == "legacy_plaintext_v1":
+        assert dto.content_mode is ContentMode.PLAINTEXT
+
+
+@pytest.mark.parametrize(
+    "priority,mode",
+    [
+        (" Signed/Priority ", " Received/Plaintext "),
+        ("normal", "legacy_plaintext_v1"),
+        (None, None),
+    ],
+)
+def test_federation_context_preserves_metadata_accepted_under_a_real_signature(
+    priority, mode
+):
+    signing_key, public_key = generate_keypair()
+    envelope = _envelope(did_from_public_key(public_key))
+    signed = json.loads(envelope["signed_payload"])
+    signed["priority"] = priority
+    envelope.update(
+        priority=priority,
+        content_mode=mode,
+        signed_payload=canonical_json_bytes(signed).decode(),
+    )
+    verified = verify_federation_envelope(envelope, _sign(envelope, signing_key))
+    dto = FederatedMessageSentContext(
+        kind=MessageKind.MAIL,
+        team_id=None,
+        from_did=verified.sender_current_did_key,
+        from_did_aw=verified.sender_did_aw,
+        to_agent_id=None,
+        from_alias="sender",
+        message_id=verified.message_id,
+        conversation_id=verified.conversation_id,
+        to_alias="recipient",
+        subject=verified.subject,
+        priority=verified.priority,
+        content_mode=verified.content_mode,
+    )
+    assert dto.to_context()["priority"] == priority
+    assert dto.to_context()["content_mode"] == mode
+    if priority == "normal":
+        assert dto.priority is MessagePriority.NORMAL
+
+
+def test_acknowledgement_context_preserves_historical_metadata_strings():
+    dto = MessageAcknowledgedContext(
+        team_id=None,
+        agent_id=None,
+        alias=None,
+        message_id="message",
+        from_alias=None,
+        subject="",
+        content_mode=" Historical/Content ",
+    )
+    assert dto.to_context()["content_mode"] == " Historical/Content "

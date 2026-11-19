@@ -1,6 +1,6 @@
 """Typed message mutation contexts and the existing public transport DTOs.
 
-docs/aw-hooks-sot.md:223-264 distinguishes native chat from inbound federation
+docs/aw-hooks-sot.md:92 (Typed producer contexts) distinguishes native chat from inbound federation
 contexts. Their serializers preserve that distinction and nullable identity
 projections. They neither authenticate a participant nor change callback,
 transaction, failure or replay semantics.
@@ -30,10 +30,12 @@ from aweb.events import (
     TeamMessageSentEvent as TeamMessageSentEvent,
 )
 from aweb.messaging.kinds import (
-    ContentMode,
+    ContentModeValue,
     MessageKind,
-    MessagePriority,
+    MessagePriorityValue,
     MessageTransport,
+    accepted_content_mode,
+    accepted_message_priority,
 )
 
 
@@ -57,17 +59,17 @@ class MailSentContext:
     conversation_id: str | None
     to_alias: str | None
     subject: str
-    priority: MessagePriority
-    content_mode: ContentMode
+    priority: MessagePriorityValue | None
+    content_mode: ContentModeValue | None
     transport: MessageTransport = MessageTransport.LOCAL
 
     def __post_init__(self) -> None:
-        _require_named_value(self.priority, expected=MessagePriority, field="priority")
-        _require_named_value(
-            self.content_mode, expected=ContentMode, field="content_mode"
-        )
         _require_named_value(
             self.transport, expected=MessageTransport, field="transport"
+        )
+        object.__setattr__(self, "priority", accepted_message_priority(self.priority))
+        object.__setattr__(
+            self, "content_mode", accepted_content_mode(self.content_mode)
         )
 
     def to_context(self) -> dict[str, object]:
@@ -83,8 +85,8 @@ class MailSentContext:
             "conversation_id": self.conversation_id,
             "to_alias": self.to_alias,
             "subject": self.subject,
-            "priority": self.priority.value,
-            "content_mode": self.content_mode.value,
+            "priority": self.priority,
+            "content_mode": self.content_mode,
         }
         if self.transport is MessageTransport.FEDERATED:
             context["federated"] = True
@@ -103,22 +105,19 @@ class ChatMessageSentContext:
     from_alias: str
     from_did: str
     from_did_aw: str | None
-    to_aliases: tuple[str, ...]
+    to_aliases: tuple[str, ...] | list[str]
     preview: str
-    content_mode: ContentMode
+    content_mode: ContentModeValue | None
     transport: MessageTransport = MessageTransport.LOCAL
 
     def __post_init__(self) -> None:
         _require_named_value(
-            self.content_mode, expected=ContentMode, field="content_mode"
-        )
-        _require_named_value(
             self.transport, expected=MessageTransport, field="transport"
         )
-        if not isinstance(self.to_aliases, tuple) or any(
-            not isinstance(alias, str) for alias in self.to_aliases
-        ):
-            raise TypeError("Pass to_aliases as an immutable tuple of strings.")
+        object.__setattr__(
+            self, "content_mode", accepted_content_mode(self.content_mode)
+        )
+        object.__setattr__(self, "to_aliases", tuple(self.to_aliases))
 
     def to_context(self) -> dict[str, object]:
         """Return callback-owned containers; mutating them cannot alter this DTO."""
@@ -133,7 +132,7 @@ class ChatMessageSentContext:
             "from_did_aw": self.from_did_aw,
             "to_aliases": list(self.to_aliases),
             "preview": self.preview,
-            "content_mode": self.content_mode.value,
+            "content_mode": self.content_mode,
         }
         if self.transport is MessageTransport.FEDERATED:
             context["federated"] = True
@@ -154,16 +153,16 @@ class FederatedMessageSentContext:
     conversation_id: str
     to_alias: str | None
     subject: str
-    priority: MessagePriority
-    content_mode: ContentMode
+    priority: MessagePriorityValue | None
+    content_mode: ContentModeValue | None
 
     def __post_init__(self) -> None:
         _require_named_value(self.kind, expected=MessageKind, field="kind")
         if self.kind not in (MessageKind.MAIL, MessageKind.CHAT):
             raise ValueError("Use mail or chat for a federation message event.")
-        _require_named_value(self.priority, expected=MessagePriority, field="priority")
-        _require_named_value(
-            self.content_mode, expected=ContentMode, field="content_mode"
+        object.__setattr__(self, "priority", accepted_message_priority(self.priority))
+        object.__setattr__(
+            self, "content_mode", accepted_content_mode(self.content_mode)
         )
 
     @property
@@ -189,8 +188,8 @@ class FederatedMessageSentContext:
             else None,
             "to_alias": self.to_alias,
             "subject": self.subject,
-            "priority": self.priority.value,
-            "content_mode": self.content_mode.value,
+            "priority": self.priority,
+            "content_mode": self.content_mode,
             "federated": True,
         }
 
@@ -206,11 +205,11 @@ class MessageAcknowledgedContext:
     message_id: str
     from_alias: str | None
     subject: str
-    content_mode: ContentMode
+    content_mode: ContentModeValue | None
 
     def __post_init__(self) -> None:
-        _require_named_value(
-            self.content_mode, expected=ContentMode, field="content_mode"
+        object.__setattr__(
+            self, "content_mode", accepted_content_mode(self.content_mode)
         )
 
     def to_context(self) -> dict[str, object]:
@@ -222,5 +221,5 @@ class MessageAcknowledgedContext:
             "message_id": self.message_id,
             "from_alias": self.from_alias,
             "subject": self.subject,
-            "content_mode": self.content_mode.value,
+            "content_mode": self.content_mode,
         }
