@@ -10,6 +10,7 @@ import shutil
 import sys
 import tempfile
 
+from collections.abc import Callable
 from contextlib import contextmanager
 import errno
 import socket
@@ -74,6 +75,44 @@ def checked(root: Path, *args: str):
     result = run(root, *args)
     assert result.returncode == 0, result.stdout + result.stderr
     return result.stdout.strip()
+
+
+def verify_same_tree_commit_cache(
+    *,
+    repo: Path,
+    ledger: Path,
+    run_fixed_baseline_gate: Callable[[], str],
+    run_full_gate: Callable[[], str],
+) -> list[str]:
+    """Same-tree reuse also requires the same reviewed main (docs/python-static-analysis.md)."""
+    previous_rows = ledger.read_text().splitlines()
+    previous_main = checked(repo, "git", "rev-parse", "refs/remotes/origin/main")
+    previous_tree = checked(repo, "git", "rev-parse", "HEAD^{tree}")
+    checked(repo, "git", "commit", "--allow-empty", "-qm", "same tree new commit")
+    assert checked(repo, "git", "rev-parse", "HEAD^{tree}") == previous_tree
+
+    # Explicit all-stage selection uses the already synchronized baseline.
+    assert "no stages run" in run_fixed_baseline_gate()
+    assert (
+        checked(repo, "git", "rev-parse", "refs/remotes/origin/main") == previous_main
+    )
+    assert ledger.read_text().splitlines() == previous_rows
+
+    # The full entry synchronizes the fixture's advanced main before key lookup.
+    assert "no stages run" not in run_full_gate()
+    current_main = checked(repo, "git", "rev-parse", "refs/remotes/origin/main")
+    assert current_main != previous_main
+    assert current_main == checked(repo, "git", "rev-parse", "HEAD")
+    rows = ledger.read_text().splitlines()
+    assert rows[: len(previous_rows)] == previous_rows
+    fresh = [row.split("\t") for row in rows[len(previous_rows) :]]
+    assert len(fresh) == len(STAGES.split())
+    assert {row[1] for row in fresh} == set(STAGES.split())
+    assert all(row[2] == "passed" for row in fresh)
+    fresh_keys = {row[0] for row in fresh}
+    assert len(fresh_keys) == 1
+    assert fresh_keys.isdisjoint(row.split("\t")[0] for row in previous_rows)
+    return rows
 
 
 def main() -> None:
@@ -214,9 +253,14 @@ candidate-gate:
         } == set(STAGES.split())
         assert all(row.split("\t")[2] == "passed" for row in rows)
         assert "no stages run" in invoke("same-tree-direct", *gate)
-        # New commit metadata with the identical tree does not invalidate proof.
-        checked(repo, "git", "commit", "--allow-empty", "-qm", "same tree new commit")
-        assert "no stages run" in invoke("same-tree-commit", "make", "candidate-gate")
+        rows = verify_same_tree_commit_cache(
+            repo=repo,
+            ledger=ledger,
+            run_fixed_baseline_gate=lambda: invoke(
+                "same-tree-fixed-baseline", *gate, stages=STAGES
+            ),
+            run_full_gate=lambda: invoke("same-tree-commit", "make", "candidate-gate"),
+        )
         refused_final = invoke(
             "final-without-rc",
             sys.executable,
@@ -254,7 +298,7 @@ candidate-gate:
         version_rows = ledger.read_text().splitlines()
         assert (
             len(version_rows) == len(rows) + 1
-            and version_rows[-1].split("\t")[0] != rows[0].split("\t")[0]
+            and version_rows[-1].split("\t")[0] != rows[-1].split("\t")[0]
         )
         env["CLI_VERSION"] = "1.2.3"
         (repo / "Makefile").write_text(recipes.replace("6 * 7 == 42", "7 * 6 == 42"))
@@ -278,13 +322,14 @@ candidate-gate:
             for name in (
                 "first-checks",
                 "missing-only",
+                "same-tree-commit",
                 "version-input",
                 "changed-tree",
                 "failed-tree",
             )
         )
     print(
-        "PASS: real Docker stages, missing-only execution, make/direct/RC reuse, changed tree/version, failed-tree refusal"
+        "PASS: real Docker stages, missing-only execution, make/direct/RC reuse, changed main/tree/version, failed-tree refusal"
     )
 
 
