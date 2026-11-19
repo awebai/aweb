@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,7 +32,7 @@ type signedHTTPReply struct {
 
 // injectSignedReply models the peer replaying authentic signed mail; verification
 // still runs through the production awid conversation reader and MailBridge.
-func (f *mailHTTPFixture) injectSignedReply(t *testing.T, input signedHTTPReply) {
+func (f *mailHTTPFixture) injectSignedReply(t *testing.T, input signedHTTPReply) awid.InboxMessage {
 	t.Helper()
 	f.mu.Lock()
 	conversation, gatewayDID := f.mailTasks[input.Task.ID], f.gatewayDID
@@ -52,6 +53,7 @@ func (f *mailHTTPFixture) injectSignedReply(t *testing.T, input signedHTTPReply)
 	f.mu.Lock()
 	f.inbox[conversation] = append(f.inbox[conversation], message)
 	f.mu.Unlock()
+	return message
 }
 
 func (f *mailHTTPFixture) readTask(t *testing.T, task a2agw.Task) a2agw.Task {
@@ -254,10 +256,11 @@ func newManagedHTTPReplyFixture(t *testing.T, options managedHTTPReplyOptions) *
 	if err := applyManagedRuntimeConfig(&cfg); err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := buildGateway(cfg)
+	runtime, gateway, err := buildGatewayWithRuntime(cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.runtime = runtime
 	f.gateway = gateway
 	f.server = httptest.NewServer(gateway)
 	t.Cleanup(f.server.Close)
@@ -340,11 +343,16 @@ func TestHTTPManagedReusedConversationDoesNotReplayEarlierQuestion(t *testing.T)
 	second := sentHTTPTask(t, f.callOK(t, sendHTTPInput("later-task")))
 	// The provider's conversation response retains authentic earlier mail.
 	// It must not become the answer to a different task in that conversation.
-	time.Sleep(100 * time.Millisecond)
-	if got := f.readTask(t, second); got.Status.State != a2agw.TaskStateWorking {
-		t.Fatalf("earlier conversation-bound QUESTION replayed into new task: %#v", got.Status)
+	f.waitForBindingCorrection(t, second)
+	completion := fmt.Sprintf("```a2a-reply\n{\"task_id\":%q,\"context_id\":%q,\"state\":\"completed\",\"text\":\"The later task answer\"}\n```", second.ID, second.ContextID)
+	f.injectSignedReply(t, signedHTTPReply{Task: second, Body: completion, Binding: conversationSigned})
+	got := f.waitForTaskReply(t, second)
+	if got.Status.State != a2agw.TaskStateCompleted || got.Metadata["reply_verification"] != string(awid.Verified) || len(got.Artifacts) != 1 || len(got.Artifacts[0].Parts) != 1 || got.Artifacts[0].Parts[0].Text != "The later task answer" {
+		t.Fatalf("second-task processing witness failed: %#v", got)
 	}
-	f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": second.ID}, Headers: tokenHeaders(t, second)})
+	if firstAfter := f.readTask(t, first); firstAfter.Status.State != a2agw.TaskStateInputRequired || len(firstAfter.Artifacts) != 1 || firstAfter.Artifacts[0].Name != "question" {
+		t.Fatalf("later answer mutated the earlier task: %#v", firstAfter)
+	}
 }
 
 func (f *mailHTTPFixture) questionForm(t *testing.T, task a2agw.Task) string {
@@ -387,8 +395,13 @@ func (f *mailHTTPFixture) waitForBindingCorrection(t *testing.T, task a2agw.Task
 			f.mu.Lock()
 			conversation := f.mailTasks[task.ID]
 			f.mu.Unlock()
-			if notice.ConversationID != conversation || notice.ToDID != f.targetDID {
-				t.Fatal("correction notice lost original conversation/recipient")
+			if notice.ConversationID != conversation || notice.ToAddress != "a2a.aweb.ai/personal" {
+				t.Fatal("correction notice lost its configured address or original conversation")
+			}
+			// Native mail carries the DID; the managed provider wire selects the
+			// already-bound route/address and signs the recipient in its own owner.
+			if f.runtime.managedTransport == nil && notice.ToDID != f.targetDID {
+				t.Fatal("native correction lost its bound signing identity")
 			}
 			return notice
 		}
@@ -513,4 +526,90 @@ func TestHTTPMailBridgeQuestionsHaveQuestionArtifacts(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (f *mailHTTPFixture) waitForAppliedTransition(t *testing.T, taskID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		data, err := os.ReadFile(f.auditPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoder := json.NewDecoder(strings.NewReader(string(data)))
+		for {
+			var event a2agw.AuditEvent
+			if err := decoder.Decode(&event); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if event.Stage == "task_state_transition" && event.TaskID == taskID && event.Outcome == string(a2agw.AuditOK) {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("question transition did not finish its bridge ingestion")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestHTTPMailBridgeQuestionCannotContinueSameTask(t *testing.T) {
+	f := newMailHTTPFixture(t, mailHTTPOptions{QuestionReplies: true, PollTimeout: 3 * time.Second})
+	task := sentHTTPTask(t, f.callOK(t, sendHTTPInput("question-task")))
+	f.injectSignedReply(t, signedHTTPReply{Task: task, Body: f.questionForm(t, task), Binding: conversationSigned})
+	question := f.waitForTaskReply(t, task)
+	if question.Status.State != a2agw.TaskStateInputRequired || len(question.Artifacts) != 1 || question.Artifacts[0].Name != "question" {
+		t.Fatalf("question failed: %#v", question)
+	}
+	f.waitForAppliedTransition(t, task.ID)
+	completion := fmt.Sprintf("```a2a-reply\n{\"task_id\":%q,\"context_id\":%q,\"state\":\"completed\",\"text\":\"A late target answer\"}\n```", task.ID, task.ContextID)
+	late := f.injectSignedReply(t, signedHTTPReply{Task: task, Body: completion, Binding: conversationSigned})
+	client, _, err := mailTransportFromConfig(mustLoadConfig(t, f.configPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	conversation := f.mailTasks[task.ID]
+	f.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	inbox, err := client.MailConversation(ctx, conversation, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lateMessage *awid.InboxMessage
+	for _, message := range inbox.Messages {
+		if message.MessageID == late.MessageID {
+			copy := message
+			lateMessage = &copy
+		}
+	}
+	if lateMessage == nil || lateMessage.VerificationStatus != awid.Verified || lateMessage.FromDID != f.targetDID {
+		t.Fatalf("late answer did not pass the production HTTP mail reader: %#v", lateMessage)
+	}
+	// Exercise the production bridge as well: even explicit ingestion cannot
+	// attach the authentic late answer to the finished question thread.
+	if _, applied, err := f.runtime.bridge.IngestInboxMessage(ctx, *lateMessage); err != nil || applied {
+		t.Fatalf("same-task late answer applied=%v err=%v", applied, err)
+	}
+	after := f.readTask(t, task)
+	if after.Status.State != a2agw.TaskStateInputRequired || after.Status.Timestamp != question.Status.Timestamp || len(after.Artifacts) != 1 || after.Artifacts[0].Name != "question" || len(after.Artifacts[0].Parts) != 1 || after.Artifacts[0].Parts[0].Text != "Which order?" {
+		t.Fatalf("question task moved after late completion: %#v", after)
+	}
+	newTask := sentHTTPTask(t, f.callOK(t, httpRPCInput{Method: "SendMessage", Params: map[string]any{"message": a2agw.A2AMessage{MessageID: "caller-answer", TaskID: task.ID, ContextID: task.ContextID, Role: a2agw.RoleUser, Parts: []a2agw.A2APart{{Text: "Order 42", MediaType: "text/plain"}}}, "configuration": map[string]bool{"returnImmediately": true}}}))
+	if newTask.ID == task.ID || newTask.Status.State != a2agw.TaskStateWorking {
+		t.Fatalf("new answer task resumed the old task: %#v", newTask)
+	}
+	f.mu.Lock()
+	delivered := f.taskMessages[newTask.ID]
+	f.mu.Unlock()
+	if !strings.Contains(delivered, "Order 42") || !strings.Contains(delivered, newTask.ID) {
+		t.Fatal("new task did not deliver the caller answer in its own signed envelope")
+	}
+	if got := f.readTask(t, task); got.Status.State != a2agw.TaskStateInputRequired {
+		t.Fatalf("new task changed question task: %#v", got)
+	}
+	f.callOK(t, httpRPCInput{Method: "CancelTask", Params: map[string]string{"id": newTask.ID}, Headers: tokenHeaders(t, newTask)})
 }

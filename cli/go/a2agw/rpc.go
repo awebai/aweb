@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/awebai/aw/a2a"
 	"io"
 	"log"
 	"net"
@@ -110,7 +111,7 @@ func (g *Gateway) serveRPC(w http.ResponseWriter, r *http.Request, routeID strin
 		var timeout net.Error
 		if errors.As(err, &timeout) && timeout.Timeout() {
 			status, code, message = http.StatusRequestTimeout, "request_body_timeout", "Request body timed out. Retry with a complete JSON body within ten seconds."
-		} else if errors.Is(err, errRequestBodyTooLarge) {
+		} else if errors.Is(err, a2a.ErrBodyTooLarge) {
 			status, code, message = http.StatusRequestEntityTooLarge, "request_too_large", "Request body is too large. Reduce the message size to the route's advertised limit and retry."
 		}
 		log.Printf("aweb-a2a-gw: request body failed request=%s: %v", requestID, err)
@@ -413,19 +414,9 @@ func taskIdentifierFailure(requestID string, err error) *rpcError {
 	return jsonRPCError(-32000, "The gateway could not create a task identifier. Restore the host random source and retry.", requestID, map[string]any{"code": "task_identifier_unavailable"})
 }
 
-var errRequestBodyTooLarge = errors.New("request body too large")
-
 func readLimitedBody(body io.ReadCloser, maxBytes int) ([]byte, error) {
 	defer body.Close()
-	reader := io.LimitReader(body, int64(maxBytes)+1)
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxBytes {
-		return nil, fmt.Errorf("request body exceeds %d bytes: %w", maxBytes, errRequestBodyTooLarge)
-	}
-	return data, nil
+	return a2a.ReadBoundedBody(body, int64(maxBytes))
 }
 
 func effectiveMaxMessageBytes(route runtimeRoute) int {

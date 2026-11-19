@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -141,7 +140,7 @@ func FetchCard(ctx context.Context, httpClient *http.Client, rawURL string) (Car
 		return Card{}, nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	body, err := ReadBoundedBody(resp.Body, 2<<20)
 	if err != nil {
 		return Card{}, nil, err
 	}
@@ -214,7 +213,7 @@ func (c *Client) call(ctx context.Context, input rpcCall) error {
 		return err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	body, err := ReadBoundedBody(resp.Body, 4<<20)
 	if err != nil {
 		return err
 	}

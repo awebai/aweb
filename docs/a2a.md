@@ -583,7 +583,7 @@ The gateway does not require synchronous agent liveness for `SendMessage` to
 succeed when `configuration.returnImmediately: true`.
 
 For the current async path, A2A clients SHOULD send
-`configuration.returnImmediately: true`. In that case the gateway returns after creating/updating the task and sending the durable aweb bridge message.
+`configuration.returnImmediately: true`. In that case the gateway returns after creating the task and sending the durable aweb bridge message. Current task-continuation limits are stated in Appendix C.
 
 If `configuration.returnImmediately` is absent or false, the gateway follows A2A semantics by waiting until the task reaches a terminal or interrupted state. If the route response wait timeout expires before an agent reply, the gateway returns the current non-terminal task state, usually `TASK_STATE_WORKING`, and leaves the task pollable until task TTL expiry. The route response timeout is only an HTTP wait bound; it is not a terminal task failure.
 
@@ -1035,3 +1035,17 @@ the fenced forms naming those tasks, as it does on a verified route.
 An input-required reply carries its text artifacts with the name `question`,
 including a plain question accepted by an unverified route. Completed replies
 keep the name `answer`.
+
+This gateway does not support A2A task continuation. A caller answers an
+`INPUT_REQUIRED` question by sending its answer as a new task. The question task
+stays interrupted and pollable until cancellation or task expiry; a later
+fenced `completed` reply from the target does not move it. Each accepted
+`SendMessage` creates a new task; `contextId` is correlation, not resumption.
+For `AUTH_REQUIRED`, fix the route authentication and start a new task.
+Authentication refusals are ephemeral and have no retained task, as above.
+
+The Go A2A client and gateway refuse overflow before decoding a JSON prefix. Agent Card
+responses allow 2 MiB, A2A RPC responses 4 MiB, and managed configuration,
+managed bridge and registry health responses 1 MiB. Inbound RPC bodies use the
+route's configured byte limit. A complete body exactly at its limit is accepted;
+a valid prefix cannot hide trailing bytes beyond that limit.

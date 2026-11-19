@@ -45,11 +45,11 @@ func TestManagedConfigAndRegistryReadFailuresAreNotHealthyOrAbsent(t *testing.T)
 	cfg := fileConfig{ManagedConfig: managedConfig{ConfigURL: server.URL + "/config", GatewayID: "gateway", BearerToken: "token"}}
 	err := applyManagedRuntimeConfig(&cfg)
 	var fetch *managedRuntimeConfigFetchError
-	if !errors.As(err, &fetch) || !strings.Contains(err.Error(), "Check the provider connection and retry") {
+	if !errors.As(err, &fetch) || !strings.Contains(err.Error(), "Check the sender connection and retry with a complete body") {
 		t.Fatalf("error=%v", err)
 	}
 	health := checkRegistryHealth(server.URL)
-	if !health.Reachable || health.Compatible || health.Status != registryResponseUnreadable || !strings.Contains(health.Error, "Check the registry connection and retry") {
+	if !health.Reachable || health.Compatible || health.Status != registryResponseUnreadable || !strings.Contains(health.Error, "Check the sender connection and retry with a complete body") {
 		t.Fatalf("health=%#v", health)
 	}
 }

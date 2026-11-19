@@ -85,7 +85,7 @@ func (e *replyBindingRefusal) Error() string { return e.Message }
 
 // conversationReplyRefusal requires a signed task body for verified replies;
 // unverified plain questions also need one when the conversation has several
-// eligible tasks (docs/a2a.md:978-994,1032-1035).
+// eligible tasks (docs/a2a.md:978-994,1031-1034).
 func (b *MailBridge) conversationReplyRefusal(attachment replyAttachment) *replyBindingRefusal {
 	if attachment.Binding == conversationOnly && b.requireVerifiedReplies {
 		return &replyBindingRefusal{Code: taskBindingRequired, Message: "The plain QUESTION was not applied because it does not name the A2A task in its signed body. Use aw 1.19.0 or later to reply in the original conversation with the fenced input_required form below."}

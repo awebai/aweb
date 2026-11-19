@@ -37,6 +37,7 @@ type mailHTTPFixture struct {
 	configPath   string
 	auditPath    string
 	gateway      *a2agw.Gateway
+	runtime      *gatewayRuntime
 	mu           sync.Mutex
 	mailTasks    map[string]string
 	taskMessages map[string]string
@@ -190,10 +191,11 @@ func newMailHTTPFixture(t *testing.T, options mailHTTPOptions) *mailHTTPFixture 
 		t.Fatal(err)
 	}
 	f.configPath = path
-	gateway, err := buildGateway(cfg)
+	runtime, gateway, err := buildGatewayWithRuntime(cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.runtime = runtime
 	f.gateway = gateway
 	f.server = httptest.NewServer(gateway)
 	t.Cleanup(f.server.Close)

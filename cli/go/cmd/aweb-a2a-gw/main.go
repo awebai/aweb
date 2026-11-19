@@ -39,6 +39,7 @@ var (
 )
 
 const minimumAWIDServiceVersion = "0.5.11"
+const maxProviderResponseBytes = 1 << 20
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
@@ -378,9 +379,13 @@ func checkRegistryHealth(registryURL string) runtimeRegistryHealth {
 		return runtimeRegistryHealth{URL: registryURL, Reachable: false, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: registryUnreachable, Error: err.Error()}
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := a2a.ReadBoundedBody(resp.Body, maxProviderResponseBytes)
 	if err != nil {
-		return runtimeRegistryHealth{URL: registryURL, Reachable: true, Status: registryResponseUnreadable, MinimumVersion: minimumAWIDServiceVersion, Error: "Registry health response could not be read. Check the registry connection and retry."}
+		status := registryResponseUnreadable
+		if errors.Is(err, a2a.ErrBodyTooLarge) {
+			status = registryResponseTooLarge
+		}
+		return runtimeRegistryHealth{URL: registryURL, Reachable: true, Status: status, MinimumVersion: minimumAWIDServiceVersion, Error: "Registry health response: " + err.Error()}
 	}
 	out := runtimeRegistryHealth{URL: registryURL, Reachable: resp.StatusCode >= 200 && resp.StatusCode < 300, Compatible: false, MinimumVersion: minimumAWIDServiceVersion, Status: registryHealthStatus(http.StatusText(resp.StatusCode))}
 	if len(body) > 0 {
@@ -722,11 +727,14 @@ var errManagedBearerRequired = errors.New("managed config bearer token is requir
 type managedRuntimeConfigFetchError struct {
 	StatusCode int
 	Message    string
+	Cause      error
 }
 
 func (e *managedRuntimeConfigFetchError) Error() string {
 	return e.Message
 }
+
+func (e *managedRuntimeConfigFetchError) Unwrap() error { return e.Cause }
 
 func applyManagedRuntimeConfig(cfg *fileConfig) error {
 	url, err := managedConfigURL(cfg.ManagedConfig)
@@ -751,9 +759,9 @@ func applyManagedRuntimeConfig(cfg *fileConfig) error {
 		return &managedRuntimeConfigFetchError{Message: fmt.Sprintf("fetch managed runtime config: %s. Check the provider connection and retry", providerConnectionFailure(err))}
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := a2a.ReadBoundedBody(resp.Body, maxProviderResponseBytes)
 	if err != nil {
-		return &managedRuntimeConfigFetchError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("read managed runtime config: %v. Check the provider connection and retry", err)}
+		return &managedRuntimeConfigFetchError{StatusCode: resp.StatusCode, Cause: err, Message: fmt.Sprintf("read managed runtime config: %v", err)}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return &managedRuntimeConfigFetchError{StatusCode: resp.StatusCode, Message: fmt.Sprintf("fetch managed runtime config: HTTP %d. Check the provider authentication and availability, then retry", resp.StatusCode)}
@@ -1654,9 +1662,9 @@ func (t *managedBridgeTransport) doJSONWithSnapshot(ctx context.Context, input m
 		return fmt.Errorf("managed bridge request failed: %s. Check the provider connection and retry", providerConnectionFailure(err))
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	data, err := a2a.ReadBoundedBody(resp.Body, maxProviderResponseBytes)
 	if err != nil {
-		return fmt.Errorf("read managed bridge response: %w. Check the provider connection and retry", err)
+		return fmt.Errorf("read managed bridge response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("managed bridge %s %s: HTTP %d. Check the provider authentication and availability, then retry", method, path, resp.StatusCode)

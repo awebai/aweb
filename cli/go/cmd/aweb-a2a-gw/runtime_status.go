@@ -35,6 +35,7 @@ const (
 	registryMissingVersion      registryHealthStatus = "missing_version"
 	registryVersionBelowMinimum registryHealthStatus = "version_below_minimum"
 	registryResponseUnreadable  registryHealthStatus = "response_unreadable"
+	registryResponseTooLarge    registryHealthStatus = "response_too_large"
 	registryResponseMalformed   registryHealthStatus = "response_malformed"
 )
 

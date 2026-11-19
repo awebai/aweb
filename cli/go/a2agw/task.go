@@ -141,7 +141,7 @@ const (
 )
 
 // replyArtifactName distinguishes an input question from an answer while
-// retaining the completed reply's artifact name (docs/a2a.md:1036-1038).
+// retaining the completed reply's artifact name (docs/a2a.md:1035-1037).
 func replyArtifactName(state taskState) string {
 	if state == taskInputRequired {
 		return string(questionArtifact)
