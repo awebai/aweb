@@ -24,8 +24,8 @@ from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 def _parse_uuid(value: str, *, field: str) -> str:
     try:
         return str(UUID(str(value).strip()))
-    except Exception:
-        raise ValueError(f"Invalid {field} format")
+    except ValueError as exc:
+        raise ValueError(f"Invalid {field} format") from exc
 
 
 class CreateSessionRequest(BaseModel):
