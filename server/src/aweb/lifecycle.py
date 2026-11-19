@@ -30,6 +30,7 @@ from .events import (
 )
 from .identity_scope import normalize_identity_scope
 from .member_status import MemberStatus
+from .grant_liveness_policy import GrantLivenessFailurePolicy
 from .lifecycle_agent import (
     AgentDisposition,
     AgentDispositionConflict,
@@ -563,6 +564,7 @@ async def _load_lifecycle_targets(
             workspace_ids=[str(row["workspace_id"]) for row in workspaces],
             registry_client=registry_client,
             request=request_context,
+            failure_policy=GrantLivenessFailurePolicy.REQUIRE_KNOWN,
         )
         for workspace_id, observation in activity.items():
             if observation.is_newer_than(cutoff=request.stale_before):
