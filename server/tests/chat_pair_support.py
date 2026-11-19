@@ -27,8 +27,6 @@ from aweb.testing import running_server
 from aweb_naapp_testing.network import DnsServer
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.registry import RegistryClient
-from awid.dns_verify import verify_domain
-from awid_service.deps import get_domain_verifier
 from awid.signing import canonical_json_bytes, sign_message
 from awid_service.testing import running_registry
 from test_messages_http import (
@@ -136,7 +134,6 @@ async def route_pair(test_db_factory, monkeypatch):
             dns_server.records[(f"_awid.{domain}", "TXT")] = [
                 f'"awid=v1;controller={team_did};registry={registry_origin}"',
             ]
-            registry.app.dependency_overrides[get_domain_verifier] = lambda: verify_domain
             await registry.add_team(
                 team_id,
                 team_did,

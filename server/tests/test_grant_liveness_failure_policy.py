@@ -22,7 +22,9 @@ class CandidateRows:
 
 
 class UnavailableRevocationReader:
-    async def get_team_revocations(self, domain, name):
+    async def get_team_revocations_for_certificates(
+        self, domain, name, certificate_ids, *, fresh=False
+    ):
         raise RegistryError("unit upstream unavailable", status_code=503)
 
 
