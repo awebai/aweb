@@ -421,3 +421,37 @@ async def test_concurrent_terminal_disposition_cannot_be_restored_by_prepared_re
         if prepared_task is not None and not prepared_task.done():
             prepared_task.cancel()
             await asyncio.gather(prepared_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_omitted_team_retry_uses_retained_workspace_team_binding(
+    aweb_cloud_db, lifecycle_redis
+):
+    """A released embedding retry stays scoped after its workspace is deleted."""
+    db = aweb_cloud_db.aweb_db
+    team, agent, workspace = await _seed_workspace_with_claim(db)
+    await db.execute(
+        "UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE workspace_id=$1", workspace
+    )
+    result = await apply_lifecycle_cascade(
+        db,
+        lifecycle_redis,
+        LifecycleCascadeRequest(
+            operation="cleanup_agent_coordination_state",
+            actor=LifecycleActor(actor_id="owner", actor_type="system", authority="embedding"),
+            target_workspace_ids=(str(workspace),),
+        ),
+    )
+    assert result.errors == ()
+    assert result.workspace_changes == ()
+    assert result.identity_deleted is False
+    assert (
+        await db.fetch_value("SELECT deleted_at FROM {{tables.agents}} WHERE agent_id=$1", agent)
+        is None
+    )
+    assert (
+        await db.fetch_value(
+            "SELECT team_id FROM {{tables.workspaces}} WHERE workspace_id=$1", workspace
+        )
+        == team
+    )

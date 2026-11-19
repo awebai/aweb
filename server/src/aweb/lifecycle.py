@@ -581,7 +581,12 @@ async def _load_lifecycle_targets(
         else (agent["team_id"] if agent is not None else None)
     )
     if team_id is None:
-        workspace_teams = {str(workspace["team_id"]) for workspace in workspaces}
+        # Retained rows also bind an idempotent retry after workspace removal.
+        bindings = await db.fetch_all(
+            "SELECT DISTINCT team_id FROM {{tables.workspaces}} WHERE workspace_id=ANY($1::uuid[])",
+            _workspace_id_values(request.target_workspace_ids),
+        )
+        workspace_teams = {str(binding["team_id"]) for binding in bindings}
         if len(workspace_teams) == 1:
             team_id = workspace_teams.pop()
     if not isinstance(team_id, str) or not team_id.strip():
