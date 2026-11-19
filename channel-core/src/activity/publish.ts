@@ -4,7 +4,7 @@ import { APIClient, APIError } from "../api/client.js";
 import type { PublishOutcome } from "./emitter.js";
 import type { SignedActivity } from "./event.js";
 
-export const ACTIVITY_PATH = "/v1/agents/me/activity";
+const ACTIVITY_PATH = "/v1/agents/me/activity";
 const RATE_WINDOW_SECONDS = 5;
 
 // The route answers a session the caller cannot see with the shared resource

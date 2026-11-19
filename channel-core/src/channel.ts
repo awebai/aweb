@@ -29,7 +29,7 @@ import {
 
 export const DEFAULT_PIN_STORE_PATH = join(homedir(), ".config", "aw", "known_agents.yaml");
 export const DEFAULT_DELIVERY_STORE_PATH = join(homedir(), ".config", "aw", "channel-delivered-ids.json");
-export const DEFAULT_UNDELIVERED_LOG_PATH = join(homedir(), ".config", "aw", "channel-undelivered.jsonl");
+const DEFAULT_UNDELIVERED_LOG_PATH = join(homedir(), ".config", "aw", "channel-undelivered.jsonl");
 const MAX_DISPATCHED_IDS = 2000;
 const MAX_DELIVERED_IDS = 5000;
 const DELIVERED_IDS_TTL_MS = 24 * 60 * 60 * 1000;
@@ -1245,7 +1245,7 @@ export function trustWarningLine(status: VerificationStatus | undefined): string
 
 // MAIL_THREAD_TEACHING is the one wording every mail surface uses: a thread
 // is a conversation, continued by reply.
-export const MAIL_THREAD_TEACHING =
+const MAIL_THREAD_TEACHING =
   "Answer in the conversation: aw mail reply <message_id>. Start a new thread only for a new topic: aw mail send --to <recipient> --subject <subject>.";
 
 function awakeningClosingLine(kind: ChannelAwakening["kind"]): string {

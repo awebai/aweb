@@ -605,11 +605,11 @@ export function parseAwidTXTRecord(record: string, dnsName: string): DomainAutho
   };
 }
 
-export function awidTXTName(domain: string): string {
+function awidTXTName(domain: string): string {
   return `_awid.${canonicalizeDomain(domain)}`;
 }
 
-export function candidateDomainsForLookup(domain: string): string[] {
+function candidateDomainsForLookup(domain: string): string[] {
   const canonical = canonicalizeDomain(domain);
   if (!canonical) return [];
   const labels = canonical.split(".");
@@ -623,7 +623,7 @@ export function candidateDomainsForLookup(domain: string): string[] {
   return out;
 }
 
-export function registeredDomainBoundary(domain: string): string {
+function registeredDomainBoundary(domain: string): string {
   return canonicalizeDomain(getDomain(domain) || domain);
 }
 
