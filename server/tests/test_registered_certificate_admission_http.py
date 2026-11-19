@@ -48,8 +48,9 @@ async def test_newly_admitted_global_human_connects_behind_warm_strict_list(
         env.registry_app.dependency_overrides[get_domain_verifier] = lambda: exact_dns
         monkeypatch.setenv("AWID_REGISTRY_URL", origin)
         monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
-        cached = _build_awid_registry_client(env.app, redis=env.redis, transport=transport)
-        object.__setattr__(cached, "_domain_verifier", exact_dns)
+        cached = _build_awid_registry_client(
+            env.app, redis=env.redis, transport=transport, domain_verifier=exact_dns
+        )
         env.app.state.awid_registry_client = cached
         try:
             await writer.register_did(ALICE["did_key"], bytes.fromhex(ALICE["seed_hex"]))
@@ -68,12 +69,6 @@ async def test_newly_admitted_global_human_connects_behind_warm_strict_list(
                 signer=_fixture_signer("alice"),
                 expected_head=None,
                 invitation_id=None,
-            )
-            # Namespace authority for the existing fixture team, not the ID-tree domain.
-            await env.registry_db.execute(
-                "INSERT INTO {{tables.dns_namespaces}} (domain, controller_did, verification_status) "
-                "VALUES ('example.test', $1, 'verified')",
-                env.team_did,
             )
             before = await cached.list_team_certificates(
                 "example.test", TEAM_NAME, active_only=False

@@ -1,7 +1,7 @@
 """Frozen S4 contact-trust case through real AWID/aweb HTTP and Postgres.
 
 The existing privacy fixture supplies disposable apps, databases and Redis.
-Only initial namespace/contact state is provisioned directly. Address replacement,
+Only initial contact state is provisioned directly. Namespace enrollment, address replacement,
 resolution, request authentication and explicit contact binding use real routes.
 """
 
@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from awid.signing import canonical_json_bytes, sign_message
+from nacl.signing import SigningKey
 from aweb.federation.activation import build_federation_authority_activation
 from aweb.messaging.contacts import add_contact, has_exact_active_identity_contact
 from test_cli_never_grants import registry_listener
@@ -32,7 +33,7 @@ assert len(_CASES) == 1, "S4 must consume the frozen operation case by name"
 @pytest.mark.parametrize("case", _CASES, ids=lambda case: case["name"])
 async def test_address_replacement_does_not_transfer_contact_trust(privacy_app, monkeypatch, case):
     env = privacy_app
-    domain, name = "example.test", "responsible-human"
+    domain, name = "contact-replacement.test", "responsible-human"
     address = f"{domain}/{name}"
     owner_did = env.actors["bob"].did
     root = _VECTORS["keys"]["root"]
@@ -55,22 +56,12 @@ async def test_address_replacement_does_not_transfer_contact_trust(privacy_app, 
                 bytes.fromhex(identity["seed_hex"]),
             )
             assert registered.did_aw == identity["did_aw"]
-        namespace_id = await env.registry_db.fetch_val(
-            """INSERT INTO {{tables.dns_namespaces}}
-               (domain, controller_did, verification_status, last_verified_at,
-                default_delivery_origin)
-               VALUES ($1, $2, 'verified', clock_timestamp(), $3)
-               RETURNING namespace_id""",
-            domain,
-            root["did_key"],
-            str(env.client.base_url).rstrip("/"),
+        await env.registry.ensure_namespace(domain=domain, controller=SigningKey(root_seed))
+        await registry.update_namespace_delivery_origin(
+            domain, root_seed, str(env.client.base_url).rstrip("/")
         )
-        await env.registry_db.execute(
-            """INSERT INTO {{tables.public_addresses}} (namespace_id, name, did_aw)
-               VALUES ($1, $2, $3)""",
-            namespace_id,
-            name,
-            old["did_aw"],
+        await registry.register_address(
+            domain, name, old["did_aw"], root_seed, current_did_key=old["did_key"]
         )
         contact = await add_contact(
             env.infra,
