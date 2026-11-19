@@ -12,6 +12,7 @@ from aweb.messaging.mail_storage import (
     MailAttestation,
     mail_content_for_storage,
     store_mail,
+    StoredMail,
 )
 from dataclasses import dataclass
 from aweb.messaging.recipient import Recipient
@@ -933,6 +934,11 @@ async def _continuation_signature_recipient(
     return {**recipient, "did_aw": stable, "did_key": signed_key, "address": address}
 
 
+async def _commit_mail_continuation(db, *, message: MailStorageInput) -> StoredMail:
+    """Store the thread's next message before its post-commit notification."""
+    return await store_mail(db, message=message)
+
+
 async def send_mail_conversation_continuation(
     runtime: MessagingRuntime,
     payload: SendMessageRequest,
@@ -1080,7 +1086,7 @@ async def send_mail_conversation_continuation(
     _require_fresh_mail_attestation(payload)
     try:
         with agent_wake_scope(runtime.agent_wake_publisher):
-            message_id, server_received_at = await store_mail(
+            message_id, server_received_at = await _commit_mail_continuation(
                 db,
                 message=MailStorageInput(
                     sender=MailSender(
