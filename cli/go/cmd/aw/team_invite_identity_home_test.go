@@ -207,9 +207,18 @@ func TestSelectedIdentityControllerInviteAndAcceptRoundTrip(t *testing.T) {
 			const team = "backend:acme.com"
 			_, controller, _ := ed25519.GenerateKey(nil)
 			writeTeamKeyForTest(t, userHome, "acme.com", "backend", controller)
-			var registrations, assertions atomic.Int32
+			var registrations, assertions, enrollmentReads atomic.Int32
 			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/did/"+stable+"/key":
+					enrollmentReads.Add(1)
+					if err := json.NewEncoder(w).Encode(map[string]any{
+						"did_aw":          stable,
+						"current_did_key": did,
+						"id_tree":         map[string]any{"enrolled": false},
+					}); err != nil {
+						t.Error(err)
+					}
 				case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/certificates"):
 					var payload struct {
 						Certificate string `json:"certificate"`
@@ -283,6 +292,9 @@ func TestSelectedIdentityControllerInviteAndAcceptRoundTrip(t *testing.T) {
 			run("id", "team", "accept-invite", invite.Token, "--name", "alice", "--global", "--no-address", "--json")
 			if registrations.Load() != 1 || assertions.Load() != 1 {
 				t.Fatalf("registrations=%d assertions=%d", registrations.Load(), assertions.Load())
+			}
+			if enrollmentReads.Load() != 1 {
+				t.Fatalf("selected inviter enrollment reads=%d, want 1", enrollmentReads.Load())
 			}
 			keyAfter, err := awid.LoadSigningKey(filepath.Join(selectedRoot, "signing.key"))
 			if err != nil || !reflect.DeepEqual(keyAfter, selectedKey) {
