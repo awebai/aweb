@@ -34,7 +34,7 @@ async def test_human_parented_person_enrolls_approves_and_refreshes_a_reissued_c
             "type": "aweb.id-certificate",
             "id": person,
             "domain": holder.store.descriptor().domain,
-            "parent": {"kind": "human", "id": parent["identity"]},
+            "parent": {"kind": "identity", "id": parent["identity"]},
             "kind": "human",
             "issuer_key": parent["key"],
             "issued_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
