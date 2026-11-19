@@ -32,11 +32,17 @@ def identity_recipient(row: Mapping[str, Any], address: str | None = None) -> di
         recipient["team_id"] = None
     if address is not None:
         recipient["address"] = address or None
-        recipient["alias"] = address.split("/", 1)[-1] if address else (recipient.get("did_aw") or recipient.get("did_key"))
+        recipient["alias"] = (
+            address.split("/", 1)[-1]
+            if address
+            else (recipient.get("did_aw") or recipient.get("did_key"))
+        )
     return recipient
 
 
-async def local_recipient_for_address_binding(db, resolution: Any, address: str) -> dict | None:
+async def local_recipient_for_address_binding(
+    db, resolution: Any, address: str
+) -> dict | None:
     """Find residence for an independently admitted address identity.
 
     The registry supplies the canonical DID and current signature key. A local
@@ -52,7 +58,8 @@ async def local_recipient_for_address_binding(db, resolution: Any, address: str)
         WHERE did_aw=$1 AND deleted_at IS NULL
         ORDER BY agent_id
         LIMIT 1
-        """, resolution.did_aw,
+        """,
+        resolution.did_aw,
     )
     if row is None:
         return None
@@ -74,7 +81,9 @@ def refuse_same_origin_nonresident(delivery_origin: str, *, origins: set[str]) -
         raise RecipientNotResidentError()
 
 
-async def local_recipient_for_own_route(db, route: Mapping[str, Any], runtime: MessagingRuntime) -> dict | None:
+async def local_recipient_for_own_route(
+    db, route: Mapping[str, Any], runtime: MessagingRuntime
+) -> dict | None:
     """Classify a stored/refreshed route before forwarding or persisting it.
 
     The stored route supplies identity, never current-key evidence. Residence
@@ -86,13 +95,15 @@ async def local_recipient_for_own_route(db, route: Mapping[str, Any], runtime: M
     did = str(route.get("did_aw") or route.get("did") or route.get("did_key") or "")
     if did.startswith("did:aw:"):
         recipient = await local_recipient_for_address_binding(
-            db, SimpleNamespace(did_aw=did, current_did_key=None),
+            db,
+            SimpleNamespace(did_aw=did, current_did_key=None),
             str(route.get("address") or ""),
         )
     else:
         # A did:key return route is already an established participant; this
         # does not create bare-key first-contact authority.
         from aweb.messaging.messages import resolve_agent_by_did
+
         recipient = await resolve_agent_by_did(db, did)
     if recipient is None:
         refuse_same_origin_nonresident(origin, origins=runtime.public_origins)
@@ -105,15 +116,21 @@ async def local_recipient_for_own_route(db, route: Mapping[str, Any], runtime: M
         except Exception as exc:
             mismatch = isinstance(exc, RegistryError) and exc.status_code == 404
             if not mismatch:
-                logging.getLogger(__name__).warning("Own-route recipient binding unavailable", exc_info=True)
+                logging.getLogger(__name__).warning(
+                    "Own-route recipient binding unavailable", exc_info=True
+                )
             raise HTTPException(
                 status_code=403 if mismatch else 503,
-                detail="identity_binding_mismatch" if mismatch else "identity_binding_unavailable",
+                detail="identity_binding_mismatch"
+                if mismatch
+                else "identity_binding_unavailable",
             ) from exc
         address = str(route.get("address") or "")
         binding = await observe_current_identity_binding(
-            runtime.registry_client, runtime.identity_binding_cache,
-            did_key=resolution.current_did_key, did_aw=did,
+            runtime.registry_client,
+            runtime.identity_binding_cache,
+            did_key=resolution.current_did_key,
+            did_aw=did,
             address=address if "/" in address else "",
         )
         recipient["did_key"] = binding.did_key
@@ -156,13 +173,19 @@ async def namespace_uses_home_registry(db, registry_client, domain: str) -> bool
     if registry_client is None or not await namespace_exists(db, domain):
         return False
     try:
-        if await registry_client.registry_audience(domain) != canonical_server_origin(registry_client.registry_url):
+        if await registry_client.registry_audience(domain) != canonical_server_origin(
+            registry_client.registry_url
+        ):
             return False
         namespace = await registry_client.get_namespace_fresh(domain)
     except AWID_DEPENDENCY_ERRORS as exc:
-        logging.getLogger(__name__).warning("Messaging home namespace lookup unavailable for %s", domain, exc_info=True)
+        logging.getLogger(__name__).warning(
+            "Messaging home namespace lookup unavailable for %s", domain, exc_info=True
+        )
         raise FederationAuthorityError("sender_registry_unavailable") from exc
     return bool(
-        namespace and namespace.domain == domain
-        and namespace.verification_status == "verified" and namespace.controller_did
+        namespace
+        and namespace.domain == domain
+        and namespace.verification_status == "verified"
+        and namespace.controller_did
     )
