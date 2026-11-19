@@ -7,6 +7,7 @@ module does not create an app, pool, transport, DNS override or bypass route.
 
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from pathlib import Path
 from uuid import UUID
 
@@ -16,6 +17,12 @@ from pgdbm.migrations import AsyncMigrationManager, Migration
 
 class LegacyNamespacePreparationError(RuntimeError):
     """The isolated schema cannot reproduce the requested historical origin."""
+
+
+class HistoricalNamespaceVerification(StrEnum):
+    """Persisted namespace status written by the pre-010 registration route."""
+
+    VERIFIED = "verified"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -107,7 +114,7 @@ async def _write_pre010_namespaces(
                 record.namespace_id,
                 record.domain,
                 record.controller_did,
-                "verified",
+                HistoricalNamespaceVerification.VERIFIED.value,
                 record.default_delivery_origin,
                 record.registered_at,
                 record.registered_at,
@@ -120,7 +127,8 @@ async def prepare_legacy_namespace_upgrade(
     """Populate pre-010 history and upgrade it before the test app starts.
 
     docs/awid-sot.md:1487-1523 requires the real ordered files/checksum ledger;
-    docs/id-certificates.md:599-606 forbids guessed pre-upgrade root history.
+    docs/id-certificates.md#key-rotation-and-re-sign states:
+    "No pre-upgrade namespace history is guessed."
     The existing registry fixture owns the database and serving lifecycle.
     Failure leaves that disposable schema for diagnosis; nothing is cleared.
     """

@@ -1,5 +1,7 @@
 """Real published migrations must not manufacture legacy namespace authority."""
 
+import hashlib
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -10,9 +12,11 @@ from awid.did import did_from_public_key, generate_keypair
 from awid_service.testing_migrations import (
     HistoricalNamespace,
     LegacyNamespacePreparationError,
+    _check_historical_namespaces,
+    _legacy_migration_prefix,
     prepare_legacy_namespace_upgrade,
 )
-from pgdbm.migrations import AsyncMigrationManager
+from pgdbm.migrations import AsyncMigrationManager, Migration
 
 
 def historical_namespaces():
@@ -114,12 +118,97 @@ async def test_preparation_refuses_an_existing_schema_without_changing_its_rows(
 
 
 def test_historical_namespace_requires_an_explicit_timezone():
-    with pytest.raises(
-        ValueError, match="Supply a timezone-aware historical timestamp"
-    ):
+    with pytest.raises(ValueError) as refusal:
         HistoricalNamespace(
             namespace_id=UUID(int=1),
             domain="example.test",
             controller_did=historical_namespaces()[0].controller_did,
             registered_at=datetime(2026, 9, 1),
         )
+    assert str(refusal.value) == "Supply a timezone-aware historical timestamp."
+
+
+def invalid_histories():
+    first, second = historical_namespaces()
+    return [
+        pytest.param(
+            (),
+            "Supply at least one historical namespace to upgrade.",
+            id="empty",
+        ),
+        pytest.param(
+            (first, replace(second, domain=first.domain)),
+            "Supply each historical namespace domain only once.",
+            id="duplicate-domain",
+        ),
+        pytest.param(
+            (first, replace(second, namespace_id=first.namespace_id)),
+            "Supply a distinct UUID for each historical namespace.",
+            id="duplicate-uuid",
+        ),
+    ]
+
+
+@pytest.mark.parametrize(("records", "message"), invalid_histories())
+def test_historical_input_refusals_give_exact_actionable_advice(records, message):
+    with pytest.raises(ValueError) as refusal:
+        _check_historical_namespaces(records)
+    assert str(refusal.value) == message
+
+
+def test_distinct_historical_namespaces_with_aware_timestamps_are_accepted():
+    records = historical_namespaces()
+    assert len({record.namespace_id for record in records}) == 2
+    assert len({record.domain for record in records}) == 2
+    assert all(record.registered_at.utcoffset() is not None for record in records)
+    _check_historical_namespaces(records)
+
+
+def published_migrations():
+    return [
+        Migration(
+            filename=path.name,
+            checksum=hashlib.sha256(path.read_bytes()).hexdigest(),
+            content=path.read_text(),
+        )
+        for path in sorted(
+            (Path(awid_service.__file__).parent / "migrations").glob("*.sql")
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "malform",
+    [
+        pytest.param(lambda files: files[:10], id="missing-boundary"),
+        pytest.param(lambda files: [files[1], files[0], *files[2:]], id="wrong-order"),
+        pytest.param(
+            lambda files: [
+                *files[:9],
+                files[9].model_copy(update={"filename": "010_wrong_boundary.sql"}),
+                *files[10:],
+            ],
+            id="wrong-010-file",
+        ),
+        pytest.param(
+            lambda files: [
+                *files[:10],
+                files[10].model_copy(update={"filename": "011_wrong_boundary.sql"}),
+                *files[11:],
+            ],
+            id="wrong-011-file",
+        ),
+    ],
+)
+def test_malformed_migration_prefix_gives_exact_restore_instruction(malform):
+    with pytest.raises(LegacyNamespacePreparationError) as refusal:
+        _legacy_migration_prefix(malform(published_migrations()))
+    assert str(refusal.value) == (
+        "The published namespace migration boundary is unavailable. "
+        "Restore the registry's complete immutable 001 through 011 migration files."
+    )
+
+
+def test_published_migration_prefix_preserves_its_actual_files():
+    files = published_migrations()
+    assert _legacy_migration_prefix(files) == tuple(files[:11])
