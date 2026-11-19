@@ -670,7 +670,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if identityExists {
-		teamOut, err := runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope, selector)
+		teamOut, err := runTeamHumanCreateForExistingIdentity(existingIdentityTeamCreation{Founding: namespaceTeamFounding{WorkingDir: wd, Name: teamName, CreatorAlias: alias, DisplayName: strings.TrimSpace(teamHumanCreateDisplayName), CreatorScope: awid.IdentityScope(firstAgentScope)}, Profile: selector})
 		if err != nil {
 			return err
 		}
@@ -721,7 +721,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HomeDir: wd, Selector: selector, HumanOutput: &out}, rosterSpecs)
 	}
 	if !initShouldUseImplicitLocalFlow(registryURL) {
-		guidedResult, err := runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, strings.TrimSpace(teamHumanCreateUsername), alias, firstAgentScope)
+		guidedResult, err := runTeamHumanCreateHostedInitBundle(hostedTeamCreation{WorkingDir: wd, AwebURL: awebURL, RegistryURL: registryURL, Username: strings.TrimSpace(teamHumanCreateUsername), Alias: alias, Scope: awid.IdentityScope(firstAgentScope)})
 		if err != nil {
 			return err
 		}
@@ -1003,25 +1003,34 @@ func teamCreateHasIdentityMaterial(workingDir string) (bool, error) {
 	return false, nil
 }
 
-func runTeamHumanCreateHostedInitBundle(wd, awebURL, registryURL, username, alias, firstAgentScope string) (*guidedOnboardingResult, error) {
+type hostedTeamCreation struct {
+	WorkingDir  string
+	AwebURL     string
+	RegistryURL string
+	Username    string
+	Alias       string
+	Scope       awid.IdentityScope
+}
+
+func runTeamHumanCreateHostedInitBundle(input hostedTeamCreation) (*guidedOnboardingResult, error) {
 	canPrompt := initIsTTY() && !jsonFlag
 	askPostCreateSetup := canPrompt && !initHasExplicitOnboardingArgs()
-	firstAgentGlobal := firstAgentScope == awid.IdentityModeGlobal
-	requestAlias := alias
+	firstAgentGlobal := input.Scope == awid.IdentityScopeGlobal
+	requestAlias := input.Alias
 	requestName := ""
 	if firstAgentGlobal {
 		requestAlias = ""
-		requestName = alias
+		requestName = input.Alias
 	}
 	req := guidedOnboardingRequest{
-		WorkingDir:         wd,
+		WorkingDir:         input.WorkingDir,
 		PromptIn:           os.Stdin,
 		PromptOut:          os.Stderr,
-		BaseURL:            awebURL,
-		RegistryURL:        registryURL,
+		BaseURL:            input.AwebURL,
+		RegistryURL:        input.RegistryURL,
 		ServerName:         serverFlag,
 		BYOD:               false,
-		Username:           strings.TrimSpace(firstNonEmptyLibraryValue(username, initUsername)),
+		Username:           strings.TrimSpace(firstNonEmptyLibraryValue(input.Username, initUsername)),
 		Domain:             strings.TrimSpace(initDomain),
 		Alias:              requestAlias,
 		Name:               requestName,
@@ -1055,11 +1064,16 @@ func resolveTeamHumanCreateFirstAgentScope() (string, error) {
 	return awid.IdentityModeLocal, nil
 }
 
-func runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope string, selector *libraryProfileSelector) (*teamCreateOutput, error) {
-	if selector != nil {
+type existingIdentityTeamCreation struct {
+	Founding namespaceTeamFounding
+	Profile  *libraryProfileSelector
+}
+
+func runTeamHumanCreateForExistingIdentity(input existingIdentityTeamCreation) (*teamCreateOutput, error) {
+	if input.Profile != nil {
 		return nil, usageError("aw team admin create --profile for an existing identity is not supported yet; use aw team admin add NAME@BLUEPRINT/PROFILE after creating the team")
 	}
-	return foundTeamWithNamespaceControllerAuthority(namespaceTeamFounding{WorkingDir: wd, Name: teamName, CreatorAlias: alias, DisplayName: strings.TrimSpace(teamHumanCreateDisplayName), CreatorScope: awid.IdentityScope(firstAgentScope)})
+	return foundTeamWithNamespaceControllerAuthority(input.Founding)
 }
 
 type namespaceTeamFounding struct {
