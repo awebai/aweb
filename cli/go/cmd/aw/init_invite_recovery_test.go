@@ -4,12 +4,56 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
+
+func TestInitJoinFromUnreadableMembershipKeepsRecovery(t *testing.T) {
+	resetTeamHumanCreateGlobals(t)
+	oldName, oldGlobal := initName, initGlobal
+	t.Cleanup(func() { initName, initGlobal = oldName, oldGlobal })
+	initName, initGlobal = "child", false
+	t.Setenv("HOME", t.TempDir())
+	wd := t.TempDir()
+	home := filepath.Join(wd, ".aw")
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(home, "signing.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(home, initInviteRecoveryFile)
+	state := &initInviteRecovery{MintedKey: true, ParentFromSource: true, Source: "/source", TeamID: "backend:example.com", Alias: "child", Scope: "local", Token: "aw_inv_DO_NOT_PRINT", Origin: "https://fixture.invalid", ExpiresAt: time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), DIDKey: awid.ComputeDIDKey(pub)}
+	if err := state.save(path); err != nil {
+		t.Fatal(err)
+	}
+	certPath := awconfig.TeamCertificatePath(wd, state.TeamID)
+	if err := os.MkdirAll(filepath.Dir(certPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certPath, []byte("broken certificate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".lock", nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotJoinFiles(t, home)
+	var out bytes.Buffer
+	err = runRecoverableJoinFrom(authTestCmd(&out), wd, state.Source, "", state.TeamID)
+	if err == nil || !strings.Contains(err.Error(), "load init retry membership") || strings.Contains(err.Error()+out.String(), state.Token) {
+		t.Fatalf("unreadable membership was treated as absent: %v", err)
+	}
+	after := snapshotJoinFiles(t, home)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("unreadable membership released recovery: before=%v after=%v", before, after)
+	}
+}
 
 func TestInitJoinFromExpiredRecovery(t *testing.T) {
 	for _, submitted := range []bool{false, true} {
