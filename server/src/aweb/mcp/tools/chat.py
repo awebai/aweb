@@ -56,6 +56,7 @@ from aweb.mcp.tools.federation import (
 from aweb.mcp.tools.refusals import CONVERSATION_CHANGED_DURING_SEND, send_refusal
 from aweb.messaging.chat_send import (
     ChatSessionChanged,
+    ChatSessionSelection,
     resolve_actor_agent,
     resolve_chat_targets,
     send_chat,
@@ -361,7 +362,7 @@ async def _resolve_chat_target_for_tool(
             selector,
             runtime,
             source,
-            reuse_or_create=True,
+            session_selection=ChatSessionSelection.REUSE_PAIR,
             recipient_binding=recipient_binding,
         )
     return await resolve_chat_targets(

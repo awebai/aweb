@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from aweb.messaging.mail_storage import (
     MailIdAvailability,
     MailStorageInput,
@@ -17,7 +18,7 @@ from aweb.messaging.mail_storage import (
 from dataclasses import dataclass
 from aweb.messaging.recipient import Recipient
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import asyncpg
@@ -1280,7 +1281,7 @@ def _recipient_identity_matches(left: dict | None, right: dict | None) -> bool:
     return bool(left_did and right_did and left_did == right_did)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class MailTarget:
     """Where a mail send goes: the recipient of a first message, or the stored conversation it continues."""
 
@@ -1290,11 +1291,26 @@ class MailTarget:
     to_alias: str | None = None
     continuation: MailContinuationContext | None = None
 
-    def __post_init__(self) -> None:
-        if self.recipient is not None:
-            object.__setattr__(
-                self, "recipient", Recipient.from_delivery_projection(self.recipient)
-            )
+    def __init__(
+        self,
+        *,
+        recipient: Mapping[str, Any] | None = None,
+        recipient_did: str = "",
+        to_agent_id: str | None = None,
+        to_alias: str | None = None,
+        continuation: MailContinuationContext | None = None,
+    ) -> None:
+        object.__setattr__(
+            self,
+            "recipient",
+            Recipient.from_delivery_projection(recipient)
+            if recipient is not None
+            else None,
+        )
+        object.__setattr__(self, "recipient_did", recipient_did)
+        object.__setattr__(self, "to_agent_id", to_agent_id)
+        object.__setattr__(self, "to_alias", to_alias)
+        object.__setattr__(self, "continuation", continuation)
 
 
 async def resolve_mail_target(

@@ -117,6 +117,8 @@ def test_explicit_residence_is_independent_of_missing_actor_and_route():
     assert identity.agent_id is None and remote.agent_id is None
     assert identity.delivery_origin is None and remote.delivery_origin is None
     assert not identity["external"] and remote["external"]
+    with pytest.raises(TypeError, match="named RecipientResidence"):
+        Recipient(residence="local")
 
 
 def test_invalid_agent_selector_ends_with_roster_recovery_action():

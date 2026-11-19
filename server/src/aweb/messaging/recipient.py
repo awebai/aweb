@@ -56,6 +56,20 @@ class Recipient(Mapping[str, Any]):
     local_resolved: bool = False
     policy_recipients: tuple[Recipient, ...] = ()
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.residence, RecipientResidence):
+            raise TypeError("Recipient residence requires a named RecipientResidence")
+        object.__setattr__(
+            self,
+            "policy_recipients",
+            tuple(
+                item
+                if isinstance(item, Recipient)
+                else Recipient.from_local_projection(item)
+                for item in self.policy_recipients
+            ),
+        )
+
     @classmethod
     def from_delivery_projection(cls, row: Mapping[str, Any]) -> Recipient:
         """Capture a resolver's explicit residence flag, never infer it from IDs."""
