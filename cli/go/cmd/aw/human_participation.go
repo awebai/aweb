@@ -304,7 +304,7 @@ func runHumanConnect(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	url := firstNonEmpty(initAwebURL, initURL, m.AwebURL, strings.TrimSpace(os.Getenv("AWEB_URL")))
+	url := humanParticipationServiceURL(humanServiceSelection{AwebURL: initAwebURL, URL: initURL, MembershipURL: m.AwebURL})
 	if url == "" {
 		return usageError("human connect requires --url")
 	}
