@@ -146,9 +146,7 @@ async def resolve_identity_auth(request: Request, *, db=None) -> IdentityAuth:
         )
     if envelope.version == 1:
         count_legacy_request_auth(request, "identity")
-    return IdentityAuth(
-        did_key=did_key, did_aw=did_aw, address=address, address_resolution=outcome
-    )
+    return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address, address_resolution=outcome)
 
 
 async def lookup_identity_agent_context(
@@ -261,9 +259,7 @@ async def current_membership(
         return _without_team_context(row)
     if not certificate_id:
         return row
-    revoked = await revoked_certificates(
-        registry_client, team_id, certificate_ids=[certificate_id]
-    )
+    revoked = await revoked_certificates(registry_client, team_id, certificate_ids=[certificate_id])
     if certificate_id not in revoked:
         decision = await read_certificate_registration(
             registry_client=registry_client,
@@ -338,9 +334,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         did_aw=identity.did_aw,
         request=request,
     )
-    outcome = getattr(
-        request.state, "identity_address_resolution", identity.address_resolution
-    )
+    outcome = getattr(request.state, "identity_address_resolution", identity.address_resolution)
     if outcome.state is AddressResolutionState.UNKNOWN:
         address = outcome.stored_address
     elif row:
@@ -353,9 +347,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         address=address,
         team_id=(row or {}).get("team_id") or None,
         alias=(row or {}).get("alias") or None,
-        agent_id=(
-            str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None
-        ),
+        agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
         identity_scope=(row or {}).get("identity_scope") or None,
         id_chain=getattr(request.state, "id_chain", None),
         address_resolution=outcome,

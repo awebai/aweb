@@ -24,8 +24,7 @@ GRANT_TERMINAL_DETAILS = {
     "grant_expired": "identity grant expired",
     "grant_revoked": "identity grant revoked",
     "grant_subject_inactive": "identity grant subject inactive",
-    "grant_issuer_revoked": "identity grant issuer revoked. "
-    + GRANT_ISSUER_RECOVERY_DETAIL,
+    "grant_issuer_revoked": "identity grant issuer revoked. " + GRANT_ISSUER_RECOVERY_DETAIL,
 }
 
 
@@ -52,18 +51,14 @@ def grant_expiry_reason(identity: TeamIdentity) -> str | None:
     return None
 
 
-async def require_valid_stream_grant(
-    request: Request, db, identity: TeamIdentity
-) -> None:
+async def require_valid_stream_grant(request: Request, db, identity: TeamIdentity) -> None:
     """Check before constructing StreamingResponse, while HTTP errors are legal."""
     reason = await grant_terminal_reason(request, db, identity)
     if reason:
         raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
 
 
-async def grant_terminal_reason(
-    request: Request, db, identity: TeamIdentity
-) -> str | None:
+async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) -> str | None:
     grant = identity.grant
     if grant is None:
         return None
@@ -149,11 +144,7 @@ def allowed_status_categories(identity: TeamIdentity) -> set[str] | None:
     if identity.grant is None:
         return None
     scopes = set(identity.grant.scopes or ())
-    return {
-        category
-        for category, scope in _STATUS_CATEGORY_SCOPE.items()
-        if scope in scopes
-    }
+    return {category for category, scope in _STATUS_CATEGORY_SCOPE.items() if scope in scopes}
 
 
 def status_event_allowed(identity: TeamIdentity, event: dict[str, Any]) -> bool:

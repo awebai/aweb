@@ -58,13 +58,9 @@ def _team_read_failure(
     serve: its members are refused with 403, and that is not a registry fault.
     """
     if is_private_team_refusal(exc) and not serves_team(registry_client, team_id):
-        logger.info(
-            "Refused %s for team %s, which this server does not serve", reading, team_id
-        )
+        logger.info("Refused %s for team %s, which this server does not serve", reading, team_id)
         return team_not_served_exception(team_id, operation=operation)
-    logger.warning(
-        "AWID registry dependency failed for %s: %s", reading, team_id, exc_info=True
-    )
+    logger.warning("AWID registry dependency failed for %s: %s", reading, team_id, exc_info=True)
     return awid_dependency_http_exception(exc, operation=operation, team_id=team_id)
 
 
@@ -105,9 +101,7 @@ async def resolve_team_key(request: Request, team_id: str, *, db: Any = None) ->
             "Unexpected AWID registry dependency error for team key resolution: %s",
             team_id,
         )
-        raise awid_dependency_http_exception(
-            exc, operation="AWID team key resolution"
-        ) from exc
+        raise awid_dependency_http_exception(exc, operation="AWID team key resolution") from exc
 
 
 async def request_revoked_certificates(
@@ -143,9 +137,7 @@ async def revoked_certificates(
     domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
-        raise awid_registry_not_configured_exception(
-            operation="AWID team revocation check"
-        )
+        raise awid_registry_not_configured_exception(operation="AWID team revocation check")
 
     try:
         select = getattr(registry_client, "get_team_revocations_for_certificates", None)
@@ -167,9 +159,7 @@ async def revoked_certificates(
             "Unexpected AWID registry dependency error for revocation check: %s",
             team_id,
         )
-        raise awid_dependency_http_exception(
-            exc, operation="AWID team revocation check"
-        ) from exc
+        raise awid_dependency_http_exception(exc, operation="AWID team revocation check") from exc
 
 
 async def request_registered_certificates(request: Request, team_id: str) -> set[str]:
@@ -190,9 +180,7 @@ async def registered_certificates(
     domain, team_name = member_team_scope(team_id)
 
     if registry_client is None:
-        raise awid_registry_not_configured_exception(
-            operation="AWID certificate existence check"
-        )
+        raise awid_registry_not_configured_exception(operation="AWID certificate existence check")
 
     try:
         if missing_certificate_id is not None:
