@@ -1,22 +1,27 @@
 import json
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+import logging
+from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Annotated
 
-from aweb_naapp.css import font_bytes
-from aweb_naapp.identity_assets import identity_asset, mount_identity_routes
-from aweb_naapp.runtime.team_key_pins import DatabaseTeamKeyPins
+from aweb_naapp.identity_assets import identity_asset
+from aweb_naapp.runtime.app import InstalledMember, NaappRuntime, mount_naapp_routes
+from aweb_naapp.runtime.authorization import DeclaredTool
+from aweb_naapp.runtime.db import ApplyMigrations
+from aweb_naapp.runtime.installation import (
+    InstallationDatabase,
+    InstallationRefused,
+    apply_installation_migrations,
+)
+from aweb_naapp.runtime.team_auth import Principal
 from awid.external_authority import TXTOutcomeResolver
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi import Depends, FastAPI, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from pgdbm import AsyncDatabaseManager
 
 from library import browse, browse_views
-from library.auth import AWIDTeamCache, Principal, authenticate_request
-from library.aweb_manifest import read_manifest_bytes
-from library.build_identity import resolve_build_identity, resolve_render_deployment_identity
+from library.aweb_manifest import MANIFEST_PATH
 from library.config import Settings, get_settings
-from library.db import LibraryDatabase
 from library.models import (
     ImportToShelfRequest,
     MaterializeRequest,
@@ -53,18 +58,19 @@ from library.repository import (
     update_from_source,
 )
 from library.surfaces import (
-    aweb_css,
+    SKILLS,
     llms_txt,
-    read_skill,
     render_landing_page,
     render_reference_page,
-    robots_txt,
-    skills_index,
 )
 
 _OG_CARD = identity_asset("library-card.png")
 assert _OG_CARD is not None
 _OG_CARD_BYTES = _OG_CARD[0]
+
+
+_MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
+_logger = logging.getLogger(__name__)
 
 
 def create_app(
@@ -73,119 +79,73 @@ def create_app(
     """library's app. ``awid_txt_resolver`` answers the ``_awid`` records that
     name who may move a pinned team key (system DNS by default)."""
     resolved = settings or get_settings()
-    build_identity = resolve_build_identity()
-    deployment_identity = resolve_render_deployment_identity()
-    holder: dict[str, object] = {}
+    runtime = NaappRuntime(
+        resolved,
+        module_name="library",
+        migrations_path=_MIGRATIONS_DIR,
+        manifest_path=MANIFEST_PATH,
+        awid_txt_resolver=awid_txt_resolver,
+        stores=(apply_installation_migrations,),
+        schema_preparation=ApplyMigrations(),
+    )
+    app = FastAPI(title="library", version="0.1.0", lifespan=runtime.lifespan)
 
-    @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        database = LibraryDatabase(resolved)
-        await database.connect()
-        holder["db"] = database
-        holder["team_cache"] = AWIDTeamCache(
-            registry_url=resolved.awid_registry_url,
-            ttl_seconds=resolved.auth_cache_ttl_seconds,
-            service_token=resolved.awid_service_token,
-            team_key_pins=DatabaseTeamKeyPins(lambda: database.db),
-            txt_resolver=awid_txt_resolver,
-            enforce_team_key_pins=resolved.enforce_team_key_pins,
+    @app.exception_handler(InstallationRefused)
+    async def installation_refused(_request: Request, error: InstallationRefused) -> JSONResponse:
+        return JSONResponse(
+            status_code=error.status,
+            content={"detail": {"code": error.code, "message": str(error)}},
         )
-        try:
-            yield
-        finally:
-            await database.disconnect()
 
-    app = FastAPI(title="library", version="0.1.0", lifespan=lifespan)
-    mount_identity_routes(app)
-
-    def db() -> AsyncDatabaseManager:
-        database = holder.get("db")
-        if not isinstance(database, LibraryDatabase):
-            raise RuntimeError("library database is not initialized")
-        return database.db
-
-    def team_cache() -> AWIDTeamCache:
-        cache = holder.get("team_cache")
-        if not isinstance(cache, AWIDTeamCache):
-            raise RuntimeError("library auth cache is not initialized")
-        return cache
-
-    async def principal(
-        request: Request,
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
-        cache: Annotated[AWIDTeamCache, Depends(team_cache)],
-    ) -> Principal:
-        return await authenticate_request(request, settings=resolved, team_cache=cache, db=database)
-
-    # --- Public, no-auth surfaces -------------------------------------------------
-
-    @app.get("/", response_class=HTMLResponse)
-    async def landing_route() -> HTMLResponse:
-        # The landing presents the first-party blueprint(s) from the live catalog
-        # with their roles (catalog_view carries each blueprint's profiles). It is
-        # a best-effort enhancement: the front door must render even when the
-        # database is unavailable, so the read is soft.
+    async def landing() -> str:
+        # The front door must render even when the database is unavailable, so
+        # the catalog teaser is a best-effort read.
         blueprints: list[dict] = []
-        database = holder.get("db")
-        if isinstance(database, LibraryDatabase):
+        database = runtime.connected_db()
+        if database is not None:
             try:
-                blueprints = await browse_views.catalog_view(database.db)
+                blueprints = await browse_views.catalog_view(database)
             except Exception:
-                blueprints = []
-        return HTMLResponse(
-            render_landing_page(public_origin=resolved.public_origin, blueprints=blueprints)
-        )
+                _logger.exception("landing catalog read failed")
+        return render_landing_page(public_origin=resolved.public_origin, blueprints=blueprints)
 
-    def _aweb_css_response(immutable: bool) -> Response:
-        # The fingerprinted URL is content-addressed, so it can be cached forever;
-        # the legacy /css/aweb.css keeps a short TTL.
-        cache = "public, max-age=31536000, immutable" if immutable else "public, max-age=3600"
-        return Response(
-            content=aweb_css(),
-            media_type="text/css",
-            headers={"X-Content-Type-Options": "nosniff", "Cache-Control": cache},
-        )
+    mount_naapp_routes(
+        app,
+        runtime=runtime,
+        skills=SKILLS,
+        landing=landing,
+        reference_html=render_reference_page(public_origin=resolved.public_origin),
+        llms_txt=llms_txt(public_origin=resolved.public_origin),
+        og_card_png=_OG_CARD_BYTES,
+    )
+    _mount_browse_routes(app, db=runtime.db, public_origin=resolved.public_origin)
+    _mount_catalog_routes(app, db=runtime.db)
+    installed_member = runtime.installed_member(policy=_member_policy)
 
-    @app.get("/css/aweb.css")
-    async def aweb_css_route() -> Response:
-        return _aweb_css_response(immutable=False)
+    async def member(
+        installed: Annotated[InstalledMember, Depends(installed_member)],
+    ) -> Principal:
+        return installed.principal
 
-    @app.get("/css/aweb.{fingerprint}.css")
-    async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
-        return _aweb_css_response(immutable=True)
+    async def member_db(
+        installed: Annotated[InstalledMember, Depends(installed_member)],
+    ) -> InstallationDatabase:
+        return installed.permit.database()
 
-    @app.get("/og-card.png")
-    async def og_card_route() -> Response:
-        return Response(
-            content=_OG_CARD_BYTES,
-            media_type="image/png",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
+    _mount_member_routes(app, principal=member, db=member_db)
+    return app
 
-    @app.get("/fonts/{font_name}")
-    async def font_route(font_name: str) -> Response:
-        font = font_bytes(font_name)
-        if font is None:
-            raise HTTPException(status_code=404, detail="Font not found")
-        return Response(
-            content=font,
-            media_type="font/woff2",
-            headers={
-                "X-Content-Type-Options": "nosniff",
-                "Cache-Control": "public, max-age=31536000, immutable",
-            },
-        )
 
-    @app.get("/llms.txt", response_class=PlainTextResponse)
-    async def llms_route() -> PlainTextResponse:
-        return PlainTextResponse(
-            llms_txt(public_origin=resolved.public_origin),
-            headers={"X-Content-Type-Options": "nosniff"},
-        )
+async def _member_policy(request: Request, principal: Principal, tool: DeclaredTool) -> bool:
+    """Library's domain rules (ownership, team keys) live in the repository; the
+    runtime admits the declared tools, invocation contexts and installed scopes."""
+    return True
 
-    @app.get("/reference", response_class=HTMLResponse)
-    async def reference_route() -> HTMLResponse:
-        return HTMLResponse(render_reference_page(public_origin=resolved.public_origin))
+
+def _mount_browse_routes(
+    app: FastAPI, *, db: Callable[..., AsyncDatabaseManager], public_origin: str
+) -> None:
+    """The public HTML pages that browse the blueprint catalog."""
 
     @app.get("/blueprints", response_class=HTMLResponse)
     async def browse_catalog_route(
@@ -193,7 +153,7 @@ def create_app(
     ) -> HTMLResponse:
         blueprints = await browse_views.catalog_view(database)
         return HTMLResponse(
-            browse.render_catalog_page(public_origin=resolved.public_origin, blueprints=blueprints)
+            browse.render_catalog_page(public_origin=public_origin, blueprints=blueprints)
         )
 
     @app.get("/blueprints/{blueprint_id}", response_class=HTMLResponse)
@@ -203,7 +163,7 @@ def create_app(
     ) -> HTMLResponse:
         blueprint = await browse_views.blueprint_view(database, blueprint_ref=blueprint_id)
         return HTMLResponse(
-            browse.render_blueprint_page(public_origin=resolved.public_origin, blueprint=blueprint)
+            browse.render_blueprint_page(public_origin=public_origin, blueprint=blueprint)
         )
 
     @app.get("/blueprints/{blueprint_id}/profiles/{profile_id}", response_class=HTMLResponse)
@@ -216,7 +176,7 @@ def create_app(
             database, blueprint_ref=blueprint_id, profile_ref=profile_id
         )
         return HTMLResponse(
-            browse.render_profile_page(public_origin=resolved.public_origin, profile=profile)
+            browse.render_profile_page(public_origin=public_origin, profile=profile)
         )
 
     @app.get(
@@ -232,55 +192,11 @@ def create_app(
         skill = await browse_views.skill_view(
             database, blueprint_ref=blueprint_id, profile_ref=profile_id, skill_name=skill_name
         )
-        return HTMLResponse(
-            browse.render_skill_page(public_origin=resolved.public_origin, skill=skill)
-        )
+        return HTMLResponse(browse.render_skill_page(public_origin=public_origin, skill=skill))
 
-    @app.get("/robots.txt", response_class=PlainTextResponse)
-    async def robots_route() -> PlainTextResponse:
-        return PlainTextResponse(robots_txt(), headers={"X-Content-Type-Options": "nosniff"})
 
-    @app.get("/skills/", response_class=PlainTextResponse)
-    async def skills_index_route() -> PlainTextResponse:
-        return PlainTextResponse(skills_index(), headers={"X-Content-Type-Options": "nosniff"})
-
-    @app.get("/skills/{skill_name}/SKILL.md", response_class=PlainTextResponse)
-    async def skill_route(skill_name: str) -> PlainTextResponse:
-        skill = read_skill(skill_name)
-        if skill is None:
-            raise HTTPException(status_code=404, detail="Skill not found")
-        return PlainTextResponse(skill, headers={"X-Content-Type-Options": "nosniff"})
-
-    async def _manifest_response() -> Response:
-        return Response(
-            content=read_manifest_bytes(resolved.public_origin),
-            media_type="application/json",
-            headers={"X-Content-Type-Options": "nosniff"},
-        )
-
-    # Served at the RFC 8615 well-known path the dispatcher/gateway fetch, plus the
-    # bare path the Library SOT lists. Both return the same raw committed bytes.
-    @app.get("/.well-known/aweb-app.json")
-    async def well_known_manifest_route() -> Response:
-        return await _manifest_response()
-
-    @app.get("/aweb-app.json")
-    async def aweb_app_manifest_route() -> Response:
-        return await _manifest_response()
-
-    @app.get("/health")
-    @app.get("/live")
-    @app.get("/ready")
-    async def health() -> dict[str, object]:
-        payload: dict[str, object] = {
-            "status": "ok",
-            "service": "library",
-            "build": build_identity,
-        }
-        if deployment_identity is not None:
-            payload["deployment"] = deployment_identity
-        return payload
-
+def _mount_catalog_routes(app: FastAPI, *, db: Callable[..., AsyncDatabaseManager]) -> None:
+    """The public JSON catalog: blueprints and their profiles, readable by anyone."""
     # --- Public catalog: blueprints are always public; ?tags filter -------------------
 
     @app.get("/v1/blueprints")
@@ -307,12 +223,20 @@ def create_app(
             database, blueprint_ref=blueprint_id, profile_ref=profile_id
         )
 
+
+def _mount_member_routes(
+    app: FastAPI,
+    *,
+    principal: Callable[..., Awaitable[Principal]],
+    db: Callable[..., Awaitable[InstallationDatabase]],
+) -> None:
+    """The team-scoped routes, each admitted by ``principal``."""
     # --- Team shelf reads (private; cert-gated) -----------------------------------
 
     @app.get("/v1/shelf")
     async def list_shelf_route(
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         return await list_shelf(database, principal=actor)
 
@@ -321,7 +245,7 @@ def create_app(
         profile_id: str,
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         # Default is the lighter summary; ?include=files adds the profile's
         # content (path/content_utf8/sha256) so a consumer can materialize the
@@ -335,7 +259,7 @@ def create_app(
     async def create_shelf_profile_route(
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         body = await request.json()
         return await create_shelf_profile(
@@ -347,7 +271,7 @@ def create_app(
         profile_ref: str,
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         body = await request.json()
         return await create_shelf_version(
@@ -362,7 +286,7 @@ def create_app(
         profile_ref: str,
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         raw = await request.body()
         payload = UpdateFromSourceRequest.model_validate(json.loads(raw) if raw.strip() else {})
@@ -378,7 +302,7 @@ def create_app(
         profile_ref: str,
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         raw = await request.body()
         payload = ProfilePublishRequest.model_validate(json.loads(raw) if raw.strip() else {})
@@ -394,7 +318,7 @@ def create_app(
     async def register_team_route(
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         raw = await request.body()
         payload = TeamRegisterRequest.model_validate(json.loads(raw) if raw.strip() else {})
@@ -408,7 +332,7 @@ def create_app(
     async def publish_blueprint_route(
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         return await publish_blueprint(database, principal=actor, payload=await request.json())
 
@@ -419,7 +343,7 @@ def create_app(
     async def import_to_shelf_route(
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         raw = await request.body()
         payload = ImportToShelfRequest.model_validate(json.loads(raw) if raw.strip() else {})
@@ -437,7 +361,7 @@ def create_app(
         agent_id: str,
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         binding = ProfileBindingRequest.model_validate(await request.json())
         return await set_profile_binding(
@@ -448,7 +372,7 @@ def create_app(
     async def get_profile_binding_route(
         agent_id: str,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         return await get_profile_binding(database, principal=actor, agent_id=agent_id)
 
@@ -456,7 +380,7 @@ def create_app(
     async def materialize_route(
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         materialize_request = MaterializeRequest.model_validate(await request.json())
         return await materialize(database, principal=actor, request=materialize_request)
@@ -467,7 +391,7 @@ def create_app(
         profile_ref: str,
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         payload = SetTagsRequest.model_validate(await request.json())
         return await set_profile_tags(
@@ -479,7 +403,7 @@ def create_app(
         blueprint_ref: str,
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         payload = SetTagsRequest.model_validate(await request.json())
         return await set_blueprint_tags(
@@ -490,7 +414,7 @@ def create_app(
     async def delete_blueprint_route(
         blueprint_ref: str,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         return await delete_blueprint(database, principal=actor, blueprint_ref=blueprint_ref)
 
@@ -498,7 +422,7 @@ def create_app(
     async def delete_shelf_profile_route(
         profile_id: str,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         return await delete_shelf_profile(database, principal=actor, profile_ref=profile_id)
 
@@ -506,7 +430,7 @@ def create_app(
     async def create_proposal_route(
         request: Request,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         payload = ProposalCreateRequest.model_validate(await request.json())
         return await create_proposal(database, principal=actor, request=payload)
@@ -514,7 +438,7 @@ def create_app(
     @app.get("/v1/proposals")
     async def list_proposals_route(
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> list[dict]:
         return await list_proposals(database, principal=actor)
 
@@ -522,7 +446,7 @@ def create_app(
     async def approve_proposal_route(
         proposal_id: str,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         return await approve_proposal(database, principal=actor, proposal_id=proposal_id)
 
@@ -530,11 +454,9 @@ def create_app(
     async def reject_proposal_route(
         proposal_id: str,
         actor: Annotated[Principal, Depends(principal)],
-        database: Annotated[AsyncDatabaseManager, Depends(db)],
+        database: Annotated[InstallationDatabase, Depends(db)],
     ) -> dict:
         return await reject_proposal(database, principal=actor, proposal_id=proposal_id)
-
-    return app
 
 
 app = create_app()

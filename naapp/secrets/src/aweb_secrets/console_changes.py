@@ -41,6 +41,7 @@ from aweb_naapp.runtime.approvals import (
 )
 from aweb_naapp.runtime.approvals.request import RequestNotCanonical, request_sha256
 from aweb_naapp.runtime.credential_audit import GovernanceUnavailable
+from aweb_naapp.runtime.human_member import PrincipalStatusUnavailable
 from aweb_naapp.runtime.installation import AdmittedInstallation, InstallationRefused
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -593,9 +594,8 @@ def console_changes_router(services: ConsoleChanges, *, prefix: str = "") -> API
                 except InstallationRefused:
                     return JSONResponse(applied_receipt)
                 except HTTPException as refused:
-                    if refused.status_code not in {401, 403} and not (
-                        refused.status_code == 503
-                        and refused.detail == "principal_status_unavailable"
+                    if refused.status_code not in {401, 403} and not isinstance(
+                        refused, PrincipalStatusUnavailable
                     ):
                         raise
                     return JSONResponse(applied_receipt, headers=refused.headers)

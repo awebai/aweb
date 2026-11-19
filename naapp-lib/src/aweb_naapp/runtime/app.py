@@ -34,7 +34,7 @@ import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import aclosing, asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from ipaddress import IPv4Network, IPv6Network, ip_address
@@ -98,11 +98,16 @@ from aweb_naapp.runtime.hook_resolver import HookResolver
 from aweb_naapp.runtime.hooks import RuntimeHooks
 from aweb_naapp.runtime.human_member import (
     HumanMemberProof,
+    HumanMemberRefused,
 )
 from aweb_naapp.runtime.human_member import (
     check_human_member as observe_human_member,
 )
-from aweb_naapp.runtime.installation import InstallationFence
+from aweb_naapp.runtime.installation import (
+    InstallationFence,
+    InstallationPermit,
+    InstallationRefused,
+)
 from aweb_naapp.runtime.manifest_hooks import ManifestEvidence, bounded_body, prepare
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -134,6 +139,19 @@ NOINDEX_ROBOTS_HEADER = "noindex, nofollow, noarchive"
 # health routes' own bound on a check, and reports no figure.
 OUTBOX_BACKLOG_READ_TIMEOUT_SECONDS = 2.0
 _NOSNIFF = {"X-Content-Type-Options": "nosniff"}
+
+
+@dataclass(frozen=True)
+class InstalledMember:
+    """A member request admitted by its team's installation grant and by the
+    installation fence, both at the same installation and generation."""
+
+    authorization: Authorization
+    permit: InstallationPermit
+
+    @property
+    def principal(self) -> Principal:
+        return self.authorization.principal
 
 
 class NaappRuntime:
@@ -190,41 +208,13 @@ class NaappRuntime:
         self._registry_client: RegistryClient | None = None
         self._database: NaappDatabase | None = None
         self._attestation_records: AWIDAttestationRecords | None = None
-        template = json.loads(manifest_path.read_bytes())
-        _refuse_the_hosted_app_id_elsewhere(settings, template)
-        self._manifest_bytes = fill_manifest(
-            template,
-            app_id=settings.app_id,
-            origin=settings.public_origin,
-            did_keys=declared_did_keys(settings, template),
+        self._manifest, self._manifest_variants = _published_manifests(
+            settings,
+            json.loads(manifest_path.read_bytes()),
+            owner_acts=owner_acts,
+            owner_acts_origin=owner_acts_origin,
         )
-        self._manifest = load_manifest(self._manifest_bytes)
-        self._manifest_variants = {self._manifest.manifest_version: self._manifest_bytes}
-        if owner_acts is not None:
-            if self._manifest.manifest_version != 2 or not owner_acts_origin:
-                raise ValueError("owner acts require a v2 template and a configured human origin")
-            v3 = copy.deepcopy(template)
-            v3["manifest_version"] = 3
-            v3["owner_acts"] = {**copy.deepcopy(dict(owner_acts)), "origin": owner_acts_origin}
-            self._manifest_bytes = fill_manifest(
-                v3,
-                app_id=settings.app_id,
-                origin=settings.public_origin,
-                did_keys=declared_did_keys(settings, v3),
-            )
-            self._manifest = load_manifest(self._manifest_bytes)
-            check_v2_variant(self._manifest_variants[2], self._manifest_bytes)
-            self._manifest_variants[3] = self._manifest_bytes
-        elif owner_acts_origin is not None:
-            raise ValueError("a human origin requires an owner-acts declaration")
-        elif self._manifest.manifest_version == 3:
-            if self._manifest.owner_acts is None:
-                raise ValueError("a v3 publication requires owner-designated roles")
-            v2 = json.loads(self._manifest_bytes)
-            v2.pop("owner_acts", None)
-            v2["manifest_version"] = 2
-            self._manifest_variants[2] = canonical_bytes(v2)
-            check_v2_variant(self._manifest_variants[2], self._manifest_bytes)
+        self._manifest_bytes = self._manifest_variants[self._manifest.manifest_version]
         self._catalog_bytes = (
             _catalog_bytes(self._manifest, self._manifest_variants)
             if self._manifest.manifest_version >= 2
@@ -235,15 +225,8 @@ class NaappRuntime:
         # Configuration only: these objects perform no I/O until a request.
         # Grant sources and guards must be wired before lifespan validation.
         self._awid_member_credentials = read_member_credentials(settings.awid_member_credentials)
-        self._team_cache = AWIDTeamCache(
-            registry_url=settings.awid_registry_url,
-            ttl_seconds=settings.auth_cache_ttl_seconds,
-            service_token=settings.awid_service_token,
-            member_credentials=self._awid_member_credentials,
-            transport=awid_transport,
-            team_key_pins=DatabaseTeamKeyPins(self.db),
-            txt_resolver=awid_txt_resolver,
-            enforce_team_key_pins=settings.enforce_team_key_pins,
+        self._team_cache = self._awid_team_cache(
+            settings, transport=awid_transport, txt_resolver=awid_txt_resolver
         )
         self._team_server_directory = TeamServerDirectory(
             team_cache=self._team_cache,
@@ -267,6 +250,25 @@ class NaappRuntime:
         )
         # Each authorized() guard, with the action_kind it was given.
         self._guards: dict[Callable[..., object], ActionKind | None] = {}
+
+    def _awid_team_cache(
+        self,
+        settings: NaappSettings,
+        *,
+        transport: httpx.AsyncBaseTransport | None,
+        txt_resolver: TXTOutcomeResolver | None,
+    ) -> AWIDTeamCache:
+        """AWID team facts for authentication, with team keys held to this app's pins."""
+        return AWIDTeamCache(
+            registry_url=settings.awid_registry_url,
+            ttl_seconds=settings.auth_cache_ttl_seconds,
+            service_token=settings.awid_service_token,
+            member_credentials=self._awid_member_credentials,
+            transport=transport,
+            team_key_pins=DatabaseTeamKeyPins(self.db),
+            txt_resolver=txt_resolver,
+            enforce_team_key_pins=settings.enforce_team_key_pins,
+        )
 
     def _installation_grant_source(
         self, settings: NaappSettings, reach: TeamServerReach
@@ -572,7 +574,6 @@ class NaappRuntime:
 
         from aweb_naapp.runtime.owner_act_delivery import (
             CheckedHumanRoleMember,
-            OwnerActDeliveryCode,
             OwnerActDeliveryRefused,
         )
 
@@ -593,15 +594,8 @@ class NaappRuntime:
                 certificate=decoded,
                 identity_client=identity_client,
             )
-        except HTTPException as exc:
-            code: OwnerActDeliveryCode
-            if exc.status_code == 403 and exc.detail == "principal_not_member":
-                code = "principal_not_member"
-            elif exc.status_code == 403 and exc.detail == "principal_not_human":
-                code = "principal_not_human"
-            else:
-                code = "principal_status_unavailable"
-            raise OwnerActDeliveryRefused(code) from None
+        except HumanMemberRefused as refused:
+            raise OwnerActDeliveryRefused(refused.code) from None
         except Exception:
             # The delivery boundary cannot turn an unclassified dependency
             # failure into a definitive non-member result or expose its detail.
@@ -727,6 +721,35 @@ class NaappRuntime:
 
         self._guards[authorized_request] = action_kind
         return authorized_request
+
+    def installed_member(
+        self, *, policy: ActionPolicy
+    ) -> Callable[..., Awaitable[InstalledMember]]:
+        """A FastAPI dependency admitting a member of a team that installed this app.
+
+        The request is authorized against the team's installation grant
+        (:meth:`authorized`), then the installation fence admits the team at
+        the installation and generation that grant named
+        (docs/app-registry.md, ``generation_superseded``). A refusal carries a
+        code and a message.
+        """
+        member_authorized = self.authorized(grants=self.installation_grants(), policy=policy)
+
+        async def installed(request: Request) -> InstalledMember:
+            authorization = await member_authorized(request)
+            try:
+                permit = await self.installation_fence().permit(authorization.principal.team_id)
+                _require_the_granted_installation(authorization, permit)
+            except InstallationRefused as refused:
+                raise HTTPException(
+                    status_code=refused.status,
+                    detail={"code": refused.code, "message": str(refused)},
+                ) from None
+            return InstalledMember(authorization=authorization, permit=permit)
+
+        # The route check (check_authorized_routes) sees this guard on the route.
+        self._guards[installed] = None
+        return installed
 
     async def record_manifest_command(
         self,
@@ -866,6 +889,22 @@ class NaappRuntime:
         )
 
 
+def _require_the_granted_installation(
+    authorization: Authorization, permit: InstallationPermit
+) -> None:
+    """The fence admitted the installation and generation the grant named; a
+    reinstall between the two reads refuses, and a retry reads both afresh."""
+    granted = (authorization.grant.installation_id, authorization.grant.generation)
+    admitted = (permit.admitted.installation_id, permit.admitted.generation)
+    if granted != admitted:
+        raise InstallationRefused(
+            "generation_superseded",
+            409,
+            "The team's installation of this app changed while the request was "
+            "admitted; retry the request",
+        )
+
+
 def _only_this_host_reaches(host: str) -> bool:
     """Whether ``host`` names this machine alone: localhost, a ``.localhost``
     name (RFC 6761 §6.3) or a loopback address."""
@@ -876,6 +915,57 @@ def _only_this_host_reaches(host: str) -> bool:
         return ip_address(host).is_loopback
     except ValueError:
         return False
+
+
+def _published_manifests(
+    settings: NaappSettings,
+    template: dict[str, Any],
+    *,
+    owner_acts: Mapping[str, Any] | None,
+    owner_acts_origin: str | None,
+) -> tuple[Manifest, dict[int, bytes]]:
+    """The served manifest and the bytes of every version published beside it.
+
+    The template is filled with this deployment's app id, origin and key
+    did:keys. Owner acts publish a v3 manifest beside the v2 template; a v3
+    template publishes its v2 variant. The served manifest is the highest
+    version, and each v2 variant is checked against it.
+    """
+    _refuse_the_hosted_app_id_elsewhere(settings, template)
+    served_bytes = fill_manifest(
+        template,
+        app_id=settings.app_id,
+        origin=settings.public_origin,
+        did_keys=declared_did_keys(settings, template),
+    )
+    served = load_manifest(served_bytes)
+    variants = {served.manifest_version: served_bytes}
+    if owner_acts is not None:
+        if served.manifest_version != 2 or not owner_acts_origin:
+            raise ValueError("owner acts require a v2 template and a configured human origin")
+        v3 = copy.deepcopy(template)
+        v3["manifest_version"] = 3
+        v3["owner_acts"] = {**copy.deepcopy(dict(owner_acts)), "origin": owner_acts_origin}
+        served_bytes = fill_manifest(
+            v3,
+            app_id=settings.app_id,
+            origin=settings.public_origin,
+            did_keys=declared_did_keys(settings, v3),
+        )
+        served = load_manifest(served_bytes)
+        check_v2_variant(variants[2], served_bytes)
+        variants[3] = served_bytes
+    elif owner_acts_origin is not None:
+        raise ValueError("a human origin requires an owner-acts declaration")
+    elif served.manifest_version == 3:
+        if served.owner_acts is None:
+            raise ValueError("a v3 publication requires owner-designated roles")
+        v2 = json.loads(served_bytes)
+        v2.pop("owner_acts", None)
+        v2["manifest_version"] = 2
+        variants[2] = canonical_bytes(v2)
+        check_v2_variant(variants[2], served_bytes)
+    return served, variants
 
 
 def _refuse_the_hosted_app_id_elsewhere(

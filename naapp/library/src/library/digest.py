@@ -3,7 +3,7 @@
 The canonical form + digest are a cross-lane contract shared with the aw CLI (the
 .2.9 conformance fixture) and verified byte-identical to the Go side. The digest
 hashes blueprint CONTENT only, using the same canonical-JSON primitive as the
-app manifest (``aweb_manifest.canonical_bytes`` — no second canonicalization).
+app manifest (``aweb_naapp.manifest.canonical_bytes`` — no second canonicalization).
 
 Access-control attributes (visibility, owner_team) live on the Library record,
 NOT in the hashed payload, so flipping a profile public never changes its digest.
@@ -21,14 +21,26 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
-from library.aweb_manifest import canonical_bytes
+from aweb_naapp.manifest import canonical_bytes
 
 BLUEPRINT_PAYLOAD_SCHEMA = "aweb.blueprint.import-payload.v1"
 PROFILE_PAYLOAD_SCHEMA = "aweb.blueprint.profile-payload.v1"
 
 # VCS, dependency, and build/cache directories never enter the hashed payload.
 EXCLUDED_DIRS = frozenset(
-    {".git", ".hg", ".svn", "node_modules", ".cache", "dist", "build", "target", "tmp", "vendor", "__pycache__"}
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        ".cache",
+        "dist",
+        "build",
+        "target",
+        "tmp",
+        "vendor",
+        "__pycache__",
+    }
 )
 
 
@@ -52,8 +64,7 @@ def _decode_utf8(root: Path, path: Path, raw: bytes) -> str:
         return raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError(
-            f"{_payload_path(root, path)}: "
-            "blueprint canonical import payload requires UTF-8 text"
+            f"{_payload_path(root, path)}: blueprint canonical import payload requires UTF-8 text"
         ) from exc
 
 

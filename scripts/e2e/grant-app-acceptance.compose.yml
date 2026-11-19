@@ -26,21 +26,29 @@ services:
       APP_ENV: test
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
   aweb:
-    command: ["/app/.venv/bin/python", "/fixture/e2e/grant_app_server.py"]
+    command: ["/app/.venv/bin/python", "/fixture/e2e/stack_server.py", "--app-origin", "https://library-grant.test:8765", "--ca-file", "/fixture/tls/ca.pem", "--user-agent", "grant-app-test/1", "--port", "8000"]
     environment:
       AWEB_PUBLIC_ORIGIN: http://127.0.0.1:8000
       AWID_PUBLIC_REGISTRY_URL: http://awid:8010
     volumes:
       - fixture:/fixture:ro
-    depends_on:
-      library:
-        condition: service_healthy
+    # Library shares this namespace: its TLS name resolves here, and the team
+    # server URL the client publishes (127.0.0.1:8000) reaches this server from
+    # Library as well as from the client.
+    networks:
+      default:
+        aliases: [library-grant.test]
     cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
     labels:
       aweb.acceptance: grant-app-tools
   library:
+    network_mode: service:aweb
+    networks: !reset {}
+    depends_on:
+      aweb:
+        condition: service_healthy
     cpus: "1"
     mem_limit: "1g"
     pids_limit: 512
@@ -49,11 +57,13 @@ services:
     command: ["/app/.venv/bin/uvicorn", "library.api:app", "--host", "0.0.0.0", "--port", "8765", "--ssl-keyfile", "/fixture/tls/server.key", "--ssl-certfile", "/fixture/tls/server.pem"]
     environment:
       LIBRARY_PUBLIC_ORIGIN: https://library-grant.test:8765
+      LIBRARY_APP_KEY_FILES: '{"library:grant-read-1": "/fixture/library/grant-read.hex"}'
+      # aweb, in Library's network namespace, is the team server it reads grants from.
+      LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS: '["http://127.0.0.1:8000"]'
     volumes:
       - fixture:/fixture:ro
-    networks:
-      default:
-        aliases: [library-grant.test]
+      # Library's template published from this stack's origin (library_stack_prepare.py).
+      - library-source:/app/naapp/library/src/library
     healthcheck:
       test: ["CMD", "python3", "-c", "import ssl,urllib.request; urllib.request.urlopen('https://library-grant.test:8765/ready', context=ssl.create_default_context(cafile='/fixture/tls/ca.pem'))"]
 
@@ -75,3 +85,5 @@ services:
 volumes:
   fixture:
     name: ${GRANT_APP_E2E_PROJECT:?set by runner}-fixture
+  library-source:
+    name: ${GRANT_APP_E2E_PROJECT:?set by runner}-library-source

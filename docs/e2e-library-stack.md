@@ -8,18 +8,53 @@ identity/team membership, or encrypted-v2 interoperability.
 The self-hosted integration stack the optional profile/team/Library flow runs against. It
 brings up, from source, on one Docker network:
 
-| Service  | Source            | Host port (default) | In-container |
-|----------|-------------------|---------------------|--------------|
-| postgres | `postgres:16`     | 55432               | 5432         |
-| redis    | `redis:7`         | (internal only)     | 6379         |
-| awid     | `awid/Dockerfile` | 18010               | 8010         |
-| aweb     | `server/Dockerfile` | 18000             | 8000         |
-| library  | `naapp/library/Dockerfile` | 18765      | 8765         |
+| Service  | Source            | In-network endpoint |
+|----------|-------------------|---------------------|
+| postgres | `postgres:16`     | `postgres:5432`     |
+| redis    | `redis:7`         | `redis:6379`        |
+| awid     | `awid/Dockerfile` | `http://<awid name>:8010` |
+| aweb     | `server/Dockerfile` | `https://<aweb name>:8000` |
+| library  | `naapp/library/Dockerfile` | `https://<library name>:8765` |
+
+Each `<name>` is the stack's project-scoped name for that service
+(`scripts/candidate-network.py hostname <project> <service>`), the same name the
+candidate gate's network adds. Nothing is published to the host.
 
 It then **seeds** the current `aweb.team` catalog blueprint into Library over
-real AWID team-certificate auth, so the materializer is exercised against the
-real folded-block-scalar blueprint content (the same flow Library's own e2e
-suite runs).
+real AWID team-certificate auth, as a team that installed Library, so the
+materializer is exercised against the real folded-block-scalar blueprint
+content (the same flow Library's own e2e suite runs).
+
+## Where the journeys run, and why
+
+The seed and the CLI suite run **inside the stack's network**, never from the
+host:
+
+- the coordination server fetches an app's manifest only over HTTPS from a
+  pinned destination, so Library serves TLS at its in-network name with a
+  certificate from a disposable stack CA, and aweb runs
+  `scripts/e2e/stack_server.py` pinned to that origin;
+- teams publish the stack's server as their team server, and `aw` accepts only
+  an HTTPS team server outside loopback, so aweb serves TLS from the same CA
+  and Library trusts that CA when it reads a team's grant;
+- Library admits a member request only for a team that installed it and
+  granted the operation's scopes, so every journey team publishes the stack's
+  server as its team server, is made an install admin there, and runs the real
+  `aw plugin install` before it calls a member route. No path reaches Library's
+  member routes without an install.
+
+Inside the candidate gate the runner is already attached to the network. Any
+other run (a developer's machine, CI) starts a disposable runner container on
+the stack network (`scripts/e2e/journey-runner.Dockerfile`), with the checkout
+mounted read-only and the stack CA in its `SSL_CERT_FILE`. Nothing is added to
+the host: no `/etc/hosts` entries, no trusted CA, no published port. The
+commands are the same in both places.
+
+Library runs as app id `library` here because `aw`'s Library commands look the
+plugin up by that id. The runtime serves the hosted id only at the template's
+origin, so the stack publishes Library's committed template from its own origin
+(`scripts/e2e/library_stack_prepare.py`, with `scripts/e2e/stack_manifest.py`)
+and gives Library an owner-only grant-read key.
 
 This harness contains postgres + redis + AWID + OSS aweb + Library. Hosted
 service infrastructure and hosted controller-key flows are not part of this
@@ -50,33 +85,27 @@ make e2e-library-stack
 Step by step (leaves the stack running between steps):
 
 ```bash
-make e2e-library-stack-up     # build + start, wait until all three are healthy
+make e2e-library-stack-up     # build + prepare + start, wait until healthy
 make e2e-library-stack-seed   # publish the aweb.team blueprint into Library
 make e2e-library-stack-down   # remove containers AND all state (-v)
 ```
 
-Or drive the script directly:
+Or drive the script directly, including any command you want to run inside
+the network (relative to the checkout):
 
 ```bash
 ./scripts/e2e-library-stack.sh up
 ./scripts/e2e-library-stack.sh seed
+./scripts/e2e-library-stack.sh journey python3 -c 'import os,urllib.request; print(urllib.request.urlopen(os.environ["LIBRARY_E2E_LIBRARY_URL"] + "/v1/blueprints").read())'
 ./scripts/e2e-library-stack.sh down
-```
-
-After `up`, the services are reachable on the host:
-
-```bash
-curl -s http://127.0.0.1:18010/health      # awid
-curl -s http://127.0.0.1:18000/health      # aweb
-curl -s http://127.0.0.1:18765/health      # library
-curl -s http://127.0.0.1:18765/v1/blueprints | python3 -m json.tool   # after seed
 ```
 
 ## Teardown leaves no state
 
-Postgres data lives on tmpfs and the stack defines no named volumes, so
-`down -v` (what `e2e-library-stack-down` and the `all` trap run) removes every
-container and all state. Teardown also queries Docker for container, network,
+Postgres data lives on tmpfs and the stack's only named volumes (the fixture
+and Library's prepared source) belong to its Compose project, so `down -v`
+(what `e2e-library-stack-down` and the `all` trap run) removes every container
+and all state. Teardown also queries Docker for container, network,
 and volume labels belonging to the exact Compose project and fails if residue
 remains; a successful test cannot hide a cleanup failure. The next `up` is a
 clean slate, which is why the `library` database is (re)created by
@@ -85,12 +114,12 @@ clean slate, which is why the `library` database is (re)created by
 ## How the seed authenticates
 
 `scripts/e2e/seed_catalog_blueprint.py` provisions a throwaway AWID identity and
-team against the stack's awid, then `POST`s the selected catalog blueprint to
+team against the stack's awid, installs Library for it (team server, install
+admin, `aw plugin install`), then `POST`s the selected catalog blueprint to
 `/v1/blueprints/import` with `aw id request --team-auth`. The signed audience
 (`aud`) is the `scheme://host` of the target URL, and Library rejects any
-request whose audience does not match its `LIBRARY_PUBLIC_ORIGIN`. The harness
-therefore pins `LIBRARY_PUBLIC_ORIGIN` to the same `http://127.0.0.1:<port>`
-origin the seed posts to; if you change the library port, both move together.
+request whose audience does not match its `LIBRARY_PUBLIC_ORIGIN`. The stack
+sets both to Library's one in-network origin.
 
 ## CLI real-stack e2e suite (`AW_E2E`)
 
@@ -100,7 +129,8 @@ selected exact `aw` binary against the live services over `os/exec` — no
 from the checkout. It lives in `cli/go/e2e/` and is the
 regression net for the real signed-request and team-certificate paths.
 
-One command brings up the stack, builds `aw`, runs the suite, and tears down:
+One command brings up the stack, builds `aw` inside the network, runs the seed
+and the suite there, and tears down:
 
 ```bash
 make -C cli e2e
@@ -114,10 +144,12 @@ The suite is **double-gated** so it never runs in the default `go test ./...`:
   a stray `-tags e2e` can't accidentally hit a stack that isn't up.
 
 `make -C cli e2e` sets both and points the suite at the stack via `AWEB_URL`,
-`AWID_REGISTRY_URL`, and `LIBRARY_E2E_LIBRARY_URL`. Each test provisions a
-**fresh throwaway AWID team** in its own workspace and `HOME` (unique namespace
-per test), so tests are isolated and never touch the shared cli team; the
-temp dirs are cleaned up by `t.TempDir`.
+`AWID_REGISTRY_URL`, `LIBRARY_E2E_LIBRARY_URL` and `LIBRARY_E2E_PROJECT`; the
+suite refuses to run without them. Each test provisions a **fresh throwaway
+AWID team** in its own workspace and `HOME` (unique namespace per test), so
+tests are isolated and never touch the shared cli team; a test that calls
+Library's member routes installs Library for its team first. The temp dirs are
+cleaned up by `t.TempDir`.
 
 The suite covers:
 
@@ -136,30 +168,12 @@ The suite covers:
   succeeds (the self-hostability fix). It bootstraps its own unique BYOT
   namespace and therefore does not contend for `local`.
 
-**Manifest fixture caveat.** Reaching Library through `aw` needs the library
-plugin pointed at the stack. The committed Library manifest hardcodes
-`origin: https://library.aweb.ai` and `aw plugin install` enforces origin/fetch
-self-consistency, so a self-hosted Library cannot be installed normally — filed
-as a self-hostability bug. The materialize suite works around this *for the test
-only* by writing the served manifest with its origin rewritten to the stack URL.
-When that bug is fixed (Library serves its own public origin), the fixture is
-deleted and the suite installs the manifest the real way.
-
 ## Environment overrides
-
-These defaults apply to manual runs. The candidate gate allocates unused host
-ports before starting its isolated runner and passes the same values to the CLI
-harness and Compose stack. Explicit port overrides remain supported.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `LIBRARY_E2E_AWID_PORT` | 18010 | awid host port |
-| `LIBRARY_E2E_AWEB_PORT` | 18000 | aweb host port |
-| `LIBRARY_E2E_LIBRARY_PORT` | 18765 | library host port |
-| `LIBRARY_E2E_POSTGRES_PORT` | 55432 | postgres host port |
-| `LIBRARY_E2E_BLUEPRINT_SRC` | `../blueprints/team` | catalog blueprint source |
-| `LIBRARY_E2E_LIBRARY_URL` | `http://127.0.0.1:18765` | Library base URL the Go e2e suite drives |
-| `AW_BIN` | `aw` | exact aw binary used to drive the seed / Go suite; `cli/scripts/e2e.sh` builds only when it is unset |
+| `LIBRARY_E2E_BLUEPRINT_SRC` | `naapp/library/test-vectors/blueprints/team` | catalog blueprint source |
+| `AW_BIN` | (built from source) | exact aw binary for the seed and the Go suite (release skew cells); otherwise each journey run builds aw inside the network |
 | `AW_E2E` | (unset) | set to `1` to run the `cli/go/e2e` suite (else it skips) |
 | `AW_E2E_TEST_RUN` | (unset) | optional exact Go `-run` selector |
 | `LIBRARY_E2E_PROJECT` | `aweb-e2e-stack-<hash>` | compose project name; defaults to a per-checkout value so concurrent runs don't collide |

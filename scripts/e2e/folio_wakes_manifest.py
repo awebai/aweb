@@ -13,11 +13,13 @@ import os
 import sys
 
 from folio.aweb_manifest import MANIFEST_PATH
+from stack_manifest import template_at_origin
 
 version, events, manifest_version = sys.argv[1], sys.argv[2] == "true", int(sys.argv[3])
-manifest = json.loads(MANIFEST_PATH.read_text())
+manifest = template_at_origin(
+    json.loads(MANIFEST_PATH.read_text()), os.environ["FOLIO_WAKES_ORIGIN"]
+)
 manifest_version = max(manifest_version, manifest["manifest_version"])
-manifest["app"]["origin"] = os.environ["FOLIO_WAKES_ORIGIN"]
 manifest["app"]["version"] = version
 if not events:
     manifest["events"] = []
@@ -27,10 +29,16 @@ if len(sys.argv) == 5:
 if manifest_version == 2:
     manifest["manifest_version"] = 2
     # Keep records' separate grant-read purpose; the emit seed signs events only.
-    keys = [key for key in manifest.get("app_keys", []) if "app-event" not in key.get("purposes", [])]
+    keys = [
+        key
+        for key in manifest.get("app_keys", [])
+        if "app-event" not in key.get("purposes", [])
+    ]
     if not any(key["kid"] == "folio:grant-read-1" for key in keys):
         keys.append({"kid": "folio:grant-read-1", "purposes": ["app-grant-read"]})
-    manifest["app_keys"] = keys + [dict(key, purposes=["app-event"]) for key in manifest.pop("event_emitters")]
+    manifest["app_keys"] = keys + [
+        dict(key, purposes=["app-event"]) for key in manifest.pop("event_emitters")
+    ]
     manifest["tools"].append(
         {
             "name": "audit-ingest",
@@ -46,10 +54,12 @@ if manifest_version == 2:
         }
     )
     hooks = manifest.setdefault("hooks", {"registration_version": 1})
-    hooks.setdefault("registrations", []).append({
-                "catalog": {"id": "folio.hooks", "version": 1},
-                "hook": "folio.after-write",
-                "tool": "audit-ingest",
-                "scopes": ["folio:hook-ingest"],
-    })
+    hooks.setdefault("registrations", []).append(
+        {
+            "catalog": {"id": "folio.hooks", "version": 1},
+            "hook": "folio.after-write",
+            "tool": "audit-ingest",
+            "scopes": ["folio:hook-ingest"],
+        }
+    )
 print(json.dumps(manifest))

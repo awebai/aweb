@@ -19,6 +19,8 @@ from aweb_naapp.runtime.team_auth import MembershipProof, Principal
 
 from folio.api import create_app
 from folio.config import Settings
+from folio.link_secrets import read_only_link_key
+from folio.models import LinkKind
 from folio.repository import mint_presentation_link
 
 OWNER = Principal(
@@ -126,7 +128,7 @@ async def mint(world, *, editable=True, ttl_seconds=None):
         settings=settings,
         slug="draft",
         version=None,
-        editable=editable,
+        kind=LinkKind.EDITABLE if editable else LinkKind.READ_ONLY,
         ttl_seconds=ttl_seconds,
     )
 
@@ -164,7 +166,7 @@ async def test_read_only_ttl_default_and_thirty_day_maximum(present_world, ttl_s
     link = await mint(present_world, editable=False, ttl_seconds=ttl_seconds)
     row = await db.fetch_one(
         "SELECT created_at, expires_at, editable FROM {{tables.presentation_links}} WHERE token=$1",
-        link["token"],
+        read_only_link_key(link["token"]),
     )
     assert not row["editable"]
     assert (row["expires_at"] - row["created_at"]).total_seconds() == expected

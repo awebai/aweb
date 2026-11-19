@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 
 import pytest
+from aweb_naapp.manifest import canonical_bytes
 
-from library.aweb_manifest import canonical_bytes
 from library.digest import (
     BLUEPRINT_PAYLOAD_SCHEMA,
     blueprint_digest,
@@ -42,7 +42,9 @@ def test_profile_digests_match_fixture_profile_relative() -> None:
 
 
 def test_import_return_digest_matches_blueprint_digest() -> None:
-    import_return = json.loads((_FIXTURE / "expected" / "import-return.json").read_text(encoding="utf-8"))
+    import_return = json.loads(
+        (_FIXTURE / "expected" / "import-return.json").read_text(encoding="utf-8")
+    )
     assert import_return["digest"] == _expected_blueprint_digest()
 
 
@@ -91,7 +93,9 @@ def test_collect_files_ignores_symlink_inside_excluded_directory(tmp_path: Path)
     ]
 
 
-def test_collect_files_rejects_symlinked_excluded_directory_with_offending_path(tmp_path: Path) -> None:
+def test_collect_files_rejects_symlinked_excluded_directory_with_offending_path(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "outside-node-modules"
     target.mkdir()
     root = tmp_path / "payload"

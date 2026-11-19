@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from library.surfaces import aweb_css, llms_txt, render_landing_page, render_reference_page
+from aweb_naapp import aweb_css
+
+from library.surfaces import llms_txt, render_landing_page, render_reference_page
 
 _GOLDEN = Path(__file__).resolve().parent / "golden"
 _ORIGIN = "https://library.aweb.ai"
@@ -48,9 +50,8 @@ def _golden(name: str) -> str:
 
 
 def test_landing_is_byte_identical() -> None:
-    assert (
-        render_landing_page(public_origin=_ORIGIN, blueprints=_LANDING_BLUEPRINTS)
-        == _golden("landing.html")
+    assert render_landing_page(public_origin=_ORIGIN, blueprints=_LANDING_BLUEPRINTS) == _golden(
+        "landing.html"
     )
 
 

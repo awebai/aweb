@@ -3,8 +3,38 @@ from __future__ import annotations
 import pytest
 from fastapi import HTTPException
 
-from folio.cloudflare_stream import sign_stream_playback_token, stream_iframe_url
+from folio import cloudflare_stream
+from folio.cloudflare_stream import (
+    sign_stream_playback_token,
+    stream_iframe_url,
+    video_status_from_cloudflare,
+)
 from folio.config import Settings
+from folio.models import StreamStatus
+
+# Cloudflare Stream's documented video states (result.status.state), from
+# https://developers.cloudflare.com/api/resources/stream/methods/get/ (read 2026-11-19).
+DOCUMENTED_STATES = {
+    "pendingupload": StreamStatus.PENDING_UPLOAD,
+    "downloading": StreamStatus.QUEUED,
+    "queued": StreamStatus.QUEUED,
+    "inprogress": StreamStatus.PROCESSING,
+    "live-inprogress": StreamStatus.PROCESSING,
+    "ready": StreamStatus.READY,
+    "error": StreamStatus.ERROR,
+}
+
+
+ABSENT = object()
+
+
+def _status(status: dict | None, *, ready_to_stream: object = False) -> object:
+    result: dict = {"uid": "stream-uid"}
+    if ready_to_stream is not ABSENT:
+        result["readyToStream"] = ready_to_stream
+    if status is not None:
+        result["status"] = status
+    return video_status_from_cloudflare(result)
 
 
 def test_stream_iframe_url_requires_signing_config() -> None:
@@ -41,3 +71,34 @@ def test_stream_playback_token_is_signed_for_stream_uid() -> None:
     assert stream_iframe_url(settings=settings, stream_uid="stream-uid").startswith(
         "https://customer-example.cloudflarestream.com/"
     )
+
+
+@pytest.mark.parametrize(("state", "expected"), DOCUMENTED_STATES.items())
+def test_every_documented_cloudflare_state_is_a_stream_status(state, expected) -> None:
+    assert _status({"state": state}) == expected
+
+
+def test_a_playable_video_is_ready_before_cloudflare_finishes_every_quality() -> None:
+    assert _status({"state": "inprogress"}, ready_to_stream=True) == StreamStatus.READY
+
+
+@pytest.mark.parametrize("status", [{"state": "melting"}, {"state": ""}, {}, None])
+def test_an_unrecognized_or_missing_state_is_refused_naming_it(status) -> None:
+    with pytest.raises(cloudflare_stream.UnrecognizedStreamState) as refused:
+        _status(status)
+    assert refused.value.state == (status or {}).get("state")
+
+
+@pytest.mark.parametrize("ready_to_stream", [False, None, ABSENT])
+def test_an_unready_absent_or_empty_readiness_leaves_the_state(ready_to_stream) -> None:
+    assert _status({"state": "inprogress"}, ready_to_stream=ready_to_stream) == (
+        StreamStatus.PROCESSING
+    )
+
+
+@pytest.mark.parametrize("ready_to_stream", ["false", "true", 0, 1, "", {}])
+def test_a_readiness_that_is_not_a_boolean_is_refused_naming_it(ready_to_stream) -> None:
+    with pytest.raises(cloudflare_stream.UndocumentedStreamReply) as refused:
+        _status({"state": "inprogress"}, ready_to_stream=ready_to_stream)
+    assert refused.value.field == "readyToStream"
+    assert refused.value.value == ready_to_stream

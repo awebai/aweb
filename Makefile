@@ -18,7 +18,7 @@ SERVER_PYTEST_PARALLEL = $(if $(filter-out 0,$(SERVER_TEST_WORKERS)),-n $(SERVER
 	test-channel-integration \
 	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
-	cli-e2e _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
+	cli-e2e e2e-grant-app-tools _candidate-gate-docker-boundaries _candidate-gate-compose-adoption _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
 	_candidate-artifact-naapp-package check-naapp-lib-package \
@@ -765,6 +765,11 @@ _candidate-artifact-a2a-image:
 # Real-stack CLI/Library journey retained in the fixed local release gate.
 cli-e2e:
 	COMPOSE_BAKE="$${LIBRARY_E2E_COMPOSE_BAKE:-}" $(MAKE) -C cli e2e
+	$(MAKE) e2e-grant-app-tools
+
+# A grant's named app tools against a real Library install, through custody.
+e2e-grant-app-tools:
+	bash scripts/e2e-grant-app-tools.sh
 
 clean:
 	@echo "Cleaning build artifacts..."

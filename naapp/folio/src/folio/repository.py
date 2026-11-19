@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hashlib
 import json
+import logging
 import re
 import secrets
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -15,10 +16,18 @@ from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 from pgdbm.core import TransactionManager
 
-from folio.cloudflare_stream import CloudflareStreamClient, stream_direct_upload_expires_at
+from folio.cloudflare_stream import (
+    CloudflareStreamClient,
+    UndocumentedStreamReply,
+    stream_direct_upload_expires_at,
+)
 from folio.config import Settings
 from folio.event_emit import emit_doc_changed
+from folio.link_secrets import read_only_link_key, secret_digest
+from folio.models import AssetKind, LinkKind
 from folio.presentation import builtin_preset, sanitize_theme_tokens
+
+logger = logging.getLogger(__name__)
 
 
 async def _team_usage(db: AsyncDatabaseManager, *, team_id: str) -> dict[str, int]:
@@ -104,7 +113,9 @@ async def create_document(
             )
     except Exception as exc:
         if "unique" in str(exc).lower():
-            raise HTTPException(status_code=409, detail="Document slug already exists for this team") from exc
+            raise HTTPException(
+                status_code=409, detail="Document slug already exists for this team"
+            ) from exc
         raise
     return await get_document(db, principal=principal, slug=slug)
 
@@ -248,7 +259,7 @@ async def mint_presentation_link(
     slug: str,
     version: int | None,
     ttl_seconds: int | None,
-    editable: bool = False,
+    kind: LinkKind = LinkKind.READ_ONLY,
 ) -> dict[str, Any]:
     selected = await db.fetch_one(
         """
@@ -275,23 +286,27 @@ async def mint_presentation_link(
     if exists is None:
         raise HTTPException(status_code=404, detail="Document version not found")
 
-    if editable and ttl_seconds is not None and ttl_seconds > 300:
+    if kind is LinkKind.EDITABLE and ttl_seconds is not None and ttl_seconds > 300:
         raise HTTPException(
             status_code=422, detail="Editable links expire after at most 300 seconds"
         )
-    if not editable and ttl_seconds is not None and ttl_seconds > settings.max_present_ttl_seconds:
+    if (
+        kind is LinkKind.READ_ONLY
+        and ttl_seconds is not None
+        and ttl_seconds > settings.max_present_ttl_seconds
+    ):
         raise HTTPException(
             status_code=422,
             detail=f"Read-only links expire after at most {settings.max_present_ttl_seconds} seconds",
         )
     requested_ttl = (
         (300 if ttl_seconds is None else ttl_seconds)
-        if editable
+        if kind is LinkKind.EDITABLE
         else (ttl_seconds or settings.default_present_ttl_seconds)
     )
     ttl = min(requested_ttl, settings.max_present_ttl_seconds)
-    opener = secrets.token_urlsafe(32) if editable else None
-    token = secrets.token_urlsafe(16) if editable else secrets.token_urlsafe(32)
+    opener = secrets.token_urlsafe(32) if kind is LinkKind.EDITABLE else None
+    token = secrets.token_urlsafe(16) if kind is LinkKind.EDITABLE else secrets.token_urlsafe(32)
     # Use the same database clock for expiry and the row's default created_at.
     # That makes the stored editable lifetime exactly bounded across hosts.
     minted = await db.fetch_one(
@@ -302,7 +317,7 @@ async def mint_presentation_link(
         VALUES ($1, $2, $3, NOW() + $4::integer * interval '1 second', $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING expires_at
         """,
-        token,
+        token if kind is LinkKind.EDITABLE else read_only_link_key(token),
         document_id,
         version_number,
         ttl,
@@ -310,16 +325,19 @@ async def mint_presentation_link(
         principal.did_aw,
         principal.alias,
         principal.certificate_id,
-        editable,
-        hashlib.sha256(opener.encode()).digest() if opener else None,
+        kind is LinkKind.EDITABLE,
+        secret_digest(opener) if opener else None,
         principal.team_did_key,
         installation_id,
     )
     assert minted is not None
     return {
         "token": token,
-        "url": (f"{settings.public_origin.rstrip('/')}/present/edit/{token}#k={opener}"
-                if editable else f"{settings.public_origin.rstrip('/')}/present/{token}"),
+        "url": (
+            f"{settings.public_origin.rstrip('/')}/present/edit/{token}#k={opener}"
+            if kind is LinkKind.EDITABLE
+            else f"{settings.public_origin.rstrip('/')}/present/{token}"
+        ),
         "expires_at": minted["expires_at"],
     }
 
@@ -330,59 +348,53 @@ async def revoke_presentation_link(
     principal: Principal,
     token: str,
 ) -> None:
+    """Revoke by the minted token: an editable link's public id, or a read-only bearer token."""
     row = await db.fetch_one(
         """
         SELECT p.token
         FROM {{tables.presentation_links}} p
         JOIN {{tables.documents}} d ON d.document_id = p.document_id
-        WHERE p.token = $1 AND d.team_id = $2
+        WHERE d.team_id = $2
+          AND ((p.editable IS TRUE AND p.token = $1) OR (p.editable IS FALSE AND p.token = $3))
         """,
         token,
         principal.team_id,
+        read_only_link_key(token),
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Presentation not found")
     await db.execute(
         "UPDATE {{tables.presentation_links}} SET revoked_at = NOW() WHERE token = $1",
-        token,
+        row["token"],
     )
 
 
-async def get_presented_document(db: AsyncDatabaseManager | TransactionManager, *, token: str) -> dict[str, Any]:
+async def get_presented_document(
+    db: AsyncDatabaseManager | TransactionManager, *, link_key: str
+) -> dict[str, Any]:
+    """The live read-only link keyed by ``link_key`` (see folio.link_secrets), as presented."""
     row = await db.fetch_one(
         """
-        SELECT p.editable, p.expires_at, d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer,
-               pinned.body AS pinned_body, pinned.version_number AS pinned_version_number,
-               latest.body AS latest_body, latest.version_number AS latest_version_number
+        SELECT d.team_id, t.tokens, t.logo_asset_id, t.header, t.footer, v.body
         FROM {{tables.presentation_links}} p
-        JOIN {{tables.document_versions}} pinned
-          ON pinned.document_id = p.document_id AND pinned.version_number = p.version_number
+        JOIN {{tables.document_versions}} v
+          ON v.document_id = p.document_id AND v.version_number = p.version_number
         JOIN {{tables.documents}} d ON d.document_id = p.document_id
-        JOIN LATERAL (
-            SELECT body, version_number
-            FROM {{tables.document_versions}}
-            WHERE document_id = p.document_id
-            ORDER BY version_number DESC
-            LIMIT 1
-        ) latest ON TRUE
         LEFT JOIN {{tables.themes}} t ON t.team_id = d.team_id
         WHERE p.token = $1 AND p.editable IS FALSE AND p.revoked_at IS NULL AND p.expires_at > NOW()
-          AND (p.editable IS FALSE OR p.expires_at <= p.created_at + interval '300 seconds')
         """,
-        token,
+        link_key,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Presentation not found")
-    editable = bool(row["editable"])
-    body = str(row["latest_body"] if editable else row["pinned_body"])
-    version_number = int(row["latest_version_number"] if editable else row["pinned_version_number"])
+    body = str(row["body"])
     return {
+        "team_id": str(row["team_id"]),
         "body": body,
-        "version_number": version_number,
-        "editable": editable,
-        "expires_at": row["expires_at"],
         "theme": _theme_from_row(row, public_origin=None),
-        "allowed_assets": await _allowed_assets_for_body(db, team_id=str(row["team_id"]), body=body),
+        "allowed_assets": await _allowed_assets_for_body(
+            db, team_id=str(row["team_id"]), body=body
+        ),
     }
 
 
@@ -394,8 +406,13 @@ def _clean_editor_name(editor_name: str | None) -> str | None:
 
 
 async def append_presented_version(
-    tx: TransactionManager, *, events: AppEvents, link: dict[str, Any],
-    body: str, base_version: int, editor_name: str | None,
+    tx: TransactionManager,
+    *,
+    events: AppEvents,
+    link: dict[str, Any],
+    body: str,
+    base_version: int,
+    editor_name: str | None,
 ) -> dict[str, Any]:
     """Append under the caller's session/link/document locks."""
     clean_editor_name = _clean_editor_name(editor_name)
@@ -492,16 +509,11 @@ def _theme_from_row(row: Any, *, public_origin: str | None) -> dict[str, Any] | 
     }
 
 
-def _asset_response(row: Any) -> dict[str, Any]:
-    data = dict(row)
-    if data.get("kind") != "image" or data.get("bytes") is None:
-        raise HTTPException(status_code=404, detail="Asset not found")
-    return {"bytes": bytes(data["bytes"]), "content_type": data["content_type"]}
-
-
 _SAFE_IMAGE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 _SAFE_VIDEO_CONTENT_TYPES = {"video/mp4", "video/quicktime", "video/webm"}
-_ASSET_REFERENCE_RE = re.compile(r"/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})")
+_ASSET_REFERENCE_RE = re.compile(
+    r"/assets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
+)
 
 
 def _image_magic_matches(payload: bytes, content_type: str) -> bool:
@@ -519,11 +531,16 @@ def _image_magic_matches(payload: bytes, content_type: str) -> bool:
 def _decode_image_asset(image: Any, *, label: str = "Image") -> tuple[bytes, str]:
     content_type = str(image.content_type).strip().lower()
     if content_type not in _SAFE_IMAGE_CONTENT_TYPES:
-        raise HTTPException(status_code=400, detail=f"{label} content_type must be image/png, image/jpeg, image/gif, or image/webp")
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} content_type must be image/png, image/jpeg, image/gif, or image/webp",
+        )
     try:
         payload = base64.b64decode(str(image.data_base64), validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"{label} data_base64 must be valid base64") from exc
+        raise HTTPException(
+            status_code=400, detail=f"{label} data_base64 must be valid base64"
+        ) from exc
     if not payload:
         raise HTTPException(status_code=400, detail=f"{label} must not be empty")
     if len(payload) > 256 * 1024:
@@ -547,7 +564,9 @@ def _asset_ids_referenced_by_body(body: str) -> set[UUID]:
     return asset_ids
 
 
-async def _allowed_assets_for_body(db: AsyncDatabaseManager | TransactionManager, *, team_id: str, body: str) -> dict[UUID, dict[str, Any]]:
+async def _allowed_assets_for_body(
+    db: AsyncDatabaseManager | TransactionManager, *, team_id: str, body: str
+) -> dict[UUID, dict[str, Any]]:
     referenced = _asset_ids_referenced_by_body(body)
     if not referenced:
         return {}
@@ -584,7 +603,7 @@ async def upload_image_asset(
     )
     return {
         "asset_id": asset_id,
-        "kind": "image",
+        "kind": AssetKind.IMAGE,
         "url": f"{settings.public_origin.rstrip('/')}/assets/{asset_id}",
         "content_type": content_type,
     }
@@ -593,8 +612,13 @@ async def upload_image_asset(
 def _validate_video_request(video: Any, *, settings: Settings) -> tuple[str, int]:
     content_type = str(video.content_type).strip().lower()
     if content_type not in _SAFE_VIDEO_CONTENT_TYPES:
-        raise HTTPException(status_code=400, detail="Video content_type must be video/mp4, video/quicktime, or video/webm")
-    requested_duration = video.max_duration_seconds or settings.cloudflare_stream_max_duration_seconds
+        raise HTTPException(
+            status_code=400,
+            detail="Video content_type must be video/mp4, video/quicktime, or video/webm",
+        )
+    requested_duration = (
+        video.max_duration_seconds or settings.cloudflare_stream_max_duration_seconds
+    )
     max_duration = min(requested_duration, settings.cloudflare_stream_max_duration_seconds)
     return content_type, max_duration
 
@@ -628,7 +652,7 @@ async def create_video_direct_upload(
     )
     return {
         "asset_id": asset_id,
-        "kind": "video",
+        "kind": AssetKind.VIDEO,
         "stream_uid": direct_upload.uid,
         "upload_url": direct_upload.upload_url,
         "upload_expires_at": direct_upload.expires_at,
@@ -656,20 +680,28 @@ async def get_asset_metadata(
     if row is None:
         raise HTTPException(status_code=404, detail="Asset not found")
     data = dict(row)
-    if data.get("kind") == "video" and data.get("stream_uid"):
+    if data.get("kind") == AssetKind.VIDEO and data.get("stream_uid"):
         try:
-            status = await CloudflareStreamClient(settings).get_video_status(stream_uid=str(data["stream_uid"]))
+            status = await CloudflareStreamClient(settings).get_video_status(
+                stream_uid=str(data["stream_uid"])
+            )
+        except UndocumentedStreamReply as exc:
+            logger.error("Refused the Cloudflare Stream status of asset %s: %s", asset_id, exc)
+            raise HTTPException(
+                status_code=502,
+                detail="Cloudflare Stream reported a video status Folio does not recognize",
+            ) from exc
         except HTTPException as exc:
             if exc.status_code != 503:
                 raise
         else:
-            data["stream_status"] = status.status
+            data["stream_status"] = status
             await db.execute(
                 "UPDATE {{tables.assets}} SET stream_status = $1, updated_at = NOW() WHERE asset_id = $2",
-                status.status,
+                status,
                 asset_id,
             )
-    if data.get("kind") == "image":
+    if data.get("kind") == AssetKind.IMAGE:
         data["url"] = f"{settings.public_origin.rstrip('/')}/assets/{asset_id}"
     return data
 
@@ -735,7 +767,9 @@ async def upsert_theme(
             "SELECT logo_asset_id FROM {{tables.themes}} WHERE team_id = $1",
             principal.team_id,
         )
-        logo_asset_id = None if clear_logo else (current["logo_asset_id"] if current is not None else None)
+        logo_asset_id = (
+            None if clear_logo else (current["logo_asset_id"] if current is not None else None)
+        )
         if logo is not None:
             logo_bytes, content_type = _decode_logo(logo)
             logo_asset_id = uuid4()
@@ -769,11 +803,26 @@ async def upsert_theme(
     return await get_theme(db, principal=principal, settings=settings)
 
 
-async def get_public_asset(db: AsyncDatabaseManager, *, asset_id: UUID) -> dict[str, Any]:
+@dataclass(frozen=True)
+class TeamImage:
+    """An image asset's stored bytes, as uploaded by a member of its team."""
+
+    content: bytes
+    content_type: str
+
+
+async def get_team_image(
+    db: AsyncDatabaseManager | TransactionManager, *, team_id: str, asset_id: UUID
+) -> TeamImage:
+    """Read one of the team's image assets; another team's asset is not found."""
     row = await db.fetch_one(
-        "SELECT kind, bytes, content_type FROM {{tables.assets}} WHERE asset_id = $1",
+        """
+        SELECT bytes, content_type FROM {{tables.assets}}
+        WHERE team_id = $1 AND asset_id = $2 AND kind = 'image'
+        """,
+        team_id,
         asset_id,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Asset not found")
-    return _asset_response(row)
+    return TeamImage(content=bytes(row["bytes"]), content_type=str(row["content_type"]))

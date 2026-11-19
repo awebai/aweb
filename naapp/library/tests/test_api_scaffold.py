@@ -27,39 +27,6 @@ def _app():
     return library_api.create_app(Settings(public_origin="https://library.aweb.ai"))
 
 
-class _FakeDB:
-    async def fetch_all(self, *args, **kwargs):
-        return []
-
-    async def fetch_one(self, *args, **kwargs):
-        return None
-
-
-def _override_infra_deps(app, *, db_value=None) -> None:
-    """Override the db/team_cache infra dependencies so routes can run without a
-    live database — cert-auth paths reject on the missing header, and read paths
-    use the supplied fake db."""
-    db_obj = db_value if db_value is not None else object()
-    seen: set[int] = set()
-
-    def walk(dependant) -> None:
-        for sub in dependant.dependencies:
-            walk(sub)
-        call = dependant.call
-        name = getattr(call, "__name__", "")
-        if name == "db" and id(call) not in seen:
-            app.dependency_overrides[call] = lambda: db_obj
-            seen.add(id(call))
-        elif name == "team_cache" and id(call) not in seen:
-            app.dependency_overrides[call] = lambda: object()
-            seen.add(id(call))
-
-    for route in app.routes:
-        dependant = getattr(route, "dependant", None)
-        if dependant is not None:
-            walk(dependant)
-
-
 def test_landing_page_is_served() -> None:
     response = TestClient(_app()).get("/")
     assert response.status_code == 200
@@ -105,9 +72,7 @@ def test_og_card_and_fingerprinted_css_served() -> None:
 def test_packaged_open_font_is_served_for_aweb_css() -> None:
     client = TestClient(_app())
     css = client.get("/css/aweb.css").text
-    for font_name in (
-        "Archivo-Latin-Variable.woff2",
-    ):
+    for font_name in ("Archivo-Latin-Variable.woff2",):
         assert f'url("/fonts/{font_name}")' in css
         response = client.get(f"/fonts/{font_name}")
         assert response.status_code == 200
@@ -120,43 +85,33 @@ def test_packaged_open_font_is_served_for_aweb_css() -> None:
     assert client.get("/fonts/BerkeleyMono-Regular.woff2").status_code == 404
 
 
-def test_health_endpoints_are_public() -> None:
-    client = TestClient(_app())
+def test_health_endpoints_are_public(library_client: TestClient) -> None:
     for path in ("/health", "/live", "/ready"):
-        response = client.get(path)
+        response = library_client.get(path)
         assert response.status_code == 200, path
-        assert response.json() == {
-            "status": "ok",
-            "service": "library",
-            "build": {"git_sha": None},
-        }
+        body = response.json()
+        assert body["status"] == "ok", path
+        assert body["service"] == "library", path
+        assert body["build"] == {"git_sha": None}, path
 
 
-def test_public_blueprint_catalog_is_unauthenticated() -> None:
+def test_public_blueprint_catalog_is_unauthenticated(library_client: TestClient) -> None:
     # Blueprints are the public catalog (no cert). Shelf reads (/v1/shelf) are
-    # private and cert-gated — covered by the team-scoped 401 cases above.
-    app = _app()
-    _override_infra_deps(app, db_value=_FakeDB())
-    client = TestClient(app)
-
-    assert client.get("/v1/blueprints").json() == []
-    assert client.get("/v1/blueprints/does-not-exist").status_code == 404
+    # private and cert-gated — covered by the team-scoped 401 cases below.
+    assert library_client.get("/v1/blueprints").json() == []
+    assert library_client.get("/v1/blueprints/does-not-exist").status_code == 404
     # A public profile read is also unauthenticated (404, not 401, without a cert).
-    assert client.get("/v1/blueprints/none/profiles/none").status_code == 404
+    assert library_client.get("/v1/blueprints/none/profiles/none").status_code == 404
 
 
 @pytest.mark.parametrize("method,path", _TEAM_SCOPED)
 def test_team_scoped_routes_require_team_certificate_auth(method: str, path: str) -> None:
-    app = _app()
-    _override_infra_deps(app)
-    response = TestClient(app).request(method, path)
+    response = TestClient(_app()).request(method, path)
     assert response.status_code == 401, (method, path, response.text)
 
 
 @pytest.mark.parametrize("method,path", _TEAM_SCOPED)
 def test_team_scoped_routes_exist_and_are_not_404(method: str, path: str) -> None:
     # Sanity: the routes are registered (a 401 from auth, never a 404 missing route).
-    app = _app()
-    _override_infra_deps(app)
-    response = TestClient(app).request(method, path)
+    response = TestClient(_app()).request(method, path)
     assert response.status_code != 404, (method, path)

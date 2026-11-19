@@ -30,6 +30,7 @@ _EXPECTED_TOOLS = {
     "asset-image",
     "asset-video",
     "asset-get",
+    "asset-content",
     "billing",
 }
 
@@ -48,6 +49,7 @@ _MUTATIONS = {
     "asset-image": True,
     "asset-video": True,
     "asset-get": False,
+    "asset-content": False,
     "billing": False,
 }
 
@@ -145,7 +147,11 @@ def _manifest_errors(m: dict) -> list[str]:
                 errors.append(f"{name}: raw body requires an explicit content_type")
 
         scopes = tool.get("scopes")
-        if not isinstance(scopes, list) or not scopes or not all(isinstance(s, str) for s in scopes):
+        if (
+            not isinstance(scopes, list)
+            or not scopes
+            or not all(isinstance(s, str) for s in scopes)
+        ):
             errors.append(f"{name}: scopes must be a non-empty list of strings")
 
         if not isinstance(tool.get("mutation"), bool):
@@ -250,7 +256,10 @@ def test_manifest_declares_doc_changed_event_and_emit_key() -> None:
     assert doc_changed["default_delivery_intent"] == "wake"
     assert doc_changed["description"]
     # The template declares the kid; deployment configuration supplies its key.
-    assert MANIFEST["app_keys"] == [{"kid": "folio:emit-1", "purposes": ["app-event"]}, {"kid": "folio:grant-read-1", "purposes": ["app-grant-read"]}]
+    assert MANIFEST["app_keys"] == [
+        {"kid": "folio:emit-1", "purposes": ["app-event"]},
+        {"kid": "folio:grant-read-1", "purposes": ["app-grant-read"]},
+    ]
 
 
 def test_conformance_validator_rejects_host_injecting_paths() -> None:

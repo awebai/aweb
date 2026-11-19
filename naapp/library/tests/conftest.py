@@ -1,27 +1,29 @@
 from __future__ import annotations
 
+import json
 import os
-from collections.abc import AsyncIterator
+import tempfile
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 import pytest_asyncio
+from aweb_naapp_testing.databases import TEST_SCHEMA, SchemaDatabases
+from fastapi.testclient import TestClient
+from manifest_config import TEST_GRANT_SEED_HEX
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
 from test_e2e_smoke import (  # noqa: F401
     aw_workspace,
-    aw_workspace_factory,
     library,
     library_origin,
+    library_without_awid_service_token,
+    workspaces,
 )
 
 _MIGRATIONS = Path(__file__).resolve().parent.parent / "src" / "library" / "migrations"
 
-# A naapp runs in its own schema: the candidate gate's role carries
-# production's search_path=pg_catalog, where an unqualified table resolves to
-# no user schema at all.
-TEST_SCHEMA = "naapp_test"
 
 _TEST_DB_CONFIG = DatabaseTestConfig(
     host=os.environ.get("TEST_DB_HOST", "localhost"),
@@ -55,23 +57,53 @@ async def migrated_db() -> AsyncIterator[AsyncDatabaseManager]:
         await test_database.drop_test_database()
 
 
-class _SchemaDatabases:
-    """pgdbm's test database factory, giving every database a schema unless the test names one.
-
-    A copy of aweb_naapp_testing.databases.SchemaDatabases: Library's lock pins
-    aweb-naapp from an external commit and cannot see the tree's testing
-    package until aweb-acgh.5 moves it to in-repo path sources.
-    """
-
-    def __init__(self, factory: Any) -> None:
-        self._factory = factory
-
-    async def create_db(
-        self, suffix: str | None = None, schema: str | None = None, **kwargs: Any
-    ) -> AsyncDatabaseManager:
-        return await self._factory.create_db(suffix, schema or TEST_SCHEMA, **kwargs)
+@pytest_asyncio.fixture
+async def database_url() -> AsyncIterator[str]:
+    """A fresh, empty real Postgres database."""
+    test_database = AsyncTestDatabase(_TEST_DB_CONFIG)
+    try:
+        await test_database.create_test_database()
+    except Exception as exc:  # pragma: no cover - environment without Postgres
+        if os.environ.get("LIBRARY_REQUIRE_TEST_DATABASE") == "1":
+            raise RuntimeError("real Postgres is required for this test run") from exc
+        pytest.skip(f"real Postgres not available: {exc}")
+    try:
+        yield test_database.get_test_db_config().get_dsn()
+    finally:
+        await test_database.drop_test_database()
 
 
 @pytest.fixture
-async def test_db_factory(test_db_factory: Any) -> _SchemaDatabases:
-    return _SchemaDatabases(test_db_factory)
+def library_client(database_url: str) -> Iterator[TestClient]:
+    """Library at its hosted origin, started on a real, empty database."""
+    # library.api builds its runtime at import, after pytest_configure's key.
+    from library.api import create_app
+    from library.config import Settings
+
+    settings = Settings(
+        _env_file=None,
+        database_url=database_url,
+        db_schema=TEST_SCHEMA,
+        public_origin="https://library.aweb.ai",
+    )
+    with TestClient(create_app(settings)) as client:
+        yield client
+
+
+@pytest.fixture
+async def test_db_factory(test_db_factory: Any) -> SchemaDatabases:
+    return SchemaDatabases(test_db_factory)
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    # library.api constructs its real runtime at import, and the runtime reads
+    # the installation grant-read key then. Give every test process a
+    # disposable key file before that module is imported.
+    directory = tempfile.TemporaryDirectory(prefix="library-test-key-")
+    grant = Path(directory.name) / "grant-read.hex"
+    grant.write_text(TEST_GRANT_SEED_HEX)
+    grant.chmod(0o600)
+    env = pytest.MonkeyPatch()
+    env.setenv("LIBRARY_APP_KEY_FILES", json.dumps({"library:grant-read-1": str(grant)}))
+    config.add_cleanup(directory.cleanup)
+    config.add_cleanup(env.undo)

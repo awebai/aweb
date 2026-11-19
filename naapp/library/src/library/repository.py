@@ -6,10 +6,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import yaml
+from aweb_naapp.runtime.installation import InstallationDatabase
+from aweb_naapp.runtime.team_auth import Principal
 from fastapi import HTTPException
 from pgdbm import AsyncDatabaseManager
 
-from library.auth import Principal
 from library.blueprint import (
     PROFILE_FIELD_ASSETS,
     ParsedBlueprint,
@@ -30,6 +31,10 @@ from library.models import (
     ProposalCreateRequest,
     UpdateFromSourceRequest,
 )
+
+# Public reads use the app's database; member operations use their
+# installation's admitted database, which fences every statement.
+type Database = AsyncDatabaseManager | InstallationDatabase
 
 
 def _json_value(value: Any) -> Any:
@@ -112,7 +117,7 @@ async def _ensure_blueprint_ref_publishable(
 
 
 async def publish_blueprint(
-    db: AsyncDatabaseManager, *, principal: Principal, payload: dict[str, Any]
+    db: Database, *, principal: Principal, payload: dict[str, Any]
 ) -> dict[str, Any]:
     """Publish (or update) a public blueprint in the global catalog. Wire-compatible
     with the frozen import-payload -> import-return contract; the blueprint and its
@@ -127,7 +132,7 @@ async def publish_blueprint(
 
 
 async def _persist_blueprint(
-    db: AsyncDatabaseManager, *, principal: Principal, blueprint: ParsedBlueprint
+    db: Database, *, principal: Principal, blueprint: ParsedBlueprint
 ) -> None:
     async with db.transaction() as tx:
         await _ensure_blueprint_ref_publishable(
@@ -235,9 +240,7 @@ _BLUEPRINT_COLUMNS = (
 )
 
 
-async def list_blueprints(
-    db: AsyncDatabaseManager, *, tags: list[str] | None
-) -> list[dict[str, Any]]:
+async def list_blueprints(db: Database, *, tags: list[str] | None) -> list[dict[str, Any]]:
     """The public catalog: latest version of every blueprint, optional ?tags overlap."""
     rows = await db.fetch_all(
         "SELECT DISTINCT ON (owner_team, blueprint_ref) "
@@ -250,7 +253,7 @@ async def list_blueprints(
     return [_blueprint_summary(row) for row in rows]
 
 
-async def get_blueprint(db: AsyncDatabaseManager, *, blueprint_ref: str) -> dict[str, Any]:
+async def get_blueprint(db: Database, *, blueprint_ref: str) -> dict[str, Any]:
     row = await db.fetch_one(
         "SELECT " + _BLUEPRINT_COLUMNS + " FROM {{tables.blueprints}}"
         " WHERE blueprint_ref = $1 ORDER BY created_at DESC LIMIT 1",
@@ -271,7 +274,7 @@ async def get_blueprint(db: AsyncDatabaseManager, *, blueprint_ref: str) -> dict
 
 
 async def get_blueprint_profile(
-    db: AsyncDatabaseManager, *, blueprint_ref: str, profile_ref: str
+    db: Database, *, blueprint_ref: str, profile_ref: str
 ) -> dict[str, Any]:
     """A public profile snapshot from the latest version of a catalog blueprint — the
     full profile content, for previewing before import. No auth (public catalog)."""
@@ -315,7 +318,7 @@ async def get_blueprint_profile(
 
 
 async def set_blueprint_tags(
-    db: AsyncDatabaseManager, *, principal: Principal, blueprint_ref: str, tags: list[Any]
+    db: Database, *, principal: Principal, blueprint_ref: str, tags: list[Any]
 ) -> dict[str, Any]:
     normalized = normalize_tags(tags)
     rows = await db.fetch_all(
@@ -331,7 +334,7 @@ async def set_blueprint_tags(
 
 
 async def delete_blueprint(
-    db: AsyncDatabaseManager, *, principal: Principal, blueprint_ref: str
+    db: Database, *, principal: Principal, blueprint_ref: str
 ) -> dict[str, Any]:
     """Hard-delete a public blueprint the team owns (all versions), cascading to its
     catalog profiles via the FK. Shelf profiles that source-track it are DETACHED -
@@ -367,7 +370,7 @@ async def delete_blueprint(
 
 
 async def delete_shelf_profile(
-    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str
+    db: Database, *, principal: Principal, profile_ref: str
 ) -> dict[str, Any]:
     """Hard-delete a team's shelf profile (all versions) and clean its dependents -
     profile bindings and proposals for that profile_ref (neither has an FK to the
@@ -398,7 +401,7 @@ async def delete_shelf_profile(
 
 
 async def publish_profile(
-    db: AsyncDatabaseManager,
+    db: Database,
     *,
     principal: Principal,
     profile_ref: str,
@@ -532,7 +535,7 @@ _SHELF_SUMMARY_COLUMNS = (
 )
 
 
-async def list_shelf(db: AsyncDatabaseManager, *, principal: Principal) -> dict[str, Any]:
+async def list_shelf(db: Database, *, principal: Principal) -> dict[str, Any]:
     """The team's shelf working set: the latest version of each shelf profile, each
     carrying its source provenance and an ``update_available`` signal. The signal is
     computed here — true when the entry came from a blueprint and that blueprint's latest
@@ -590,11 +593,7 @@ def _proposal_asset_digests(files: list[dict[str, str]]) -> dict[str, str]:
     digests = profile_asset_digests(files)
     by_path = {entry["path"]: entry for entry in files}
     profile_doc = yaml.safe_load(by_path["profile.yaml"]["content_utf8"]) or {}
-    proposal_digests = {
-        path: digests[f"file:{path}"]
-        for path in by_path
-        if path != "profile.yaml"
-    }
+    proposal_digests = {path: digests[f"file:{path}"] for path in by_path if path != "profile.yaml"}
     proposal_digests.update(
         {
             f"profile.yaml#{field}": digests[f"field:{field}"]
@@ -606,7 +605,7 @@ def _proposal_asset_digests(files: list[dict[str, str]]) -> dict[str, str]:
 
 
 async def get_shelf_profile(
-    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, include_files: bool = False
+    db: Database, *, principal: Principal, profile_ref: str, include_files: bool = False
 ) -> dict[str, Any]:
     # The latest shelf version is the one approve() minted, so a refresh that reads
     # this picks up the team's own learning. include_files adds the profile content
@@ -629,7 +628,7 @@ async def get_shelf_profile(
 
 
 async def set_profile_tags(
-    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, tags: list[Any]
+    db: Database, *, principal: Principal, profile_ref: str, tags: list[Any]
 ) -> dict[str, Any]:
     normalized = normalize_tags(tags)
     rows = await db.fetch_all(
@@ -645,7 +644,7 @@ async def set_profile_tags(
 
 
 async def _upsert_shelf_profile(
-    db: AsyncDatabaseManager,
+    db: Database,
     *,
     team_id: str,
     profile: ParsedProfile,
@@ -703,7 +702,7 @@ async def _upsert_shelf_profile(
 
 
 async def create_shelf_profile(
-    db: AsyncDatabaseManager, *, principal: Principal, files: list[dict[str, str]], tags: list[Any]
+    db: Database, *, principal: Principal, files: list[dict[str, str]], tags: list[Any]
 ) -> dict[str, Any]:
     """Create a directly-authored private shelf profile (no source blueprint)."""
     try:
@@ -727,7 +726,7 @@ async def create_shelf_profile(
 
 
 async def create_shelf_version(
-    db: AsyncDatabaseManager, *, principal: Principal, profile_ref: str, files: list[dict[str, str]]
+    db: Database, *, principal: Principal, profile_ref: str, files: list[dict[str, str]]
 ) -> dict[str, Any]:
     """Add a new content version of an owned shelf profile (the evolve path).
     Source provenance, tags, and per-part baselines carry from the prior version."""
@@ -781,7 +780,7 @@ def _shelf_provenance(data: dict[str, Any], *, created: bool) -> dict[str, Any]:
 
 
 async def import_to_shelf(
-    db: AsyncDatabaseManager,
+    db: Database,
     *,
     principal: Principal,
     source_blueprint_ref: str,
@@ -886,7 +885,7 @@ def _blueprint_profile_files(row: Any) -> list[dict[str, str]]:
 
 
 async def update_from_source(
-    db: AsyncDatabaseManager,
+    db: Database,
     *,
     principal: Principal,
     profile_ref: str,
@@ -985,7 +984,7 @@ async def update_from_source(
 
 
 async def register_team(
-    db: AsyncDatabaseManager, *, principal: Principal, owner: str | None, display_name: str | None
+    db: Database, *, principal: Principal, owner: str | None, display_name: str | None
 ) -> dict[str, Any]:
     await db.execute(
         "INSERT INTO {{tables.team_registrations}} (team_id, owner, display_name)"
@@ -1009,7 +1008,7 @@ async def register_team(
 
 
 async def set_profile_binding(
-    db: AsyncDatabaseManager, *, principal: Principal, agent_id: str, binding: ProfileBindingRequest
+    db: Database, *, principal: Principal, agent_id: str, binding: ProfileBindingRequest
 ) -> dict[str, Any]:
     async with db.transaction() as tx:
         await tx.execute(
@@ -1035,7 +1034,7 @@ async def set_profile_binding(
 
 
 async def get_profile_binding(
-    db: AsyncDatabaseManager, *, principal: Principal, agent_id: str
+    db: Database, *, principal: Principal, agent_id: str
 ) -> dict[str, Any]:
     row = await db.fetch_one(
         "SELECT agent_id, profile_ref, profile_version, profile_digest"
@@ -1049,7 +1048,7 @@ async def get_profile_binding(
 
 
 async def materialize(
-    db: AsyncDatabaseManager, *, principal: Principal, request: MaterializeRequest
+    db: Database, *, principal: Principal, request: MaterializeRequest
 ) -> dict[str, Any]:
     profile_ref = request.profile_ref
     version = request.profile_version
@@ -1136,9 +1135,7 @@ def _proposal_row(row: Any) -> dict[str, Any]:
     }
 
 
-async def _get_proposal(
-    db: AsyncDatabaseManager, team_id: str, proposal_id: UUID
-) -> dict[str, Any]:
+async def _get_proposal(db: Database, team_id: str, proposal_id: UUID) -> dict[str, Any]:
     row = await db.fetch_one(
         "SELECT " + _PROPOSAL_COLUMNS + " FROM {{tables.proposals}}"
         " WHERE team_id = $1 AND proposal_id = $2",
@@ -1158,7 +1155,7 @@ def _unsupported_proposal_target(target: str) -> HTTPException:
 
 
 async def create_proposal(
-    db: AsyncDatabaseManager, *, principal: Principal, request: ProposalCreateRequest
+    db: Database, *, principal: Principal, request: ProposalCreateRequest
 ) -> dict[str, Any]:
     if request.target != "profile":
         raise _unsupported_proposal_target(request.target)
@@ -1185,7 +1182,7 @@ async def create_proposal(
     return await _get_proposal(db, principal.team_id, proposal_id)
 
 
-async def list_proposals(db: AsyncDatabaseManager, *, principal: Principal) -> list[dict[str, Any]]:
+async def list_proposals(db: Database, *, principal: Principal) -> list[dict[str, Any]]:
     rows = await db.fetch_all(
         "SELECT " + _PROPOSAL_COLUMNS + " FROM {{tables.proposals}}"
         " WHERE team_id = $1 ORDER BY created_at DESC",
@@ -1202,7 +1199,7 @@ def _parse_proposal_id(proposal_id: str) -> UUID:
 
 
 async def _set_proposal_status(
-    db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str, status: str
+    db: Database, *, principal: Principal, proposal_id: str, status: str
 ) -> dict[str, Any]:
     pid = _parse_proposal_id(proposal_id)
     rows = await db.fetch_all(
@@ -1423,7 +1420,7 @@ def _apply_asset_changeset(
 
 
 async def _validate_profile_proposal(
-    db: AsyncDatabaseManager,
+    db: Database,
     *,
     principal: Principal,
     profile_ref: str | None,
@@ -1477,7 +1474,7 @@ async def _validate_profile_proposal(
 
 
 async def _mint_from_proposal(
-    db: AsyncDatabaseManager, *, principal: Principal, proposal: dict[str, Any]
+    db: Database, *, principal: Principal, proposal: dict[str, Any]
 ) -> dict[str, Any]:
     """Mint a new shelf-profile version from an approved asset changeset.
 
@@ -1539,7 +1536,7 @@ async def _mint_from_proposal(
 
 
 async def approve_proposal(
-    db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str
+    db: Database, *, principal: Principal, proposal_id: str
 ) -> dict[str, Any]:
     pid = _parse_proposal_id(proposal_id)
     proposal = await _get_proposal(db, principal.team_id, pid)
@@ -1556,7 +1553,7 @@ async def approve_proposal(
 
 
 async def reject_proposal(
-    db: AsyncDatabaseManager, *, principal: Principal, proposal_id: str
+    db: Database, *, principal: Principal, proposal_id: str
 ) -> dict[str, Any]:
     return await _set_proposal_status(
         db, principal=principal, proposal_id=proposal_id, status="rejected"

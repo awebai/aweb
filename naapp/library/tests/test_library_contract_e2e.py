@@ -4,20 +4,22 @@ import hashlib
 import json
 import subprocess
 import uuid
+from http import HTTPMethod
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import yaml
-from test_e2e_smoke import (
+from aweb_naapp_testing.deployment import (
     AWWorkspace,
-    RunningLibrary,
-    _assert_aw_status,
-    _aw_json,
-    _aw_request,
-    _provision_team,
+    RunningApp,
+    assert_aw_status,
+    aw_json,
+    aw_request,
+    provision_team,
 )
+from test_e2e_smoke import AWID_URL, installed_team
 
 from library.blueprint import (
     ParsedBlueprint,
@@ -341,18 +343,16 @@ def _profile_files_with_version(profile_ref: str, version: str) -> list[dict[str
 
 
 def _post_json(team: Any, url: str, payload: Any) -> subprocess.CompletedProcess[str]:
-    return _aw_request(team, "POST", url, body=_json_body(payload))
+    return aw_request(team, HTTPMethod.POST, url, body=_json_body(payload))
 
 
 def _put_json(team: Any, url: str, payload: Any) -> subprocess.CompletedProcess[str]:
-    return _aw_request(team, "PUT", url, body=_json_body(payload))
+    return aw_request(team, HTTPMethod.PUT, url, body=_json_body(payload))
 
 
-def _publish_blueprint(
-    team: Any, library: RunningLibrary, payload: dict[str, Any]
-) -> dict[str, Any]:
+def _publish_blueprint(team: Any, library: RunningApp, payload: dict[str, Any]) -> dict[str, Any]:
     blueprint = _payload_blueprint(payload)
-    result = _aw_json(
+    result = aw_json(
         _post_json(team, f"{library.origin}/v1/blueprints/import", payload),
         context=f"publish blueprint {blueprint.blueprint_ref}",
     )
@@ -362,7 +362,7 @@ def _publish_blueprint(
 
 def _import_to_shelf(
     team: Any,
-    library: RunningLibrary,
+    library: RunningApp,
     *,
     blueprint: ParsedBlueprint,
     profile_ref: str = "developer",
@@ -370,7 +370,7 @@ def _import_to_shelf(
     created: bool = True,
 ) -> dict[str, Any]:
     profile = next(profile for profile in blueprint.profiles if profile.profile_ref == profile_ref)
-    response = _aw_json(
+    response = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/shelf/import",
@@ -399,7 +399,7 @@ def _import_to_shelf(
 
 def _bind_profile(
     team: Any,
-    library: RunningLibrary,
+    library: RunningApp,
     *,
     agent_id: str,
     profile_ref: str,
@@ -411,13 +411,13 @@ def _bind_profile(
         "profile_version": profile_version,
         "profile_digest": profile_digest,
     }
-    set_response = _aw_json(
+    set_response = aw_json(
         _post_json(team, f"{library.origin}/v1/agents/{agent_id}/profile-binding", binding),
         context=f"bind {agent_id}",
     )
     assert set_response == {"agent_id": agent_id, **binding}
-    get_response = _aw_json(
-        _aw_request(team, "GET", f"{library.origin}/v1/agents/{agent_id}/profile-binding"),
+    get_response = aw_json(
+        aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/agents/{agent_id}/profile-binding"),
         context=f"get binding {agent_id}",
     )
     assert get_response == set_response
@@ -425,21 +425,19 @@ def _bind_profile(
 
 
 def test_manifest_digest_and_public_blueprint_catalog_reads_are_unauth(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
-    # Drift test, not a pinned digest: the served manifest must equal the canonical
-    # manifest bytes for this e2e origin. This stays green across feature merges that
-    # add tools while still catching real serve/commit drift; the hosted pinned-digest
+    # Drift test, not a pinned digest: the bare manifest path serves exactly the v2
+    # variant the catalog pins, filled for this e2e origin. The hosted pinned-digest
     # conformance lives at the unit level (test_app_manifest).
-    from library.aweb_manifest import read_manifest_bytes
-
     manifest = httpx.get(f"{library.origin}/aweb-app.json", timeout=10.0)
     assert manifest.status_code == 200, manifest.text
-    assert manifest.content == read_manifest_bytes(library.origin)
+    variant = httpx.get(f"{library.origin}/manifests/v2.json", timeout=10.0)
+    assert manifest.content == variant.content
     assert json.loads(manifest.content)["app"]["origin"] == library.origin
 
-    team = _provision_team(aw_workspace)
+    team = installed_team(aw_workspace, library)
     unique = uuid.uuid4().hex[:8]
     runtime_hints = {"coordinator": ["claude-code"], "reviewer": ["pi", "claude-code"]}
     payload = _blueprint_payload(
@@ -448,7 +446,7 @@ def test_manifest_digest_and_public_blueprint_catalog_reads_are_unauth(
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
 
-    tags = _aw_json(
+    tags = aw_json(
         _put_json(
             team,
             f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/tags",
@@ -495,26 +493,28 @@ def test_manifest_digest_and_public_blueprint_catalog_reads_are_unauth(
 
 
 def test_publish_blueprint_preserves_frozen_import_contract(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = installed_team(aw_workspace, library)
     result = _publish_blueprint(team, library, _canonical_payload())
     assert result == _expected_import_return()
 
 
 def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = installed_team(aw_workspace, library)
     unique = uuid.uuid4().hex[:8]
     blueprint_payload = _blueprint_payload(blueprint_ref=f"example.copy-{unique}")
     blueprint = _payload_blueprint(blueprint_payload)
     _publish_blueprint(team, library, blueprint_payload)
 
     _import_to_shelf(team, library, blueprint=blueprint, tags=["First", "first"])
-    shelf = _aw_json(_aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf")
+    shelf = aw_json(
+        aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/shelf"), context="list shelf"
+    )
     assert shelf == {
         "profiles": [
             _expected_shelf_read_profile(
@@ -523,7 +523,7 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
         ]
     }
 
-    updated_tags = _aw_json(
+    updated_tags = aw_json(
         _put_json(
             team, f"{library.origin}/v1/profiles/developer/tags", {"tags": ["local", "first"]}
         ),
@@ -533,8 +533,9 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
 
     # Same source profile is a pure no-op and never clobbers local shelf metadata.
     _import_to_shelf(team, library, blueprint=blueprint, tags=["ignored"], created=False)
-    shelf_after_noop = _aw_json(
-        _aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after noop"
+    shelf_after_noop = aw_json(
+        aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/shelf"),
+        context="list shelf after noop",
     )
     assert shelf_after_noop["profiles"][0]["tags"] == ["first", "local"]
     assert shelf_after_noop["profiles"][0]["update_available"] is False
@@ -546,8 +547,9 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
     )
     _publish_blueprint(team, library, newer_payload)
     _import_to_shelf(team, library, blueprint=blueprint, created=False)
-    shelf_with_update = _aw_json(
-        _aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf with update"
+    shelf_with_update = aw_json(
+        aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/shelf"),
+        context="list shelf with update",
     )
     assert shelf_with_update == {
         "profiles": [
@@ -566,14 +568,14 @@ def test_import_to_shelf_idempotent_conflict_never_clobbers_and_signals_update(
         f"{library.origin}/v1/shelf/import",
         {"source_blueprint_ref": other_blueprint.blueprint_ref, "profile_ref": "developer"},
     )
-    _assert_aw_status(conflict, 409, context="different source same shelf ref")
+    assert_aw_status(conflict, 409, context="different source same shelf ref")
 
 
 def test_update_from_source_merges_noops_and_rejects_collision(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = installed_team(aw_workspace, library)
     unique = uuid.uuid4().hex[:8]
     payload = _blueprint_payload(blueprint_ref=f"example.update-{unique}")
     blueprint = _payload_blueprint(payload)
@@ -590,7 +592,7 @@ def test_update_from_source_merges_noops_and_rejects_collision(
         "coordinator", "0.1.1", instructions_suffix=local_instructions
     )
     local_profile = parse_profile_payload(local_files)
-    local = _aw_json(
+    local = aw_json(
         _post_json(
             team, f"{library.origin}/v1/profiles/coordinator/versions", {"files": local_files}
         ),
@@ -615,7 +617,7 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     newer_blueprint = _payload_blueprint(newer_payload)
     _publish_blueprint(team, library, newer_payload)
 
-    update = _aw_json(
+    update = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/profiles/coordinator/update-from-source",
@@ -630,8 +632,9 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     assert update["source_blueprint_version"] == "0.2.0"
     assert update["source_blueprint_digest"] == newer_blueprint.digest
 
-    shelf = _aw_json(
-        _aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after update"
+    shelf = aw_json(
+        aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/shelf"),
+        context="list shelf after update",
     )
     coordinator = next(
         profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator"
@@ -646,7 +649,7 @@ def test_update_from_source_merges_noops_and_rejects_collision(
     assert coordinator["source_blueprint_latest_version"] == "0.2.0"
     assert coordinator["update_available"] is False
 
-    materialized = _aw_json(
+    materialized = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/materialize",
@@ -679,7 +682,7 @@ def test_update_from_source_merges_noops_and_rejects_collision(
         "source_blueprint_digest": newer_blueprint.digest,
     }
 
-    no_op = _aw_json(
+    no_op = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/profiles/coordinator/update-from-source",
@@ -706,7 +709,7 @@ def test_update_from_source_merges_noops_and_rejects_collision(
             "target": "local",
         },
     )
-    _assert_aw_status(missing_noop_version, 404, context="no-op does not mint target version")
+    assert_aw_status(missing_noop_version, 404, context="no-op does not mint target version")
 
     collision_payload = _blueprint_payload(
         blueprint_ref=blueprint.blueprint_ref,
@@ -720,15 +723,15 @@ def test_update_from_source_merges_noops_and_rejects_collision(
         f"{library.origin}/v1/profiles/coordinator/update-from-source",
         {"target_version": "0.1.1"},
     )
-    _assert_aw_status(collision, 409, context="update-from-source target version collision")
+    assert_aw_status(collision, 409, context="update-from-source target version collision")
 
 
 def test_create_shelf_version_publish_profile_and_created_materialize(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
-    created = _aw_json(
+    team = installed_team(aw_workspace, library)
+    created = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/profiles",
@@ -749,7 +752,7 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
         profile_version=created["version"],
         profile_digest=created["digest"],
     )
-    materialized = _aw_json(
+    materialized = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/materialize",
@@ -771,7 +774,7 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
 
     next_files = _profile_files_with_version("developer", "0.1.1")
     next_profile = parse_profile_payload(next_files)
-    versioned = _aw_json(
+    versioned = aw_json(
         _post_json(team, f"{library.origin}/v1/profiles/developer/versions", {"files": next_files}),
         context="create shelf version",
     )
@@ -795,7 +798,7 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
             "missions": ["Use the published profile."],
         },
     }
-    published = _aw_json(
+    published = aw_json(
         _post_json(team, f"{library.origin}/v1/profiles/developer/publish", publish_request),
         context="publish shelf profile into new blueprint",
     )
@@ -832,7 +835,7 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
         _expected_blueprint_summary(expected_blueprint, tags=[f"e2e-{unique}", "published"])
     ]
 
-    existing_publish = _aw_json(
+    existing_publish = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/profiles/developer/publish",
@@ -861,24 +864,24 @@ def test_create_shelf_version_publish_profile_and_created_materialize(
             },
         },
     )
-    _assert_aw_status(invalid_target, 422, context="publish target XOR new_blueprint")
+    assert_aw_status(invalid_target, 422, context="publish target XOR new_blueprint")
 
 
 def test_register_bind_materialize_blueprint_copy_and_proposals(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = installed_team(aw_workspace, library)
     unique = uuid.uuid4().hex[:8]
     payload = _blueprint_payload(blueprint_ref=f"example.flow-{unique}")
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
     shelf_copy = _import_to_shelf(team, library, blueprint=blueprint)
 
-    first_register = _aw_json(
+    first_register = aw_json(
         _post_json(team, f"{library.origin}/v1/team/register", {}), context="team register"
     )
-    second_register = _aw_json(
+    second_register = aw_json(
         _post_json(team, f"{library.origin}/v1/team/register", {}), context="team register again"
     )
     assert second_register == first_register
@@ -892,7 +895,7 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
         f"{library.origin}/v1/materialize",
         {"agent_id": "agent-dev-1", "runtime_kind": "claude-code", "target": "local"},
     )
-    _assert_aw_status(unbound_materialize, 404, context="materialize requires bound profile")
+    assert_aw_status(unbound_materialize, 404, context="materialize requires bound profile")
 
     binding = _bind_profile(
         team,
@@ -902,7 +905,7 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
         profile_version=shelf_copy["version"],
         profile_digest=shelf_copy["digest"],
     )
-    materialized = _aw_json(
+    materialized = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/materialize",
@@ -952,7 +955,7 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
                 "content": {"title": "unsupported no-op target"},
             },
         )
-        _assert_aw_status(rejected_create, 422, context=f"reject {unsupported_target} proposal")
+        assert_aw_status(rejected_create, 422, context=f"reject {unsupported_target} proposal")
         assert json.loads(rejected_create.stdout) == {
             "detail": (
                 f"Unsupported proposal target '{unsupported_target}'; "
@@ -960,27 +963,27 @@ def test_register_bind_materialize_blueprint_copy_and_proposals(
             )
         }
 
-    listed = _aw_json(
-        _aw_request(team, "GET", f"{library.origin}/v1/proposals"), context="list proposals"
+    listed = aw_json(
+        aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/proposals"), context="list proposals"
     )
     assert listed == []
 
 
 def test_profile_proposal_approval_mints_and_rejects_stale_asset(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
+    team = installed_team(aw_workspace, library)
     unique = uuid.uuid4().hex[:8]
     payload = _blueprint_payload(blueprint_ref=f"example.mint-{unique}")
     blueprint = _payload_blueprint(payload)
     _publish_blueprint(team, library, payload)
     base = _import_to_shelf(team, library, blueprint=blueprint, profile_ref="coordinator")
 
-    base_profile = _aw_json(
-        _aw_request(
+    base_profile = aw_json(
+        aw_request(
             team,
-            "GET",
+            HTTPMethod.GET,
             f"{library.origin}/v1/blueprints/{blueprint.blueprint_ref}/profiles/coordinator",
         ),
         context="get coordinator profile for asset digests",
@@ -1027,7 +1030,7 @@ def test_profile_proposal_approval_mints_and_rejects_stale_asset(
         assert isinstance(proposal["created_at"], str)
         assert proposal["status"] == status
 
-    proposal = _aw_json(
+    proposal = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/proposals",
@@ -1045,7 +1048,7 @@ def test_profile_proposal_approval_mints_and_rejects_stale_asset(
     assert proposal["summary"] == "Sharpen coordinator mission"
     assert proposal["rationale"] == "The team learned a better coordination habit."
 
-    approved = _aw_json(
+    approved = aw_json(
         _post_json(team, f"{library.origin}/v1/proposals/{proposal['proposal_id']}/approve", {}),
         context="approve minting proposal",
     )
@@ -1058,8 +1061,9 @@ def test_profile_proposal_approval_mints_and_rejects_stale_asset(
         "supersedes_profile_digest": base["digest"],
     }
 
-    shelf = _aw_json(
-        _aw_request(team, "GET", f"{library.origin}/v1/shelf"), context="list shelf after mint"
+    shelf = aw_json(
+        aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/shelf"),
+        context="list shelf after mint",
     )
     coordinator = next(
         profile for profile in shelf["profiles"] if profile["profile_ref"] == "coordinator"
@@ -1074,7 +1078,7 @@ def test_profile_proposal_approval_mints_and_rejects_stale_asset(
         coordinator_mission="Upstream blueprint mission should not overwrite the blessed team mission.",
     )
     _publish_blueprint(team, library, upstream_payload)
-    no_pull = _aw_json(
+    no_pull = aw_json(
         _post_json(
             team,
             f"{library.origin}/v1/profiles/coordinator/update-from-source",
@@ -1103,22 +1107,22 @@ def test_profile_proposal_approval_mints_and_rejects_stale_asset(
             "content": stale_content,
         },
     )
-    _assert_aw_status(stale_create, 409, context="submit stale-asset proposal")
+    assert_aw_status(stale_create, 409, context="submit stale-asset proposal")
     assert json.loads(stale_create.stdout) == {
         "detail": (
             "Asset 'profile.yaml#mission' base_asset_digest does not match the current "
             "proposal_asset_digests value"
         )
     }
-    proposals = _aw_json(
-        _aw_request(team, "GET", f"{library.origin}/v1/proposals"),
+    proposals = aw_json(
+        aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/proposals"),
         context="list proposals after rejected stale submission",
     )
     assert [item["proposal_id"] for item in proposals] == [proposal["proposal_id"]]
 
 
 def test_empty_profile_invariant_never_requires_reachable_library(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
     expected = _load_json(_EXPECTED / "empty-profile-invariant.json")
@@ -1146,12 +1150,12 @@ def test_empty_profile_invariant_never_requires_reachable_library(
         }
     )
     library.proxy.last_request = None
-    team = _provision_team(aw_workspace)
+    team = provision_team(aw_workspace, awid_url=AWID_URL, namespace_prefix="library-e2e")
     assert team.team_id
     assert library.proxy.last_request is None
 
 
-def test_team_scoped_writes_require_real_team_cert(library: RunningLibrary) -> None:
+def test_team_scoped_writes_require_real_team_cert(library: RunningApp) -> None:
     payload = _canonical_payload()
     unauth_publish = httpx.post(
         f"{library.origin}/v1/blueprints/import", json=payload, timeout=10.0
@@ -1194,13 +1198,13 @@ def test_contract_fixture_contains_materialized_profile_refs() -> None:
 
 
 def test_delete_blueprint_removes_from_catalog_and_requires_auth(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
     """The HTTP/auth walk for the destructive delete: an unsigned DELETE is rejected
     (auth gates it), and the signed owner DELETE removes the blueprint + cascades to
     its catalog profile."""
-    team = _provision_team(aw_workspace)
+    team = installed_team(aw_workspace, library)
     unique = uuid.uuid4().hex[:8]
     payload = _blueprint_payload(blueprint_ref=f"example.e2e-{unique}-del")
     blueprint = _payload_blueprint(payload)
@@ -1215,8 +1219,8 @@ def test_delete_blueprint_removes_from_catalog_and_requires_auth(
     assert httpx.get(f"{library.origin}/v1/blueprints/{ref}", timeout=10.0).status_code == 200
 
     # the signed OWNER delete succeeds, removes it, and cascades to its profile.
-    deleted = _aw_json(
-        _aw_request(team, "DELETE", f"{library.origin}/v1/blueprints/{ref}"),
+    deleted = aw_json(
+        aw_request(team, HTTPMethod.DELETE, f"{library.origin}/v1/blueprints/{ref}"),
         context="delete blueprint",
     )
     assert deleted["blueprint_ref"] == ref

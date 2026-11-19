@@ -1,544 +1,199 @@
+"""Library on a real stack: real AWID (the compose stack), a real coordination
+server and real Library behind TLS. Each team installs Library with the real
+``aw plugin install`` before it calls a member route; no path signs in with a
+bare certificate.
+"""
+
 from __future__ import annotations
 
 import json
 import os
-import socket
-import subprocess
-import sys
-import threading
+import secrets
 import time
-import uuid
-from collections.abc import Callable, Iterator, Mapping
-from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import replace
+from http import HTTPMethod
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pytest
+from aweb_naapp_testing.deployment import (
+    AWWorkspace,
+    E2ETeam,
+    RunningApp,
+    assert_aw_status,
+    assert_aw_success,
+    aw_request,
+    aw_workspace_factory,
+    connect_team_server,
+    coordination_listener,
+    e2e_stack,
+    install_app,
+    provision_team,
+    run_aw,
+    running_app,
+    running_coordination_server,
+    wait_http_ok,
+)
 
 pytestmark = pytest.mark.e2e
 
-@dataclass(frozen=True)
-class E2EStack:
-    awid_url: str
-    postgres_url: str
-    compose: list[str]
-
-
-def candidate_hostname(project: str, service: str) -> str:
-    helper = Path(__file__).resolve().parents[3] / "scripts/candidate-network.py"
-    return subprocess.check_output([sys.executable, str(helper), "hostname", project, service], text=True).strip()
-
-
-def e2e_stack(env: Mapping[str, str]) -> E2EStack:
-    """Endpoints and project for the stack allocated by the gate or local make."""
-    host = env.get("NAAPP_E2E_HOST", "127.0.0.1")
-    project = env.get("NAAPP_E2E_PROJECT", "library-e2e")
-    awid_port = env.get("NAAPP_E2E_AWID_PORT", "18010")
-    postgres_port = env.get("NAAPP_E2E_POSTGRES_PORT", "55432")
-    container_network = env.get("NAAPP_E2E_CONTAINER_NETWORK") == "1"
-    return E2EStack(
-        awid_url=(f"http://{candidate_hostname(project, 'awid')}:8010" if container_network
-                  else f"http://{host}:{awid_port}"),
-        postgres_url=(f"postgresql://library:library@{candidate_hostname(project, 'postgres')}:5432/library" if container_network
-                      else f"postgresql://library:library@{host}:{postgres_port}/library"),
-        compose=["docker", "compose", "-p", project, "-f", "docker-compose.e2e.yml"],
-    )
-
-
-STACK = e2e_stack(os.environ)
+STACK = e2e_stack(os.environ, project="library-e2e", database="library")
 AWID_URL = STACK.awid_url
 # Same-operator credential shared with the e2e awid service (docker-compose.e2e.yml).
 AWID_SERVICE_TOKEN = os.environ.get(
     "LIBRARY_E2E_AWID_SERVICE_TOKEN", "library-e2e-awid-service-token-0123456789abcdef"
 )
-POSTGRES_URL = STACK.postgres_url
-COMPOSE = STACK.compose
 E2E_BUILD_SHA = "0123456789abcdef0123456789abcdef01234567"
+# A deployment on this host's address is not the hosted origin, so it needs its own app id.
+E2E_APP_ID = "library-e2e"
+# Library's own settings the caller's environment must not leak into a deployment.
+_DEPLOYMENT_SETTINGS = (
+    "RENDER_SERVICE_ID",
+    "RENDER_SERVICE_NAME",
+    "RENDER_EXTERNAL_HOSTNAME",
+    "RENDER_GIT_REPO_SLUG",
+    "RENDER_GIT_BRANCH",
+    "RENDER_GIT_COMMIT",
+    "LIBRARY_GIT_SHA",
+    "LIBRARY_AWID_SERVICE_TOKEN",
+    "LIBRARY_APP_KEY_FILES",
+    "LIBRARY_APP_ID",
+    "LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS",
+)
 
 
-@dataclass(frozen=True)
-class CapturedRequest:
-    method: str
-    path: str
-    headers: dict[str, str]
-    body: bytes
-
-
-class RecordingProxy(ThreadingHTTPServer):
-    backend_origin: str
-    last_request: CapturedRequest | None
-
-    def __init__(self, server_address: tuple[str, int], backend_origin: str) -> None:
-        super().__init__(server_address, _RecordingProxyHandler)
-        self.backend_origin = backend_origin.rstrip("/")
-        self.last_request = None
-
-
-class _RecordingProxyHandler(BaseHTTPRequestHandler):
-    protocol_version = "HTTP/1.1"
-
-    @property
-    def proxy(self) -> RecordingProxy:
-        return self.server  # type: ignore[return-value]
-
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler hook
-        self._proxy()
-
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler hook
-        self._proxy()
-
-    def do_PUT(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler hook
-        self._proxy()
-
-    def do_DELETE(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler hook
-        self._proxy()
-
-    def log_message(self, _format: str, *_args: object) -> None:
-        return
-
-    def _proxy(self) -> None:
-        length = int(self.headers.get("Content-Length") or "0")
-        body = self.rfile.read(length) if length else b""
-        headers = {key: value for key, value in self.headers.items()}
-        self.proxy.last_request = CapturedRequest(
-            method=self.command,
-            path=self.path,
-            headers=headers,
-            body=body,
-        )
-
-        forward_headers = {
-            key: value
-            for key, value in headers.items()
-            if key.lower() not in {"host", "content-length", "connection", "accept-encoding"}
-        }
-        try:
-            with httpx.Client(timeout=15.0, follow_redirects=False) as client:
-                upstream = client.request(
-                    self.command,
-                    f"{self.proxy.backend_origin}{self.path}",
-                    headers=forward_headers,
-                    content=body,
-                )
-        except Exception as exc:  # pragma: no cover - diagnostic path only
-            response = str(exc).encode("utf-8", errors="replace")
-            self.send_response(502)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(response)))
-            self.end_headers()
-            self.wfile.write(response)
-            self.close_connection = True
-            return
-
-        self.send_response(upstream.status_code)
-        for key, value in upstream.headers.items():
-            if key.lower() in {"content-length", "connection", "transfer-encoding", "content-encoding"}:
-                continue
-            self.send_header(key, value)
-        self.send_header("Content-Length", str(len(upstream.content)))
-        self.end_headers()
-        self.wfile.write(upstream.content)
-        self.close_connection = True
-
-
-@dataclass(frozen=True)
-class RunningLibrary:
-    origin: str
-    backend_origin: str
-    proxy: RecordingProxy
-
-    @property
-    def last_request(self) -> CapturedRequest:
-        captured = self.proxy.last_request
-        assert captured is not None
-        return captured
-
-
-@dataclass(frozen=True)
-class AWWorkspace:
-    path: Path
-    env: dict[str, str]
-
-
-@dataclass(frozen=True)
-class E2ETeam:
-    workspace: AWWorkspace
-    namespace: str
-    team: str
-    team_id: str
-    alias: str
-    address: str
-    did_key: str
-    certificate_id: str
-
-
-def _require_e2e_enabled() -> None:
+def require_e2e_enabled() -> None:
     if os.environ.get("LIBRARY_E2E") != "1":
         pytest.skip("set LIBRARY_E2E=1 or run `make e2e` to execute docker-backed e2e tests")
 
 
-def _wait_http_ok(url: str, *, timeout_seconds: float = 30.0) -> None:
-    deadline = time.monotonic() + timeout_seconds
-    last_error: Exception | None = None
-    while time.monotonic() < deadline:
-        try:
-            response = httpx.get(url, timeout=2.0)
-            if response.status_code < 500:
-                return
-        except Exception as exc:  # pragma: no cover - only used for diagnostics
-            last_error = exc
-        time.sleep(0.25)
-    raise RuntimeError(f"timed out waiting for {url}: {last_error}")
-
-
-def _compose(*args: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        [*COMPOSE, *args],
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise AssertionError(
-            "docker compose command failed\n"
-            f"cmd: {' '.join([*COMPOSE, *args])}\n"
-            f"exit: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}\n"
-        )
-    return result
-
-
-def _run_aw(workspace: AWWorkspace, *args: str) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        ["aw", "--json", *args],
-        cwd=workspace.path,
-        env=workspace.env,
-        text=True,
-        capture_output=True,
-        timeout=60,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise AssertionError(
-            "aw command failed\n"
-            f"cmd: aw --json {' '.join(args)}\n"
-            f"exit: {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}\n"
-        )
-    return result
-
-
-def _run_aw_json(workspace: AWWorkspace, *args: str) -> dict[str, Any]:
-    result = _run_aw(workspace, *args)
-    try:
-        payload = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise AssertionError(f"aw command did not emit JSON: {result.stdout}\n{result.stderr}") from exc
-    assert isinstance(payload, dict)
-    return payload
-
-
-def _aw_request(
-    team: E2ETeam,
-    method: str,
-    url: str,
+@contextmanager
+def running_library(
+    directory: Path,
     *,
-    body: str | None = None,
-    body_file: Path | None = None,
-) -> subprocess.CompletedProcess[str]:
-    args = ["aw", "id", "request", method, url, "--team-auth", "--raw"]
-    if body is not None:
-        args.extend(["--body", body])
-    if body_file is not None:
-        args.extend(["--body-file", str(body_file)])
-    return subprocess.run(
-        args,
-        cwd=team.workspace.path,
-        env=team.workspace.env,
-        text=True,
-        capture_output=True,
-        timeout=60,
-        check=False,
-    )
+    awid_service_token: str | None,
+    team_server_origin: str,
+    registry_url: str = AWID_URL,
+) -> Iterator[RunningApp]:
+    """Library behind TLS on this host, reading AWID at ``registry_url``, with
+    ``team_server_origin`` as the one team server it reaches outside the egress guard."""
+    require_e2e_enabled()
+    wait_http_ok(f"{registry_url}/health")
+    directory.mkdir(parents=True)
+    grant_key = directory / "grant-read.hex"
+    grant_key.write_text(secrets.token_hex(32))
+    grant_key.chmod(0o600)
 
+    def settings(origin: str) -> dict[str, str]:
+        values = {
+            "RENDER_GIT_COMMIT": E2E_BUILD_SHA,
+            "LIBRARY_DATABASE_URL": STACK.postgres_url,
+            "LIBRARY_AWID_REGISTRY_URL": registry_url,
+            "LIBRARY_AUTH_CACHE_TTL_SECONDS": "2",
+            "LIBRARY_PUBLIC_ORIGIN": origin,
+            "LIBRARY_APP_ID": E2E_APP_ID,
+            "LIBRARY_APP_KEY_FILES": json.dumps({"library:grant-read-1": str(grant_key)}),
+            "LIBRARY_TEAM_SERVER_INTERNAL_ORIGINS": json.dumps([team_server_origin]),
+        }
+        if awid_service_token is not None:
+            values["LIBRARY_AWID_SERVICE_TOKEN"] = awid_service_token
+        return values
 
-def _assert_aw_success(result: subprocess.CompletedProcess[str], *, context: str) -> str:
-    assert result.returncode == 0, (
-        f"aw id request failed: {context}\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}\n"
-    )
-    return result.stdout
-
-
-def _assert_aw_status(result: subprocess.CompletedProcess[str], status: int, *, context: str) -> None:
-    assert result.returncode != 0, f"expected HTTP {status} failure for {context}, got success: {result.stdout}"
-    assert f"HTTP {status}" in result.stderr, (
-        f"expected HTTP {status} for {context}\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}\n"
-    )
-
-
-def _aw_json(result: subprocess.CompletedProcess[str], *, context: str) -> Any:
-    stdout = _assert_aw_success(result, context=context)
-    try:
-        return json.loads(stdout)
-    except json.JSONDecodeError as exc:
-        raise AssertionError(f"invalid JSON for {context}: {stdout}") from exc
+    with running_app(
+        name="library",
+        factory="library.api:create_app",
+        env_for=settings,
+        drop_env=_DEPLOYMENT_SETTINGS,
+        tls_dir=directory / "tls",
+    ) as app:
+        yield app
 
 
 @contextmanager
-def _running_library(*, awid_service_token: str | None, registry_url: str = AWID_URL) -> Iterator[RunningLibrary]:
-    _require_e2e_enabled()
-    _wait_http_ok(f"{registry_url}/health")
-
-    with ExitStack() as setup:
-        listener = setup.enter_context(socket.socket())
-        listener.bind(("127.0.0.1", 0))
-        listener.listen()
-        backend_port = listener.getsockname()[1]
-        backend_origin = f"http://127.0.0.1:{backend_port}"
-        proxy = setup.enter_context(RecordingProxy(("127.0.0.1", 0), backend_origin))
-        proxy_origin = f"http://127.0.0.1:{proxy.server_address[1]}"
-        env = os.environ.copy()
-        for name in (
-            "RENDER_SERVICE_ID",
-            "RENDER_SERVICE_NAME",
-            "RENDER_EXTERNAL_HOSTNAME",
-            "RENDER_GIT_REPO_SLUG",
-            "RENDER_GIT_BRANCH",
-            "RENDER_GIT_COMMIT",
-            "LIBRARY_GIT_SHA",
-            "LIBRARY_AWID_SERVICE_TOKEN",
-        ):
-            env.pop(name, None)
-        if awid_service_token is not None:
-            env["LIBRARY_AWID_SERVICE_TOKEN"] = awid_service_token
-        env.update(
-            {
-                "RENDER_GIT_COMMIT": E2E_BUILD_SHA,
-                "LIBRARY_DATABASE_URL": POSTGRES_URL,
-                "LIBRARY_AWID_REGISTRY_URL": registry_url,
-                "LIBRARY_AUTH_CACHE_TTL_SECONDS": "2",
-                "LIBRARY_PUBLIC_ORIGIN": proxy_origin,
-            }
-        )
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "library.api:create_app",
-                "--factory",
-                "--fd",
-                str(listener.fileno()),
-            ],
-            env=env,
-            pass_fds=(listener.fileno(),),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        listener.close()
-        thread = threading.Thread(target=proxy.serve_forever, name="library-e2e-proxy", daemon=True)
-        thread.start()
-        try:
-            _wait_http_ok(f"{proxy_origin}/health")
-            yield RunningLibrary(origin=proxy_origin, backend_origin=backend_origin, proxy=proxy)
-        finally:
-            proxy.shutdown()
-            proxy.server_close()
-            thread.join(timeout=5)
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=10)
-            failed = proc.returncode not in (0, -15, -9, None)
-            stdout = proc.stdout.read() if failed and proc.stdout else ""
-            stderr = proc.stderr.read() if failed and proc.stderr else ""
-            if proc.stdout:
-                proc.stdout.close()
-            if proc.stderr:
-                proc.stderr.close()
-            if failed:
-                raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
+def library_deployment(directory: Path, *, awid_service_token: str | None) -> Iterator[RunningApp]:
+    """Library plus the coordination server its teams install it through."""
+    with (
+        coordination_listener() as (listener, server_origin),
+        running_library(
+            directory, awid_service_token=awid_service_token, team_server_origin=server_origin
+        ) as app,
+    ):
+        assert app.ca_file is not None
+        with running_coordination_server(
+            directory,
+            listener=listener,
+            stack=STACK,
+            awid_service_token=AWID_SERVICE_TOKEN,
+            app_origin=app.origin,
+            ca_file=app.ca_file,
+        ) as server:
+            yield replace(app, server=server)
 
 
 @pytest.fixture(scope="session")
-def library() -> Iterator[RunningLibrary]:
-    with _running_library(awid_service_token=AWID_SERVICE_TOKEN) as running:
-        yield running
+def library(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RunningApp]:
+    directory = tmp_path_factory.mktemp("library") / "deployment"
+    with library_deployment(directory, awid_service_token=AWID_SERVICE_TOKEN) as app:
+        yield app
 
 
 @pytest.fixture(scope="session")
-def library_without_awid_service_token() -> Iterator[RunningLibrary]:
-    with _running_library(awid_service_token=None) as running:
-        yield running
+def library_without_awid_service_token(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[RunningApp]:
+    directory = tmp_path_factory.mktemp("library-without-token") / "deployment"
+    with library_deployment(directory, awid_service_token=None) as app:
+        yield app
 
 
 @pytest.fixture(scope="session")
-def library_origin(library: RunningLibrary) -> str:
+def library_origin(library: RunningApp) -> str:
     return library.origin
 
 
-def aw_workspace_env(*, home: Path) -> dict[str, str]:
-    """Keep disposable aw commands independent of the caller's identity and config."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_"))}
-    env.update(
-        {
-            "HOME": str(home),
-            "AWEB_URL": "http://127.0.0.1:1",
-            "AWID_REGISTRY_URL": AWID_URL,
-            "NO_COLOR": "1",
-        }
-    )
-    return env
+@pytest.fixture()
+def workspaces(tmp_path: Path) -> Callable[[str], AWWorkspace]:
+    require_e2e_enabled()
+    return aw_workspace_factory(tmp_path, awid_url=AWID_URL)
 
 
 @pytest.fixture()
-def aw_workspace_factory(tmp_path: Path) -> Callable[[str], AWWorkspace]:
-    _require_e2e_enabled()
-
-    def make(name: str) -> AWWorkspace:
-        workspace = tmp_path / name / "workspace"
-        home = tmp_path / name / "home"
-        workspace.mkdir(parents=True)
-        home.mkdir(parents=True)
-        env = aw_workspace_env(home=home)
-        return AWWorkspace(path=workspace, env=env)
-
-    return make
+def aw_workspace(workspaces: Callable[[str], AWWorkspace]) -> AWWorkspace:
+    return workspaces("primary")
 
 
-@pytest.fixture()
-def aw_workspace(aw_workspace_factory: Callable[[str], AWWorkspace]) -> AWWorkspace:
-    return aw_workspace_factory("primary")
+def connected_team(workspace: AWWorkspace, library: RunningApp) -> E2ETeam:
+    """A new team whose server is the deployment's, with Library not installed."""
+    team = provision_team(workspace, awid_url=AWID_URL, namespace_prefix="library-e2e")
+    connect_team_server(team, library, awid_url=AWID_URL)
+    return team
 
 
-def _write_workspace_binding(workspace: AWWorkspace, *, team_id: str, alias: str, cert_path: str) -> None:
-    now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    workspace_id = str(uuid.uuid4())
-    (workspace.path / ".aw" / "workspace.yaml").write_text(
-        f"""aweb_url: http://127.0.0.1:1
-memberships:
-    - team_id: {team_id}
-      alias: {alias}
-      workspace_id: {workspace_id}
-      cert_path: {cert_path}
-      joined_at: \"{now}\"
-human_name: e2e
-agent_type: agent
-workspace_path: {workspace.path}
-updated_at: \"{now}\"
-""",
-        encoding="utf-8",
-    )
+def installed_team(
+    workspace: AWWorkspace, library: RunningApp, *, grant_scopes: tuple[str, ...] = ()
+) -> E2ETeam:
+    """A new team that installed Library; ``grant_scopes`` narrows its grant."""
+    team = connected_team(workspace, library)
+    install_app(team, library, grant_scopes=grant_scopes)
+    return team
 
 
-def _provision_team(workspace: AWWorkspace, *, alias: str = "alice") -> E2ETeam:
-    unique = uuid.uuid4().hex[:12]
-    namespace = f"library-{unique}.test"
-    team = "default"
-    address = f"{namespace}/{alias}"
-
-    _run_aw(
-        workspace,
-        "id",
-        "create",
-        "--domain",
-        namespace,
-        "--name",
-        alias,
-        "--registry",
-        AWID_URL,
-        "--skip-dns-verify",
-    )
-    _run_aw(
-        workspace,
-        "id",
-        "team",
-        "create",
-        "--namespace",
-        namespace,
-        "--name",
-        team,
-        "--registry",
-        AWID_URL,
-    )
-    add_member = _run_aw_json(
-        workspace,
-        "id",
-        "team",
-        "add-member",
-        "--namespace",
-        namespace,
-        "--team",
-        team,
-        "--member",
-        address,
-    )
-    certificate_id = str(add_member["certificate_id"])
-    fetch_cert = _run_aw_json(
-        workspace,
-        "id",
-        "team",
-        "fetch-cert",
-        "--namespace",
-        namespace,
-        "--team",
-        team,
-        "--cert-id",
-        certificate_id,
-        "--registry",
-        AWID_URL,
-    )
-    team_id = f"{team}:{namespace}"
-    _run_aw(workspace, "id", "team", "switch", team_id)
-    _write_workspace_binding(
-        workspace,
-        team_id=team_id,
-        alias=alias,
-        cert_path=str(fetch_cert["cert_path"]),
-    )
-    cert = _run_aw_json(workspace, "id", "cert", "show")
-    return E2ETeam(
-        workspace=workspace,
-        namespace=namespace,
-        team=team,
-        team_id=team_id,
-        alias=alias,
-        address=address,
-        did_key=str(cert["member_did_key"]),
-        certificate_id=certificate_id,
-    )
-
-
-def test_health_endpoints_are_public(library: RunningLibrary) -> None:
+def test_health_endpoints_are_public(library: RunningApp) -> None:
     for path in ("/health", "/live", "/ready"):
         response = httpx.get(f"{library.origin}{path}", timeout=10.0)
         assert response.status_code == 200, response.text
-        assert response.json() == {
-            "status": "ok",
-            "service": "library",
-            "build": {"git_sha": E2E_BUILD_SHA},
-        }
+        body = response.json()
+        assert body["status"] == "ok", path
+        assert body["service"] == E2E_APP_ID, path
+        assert body["build"] == {"git_sha": E2E_BUILD_SHA}, path
 
 
-def test_public_blueprint_catalog_needs_no_auth(library: RunningLibrary) -> None:
-    # Blueprints are the public catalog.
+def test_public_blueprint_catalog_needs_no_auth(library: RunningApp) -> None:
     blueprints = httpx.get(f"{library.origin}/v1/blueprints", timeout=10.0)
     assert blueprints.status_code == 200, blueprints.text
-    assert blueprints.json() == []
+    assert isinstance(blueprints.json(), list)
     assert httpx.get(f"{library.origin}/v1/blueprints/none", timeout=10.0).status_code == 404
 
 
@@ -548,55 +203,59 @@ def test_shelf_and_team_routes_without_envelope_fail_closed(library_origin: str)
     assert httpx.get(f"{library_origin}/v1/proposals", timeout=10.0).status_code == 401
 
 
-def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
-    from library.aweb_manifest import read_manifest_bytes
-
-    expected = read_manifest_bytes(library.origin)
-    for path in ("/.well-known/aweb-app.json", "/aweb-app.json"):
-        response = httpx.get(f"{library.origin}{path}", timeout=10.0)
-        assert response.status_code == 200, response.text
-        assert response.headers["content-type"].startswith("application/json")
-        assert response.content == expected
-        assert json.loads(response.content)["app"]["origin"] == library.origin
+def test_manifest_is_public_and_names_this_deployment(library: RunningApp) -> None:
+    served = httpx.get(f"{library.origin}/manifests/v2.json", timeout=10.0)
+    assert served.status_code == 200, served.text
+    bare = httpx.get(f"{library.origin}/aweb-app.json", timeout=10.0)
+    assert bare.status_code == 200, bare.text
+    assert bare.content == served.content
+    document = json.loads(served.content)
+    assert document["app"]["origin"] == library.origin
+    assert document["app"]["id"] == library.app_id == E2E_APP_ID
 
 
 def test_private_team_authenticates_without_the_awid_service_token(
-    library_without_awid_service_token: RunningLibrary, aw_workspace: AWWorkspace
+    library_without_awid_service_token: RunningApp, aw_workspace: AWWorkspace
 ) -> None:
-    team = _provision_team(aw_workspace)
-    result = _aw_request(
-        team, "GET", f"{library_without_awid_service_token.origin}/v1/proposals"
+    team = installed_team(aw_workspace, library_without_awid_service_token)
+    result = aw_request(
+        team, HTTPMethod.GET, f"{library_without_awid_service_token.origin}/v1/proposals"
     )
-    assert _assert_aw_success(result, context="private team without service token").strip() == "[]"
+    assert assert_aw_success(result, context="private team without service token").strip() == "[]"
 
 
-def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:
-    team = _provision_team(aw_workspace)
-    # Public catalog read with team auth still works (a JSON array; may be non-empty
-    # if earlier tests published blueprints into the shared catalog).
-    blueprints = _aw_request(team, "GET", f"{library.origin}/v1/blueprints")
-    assert isinstance(json.loads(_assert_aw_success(blueprints, context="list blueprints smoke")), list)
+def test_real_aw_team_auth_reaches_team_scoped_routes(
+    library: RunningApp, aw_workspace: AWWorkspace
+) -> None:
+    team = installed_team(aw_workspace, library)
+    blueprints = aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/blueprints")
+    assert isinstance(
+        json.loads(assert_aw_success(blueprints, context="list blueprints smoke")), list
+    )
     # A valid certificate passes auth: get-binding for an unbound agent is a real
     # 404 (not 401), proving auth + the live endpoint.
-    binding = _aw_request(team, "GET", f"{library.origin}/v1/agents/agent-1/profile-binding")
-    _assert_aw_status(binding, 404, context="authenticated get-binding for unbound agent")
-    # proposals list for a fresh team is an empty list (live, team-scoped).
-    proposals = _aw_request(team, "GET", f"{library.origin}/v1/proposals")
-    assert _assert_aw_success(proposals, context="list proposals smoke").strip() == "[]"
+    binding = aw_request(
+        team, HTTPMethod.GET, f"{library.origin}/v1/agents/agent-1/profile-binding"
+    )
+    assert_aw_status(binding, 404, context="authenticated get-binding for unbound agent")
+    proposals = aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/proposals")
+    assert assert_aw_success(proposals, context="list proposals smoke").strip() == "[]"
 
 
 def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
-    library: RunningLibrary,
+    library: RunningApp,
     aw_workspace: AWWorkspace,
 ) -> None:
-    team = _provision_team(aw_workspace)
-    # Valid certificate authenticates and reaches the live endpoint.
-    assert _assert_aw_success(
-        _aw_request(team, "GET", f"{library.origin}/v1/proposals"),
-        context="valid certificate reaches proposals",
-    ).strip() == "[]"
+    team = installed_team(aw_workspace, library)
+    assert (
+        assert_aw_success(
+            aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/proposals"),
+            context="valid certificate reaches proposals",
+        ).strip()
+        == "[]"
+    )
 
-    _run_aw(
+    run_aw(
         aw_workspace,
         "id",
         "team",
@@ -611,5 +270,5 @@ def test_revoked_certificate_fails_after_awid_revocation_cache_refresh(
         AWID_URL,
     )
     time.sleep(2.2)
-    revoked = _aw_request(team, "GET", f"{library.origin}/v1/proposals")
-    _assert_aw_status(revoked, 401, context="revoked certificate")
+    revoked = aw_request(team, HTTPMethod.GET, f"{library.origin}/v1/proposals")
+    assert_aw_status(revoked, 401, context="revoked certificate")

@@ -1,32 +1,25 @@
 from __future__ import annotations
 
-import os
-import re
 from html import escape
 from pathlib import Path
 from typing import Any
 
 import aweb_naapp as naapp
-from aweb_naapp import FooterColumn, NavLink, SiteConfig, aweb_css
+from aweb_naapp import FooterColumn, NavLink, SiteConfig
 from aweb_naapp.chrome import render_field
+from aweb_naapp.skills import Skills
 
 from library.aweb_manifest import MANIFEST
 
 __all__ = [
-    "aweb_css",
+    "SKILLS",
     "render_landing_page",
     "render_reference_page",
     "llms_txt",
-    "robots_txt",
-    "skills_index",
-    "read_skill",
-    "skill_names",
 ]
 
-_SKILL_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,80}$")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SKILLS_DIR = _REPO_ROOT / "skills"
-_CONTAINER_SKILLS_DIR = Path("/app/skills")
+SKILLS = Skills(app_name="library", env_var="LIBRARY_SKILLS_DIR", source_dir=_REPO_ROOT / "skills")
 
 # library's identity in the shared naapp chrome. The aweb design system, the
 # chrome, the manifest-driven llms.txt blocks, and the /reference page all come
@@ -41,7 +34,7 @@ _NAV_LINKS = (
     NavLink("aweb", "https://aweb.ai"),
 )
 _FOOTER_BLURB = (
-    "Public blueprints and private team shelves for <span class=\"brand-word\">awid</span> teams — "
+    'Public blueprints and private team shelves for <span class="brand-word">awid</span> teams — '
     "adopt, bind, materialize, and evolve your agents' profiles."
 )
 _FOOTER_COLUMNS = (
@@ -63,9 +56,7 @@ _FOOTER_COLUMNS = (
         ),
     ),
 )
-_FOOTER_BOTTOM = (
-    'library is a Native Agentic App on the <span class="brand-word">aweb</span>.ai hub. <span class="brand-word">awid</span> is the identity authority.'
-)
+_FOOTER_BOTTOM = 'library is a Native Agentic App on the <span class="brand-word">aweb</span>.ai hub. <span class="brand-word">awid</span> is the identity authority.'
 # library's domain values for the shared docs generators: live path-param values
 # that make the public catalog reads genuinely runnable, the public-reads phrase,
 # and the /reference section copy in library's own nouns.
@@ -282,17 +273,6 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         source_url="https://github.com/awebai/aweb/tree/main/naapp/library",
         og_image="/brand/field-v1/library-card.png",
     )
-
-
-def _skills_dir() -> Path:
-    configured = os.environ.get("LIBRARY_SKILLS_DIR")
-    if configured:
-        return Path(configured)
-    if _SKILLS_DIR.is_dir():
-        return _SKILLS_DIR
-    if _CONTAINER_SKILLS_DIR.is_dir():
-        return _CONTAINER_SKILLS_DIR
-    return _SKILLS_DIR
 
 
 def _catalog_teaser(blueprints: Any) -> str:
@@ -702,68 +682,3 @@ Team operations (AWID team certificate):
 - Shelf versions are immutable: a version's digest is its identity, never overwritten.
 - library owns its own binding, materialization, and proposal state.
 """
-
-
-def robots_txt() -> str:
-    return """User-agent: *
-Allow: /
-"""
-
-
-def _skill_path_if_safe(name: str) -> Path | None:
-    if _SKILL_NAME.fullmatch(name) is None:
-        return None
-    skills_dir = _skills_dir()
-    root = skills_dir.resolve()
-    candidate = skills_dir / name / "SKILL.md"
-    path = candidate.resolve()
-    if (
-        candidate.is_symlink()
-        or candidate.parent.is_symlink()
-        or path.is_symlink()
-        or not path.is_relative_to(root)
-        or not path.is_file()
-    ):
-        return None
-    return path
-
-
-def skill_names() -> list[str]:
-    root = _skills_dir().resolve()
-    if not root.is_dir():
-        return []
-    names = []
-    for entry in root.iterdir():
-        if entry.is_symlink() or not entry.is_dir() or _SKILL_NAME.fullmatch(entry.name) is None:
-            continue
-        if _skill_path_if_safe(entry.name) is not None:
-            names.append(entry.name)
-    return sorted(names)
-
-
-def skills_index() -> str:
-    lines = [
-        "# library agent skills",
-        "",
-        "library is a Native Agentic App (naapp) on the aweb.ai hub.",
-        "Agents should fetch the relevant skill before acting so requests match the library API contract.",
-        "",
-        "- aweb.ai hub: https://aweb.ai",
-        "- AWID identity authority: https://awid.ai",
-        "",
-        "Available skills:",
-        "",
-    ]
-    for name in skill_names():
-        lines.append(f"- GET /skills/{name}/SKILL.md")
-    lines.append("")
-    return "\n".join(lines)
-
-
-def read_skill(name: str) -> str | None:
-    if name not in skill_names():
-        return None
-    path = _skill_path_if_safe(name)
-    if path is None:
-        return None
-    return path.read_text(encoding="utf-8")
