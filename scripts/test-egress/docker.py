@@ -6,6 +6,7 @@ Evidence survives cleanup. No host credentials or identity directories are mount
 """
 
 import argparse
+from dataclasses import dataclass
 import json
 import hashlib
 import importlib.util
@@ -74,12 +75,39 @@ def docker(*args):
     return subprocess.check_output(["docker", *args], text=True).strip()
 
 
-def postgres_args(runner, port=5432, parallel=False):
+@dataclass(frozen=True)
+class MemoryPostgresOptions:
+    """What keeps a test PostgreSQL in memory: options for docker run, and
+    arguments for the server after the image."""
+
+    docker_options: tuple[str, ...]
+    server_args: tuple[str, ...]
+
+
+def memory_postgres_options(*, memory: str) -> MemoryPostgresOptions:
     # Disposable databases must not wait on the host disk's WAL fsync. Bound
     # both RAM and WAL growth, and prohibit swapping the tmpfs back to disk.
+    # fsync and synchronous_commit keep their defaults.
+    return MemoryPostgresOptions(
+        docker_options=(
+            "--memory",
+            memory,
+            "--memory-swap",
+            memory,
+            "--tmpfs",
+            "/var/lib/postgresql/data:rw,noexec,nosuid,size=1g",
+            "-e",
+            "PGDATA=/var/lib/postgresql/data/pgdata",
+        ),
+        server_args=("-c", "max_wal_size=128MB", "-c", "min_wal_size=32MB"),
+    )
+
+
+def postgres_args(runner, port=5432, parallel=False):
     # Worker 0 also serves the later serial unit suites: keep its original cap.
     memory = "1280m" if parallel and port != 5432 else "2g"
     port_args = ["-c", f"port={port}"] if parallel else []
+    options = memory_postgres_options(memory=memory)
     return [
         "run",
         "-d",
@@ -87,23 +115,13 @@ def postgres_args(runner, port=5432, parallel=False):
         "container:" + runner,
         "--cpus",
         "1",
-        "--memory",
-        memory,
-        "--memory-swap",
-        memory,
         "--pids-limit",
         "512",
-        "--tmpfs",
-        "/var/lib/postgresql/data:rw,noexec,nosuid,size=1g",
-        "-e",
-        "PGDATA=/var/lib/postgresql/data/pgdata",
+        *options.docker_options,
         "-e",
         "POSTGRES_PASSWORD=postgres",
         "postgres:17",
-        "-c",
-        "max_wal_size=128MB",
-        "-c",
-        "min_wal_size=32MB",
+        *options.server_args,
         *port_args,
     ]
 
@@ -151,9 +169,9 @@ def wait_for_redis(container, port):
     raise RuntimeError("worker Redis did not become ready")
 
 
-def wait_for_postgres(container, port=5432):
+def wait_for_postgres(container, port=5432, *, attempts=60, interval=0.5):
     # The entrypoint's temporary initialization server has no TCP listener.
-    for _ in range(60):
+    for _ in range(attempts):
         if (
             subprocess.run(
                 [
@@ -174,8 +192,11 @@ def wait_for_postgres(container, port=5432):
             == 0
         ):
             return
-        time.sleep(0.5)
-    raise RuntimeError("Postgres did not become ready")
+        time.sleep(interval)
+    raise RuntimeError(
+        f"Postgres did not become ready in {container}. Inspect its startup with "
+        f"docker logs {container}, fix what stops it, and rerun."
+    )
 
 
 def postgres_storage(container, port=5432):
@@ -208,10 +229,15 @@ def require_memory_postgres(container, port=5432):
     storage = postgres_storage(container, port)
     for name in ("data", "wal"):
         if storage[name]["filesystem"] != "tmpfs":
-            raise RuntimeError(f"Postgres {name} must be on tmpfs: {storage[name]}")
+            raise RuntimeError(
+                f"Postgres {name} must be on tmpfs: {storage[name]}. Recreate the "
+                "test PostgreSQL with the memory_postgres_options settings and rerun."
+            )
     if storage["swap_max"] != "0":
         raise RuntimeError(
-            f"Postgres swap must be disabled: memory.swap.max={storage['swap_max']}"
+            f"Postgres swap must be disabled: memory.swap.max={storage['swap_max']}. "
+            "Recreate the test PostgreSQL with equal --memory and --memory-swap from "
+            "memory_postgres_options and rerun."
         )
     return storage
 

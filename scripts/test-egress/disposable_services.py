@@ -2,9 +2,10 @@
 not supply services to.
 
 Each container takes a daemon-assigned loopback port and is removed, with its
-anonymous volumes, on exit. PostgreSQL's data directory is on tmpfs, verified
-rather than assumed. Each is labelled with its launcher's pid, so a launcher
-killed before its cleanup leaves containers the next launcher removes.
+anonymous volumes, on exit. PostgreSQL runs with the isolated runner's
+memory-backed options and passes its readiness and storage checks (docker.py
+owns that rule). Each container is labelled with its launcher's pid, so a
+launcher killed before its cleanup leaves containers the next launcher removes.
 
 Run as a script with the PostgreSQL password the caller chose in PGPASSWORD,
 it prints one JSON line of PGHOST/PGPORT/REDIS_URL settings once both answer,
@@ -16,14 +17,14 @@ import json
 import os
 import subprocess
 import sys
-import time
 from collections.abc import Generator
 from contextlib import contextmanager
 
-POSTGRES_DATA = "/var/lib/postgresql/data"
+from docker import memory_postgres_options, require_memory_postgres, wait_for_postgres
+
 OWNER_LABEL = "aw-test-services.owner-pid"
-READY_ATTEMPTS = 120
-READY_INTERVAL = 0.25
+# One PostgreSQL serves a whole package run: the runner's serial cap.
+POSTGRES_MEMORY = "2g"
 
 
 def run(*args: str) -> str:
@@ -92,11 +93,16 @@ def reap_orphaned_containers() -> None:
 
 
 def start_container(
-    owned: list[str], *, image: str, port: int, options: tuple[str, ...] = ()
+    owned: list[str],
+    *,
+    image: str,
+    port: int,
+    options: tuple[str, ...] = (),
+    command: tuple[str, ...] = (),
 ) -> tuple[str, str]:
-    """Start image publishing port on a daemon-assigned loopback port, labelled
-    with this launcher's pid; record the container in owned and return it with
-    its host port."""
+    """Start image with options and command, publishing port on a
+    daemon-assigned loopback port and labelled with this launcher's pid; record
+    the container in owned and return it with its host port."""
     container = run(
         "docker",
         "run",
@@ -104,55 +110,14 @@ def start_container(
         "--rm",
         "--label",
         f"{OWNER_LABEL}={os.getpid()}",
-        "--cpus",
-        "1",
-        "--memory",
-        "512m",
         "-p",
         f"127.0.0.1::{port}",
         *options,
         image,
+        *command,
     )
     owned.append(container)
     return container, run("docker", "port", container, str(port)).rsplit(":", 1)[1]
-
-
-def wait_for_postgres(
-    container: str,
-    *,
-    attempts: int = READY_ATTEMPTS,
-    interval: float = READY_INTERVAL,
-) -> None:
-    # Over TCP: the image's initialization server listens on its socket only,
-    # so only the final server answers here.
-    probe = ["docker", "exec", container, "pg_isready", "-h", "127.0.0.1"]
-    for _ in range(attempts):
-        ready = subprocess.run(
-            [*probe, "-U", "postgres"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if ready.returncode == 0:
-            return
-        time.sleep(interval)
-    raise RuntimeError(
-        f"PostgreSQL in {container} was not ready after {attempts * interval:g}s. "
-        f"Inspect its startup with docker logs {container}, fix what stops it, "
-        "and rerun the fixture."
-    )
-
-
-def verify_postgres_on_tmpfs(container: str) -> None:
-    query = ["psql", "-h", "127.0.0.1", "-U", "postgres", "-tAc"]
-    data_directory = run("docker", "exec", container, *query, "SHOW data_directory")
-    mounts = run("docker", "exec", container, "cat", "/proc/mounts").splitlines()
-    tmpfs = {fields[1] for fields in map(str.split, mounts) if fields[2] == "tmpfs"}
-    if data_directory != POSTGRES_DATA or POSTGRES_DATA not in tmpfs:
-        raise RuntimeError(
-            f"PostgreSQL data directory {data_directory!r} is not on tmpfs "
-            f"(tmpfs mounts: {sorted(tmpfs)}). Start the owned PostgreSQL "
-            f"container with --tmpfs {POSTGRES_DATA} and rerun the fixture."
-        )
 
 
 @contextmanager
@@ -162,15 +127,28 @@ def disposable_postgres_and_redis(*, password: str) -> Generator[dict[str, str]]
     reap_orphaned_containers()
     owned: list[str] = []
     try:
+        memory = memory_postgres_options(memory=POSTGRES_MEMORY)
         postgres, postgres_port = start_container(
             owned,
             image="postgres:17",
             port=5432,
-            options=("-e", "POSTGRES_PASSWORD=" + password, "--tmpfs", POSTGRES_DATA),
+            options=(
+                "--cpus",
+                "1",
+                *memory.docker_options,
+                "-e",
+                "POSTGRES_PASSWORD=" + password,
+            ),
+            command=memory.server_args,
         )
-        _, redis_port = start_container(owned, image="redis:7", port=6379)
+        _, redis_port = start_container(
+            owned,
+            image="redis:7",
+            port=6379,
+            options=("--cpus", "1", "--memory", "512m"),
+        )
         wait_for_postgres(postgres)
-        verify_postgres_on_tmpfs(postgres)
+        require_memory_postgres(postgres)
         yield {
             "PGHOST": "127.0.0.1",
             "PGPORT": postgres_port,

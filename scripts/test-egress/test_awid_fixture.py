@@ -11,9 +11,6 @@ from disposable_services import (
     reap_orphaned_containers,
     remove_owned_containers,
     run,
-    start_container,
-    verify_postgres_on_tmpfs,
-    wait_for_postgres,
 )
 
 
@@ -73,48 +70,6 @@ class DisposablePostgresAndRedis(unittest.TestCase):
         self.assertEqual(run('docker', 'ps', '-aq', '--filter', 'id=' + postgres), '')
         self.assertEqual(run('docker', 'ps', '-aq', '--filter', 'id=' + redis), '')
 
-    def test_postgres_on_the_container_filesystem_is_refused(self):
-        owned = []
-        self.addCleanup(remove_owned_containers, owned)
-        postgres, _ = start_container(owned, image='postgres:17', port=5432, options=('-e', 'POSTGRES_PASSWORD=postgres'))
-        wait_for_postgres(postgres)
-        with self.assertRaisesRegex(RuntimeError, 'is not on tmpfs'):
-            verify_postgres_on_tmpfs(postgres)
-
-
-def docker_stub(test, script):
-    """Put a docker running script first on PATH for the rest of test."""
-    directory = Path(tempfile.mkdtemp())
-    docker = directory / 'docker'
-    docker.write_text('#!/bin/sh\n' + script)
-    docker.chmod(0o755)
-    saved = dict(os.environ)
-    test.addCleanup(os.environ.update, saved)
-    os.environ['PATH'] = f"{directory}{os.pathsep}{os.environ['PATH']}"
-
-
-class PostgresRefusalsWithoutADaemon(unittest.TestCase):
-    """Each refusal keeps its diagnosis and ends with what to do."""
-
-    def test_postgres_that_never_answers_names_its_logs(self):
-        docker_stub(self, 'exit 2\n')
-        with self.assertRaises(RuntimeError) as refused:
-            wait_for_postgres('pg-1', attempts=3, interval=0.01)
-        self.assertEqual(str(refused.exception),
-                         'PostgreSQL in pg-1 was not ready after 0.03s. Inspect its startup with '
-                         'docker logs pg-1, fix what stops it, and rerun the fixture.')
-
-    def test_postgres_on_the_container_filesystem_says_how_to_start_it(self):
-        docker_stub(self, 'case "$*" in\n'
-                          '*"SHOW data_directory"*) echo /var/lib/postgresql/data ;;\n'
-                          '*/proc/mounts*) echo "overlay / overlay rw 0 0" ;;\n'
-                          'esac\n')
-        with self.assertRaises(RuntimeError) as refused:
-            verify_postgres_on_tmpfs('pg-1')
-        self.assertEqual(str(refused.exception),
-                         "PostgreSQL data directory '/var/lib/postgresql/data' is not on tmpfs "
-                         "(tmpfs mounts: []). Start the owned PostgreSQL container with --tmpfs "
-                         "/var/lib/postgresql/data and rerun the fixture.")
 
 
 class OwnedContainerRemovalFailures(unittest.TestCase):
