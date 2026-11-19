@@ -964,7 +964,8 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	}
 	memberDID := awid.ComputeDIDKey(memberPub)
 	stableID := awid.ComputeStableID(memberPub)
-	registryURL := realAWIDFixture(t)
+	// The shared stack's registry: the identity is all this test registers there.
+	registryURL := newRealCommandWorld(t).Stack.RegistryURL
 	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	if _, err := registry.RegisterIdentity(context.Background(), registryURL, memberDID, stableID, memberKey); err != nil {

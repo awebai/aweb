@@ -22,6 +22,8 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
+// humanInitDomain is the domain of the refusals that end before any registry
+// request; a harness on the shared registry has a domain of its own.
 const humanInitDomain = "humans.example.invalid"
 
 // runHumanInitBinary runs the real aw binary with a fresh HOME. With
@@ -113,6 +115,7 @@ func TestHumanInitHasNoFlagThatApproves(t *testing.T) {
 type humanInitHarness struct {
 	t             *testing.T
 	home          string
+	domain        string
 	registryURL   string
 	controllerKey ed25519.PrivateKey
 	resolver      staticTXTResolver
@@ -126,7 +129,12 @@ type humanInitHarness struct {
 func newHumanInitHarness(t *testing.T) *humanInitHarness {
 	t.Helper()
 	keyring.MockInit()
-	h := &humanInitHarness{t: t, home: t.TempDir(), registryURL: realAWIDFixture(t)}
+	// The shared registry's DNS knows no record for the harness's domain, as
+	// the public DNS knows none for a .invalid name.
+	h := &humanInitHarness{
+		t: t, home: t.TempDir(), domain: freshName(t, "humans-") + ".example.invalid",
+		registryURL: newRealCommandWorld(t).Stack.RegistryURL,
+	}
 	t.Setenv("HOME", h.home)
 	t.Setenv("AWID_REGISTRY_URL", h.registryURL)
 	t.Setenv("AW_CONFIG_PATH", "")
@@ -134,18 +142,18 @@ func newHumanInitHarness(t *testing.T) *humanInitHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := awconfig.SaveControllerKey(humanInitDomain, key); err != nil {
+	if err := awconfig.SaveControllerKey(h.domain, key); err != nil {
 		t.Fatal(err)
 	}
 	h.controllerKey = key
-	h.resolver = staticTXTResolver{"_awid." + humanInitDomain: {idCreateDNSRecordValue(awid.ComputeDIDKey(pub), "")}}
+	h.resolver = staticTXTResolver{"_awid." + h.domain: {idCreateDNSRecordValue(awid.ComputeDIDKey(pub), "")}}
 	return h
 }
 
 func (h *humanInitHarness) run(answers ...string) (idHumanInitOutput, error) {
 	h.answers = append(h.answers, answers...)
 	return executeIDHumanInit(context.Background(), idHumanInitOptions{
-		Domain:      humanInitDomain,
+		Domain:      h.domain,
 		AsRoot:      !h.prepareOnly,
 		Another:     h.another,
 		RegistryURL: h.registryURL,
@@ -172,7 +180,7 @@ func (h *humanInitHarness) run(answers ...string) (idHumanInitOutput, error) {
 
 func (h *humanInitHarness) records() []*awconfig.HumanRecord {
 	h.t.Helper()
-	records, err := awconfig.HumanRecords(humanInitDomain)
+	records, err := awconfig.HumanRecords(h.domain)
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -189,7 +197,7 @@ func (h *humanInitHarness) assertNamespaceRefused(err error) {
 		h.t.Fatalf("err=%v", err)
 	}
 	registry := awid.NewAWIDRegistryClient(nil, nil)
-	_, _, lookup := registry.GetNamespaceAt(context.Background(), h.registryURL, humanInitDomain)
+	_, _, lookup := registry.GetNamespaceAt(context.Background(), h.registryURL, h.domain)
 	if code, ok := registryStatusCode(lookup); !ok || code != http.StatusNotFound {
 		h.t.Fatalf("namespace lookup: %v", lookup)
 	}
@@ -201,8 +209,8 @@ func TestHumanInitRefusesADNSControllerOtherThanThisMachines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ours := h.resolver["_awid."+humanInitDomain]
-	h.resolver["_awid."+humanInitDomain] = []string{idCreateDNSRecordValue(awid.ComputeDIDKey(other.Public().(ed25519.PublicKey)), "")}
+	ours := h.resolver["_awid."+h.domain]
+	h.resolver["_awid."+h.domain] = []string{idCreateDNSRecordValue(awid.ComputeDIDKey(other.Public().(ed25519.PublicKey)), "")}
 	if _, err := h.run(humanPassphrase, humanPassphrase); err == nil {
 		t.Fatal("initialised under another controller")
 	}
@@ -211,7 +219,7 @@ func TestHumanInitRefusesADNSControllerOtherThanThisMachines(t *testing.T) {
 	}
 	// With this machine's controller in DNS the same run goes on to ask for
 	// the passphrase.
-	h.resolver["_awid."+humanInitDomain] = ours
+	h.resolver["_awid."+h.domain] = ours
 	h.answers = nil
 	if _, err := h.run(); err == nil || len(h.prompts) != 1 {
 		t.Fatalf("err=%v prompts=%d", err, len(h.prompts))
@@ -261,7 +269,7 @@ func TestHumanInitRegistersTheDIDThenResumesTheSameHuman(t *testing.T) {
 	if err != nil || resolved.CurrentDIDKey != human.DIDKey {
 		t.Fatalf("AWID resolves %+v (%v)", resolved, err)
 	}
-	dir, err := awconfig.ControllerIssuanceDir(humanInitDomain)
+	dir, err := awconfig.ControllerIssuanceDir(h.domain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +292,7 @@ func TestHumanInitRegistersTheDIDThenResumesTheSameHuman(t *testing.T) {
 // succeeded does not quietly mint another.
 func TestHumanInitDoesNotQuietlyCreateASecondHuman(t *testing.T) {
 	h := newHumanInitHarness(t)
-	done := &awconfig.HumanRecord{StableID: "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanRegistered}
+	done := &awconfig.HumanRecord{StableID: "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: h.domain, RegistryURL: h.registryURL, State: awconfig.HumanRegistered}
 	if err := awconfig.SaveHumanRecord(done); err != nil {
 		t.Fatal(err)
 	}
@@ -303,8 +311,8 @@ func TestHumanInitDoesNotQuietlyCreateASecondHuman(t *testing.T) {
 
 func TestHumanInitRefusesARegistryThatContradictsDNS(t *testing.T) {
 	h := newHumanInitHarness(t)
-	controller := h.resolver["_awid."+humanInitDomain][0]
-	h.resolver["_awid."+humanInitDomain] = []string{strings.TrimSuffix(controller, ";") + "; registry=https://registry.other.example;"}
+	controller := h.resolver["_awid."+h.domain][0]
+	h.resolver["_awid."+h.domain] = []string{strings.TrimSuffix(controller, ";") + "; registry=https://registry.other.example;"}
 	if _, err := h.run(humanPassphrase, humanPassphrase); exitCode(err) != 2 {
 		t.Fatalf("err=%v", err)
 	}
@@ -322,7 +330,7 @@ func TestHumanInitRefusesToGuessBetweenUnfinishedHumans(t *testing.T) {
 	} {
 		h := newHumanInitHarness(t)
 		for _, id := range ids {
-			if err := awconfig.SaveHumanRecord(&awconfig.HumanRecord{StableID: id, DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanPrepared, Path: awconfig.HumanPathRoot}); err != nil {
+			if err := awconfig.SaveHumanRecord(&awconfig.HumanRecord{StableID: id, DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: h.domain, RegistryURL: h.registryURL, State: awconfig.HumanPrepared, Path: awconfig.HumanPathRoot}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -406,7 +414,7 @@ func TestHumanInitWithoutAsRootOnlyPrepares(t *testing.T) {
 	if _, err := awid.NewAWIDRegistryClient(nil, nil).ResolveKeyAt(context.Background(), h.registryURL, out.ID); err == nil {
 		t.Fatal("a prepared human was registered")
 	}
-	dir, err := awconfig.ControllerIssuanceDir(humanInitDomain)
+	dir, err := awconfig.ControllerIssuanceDir(h.domain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +448,7 @@ func TestHumanInitPrepareOnlyNeedsTheHumanAndRefusesAQuietSecond(t *testing.T) {
 		t.Fatalf("records=%d prompts=%d", len(h.records()), len(h.prompts))
 	}
 	h.away = false
-	done := &awconfig.HumanRecord{StableID: "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: humanInitDomain, RegistryURL: h.registryURL, State: awconfig.HumanRegistered, Path: awconfig.HumanPathRoot}
+	done := &awconfig.HumanRecord{StableID: "did:aw:3YDAM5ZLRKg7eHH1Zs6sSMwkga8w", DIDKey: "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX", Domain: h.domain, RegistryURL: h.registryURL, State: awconfig.HumanRegistered, Path: awconfig.HumanPathRoot}
 	if err := awconfig.SaveHumanRecord(done); err != nil {
 		t.Fatal(err)
 	}

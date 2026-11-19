@@ -162,7 +162,8 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	registryURL := realAWIDFixture(t)
+	// The shared stack's registry: the identity is all this test registers there.
+	registryURL := newRealCommandWorld(t).Stack.RegistryURL
 	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	if _, err := registry.RegisterIdentity(ctx, registryURL, memberDIDKey, awid.ComputeStableID(memberPub), memberKey); err != nil {
@@ -586,7 +587,8 @@ func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	registryURL := realAWIDFixture(t)
+	// The shared stack's registry: the identity is all this test registers there.
+	registryURL := newRealCommandWorld(t).Stack.RegistryURL
 	t.Setenv("AWID_REGISTRY_URL", registryURL)
 	registry := awid.NewAWIDRegistryClient(nil, nil)
 	if _, err := registry.RegisterIdentity(ctx, registryURL, memberDIDKey, awid.ComputeStableID(memberPub), memberKey); err != nil {
