@@ -794,9 +794,9 @@ async def deliver_federation_mutation_outbox(
                 await callback(row["event_type"], payload)
             except Exception as exc:
                 logger.warning(
-                    "Federation mutation outbox delivery failed",
+                    "Federation mutation outbox delivery failed failure_type=%s",
+                    type(exc).__name__,
                     extra={"outbox_id": str(row["outbox_id"])},
-                    exc_info=True,
                 )
                 await tx.execute(
                     """
