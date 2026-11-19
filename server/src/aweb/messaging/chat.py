@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from aweb.messaging.kinds import ContentMode
 from aweb.messaging.chat_storage import (
-    store_chat as send_in_session,
+    store_chat as _store_chat,
     _uuid_or_none,
 )
 
@@ -30,6 +30,9 @@ from aweb.service_errors import ConflictError, NotFoundError, ServiceError
 from aweb.messaging.conversations import (
     find_active_one_to_one_conversation_between,
 )
+
+# Public Python consumers retain this name; storage has one implementation.
+send_in_session = _store_chat
 
 logger = logging.getLogger(__name__)
 
