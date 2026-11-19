@@ -70,7 +70,6 @@ func runTeamHumanExtend(cmd *cobra.Command, args []string) error {
 		AgentsRoot:            authority.AgentsRoot,
 		WorktreeAnchorDir:     wd,
 		APIKey:                authority.APIKey,
-		ForceAPIKey:           strings.TrimSpace(authority.APIKey) != "",
 		ExpectedTeamID:        expectedTeamID,
 		TeamIDAssertionSource: assertionSource,
 		OutputStatus:          "extended",

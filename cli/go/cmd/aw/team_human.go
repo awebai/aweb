@@ -1538,7 +1538,6 @@ type teamHumanAddRunOptions struct {
 	AgentsRoot            string
 	WorktreeAnchorDir     string
 	APIKey                string
-	ForceAPIKey           bool
 	ExpectedTeamID        string
 	TeamIDAssertionSource teamIDAssertionSource
 	OutputStatus          string
