@@ -170,10 +170,10 @@ class Listener:
     """A local socket, bound now so its origin is known before the app it will
     serve exists (a service names its own public origin at construction)."""
 
-    def __init__(self, host: str = "127.0.0.1") -> None:
+    def __init__(self, host: str = "127.0.0.1", *, name: str | None = None) -> None:
         self._socket = socket.socket()
         self._socket.bind((host, 0))
-        self.origin = f"http://{host}:{self._socket.getsockname()[1]}"
+        self.origin = f"http://{name or host}:{self._socket.getsockname()[1]}"
 
     @asynccontextmanager
     async def serving(self, app: Any) -> AsyncIterator[str]:
@@ -235,11 +235,15 @@ async def listening_coordination(
             registry_listener.origin,
         )
         registry_url = await stack.enter_async_context(registry_listener.serving(registry.app))
+        # A test deployment of AWID (as production_registry runs the release):
+        # its delivery-origin policy admits a plain-http localhost team server,
+        # where production requires https at a public name.
+        monkeypatch.setenv("APP_ENV", "test")
         monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/aweb")
         monkeypatch.setenv("AWID_SERVICE_TOKEN", SERVICE_TOKEN)
         monkeypatch.setenv("AWID_REGISTRY_URL", registry_url)
         server_db = await test_db_factory.create_db(suffix="coordination_aweb")
-        server_listener = Listener()
+        server_listener = Listener(name="localhost")
         server = await stack.enter_async_context(
             running_server(
                 server_db.config.get_dsn(),
