@@ -4,6 +4,7 @@ import json
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 
 from aweb.lifecycle import (
     AgentDisposition,
@@ -32,9 +33,47 @@ async def request_as(env, *, alias, method, path, payload=None):
     )
 
 
-@pytest.mark.asyncio
-async def test_claim_and_focus_titles_use_the_full_hyphenated_team_ref(privacy_app):
+@pytest_asyncio.fixture
+async def coordination_mcp(privacy_app):
     env = privacy_app
+    mcp = create_mcp_app(
+        db_infra=env.infra,
+        redis=env.redis,
+        registry_client=env.app.state.awid_registry_client,
+        public_origin=str(env.client.base_url).rstrip("/"),
+    )
+    env.app.mount("/coordination-mcp", mcp)
+    await mcp.startup()
+    try:
+        yield env
+    finally:
+        await mcp.shutdown()
+
+
+async def call_mcp(env, *, name, arguments=None):
+    response = await request_as(
+        env,
+        alias="alice",
+        method="POST",
+        path="/coordination-mcp/",
+        payload={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments or {}},
+        },
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert not result.get("isError"), result
+    return json.loads(result["content"][0]["text"])
+
+
+@pytest.mark.asyncio
+async def test_claim_and_focus_titles_use_the_full_hyphenated_team_ref(
+    coordination_mcp,
+):
+    env = coordination_mcp
     assert "-" in TEAM.split(":")[0]
     parent = await request_as(
         env,
@@ -82,34 +121,8 @@ async def test_claim_and_focus_titles_use_the_full_hyphenated_team_ref(privacy_a
             "epic",
         )
 
-    mcp = create_mcp_app(
-        db_infra=env.infra,
-        redis=env.redis,
-        registry_client=env.app.state.awid_registry_client,
-        public_origin=str(env.client.base_url).rstrip("/"),
-    )
-    env.app.mount("/coordination-mcp", mcp)
-    await mcp.startup()
-    try:
-        response = await request_as(
-            env,
-            alias="alice",
-            method="POST",
-            path="/coordination-mcp/",
-            payload={
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {"name": "workspace_status", "arguments": {}},
-            },
-        )
-        assert response.status_code == 200, response.text
-        result = response.json()["result"]
-        assert not result.get("isError"), result
-        status = json.loads(result["content"][0]["text"])
-        assert status["self"]["claims"][0]["title"] == "Claimed task"
-    finally:
-        await mcp.shutdown()
+    status = await call_mcp(env, name="workspace_status")
+    assert status["self"]["claims"][0]["title"] == "Claimed task"
 
 
 @pytest.mark.asyncio
